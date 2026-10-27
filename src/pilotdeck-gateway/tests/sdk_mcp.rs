@@ -21,15 +21,16 @@ use pilotdeck_gateway::{
         plugins::{LoadedPlugin, PluginRuntime, PluginRuntimeOptions, PluginSource},
         sdk_session::{
             ResolvedSdkRuntime, SdkRuntimeResolver, SdkSessionError, SdkSessionOptions,
-            SdkSessionProjects, SdkSessionRegistry,
+            SdkSessionProjects, SdkSessionProjectsTable, SdkSessionRegistry, SdkTaskBudget,
         },
     },
+    storage::TaskBudgetError,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::{
     path::PathBuf,
     sync::{Arc, Condvar, Mutex, MutexGuard},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const ORACLE: &str = include_str!("fixtures/sdk-mcp/oracle.json");
@@ -314,6 +315,13 @@ async fn run_step(config: &SdkMcpConfig, step: &JsValue) -> JsValue {
 fn test_config(
     environment: Arc<dyn SdkMcpEnvironment>,
 ) -> (SdkMcpConfig, Arc<Mutex<Vec<JsValue>>>) {
+    test_config_with_projects(environment, SdkSessionProjects::shared())
+}
+
+fn test_config_with_projects(
+    environment: Arc<dyn SdkMcpEnvironment>,
+    projects: Arc<dyn SdkSessionProjectsTable>,
+) -> (SdkMcpConfig, Arc<Mutex<Vec<JsValue>>>) {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let project = Arc::new(FakeProject {
         root: "/pdrs-fixture/project".into(),
@@ -339,7 +347,7 @@ fn test_config(
         }),
         permission_rule_sets: Arc::new(GatewaySessionPermissionRuleSetRegistry::new()),
         environment,
-        projects: SdkSessionProjects::shared(),
+        projects,
     });
     (config, calls)
 }
@@ -465,6 +473,87 @@ impl SdkMcpEnvironment for GatedEnvironment {
     }
 }
 
+/// #347 fix-r1 (review P1-1): a shared-table stand-in that parks the armed
+/// `set`/`delete` writes, so the clear × set interleaving is deterministic.
+/// Reads pass through to the real table underneath.
+#[derive(Default)]
+struct GatedProjects {
+    inner: SdkSessionProjects,
+    armed: Mutex<bool>,
+    set_gate: Gate,
+    delete_gate: Gate,
+}
+
+impl SdkSessionProjectsTable for GatedProjects {
+    fn project(&self, session_key: &JsValue) -> Option<JsString> {
+        self.inner.project(session_key)
+    }
+    fn set(&self, session_key: &JsValue, project_root: JsString) {
+        if *lock(&self.armed) {
+            hold_at_gate(&self.set_gate, "shared-table set");
+        }
+        self.inner.set(session_key, project_root);
+    }
+    fn delete(&self, session_key: &JsValue) {
+        if *lock(&self.armed) {
+            hold_at_gate(&self.delete_gate, "shared-table delete");
+        }
+        self.inner.delete(session_key);
+    }
+    fn entries(&self) -> Vec<(JsValue, JsString)> {
+        self.inner.entries()
+    }
+}
+
+/// Park the calling thread inside a gated write until the coordinator
+/// releases it; bounded so a lost release fails the test instead of hanging.
+fn hold_at_gate(gate: &Gate, step: &str) {
+    {
+        let mut entered = lock(&gate.entered.0);
+        *entered = true;
+        gate.entered.1.notify_all();
+    }
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut released = lock(&gate.release.0);
+    while !*released {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "#347 fix-r1 the gated {step} was never released"
+        );
+        let (guard, _timed_out) = gate
+            .release
+            .1
+            .wait_timeout(released, remaining)
+            .expect("gate condvar");
+        released = guard;
+    }
+}
+
+/// Bounded wait until a gated write has entered.
+fn wait_entered(gate: &Gate, step: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut entered = lock(&gate.entered.0);
+    while !*entered {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "#347 fix-r1 the gated {step} never ran"
+        );
+        let (guard, _timed_out) = gate
+            .entered
+            .1
+            .wait_timeout(entered, remaining)
+            .expect("gate condvar");
+        entered = guard;
+    }
+}
+
+fn release_gate(gate: &Gate) {
+    *lock(&gate.release.0) = true;
+    gate.release.1.notify_all();
+}
+
 #[tokio::test]
 async fn deep_configs_are_rejected_without_state_or_close() {
     let (config, calls) = test_config(Arc::new(FixtureEnvironment));
@@ -563,7 +652,11 @@ async fn non_string_project_key_throws_the_node_type_error() {
             "TypeError",
             "#347 {label} projectKey must throw TypeError, not fall back"
         );
-        assert_eq!(set_error.code(), None, "#347 {label} projectKey error code");
+        assert_eq!(
+            set_error.code(),
+            Some("ERR_INVALID_ARG_TYPE"),
+            "#347 fix-r1 {label} projectKey keeps Node's error code"
+        );
         assert_eq!(
             String::from_utf16_lossy(set_error.message().units()),
             expected,
@@ -583,6 +676,11 @@ async fn non_string_project_key_throws_the_node_type_error() {
             "TypeError",
             "#347 {label} projectKey status error name"
         );
+        assert_eq!(
+            status_error.code(),
+            Some("ERR_INVALID_ARG_TYPE"),
+            "#347 fix-r1 {label} status projectKey keeps Node's error code"
+        );
     }
     assert_eq!(
         count_calls(&calls, "resolve"),
@@ -598,6 +696,146 @@ async fn non_string_project_key_throws_the_node_type_error() {
         text(&config.snapshot_state()),
         before,
         "#347 a rejected projectKey must not mutate state"
+    );
+}
+
+/// #347 fix-r1 (review P1-3): the `constructor.name` shapes Node converts
+/// with `String(name)` — null/undefined/""/0/NaN/false/{}/[]/[1,2]… — project
+/// to `an instance of <String(name)>`, not the `[Object]` fallback; only a
+/// missing `name` property, a nullish/array constructor, or the implicit
+/// Object.prototype constructor keep their own texts. Node v22.22.0 matrix:
+/// `_tmp/20261026-issue-347/fix-r1/probe/constructor-name{,-edge}.out`.
+#[tokio::test]
+async fn constructor_name_shapes_project_the_node_received_text() {
+    let (config, calls) = test_config(Arc::new(FixtureEnvironment));
+    config
+        .set_mcp_servers(&set_input("s", &[("a", stdio_config("node"))]))
+        .await
+        .expect("#347 fix-r1 the setup set must succeed");
+    let before = text(&config.snapshot_state());
+    lock(&calls).clear();
+    let named = |name: JsValue| {
+        let mut constructor = JsObject::new();
+        constructor.insert("name".into(), name);
+        let mut key = JsObject::new();
+        key.insert("constructor".into(), JsValue::Object(constructor));
+        JsValue::Object(key)
+    };
+    for (label, key, received) in [
+        (
+            "name-object",
+            named(JsValue::Object(JsObject::new())),
+            "an instance of [object Object]",
+        ),
+        (
+            "name-array",
+            named(JsValue::Array(Vec::new())),
+            "an instance of ",
+        ),
+        (
+            "name-two-element-array",
+            named(JsValue::Array(vec![
+                JsValue::Number(1.0),
+                JsValue::Number(2.0),
+            ])),
+            "an instance of 1,2",
+        ),
+        ("name-null", named(JsValue::Null), "an instance of null"),
+        (
+            "name-undefined",
+            named(JsValue::Undefined),
+            "an instance of undefined",
+        ),
+        (
+            "name-empty-string",
+            named(JsValue::String("".into())),
+            "an instance of ",
+        ),
+        (
+            "name-false",
+            named(JsValue::Bool(false)),
+            "an instance of false",
+        ),
+        ("name-zero", named(JsValue::Number(0.0)), "an instance of 0"),
+        (
+            "name-nan",
+            named(JsValue::Number(f64::NAN)),
+            "an instance of NaN",
+        ),
+        (
+            "name-infinity",
+            named(JsValue::Number(f64::INFINITY)),
+            "an instance of Infinity",
+        ),
+        (
+            "constructor-null",
+            parse_json(r#"{"constructor":null}"#).unwrap(),
+            "[Object]",
+        ),
+        (
+            "constructor-array",
+            parse_json(r#"{"constructor":[]}"#).unwrap(),
+            "[Object]",
+        ),
+        (
+            "constructor-without-name",
+            parse_json(r#"{"constructor":{}}"#).unwrap(),
+            "[Object]",
+        ),
+        (
+            "constructor-missing",
+            parse_json("{}").unwrap(),
+            "an instance of Object",
+        ),
+    ] {
+        let expected =
+            format!("The \"paths[0]\" argument must be of type string. Received {received}");
+        let set_error = config
+            .set_mcp_servers(&set_input_with_project_key(
+                key.clone(),
+                &[("a", stdio_config("node"))],
+            ))
+            .await
+            .expect_err("#347 fix-r1 a non-string projectKey must reject setMcpServersForSdk");
+        assert_eq!(
+            String::from_utf16_lossy(set_error.message().units()),
+            expected,
+            "#347 fix-r1 {label} set message must match Node's String(name) conversion"
+        );
+        assert_eq!(
+            set_error.code(),
+            Some("ERR_INVALID_ARG_TYPE"),
+            "#347 fix-r1 {label} set keeps Node's error code"
+        );
+        let status_error = config
+            .mcp_server_status(&status_input_with_project_key(key.clone()))
+            .await
+            .expect_err("#347 fix-r1 a non-string projectKey must reject mcpServerStatusForSdk");
+        assert_eq!(
+            String::from_utf16_lossy(status_error.message().units()),
+            expected,
+            "#347 fix-r1 {label} status message must match Node's String(name) conversion"
+        );
+        assert_eq!(
+            status_error.code(),
+            Some("ERR_INVALID_ARG_TYPE"),
+            "#347 fix-r1 {label} status keeps Node's error code"
+        );
+    }
+    assert_eq!(
+        count_calls(&calls, "resolve"),
+        0,
+        "#347 fix-r1 the TypeError is thrown before this.resolve runs"
+    );
+    assert_eq!(
+        count_calls(&calls, "closeSession"),
+        0,
+        "#347 fix-r1 a rejected projectKey must not close the session"
+    );
+    assert_eq!(
+        text(&config.snapshot_state()),
+        before,
+        "#347 fix-r1 a rejected projectKey must not mutate state"
     );
 }
 
@@ -786,6 +1024,26 @@ async fn session_mcp_servers_reads_the_table_in_insertion_order() {
     );
 }
 
+/// A `SdkRuntimeResolver` that always resolves one fixed runtime; shared by
+/// the registry-over-shared-table tests.
+struct FixedResolver {
+    root: PathBuf,
+    snapshot: JsValue,
+    plugin_runtime: Arc<PluginRuntime>,
+}
+impl SdkRuntimeResolver for FixedResolver {
+    fn resolve(
+        &self,
+        _project_key: Option<&JsString>,
+    ) -> Result<ResolvedSdkRuntime, SdkSessionError> {
+        Ok(ResolvedSdkRuntime {
+            project_root: self.root.clone(),
+            snapshot: self.snapshot.clone(),
+            plugin_runtime: Arc::clone(&self.plugin_runtime),
+        })
+    }
+}
+
 /// #347③: `SdkMcpConfig` and the A6.3-pr8 `SdkSessionRegistry` write the
 /// one shared `sdkSessionProjects` table, so a session→project entry written
 /// by one slice is exactly what the other reads.
@@ -809,23 +1067,6 @@ async fn session_to_project_table_is_shared_with_the_session_registry() {
     // An empty session config passes validation; only the recorded project
     // root is under observation here.
     let snapshot = JsValue::Object(JsObject::new());
-    struct FixedResolver {
-        root: PathBuf,
-        snapshot: JsValue,
-        plugin_runtime: Arc<PluginRuntime>,
-    }
-    impl SdkRuntimeResolver for FixedResolver {
-        fn resolve(
-            &self,
-            _project_key: Option<&JsString>,
-        ) -> Result<ResolvedSdkRuntime, SdkSessionError> {
-            Ok(ResolvedSdkRuntime {
-                project_root: self.root.clone(),
-                snapshot: self.snapshot.clone(),
-                plugin_runtime: Arc::clone(&self.plugin_runtime),
-            })
-        }
-    }
     let projects = SdkSessionProjects::shared();
     let mut registry = SdkSessionRegistry::new(
         SdkSessionOptions::new(
@@ -878,7 +1119,7 @@ async fn session_to_project_table_is_shared_with_the_session_registry() {
         }),
         permission_rule_sets: Arc::new(GatewaySessionPermissionRuleSetRegistry::new()),
         environment: Arc::new(FixtureEnvironment),
-        projects: Arc::clone(&projects),
+        projects: projects.clone(),
     });
     // The entry the session registry wrote is the one the MCP slice reads,
     // and the MCP write for another session does not disturb it.
@@ -916,6 +1157,111 @@ async fn session_to_project_table_is_shared_with_the_session_registry() {
         registry.session_project(&"t".into()),
         Some("/pdrs-fixture/project".into()),
         "#347 the MCP clear leaves the other sessions"
+    );
+}
+
+/// #347 fix-r1 (review P2-2): the composition-root order for the two clear
+/// entries — registry first (its task-budget step reads the shared project
+/// entry), MCP second (it drops that entry) — clears everything, mirroring
+/// the single TS `clearSdkSessionState` (:776-789) where the budget clear
+/// reads `sdkSessionProjects` before the same function deletes it.
+#[tokio::test]
+async fn registry_clear_then_mcp_clear_clears_everything_in_order() {
+    struct RecordingBudget {
+        cleared: Arc<Mutex<Vec<JsString>>>,
+    }
+    impl SdkTaskBudget for RecordingBudget {
+        fn configure_project(
+            &self,
+            _project_root: &JsString,
+            _session_key: &JsString,
+            _total_usd: f64,
+            _retention_ms: Option<f64>,
+            _now_ms: f64,
+        ) -> Result<(), TaskBudgetError> {
+            Ok(())
+        }
+        fn clear_session(
+            &self,
+            project_root: &JsString,
+            _session_key: &JsString,
+        ) -> Result<(), TaskBudgetError> {
+            lock(&self.cleared).push(project_root.clone());
+            Ok(())
+        }
+    }
+    let case = scratch::Scratch::new("sdk-mcp-paired-clear");
+    let dir = case.path().to_path_buf();
+    let plugin_runtime = Arc::new(PluginRuntime::new(PluginRuntimeOptions {
+        project_root: dir.clone(),
+        pilot_home: dir.join("home"),
+        builtin_skills_root: None,
+        builtin_plugins: Vec::new(),
+        builtin_plugins_enabled: std::collections::HashMap::new(),
+    }));
+    let mut env = Env::new();
+    env.insert("HOME".into(), dir.to_string_lossy().into_owned());
+    env.insert(
+        "PILOT_HOME".into(),
+        dir.join("home").to_string_lossy().into_owned(),
+    );
+    let projects = SdkSessionProjects::shared();
+    let cleared = Arc::new(Mutex::new(Vec::new()));
+    let mut registry = SdkSessionRegistry::new(
+        SdkSessionOptions::new(
+            dir.join("fallback"),
+            case.path(),
+            env,
+            Arc::new(FixedResolver {
+                root: dir.clone(),
+                snapshot: JsValue::Object(JsObject::new()),
+                plugin_runtime: Arc::clone(&plugin_runtime),
+            }),
+        )
+        .with_projects(Arc::clone(&projects))
+        .with_task_budget(Arc::new(RecordingBudget {
+            cleared: Arc::clone(&cleared),
+        })),
+    );
+    registry
+        .set_session_config(&"s".into(), &JsValue::Object(JsObject::new()), None, None)
+        .await
+        .expect("#347 fix-r1 the session config must record the project");
+    let (config, _calls) =
+        test_config_with_projects(Arc::new(FixtureEnvironment), projects.clone());
+    config
+        .set_mcp_servers(&set_input("s", &[("a", stdio_config("node"))]))
+        .await
+        .expect("#347 fix-r1 the MCP set must record the project");
+    assert_eq!(
+        projects.project(&JsValue::String("s".into())),
+        // The MCP set replaces the registry's entry in place (JS Map
+        // semantics): both slices recorded the session's project.
+        Some("/pdrs-fixture/project".into()),
+        "#347 fix-r1 both slices recorded the session's project"
+    );
+
+    // The composition-root order: registry clear (budget step reads the
+    // entry), then the MCP clear (drops it).
+    registry
+        .clear_session_state(&"s".into())
+        .expect("#347 fix-r1 the registry clear must succeed");
+    config.clear_sdk_session_state(&JsValue::String("s".into()));
+    assert_eq!(
+        lock(&cleared).len(),
+        1,
+        "#347 fix-r1 the registry clear's budget step still sees the shared entry"
+    );
+    assert!(
+        config
+            .session_mcp_servers(&JsValue::String("s".into()))
+            .is_empty(),
+        "#347 fix-r1 the paired clears drop the MCP server table"
+    );
+    assert_eq!(
+        registry.session_project(&"s".into()),
+        None,
+        "#347 fix-r1 the paired clears drop the shared project entry"
     );
 }
 
@@ -963,6 +1309,124 @@ async fn set_and_toggle_do_not_lose_updates() {
     );
     toggle_task.await.unwrap().unwrap();
     assert_eq!(enabled_for(&config, "a"), Some(JsValue::Bool(false)));
+}
+
+/// #347 fix-r1 (review P1-1): a clear issued while a `setMcpServersForSdk`
+/// for the same session is in flight cannot leave a half-cleared session —
+/// `clear_sdk_session_state` holds the servers guard (the same critical
+/// section the set commits under) across all four drops, so the set's commit
+/// runs entirely after it. Matrix cell 3 in
+/// `_tmp/20261026-issue-347/fix-r1/plan.md`; TS is synchronous across the
+/// whole clear (`probe/clear-set-atomicity.out`), so no mixed state exists
+/// there to begin with.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn clear_and_set_commits_share_one_critical_section() {
+    let projects = Arc::new(GatedProjects::default());
+    let (config, _calls) =
+        test_config_with_projects(Arc::new(FixtureEnvironment), projects.clone());
+    let config = Arc::new(config);
+    config
+        .set_mcp_servers(&set_input("s", &[("a", stdio_config("node"))]))
+        .await
+        .expect("#347 fix-r1 the setup set must succeed");
+    // Arm: the next shared-table set/delete parks instead of completing.
+    *lock(&projects.armed) = true;
+
+    let clear_config = Arc::clone(&config);
+    let clear_key = JsValue::String("s".into());
+    let clear =
+        tokio::task::spawn_blocking(move || clear_config.clear_sdk_session_state(&clear_key));
+    // The clear parks at its last drop, holding the shared commit guard.
+    wait_entered(&projects.delete_gate, "shared-table delete");
+
+    let set_config = Arc::clone(&config);
+    let mut set_task = tokio::spawn(async move {
+        set_config
+            .set_mcp_servers(&set_input("s", &[("b", stdio_config("node"))]))
+            .await
+    });
+    // A commit that did not share the critical section would finish its
+    // shared-table write in this window (its set gate is open); the fixed
+    // shape parks at the servers guard instead. The timeout is tolerated
+    // either way: only the final state is asserted.
+    release_gate(&projects.set_gate);
+    let outcome = tokio::time::timeout(Duration::from_secs(1), &mut set_task).await;
+    release_gate(&projects.delete_gate);
+    // A commit that finished inside the window is already joined by the
+    // timeout; re-polling a completed JoinHandle would panic, and the final
+    // state — not the join itself — is what this test asserts.
+    let set_result = match outcome {
+        Ok(result) => result,
+        Err(_elapsed) => set_task.await,
+    };
+    set_result
+        .expect("#347 fix-r1 the set task must join")
+        .expect("#347 fix-r1 setMcpServersForSdk must succeed after the clear");
+    clear.await.expect("#347 fix-r1 the clear task must join");
+    let names: Vec<String> = config
+        .session_mcp_servers(&JsValue::String("s".into()))
+        .iter()
+        .map(|(name, _)| String::from_utf16_lossy(name.units()))
+        .collect();
+    assert_eq!(
+        names,
+        vec!["b".to_owned()],
+        "#347 fix-r1 the later set commits its server table"
+    );
+    assert_eq!(
+        projects.project(&JsValue::String("s".into())),
+        Some("/pdrs-fixture/project".into()),
+        "#347 fix-r1 the shared session→project entry must not lag the server table"
+    );
+}
+
+/// #347 fix-r1 (review P1-1), the mirrored cell: a clear issued while a
+/// set's commit is in flight cannot see the server table without the
+/// shared-table write — the set's commit (including `projects.set`) holds
+/// the servers guard until both writes are done, so the clear runs entirely
+/// after it. Matrix cell 4 in `fix-r1/plan.md`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn set_commit_cannot_outlive_the_shared_table_write() {
+    let projects = Arc::new(GatedProjects::default());
+    let (config, _calls) =
+        test_config_with_projects(Arc::new(FixtureEnvironment), projects.clone());
+    let config = Arc::new(config);
+    *lock(&projects.armed) = true;
+
+    let set_config = Arc::clone(&config);
+    let set_task = tokio::spawn(async move {
+        set_config
+            .set_mcp_servers(&set_input("s", &[("b", stdio_config("node"))]))
+            .await
+    });
+    // The set's commit parks at its shared-table write, holding the guard.
+    wait_entered(&projects.set_gate, "shared-table set");
+
+    let clear_config = Arc::clone(&config);
+    let clear_key = JsValue::String("s".into());
+    let mut clear =
+        tokio::task::spawn_blocking(move || clear_config.clear_sdk_session_state(&clear_key));
+    // The clear must not complete inside the set's commit window (it parks
+    // at the servers guard — or, in the unfixed shape, at the gated delete).
+    let _ = tokio::time::timeout(Duration::from_secs(1), &mut clear).await;
+    release_gate(&projects.delete_gate);
+    release_gate(&projects.set_gate);
+    clear.await.expect("#347 fix-r1 the clear task must join");
+    set_task
+        .await
+        .expect("#347 fix-r1 the set task must join")
+        .expect("#347 fix-r1 setMcpServersForSdk must succeed");
+    assert!(
+        config
+            .session_mcp_servers(&JsValue::String("s".into()))
+            .is_empty(),
+        "#347 fix-r1 the clear drops the in-flight commit's server table"
+    );
+    assert_eq!(
+        projects.project(&JsValue::String("s".into())),
+        None,
+        "#347 fix-r1 the clear must not leave the commit's shared-table entry behind"
+    );
 }
 
 #[tokio::test]

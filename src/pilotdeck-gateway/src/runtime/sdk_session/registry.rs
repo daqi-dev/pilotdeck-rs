@@ -1,10 +1,10 @@
 use super::{
     HandlerRegistration, ModelField, ModelRef, OrganizationPolicy, ResolveSettingsOptions,
-    SdkConfigChangeHandler, SdkSessionError, SdkSessionProjects, SelectorKind,
-    SessionHandlerRegistry, SessionHookHandler, apply_organization_task_budget_cap, array,
-    assert_managed_model_allowed, assert_organization_setting_sources_allowed, field, is_null,
-    is_organization_model_allowed, js_object, json_text, map_settings_error, nullish, number,
-    number_text, organization_provider_policy_rejection, own, path_js, primitive_type,
+    SdkConfigChangeHandler, SdkSessionError, SdkSessionProjects, SdkSessionProjectsTable,
+    SelectorKind, SessionHandlerRegistry, SessionHookHandler, apply_organization_task_budget_cap,
+    array, assert_managed_model_allowed, assert_organization_setting_sources_allowed, field,
+    is_null, is_organization_model_allowed, js_object, json_text, map_settings_error, nullish,
+    number, number_text, organization_provider_policy_rejection, own, path_js, primitive_type,
     resolve_configured_model, resolve_session_settings, set_property, truthy,
     validate_managed_permissions, validate_selector_policy, validate_setting_sources,
 };
@@ -601,10 +601,16 @@ impl SdkSessionRegistry {
             .is_some_and(|value| matches!(value, JsValue::Bool(false)))
     }
 
-    /// `clearSdkSessionState`. The MCP fields (servers, permission overrides
-    /// and generated rules) are owned by A6.5's `SdkMcpConfig`, which clears
-    /// them through the same shared projects table; the task-budget clear is
-    /// called only when a project was recorded.
+    /// `clearSdkSessionState` (the non-MCP fields; ProjectRuntimeRegistry.ts
+    /// :776-789). The MCP fields (servers, permission overrides and generated
+    /// rules) are owned by A6.5's `SdkMcpConfig`, which clears them through
+    /// the same shared projects table; the task-budget clear is called only
+    /// when a project was recorded. Like the baseline — where the budget
+    /// clear reads `sdkSessionProjects` before the same function deletes it —
+    /// the composition root must call this **before**
+    /// [`crate::runtime::mcp::sdk::SdkMcpConfig::clear_sdk_session_state`]:
+    /// the MCP clear drops the shared entry this clear's budget step reads,
+    /// so the reverse order silently skips the ledger clear.
     pub fn clear_session_state(&mut self, session_key: &JsString) -> Result<(), SdkSessionError> {
         if let Some(root) = self.session_project(session_key)
             && let Some(budget) = &self.options.task_budget
