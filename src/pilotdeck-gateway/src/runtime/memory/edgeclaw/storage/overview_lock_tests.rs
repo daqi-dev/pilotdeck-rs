@@ -33,7 +33,7 @@ fn run_topologies(standalone: bool) {
             {
                 continue;
             }
-            let mut child = Command::new(std::env::current_exe().unwrap())
+            let mut child = Command::new(std::env::current_exe().expect("#273 lock child path"))
                 .args(["--exact", CHILD, "--nocapture", "--test-threads=1"])
                 .env("PDRS_R9_LOCK_CASE", topology)
                 .env("PDRS_R9_LOCK_CACHE", cache)
@@ -41,10 +41,11 @@ fn run_topologies(standalone: bool) {
                     "PDRS_R9_LOCK_STANDALONE",
                     if standalone { "1" } else { "0" },
                 )
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .spawn()
-                .unwrap();
+                .expect("#273 lock child spawn");
             let deadline = Instant::now() + Duration::from_secs(20);
             let status = loop {
                 if let Some(status) = child.try_wait().unwrap() {
@@ -63,7 +64,15 @@ fn run_topologies(standalone: bool) {
                 // determines whether a thread reached a lock acquisition.
                 std::thread::sleep(Duration::from_millis(10));
             };
-            assert!(status.success(), "{topology}/{cache}: {status}");
+            let output = child.wait_with_output().expect("#273 lock child output");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // #273: libtest exits 0 even when --exact matches nothing after a
+            // rename; only the summary line proves the topology child really ran.
+            assert!(
+                status.success() && stdout.contains("1 passed") && stdout.contains("0 failed"),
+                "#273 lock topology rerun matched no test: {topology}/{cache}: {status}\n{stdout}\n{stderr}"
+            );
         }
     }
 }

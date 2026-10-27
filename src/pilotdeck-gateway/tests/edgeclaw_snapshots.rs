@@ -494,17 +494,22 @@ fn in_oracle_locale(test: &str) -> bool {
     if std::env::var("PDRS_SNAPSHOT_LOCALE_CHILD").as_deref() == Ok(test) {
         return true;
     }
-    let status = Command::new(std::env::current_exe().unwrap())
+    let output = Command::new(std::env::current_exe().expect("#273 locale child path"))
         .args(["--exact", test, "--include-ignored", "--nocapture"])
         .env("PDRS_SNAPSHOT_LOCALE_CHILD", test)
         .env("LANG", "en_US.UTF-8")
         .env_remove("LC_ALL")
         .env_remove("LC_MESSAGES")
-        .status()
-        .unwrap();
+        .output()
+        .expect("#273 locale child spawn");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // #273: libtest exits 0 even when --exact matches nothing after a rename;
+    // only the summary line proves the locale rerun really ran the test.
     assert!(
-        status.success(),
-        "locale-isolated snapshot test {test} failed: {status}"
+        output.status.success() && stdout.contains("1 passed") && stdout.contains("0 failed"),
+        "#273 snapshot locale rerun matched no test ({test}): {status}\n{stdout}\n{stderr}",
+        status = output.status
     );
     false
 }

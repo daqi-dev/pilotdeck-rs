@@ -44,19 +44,22 @@ fn stats_dateparse_matches_real_ts_in_three_timezones() {
         ":Asia/Shanghai",
         "/etc/localtime",
     ] {
-        let output = Command::new(std::env::current_exe().unwrap())
+        let output = Command::new(std::env::current_exe().expect("#273 zone child path"))
             .args(["--exact", CHILD, "--nocapture"])
             .env(ZONE_ENV, zone)
             .env("TZ", zone)
             .output()
-            .unwrap();
+            .expect("#273 zone child spawn");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // #273: libtest exits 0 even when --exact matches nothing after a rename;
+        // only the summary line proves the zone child really ran.
         assert!(
-            output.status.success(),
-            "TZ={zone}: {}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+            output.status.success() && stdout.contains("1 passed") && stdout.contains("0 failed"),
+            "#273 TZ rerun matched no test: TZ={zone}: {status}\n{stdout}\n{stderr}",
+            status = output.status
         );
-        println!("{}", String::from_utf8_lossy(&output.stdout));
+        println!("{stdout}");
     }
 }
 

@@ -938,19 +938,25 @@ mod tests {
             let mut child = std::process::Command::new("/bin/sh");
             child
                 .args(["-c", "umask 022; exec \"$@\"", "pdrs-copy-umask-test"])
-                .arg(std::env::current_exe().unwrap())
+                .arg(std::env::current_exe().expect("#273 umask test binary path"))
                 .args([
                     "--exact",
                     "skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp",
                     "--nocapture",
                 ])
                 .env("PDRS_TEST_COPY_UMASK", "1");
-            let output = child.output().unwrap();
+            let output = child.output().expect("#273 umask child spawn");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // #273: a renamed test makes this --exact filter match nothing, and
+            // libtest still exits 0 — only the summary line proves the rerun
+            // executed this test rather than a vacuous zero-match pass.
             assert!(
-                output.status.success(),
-                "stdout: {}\nstderr: {}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
+                output.status.success()
+                    && stdout.contains("1 passed")
+                    && stdout.contains("0 failed"),
+                "#273 umask rerun matched no test: {status}\n{stdout}\n{stderr}",
+                status = output.status
             );
             return;
         }
