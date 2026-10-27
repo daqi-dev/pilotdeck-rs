@@ -203,7 +203,7 @@ pub struct TokenStatsCollector {
 impl TokenStatsCollector {
     /// `new TokenStatsCollector(config)`; `pilot_home` replaces
     /// `resolvePilotHome()` for callers that already resolved it.
-    pub fn new(config: Option<&StatsConfig>, pilot_home: Option<&Path>) -> Self {
+    pub fn new(config: Option<&StatsConfig>, pilot_home: Option<&Path>) -> std::io::Result<Self> {
         Self::with_clock(config, pilot_home, Arc::new(wall_clock))
     }
 
@@ -211,7 +211,7 @@ impl TokenStatsCollector {
         config: Option<&StatsConfig>,
         pilot_home: Option<&Path>,
         clock: StatsClock,
-    ) -> Self {
+    ) -> std::io::Result<Self> {
         let enabled = config.map(|config| config.enabled).unwrap_or(false);
         let model_pricing = config.and_then(|config| config.model_pricing.clone());
         let baseline_model = config.and_then(|config| config.baseline_model.clone());
@@ -230,14 +230,15 @@ impl TokenStatsCollector {
             clock,
         };
         if !enabled {
-            return collector;
+            return Ok(collector);
         }
         let router_dir = match config.and_then(|config| config.file_path.as_deref()) {
             Some(file) => file.parent().unwrap_or(Path::new(".")).to_path_buf(),
-            None => pilot_home
-                .map(Path::to_path_buf)
-                .unwrap_or_else(default_pilot_home)
-                .join("router"),
+            None => match pilot_home {
+                Some(home) => home.to_path_buf(),
+                None => default_pilot_home()?,
+            }
+            .join("router"),
         };
         let _ = fs::create_dir_all(&router_dir);
         let jsonl = router_dir.join("stats.jsonl");
@@ -254,7 +255,7 @@ impl TokenStatsCollector {
                 .open(&jsonl)
                 .ok();
         }
-        collector
+        Ok(collector)
     }
 
     pub fn enabled(&self) -> bool {
@@ -1201,18 +1202,41 @@ fn locale_compare_js(left: &JsString, right: &JsString) -> Ordering {
 /// `resolvePilotHome()`: `PILOT_HOME ?? "~/.pilotdeck"`, then Node
 /// `path.resolve` against the process cwd (`paths.ts:21-29`). An empty
 /// `PILOT_HOME` is a set value and resolves to the cwd, not the default.
-fn default_pilot_home() -> PathBuf {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-    resolve_pilot_home(
-        std::env::var("PILOT_HOME").ok().as_deref(),
-        std::env::var_os("HOME").as_deref(),
-        &cwd,
-    )
+///
+/// Node reads `process.cwd()` only when `path.resolve` receives a relative
+/// input. A bare `~` is returned verbatim by `normalizeHomePath`, so it never
+/// reads the cwd either; `~/...` with the usual absolute HOME, an absolute
+/// `PILOT_HOME` and the unset default all stay cwd-free when the cwd is
+/// deleted. A failed read is returned unchanged: TS throws
+/// `ENOENT ... uv_cwd` instead of resolving against `/` (#879).
+fn default_pilot_home() -> std::io::Result<PathBuf> {
+    let raw = std::env::var("PILOT_HOME").ok();
+    let home = std::env::var_os("HOME");
+    if raw.as_deref() == Some("~") {
+        // `normalizeHomePath` returns `homedir()` verbatim for the bare "~";
+        // it never calls `path.resolve`, so even an empty or relative HOME
+        // does not need the process cwd (TokenStatsCollector.ts:90-96).
+        return Ok(home
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("~")));
+    }
+    let expanded = expand_pilot_home(raw.as_deref(), home.as_deref());
+    if expanded.is_absolute() {
+        // `path.resolve` never consults the cwd for an absolute input. The
+        // empty base makes that explicit instead of inventing a directory.
+        return Ok(crate::metadata::resolve_path(Path::new(""), &expanded));
+    }
+    let cwd = std::env::current_dir().map_err(|error| {
+        let (_, message) = crate::node_io::diagnostic_or_unknown(&error, "uv_cwd", None);
+        std::io::Error::new(error.kind(), message)
+    })?;
+    Ok(crate::metadata::resolve_path(&cwd, &expanded))
 }
 
-fn resolve_pilot_home(raw: Option<&str>, home: Option<&std::ffi::OsStr>, cwd: &Path) -> PathBuf {
+fn expand_pilot_home(raw: Option<&str>, home: Option<&std::ffi::OsStr>) -> PathBuf {
     let raw = raw.unwrap_or("~/.pilotdeck");
-    let expanded = if raw == "~" {
+    if raw == "~" {
         home.map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(raw))
     } else if let Some(rest) = raw.strip_prefix("~/") {
@@ -1220,8 +1244,15 @@ fn resolve_pilot_home(raw: Option<&str>, home: Option<&std::ffi::OsStr>, cwd: &P
             .unwrap_or_else(|| PathBuf::from(raw))
     } else {
         PathBuf::from(raw)
-    };
-    crate::metadata::resolve_path(cwd, &expanded)
+    }
+}
+
+#[cfg(test)]
+fn resolve_pilot_home(raw: Option<&str>, home: Option<&std::ffi::OsStr>, cwd: &Path) -> PathBuf {
+    if raw == Some("~") {
+        return expand_pilot_home(raw, home);
+    }
+    crate::metadata::resolve_path(cwd, &expand_pilot_home(raw, home))
 }
 
 /// One-time migration from the old `stats.json` / `router-stats.json` formats.
@@ -1385,3 +1416,7 @@ mod tests;
 #[cfg(test)]
 #[path = "stats_dateparse_tests.rs"]
 mod dateparse_tests;
+
+#[cfg(all(test, unix))]
+#[path = "../../../tests/fixtures/stats-cwd/regression.rs"]
+mod cwd_tests;

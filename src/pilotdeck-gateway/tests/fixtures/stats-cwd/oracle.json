@@ -1,0 +1,578 @@
+{
+  "node": "v22.22.0",
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/router/stats/TokenStatsCollector.ts": "886914cd342433be20c2ba58f832a3f59c91b88a69767fb459484d7b20475ad1",
+    "src/pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a",
+    "src/router/RouterRuntime.ts": "c3136e14359ac8ab0ef4fa4872da456b0fd30401b797592e7d38f30179ee45b8",
+    "src/router/usage/RouterUsageObserver.ts": "08bbf8125ecc5c147c856331044cafb037fe12c41dc42425b8dbc9e609ef9ef3"
+  },
+  "cases": [
+    {
+      "name": "relative-normal",
+      "collector": {
+        "name": "relative-normal",
+        "entry": "collector",
+        "cwdReads": 1,
+        "outcome": {
+          "result": {
+            "journal": "<root>/home/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      },
+      "runtime": {
+        "name": "relative-normal",
+        "entry": "runtime",
+        "cwdReads": 1,
+        "outcome": {
+          "result": {
+            "journal": "<root>/home/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      }
+    },
+    {
+      "name": "relative-deleted",
+      "collector": {
+        "name": "relative-deleted",
+        "entry": "collector",
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "runtime": {
+        "name": "relative-deleted",
+        "entry": "runtime",
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      }
+    },
+    {
+      "name": "empty-normal",
+      "collector": {
+        "name": "empty-normal",
+        "entry": "collector",
+        "cwdReads": 1,
+        "outcome": {
+          "result": {
+            "journal": "<root>/cwd/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      },
+      "runtime": {
+        "name": "empty-normal",
+        "entry": "runtime",
+        "cwdReads": 1,
+        "outcome": {
+          "result": {
+            "journal": "<root>/cwd/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      }
+    },
+    {
+      "name": "empty-deleted",
+      "collector": {
+        "name": "empty-deleted",
+        "entry": "collector",
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "runtime": {
+        "name": "empty-deleted",
+        "entry": "runtime",
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      }
+    },
+    {
+      "name": "absolute-normal",
+      "collector": {
+        "name": "absolute-normal",
+        "entry": "collector",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/home/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      },
+      "runtime": {
+        "name": "absolute-normal",
+        "entry": "runtime",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/home/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      }
+    },
+    {
+      "name": "absolute-deleted",
+      "collector": {
+        "name": "absolute-deleted",
+        "entry": "collector",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/home/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      },
+      "runtime": {
+        "name": "absolute-deleted",
+        "entry": "runtime",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/home/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      }
+    },
+    {
+      "name": "tilde-normal",
+      "collector": {
+        "name": "tilde-normal",
+        "entry": "collector",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/user/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      },
+      "runtime": {
+        "name": "tilde-normal",
+        "entry": "runtime",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/user/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      }
+    },
+    {
+      "name": "tilde-deleted",
+      "collector": {
+        "name": "tilde-deleted",
+        "entry": "collector",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/user/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      },
+      "runtime": {
+        "name": "tilde-deleted",
+        "entry": "runtime",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/user/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      }
+    },
+    {
+      "name": "tilde-child-normal",
+      "collector": {
+        "name": "tilde-child-normal",
+        "entry": "collector",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/user/home/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      },
+      "runtime": {
+        "name": "tilde-child-normal",
+        "entry": "runtime",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/user/home/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      }
+    },
+    {
+      "name": "tilde-child-deleted",
+      "collector": {
+        "name": "tilde-child-deleted",
+        "entry": "collector",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/user/home/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      },
+      "runtime": {
+        "name": "tilde-child-deleted",
+        "entry": "runtime",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/user/home/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      }
+    },
+    {
+      "name": "unset-normal",
+      "collector": {
+        "name": "unset-normal",
+        "entry": "collector",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/user/.pilotdeck/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      },
+      "runtime": {
+        "name": "unset-normal",
+        "entry": "runtime",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/user/.pilotdeck/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      }
+    },
+    {
+      "name": "unset-deleted",
+      "collector": {
+        "name": "unset-deleted",
+        "entry": "collector",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/user/.pilotdeck/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      },
+      "runtime": {
+        "name": "unset-deleted",
+        "entry": "runtime",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/user/.pilotdeck/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      }
+    },
+    {
+      "name": "empty-home-tilde-normal",
+      "collector": {
+        "name": "empty-home-tilde-normal",
+        "entry": "collector",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "router/stats.jsonl",
+            "exists": true
+          }
+        }
+      },
+      "runtime": {
+        "name": "empty-home-tilde-normal",
+        "entry": "runtime",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "router/stats.jsonl",
+            "exists": true
+          }
+        }
+      }
+    },
+    {
+      "name": "empty-home-tilde-deleted",
+      "collector": {
+        "name": "empty-home-tilde-deleted",
+        "entry": "collector",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "router/stats.jsonl",
+            "exists": false
+          }
+        }
+      },
+      "runtime": {
+        "name": "empty-home-tilde-deleted",
+        "entry": "runtime",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "router/stats.jsonl",
+            "exists": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty-home-unset-normal",
+      "collector": {
+        "name": "empty-home-unset-normal",
+        "entry": "collector",
+        "cwdReads": 1,
+        "outcome": {
+          "result": {
+            "journal": "<root>/cwd/.pilotdeck/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      },
+      "runtime": {
+        "name": "empty-home-unset-normal",
+        "entry": "runtime",
+        "cwdReads": 1,
+        "outcome": {
+          "result": {
+            "journal": "<root>/cwd/.pilotdeck/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      }
+    },
+    {
+      "name": "empty-home-unset-deleted",
+      "collector": {
+        "name": "empty-home-unset-deleted",
+        "entry": "collector",
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "runtime": {
+        "name": "empty-home-unset-deleted",
+        "entry": "runtime",
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      }
+    },
+    {
+      "name": "empty-home-child-normal",
+      "collector": {
+        "name": "empty-home-child-normal",
+        "entry": "collector",
+        "cwdReads": 1,
+        "outcome": {
+          "result": {
+            "journal": "<root>/cwd/data/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      },
+      "runtime": {
+        "name": "empty-home-child-normal",
+        "entry": "runtime",
+        "cwdReads": 1,
+        "outcome": {
+          "result": {
+            "journal": "<root>/cwd/data/router/stats.jsonl",
+            "exists": true
+          }
+        }
+      }
+    },
+    {
+      "name": "empty-home-child-deleted",
+      "collector": {
+        "name": "empty-home-child-deleted",
+        "entry": "collector",
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "runtime": {
+        "name": "empty-home-child-deleted",
+        "entry": "runtime",
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      }
+    },
+    {
+      "name": "file-path-normal",
+      "collector": {
+        "name": "file-path-normal",
+        "entry": "collector",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/custom/stats.jsonl",
+            "exists": true
+          }
+        }
+      },
+      "runtime": {
+        "name": "file-path-normal",
+        "entry": "runtime",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/custom/stats.jsonl",
+            "exists": true
+          }
+        }
+      }
+    },
+    {
+      "name": "file-path-deleted",
+      "collector": {
+        "name": "file-path-deleted",
+        "entry": "collector",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/custom/stats.jsonl",
+            "exists": true
+          }
+        }
+      },
+      "runtime": {
+        "name": "file-path-deleted",
+        "entry": "runtime",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": "<root>/custom/stats.jsonl",
+            "exists": true
+          }
+        }
+      }
+    },
+    {
+      "name": "disabled-normal",
+      "collector": {
+        "name": "disabled-normal",
+        "entry": "collector",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": null,
+            "exists": false
+          }
+        }
+      },
+      "runtime": {
+        "name": "disabled-normal",
+        "entry": "runtime",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": null,
+            "exists": false
+          }
+        }
+      }
+    },
+    {
+      "name": "disabled-deleted",
+      "collector": {
+        "name": "disabled-deleted",
+        "entry": "collector",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": null,
+            "exists": false
+          }
+        }
+      },
+      "runtime": {
+        "name": "disabled-deleted",
+        "entry": "runtime",
+        "cwdReads": 0,
+        "outcome": {
+          "result": {
+            "journal": null,
+            "exists": false
+          }
+        }
+      }
+    }
+  ]
+}
