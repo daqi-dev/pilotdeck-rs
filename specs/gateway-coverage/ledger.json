@@ -1,6 +1,6 @@
 {
 "audit_texts": {
-"Tz5wlw": "函数扫描只检查已列范围的领域码字面量；参数 code、远端 error.code、Node errno 和回调异常按其传播/转换语义记录，不能静态枚举任意宿主实现。 普通 Error 无 string code 才进入 gateway_request_failed；Node errno/宿主 string code 由 WS 保留；submit/provider catch 的转换以 error 摘要为准。",
+"Tz5wlw": "NEGCTL 故意改坏：函数扫描只检查已列范围的领域码字面量；参数 code、远端 error.code、Node errno 和回调异常按其传播/转换语义记录，不能静态枚举任意宿主实现。 普通 Error 无 string code 才进入 gateway_request_failed；Node errno/宿主 string code 由 WS 保留；submit/provider catch 的转换以 error 摘要为准。",
 "lQoPmQ": "函数扫描只检查已列范围的领域码字面量；参数 code、远端 error.code、Node errno 和回调异常按其传播/转换语义记录，不能静态枚举任意宿主实现。 普通 Error 无 string code 才进入 gateway_request_failed；Node errno/宿主 string code 由 WS 保留；submit/provider catch 的转换以 error 摘要为准。 审批 identity guard 已回源到 B/ui/server/staffdeck-approval-authority.mjs:14；只验证其当前用户接口边界，不调用真实账户。",
 "siPmkA": "逐方法核对冻结基线的默认 CLI、native provider、可见替代端口与错误传播；source_audit.functions 是本次读取的完整函数范围。动态注入的实际错误码集合见 blockers，不用 unavailable 替代。"
 },
