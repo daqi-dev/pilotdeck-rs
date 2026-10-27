@@ -878,9 +878,11 @@ NON_AGGREGATION_POINTS = {
 # Classify each explicitly; never exempt a whole file from the inventory.
 NON_AGGREGATION_POINTS.update({
     ('src/pilotdeck-gateway/tests/fixtures/gateway-batch/negative_controls.py',
-     'record'): 'one mutation verdict record, not a batch exit',
-    ('scripts/gateway-parity/test_safety.py', 'test_deadline_not_run_has_dedicated_exit_code'):
+     'main.record'): 'one mutation verdict record, not a batch exit',
+    ('scripts/gateway-parity/test_safety.py', 'ApparatusInputs.test_deadline_not_run_has_dedicated_exit_code'):
         'test-only shared exit mapping and real CLI contract, not a batch',
+    ('scripts/gateway-parity/test_safety.py', 'ApparatusInputs.test_empty_aggregation_fails_closed'):
+        'test-only empty batch contract, not a batch',
     ('scripts/gateway-parity/build_proxy.py', 'main'): 'single build precondition, no batch',
     ('scripts/gateway-parity/compare.py', 'projection'): 'single evidence projection',
     ('scripts/gateway-parity/compare.py', 'compare'): 'A2 pair comparison, own frozen verdict',
@@ -892,7 +894,8 @@ NON_AGGREGATION_POINTS.update({
        'test-only leaf input or replay, no production batch exit'
        for name in ('wiring_control', 'census_snapshot_race_control',
                     'census_enumeration_failure_control', 'negative_restored_replays',
-                    'bypass_probe', 'fake_run', 'replay')},
+                    'runtime_negative.bypass_probe', 'batch_aggregation_control.fake_run',
+                    'batch_aggregation_control.replay')},
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_controls.py',
      'wiring_relaxed'): 'mutation verdict predicate, not batch exit',
 })
@@ -933,13 +936,21 @@ def _is_report_status(target, value):
 
 
 def own_nodes(function):
-    """Nested function bodies must not certify an enclosing exit path."""
+    """Skip deferred bodies, but inspect expressions executed at definition.
+
+    Class bodies/bases, decorators and defaults execute in the caller. They
+    can terminate it even though nested function/lambda bodies cannot.
+    """
     def descend(node):
         yield node
-        for child in ast.iter_child_nodes(node):
-            if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
-                                      ast.ClassDef, ast.Lambda)):
-                yield from descend(child)
+        if node is not function and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            children = (list(getattr(node, 'decorator_list', []))
+                        + list(node.args.defaults)
+                        + [value for value in node.args.kw_defaults if value is not None])
+        else:
+            children = ast.iter_child_nodes(node)
+        for child in children:
+            yield from descend(child)
     return list(descend(function))
 
 
@@ -991,8 +1002,13 @@ def shared_returns(function, kind):
     """
     nodes = own_nodes(function)
     returns = [node.value for node in nodes if isinstance(node, ast.Return)]
+    exits = [explicit_exit(node) for node in nodes if is_explicit_exit(node)]
+    # Each terminating edge must certify itself, even if an unreachable return
+    # below it contains a shared call. Missing/keyword arguments fail closed.
+    if not all(shared_value(nodes, value, 1) for value in exits):
+        return False
     if kind == 'exit':
-        return bool(returns) and all(shared_value(nodes, value, 1) for value in returns)
+        return bool(returns or exits) and all(shared_value(nodes, value, 1) for value in returns)
     if kind == 'status-tuple':
         return bool(returns) and all(isinstance(value, ast.Tuple) and len(value.elts) == 2
                                     and shared_value(nodes, value.elts[0], 0) for value in returns)
@@ -1028,6 +1044,22 @@ def shared_returns(function, kind):
     return True
 
 
+def is_explicit_exit(node):
+    if isinstance(node, ast.Raise):
+        return node.exc is not None and any(
+            isinstance(value, (ast.Name, ast.Attribute))
+            and ast.unparse(value) in ('SystemExit', 'builtins.SystemExit')
+            for value in ast.walk(node.exc))
+    return (isinstance(node, ast.Call)
+            and ast.unparse(node.func) in ('sys.exit', 'os._exit'))
+
+
+def explicit_exit(node):
+    call = node.exc if isinstance(node, ast.Raise) else node
+    return (call.args[0] if isinstance(call, ast.Call) and len(call.args) == 1
+            and not call.keywords else None)
+
+
 def aggregation_markers(function):
     """Markers that make *function* a top-level status/exit computation."""
     markers = set()
@@ -1059,11 +1091,8 @@ def aggregation_markers(function):
             if isinstance(value, ast.IfExp) and (
                     _status_literals(value) or _has_passed_aggregate(value)):
                 markers.add('return-conditional-status')
-        elif (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
-              and isinstance(node.exc.func, ast.Name) and node.exc.func.id == 'SystemExit'
-              and node.exc.args and (_status_literals(node.exc.args[0])
-                                     or _has_passed_aggregate(node.exc.args[0]))):
-            markers.add('raise-exit-status')
+        elif is_explicit_exit(node):
+            markers.add('explicit-exit')
         elif shared_call(node):
             markers.add('calls-aggregate')
     return markers
@@ -1074,13 +1103,27 @@ def calls_shared(function):
 
 
 def scan_aggregation_tree(tree, rel):
+    definitions = {}
+
+    def descend(node, scope):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                name = '.'.join((*scope, child.name))
+                if not isinstance(child, ast.ClassDef):
+                    definitions.setdefault((rel, name), []).append(child)
+                descend(child, (*scope, child.name))
+            else:
+                descend(child, scope)
+
+    descend(tree, ())
     found = {}
-    for function in ast.walk(tree):
-        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        markers = aggregation_markers(function)
-        if markers:
-            found[(rel, function.name)] = (markers, function)
+    for key, functions in definitions.items():
+        markers = set().union(*(aggregation_markers(function) for function in functions))
+        if len(functions) != 1 and (markers or key in AGGREGATION_POINTS):
+            # Even a later definition without markers can replace an entry.
+            found[key] = (markers | {'duplicate-definition'}, None)
+        elif markers:
+            found[key] = (markers, functions[0])
     return found
 
 
@@ -1119,7 +1162,7 @@ def aggregation_audit():
         markers, function = found[key]
         kind = ('exit' if name == 'main' else 'status-tuple'
                 if name == 'summarize_results' else 'report')
-        shared = calls_shared(function) and shared_returns(function, kind)
+        shared = function is not None and calls_shared(function) and shared_returns(function, kind)
         points[point_id] = {'file': rel, 'function': name, 'shared': shared,
                             'markers': sorted(markers)}
         if not shared:
@@ -1224,7 +1267,7 @@ def negative_restored_replays(output):
     """
     nc = load_negative_controls()
     name = nc.MUTATIONS[0][0]
-    sources = {Path(row[1]) for row in nc.MUTATIONS}
+    sources = {nc.COMMON_SOURCE, *(Path(row[1]) for row in nc.MUTATIONS)}
     real_write_text = Path.write_text
     real_write_bytes = Path.write_bytes
 

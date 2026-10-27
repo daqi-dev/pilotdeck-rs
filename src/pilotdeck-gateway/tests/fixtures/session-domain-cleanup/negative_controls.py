@@ -51,13 +51,6 @@ COMMON_SOURCE = ROOT / 'scripts/gateway-parity/common.py'
 CHECK = Path(__file__).resolve().with_name('check_cleanup.py')
 NEGATIVE = Path(__file__).resolve()
 GATEWAY_NEGATIVE = NEGATIVE.parent.parent / 'gateway-batch/negative_controls.py'
-_spec = importlib.util.spec_from_file_location('session_cleanup_common', COMMON_SOURCE)
-common = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(common)
-
-# Batch verdict -> child status for the shared aggregator.  INVALID is an
-# environment/startup failure: BLOCKED, never PASS and never counted as KILLED.
-MUTATION_STATUS = common.MUTATION_STATUS
 
 _MISSING = object()
 
@@ -520,33 +513,33 @@ def main():
     summary = []
     invalid = []
     survived = []
-    sources = sorted({Path(row[1]) for row in MUTATIONS}, key=str)
+    sources = sorted({COMMON_SOURCE, *(Path(row[1]) for row in MUTATIONS)}, key=str)
     with mutating_sources(ROOT, sources, baseline=args.baseline) as snapshots:
+        # Import only after every source, including the verdict table, is pristine.
+        _spec = importlib.util.spec_from_file_location('session_cleanup_common', COMMON_SOURCE)
+        common = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(common)
+        # INVALID remains BLOCKED, never a killed mutant or a passing batch.
+        MUTATION_STATUS = common.MUTATION_STATUS
         originals = {source: snapshots[source] for source in sources}
         digests = {source: hashlib.sha256(originals[source]).hexdigest()
                    for source in sources}
         contents = {source: originals[source].decode() for source in sources}
-        stale = [(item[0], contents[Path(item[1])].count(item[2])) for item in selected
-                 if contents[Path(item[1])].count(item[2]) != 1]
-        if stale:
-            (output / 'summary.json').write_text(json.dumps({
-                'status': 'ANCHOR_EXPIRED', 'anchors': stale}, ensure_ascii=False, indent=2) + '\n')
-            for name, count in stale:
-                print(json.dumps({'status': 'ANCHOR_EXPIRED', 'mutation': name,
-                                  'anchorCount': count}, ensure_ascii=False))
-            return common.aggregate_status('BLOCKED')[1]
         try:
             for mutation in selected:
                 name, source, old, new = mutation
                 source = Path(source)
                 judge_spec = JUDGES[name]
                 mode = judge_spec[0]
-                changed = contents[source].replace(old, new, 1)
-                compile(changed, str(source), 'exec')
                 case = output / name  # check_cleanup.py owns/creates this directory
-                source.write_text(changed)
                 returncode = None
                 try:
+                    if contents[source].count(old) != 1:
+                        raise ValueError(f'#{name} anchor expired: count={contents[source].count(old)}')
+                    changed = contents[source].replace(old, new, 1)
+                    compile(changed, str(source), 'exec')
+                    (output / f'{name}-compile.log').write_text('Python compile: PASS\n')
+                    source.write_text(changed)
                     try:
                         run = run_check(case, mode)
                         returncode = run.returncode
@@ -556,6 +549,8 @@ def main():
                     except (subprocess.SubprocessError, OSError) as error:
                         (output / f'{name}.log').write_text(f'{type(error).__name__}: {error}\n')
                         verdict, detail = classify(name, judge_spec, error, case)
+                except Exception as error:
+                    verdict, detail = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
                     source.write_bytes(originals[source])
                     if hashlib.sha256(source.read_bytes()).hexdigest() != digests[source]:

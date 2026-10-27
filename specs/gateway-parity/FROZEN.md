@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-28 #166 fix-r2 重登记候选（按协调者三项 P0 修复授权，待两家非作者终审）**：`common.py` 空/全 None 聚合由 PASS 改为 FAIL，保留有实际状态时 None 的可选子项行为；`test_safety.py` 补 A2+A3 实际扫描及注入 A3 同级导入的负例，补 #209 log 失败登记回填测试和专属断言消息。仅更新此两行 sha256；生命周期实现、阈值、分母和评分未改。非冻结 fixture 审计改为限定作用域且拒绝重定义；登记函数中的 Return 与 SystemExit/sys.exit/os._exit 路径逐条校验；两套负控先守卫（始终含 common.py）再导入映射，守卫失败非零退出。证据见 `_tmp/20261026-issue-166/fix-r2/RESULT.md`；真实存档回放与检查原始输出随该目录交付，实际全量负控及双谱系终审待协调者提交后执行。
+
 > **2026-10-28 重登记候选（#166 / #892 / #909 / #701，Refs #209；待两家非作者终审与人复核）**：#166 仅把共享 `NOT_RUN` 出口登记为 **3**，deadline 四格结构和 execution/acceptance 状态仍为 NOT_RUN，PASS=0、FAIL/PASS_WITH_SKIPS=1、BLOCKED=2 不变。#892 的非冻结 fixture AST 守卫枚举直接 status 字典/任意变量/dict(status=)，按登记出口逐分支核对共享函数投影及所有返回变量赋值，嵌套函数调用、独立条件码和报告别名不可替出口背书；直接字典/分支退出码负例已配套，新 gateway 源码负控也纳入审计，两套源码负控的 KILLED/SURVIVED/INVALID 映射共用 common.MUTATION_STATUS。#909 按工单允许的方案删除冻结 prerequisites 的跨 job `ci-check-node` 文本谓词；该职责由 CI 实际执行的 `test_metadata_io_driver.EnvironmentControls` 逐 job 守卫承担，并补四 job 各自删除/后移/条件 setup 的 12 条负控。#701 装置 import 词干取 A2+A3 的 Python 并集；-I 前标准库窗口和姊妹刻意构造沿用人定已知边界。#209 gateway A2 部分未过期：启动/登记与整批清理期间挂起中断；WNOWAIT 保持直接子进程身份，所有实际组信号完成后才 reap；清理错误继续后续组；Darwin 已退出未回收 leader 的 EPERM 仅在成功回收且最终 ESRCH 后解除，拒绝记录保留在原始 audit；损坏的已发布 owner 不作为未发布陈旧锁回收；获取锁即预置 `cleanupPending: true`，覆盖 SIGKILL/OOM 和清理记录写失败；释放前先屏蔽信号再等 guard，未证实清理则保留登记和锁，gateway 不自动接管。进程登记仅覆盖 A2，E1 `session_domain.run_fixture` 未接入 `LIVE_GROUPS`，以及 A1/其他姊妹接管规则仍须 #209 续办（前置于下一次全量对拍/定标）。保留已有 `.guard` flock/owner 目录互操作协议，不在一个成员里单边换锁。本次只重登记 common.py、session_domain.py、run_round.py、test_safety.py、controls/prerequisites.py 五行；不改阈值、分母、归一化、评分、旧差异账本或 A3 schema 冻结。原始证据与边界见 `_tmp/20261026-issue-166/RESULT.md`；此候选不代表 A7 或其他阶段验收完成。
 
 > **2026-10-27 重登记（#164 fix-r7，AI 代批，待人复核）**：**汇总函数只保留一个（结构封死，不是同一处第 5 次补丁）**。Codex P0 成立：`negative_controls.py` 在非 Darwin 把恢复正控的 `PASS_WITH_SKIPS`/exit 1 认作 `restored_ok=True` 后，批次仍汇总为 `PASS`/exit 0；本轮 `before-p0.log` 纯内存复现为 `restored positive: PASS` + `{"status":"PASS",...}` + `topExit=0`。修法：`common.py` 新增唯一共享 `aggregate_status(*children) -> (status, exit_code)`（全序 `PASS < PASS_WITH_SKIPS < NOT_RUN < BLOCKED < FAIL`，未知判 `FAIL`；`PASS=0`、`PASS_WITH_SKIPS/NOT_RUN/FAIL=1`、`BLOCKED=2`），`controls/session_domain.py` 的 `cleanup_controls`/`run_all`/`main`、`session_domain.py` calibrate 收尾/frozen/异常、fixture `check_cleanup.py` 的 `summarize_results`/`main`、`negative_controls.py` 的最终批次全部改调它；源码负控把 KILLED/SURVIVED/INVALID 映射为 PASS/FAIL/BLOCKED，恢复正控状态作为同一子项计入，故 `PASS_WITH_SKIPS` 恢复正控使批次 `PASS_WITH_SKIPS`/exit 1，各变异 KILLED 记录保留（`restoredPass` 仍为 true）。新增 `check_cleanup.py --mode aggregation-audit` 静态枚举所有顶层状态/退出码点：登记点必须调用共享函数，未登记新点或 `int(...)` 直接算退出码即失败；`batch-aggregation` 增内存 replay 钉上述最终汇总点。源码变异新增 `restored-skip-accepted`（删除恢复正控子项）与 `aggregation-exit-bypassed`（controls `main()` 改回 `int(...)`），全表 22 条；本会话跑 2 条样本均 KILLED（`neg-sample-restored.log`、`neg-sample-audit.log`），全量由协调者宿主跑。本次重登记 `common.py`、`session_domain.py`、`controls/session_domain.py` 三行（`common.py` 新增共享函数）；阈值、分母、`accepted-diffs.md` 未变。`setsid`/`detached` 逃逸 P2 沿用既有证明边界。
@@ -155,7 +157,7 @@
 79e89dedb04af912e9a37e4f1f331abd5dc099dcee9448deafb89e82154cf86a  ../../scripts/gateway-parity/build_proxy.py
 4a6105af6842cc2276f381b8c3754770c45bf22d191705e27ac48cc7e82621ce  ../../scripts/gateway-parity/check_frozen.py
 71a69f46f4076a13198c3c11ccc56eee3b4042e830292e2330a763b731fefba3  ../../scripts/gateway-parity/check_ruler.py
-dcdf904531a9d12c31af19c9e92d1871878ad1ae9dbee4cf3d4d29b98d846afb  ../../scripts/gateway-parity/common.py
+d4b7bb67c361578c43ac4310d461c3214d8f15bbfd9d6582bb0092d593cef843  ../../scripts/gateway-parity/common.py
 e36267947be34f26f6f913ae2e0f44109e41e87bf8e54dde692d76ae595ed05b  ../../scripts/gateway-parity/compare.py
 665266294a276508ececfe80a83ef578d0c566566787f15a8ae810ee0bda6d4e  ../../scripts/gateway-parity/controls/prerequisites.py
 83f4b3ef80b77cc8d8c550922ae8b33a6cff57e58ba4dc714ffd8ab428b09b9e  ../../scripts/gateway-parity/controls/run_all.py
@@ -163,7 +165,7 @@ e36267947be34f26f6f913ae2e0f44109e41e87bf8e54dde692d76ae595ed05b  ../../scripts/
 95fe265a7b7512f1969f19b7ee2d14133ce56916fb25c0953a84b5ec05568f74  ../../scripts/gateway-parity/mock.mjs
 3a758aa57cbb5d8129c2e9b73c0baa04028a87aa7bae5dba6d8519f713869692  ../../scripts/gateway-parity/observer.py
 75fb9a0085c7c2538e63fcf8457a833aa01e3e30d51ac2db6def382fbf7bfad9  ../../scripts/gateway-parity/run_round.py
-6e08d2dd785503995f914d33a8efc2df08e7d1d67fc23fc79fd1ccae3bfc175f  ../../scripts/gateway-parity/test_safety.py
+5e232da20ce5e16568acff36c24c5ed7d71a36507c1e53beeff03a830ba291d7  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
 7463926664462007cccda95a17e635d245b798a5bc10be53f5a6139b3f4139e3  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
