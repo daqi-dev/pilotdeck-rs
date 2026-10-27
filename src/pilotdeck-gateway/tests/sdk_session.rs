@@ -923,13 +923,10 @@ fn encoded_state(registry: &SdkSessionRegistry, root: &Path) -> JsValue {
         registry
             .project_entries()
             .iter()
-            .map(|(key, path)| {
+            .map(|(key, root_path)| {
                 array(vec![
-                    JsValue::String(key.clone()),
-                    encode(
-                        &JsValue::String(path.to_string_lossy().into_owned().into()),
-                        root,
-                    ),
+                    key.clone(),
+                    encode(&JsValue::String(root_path.clone()), root),
                 ])
             })
             .collect(),

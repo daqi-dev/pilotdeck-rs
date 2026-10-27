@@ -7,6 +7,8 @@
 //! - `toggleMcpServerForSdk`
 //! - `reconnectMcpServerForSdk`
 //! - `mcpServerStatusForSdk`
+//! - `clearSdkSessionState` (the MCP fields; #347②)
+//! - the `sdkSessionMcpServers` read used by the merged plugin view
 //!
 //! This is state management only. The project runtime, plugin snapshot,
 //! session plugin source and gateway `closeSession` are injected; nothing here
@@ -26,6 +28,7 @@ use crate::config::permission::{GatewaySessionPermissionRuleSetRegistry, Permiss
 use crate::config::session_value::SessionValue;
 use crate::js_value;
 use crate::runtime::cleanup_task::lock;
+use crate::runtime::sdk_session::{SdkSessionProjects, same_key};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     fmt,
@@ -227,13 +230,17 @@ where
 }
 
 /// Injected collaborators. The permission registry is the same live object
-/// that owns session ask arrays (A6.3-pr6).
+/// that owns session ask arrays (A6.3-pr6); the projects table is the single
+/// shared `sdkSessionProjects` map (#347③).
 pub struct SdkMcpConfigOptions {
     pub resolver: Arc<dyn SdkMcpProjectResolver>,
     pub close_session: SdkMcpCloseSession,
     pub session_plugins: Arc<dyn SdkMcpSessionPlugins>,
     pub permission_rule_sets: Arc<GatewaySessionPermissionRuleSetRegistry>,
     pub environment: Arc<dyn SdkMcpEnvironment>,
+    /// `this.sdkSessionProjects`, shared with the A6.3-pr8 session registry
+    /// so both slices write the same session→project mapping.
+    pub projects: Arc<SdkSessionProjects>,
 }
 
 #[derive(Clone, Debug)]
@@ -256,7 +263,6 @@ pub struct SdkMcpConfig {
     overrides: Mutex<OverrideTable>,
     /// Generated `PermissionRule` objects, kept by identity with the ask array.
     rules: Mutex<RuleTable>,
-    projects: Mutex<Vec<(JsValue, JsString)>>,
 }
 
 impl SdkMcpConfig {
@@ -266,15 +272,14 @@ impl SdkMcpConfig {
             servers: Mutex::new(Vec::new()),
             overrides: Mutex::new(Vec::new()),
             rules: Mutex::new(Vec::new()),
-            projects: Mutex::new(Vec::new()),
         }
     }
 
     /// `setMcpServersForSdk`.
     pub async fn set_mcp_servers(&self, input: &JsValue) -> Result<JsValue, SdkMcpError> {
         let input = require_input(input, "projectKey")?;
-        let project_key = input.get("projectKey").and_then(JsValue::as_string);
-        let runtime = self.options.resolver.resolve(project_key).await?;
+        let project_key = project_key(input)?;
+        let runtime = self.options.resolver.resolve(project_key.as_ref()).await?;
         runtime.refresh().await?;
         let project_plugins = runtime.snapshot().await;
         let session_key = input
@@ -370,7 +375,7 @@ impl SdkMcpConfig {
                 (None, true) => {}
                 (None, false) => servers.push((session_key.clone(), next)),
             }
-            self.set_project(&session_key, project_root);
+            self.options.projects.set(&session_key, project_root);
         }
         (self.options.close_session)(session_key, "sdk_mcp_servers_changed").await?;
         Ok(set_result(&added, &removed, &[]))
@@ -503,8 +508,8 @@ impl SdkMcpConfig {
     /// `mcpServerStatusForSdk`.
     pub async fn mcp_server_status(&self, input: &JsValue) -> Result<JsValue, SdkMcpError> {
         let input = require_input(input, "projectKey")?;
-        let project_key = input.get("projectKey").and_then(JsValue::as_string);
-        let runtime = self.options.resolver.resolve(project_key).await?;
+        let project_key = project_key(input)?;
+        let runtime = self.options.resolver.resolve(project_key.as_ref()).await?;
         runtime.refresh().await?;
         let mut servers: Vec<(JsString, bool)> = Vec::new();
         if let Some(session_key) = input.get("sessionKey").filter(|value| js_truthy(value)) {
@@ -601,11 +606,11 @@ impl SdkMcpConfig {
         object.insert(
             "projects".into(),
             JsValue::Array(
-                lock(&self.projects)
-                    .iter()
-                    .map(|(key, root)| {
-                        JsValue::Array(vec![key.clone(), JsValue::String(root.clone())])
-                    })
+                self.options
+                    .projects
+                    .entries()
+                    .into_iter()
+                    .map(|(key, root)| JsValue::Array(vec![key.clone(), JsValue::String(root)]))
                     .collect(),
             ),
         );
@@ -620,16 +625,29 @@ impl SdkMcpConfig {
             .unwrap_or_default()
     }
 
-    fn set_project(&self, session_key: &JsValue, project_root: JsString) {
-        let mut projects = lock(&self.projects);
-        if let Some((_, root)) = projects
-            .iter_mut()
-            .find(|(key, _)| same_key(key, session_key))
-        {
-            *root = project_root;
-        } else {
-            projects.push((session_key.clone(), project_root));
+    /// `this.sdkSessionMcpServers.get(sessionKey) ?? new Map()` — the read
+    /// entry the wiring layer needs for the merged plugin view
+    /// (ProjectRuntimeRegistry.ts:1002). Entries keep insertion order; the
+    /// value is the stored `{ config, enabled }` projection.
+    pub fn session_mcp_servers(&self, session_key: &JsValue) -> Vec<(JsString, JsValue)> {
+        self.servers_for(session_key)
+            .into_iter()
+            .map(|(name, entry)| (name, server_value(&entry)))
+            .collect()
+    }
+
+    /// The `clearSdkSessionState` MCP fields (ProjectRuntimeRegistry.ts:776-789):
+    /// the session's server table, permission-mode overrides, generated
+    /// permission rules and the shared session→project entry are dropped.
+    /// Like the baseline, already-generated rules stay in the live ask arrays;
+    /// only a later `setMcpPermissionModeOverrideForSdk` re-sync removes them.
+    pub fn clear_sdk_session_state(&self, session_key: &JsValue) {
+        lock(&self.servers).retain(|(key, _)| !same_key(key, session_key));
+        if let JsValue::String(key) = session_key {
+            lock(&self.overrides).retain(|(existing, _)| existing != key);
+            lock(&self.rules).retain(|(existing, _)| existing != key);
         }
+        self.options.projects.delete(session_key);
     }
 
     fn set_override(&self, session_key: &JsString, server_name: &JsString, mode: JsString) {
@@ -660,8 +678,11 @@ impl SdkMcpConfig {
         }
     }
 
-    /// `syncSdkMcpPermissionRules`, called with the live ask array.
-    fn sync_permission_rules(&self, session_key: &JsString, ask_rules: &mut Vec<SessionValue>) {
+    /// `syncSdkMcpPermissionRules`, called with the live ask array. Besides
+    /// `setMcpPermissionModeOverrideForSdk`, the baseline syncs when a session
+    /// lease is acquired (ProjectRuntimeRegistry.ts:305-308); the wiring layer
+    /// calls this with `lease.rules().ask` there.
+    pub fn sync_permission_rules(&self, session_key: &JsString, ask_rules: &mut Vec<SessionValue>) {
         let active: Vec<(JsString, JsString)> = lock(&self.overrides)
             .iter()
             .find(|(key, _)| key == session_key)
@@ -729,6 +750,21 @@ fn require_input<'a>(input: &'a JsValue, field: &str) -> Result<&'a JsValue, Sdk
     }
 }
 
+/// `this.resolve(input.projectKey)`: `node:path.resolve` throws `TypeError`
+/// for a non-string, non-nullish project key (Node v22.22.0 text; probe
+/// `_tmp/20261026-issue-347/probe-347/project-key-type.out`), while
+/// `undefined`/`null` keep the injected fallback (#347①).
+fn project_key(input: &JsValue) -> Result<Option<JsString>, SdkMcpError> {
+    match input.get("projectKey") {
+        None | Some(JsValue::Undefined) | Some(JsValue::Null) => Ok(None),
+        Some(JsValue::String(key)) => Ok(Some(key.clone())),
+        Some(value) => Err(SdkMcpError::type_error(format!(
+            "The \"paths[0]\" argument must be of type string. Received {}",
+            crate::metadata::argument_received(value).unwrap_or_else(|| "[Object]".into())
+        ))),
+    }
+}
+
 fn input_kind(value: &JsValue) -> &'static str {
     match value {
         JsValue::Undefined => "undefined",
@@ -772,16 +808,6 @@ fn js_truthy(value: &JsValue) -> bool {
         JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
         JsValue::String(value) => !value.is_empty(),
         JsValue::Array(_) | JsValue::Object(_) => true,
-    }
-}
-
-fn same_key(left: &JsValue, right: &JsValue) -> bool {
-    match (left, right) {
-        (JsValue::Undefined, JsValue::Undefined) | (JsValue::Null, JsValue::Null) => true,
-        (JsValue::Bool(a), JsValue::Bool(b)) => a == b,
-        (JsValue::Number(a), JsValue::Number(b)) => a == b || (a.is_nan() && b.is_nan()),
-        (JsValue::String(a), JsValue::String(b)) => a == b,
-        _ => false,
     }
 }
 
