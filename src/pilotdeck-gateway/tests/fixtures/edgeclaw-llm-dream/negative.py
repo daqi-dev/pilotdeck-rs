@@ -38,10 +38,12 @@ mutations = [
      '            && allowed_relative_paths.contains(&member)\n',
      '',
      'wire_matrix'),
-    # 3. Duplicate project ids are no longer deduped.
+    # 3. Duplicate project ids are no longer deduped. Keep `seen` in the
+    #    closure: a bare `|_| true` leaves the set's element type
+    #    unconstrained (E0282), which is a compile failure, not a kill.
     ('merge-dedupe', dream,
      '.filter(|value| seen.insert(value.clone()))',
-     '.filter(|_| true)',
+     '.filter(|value| seen.insert(value.clone()) || true)',
      'wire_matrix'),
     # 4. A blank status falls back to the wrong literal.
     ('meta-fallback-active', dream,
