@@ -47,20 +47,20 @@ fn oracle() -> JsValue {
     let path = format!("{FIXTURES}/oracle.json");
     let Ok(text) = fs::read_to_string(&path) else {
         panic!(
-            "oracle.json is missing; generate it first (tests/fixtures/workspace-snapshot/README.md):\n\
+            "#322 oracle.json is missing; generate it first (tests/fixtures/workspace-snapshot/README.md):\n\
              PDRS_BASELINE=/absolute/path/to/PilotDeck node --import \"$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs\" \
              {FIXTURES}/generate.mts {FIXTURES}"
         );
     };
     assert!(
         !text.contains(".generate-"),
-        "oracle.json leaks a generation path"
+        "#322 oracle.json leaks a generation path"
     );
     // Every scenario path is a per-run mkdtemp directory masked as `<dir>`.
     for fixed in ["/tmp/pdrs-r9-", "/tmp/ws-snapshot-scenario", "/tmp/pdrs-"] {
         assert!(
             !text.contains(fixed),
-            "oracle.json keeps a fixed absolute path: {fixed}"
+            "#322 oracle.json keeps a fixed absolute path: {fixed}"
         );
     }
     baseline::oracle(&text)
@@ -76,11 +76,11 @@ impl Scratch {
         // ERR_INVALID_ARG_VALUE quoting (128 UTF-16 units) identical to the
         // generator's masked `<dir>` text.
         let base = PathBuf::from("/tmp");
-        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(&base).expect("#322 create scratch base");
         loop {
             let nanos = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .expect("#322 system time after the epoch")
                 .subsec_nanos();
             let token = u64::from(nanos)
                 ^ (u64::from(std::process::id()) << 20)
@@ -92,7 +92,7 @@ impl Scratch {
             match fs::create_dir(&dir) {
                 Ok(()) => return Self(dir),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(error) => panic!("create scratch {}: {error}", dir.display()),
+                Err(error) => panic!("#322 create scratch {}: {error}", dir.display()),
             }
         }
     }
@@ -112,9 +112,9 @@ fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
 fn s(value: &JsValue) -> String {
     value
         .as_string()
-        .expect("expected a string")
+        .expect("#322 fixture value is a string")
         .to_utf8()
-        .unwrap()
+        .expect("#322 fixture string is UTF-8")
 }
 fn arr(value: &JsValue) -> &[JsValue] {
     if let JsValue::Array(items) = value {
@@ -502,6 +502,40 @@ fn snapshot_path(step: &JsValue, root: &Path, marker_dirs: &HashMap<String, Stri
 
 // ------------------------------------------------------------------- replay
 
+/// #322-3: the workspace-snapshot corpus must not be allowed to shrink. The
+/// old `>= 27` check let a truncated oracle (valid provenance, fewer scenarios)
+/// replay zero/fewer rows and still pass. Every name and both per-scenario
+/// counts are pinned; the generator asserts the same totals.
+const EXPECTED: &[(&str, usize, usize)] = &[
+    ("normal", 17, 61),
+    ("quiescent", 13, 13),
+    ("failure-fields", 5, 15),
+    ("mask-scope", 4, 15),
+    ("identity-sanitize", 5, 16),
+    ("identity-invalid", 6, 13),
+    ("snapshot-inside", 3, 19),
+    ("workspace-missing", 2, 7),
+    ("root-equals-workspace", 3, 8),
+    ("provider-quirks", 36, 46),
+    ("provider-null", 3, 7),
+    ("provider-order", 8, 17),
+    ("manifest-syntax", 3, 7),
+    ("manifest-read-dir", 3, 8),
+    ("nul-workspace-dir", 2, 7),
+    ("surrogate-readback", 7, 13),
+    ("nul-restore-target", 3, 13),
+    ("nul-restore-object", 2, 7),
+    ("nul-restore-link", 2, 7),
+    ("nul-restore-link-output", 2, 7),
+    ("nul-restore-path", 3, 12),
+    ("nul-restore-link-existing", 4, 7),
+    ("nul-link-target-surrogate", 2, 7),
+    ("nul-output-surrogate", 2, 7),
+    ("nul-object-surrogate", 2, 7),
+    ("nul-file-output-surrogate", 3, 12),
+    ("nul-capture-root", 2, 0),
+];
+
 #[test]
 fn scenarios_match_ts_outcomes_and_trees() {
     let oracle = oracle();
@@ -524,26 +558,52 @@ fn scenarios_match_ts_outcomes_and_trees() {
     .into_iter()
     .map(|name| {
         let dir = guard.0.join(name);
-        fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(&dir).expect("#322 create sentinel directory");
         let sentinel = dir.join("sentinel");
-        fs::write(&sentinel, b"keep\n").unwrap();
+        fs::write(&sentinel, b"keep\n").expect("#322 write sentinel");
         sentinel
     })
     .collect();
     let scenarios = arr(field(&oracle, "scenarios"));
-    assert!(
-        scenarios.len() >= 27,
-        "oracle lost its scenario set: {}",
-        scenarios.len()
+    assert_eq!(
+        scenarios.len(),
+        EXPECTED.len(),
+        "#322 workspace-snapshot corpus is pinned"
     );
-    for scenario in scenarios {
+    assert_eq!(
+        scenarios
+            .iter()
+            .map(|scenario| s(field(scenario, "name")))
+            .collect::<Vec<_>>(),
+        EXPECTED
+            .iter()
+            .map(|(name, _, _)| (*name).to_owned())
+            .collect::<Vec<_>>(),
+        "#322 workspace-snapshot scenario names are pinned"
+    );
+    for (scenario, (name, steps, tree)) in scenarios.iter().zip(EXPECTED) {
+        assert_eq!(
+            s(field(scenario, "name")),
+            *name,
+            "#322 scenario name order is pinned"
+        );
+        assert_eq!(
+            arr(field(scenario, "steps")).len(),
+            *steps,
+            "#322 {name}: step count is pinned"
+        );
+        assert_eq!(
+            arr(field(scenario, "tree")).len(),
+            *tree,
+            "#322 {name}: tree row count is pinned"
+        );
         replay_scenario(scenario);
     }
     for sentinel in &sentinels {
         assert_eq!(
-            fs::read(sentinel).unwrap(),
+            fs::read(sentinel).expect("#322 read sentinel"),
             b"keep\n",
-            "run removed an unowned sentinel {}",
+            "#322 run removed an unowned sentinel {}",
             sentinel.display()
         );
     }
@@ -922,9 +982,10 @@ fn config_env_table_matches_ts() {
         .to_string_lossy()
         .into_owned();
     let cases = arr(field(&oracle, "configCases"));
-    assert!(
-        cases.len() >= 7,
-        "oracle lost its config case set: {}",
+    assert_eq!(
+        cases.len(),
+        7,
+        "#322 config case set is pinned (lost: {})",
         cases.len()
     );
     for case in cases {
@@ -977,6 +1038,16 @@ fn config_env_table_matches_ts() {
 fn rust_reads_ts_written_snapshots() {
     let oracle = oracle();
     let cross = field(&oracle, "cross");
+    assert_eq!(
+        strs(field(cross, "dirs")).len(),
+        41,
+        "#322 cross dir set is pinned"
+    );
+    assert_eq!(
+        arr(field(cross, "files")).len(),
+        20,
+        "#322 cross file set is pinned"
+    );
     let scratch = Scratch::new();
     let root = scratch.0.join("ts-written");
     for dir in strs(field(cross, "dirs")) {
@@ -1179,4 +1250,10 @@ fn tree_projection_only_masks_runtime_created_at() {
     let text = std::str::from_utf8(&projected).unwrap();
     assert!(text.contains(&format!("\"failureReason\": \"{dir}/keep\"")));
     assert!(text.contains("scandir '<dir>/x'"));
+}
+
+#[test]
+#[ignore = "requires fixed TS baseline and Node/tsx; run with PDRS_BASELINE"]
+fn workspace_snapshot_fixture_regenerates_identically() {
+    baseline::regenerates_identically("workspace-snapshot");
 }

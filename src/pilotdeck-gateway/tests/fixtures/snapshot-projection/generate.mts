@@ -6,13 +6,11 @@
 // createLocalGateway project the same on-disk tree. Every projection input and
 // every outcome (value or name/code/message) is recorded verbatim.
 import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { installFixedClock, bindBaseline, removeOwned } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide the fixture directory');
@@ -20,35 +18,10 @@ const BASELINE_COMMIT = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
 
-// The recorder reads the clock once per capture. Pin it so oracle.json is
-// byte-identical between runs; `tick` advances the fake clock instead of
-// sleeping. Restore names are random but masked as `<restore>`.
-const RealDate = Date;
-let clockMs = RealDate.UTC(2026, 0, 1);
-class FixedDate extends RealDate {
-  constructor(...args: any[]) {
-    super(...((args.length === 0 ? [clockMs] : args) as []));
-  }
-  static now(): number {
-    return clockMs;
-  }
-}
-globalThis.Date = FixedDate as unknown as DateConstructor;
-
-// #280's shared provenance guard. It checks the pinned HEAD, a clean tracked
-// tree, and every tracked `src` byte against the Git blob at that commit.
-const gitExecutable = realpathSync(
-  process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim(),
-);
-const provenance = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable);
-const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
-const git = (...args: string[]) =>
-  execFileSync(gitExecutable, ['--no-replace-objects', '-C', baseline, ...args], {
-    env: gitEnv,
-    maxBuffer: 32 * 1024 * 1024,
-  });
-const trackedChanges = git('status', '--porcelain', '--untracked-files=no').toString();
-assert.equal(trackedChanges, '', `baseline has uncommitted changes to tracked files:\n${trackedChanges}`);
+// Shared prologue (#322-4): pinned clock, Git provenance binding and the
+// ownership-checked recursive delete, identical to workspace-snapshot.
+const clock = installFixedClock();
+const { git, provenance } = bindBaseline({ baseline, commit: BASELINE_COMMIT });
 assert.ok(process.versions.node.startsWith('22.'), `Node 22 required, got ${process.versions.node}`);
 
 // Direct behavior inputs of this projection. The shared guard already binds the
@@ -72,23 +45,6 @@ for (const path of sourceFiles) {
 
 type RemoveImpl = (path: string, options: { recursive: boolean; force: boolean }) => Promise<void>;
 
-/** Every delete is confined to this run's own mkdtemp tree. */
-function assertInside(root: string, path: string, action: string): string {
-  const rel = relative(root, path);
-  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new Error(`${action} refused: ${path} is outside the run directory ${root}`);
-  }
-  return path;
-}
-async function removeOwned(
-  root: string,
-  value: string,
-  options: { recursive?: boolean } = {},
-  remove: RemoveImpl = rm,
-): Promise<void> {
-  const path = assertInside(root, resolve(root, value), 'remove');
-  await remove(path, { recursive: !!options.recursive, force: true });
-}
 
 const { createLocalGateway } = await import(
   pathToFileURL(join(baseline, 'src/cli/createLocalGateway.ts')).href
@@ -195,7 +151,9 @@ async function makeGateway(dir: string, options: { configured: boolean }) {
 
 type Operation = {
   op: 'snapshotList' | 'snapshotGet' | 'snapshotRestore';
-  input: any;
+  input?: any;
+  /** `undefined` / `null` params object: JSON cannot carry it in `input`. */
+  params?: 'undefined' | 'null';
   outcome: any;
   targetTree?: any[];
   restoreDir?: boolean;
@@ -204,19 +162,24 @@ type Operation = {
 class Recorder {
   readonly operations: Operation[] = [];
   constructor(readonly dir: string) {}
-  async call(op: Operation['op'], input: any): Promise<Operation> {
-    const recorded: Operation = { op, input: mask(input, this.dir), outcome: undefined };
+  async call(op: Operation['op'], input?: any, params?: 'undefined' | 'null'): Promise<Operation> {
+    const recorded: Operation = {
+      op,
+      ...(params ? { params } : { input: mask(input, this.dir) }),
+      outcome: undefined,
+    };
     let target: string | undefined;
     let before: string[] = [];
-    if (op === 'snapshotRestore') {
+    if (op === 'snapshotRestore' && !params) {
       target = input.targetProjectKey ?? input.projectKey;
       before = await readdir(target).catch(() => []);
     }
     try {
-      const value = await (this as any).gateway[op](input);
+      const actual = params === 'undefined' ? undefined : params === 'null' ? null : input;
+      const value = await (this as any).gateway[op](actual);
       let projected = value;
       let created: string | undefined;
-      if (op === 'snapshotRestore') {
+      if (op === 'snapshotRestore' && !params) {
         const after = await readdir(target!).catch(() => []);
         const names = after.filter((name) => name.startsWith('.pilotdeck-restore-') && !before.includes(name));
         assert.equal(names.length, 1, `restore must create exactly one mkdtemp directory, got ${names.length}`);
@@ -235,7 +198,7 @@ class Recorder {
           message: maskRestoreName(String(error.message).split(this.dir).join('<dir>')),
         },
       };
-      if (op === 'snapshotRestore') {
+      if (op === 'snapshotRestore' && !params) {
         const after = await readdir(target!).catch(() => []);
         const names = after.filter((name) => name.startsWith('.pilotdeck-restore-') && !before.includes(name));
         assert.ok(names.length <= 1, `restore left more than one mkdtemp directory: ${names}`);
@@ -297,7 +260,7 @@ try {
     const config = { root: snapshotRoot, snapshotRoot };
     const snapshots = new ContentAddressedWorkspaceSnapshotRecorder(config);
     const tick = () => {
-      clockMs += 1;
+      clock.tick();
     };
     const capture = async (turnId: string, sessionId: string, phase: 'pre_user' | 'post_agent', workspaceId = gateway.mainWorkspaceId) => {
       const input = {
@@ -774,6 +737,194 @@ try {
     console.log(`restore-partial: operations=${recorder.operations.length}`);
   }
 
+  // ------------------------------------ native gateway adapter + project ids
+  //
+  // Unlike the scenarios above, this one is replayed through the production
+  // `SnapshotGateway` + `SnapshotProjects`; the oracle records the real
+  // InProcessGateway wrapper validation and the real `resolveProjectKey` /
+  // `resolveProjectStorageId` over `.cwd` markers. All workspace ids are fixed
+  // (`p-main`, `p-target`, `p-general`) so no per-run slug is embedded.
+  {
+    const dir = join(scratch, 'gateway-native');
+    const projectRoot = join(dir, 'project');
+    const targetRoot = join(dir, 'target-project');
+    const pilotHome = join(dir, 'pilot-home');
+    const storageRoot = join(dir, 'storage');
+    const snapshotRoot = join(storageRoot, 'snapshots');
+    for (const path of [projectRoot, targetRoot, pilotHome, storageRoot]) {
+      await mkdir(path, { recursive: true });
+    }
+    await writeFile(join(pilotHome, 'pilotdeck.yaml'), PIPELINE_YAML, 'utf8');
+    const notADir = join(dir, 'not-a-dir');
+    await writeFile(notADir, 'x', 'utf8');
+    // `p-general` is the virtual General workspace: the registry still lets a
+    // marker own its storage id, while `resolveProjectKey` short-circuits home.
+    for (const [id, marker] of [
+      ['p-main', projectRoot],
+      ['p-target', targetRoot],
+      ['p-general', pilotHome],
+      ['p-file', notADir],
+      ['p-gone', join(dir, 'gone-project')],
+    ] as const) {
+      const registry = join(pilotHome, 'projects', id);
+      await mkdir(registry, { recursive: true });
+      await writeFile(join(registry, '.cwd'), `${marker}\n`, 'utf8');
+    }
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      PILOTDECK_STORAGE_ROOT: storageRoot,
+      PILOTDECK_SNAPSHOT_ROOT: snapshotRoot,
+    };
+    const local = createLocalGateway({
+      projectRoot,
+      pilotHome,
+      fallbackProjectRoot: projectRoot,
+      env,
+    });
+    await mkdir(join(snapshotRoot, 'objects'), { recursive: true });
+    await writeFile(join(snapshotRoot, 'objects', 'a'), 'hi\n', 'utf8');
+    const writeManifest = async (
+      workspaceId: string,
+      snapshotId: string,
+      createdAt: string,
+      entries: any[],
+    ) => {
+      const partition = join(
+        snapshotRoot,
+        'workspaces',
+        workspaceId,
+        'sessions',
+        's',
+        'snapshots',
+        snapshotId,
+      );
+      await mkdir(partition, { recursive: true });
+      await writeFile(join(partition, 'manifest.json'), JSON.stringify({
+        snapshotId,
+        workspaceId,
+        sessionId: 's',
+        turnId: 't',
+        runId: 'r',
+        phase: 'pre_user',
+        createdAt,
+        entries,
+      }, null, 2));
+    };
+    const file = (path: string) => ({
+      path,
+      entryType: 'file',
+      objectKey: 'objects/a',
+      size: 3,
+      digest: createHash('sha256').update('hi\n').digest('hex'),
+    });
+    await writeManifest('p-main', 'snap-main', '2026-01-01T00:00:03.000Z', [file('a.txt')]);
+    await writeManifest('p-main', 'snap-unsafe', '2026-01-01T00:00:02.000Z', [file('../escape.txt')]);
+    await writeManifest('p-target', 'snap-target', '2026-01-01T00:00:01.000Z', [file('t.txt')]);
+    await writeManifest('p-general', 'snap-general', '2026-01-01T00:00:00.000Z', [file('g.txt')]);
+    await writeManifest('p-other', 'snap-other', '2025-12-31T23:59:59.000Z', [file('o.txt')]);
+
+    assert.equal(resolveProjectStorageId(projectRoot, pilotHome), 'p-main');
+    assert.equal(resolveProjectStorageId(targetRoot, pilotHome), 'p-target');
+    assert.equal(resolveProjectStorageId(pilotHome, pilotHome), 'p-general');
+
+    const recorder = new Recorder(dir);
+    (recorder as any).gateway = local.gateway;
+    const call = (op: Operation['op'], input?: any, params?: 'undefined' | 'null') =>
+      recorder.call(op, input, params);
+
+    await call('snapshotList', { projectKey: projectRoot, limit: 1 });
+    await call('snapshotList', { projectKey: projectRoot, limit: 2 });
+    await call('snapshotList', { projectKey: projectRoot, cursor: 'snap-main' });
+    await call('snapshotList', { projectKey: projectRoot, cursor: null });
+    await call('snapshotList', { projectKey: projectRoot, limit: null });
+    await call('snapshotList', { projectKey: projectRoot, limit: 0 });
+    await call('snapshotList', { projectKey: projectRoot, limit: 501 });
+    await call('snapshotList', { projectKey: projectRoot, sessionKey: '' });
+    await call('snapshotList', { projectKey: projectRoot, sessionKey: 42 });
+    await call('snapshotList', { projectKey: targetRoot });
+    await call('snapshotList', { projectKey: pilotHome });
+    await call('snapshotList', { projectKey: join(dir, 'outside') });
+    await call('snapshotList', { projectKey: `${projectRoot}/../target-project` });
+    await call('snapshotList', { projectKey: `${projectRoot}/` });
+    await call('snapshotList', { projectKey: `${projectRoot}/missing` });
+    await call('snapshotList', { projectKey: notADir });
+    await call('snapshotList', { projectKey: undefined });
+    await call('snapshotList', { projectKey: null });
+    await call('snapshotList', { projectKey: 42 });
+    await call('snapshotList', { projectKey: {} });
+    await call('snapshotList', { projectKey: '' });
+    await call('snapshotList', { projectKey: '   ' });
+    await call('snapshotList', { projectKey: projectRoot, limit: {} });
+    await call('snapshotList', { projectKey: projectRoot, sessionKey: null });
+    await call('snapshotList', { projectKey: projectRoot, sessionKey: '   ' });
+    await call('snapshotList', undefined, 'undefined');
+    await call('snapshotList', undefined, 'null');
+    await call('snapshotList', { projectKey: join(dir, 'gone-project') });
+    await call('snapshotList', { projectKey: 'relative-project' });
+
+    await call('snapshotGet', { projectKey: projectRoot, snapshotId: 'snap-main' });
+    await call('snapshotGet', { projectKey: projectRoot, snapshotId: 'snap-target' });
+    await call('snapshotGet', { projectKey: projectRoot, snapshotId: 'nope' });
+    await call('snapshotGet', { projectKey: projectRoot, snapshotId: undefined });
+    await call('snapshotGet', { projectKey: projectRoot, snapshotId: null });
+    await call('snapshotGet', { projectKey: projectRoot, snapshotId: 42 });
+    await call('snapshotGet', { projectKey: projectRoot, snapshotId: '' });
+    await call('snapshotGet', { projectKey: projectRoot, snapshotId: '   ' });
+    await call('snapshotGet', { projectKey: join(dir, 'outside'), snapshotId: 'snap-main' });
+
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: 'snap-main', targetProjectKey: targetRoot });
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: 'snap-main' });
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: 'snap-main', targetProjectKey: `${projectRoot}/../target-project` });
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: 'snap-main', targetProjectKey: pilotHome });
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: 'snap-main', targetProjectKey: join(dir, 'outside') });
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: 'snap-main', targetProjectKey: notADir });
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: 'snap-main', targetProjectKey: null });
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: 'snap-main', targetProjectKey: '' });
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: 'snap-main', targetProjectKey: 42 });
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: 'snap-main', targetProjectKey: '   ' });
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: undefined, targetProjectKey: targetRoot });
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: null, targetProjectKey: targetRoot });
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: '', targetProjectKey: targetRoot });
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: '   ', targetProjectKey: targetRoot });
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: 'snap-unsafe', targetProjectKey: targetRoot });
+    await call('snapshotRestore', { projectKey: targetRoot, snapshotId: 'snap-main', targetProjectKey: targetRoot });
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: 'nope', targetProjectKey: targetRoot });
+    await call('snapshotRestore', { projectKey: join(dir, 'outside'), snapshotId: 'snap-main', targetProjectKey: targetRoot });
+    await call('snapshotRestore', undefined, 'undefined');
+    await call('snapshotRestore', { projectKey: projectRoot, snapshotId: 'snap-main', targetProjectKey: join(dir, 'gone-project') });
+
+    const last = recorder.operations.at(-1)!;
+    assert.equal(last.outcome.error.code, 'PROJECT_NOT_FOUND');
+    scenarios.push({
+      name: 'gateway-native',
+      tree: await recordTree(storageRoot, dir),
+      snapshotRoot: '<dir>/storage/snapshots',
+      absoluteFile: null,
+      projects: [
+        { key: '<dir>/project', workspaceId: 'p-main' },
+        { key: '<dir>/target-project', workspaceId: 'p-target' },
+        { key: '<dir>/pilot-home', workspaceId: 'p-general' },
+      ],
+      fallbackProjectRoot: '<dir>/project',
+      gateway: true,
+      native: {
+        pilotHome: '<dir>/pilot-home',
+        cwd: '<dir>',
+        projects: [
+          { id: 'p-main', marker: '<dir>/project' },
+          { id: 'p-target', marker: '<dir>/target-project' },
+          { id: 'p-general', marker: '<dir>/pilot-home' },
+          { id: 'p-file', marker: '<dir>/not-a-dir' },
+          { id: 'p-gone', marker: '<dir>/gone-project' },
+        ],
+        files: [{ path: '<dir>/not-a-dir', content: 'x' }],
+      },
+      operations: recorder.operations,
+    });
+    local.dispose();
+    console.log(`gateway-native: operations=${recorder.operations.length}`);
+  }
+
   const oracle = {
     sourceCommit: provenance.ref,
     sourceTreeSha256: provenance.sha256,
@@ -797,13 +948,16 @@ try {
     'unconfigured',
     'restore-missing-target',
     'restore-partial',
+    'gateway-native',
   ]) {
     assert.ok(scenarios.some((scenario) => scenario.name === name), `missing scenario ${name}`);
   }
-  assert.equal(scenarios.length, 6);
+  assert.equal(scenarios.length, 7);
   assert.equal(scenarios[0].operations.length, 44, 'projection operation count is pinned');
+  const native = scenarios.find((scenario) => scenario.name === 'gateway-native');
+  assert.equal(native.operations.length, 58, 'gateway-native operation count is pinned');
   await mkdir(output, { recursive: true });
-  await writeFile(join(output, 'oracle.json'), text);
+  await writeFile(join(output, 'oracle.json'), text, { flag: 'wx' });
   console.log(`wrote ${join(output, 'oracle.json')} (${text.length} bytes)`);
 } finally {
   await removeOwned(scratch, scratch, { recursive: true });

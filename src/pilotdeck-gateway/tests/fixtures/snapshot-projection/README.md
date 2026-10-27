@@ -1,4 +1,4 @@
-# Snapshot 管理投影 TS 夹具（A6.6-pr4）
+# Snapshot 管理投影 TS 夹具（A6.6-pr4 + A8.2-pr2）
 
 固定基线：`OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。被测行为是
 `src/cli/createLocalGateway.ts:1271-1313` 的 `snapshotList` / `snapshotGet` /
@@ -9,9 +9,11 @@
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck
 export PDRS_GIT="$(command -v git)"   # 可选；必须是绝对路径
+out="$(mktemp -d)"                     # 生成器用 flag:'wx'，输出目录必须是空的
 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   src/pilotdeck-gateway/tests/fixtures/snapshot-projection/generate.mts \
-  src/pilotdeck-gateway/tests/fixtures/snapshot-projection
+  "$out"
+cmp "$out/oracle.json" src/pilotdeck-gateway/tests/fixtures/snapshot-projection/oracle.json
 ```
 
 生成器先接 #280 的共享溯源守卫 `tests/baseline_source_guard.mjs` 的
@@ -20,6 +22,9 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 `node` / `v8` / `platform` / `arch` / `locale`（`Intl.Collator().resolvedOptions().locale`）
 与整棵 `src/` 的 `sourceTreeSha256` / `sourceTreeFiles`。`sourceSha256` 只列本投影
 的直接入口文件，避免把整个 `createLocalGateway` 的 import 闭包写成上千条回放检查。
+#322-4 起固定时钟、Git 溯源前导与安全删除都来自共享
+`tests/fixtures/_shared/generator_guard.mjs`，与 `workspace-snapshot/generate.mts`
+同一份实现（两个生成器重跑后 oracle 逐字节不变）。
 
 ## 生成方式（真实 TS，不是重写）
 
@@ -44,9 +49,19 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 6. `restore-partial`：一个条目的 manifest 先写 `written.txt`，后一个条目的
    `../` 路径才失败；记录恢复目录里已写的文件、失败错误和 `restoreDir=true`，
    让回放同时验证失败分支的 `targetTree` 与 0700。
+7. `gateway-native`（A8.2-pr2）：用真实 `createLocalGateway(...).gateway` 调 58 个
+   操作，覆盖 `InProcessGateway` 包装层参数校验（params undefined/null、
+   projectKey/sessionKey/snapshotId/targetProjectKey 的类型与空白、校验先于
+   `CAPABILITY_UNAVAILABLE`）以及真实 `resolveProjectKey` /
+   `resolveProjectStorageId`：绝对与相对 `.cwd` 标记、General workspace
+   （pilotHome）、尾斜杠/`..` 归一、标记指向文件/不存在、未注册路径、无标记
+   fallback slug、跨 workspace 的 get/restore、restore 目标缺失/文件/未知、
+   `../` 条目半途失败。该场景的 `native` 字段描述 pilot home、registry id 与
+   `.cwd` 内容，Rust 回放据此重建真实目录，不使用注入 resolver。
 
 固定进程时钟（`2026-01-01T00:00:00Z`，`tick` 每次 +1 ms）让 recorder 的
-`createdAt` 跨运行不变。`mkdtemp` 的随机后缀不固定：`snapshotRestore` 的
+`createdAt` 跨运行不变；该时钟与溯源前导来自共享 `generator_guard.mjs`。
+`mkdtemp` 的随机后缀不固定：`snapshotRestore` 的
 `workspaceKey` 与目标树分别投影成 `<restore>` 和“相对 restore 目录的树”；
 失败错误里的实际随机名投影成 `<random>`。运行目录统一掩成 `<dir>`；
 `escape-object` 的绝对 `objectKey` 是唯一需要把 `<dir>` 写进 manifest 字节的值，
@@ -55,10 +70,11 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 
 ## 删除归属
 
-所有删除走 `removeOwned`：先 `resolve` 再 `relative` 判 `..`/绝对，越界立即抛错，
-不触达文件系统。负控把旧固定路径 `/tmp/pdrs-a66-pr4-legacy` 和一个真实越界哨兵
-分别交给记录桩与真实 remover，断言零调用、哨兵仍在。`finally` 只删本次
-`mkdtemp` 根。
+所有删除走共享 `generator_guard.mjs` 的 `removeOwned`：先 `resolve` 再
+`relative` 判 `..`/绝对，越界立即抛错，不触达文件系统。负控把旧固定路径
+`/tmp/pdrs-a66-pr4-legacy` 和一个真实越界哨兵分别交给记录桩与真实 remover，
+断言零调用、哨兵仍在。`finally` 只删本次 `mkdtemp` 根。`workspace-snapshot`
+生成器使用同一实现，两份守卫不会各自漂移。
 
 ## `oracle.json`
 
@@ -67,37 +83,50 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 - `scenarios[]`：`name`、`tree`（相对 snapshot storage root 的完整树，文件用
   base64；递归删除后的失败 marker 仍在树里）、`snapshotRoot`、`absoluteFile`
   （回放用的 snapshot 根外绝对对象）、`projects`（projectKey → workspaceId）、
-  `fallbackProjectRoot`、`operations[]`。
-- `operations[]`：`op`、`input`（路径已掩成 `<dir>`）、`outcome`（成功为
+  `fallbackProjectRoot`、`operations[]`；`gateway-native` 另有 `gateway:true` 与
+  `native`（pilotHome、cwd、registry id + `.cwd` 内容、marker 指向的文件）。
+- `operations[]`：`op`、`input`（路径已掩成 `<dir>`）或 `params`（`undefined` /
+  `null` 的 params 对象，JSON 的 `input` 带不动）、`outcome`（成功为
   `{ok: value}`，失败为 `{error: {name, code?, message}}`）、restore 的
   `targetTree` / `restoreDir`。
 
 ## Rust 回放
 
-`tests/snapshot_projection.rs` 先 materialize 记录树，再用
-`runtime::snapshot::SnapshotProjection` 重放 55 个操作：
+`tests/snapshot_projection.rs` 先 materialize 记录树；前六个场景用
+`runtime::snapshot::SnapshotProjection`，`gateway-native` 用生产
+`runtime::snapshot::SnapshotGateway` + `SnapshotProjects`，合计 113 个操作：
 
-- 精确钉住 6 个场景名、每场景操作数 `44/3/3/3/1/1`、树行数
-  `60/8/8/0/8/10`，空/缩水 oracle 直接失败（#293 的零场景类 P2）。
+- 精确钉住 7 个场景名、每场景操作数 `44/3/3/3/1/1/58`、树行数
+  `60/8/8/0/8/10/30`，空/缩水 oracle 直接失败（#293 的零场景类 P2）。
 - 逐操作比较成功值或 `{name, code, message}`；restore（成功和失败）都再比较相对
   restore 目录的完整树，并断言 mkdtemp 目录 mode 为 `0700`。失败树尤其覆盖
-  “前面条目已写、后面条目才失败”的 `restore-partial`。
+  “前面条目已写、后面条目才失败”的 `restore-partial`。成功 restore 的
+  `workspaceKey` 是真实 mkdtemp 路径，回放用它掩码（目标键可含 `a/../b`）。
 - `restore-missing-target` 的 `ENOENT` 文案来自真实 TS/Node，不再手写；`<random>`
   在回放侧按实际随机后缀掩码。
-- project 解析与 `resolveProjectStorageId` 是注入依赖（对应 A6.3 的项目 registry
-  与 paths 尚未移植）；resolver 的 `PROJECT_NOT_FOUND` 文本与 TS 相同。
-- 回放之外另有单测覆盖 gateway 入口挡住的投影分支：省略 `projectKey` 走
-  `fallbackProjectRoot`、空 `sessionKey` 不过滤、provider 缺失先于 project 解析；
-  以及孤立代理项 snapshotId 的原始 UTF-16 比较、mkdtemp 前的 `path.join` 词法
-  规范化、`HostRequired` 的 `JS_HOST_REQUIRED` 分流标记。
+- `gateway-native` 的 project resolver 是生产实现：pilot home、`.cwd` 标记与
+  marker-to-file 冲突由 oracle 的 `native` 字段在 scratch 重建；不再注入
+  `TestResolver`。其余场景保留注入表（TS 侧 project registry 的替身）。
+- #322-1：mkdtemp 十次 `EEXIST` 后返回 `NODE_IO_REQUIRED`（空消息 +
+  `requires_host`），不再手写 `EEXIST: ... mkdtemp '<template>'`；确定性后缀
+  注入单测覆盖该不可达分支。
+- #322-2：`requires_host()` 文档与测试同时钉住 `NODE_IO_REQUIRED` 与
+  `JS_HOST_REQUIRED` 两种形状；普通投影错误不置位。
+- 回放之外另有单测覆盖 gateway 包装层挡住/放行的分支：省略 `projectKey` 走
+  `fallbackProjectRoot`（只经投影入口）、空 `sessionKey` 不过滤、provider 缺失
+  先于 project 解析、校验先于 capability、未知方法保持转发、HostRequired 经
+  `dispatch` 返回 `Forward`；以及孤立代理项 snapshotId 的原始 UTF-16 比较、
+  mkdtemp 前的 `path.join` 词法规范化、native resolver 的相对标记与 slug 回退。
 
 ```sh
 cd src
 cargo test -p pilotdeck-gateway --locked --offline --test snapshot_projection
 ```
 
-范围：只证明投影（过滤、排序、分页/cursor、limit、ownership、错误、restore
-mkdtemp 与目录树）与 TS 一致；不接 WS 入口（A8）。`#293` 中投影相关的
-`createdAt` 缺失排序、`objectKey` 不校验（实测 TS 同样不校验 `../` 与绝对路径）、
-Node/locale 记录、删除归属与零场景断言在此覆盖；并发 capture、重复 JSON/quoted
-实现、`scripts/parity/round.py` 的 env 隔离（冻结件）不在本 PR。
+范围：证明投影（过滤、排序、分页/cursor、limit、ownership、错误、restore
+mkdtemp 与目录树）和 A8.2-pr2 的 `SnapshotGateway` / `SnapshotProjects` 适配层
+（参数校验顺序、project resolver、storage ID、错误映射）与 TS 一致；适配层
+**未注册**进默认 dispatch，`snapshot_*` 仍转发 TS 宿主，native WS 入口由 A8 负责。
+`#293` 中投影相关的 `createdAt` 缺失排序、`objectKey` 不校验（实测 TS 同样不校验
+`../` 与绝对路径）、Node/locale 记录、删除归属与零场景断言在此覆盖；并发 capture、
+重复 JSON/quoted 实现、`scripts/parity/round.py` 的 env 隔离（冻结件）不在本 PR。

@@ -5,6 +5,7 @@
 //! RuntimeLease for the lifetime of a session. No background writes need draining.
 
 use super::{FamilyResource, Resource, RuntimeError, RuntimeResult, StageContext, StageSink};
+use crate::runtime::snapshot::{SnapshotGateway, SnapshotProjects};
 use crate::storage::{
     ContentAddressedWorkspaceSnapshotRecorder, JsonlTranscriptStore, StoreResult, TranscriptKey,
     TranscriptRead, TranscriptStore, WorkspaceSnapshotProvider, create_workspace_snapshot_provider,
@@ -51,6 +52,22 @@ pub struct PersistenceResources {
     pub snapshots: Option<WorkspaceSnapshots>,
 }
 impl PersistenceResources {
+    /// Compose the unregistered U3 snapshot gateway from this project's one
+    /// provider. `cwd` is the process cwd `path.resolve`/`.cwd` markers use;
+    /// callers pass it explicitly so tests and the host agree. A project with
+    /// no snapshot config keeps the `CAPABILITY_UNAVAILABLE` branch. The
+    /// gateway is not added to `LOCAL_METHODS`: default dispatch still forwards
+    /// `snapshot_*` to the TS host until A8 owns the WS entry.
+    pub fn snapshot_gateway(&self, cwd: impl Into<PathBuf>) -> SnapshotGateway<SnapshotProjects> {
+        SnapshotGateway::new(
+            self.snapshots
+                .as_ref()
+                .map(|snapshots| snapshots.provider.clone()),
+            SnapshotProjects::new(self.pilot_home.clone(), cwd),
+            self.project_root.to_string_lossy().into_owned(),
+        )
+    }
+
     /// Restore a recorder before publishing it to the session. The host supplies
     /// the session storage's resolved transcript path; `None` deliberately selects
     /// memory-only recording (AgentSessionRuntimeBundle.ts:125-142). No home or
