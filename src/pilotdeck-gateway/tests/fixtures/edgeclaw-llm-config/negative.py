@@ -116,6 +116,15 @@ cases = [
      '            let clamped = value.floor().max(0.0);',
      '            let clamped = value.ceil().max(0.0);',
      'llm_config_matches_ts'),
+    # fix-r5 P2-3: only the new `-0` input row distinguishes this mutation;
+    # `+0`/negative floors still return `+0`, so an earlier merge row cannot
+    # absorb the kill. The oracle expected value is `+0` (`Math.max(0, -0)`).
+    ('merge-negative-zero', config,
+     '            if clamped == 0.0 { 0.0 } else { clamped }',
+     '            if clamped == 0.0 {\n'
+     '                if *value == 0.0 && value.is_sign_negative() { -0.0 } else { 0.0 }\n'
+     '            } else { clamped }',
+     'llm_config_matches_ts'),
     # Header values are stored untrimmed.
     # oracle: sanitizeHeaders #37 `"  keep  "` -> `"keep"`; resolveSelection
     # #158 keeps model header `" m "` raw.
@@ -286,6 +295,7 @@ cases = [
 # binary (or a harness fault) cannot pass for a kill.
 KILL_FAILURE_TEXT = {
     'openclaw-null-retry': '#836: cached bad-file null must not re-probe home',
+    'merge-negative-zero': '$.autoIndexIntervalMinutes: number bits',
 }
 
 names = [case[0] for case in cases]

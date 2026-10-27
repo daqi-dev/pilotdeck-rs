@@ -399,6 +399,9 @@ export async function collect(baseline: string) {
       {autoIndexIntervalMinutes: 5, autoDreamIntervalMinutes: 9},
       {autoIndexIntervalMinutes: -3.7, autoDreamIntervalMinutes: 2.9},
       {autoIndexIntervalMinutes: 0, autoDreamIntervalMinutes: 0},
+      // fix-r5: `Math.max(0, Math.floor(-0))` is +0; the encoder must not
+      // collapse a finite `-0` input to plain `0` either.
+      {autoIndexIntervalMinutes: -0, autoDreamIntervalMinutes: -0.4},
       {autoIndexIntervalMinutes: '5', autoDreamIntervalMinutes: true},
       {autoIndexIntervalMinutes: NaN, autoDreamIntervalMinutes: Infinity},
       {autoIndexIntervalMinutes: -Infinity, autoDreamIntervalMinutes: 1e9},

@@ -36,11 +36,11 @@ const MESSAGES = [
   {role: 'assistant', content: 'alpha assistant'},
 ];
 
-/// `undefined`, non-finite numbers and lone-surrogate-free JSON. Rust mirrors
-/// this exact encoding in its observation writer.
+/// `undefined`, non-finite numbers, finite `-0` and lone-surrogate-free JSON.
+/// Rust mirrors this exact encoding in its observation writer.
 export function encode(value: any): any {
   if (value === undefined) return {$type: 'undefined'};
-  if (typeof value === 'number' && !Number.isFinite(value)) {
+  if (typeof value === 'number' && (Object.is(value, -0) || !Number.isFinite(value))) {
     return {$type: 'number', value: Object.is(value, -0) ? '-0' : String(value)};
   }
   if (Array.isArray(value)) return value.map(encode);
@@ -180,6 +180,12 @@ function specs(): Spec[] {
         {op: 'list'},
         {op: 'list', args: {options: {kinds: ['project'], query: 'Alpha'}}},
         {op: 'get', args: {ids: [ids.entry], maxLines: 10}},
+        // `get(ids, maxLines = 80)` only defaults `undefined`; `null <= 0` is
+        // true, so `null` returns empty content. `-0` exercises the shared
+        // encoder's finite-zero envelope (`$type:number:"-0"`) on both sides.
+        {op: 'get', args: {ids: [ids.entry], maxLines: undefined}},
+        {op: 'get', args: {ids: [ids.entry], maxLines: null}},
+        {op: 'get', args: {ids: [ids.entry], maxLines: -0}},
         {op: 'getUserSummary'},
         {op: 'getProjectMeta'},
         {op: 'getWorkspaceMode'},

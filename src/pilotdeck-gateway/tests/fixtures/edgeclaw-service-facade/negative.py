@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Prove the EdgeClaw service facade checks fail on their own product mutation.
 
-The new `service/mod.rs` and `storage.rs` sources must be committed before this
-runner can obtain the `mutating_sources` HEAD guard. Until then it refuses with
-the shared `SourceBaselineError` instead of mutating an uncommitted product
-tree.
+The new `service/mod.rs`, `storage.rs`, test driver and fixture encoder must be
+committed before this runner can obtain the `mutating_sources` HEAD guard.
+Until then it refuses with the shared `SourceBaselineError` instead of mutating
+an uncommitted product tree.
 
     CARGO_TARGET_DIR=/abs/target python3 \
         src/pilotdeck-gateway/tests/fixtures/edgeclaw-service-facade/negative.py \
@@ -34,7 +34,10 @@ ROOT = Path(__file__).resolve().parents[5]
 SERVICE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/service/mod.rs'
 STORAGE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage.rs'
 CONFIG = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/config.rs'
+OBSERVE = ROOT / 'src/pilotdeck-gateway/tests/fixtures/edgeclaw-service-facade/observe.mts'
+TEST_SOURCE = ROOT / 'src/pilotdeck-gateway/tests/edgeclaw_service_facade.rs'
 TEST = 'ts_service_facade_scenarios_match'
+VERIFY = 'real_ts_reads_rust_service_observations'
 TEST_FILE = 'pilotdeck-gateway/tests/edgeclaw_service_facade.rs'
 
 
@@ -68,10 +71,22 @@ ANCHORS = {
     # fix-r4: `1e20` is a finite JS number and must survive `getSettings`;
     # only non-finite defaults become `null` on the wire.
     'settings-large-finite-preserved': '#775 facade steps for scenario 12 settings-large-finite',
+    # fix-r5 P1: the new `maxLines: -0` argument is the first finite `-0` the
+    # service oracle encodes. Removing the TS branch makes the fresh real-TS
+    # run differ from the committed `$type:number:"-0"` envelope.
+    'observe-negative-zero-encode': '#775 verify.mts failed',
+    # fix-r5 P1 (Rust side): the same oracle argument must keep its `-0`
+    # envelope when the Rust driver re-encodes it.
+    'encode-negative-zero': '#775 facade steps for scenario 4 facade-sequence',
+    # fix-r5 P2-1: `null` must stay distinct from the `undefined` default 80.
+    'get-null-maxlines': '#775 facade steps for scenario 4 facade-sequence',
+    # fix-r5 P2-2: the facade must reuse the indexer's UTF-16 message, not the
+    # old lossy `Display` copy.
+    'heartbeat-message-not-reused': '#775 ServiceError::js_message must reuse HeartbeatError::message (lone surrogate preserved)',
 }
 
 
-def mutation(name, path, before, after, test=TEST):
+def mutation(name, path, before, after, test=TEST, include_ignored=False):
     return dict(
         name=name,
         path=path,
@@ -79,6 +94,7 @@ def mutation(name, path, before, after, test=TEST):
         new=after,
         test=test,
         anchor=ANCHORS[name],
+        include_ignored=include_ignored,
     )
 
 
@@ -219,6 +235,48 @@ MUTANTS = [
         '        });\n'
         '        next.insert("retrieval".into(), sorted.unwrap_or(retrieval));',
     ),
+    # fix-r5 P1: TS `encode` used to keep the `Object.is(value, -0)` test
+    # inside the non-finite guard, so finite `-0` fell through to
+    # `JSON.stringify(-0)` -> 0. The committed oracle has the `$type` envelope;
+    # the fresh real-TS verifier must fail when the branch is removed.
+    mutation(
+        'observe-negative-zero-encode',
+        OBSERVE,
+        "if (typeof value === 'number' && (Object.is(value, -0) || !Number.isFinite(value))) {",
+        "if (typeof value === 'number' && !Number.isFinite(value)) {",
+        test=VERIFY,
+        include_ignored=True,
+    ),
+    # fix-r5 P1 Rust side: `encode_js` must mirror that finite `-0` envelope.
+    mutation(
+        'encode-negative-zero',
+        TEST_SOURCE,
+        '            } else if *number == 0.0 && number.is_sign_negative() {',
+        '            } else if false && *number == 0.0 && number.is_sign_negative() {',
+    ),
+    # fix-r5 P2-1: TS defaults only `undefined`; `null <= 0` yields empty
+    # content and the oracle records that in scenario 4.
+    mutation(
+        'get-null-maxlines',
+        SERVICE,
+        '            Some(JsValue::Null) => 0.0,',
+        '            Some(JsValue::Null) => 80.0,',
+    ),
+    # fix-r5 P2-2: restore the old hand-copied Heartbeat arm. `IndexError`
+    # `Display` is lossy for a lone surrogate, so the dedicated test fails.
+    mutation(
+        'heartbeat-message-not-reused',
+        SERVICE,
+        '            Self::Heartbeat(error) => error.message(),',
+        '            Self::Heartbeat(error) => match error {\n'
+        '                HeartbeatError::Storage(StorageError::Closed) => {\n'
+        '                    JsString::from("database is not open")\n'
+        '                }\n'
+        '                HeartbeatError::File(error) => error.js_message(),\n'
+        '                other => JsString::from(other.to_string()),\n'
+        '            },',
+        test='service_error_heartbeat_message_reuses_heartbeat_message',
+    ),
 ]
 
 
@@ -273,13 +331,17 @@ def main():
     ]
     results = []
 
-    def run(label, mutant_test):
+    def run(label, mutant_test, include_ignored=False):
+        args = ['--', mutant_test, '--exact', '--nocapture']
+        if include_ignored:
+            # libtest option, so it stays after cargo's `--` separator.
+            args.insert(1, '--include-ignored')
         with (output / f'{label}.log').open('w') as log:
             gate = wait_for_slot(ROOT / 'scripts/cargo-slots.sh')
             log.write(gate.stdout + gate.stderr)
             log.flush()
             result = run_owned(
-                command + ['--', mutant_test, '--exact', '--nocapture'],
+                command + args,
                 cwd=ROOT, env=env, timeout=900,
             )
             log.write(result.stdout + result.stderr)
@@ -303,7 +365,9 @@ def main():
         print(f"{mutant['name']}: {status}: {reason}", flush=True)
 
     try:
-        with mutating_sources(ROOT, [SERVICE, STORAGE, CONFIG], baseline='HEAD') as snapshots:
+        with mutating_sources(
+            ROOT, [SERVICE, STORAGE, CONFIG, OBSERVE, TEST_SOURCE], baseline='HEAD'
+        ) as snapshots:
             for mutant in selected:
                 path = mutant['path']
                 original = snapshots[path].decode()
@@ -315,7 +379,7 @@ def main():
                         f"anchor appears {occurrences} times, expected exactly once",
                     )
                     continue
-                if not passed(run(f"{mutant['name']}-positive", mutant['test']), mutant['test']):
+                if not passed(run(f"{mutant['name']}-positive", mutant['test'], mutant['include_ignored']), mutant['test']):
                     record(mutant, 'INVALID', 'positive control did not pass the bound test')
                     continue
                 mutated = original.replace(mutant['old'], mutant['new'], 1)
@@ -326,7 +390,7 @@ def main():
                     # with coarse mtimes; a cached binary would fake SURVIVED.
                     time.sleep(1.1)
                     status, reason = classify(
-                        run(f"{mutant['name']}-negative", mutant['test']), mutant
+                        run(f"{mutant['name']}-negative", mutant['test'], mutant['include_ignored']), mutant
                     )
                 except Exception as error:  # noqa: BLE001 - summarized as INVALID
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
@@ -336,7 +400,7 @@ def main():
                     if path.read_text() != original:
                         raise RuntimeError(f'byte restoration failed: {path}')
                 if not passed(
-                    run(f"{mutant['name']}-restored", mutant['test']), mutant['test']
+                    run(f"{mutant['name']}-restored", mutant['test'], mutant['include_ignored']), mutant['test']
                 ):
                     status, reason = 'INVALID', reason + '; restored test did not pass'
                 record(mutant, status, reason)
