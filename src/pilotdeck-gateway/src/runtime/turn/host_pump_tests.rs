@@ -332,15 +332,26 @@ async fn host_pump_final_orders_behind_the_reserved_slot() {
     queue_host_events(&inner, &[host_event("final_batch")]);
     let mut final_call = handler.event(wire(&host_event("turn_completed"), true));
     assert_pending(&mut final_call).await;
-    assert_eq!(rx.try_recv().unwrap(), host_event("batch_a"));
-    assert!(rx.try_recv().is_err(), "the final's batch waits behind K");
+    assert_eq!(
+        rx.try_recv().expect("#855: batch_a must be available").0,
+        host_event("batch_a"),
+        "#855: the module batch starts with batch_a"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "#855: the final's batch waits behind K"
+    );
     // Completing M2 wakes the pump; the :909 re-check keeps it closed. Its
     // reserved slot K hands the chain to F, so e publishes only now.
     timeout(Duration::from_secs(5), module_call)
         .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(rx.try_recv().unwrap(), host_event("batch_b"));
+        .expect("#855: module callback must finish within 5 seconds")
+        .expect("#855: module callback must succeed");
+    assert_eq!(
+        rx.try_recv().expect("#855: batch_b must be available").0,
+        host_event("batch_b"),
+        "#855: batch_b follows batch_a"
+    );
     // #855: the channel is empty now, so a final that bypassed its reserved
     // predecessor K would send e on this very poll. Drive the final's callback
     // once without polling the pump: correct code keeps F parked on K's done,
@@ -354,7 +365,10 @@ async fn host_pump_final_orders_behind_the_reserved_slot() {
         std::task::Poll::Ready(())
     })
     .await;
-    assert!(rx.try_recv().is_err(), "e still waits for the pump's slot");
+    assert!(
+        rx.try_recv().is_err(),
+        "#855: e still waits for the pump's slot"
+    );
     assert_pending(&mut task).await; // woke, re-checked stopped, published nothing
     // Activity probe, armed before the final publishes (the non-module send
     // refreshes activity): a blocked module callback captures one more host
@@ -366,15 +380,22 @@ async fn host_pump_final_orders_behind_the_reserved_slot() {
     assert_pending(&mut probe).await;
     timeout(Duration::from_secs(5), final_call)
         .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(rx.try_recv().unwrap(), host_event("final_batch"));
+        .expect("#855: final callback must finish within 5 seconds")
+        .expect("#855: final callback must succeed");
+    assert_eq!(
+        rx.try_recv()
+            .expect("#855: final batch must be available")
+            .0,
+        host_event("final_batch"),
+        "#855: the final batch follows the reserved slot"
+    );
     assert_pending(&mut probe).await;
     assert_eq!(
         rx.try_recv()
-            .expect("#855: the probe batch must publish at the pre-final deadline"),
+            .expect("#855: the probe batch must publish at the pre-final deadline")
+            .0,
         host_event("probe_batch"),
-        "the probe's batch publishes at the pre-final deadline, not 500 ms later"
+        "#855: the probe's batch publishes at the pre-final deadline, not 500 ms later"
     );
     // The stopped pump never drains again; the closing advance polls the pump
     // itself, so a mutant that still ticks after the stop fails here instead
@@ -382,6 +403,17 @@ async fn host_pump_final_orders_behind_the_reserved_slot() {
     drop(probe);
     queue_host_events(&inner, &[host_event("never_drained")]);
     advance(&mut task, 10_000).await;
-    assert!(rx.try_recv().is_err());
-    assert_eq!(inner.drains.lock().unwrap().len(), 1);
+    assert!(
+        rx.try_recv().is_err(),
+        "#855: the stopped pump never publishes"
+    );
+    assert_eq!(
+        inner
+            .drains
+            .lock()
+            .expect("#855: drain queue must remain unpoisoned")
+            .len(),
+        1,
+        "#855: the stopped pump leaves the final queued batch undrained"
+    );
 }
