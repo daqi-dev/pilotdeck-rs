@@ -442,11 +442,11 @@ fn settings_json(settings: &IndexingSettings) -> JsValue {
         ),
         (
             "autoIndexIntervalMinutes",
-            JsValue::Number(settings.auto_index_interval_minutes as f64),
+            JsValue::Number(settings.auto_index_interval_minutes),
         ),
         (
             "autoDreamIntervalMinutes",
-            JsValue::Number(settings.auto_dream_interval_minutes as f64),
+            JsValue::Number(settings.auto_dream_interval_minutes),
         ),
     ])
 }
@@ -855,13 +855,13 @@ fn observe(storage: &EdgeClawStorage) -> JsValue {
 
     let default_settings = IndexingSettings {
         reasoning_mode: "answer_first".into(),
-        auto_index_interval_minutes: 5,
-        auto_dream_interval_minutes: 10,
+        auto_index_interval_minutes: 5.0,
+        auto_dream_interval_minutes: 10.0,
     };
     let other_defaults = IndexingSettings {
         reasoning_mode: "accuracy_first".into(),
-        auto_index_interval_minutes: 1,
-        auto_dream_interval_minutes: 2,
+        auto_index_interval_minutes: 1.0,
+        auto_dream_interval_minutes: 2.0,
     };
     let settings = object(vec![
         (
@@ -966,10 +966,10 @@ fn parse_settings(value: &JsValue) -> IndexingSettings {
         reasoning_mode: as_text(field(value, "reasoningMode")),
         auto_index_interval_minutes: field(value, "autoIndexIntervalMinutes")
             .as_number()
-            .expect("default number") as i64,
+            .expect("default number"),
         auto_dream_interval_minutes: field(value, "autoDreamIntervalMinutes")
             .as_number()
-            .expect("default number") as i64,
+            .expect("default number"),
     }
 }
 
@@ -1396,8 +1396,8 @@ fn write_lock_contention_fails_immediately_like_node() {
 
     let defaults = IndexingSettings {
         reasoning_mode: "answer_first".into(),
-        auto_index_interval_minutes: 5,
-        auto_dream_interval_minutes: 10,
+        auto_index_interval_minutes: 5.0,
+        auto_dream_interval_minutes: 10.0,
     };
     let started = Instant::now();
     let error = storage

@@ -283,9 +283,9 @@ fn invoke(
                     js_text(defaults_input, "reasoningMode")
                 },
                 auto_index_interval_minutes: js_number(defaults_input, "autoIndexIntervalMinutes")
-                    .unwrap_or(30.0) as i64,
+                    .unwrap_or(30.0),
                 auto_dream_interval_minutes: js_number(defaults_input, "autoDreamIntervalMinutes")
-                    .unwrap_or(60.0) as i64,
+                    .unwrap_or(60.0),
             };
             let partial = input.get("partial").cloned().unwrap_or(JsValue::Null);
             r.storage
@@ -298,11 +298,11 @@ fn invoke(
                     );
                     object.insert(
                         "autoIndexIntervalMinutes".into(),
-                        JsValue::Number(s.auto_index_interval_minutes as f64),
+                        JsValue::Number(s.auto_index_interval_minutes),
                     );
                     object.insert(
                         "autoDreamIntervalMinutes".into(),
-                        JsValue::Number(s.auto_dream_interval_minutes as f64),
+                        JsValue::Number(s.auto_dream_interval_minutes),
                     );
                     JsValue::Object(object)
                 })

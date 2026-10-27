@@ -260,21 +260,30 @@ impl EdgeClawMemoryService {
             Some(home) => home,
             None => super::storage::accessors::homedir()?,
         };
+        // `resolveDefaultRootDir` treats only a truthy `rootDir` as explicit
+        // (`service.ts:169-171`); `Some("")` must fall back to the default
+        // root, while `" "` is a real (non-empty) relative path.
         let root_dir = match options.root_dir.as_deref() {
-            Some(root) => absolute(root)?,
-            None => absolute(&home.join(".edgeclaw").join("memory"))?,
+            Some(root) if !root.as_os_str().is_empty() => absolute(root)?,
+            _ => absolute(&home.join(".edgeclaw").join("memory"))?,
         };
+        // `resolveConfiguredDataDir` uses `if (options.dbPath)` / `if
+        // (options.memoryDir)` (`service.ts:345-353`), so empty strings fall
+        // through to the workspace default. The final `??` resolution below
+        // still keeps an explicit empty value, exactly like TS.
+        let db_path_option = options.db_path.as_deref();
+        let memory_dir_option = options.memory_dir.as_deref();
         let data_dir = resolve_configured_data_dir(
-            options.db_path.as_deref(),
-            options.memory_dir.as_deref(),
+            db_path_option.filter(|path| !path.as_os_str().is_empty()),
+            memory_dir_option.filter(|path| !path.as_os_str().is_empty()),
             &workspace_dir,
             &root_dir,
         )?;
-        let db_path = match options.db_path.as_deref() {
+        let db_path = match db_path_option {
             Some(path) => absolute(path)?,
             None => absolute(&data_dir.join("control.sqlite"))?,
         };
-        let memory_dir = match options.memory_dir.as_deref() {
+        let memory_dir = match memory_dir_option {
             Some(path) => absolute(path)?,
             None => absolute(&data_dir.join("memory"))?,
         };
@@ -322,7 +331,13 @@ impl EdgeClawMemoryService {
         }
         let extractor = Arc::new(extractor);
         let source = options.source.clone().unwrap_or_else(|| "edgeclaw".into());
-        let mut heartbeat_options = HeartbeatOptions::new(default_indexing_settings.clone());
+        // `service.ts:645` seeds the indexer from the repository, not from the
+        // constructor defaults: reopening an existing database must restore the
+        // persisted settings.
+        let initial_indexing_settings = repository
+            .storage
+            .get_indexing_settings(&default_indexing_settings)?;
+        let mut heartbeat_options = HeartbeatOptions::new(initial_indexing_settings);
         heartbeat_options.batch_size = Some(options.heartbeat_batch_size.unwrap_or(30));
         heartbeat_options.source = Some(source.clone());
         heartbeat_options.logger = logger
@@ -374,14 +389,19 @@ impl EdgeClawMemoryService {
     /// `saveSettings` (`service.ts:663-668`): persist, refresh the indexer's
     /// settings, then clear the retriever's transient recall cache.
     pub fn save_settings(&self, partial: &JsValue) -> Result<IndexingSettings> {
+        // Keep the write and the in-memory refresh in one critical section so
+        // two concurrent callers cannot leave SQLite and the indexer with
+        // different settings. Lock order is indexer → storage everywhere.
+        let mut indexer = self
+            .indexer
+            .lock()
+            .expect("edgeclaw service indexer mutex poisoned");
         let settings = self
             .repository
             .storage
             .save_indexing_settings(partial, &self.default_indexing_settings)?;
-        self.indexer
-            .lock()
-            .expect("edgeclaw service indexer mutex poisoned")
-            .set_settings(settings.clone());
+        indexer.set_settings(settings.clone());
+        drop(indexer);
         self.retriever.reset_transient_state();
         Ok(settings)
     }
@@ -415,20 +435,45 @@ impl EdgeClawMemoryService {
                 session_key: input.session_key,
             });
         }
-        self.indexer
+        // `captureL0Session` may synchronously call the user logger on the
+        // duplicate branch. Never hold the indexer mutex across that call: a
+        // logger that re-enters the service (e.g. `saveSettings` through a
+        // `Weak`) would otherwise wait on the same non-reentrant mutex and
+        // deadlock. Clone the (cheap, `Arc`-based) indexer under the guard and
+        // release it before doing any capture work.
+        let indexer = self
+            .indexer
             .lock()
             .expect("edgeclaw service indexer mutex poisoned")
-            .capture_l0_session(CaptureL0SessionInput {
-                session_key: input.session_key.clone(),
-                timestamp: input.timestamp,
-                messages: normalized_messages.clone(),
-                source: input.source.or_else(|| Some(self.source.clone())),
-            })?;
+            .clone();
+        indexer.capture_l0_session(CaptureL0SessionInput {
+            session_key: input.session_key.clone(),
+            timestamp: input.timestamp,
+            messages: normalized_messages.clone(),
+            source: input.source.or_else(|| Some(self.source.clone())),
+        })?;
         Ok(CaptureTurnResult {
             captured: true,
             normalized_messages,
             session_key: input.session_key,
         })
+    }
+
+    /// Test seam for the re-entrancy guard: true when the indexer mutex is not
+    /// held. The duplicate-capture logger asserts this before calling back into
+    /// the service, so a regression fails with a message instead of hanging.
+    #[doc(hidden)]
+    pub fn indexer_lock_is_available(&self) -> bool {
+        self.indexer.try_lock().is_ok()
+    }
+
+    /// Test seam for the constructor assembly (TS `service.ts:645`).
+    #[doc(hidden)]
+    pub fn indexer_settings(&self) -> IndexingSettings {
+        self.indexer
+            .lock()
+            .expect("edgeclaw service indexer mutex poisoned")
+            .get_settings()
     }
 
     pub fn list(&self, options: &JsObject) -> Result<JsValue> {
@@ -508,14 +553,32 @@ impl EdgeClawMemoryService {
                 JsString::from_utf16(crate::runtime::memory::js_trim_units(value.units()).to_vec())
             }
             _ => {
-                let seed = format!(
-                    "{}:{}:{}:{}",
-                    template_text(record.get("sessionKey").unwrap_or(&undefined)),
-                    template_text(record.get("query").unwrap_or(&undefined)),
-                    started_at.to_utf8().unwrap_or_default(),
-                    (self.random_token)().to_utf8().unwrap_or_default(),
-                );
-                JsString::from(format!("case_trace_{}", hash_text(&JsString::from(seed))))
+                // `service.ts:1041` builds a JS template literal: the seed is a
+                // UTF-16 string concatenation. `hashText` replaces an unpaired
+                // surrogate with U+FFFD only when encoding the seed as UTF-8;
+                // converting each field to UTF-8 up front would instead drop an
+                // entire `startedAt` that contains one.
+                let mut seed: Vec<u16> = Vec::new();
+                for (index, value) in [
+                    record.get("sessionKey").unwrap_or(&undefined),
+                    record.get("query").unwrap_or(&undefined),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    if index > 0 {
+                        seed.push(u16::from(b':'));
+                    }
+                    seed.extend(template_units(value));
+                }
+                seed.push(u16::from(b':'));
+                seed.extend_from_slice(started_at.units());
+                seed.push(u16::from(b':'));
+                seed.extend_from_slice((self.random_token)().units());
+                JsString::from(format!(
+                    "case_trace_{}",
+                    hash_text(&JsString::from_utf16(seed))
+                ))
             }
         };
         // Object-literal insertion order from `service.ts:1042-1052`; undefined
@@ -574,12 +637,17 @@ impl EdgeClawMemoryService {
     /// `importBundle` (`service.ts:1085-1090`): refresh indexer settings from
     /// the imported state and clear the retriever cache.
     pub fn import_bundle(&self, bundle: &JsValue) -> Result<JsValue> {
+        // Same lock order as `save_settings`: indexer → storage. Importing and
+        // refreshing the in-memory settings must not interleave with another
+        // save/import, or the database and indexer could diverge.
+        let mut indexer = self
+            .indexer
+            .lock()
+            .expect("edgeclaw service indexer mutex poisoned");
         let result = self.repository.import_memory_bundle(bundle)?;
         let settings = self.get_settings()?;
-        self.indexer
-            .lock()
-            .expect("edgeclaw service indexer mutex poisoned")
-            .set_settings(settings);
+        indexer.set_settings(settings);
+        drop(indexer);
         self.retriever.reset_transient_state();
         Ok(result)
     }
@@ -771,30 +839,16 @@ fn resolve_parent(path: &Path) -> Result<PathBuf> {
         .unwrap_or_else(|| PathBuf::from("/")))
 }
 
-/// `mergeIndexingSettings` returns JS `Math.floor`/`Math.max` results, which
-/// may be non-finite. [`IndexingSettings`] stores `i64`, so `+Infinity`
-/// saturates to `i64::MAX`, `-Infinity` becomes `0`, and `NaN` becomes `0`.
-/// This is the storage-layer number-model difference registered in RESULT.md;
-/// finite values (including `Math.floor` and the non-negative clamp) match TS.
+/// `mergeIndexingSettings` returns JS `Math.floor`/`Math.max` results. The
+/// storage type keeps the same `f64` value, including `NaN`/`±Infinity` and
+/// finite values above `i64::MAX`; the SQLite writer serializes non-finite
+/// numbers as JSON `null`, exactly like `JSON.stringify`.
 fn storage_settings(merged: MergedIndexingSettings) -> IndexingSettings {
     IndexingSettings {
         reasoning_mode: merged.reasoning_mode.to_utf8().unwrap_or_default(),
-        auto_index_interval_minutes: interval(merged.auto_index_interval_minutes),
-        auto_dream_interval_minutes: interval(merged.auto_dream_interval_minutes),
+        auto_index_interval_minutes: merged.auto_index_interval_minutes,
+        auto_dream_interval_minutes: merged.auto_dream_interval_minutes,
     }
-}
-
-fn interval(value: f64) -> i64 {
-    if value.is_nan() {
-        return 0;
-    }
-    if value == f64::INFINITY {
-        return i64::MAX;
-    }
-    if value <= 0.0 {
-        return 0;
-    }
-    value.min(i64::MAX as f64) as i64
 }
 
 fn normalize_trace_preview(record: JsValue) -> JsValue {
@@ -815,8 +869,14 @@ fn array_len(value: &JsValue) -> usize {
 /// typed as strings in TS; this keeps `undefined`/`null`, numbers, booleans and
 /// objects on the same `ToPrimitive` path if a caller omits a typed field.
 fn template_text(value: &JsValue) -> String {
+    String::from_utf16_lossy(&template_units(value))
+}
+
+/// Raw UTF-16 units of the JS `String(value)` conversion, preserving unpaired
+/// surrogates for callers that concatenate before a single UTF-8 encoding.
+fn template_units(value: &JsValue) -> Vec<u16> {
     match crate::js_value::to_string_units_checked(value) {
-        Ok(units) => String::from_utf16_lossy(&units),
-        Err(error) => error.message().to_string(),
+        Ok(units) => units,
+        Err(error) => error.message().encode_utf16().collect(),
     }
 }

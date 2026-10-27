@@ -6,6 +6,7 @@
 // replays on the Rust side. Every observed value is encoded so `undefined`,
 // `NaN` and `Infinity` survive JSON.
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
@@ -49,15 +50,24 @@ export function encode(value: any): any {
   return value;
 }
 
-function clean(value: any, root: string): any {
+function clean(value: any, root: string, workspaceHash: string): any {
   if (typeof value === 'string') {
     return value
       .split(root).join('$ROOT')
-      .replace(/\/workspaces\/[0-9a-f]{10}(?=\/|$)/gu, '/workspaces/$HASH');
+      .replace(/\/workspaces\/([0-9a-f]{10})(?=\/|$)/gu, (_match, hash: string) => {
+        // A wrong seed (root, fixed string, …) used to be erased by the
+        // generic $HASH replacement. Bind the observed slug to
+        // sha1(resolve(workspaceDir))[:10] before normalising it.
+        assert.equal(hash, workspaceHash,
+          `workspace data-dir slug ${hash} is not sha1(resolve(workspaceDir))=${workspaceHash}`);
+        return '/workspaces/$HASH';
+      });
   }
-  if (Array.isArray(value)) return value.map((item) => clean(item, root));
+  if (Array.isArray(value)) return value.map((item) => clean(item, root, workspaceHash));
   if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clean(item, root)]));
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, clean(item, root, workspaceHash)]),
+    );
   }
   return value;
 }
@@ -66,12 +76,22 @@ function errorShape(error: any) {
   return {name: error?.name ?? null, message: error?.message ?? null};
 }
 
-function syncStep(name: string, args: any, fn: () => any, root: string) {
+function syncStep(name: string, args: any, fn: () => any, state: any) {
   try {
     const value = fn();
-    return {op: name, args: clean(encode(args), root), ok: true, value: clean(encode(value), root)};
+    return {
+      op: name,
+      args: clean(encode(args), state.root, state.workspaceHash),
+      ok: true,
+      value: clean(encode(value), state.root, state.workspaceHash),
+    };
   } catch (error) {
-    return {op: name, args: clean(encode(args), root), ok: false, error: clean(encode(errorShape(error)), root)};
+    return {
+      op: name,
+      args: clean(encode(args), state.root, state.workspaceHash),
+      ok: false,
+      error: clean(encode(errorShape(error)), state.root, state.workspaceHash),
+    };
   }
 }
 
@@ -299,6 +319,35 @@ function specs(): Spec[] {
         {op: 'close'},
       ],
     },
+    {
+      name: 'settings-nonfinite',
+      paths: {workspace: 'workspace', rootDir: 'root'},
+      options: {defaultIndexingSettings: {
+        autoIndexIntervalMinutes: Number.NaN,
+        autoDreamIntervalMinutes: Number.POSITIVE_INFINITY,
+      }},
+      seeds: [],
+      buildOps: () => [
+        {op: 'getSettings'},
+        {op: 'saveSettings', args: {partial: {reasoningMode: 'answer_first'}}},
+        {op: 'getSettings'},
+        {op: 'close'},
+      ],
+    },
+    {
+      name: 'closed-empty',
+      paths: {workspace: 'workspace', rootDir: 'root'},
+      seeds: [],
+      buildOps: () => [
+        {op: 'close'},
+        {op: 'listReadableProjectCatalog'},
+        {op: 'getReadableProject', args: {id: 'current_project'}},
+        {op: 'listReadableProjectEntries', args: {id: 'current_project', options: {}}},
+        {op: 'captureTurn', args: {messages: [], input: {sessionKey: 'empty'}}},
+        {op: 'captureTurn', args: {messages: [{role: 'tool'}], input: {sessionKey: 'tool'}}},
+        {op: 'captureTurn', args: {messages: [{role: 'assistant', content: 'only assistant'}], input: {sessionKey: 'assistant'}}},
+      ],
+    },
   ];
 }
 
@@ -331,41 +380,41 @@ function idsFor(service: any): any {
 }
 
 function runOp(service: any, op: any, state: any) {
-  if (op.op === 'getSettings') return syncStep(op.op, op.args, () => service.getSettings(), state.root);
-  if (op.op === 'saveSettings') return syncStep(op.op, op.args, () => service.saveSettings(op.args.partial), state.root);
-  if (op.op === 'overview') return syncStep(op.op, op.args, () => service.overview(), state.root);
-  if (op.op === 'snapshot') return syncStep(op.op, op.args, () => service.snapshot(op.args?.limit), state.root);
-  if (op.op === 'captureTurn') return syncStep(op.op, op.args, () => service.captureTurn(op.args.messages, op.args.input), state.root);
-  if (op.op === 'list') return syncStep(op.op, op.args, () => service.list(op.args?.options), state.root);
-  if (op.op === 'get') return syncStep(op.op, op.args, () => service.get(op.args.ids, op.args.maxLines), state.root);
-  if (op.op === 'getUserSummary') return syncStep(op.op, op.args, () => service.getUserSummary(), state.root);
-  if (op.op === 'getProjectMeta') return syncStep(op.op, op.args, () => service.getProjectMeta(), state.root);
-  if (op.op === 'getWorkspaceMode') return syncStep(op.op, op.args, () => service.getWorkspaceMode(), state.root);
-  if (op.op === 'listReadableProjectCatalog') return syncStep(op.op, op.args, () => service.listReadableProjectCatalog(), state.root);
-  if (op.op === 'getReadableProject') return syncStep(op.op, op.args, () => service.getReadableProject(op.args.id), state.root);
-  if (op.op === 'listReadableProjectEntries') return syncStep(op.op, op.args, () => service.listReadableProjectEntries(op.args.id, op.args.options), state.root);
-  if (op.op === 'updateProjectMeta') return syncStep(op.op, op.args, () => service.updateProjectMeta(op.args.input), state.root);
-  if (op.op === 'getSnapshotVersion') return syncStep(op.op, op.args, () => service.getSnapshotVersion(), state.root);
-  if (op.op === 'saveCaseTrace') return syncStep(op.op, op.args, () => service.saveCaseTrace(op.args.record), state.root);
-  if (op.op === 'listCaseTraces') return syncStep(op.op, op.args, () => service.listCaseTraces(op.args?.limit), state.root);
-  if (op.op === 'getCaseTrace') return syncStep(op.op, op.args, () => service.getCaseTrace(op.args.caseId), state.root);
-  if (op.op === 'listIndexTraces') return syncStep(op.op, op.args, () => service.listIndexTraces(op.args?.limit), state.root);
-  if (op.op === 'getIndexTrace') return syncStep(op.op, op.args, () => service.getIndexTrace(op.args.id), state.root);
-  if (op.op === 'listDreamTraces') return syncStep(op.op, op.args, () => service.listDreamTraces(op.args?.limit), state.root);
-  if (op.op === 'getDreamTrace') return syncStep(op.op, op.args, () => service.getDreamTrace(op.args.id), state.root);
+  if (op.op === 'getSettings') return syncStep(op.op, op.args, () => service.getSettings(), state);
+  if (op.op === 'saveSettings') return syncStep(op.op, op.args, () => service.saveSettings(op.args.partial), state);
+  if (op.op === 'overview') return syncStep(op.op, op.args, () => service.overview(), state);
+  if (op.op === 'snapshot') return syncStep(op.op, op.args, () => service.snapshot(op.args?.limit), state);
+  if (op.op === 'captureTurn') return syncStep(op.op, op.args, () => service.captureTurn(op.args.messages, op.args.input), state);
+  if (op.op === 'list') return syncStep(op.op, op.args, () => service.list(op.args?.options), state);
+  if (op.op === 'get') return syncStep(op.op, op.args, () => service.get(op.args.ids, op.args.maxLines), state);
+  if (op.op === 'getUserSummary') return syncStep(op.op, op.args, () => service.getUserSummary(), state);
+  if (op.op === 'getProjectMeta') return syncStep(op.op, op.args, () => service.getProjectMeta(), state);
+  if (op.op === 'getWorkspaceMode') return syncStep(op.op, op.args, () => service.getWorkspaceMode(), state);
+  if (op.op === 'listReadableProjectCatalog') return syncStep(op.op, op.args, () => service.listReadableProjectCatalog(), state);
+  if (op.op === 'getReadableProject') return syncStep(op.op, op.args, () => service.getReadableProject(op.args.id), state);
+  if (op.op === 'listReadableProjectEntries') return syncStep(op.op, op.args, () => service.listReadableProjectEntries(op.args.id, op.args.options), state);
+  if (op.op === 'updateProjectMeta') return syncStep(op.op, op.args, () => service.updateProjectMeta(op.args.input), state);
+  if (op.op === 'getSnapshotVersion') return syncStep(op.op, op.args, () => service.getSnapshotVersion(), state);
+  if (op.op === 'saveCaseTrace') return syncStep(op.op, op.args, () => service.saveCaseTrace(op.args.record), state);
+  if (op.op === 'listCaseTraces') return syncStep(op.op, op.args, () => service.listCaseTraces(op.args?.limit), state);
+  if (op.op === 'getCaseTrace') return syncStep(op.op, op.args, () => service.getCaseTrace(op.args.caseId), state);
+  if (op.op === 'listIndexTraces') return syncStep(op.op, op.args, () => service.listIndexTraces(op.args?.limit), state);
+  if (op.op === 'getIndexTrace') return syncStep(op.op, op.args, () => service.getIndexTrace(op.args.id), state);
+  if (op.op === 'listDreamTraces') return syncStep(op.op, op.args, () => service.listDreamTraces(op.args?.limit), state);
+  if (op.op === 'getDreamTrace') return syncStep(op.op, op.args, () => service.getDreamTrace(op.args.id), state);
   if (op.op === 'export') {
-    const result = syncStep(op.op, op.args, () => service.exportBundle(), state.root);
+    const result = syncStep(op.op, op.args, () => service.exportBundle(), state);
     if (result.ok) state.lastExport = result.value;
     return result;
   }
   if (op.op === 'importLastExport') {
     assert.ok(state.lastExport, 'importLastExport needs a prior export');
-    return syncStep(op.op, op.args, () => service.importBundle(state.lastExport), state.root);
+    return syncStep(op.op, op.args, () => service.importBundle(state.lastExport), state);
   }
-  if (op.op === 'clear') return syncStep(op.op, op.args, () => service.clear(op.args?.scope), state.root);
-  if (op.op === 'clearSession') return syncStep(op.op, op.args, () => service.clearSession(op.args.sessionKey), state.root);
-  if (op.op === 'act') return syncStep(op.op, op.args, () => service.act(op.args.input), state.root);
-  if (op.op === 'close') return syncStep(op.op, op.args, () => service.close(), state.root);
+  if (op.op === 'clear') return syncStep(op.op, op.args, () => service.clear(op.args?.scope), state);
+  if (op.op === 'clearSession') return syncStep(op.op, op.args, () => service.clearSession(op.args.sessionKey), state);
+  if (op.op === 'act') return syncStep(op.op, op.args, () => service.act(op.args.input), state);
+  if (op.op === 'close') return syncStep(op.op, op.args, () => service.close(), state);
   throw new Error(`unknown op ${op.op}`);
 }
 
@@ -403,32 +452,35 @@ export async function collect(baseline: string) {
       const ids = idsFor(service);
       const ops = spec.buildOps(service, ids);
       const steps = [];
-      const state: any = {root};
+      const workspaceHash = createHash('sha1')
+        .update(resolve(service.workspaceDir)).digest('hex').slice(0, 10);
+      const state: any = {root, workspaceHash};
       for (const op of ops) steps.push(runOp(service, op, state));
       // Every scenario closes in its ops. A second close is harmless here and
       // guarantees the SQLite handle is released for the dump.
       try { service.close(); } catch {}
-      const cleaned = (value: any) => clean(encode(value), root);
+      const cleaned = (value: any) => clean(encode(value), root, workspaceHash);
+      // `resolveDefaultRootDir` treats an empty `rootDir` as absent, so the
+      // global store lives under HOME rather than under cwd.
+      const effectiveRoot = options.rootDir ? options.rootDir : join(home, '.edgeclaw', 'memory');
       observed.push({
         name: spec.name,
-        options: clean(encode(spec.options ?? null), root),
-        seeds: clean(encode(spec.seeds), root),
-        ops: clean(encode(ops), root),
-        inputPaths: clean(encode(spec.paths), root),
+        options: clean(encode(spec.options ?? null), root, workspaceHash),
+        seeds: clean(encode(spec.seeds), root, workspaceHash),
+        ops: clean(encode(ops), root, workspaceHash),
+        inputPaths: clean(encode(spec.paths), root, workspaceHash),
         paths: {
-          workspace: clean(options.workspaceDir, root),
-          rootDir: options.rootDir === undefined ? null : clean(options.rootDir, root),
-          dataDir: clean(service.dataDir, root),
-          dbPath: clean(service.dbPath, root),
-          memoryDir: clean(service.memoryDir, root),
+          workspace: clean(options.workspaceDir, root, workspaceHash),
+          rootDir: options.rootDir === undefined ? null : clean(options.rootDir, root, workspaceHash),
+          dataDir: clean(service.dataDir, root, workspaceHash),
+          dbPath: clean(service.dbPath, root, workspaceHash),
+          memoryDir: clean(service.memoryDir, root, workspaceHash),
         },
         steps,
         sqlite: cleaned(sqliteDump(service.dbPath)),
         files: {
           memory: cleaned(tree(service.memoryDir)),
-          global: cleaned(tree(options.rootDir === undefined
-            ? join(home, '.edgeclaw', 'memory', 'global')
-            : join(options.rootDir, 'global'))),
+          global: cleaned(tree(join(effectiveRoot, 'global'))),
         },
       });
     }
