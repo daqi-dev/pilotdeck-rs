@@ -17,7 +17,7 @@ node --disable-warning=ExperimentalWarning --import "$PDRS_BASELINE/node_modules
 
 重生成守卫：`metadata::process_cwd_tests::metadata_process_cwd_regenerates_identically`（ignored）。原始 stdout 由执行者保存，oracle 记录固定 commit 与原版文件 SHA-256。
 
-负控：`negative_controls.py <全新输出目录> [变异名…]`，调用者必须设置 CARGO_TARGET_DIR。26 个变异全部记 KILLED / SURVIVED / INVALID，任一非 KILLED 非零；过期锚点、未提交源码、编译或环境失败都记 INVALID，绝不当 kill。判杀走共享 `negative_suite.target_hits`：外层 libtest `failures:` 清单点名该测试，且其自身 panic 块里内嵌 `cwd_worker` 自己的 panic payload 带专属 marker（#889）；worker stdout 普通诊断或父块自身文案里的回显不算。本装置单测试 `--exact` 运行无外来测试可回显，且 `matrix()` 的 `catch_unwind` 包装会在不带 worker 输出的情况下再 panic 一次（`#879 child matrix failed`），故取 any-one-own-block 语义（`every_block=False`）。默认 HEAD 守卫；`NEGATIVE_BASELINE` 仅允许提交前抽样指向临时的 `git stash create`/`commit-tree` 对象，不移动 HEAD。整套多轮重编可能超过 20 分钟，提交后由协调者在宿主分批执行；本树未提交，不绕过守卫。
+负控：`negative_controls.py <全新输出目录> [变异名…]`，调用者必须设置 CARGO_TARGET_DIR。26 个变异全部记 KILLED / SURVIVED / INVALID，任一非 KILLED 非零；过期锚点、未提交源码、编译或环境失败都记 INVALID，绝不当 kill。判杀走共享 `negative_suite.target_hits`：外层 libtest `failures:` 清单点名该测试，且其自身 panic 块里内嵌 `cwd_worker` 自己的 panic payload 带专属 marker（#889）；worker stdout 普通诊断或父块自身文案里的回显不算；fix-r3（#889）起 payload 仅取 worker 真实 stderr 段（父块消息按 stdout→stderr 拼接、stdout 止于 worker libtest 汇总行，整段旧 panic 的 stdout 回显不参与），同一块多个 payload 相互冲突即拒判。本装置单测试 `--exact` 运行无外来测试可回显，且 `matrix()` 的 `catch_unwind` 包装会在不带 worker 输出的情况下再 panic 一次（`#879 child matrix failed`），故取 any-one-own-block 语义（`every_block=False`）。默认 HEAD 守卫；`NEGATIVE_BASELINE` 仅允许提交前抽样指向临时的 `git stash create`/`commit-tree` 对象，不移动 HEAD。整套多轮重编可能超过 20 分钟，提交后由协调者在宿主分批执行；本树未提交，不绕过守卫。
 
 fix-r2：pilot-project 八格直接消费 oracle；loader/store 以 Some(".") 选择 input 对应的真实项目。
 project_config_path 保留 absent/empty project 跳过语义，其相对 cwd 路径失败会返回 uv_cwd。

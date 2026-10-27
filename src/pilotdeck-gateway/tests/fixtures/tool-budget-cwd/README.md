@@ -33,7 +33,9 @@ ignored 重生成守卫：在 `src/` 下运行 `cargo test -p pilotdeck-gateway 
 （仅 stdout 最后一段，嵌套 worker 的清单与 panic 回显都在 stderr，不参与）点名该测试，
 且该测试自身 panic 块（内嵌 worker 输出）携带专属消息；fix-r2 起消息只认内嵌 worker
 自己的 panic payload 里的断言位，worker stdout 普通诊断、父块自身文案或断言值里的
-回显都不判杀。相邻 `... FAILED` 拼写或别处 panic/回显里的消息不再判杀。
+回显都不判杀；fix-r3 起 payload 仅取 worker 真实 stderr 段（父块消息按 stdout→stderr
+拼接、stdout 止于 worker libtest 汇总行，整段旧 panic 的 stdout 回显不参与），同一块
+多个 payload 相互冲突即拒判。相邻 `... FAILED` 拼写或别处 panic/回显里的消息不再判杀。
 全量可能超过 20 分钟，协调者提交后分批跑，不在未提交树伪造 HEAD。提交前样本可用
 `NEGATIVE_BASELINE=<临时 git commit-tree 对象>` 指向同字节的临时基线（不移动
 HEAD），默认值仍是 HEAD。
@@ -49,4 +51,5 @@ panic 文本内嵌 worker 全部输出（`test_process.rs:137`），截断边界
 测试 panic、不认被嵌 worker 的 panic 行，worker 专属断言消息因此完整参与判杀（与
 `negative_controls.py` 的既有 worker 排除同型）。#889 fix-r1 起该分类器同样改用共享
 `negative_suite.target_hits`（worker = `session_cwd_environment_worker`），不再依赖相邻
-`... FAILED` 拼写，fix-r2 起同样只认内嵌 worker 自己的 panic payload 里的断言位。
+`... FAILED` 拼写，fix-r2 起同样只认内嵌 worker 自己的 panic payload 里的断言位，
+fix-r3 起 payload 仅取 worker 真实 stderr 段、多个相互冲突的 payload 拒判。

@@ -92,16 +92,26 @@ _ASSERTION_PREFIXES = ('assertion `left == right` failed: ',
 
 
 def worker_payloads(block, prefix, worker):
-    """The embedded worker's own panic payloads inside a parent block.
+    """The embedded worker's own stderr panic payloads inside a parent block.
 
-    A parent's message embeds the worker's whole captured output, so a
-    marker in worker stdout or a plain diagnostic is not evidence (#889
-    fix-r2): only the body of the worker's own panic is. The ``panicked at
-    <loc>:`` header line and everything after the backtrace note are
-    dropped, mirroring the shared #813 ``negative_panic`` rule.
+    A parent's message embeds the worker's whole captured output, and
+    run_case splices it as stdout then stderr (test_process.rs:137), so the
+    worker's stdout - where a whole old panic diagnostic can be echoed
+    back - ends at the worker's own libtest summary line. Only panics after
+    the block's last ``test result:`` line are the worker's real stderr; a
+    block without one embeds no completed worker run and yields no payload
+    (#889 fix-r3). A marker in worker stdout or a plain diagnostic is not
+    evidence (#889 fix-r2): only the body of the worker's own panic is.
+    The ``panicked at <loc>:`` header line and everything after the
+    backtrace note are dropped, mirroring the shared #813 ``negative_panic``
+    rule.
     """
+    lines = block.splitlines()
+    summaries = [i for i, line in enumerate(lines) if line.startswith('test result:')]
+    if not summaries:
+        return []
     payloads = []
-    for segment in block.split("\nthread '")[1:]:
+    for segment in '\n'.join(lines[summaries[-1] + 1:]).split("\nthread '")[1:]:
         if segment.split("'", 1)[0] != prefix + worker:
             continue
         at = segment.find(' panicked at ')
@@ -111,12 +121,12 @@ def worker_payloads(block, prefix, worker):
         newline = body.find('\n')
         if newline < 0:
             continue
-        lines = []
+        kept = []
         for line in body[newline + 1:].splitlines():
             if _PANIC_TAIL.match(line):
                 break
-            lines.append(line)
-        payloads.append('\n'.join(lines))
+            kept.append(line)
+        payloads.append('\n'.join(kept))
     return payloads
 
 
@@ -133,17 +143,22 @@ def _scoped_to_assertion(payload, message):
                for line in payload.splitlines())
 
 
-def target_hits(result, prefix, targets, worker, *, every_block=True):
+def target_hits(result, prefix, targets, worker, *, every_block=True, refused=None):
     """Split declared ``(test, dedicated message)`` targets into hits/unrelated.
 
     A target counts as hit only when the outer ``failures:`` list names it
     and every one of its own panic blocks carries its dedicated message in
-    the embedded worker's own panic payload; a declared failure whose
-    worker died elsewhere - a plain diagnostic echoing the marker, a setup
-    ``unwrap()``, or the marker echoed in assertion values - is unrelated,
-    never a kill (#889 fix-r2). A matrix run has exactly one block per
-    test, so the every-block requirement stays fail-closed when a foreign
-    panic echoes this test's panic-start line (#889).
+    every one of the embedded worker's own stderr panic payloads; a
+    declared failure whose worker died elsewhere - a plain diagnostic
+    echoing the marker, a setup ``unwrap()``, an old panic echoed on worker
+    stdout, or the marker echoed in assertion values - is unrelated, never
+    a kill (#889 fix-r2, fix-r3). A block whose payloads disagree - one
+    carrying the message, another not - is conflicting evidence: the
+    target is refused (kept in ``unrelated`` and appended to ``refused``
+    when the caller supplies a list), never judged by any single payload
+    (#889 fix-r3). A matrix run has exactly one block per test, so the
+    every-block requirement stays fail-closed when a foreign panic echoes
+    this test's panic-start line (#889).
 
     ``every_block=False`` is for single-test ``--exact`` runners: their
     parent legitimately re-panics after ``catch_unwind`` without the
@@ -159,19 +174,28 @@ def target_hits(result, prefix, targets, worker, *, every_block=True):
         if f'{prefix}{test}' not in failed:
             continue
         blocks = panic_blocks(result.stderr, prefix, test, worker)
-        carries = [any(_scoped_to_assertion(payload, message)
-                       for payload in worker_payloads(block, prefix, worker))
-                   for block in blocks]
-        (hit if blocks and (all(carries) if every_block else any(carries))
-         else unrelated).append(test)
+        carries, conflicts = [], []
+        for block in blocks:
+            carrying = [_scoped_to_assertion(payload, message)
+                        for payload in worker_payloads(block, prefix, worker)]
+            carries.append(bool(carrying) and all(carrying))
+            conflicts.append(any(carrying) and not all(carrying))
+        if any(conflicts):
+            unrelated.append(test)
+            if refused is not None:
+                refused.append(test)
+        elif blocks and (all(carries) if every_block else any(carries)):
+            hit.append(test)
+        else:
+            unrelated.append(test)
     return hit, unrelated
 
 
-def cell_hits(result, prefix, tests, marker, worker):
+def cell_hits(result, prefix, tests, marker, worker, *, refused=None):
     """Matrix cells compose their dedicated message from marker and case id."""
     return target_hits(result, prefix,
                        [(test, f'{marker} {case_name(test)}') for test in tests],
-                       worker)
+                       worker, refused=refused)
 
 
 def judge(result, prefix, tests, marker, worker, *, any_cell=False):
@@ -180,7 +204,9 @@ def judge(result, prefix, tests, marker, worker, *, any_cell=False):
     ``any_cell`` accepts a partial kill: one declared cell red with its
     dedicated message is a kill even while a sibling declared cell is
     structurally unreachable for that mutation (the #879b stats
-    ``absolute-guard`` run relies on this).
+    ``absolute-guard`` run relies on this). A declared cell with
+    conflicting worker payloads vetoes the whole run instead (#889 fix-r3):
+    no single payload ever decides.
     """
     log = result.stdout + result.stderr
     if result.returncode == 0:
@@ -189,7 +215,10 @@ def judge(result, prefix, tests, marker, worker, *, any_cell=False):
         return False, 'compile failure', []
     if result.returncode != 101 or 'panicked at' not in log:
         return False, 'missing named runtime failure (build error, wrong panic, or missing test)', []
-    hit, unrelated = cell_hits(result, prefix, tests, marker, worker)
+    refused = []
+    hit, unrelated = cell_hits(result, prefix, tests, marker, worker, refused=refused)
+    if refused:
+        return False, f'conflicting worker payloads refused: {refused}', hit
     if unrelated:
         return False, f'declared cells failed without the dedicated marker: {unrelated}', hit
     missed = [test for test in tests if test not in hit]

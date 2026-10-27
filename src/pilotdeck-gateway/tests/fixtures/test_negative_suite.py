@@ -63,7 +63,8 @@ def worker_panic(case, marker=MARKER, payload=None):
             'note: run with `RUST_BACKTRACE=1` for a backtrace\n')
 
 
-def parent_failure(test, marker=MARKER, worker_output='', worker_payload=None):
+def parent_failure(test, marker=MARKER, worker_output='', worker_payload=None,
+                   worker_extra_panic=None):
     """A real kill shape: the parent's message embeds the worker's whole output.
 
     Mirrors the host log (test_process.rs:32 panic embedding the worker's
@@ -71,6 +72,8 @@ def parent_failure(test, marker=MARKER, worker_output='', worker_payload=None):
     ``worker_output`` is inserted before the worker's libtest run and
     ``worker_payload`` replaces the worker's panic body, e.g. a plain
     stdout diagnostic or a setup unwrap the judgment must refuse.
+    ``worker_extra_panic`` appends a second panic to the worker's stderr,
+    e.g. an old diagnostic echoed there (#889 fix-r3).
     """
     case = suite.case_name(test)
     message = (f'{PREFIX}{WORKER}/{case}: expected one passed test and receipt '
@@ -78,6 +81,8 @@ def parent_failure(test, marker=MARKER, worker_output='', worker_payload=None):
                f'test {PREFIX}{WORKER} ... FAILED\n\nfailures:\n\nfailures:\n'
                f'    {PREFIX}{WORKER}\n\ntest result: FAILED. 0 passed; 1 failed; '
                f'0 ignored;\n\n{worker_panic(case, marker, worker_payload)}')
+    if worker_extra_panic is not None:
+        message += '\n' + worker_panic(case, payload=worker_extra_panic)
     return panic_text(test, message)
 
 
@@ -337,6 +342,71 @@ class FailureListTests(unittest.TestCase):
         self.assertFalse(killed, 'an assertion-value echo must not fake a kill')
         self.assertIn('without the dedicated marker', reason)
 
+    def test_stdout_echo_of_a_whole_old_worker_panic_is_not_a_kill(self):
+        # #889 fix-r3 P0: the worker's stdout echoes a complete old panic
+        # carrying the dedicated marker, then it dies on an unrelated setup
+        # unwrap. The parent's block embeds both texts whole - the echo even
+        # has the worker's own panic header - but only the worker's real
+        # stderr panic is evidence, so the echo toggle must not change the
+        # verdict and neither variant may fake a kill.
+        cell = CELLS[0]
+        verdicts = []
+        for echo in ('', '\n' + worker_panic(suite.case_name(cell)) + '\n'):
+            stderr = parent_failure(
+                cell, worker_output=echo,
+                worker_payload='called Result::unwrap() on an Err value: PermissionDenied')
+            result = run_result(libtest_stdout([cell]), stderr)
+            self.assertIn('called Result::unwrap()', result.stderr)
+            self.assertEqual(f'{MARKER} {suite.case_name(cell)}' in result.stderr,
+                             bool(echo), 'the variants must differ only in the echoed old panic')
+            verdicts.append(suite.judge(result, PREFIX, [cell], MARKER, WORKER))
+        self.assertEqual(verdicts[0], verdicts[1],
+                         'the stdout echo toggle must not change the verdict')
+        killed, reason, _ = verdicts[1]
+        self.assertFalse(killed, 'an old panic echoed on worker stdout must not fake a kill')
+        self.assertIn('without the dedicated marker', reason)
+
+    def test_conflicting_worker_payloads_are_refused(self):
+        # When the worker's real stderr carries two panics that disagree -
+        # an old diagnostic echoed onto stderr carrying the marker plus the
+        # setup unwrap that actually failed, or the real marker panic
+        # beside an echoed unrelated one - no single payload decides: both
+        # directions are refused (#889 fix-r3). Two payloads that agree are
+        # consistent evidence and still hit.
+        cell = CELLS[0]
+        unwrap = 'called Result::unwrap() on an Err value: PermissionDenied'
+        marker = f'assertion `left == right` failed: {MARKER} {suite.case_name(cell)}'
+        for first, second in ((marker, unwrap), (unwrap, marker)):
+            result = run_result(libtest_stdout([cell]),
+                                parent_failure(cell, worker_payload=first,
+                                               worker_extra_panic=second))
+            self.assertEqual(suite.cell_hits(result, PREFIX, [cell], MARKER, WORKER),
+                             ([], [cell]))
+            killed, reason, _ = suite.judge(result, PREFIX, [cell], MARKER, WORKER)
+            self.assertFalse(killed, 'conflicting payloads must be refused, not judged')
+            self.assertIn('conflicting worker payloads refused', reason)
+        agreeing = parent_failure(cell, worker_payload=marker, worker_extra_panic=marker)
+        result = run_result(libtest_stdout([cell]), agreeing)
+        self.assertEqual(suite.cell_hits(result, PREFIX, [cell], MARKER, WORKER), ([cell], []))
+        killed, reason, _ = suite.judge(result, PREFIX, [cell], MARKER, WORKER)
+        self.assertTrue(killed, reason)
+
+    def test_worker_payloads_only_read_the_embedded_stderr_portion(self):
+        # run_case splices the worker's stdout then its stderr into the
+        # parent's message (test_process.rs:137); the stdout portion ends at
+        # the worker's own libtest summary. A whole old panic echoed on
+        # worker stdout stays before that boundary and never becomes a
+        # payload; only the real stderr panic after it does.
+        cell = CELLS[0]
+        echoed = parent_failure(
+            cell, worker_output='\n' + worker_panic(suite.case_name(cell)) + '\n',
+            worker_payload='setup guard failed')
+        blocks = suite.panic_blocks(echoed, PREFIX, cell, WORKER)
+        self.assertEqual(suite.worker_payloads(blocks[0], PREFIX, WORKER),
+                         ['setup guard failed'])
+        self.assertIn(f'{MARKER} {suite.case_name(cell)}', blocks[0],
+                      'sample must genuinely echo the marker inside the block')
+
     def test_expect_message_at_line_start_kills(self):
         # file-history binds expect() messages on purpose: the payload line
         # starts with the dedicated message and the error follows it.
@@ -436,10 +506,14 @@ class FailureListTests(unittest.TestCase):
 
     def test_worker_panic_inside_a_foreign_block_does_not_leak(self):
         # The worker panic carrying a declared cell's message sits inside a
-        # foreign parent's block; the declared cell failed for another reason.
+        # foreign parent's block - complete with the worker's own libtest
+        # run, so it is a genuine payload past the boundary; the declared
+        # cell failed for another reason and its own block decides.
         declared = CELLS[:1]
-        stderr = (panic_text(declared[0], 'setup failed: Permission denied')
-                  + panic_text(FOREIGN, worker_panic(suite.case_name(declared[0]))))
+        stray = parent_failure(
+            FOREIGN,
+            worker_payload=f'assertion `left == right` failed: {MARKER} {suite.case_name(declared[0])}')
+        stderr = (panic_text(declared[0], 'setup failed: Permission denied') + stray)
         result = run_result(libtest_stdout([*declared, FOREIGN]), stderr)
         self.assertIn(f'{MARKER} {suite.case_name(declared[0])}', result.stderr)
         self.assertEqual(suite.cell_hits(result, PREFIX, declared, MARKER, WORKER),
