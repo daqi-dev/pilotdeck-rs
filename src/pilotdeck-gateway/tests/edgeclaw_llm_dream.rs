@@ -263,7 +263,7 @@ fn check_validation(
 async fn wire_matrix() {
     let oracle = oracle();
     let cases = array(oracle.get("cases").expect("#771 oracle cases"));
-    assert_eq!(cases.len(), 28, "#771 oracle case count");
+    assert_eq!(cases.len(), 31, "#771 oracle case count");
     let mut seen = HashSet::new();
     for case in cases {
         let name = string_field(case, "name");
@@ -357,6 +357,72 @@ async fn wire_matrix() {
         server.close().await;
     }
     assert_eq!(seen.len(), 5, "#771 every Dream LLM method must be covered");
+}
+
+/// fix-r3 P1-1: `JSON.parse` on a JavaScript string sees a lone surrogate
+/// after an odd run of backslashes as an invalid escape; only an even run (or
+/// no backslash) is a legal lone surrogate. `wire_matrix` replays all three
+/// gold cases, and this test keeps a dedicated anchor for the negative control.
+#[tokio::test]
+async fn surrogate_escape_matrix() {
+    let oracle = oracle();
+    let cases = array(oracle.get("cases").expect("#771 oracle cases"));
+    for name in [
+        "planDreamClusters#9",
+        "planDreamClusters#10",
+        "planDreamClusters#11",
+    ] {
+        let case = cases
+            .iter()
+            .find(|case| string_field(case, "name") == name)
+            .unwrap_or_else(|| panic!("#771 surrogate-escape {name} missing from oracle"));
+        let input = case
+            .get("input")
+            .and_then(JsValue::as_object)
+            .unwrap_or_else(|| panic!("#771 surrogate-escape {name} input"));
+        let server = LlmStub::start(steps(case), Arc::new(AtomicU64::new(0))).await;
+        let _closed = &server.closed;
+        let extractor = LlmMemoryExtractor::new(
+            config(&server.origin),
+            Arc::new(HyperModelTransport::new()),
+            Arc::new(()),
+        );
+        let (outcome, _) =
+            tokio::time::timeout(Duration::from_secs(5), invoke(&extractor, case, input))
+                .await
+                .unwrap_or_else(|_| panic!("#771 surrogate-escape {name} timed out"));
+        let expected = case
+            .get("expected")
+            .expect("#771 surrogate-escape expected outcome");
+        if name == "planDreamClusters#11" {
+            let result = outcome
+                .get("result")
+                .unwrap_or_else(|| panic!("#771 surrogate-escape {name} must parse"));
+            equal(
+                result,
+                expected
+                    .get("result")
+                    .expect("#771 surrogate-escape expected result"),
+                &server.origin,
+                &format!("#771 surrogate-escape {name} result"),
+            );
+        } else {
+            let error = outcome
+                .get("error")
+                .unwrap_or_else(|| panic!("#771 surrogate-escape {name} must be rejected"));
+            assert_eq!(
+                string_field(error, "name"),
+                "SyntaxError",
+                "#771 surrogate-escape {name} error name"
+            );
+            assert_eq!(
+                error.get("message"),
+                expected.get("error").and_then(|error| error.get("message")),
+                "#771 surrogate-escape {name} error message"
+            );
+        }
+        server.close().await;
+    }
 }
 
 /// A transport that records the attempt and never resolves, so the Dream

@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Reversible product mutations for edgeclaw-llm-dream (#771).
 
-Every mutant is a one-line change to `llm/dream.rs`. Before any mutation the
-unmutated suite runs once and must exit 0; a broken environment is not a kill.
-A kill requires the test to fail at the mutant's own ``#771 ...`` assertion
-message. Compile failures, unrelated panics and missing anchor messages are
-INVALID, never KILLED. Stale anchors exit 2 instead of being reported as
-SURVIVED. Every mutant runs, then the script prints KILLED/SURVIVED and exits 1
-if anything survived.
+Every mutant is a one-line change to `llm/dream.rs` or the shared
+`edgeclaw/text.rs` JSON projection. Before any mutation the unmutated suite runs
+once and must exit 0; a broken environment is not a kill. A kill requires the
+test to fail at the mutant's own ``#771 ...`` assertion message. Compile
+failures, unrelated panics and missing anchor messages are INVALID, never
+KILLED. Stale anchors exit 2 instead of being reported as SURVIVED. Every mutant
+runs, then the script prints KILLED/SURVIVED and exits 1 if anything survived.
 
-`mutating_sources` requires the product tree to match the baseline. The new
-`llm/dream.rs` is not in HEAD before the coordinator commits it, so the normal
+`mutating_sources` requires the product tree to match the baseline. The changed
+product files are not in HEAD before the coordinator commits them, so the normal
 run is expected to refuse here; this tree can run samples with
 ``NEGATIVE_BASELINE=$(git stash create)`` after staging the new files. Never
 use a shadow git or a second build directory. cargo always uses the caller's
@@ -26,6 +26,7 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 root = Path(__file__).resolve().parents[5]
 fixtures = Path(__file__).resolve().parent
 dream = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/dream.rs'
+text = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/text.rs'
 
 mutations = [
     # 1. Cluster header description cap drifts by one UTF-16 unit.
@@ -125,6 +126,12 @@ mutations = [
      '        Some(JsValue::Number(value)) => *value,',
      '        Some(JsValue::Number(_value)) => default,',
      'timeout_matrix'),
+    # 20. fix-r3 P1-1: the shared projection expands a lone surrogate after an
+    #     odd run of backslashes, turning an invalid JSON escape into `\\uXXXX`.
+    ('surrogate-backslash-reject', text,
+     'if backslashes % 2 == 1 {',
+     'if backslashes % 2 == 2 {',
+     'surrogate_escape_matrix'),
 ]
 
 fragments = {
@@ -147,17 +154,22 @@ fragments = {
     'markdown-line-terminators': '#771 result rewriteUserProfile#7',
     'timeout-plan-default': '#771 timeout planDreamClusters default 180000ms',
     'timeout-explicit-override': '#771 timeout planDreamClusters override 7ms',
+    'surrogate-backslash-reject':
+        '#771 surrogate-escape planDreamClusters#9 must be rejected',
 }
 
 if '--check-anchors' in sys.argv:
-    source = dream.read_text()
-    bad = [(name, source.count(before)) for name, _path, before, _after, _test in mutations
-           if source.count(before) != 1]
-    for name, count in bad:
-        print(f'STALE ANCHOR {name}: {count} matches in {dream.relative_to(root)}')
+    paths = {path for _name, path, _before, _after, _test in mutations}
+    sources = {path: path.read_text() for path in paths}
+    bad = [(name, sources[path].count(before), path)
+           for name, path, before, _after, _test in mutations
+           if sources[path].count(before) != 1]
+    for name, count, path in bad:
+        print(f'STALE ANCHOR {name}: {count} matches in {path.relative_to(root)}')
     if bad:
         sys.exit(2)
-    print(f'OK {len(mutations)} anchors in {dream.relative_to(root)}')
+    labels = ', '.join(path.relative_to(root).as_posix() for path in sorted(paths))
+    print(f'OK {len(mutations)} anchors in {labels}')
     sys.exit(0)
 
 out = Path(sys.argv[1]).resolve()
@@ -190,7 +202,7 @@ def failure_is_bound(log, fragment, test):
 
 
 killed, survived, invalid = [], [], []
-with mutating_sources(root, [dream], baseline=baseline) as originals:
+with mutating_sources(root, [dream, text], baseline=baseline) as originals:
     stale = []
     for name, path, before, _after, _test in mutations:
         count = originals[path].decode().count(before)
@@ -205,7 +217,7 @@ with mutating_sources(root, [dream], baseline=baseline) as originals:
         sys.exit(2)
 
     baseline_logs = []
-    for test in ('wire_matrix', 'timeout_matrix'):
+    for test in ('wire_matrix', 'timeout_matrix', 'surrogate_escape_matrix'):
         slots, run, log = run_suite(test)
         baseline_logs.append(slots.stdout + slots.stderr + log)
         if run.returncode != 0:

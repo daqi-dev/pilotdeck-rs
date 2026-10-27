@@ -326,6 +326,33 @@ function specs(): any[] {
       },
       text: '{"summary":' + String.fromCharCode(0xd800) + '}',
     },
+    // fix-r3 P1-1: a lone surrogate after an odd run of backslashes is an
+    // invalid escape (`\<surrogate>`), so JSON.parse must throw; after an even
+    // run it is a plain lone surrogate and parses. Both sides are recorded.
+    {
+      name: 'planDreamClusters#9', fn: 'planDreamClusters',
+      input: {
+        kind: 'project',
+        headers: [HEADER('Project/a.md', 'A', 'a', 'U1'), HEADER('Project/b.md', 'B', 'b', 'U2')],
+      },
+      text: '{"summary":"' + String.fromCharCode(0x5c, 0xd800) + '","clusters":[]}',
+    },
+    {
+      name: 'planDreamClusters#10', fn: 'planDreamClusters',
+      input: {
+        kind: 'project',
+        headers: [HEADER('Project/a.md', 'A', 'a', 'U1'), HEADER('Project/b.md', 'B', 'b', 'U2')],
+      },
+      text: '{"summary":"' + String.fromCharCode(0x5c, 0xdc00) + '","clusters":[]}',
+    },
+    {
+      name: 'planDreamClusters#11', fn: 'planDreamClusters',
+      input: {
+        kind: 'project',
+        headers: [HEADER('Project/a.md', 'A', 'a', 'U1'), HEADER('Project/b.md', 'B', 'b', 'U2')],
+      },
+      text: '{"summary":"' + String.fromCharCode(0x5c, 0x5c, 0xd800) + '","clusters":[]}',
+    },
     // fix-r2 P1-2: ECMAScript `m` anchors also match after U+2028/U+2029.
     {
       name: 'rewriteUserProfile#7', fn: 'rewriteUserProfile',

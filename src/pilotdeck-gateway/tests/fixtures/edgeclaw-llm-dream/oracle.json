@@ -2267,6 +2267,206 @@
       }
     },
     {
+      "name": "planDreamClusters#9",
+      "fn": "planDreamClusters",
+      "input": {
+        "kind": "project",
+        "headers": [
+          {
+            "relativePath": "Project/a.md",
+            "name": "A",
+            "description": "a",
+            "updatedAt": "U1"
+          },
+          {
+            "relativePath": "Project/b.md",
+            "name": "B",
+            "description": "b",
+            "updatedAt": "U2"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"summary\\\":\\\"\\\\\\ud800\\\",\\\"clusters\\\":[]}\"}}]}"
+        }
+      ],
+      "expected": {
+        "error": {
+          "name": "SyntaxError",
+          "message": "Unexpected token '\ud800', ...\"ummary\":\"\\\ud800\",\"cluste\"... is not valid JSON"
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream project cluster plan",
+            "systemPrompt": "You are the Project Dream cluster planner for a file-memory system.\n\nYour job is to inspect lightweight header information only and decide which files should be refined together.\n\nRules:\n- Use only the supplied header metadata as evidence.\n- Do not assume full file contents beyond what the header says.\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\n- Return mutually exclusive candidate clusters only.\n- A file may appear in at most one cluster.\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\n- If files are distinct and should remain separate, leave them out of clusters.\n- Files belonging to the same current project is not, by itself, a merge reason.\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\n- Keep reasons concise and specific.\n- Natural-language output should follow the dominant language already visible in the supplied headers.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short planning summary\",\n  \"clusters\": [\n    {\n      \"member_relative_paths\": [\"Project/a.md\", \"Project/b.md\"],\n      \"reason\": \"why these files should be refined together\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"category\": \"project\",\n  \"headers\": [\n    {\n      \"relative_path\": \"Project/a.md\",\n      \"name\": \"A\",\n      \"description\": \"a\",\n      \"updated_at\": \"U1\"\n    },\n    {\n      \"relative_path\": \"Project/b.md\",\n      \"name\": \"B\",\n      \"description\": \"b\",\n      \"updated_at\": \"U2\"\n    }\n  ]\n}",
+            "rawResponse": "{\"summary\":\"\\\ud800\",\"clusters\":[]}",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "Unexpected token '\ud800', ...\"ummary\":\"\\\ud800\",\"cluste\"... is not valid JSON"
+          }
+        ],
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2098",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Project Dream cluster planner for a file-memory system.\\n\\nYour job is to inspect lightweight header information only and decide which files should be refined together.\\n\\nRules:\\n- Use only the supplied header metadata as evidence.\\n- Do not assume full file contents beyond what the header says.\\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\\n- Return mutually exclusive candidate clusters only.\\n- A file may appear in at most one cluster.\\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\\n- If files are distinct and should remain separate, leave them out of clusters.\\n- Files belonging to the same current project is not, by itself, a merge reason.\\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\\n- Keep reasons concise and specific.\\n- Natural-language output should follow the dominant language already visible in the supplied headers.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short planning summary\\\",\\n  \\\"clusters\\\": [\\n    {\\n      \\\"member_relative_paths\\\": [\\\"Project/a.md\\\", \\\"Project/b.md\\\"],\\n      \\\"reason\\\": \\\"why these files should be refined together\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"category\\\": \\\"project\\\",\\n  \\\"headers\\\": [\\n    {\\n      \\\"relative_path\\\": \\\"Project/a.md\\\",\\n      \\\"name\\\": \\\"A\\\",\\n      \\\"description\\\": \\\"a\\\",\\n      \\\"updated_at\\\": \\\"U1\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/b.md\\\",\\n      \\\"name\\\": \\\"B\\\",\\n      \\\"description\\\": \\\"b\\\",\\n      \\\"updated_at\\\": \\\"U2\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "planDreamClusters#10",
+      "fn": "planDreamClusters",
+      "input": {
+        "kind": "project",
+        "headers": [
+          {
+            "relativePath": "Project/a.md",
+            "name": "A",
+            "description": "a",
+            "updatedAt": "U1"
+          },
+          {
+            "relativePath": "Project/b.md",
+            "name": "B",
+            "description": "b",
+            "updatedAt": "U2"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"summary\\\":\\\"\\\\\\udc00\\\",\\\"clusters\\\":[]}\"}}]}"
+        }
+      ],
+      "expected": {
+        "error": {
+          "name": "SyntaxError",
+          "message": "Unexpected token '\udc00', ...\"ummary\":\"\\\udc00\",\"cluste\"... is not valid JSON"
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream project cluster plan",
+            "systemPrompt": "You are the Project Dream cluster planner for a file-memory system.\n\nYour job is to inspect lightweight header information only and decide which files should be refined together.\n\nRules:\n- Use only the supplied header metadata as evidence.\n- Do not assume full file contents beyond what the header says.\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\n- Return mutually exclusive candidate clusters only.\n- A file may appear in at most one cluster.\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\n- If files are distinct and should remain separate, leave them out of clusters.\n- Files belonging to the same current project is not, by itself, a merge reason.\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\n- Keep reasons concise and specific.\n- Natural-language output should follow the dominant language already visible in the supplied headers.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short planning summary\",\n  \"clusters\": [\n    {\n      \"member_relative_paths\": [\"Project/a.md\", \"Project/b.md\"],\n      \"reason\": \"why these files should be refined together\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"category\": \"project\",\n  \"headers\": [\n    {\n      \"relative_path\": \"Project/a.md\",\n      \"name\": \"A\",\n      \"description\": \"a\",\n      \"updated_at\": \"U1\"\n    },\n    {\n      \"relative_path\": \"Project/b.md\",\n      \"name\": \"B\",\n      \"description\": \"b\",\n      \"updated_at\": \"U2\"\n    }\n  ]\n}",
+            "rawResponse": "{\"summary\":\"\\\udc00\",\"clusters\":[]}",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "Unexpected token '\udc00', ...\"ummary\":\"\\\udc00\",\"cluste\"... is not valid JSON"
+          }
+        ],
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2098",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Project Dream cluster planner for a file-memory system.\\n\\nYour job is to inspect lightweight header information only and decide which files should be refined together.\\n\\nRules:\\n- Use only the supplied header metadata as evidence.\\n- Do not assume full file contents beyond what the header says.\\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\\n- Return mutually exclusive candidate clusters only.\\n- A file may appear in at most one cluster.\\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\\n- If files are distinct and should remain separate, leave them out of clusters.\\n- Files belonging to the same current project is not, by itself, a merge reason.\\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\\n- Keep reasons concise and specific.\\n- Natural-language output should follow the dominant language already visible in the supplied headers.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short planning summary\\\",\\n  \\\"clusters\\\": [\\n    {\\n      \\\"member_relative_paths\\\": [\\\"Project/a.md\\\", \\\"Project/b.md\\\"],\\n      \\\"reason\\\": \\\"why these files should be refined together\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"category\\\": \\\"project\\\",\\n  \\\"headers\\\": [\\n    {\\n      \\\"relative_path\\\": \\\"Project/a.md\\\",\\n      \\\"name\\\": \\\"A\\\",\\n      \\\"description\\\": \\\"a\\\",\\n      \\\"updated_at\\\": \\\"U1\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/b.md\\\",\\n      \\\"name\\\": \\\"B\\\",\\n      \\\"description\\\": \\\"b\\\",\\n      \\\"updated_at\\\": \\\"U2\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "planDreamClusters#11",
+      "fn": "planDreamClusters",
+      "input": {
+        "kind": "project",
+        "headers": [
+          {
+            "relativePath": "Project/a.md",
+            "name": "A",
+            "description": "a",
+            "updatedAt": "U1"
+          },
+          {
+            "relativePath": "Project/b.md",
+            "name": "B",
+            "description": "b",
+            "updatedAt": "U2"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"summary\\\":\\\"\\\\\\\\\\ud800\\\",\\\"clusters\\\":[]}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "summary": "\\\ud800",
+          "clusters": []
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream project cluster plan",
+            "systemPrompt": "You are the Project Dream cluster planner for a file-memory system.\n\nYour job is to inspect lightweight header information only and decide which files should be refined together.\n\nRules:\n- Use only the supplied header metadata as evidence.\n- Do not assume full file contents beyond what the header says.\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\n- Return mutually exclusive candidate clusters only.\n- A file may appear in at most one cluster.\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\n- If files are distinct and should remain separate, leave them out of clusters.\n- Files belonging to the same current project is not, by itself, a merge reason.\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\n- Keep reasons concise and specific.\n- Natural-language output should follow the dominant language already visible in the supplied headers.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short planning summary\",\n  \"clusters\": [\n    {\n      \"member_relative_paths\": [\"Project/a.md\", \"Project/b.md\"],\n      \"reason\": \"why these files should be refined together\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"category\": \"project\",\n  \"headers\": [\n    {\n      \"relative_path\": \"Project/a.md\",\n      \"name\": \"A\",\n      \"description\": \"a\",\n      \"updated_at\": \"U1\"\n    },\n    {\n      \"relative_path\": \"Project/b.md\",\n      \"name\": \"B\",\n      \"description\": \"b\",\n      \"updated_at\": \"U2\"\n    }\n  ]\n}",
+            "rawResponse": "{\"summary\":\"\\\\\ud800\",\"clusters\":[]}",
+            "parsedResult": {
+              "summary": "\\\ud800",
+              "clusters": []
+            }
+          }
+        ],
+        "validation": {
+          "kind": "clusters",
+          "result": {
+            "clusters": [],
+            "droppedWarnings": []
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2098",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Project Dream cluster planner for a file-memory system.\\n\\nYour job is to inspect lightweight header information only and decide which files should be refined together.\\n\\nRules:\\n- Use only the supplied header metadata as evidence.\\n- Do not assume full file contents beyond what the header says.\\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\\n- Return mutually exclusive candidate clusters only.\\n- A file may appear in at most one cluster.\\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\\n- If files are distinct and should remain separate, leave them out of clusters.\\n- Files belonging to the same current project is not, by itself, a merge reason.\\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\\n- Keep reasons concise and specific.\\n- Natural-language output should follow the dominant language already visible in the supplied headers.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short planning summary\\\",\\n  \\\"clusters\\\": [\\n    {\\n      \\\"member_relative_paths\\\": [\\\"Project/a.md\\\", \\\"Project/b.md\\\"],\\n      \\\"reason\\\": \\\"why these files should be refined together\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"category\\\": \\\"project\\\",\\n  \\\"headers\\\": [\\n    {\\n      \\\"relative_path\\\": \\\"Project/a.md\\\",\\n      \\\"name\\\": \\\"A\\\",\\n      \\\"description\\\": \\\"a\\\",\\n      \\\"updated_at\\\": \\\"U1\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/b.md\\\",\\n      \\\"name\\\": \\\"B\\\",\\n      \\\"description\\\": \\\"b\\\",\\n      \\\"updated_at\\\": \\\"U2\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
       "name": "rewriteUserProfile#7",
       "fn": "rewriteUserProfile",
       "input": {
