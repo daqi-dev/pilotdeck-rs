@@ -78,7 +78,11 @@ async function waitCoexistReady(runtime, env, isInterrupted, audit, phase) {
 // or missing identity, or a fatal orchestration error). An execution error
 // never credits the suite, and neither does a duplicate failed instance
 // masked by a passing first match: the executed-title multiset must equal the
-// registration exactly.
+// registration exactly. fix-r2 P0-1: a duplicate counts in EVERY form — a
+// same-named skipped or empty-results instance next to the executed match is
+// drift too (a legal skip carries another phase's title, never one
+// registered for the phase being scored), mirroring accounting.mjs's
+// matches.length !== 1 discipline.
 export function coexistAccounting(reports, runs) {
   const rows = [], errors = [];
   for (const run of runs) {
@@ -87,6 +91,18 @@ export function coexistAccounting(reports, runs) {
     const tests = report ? reportCases(report, run.testDir) : [];
     for (const error of report?.errors || []) errors.push(`coexist ${run.phase} execution error: ${error.message || String(error)}`);
     if (titles) {
+      // fix-r2 P0-1: every instance counts, not just executed ones. A
+      // same-named skipped or empty-results duplicate next to the executed
+      // match must surface as drift; only other phases' titles may legally
+      // skip, and those are never registered for this phase.
+      const instances = new Map();
+      for (const row of tests) instances.set(row.title, (instances.get(row.title) ?? 0) + 1);
+      for (const title of titles) {
+        const count = instances.get(title) ?? 0;
+        if (report && count !== 1) {
+          errors.push(`coexist ${run.phase} registration drift: ${JSON.stringify(title)} matched ${count} instance(s), expected exactly 1`);
+        }
+      }
       const executed = tests.filter(row => !row.results.every(result => result.status === 'skipped')).map(row => row.title);
       if (report && JSON.stringify([...executed].sort()) !== JSON.stringify([...titles].sort())) {
         errors.push(`coexist ${run.phase} registration drift: ${JSON.stringify(executed)}`);
@@ -115,17 +131,26 @@ export function coexistAccounting(reports, runs) {
 }
 // B-class new-side pairing matrix: only the native-auth cell executes (against
 // this package's coexistence deployment); every other cell is recorded
-// NOT_RUN_NEW_SIDE, never silently skipped. No scoring change: the new side can
-// never turn the B suite green (its own status stays FAIL), but its honest
-// native-auth FAIL does surface in run.mjs's B verdict.
-export function newSideAccounting(nativeReport, executed) {
-  const nativeRows = nativeReport?.rows ?? [];
+// NOT_RUN_NEW_SIDE, never silently skipped. fix-r2 P0-2: the cell and the
+// summary consume the pairing run's own three-state accounting
+// (coexistAccounting) instead of re-deriving a verdict from the rows — an
+// execution error (ERROR) outranks row-level PASS, so invalid evidence can
+// never fold into a green cell or a green B verdict. The new side still
+// cannot turn B green: its honest native-auth FAIL (the probe has no
+// settings pages until F3+ migration) keeps the overall B verdict FAIL.
+export function newSideAccounting(nativeAccounting, executed) {
+  const nativeRows = nativeAccounting?.rows ?? [];
+  const errors = nativeAccounting?.errors ?? [];
+  const nativeStatus = !nativeAccounting || nativeAccounting.status === 'ERROR' || errors.length ? 'ERROR'
+    : nativeAccounting.status === 'PASS' && nativeRows.length && nativeRows.every(row => row.status === 'PASS') ? 'PASS' : 'FAIL';
   const rows = DEPLOY_CELLS.map(cell => cell.id === 'native-auth'
-    ? { cell: cell.id, status: nativeRows.length && nativeRows.every(row => row.status === 'PASS') ? 'PASS' : 'FAIL',
-        reason: 'executed against the #927 coexistence deployment (real native TS, switch on); the probe has no settings pages, an honest FAIL is expected until F3+ migration' }
+    ? { cell: cell.id, status: nativeStatus,
+        reason: nativeStatus === 'ERROR'
+          ? 'executed against the #927 coexistence deployment; the pairing run\'s evidence is invalid (execution error), so the cell is ERROR and B can never pass on it'
+          : 'executed against the #927 coexistence deployment (real native TS, switch on); the probe has no settings pages, an honest FAIL is expected until F3+ migration' }
     : { cell: cell.id, status: 'NOT_RUN_NEW_SIDE',
         reason: '目标路由未迁移：新侧只接 native-auth 配对；其余 profile 的 vite 内存生成模块不适用于静态共存部署' });
-  return { rows, executed, status: 'FAIL' };
+  return { rows, executed, status: nativeStatus };
 }
 async function runCoexistRuns({ output, command, children, isInterrupted, runs }) {
   const reports = {}, executions = [];

@@ -20,6 +20,19 @@ its test were deleted; the behavioural oracle now executes the real template
 template itself (``template-switch-ignored`` / ``template-new-dead`` /
 ``patch-prefix-loose``).
 
+fix-r2 note (review P0-1/P0-2/P0-3 + sibling P2-1): every ruler path must stay
+non-PASS on ERROR / duplicate / missing / unknown attribution. Added mutants:
+``duplicate-instances-filtered`` (per-title instance counting must not filter
+skipped/empty duplicates), ``newside-error-folded`` + ``b-verdict-ignores-error``
+(the B new-side cell and the B overall verdict must consume the pairing
+accounting's three states), ``storage-merge-flat`` (the C3 snapshot must keep
+the localStorage/sessionStorage namespaces), ``port-guard-dropped`` /
+``port-guard-native-dropped`` / ``fatal-status-fail`` (both entries assert
+ports free before assembly; fatal keeps ERROR). ``active-project-unchecked``
+and ``s1-marker-reverted`` are wiring guards (source-text checks on the spec),
+not behavioural detections — the browser-level mutants would need a live
+deployment.
+
 No cargo, no listen, no browser: the oracles are the offline node --test set
 #927 ships (coexist-boundary / coexist-patch / coexist-accounting /
 coexist-self-check .test.mjs).
@@ -43,6 +56,7 @@ ROOT = Path(__file__).resolve().parents[5]
 BOUNDARY = ROOT / "ui-rs/shared/boundary.js"
 DEPLOY = ROOT / "scripts/fe-parity/coexist-deploy.mjs"
 RUNNER = ROOT / "scripts/fe-parity/coexist-runner.mjs"
+RUN = ROOT / "scripts/fe-parity/run.mjs"
 SHARED_KEYS = ROOT / "scripts/fe-parity/coexist-shared-keys.mjs"
 SPEC = ROOT / "scripts/fe-parity/coexist-tests/coexist.spec.mjs"
 BOUNDARY_ORACLE = ROOT / "scripts/fe-parity/coexist-boundary.test.mjs"
@@ -177,6 +191,60 @@ mutations = [
         "P0：报告含执行错误时总状态不得 PASS（14 例全绿也不行）",
     ),
     (
+        "duplicate-instances-filtered",
+        RUNNER,
+        "      for (const row of tests) instances.set(row.title, (instances.get(row.title) ?? 0) + 1);",
+        "      for (const row of tests.filter(item => !item.results.every(result => result.status === 'skipped')))"
+        " instances.set(row.title, (instances.get(row.title) ?? 0) + 1);",
+        ACCOUNTING_ORACLE,
+        "P0-1（fix-r2）：同名 skipped/空结果重复实例不得被过滤成 PASS（登记身份的实例匹配数必须恰为 1）",
+    ),
+    (
+        "newside-error-folded",
+        RUNNER,
+        "  const nativeStatus = !nativeAccounting || nativeAccounting.status === 'ERROR' || errors.length ? 'ERROR'\n"
+        "    : nativeAccounting.status === 'PASS' && nativeRows.length && nativeRows.every(row => row.status === 'PASS') ? 'PASS' : 'FAIL';",
+        "  const nativeStatus = nativeRows.length && nativeRows.every(row => row.status === 'PASS') ? 'PASS' : 'FAIL';",
+        ACCOUNTING_ORACLE,
+        "P0-2（fix-r2）：原账目 ERROR 时新侧 native-auth 格不得记 PASS（执行错误优先于行级 PASS）",
+    ),
+    (
+        "b-verdict-ignores-error",
+        RUN,
+        "    if (native && native.newSide.status !== 'PASS') {",
+        "    if (native && native.newSide.rows.some(row => row.status === 'FAIL')) {",
+        SELFCHECK_ORACLE,
+        "P0-2（fix-r2）：B 总判分必须消费新侧三态汇总（ERROR 不得折成 PASS_*）",
+    ),
+    (
+        "port-guard-dropped",
+        RUNNER,
+        "  // Ports before assembly: a second entry point must fail closed here instead\n"
+        "  // of rm -rf-ing the deployment copy another run is currently serving.\n"
+        "  await assertCoexistPortsFree();",
+        "  // Ports before assembly: a second entry point must fail closed here instead\n"
+        "  // of rm -rf-ing the deployment copy another run is currently serving.",
+        SELFCHECK_ORACLE,
+        "并发守卫：每个共存入口必须在装配（rm -rf 副本）前先 assertCoexistPortsFree（fail-closed，不杀进程）",
+    ),
+    (
+        "port-guard-native-dropped",
+        RUNNER,
+        "  // Same ordering guard as runCoexist: never destroy a copy another run serves.\n"
+        "  await assertCoexistPortsFree();",
+        "  // Same ordering guard as runCoexist: never destroy a copy another run serves.",
+        SELFCHECK_ORACLE,
+        "并发守卫：每个共存入口必须在装配（rm -rf 副本）前先 assertCoexistPortsFree（fail-closed，不杀进程）",
+    ),
+    (
+        "fatal-status-fail",
+        RUNNER,
+        "    accounting.status = 'ERROR';",
+        "    accounting.status = 'FAIL';",
+        SELFCHECK_ORACLE,
+        "fatal 编排错误必须记 ERROR（证据无效），不得退回 FAIL",
+    ),
+    (
         "catalog-drift-masked",
         RUNNER,
         "    'C3 共享键跨跳转不变',",
@@ -187,10 +255,18 @@ mutations = [
     (
         "storage-local-only",
         SHARED_KEYS,
-        "  for (const storage of [localStorage, sessionStorage]) {",
-        "  for (const storage of [localStorage]) {",
+        "  return { localStorage: pick(localStorage), sessionStorage: pick(sessionStorage) };",
+        "  return { localStorage: pick(localStorage), sessionStorage: {} };",
         SELFCHECK_ORACLE,
         "C3 快照必须覆盖 sessionStorage：活动项目键在 sessionStorage（AppShellV2.tsx:163），只读 localStorage 会漏",
+    ),
+    (
+        "storage-merge-flat",
+        SHARED_KEYS,
+        "  return { localStorage: pick(localStorage), sessionStorage: pick(sessionStorage) };",
+        "  return { ...pick(localStorage), ...pick(sessionStorage) };",
+        SELFCHECK_ORACLE,
+        "P0-3（fix-r2）：快照必须按 storage 命名空间分组，不得平面合并两 storage 丢归属",
     ),
     (
         "active-project-unchecked",

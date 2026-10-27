@@ -229,9 +229,10 @@ try {
     if (frontends.includes('new')) {
       // #927 pairing entry: the new side is the #927 coexistence deployment
       // running the frozen native-auth spec verbatim. Honest record only; the
-      // new side can never turn the B suite green — but its honest native-auth
-      // FAIL (the probe has no settings pages until F3+ migration) does make
-      // the overall B verdict FAIL, which is exactly what is reported below.
+      // new side can never turn the B suite green — its honest native-auth
+      // FAIL (the probe has no settings pages until F3+ migration) keeps the
+      // overall B verdict FAIL, and an invalid-evidence pairing run records
+      // ERROR (fix-r2 P0-2), exactly what is reported below.
       native = await runCoexistNativeAuth({ output, command, children, isInterrupted: () => interrupted });
       result.deployNew = native;
       for (const row of native.newSide.rows) console.log(`B 新侧 ${row.cell}: ${row.status} — ${row.reason}`);
@@ -255,9 +256,12 @@ try {
     } else {
       result.baselineExecution = { expected: inventory.length, actual: 0, status: 'NOT_RUN_NEW_SIDE_ONLY', reason: 'B new-side pairing only; the old side was not requested' };
     }
-    if (native?.newSide.rows.some(row => row.status === 'FAIL')) {
-      // The new side's honest record (the probe has no settings pages yet).
-      result.status = 'FAIL';
+    if (native && native.newSide.status !== 'PASS') {
+      // fix-r2 P0-2: the B verdict consumes the new-side pairing summary's
+      // three states — an execution error (ERROR) is invalid evidence and can
+      // never fold into a green B; the honest native-auth FAIL (the probe has
+      // no settings pages yet) keeps B FAIL.
+      result.status = native.newSide.status;
     } else if (deploy) {
       result.status = deploy.accounting.status === 'PASS'
         ? (profiles.length === 3 ? 'PASS_SINGLE_FRONTEND_ONLY' : 'PASS_PARTIAL_B_PROFILES_ONLY') : 'FAIL';

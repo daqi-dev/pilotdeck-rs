@@ -58,9 +58,6 @@ const marker = page => page.evaluate(() => window.__coexistMarker);
 const navType = page => page.evaluate(() => performance.getEntriesByType('navigation')?.[0]?.type);
 const draftKeys = page => page.evaluate(() =>
   Object.fromEntries(Object.entries(localStorage).filter(([key]) => key.startsWith('draft_input_'))));
-// C3 snapshots BOTH storages through the shared helper: the old shell keeps
-// the active-project key in sessionStorage, which a localStorage-only walk
-// cannot see.
 
 phaseTest('valid', 'S1 开关开：GET /settings 新 bundle、GET /settingsX 旧 bundle（HTTP 严格段边界）', async ({ request }) => {
   const migrated = await request.get('/settings');
@@ -120,8 +117,8 @@ async function chromeHistory(page) {
 // (the frozen old shell's reload boot navigation prunes the forward entry,
 // characterized in N3b): the case therefore records an honest FAIL against
 // the original criterion instead of being re-scored as a characterization
-// pass. The remediation options are a human decision (decision card
-// decision-n3.md: change no-store / drop the boot push / accept no forward).
+// pass. The remediation options are a human decision (moved to issue #937:
+// change no-store / drop the boot push / accept no forward).
 phaseTest('valid', 'N3 前进/后退跨壳遍历（原验收格）：旧壳侧出发 goForward 进入 /settings 必须落新 bundle', async ({ page }) => {
   await signInOldShell(page);
   await oldShellReady(page);
@@ -136,7 +133,7 @@ phaseTest('valid', 'N3 前进/后退跨壳遍历（原验收格）：旧壳侧�
   await newShellReady(page);
   await evidence('N3', { from, url: page.url(), goForwardResponse: fwd ? fwd.status() : null,
     note: '原验收格照原判据执行（评审 P1-1）：旧壳侧出发的前进必须落新 bundle。' +
-      '当前实测被冻结旧壳固有行为阻断（整页重载后启动 pushState 清跨壳前进项，根因特征化见 N3b，决策卡 decision-n3.md 待 F3 定夺）。' +
+      '当前实测被冻结旧壳固有行为阻断（整页重载后启动 pushState 清跨壳前进项，根因特征化见 N3b，决策已转 issue #937 待定夺）。' +
       'BFCache 归因如实标注：本装置 Chrome 由 Playwright 以 --disable-back-forward-cache 启动，BFCache 整体关闭；' +
       '「server no-store 使旧壳不命中 BFCache」为读码推断（HTTP 标准语义），未在本装置实测。' +
       'D4 对账：跨壳后退为跨文档导航，落在正确壳，状态由 URL+storage 重建；跨壳视觉闪烁仅人眼（待人工验收）。' });
@@ -180,7 +177,7 @@ phaseTest('valid', 'N3b 前进入新壳（特征化）：旧壳重载后其启�
   expect(page.url(), '前进项已被清除，goForward 不得再导航（特征化断言，待 F3 定夺）').toContain('/p/general');
   await oldShellReady(page);
   await evidence('N3b', { appended, afterPrune, mutations, goForwardResponse: fwd ? fwd.status() : null,
-    note: '前进入新壳被冻结旧壳固有行为阻断：① 后退入旧壳在本装置必整页重载——本装置 Chrome 由 Playwright 以 --disable-back-forward-cache 启动，BFCache 整体关闭（tcp-connections.jsonl 进程 argv 实测）；server no-store 是否独立阻断真实用户浏览器的 BFCache 为读码推断（HTTP 标准语义），未实测；② 重载启动时 URL 同步 effect 调 handleProjectSelect → navigate(\'/\') pushState，清掉跨壳前进项。②为冻结 TS 侧行为，非本包 A patch/boundary 缺陷；修复需 F3 定夺（改 no-store / 去启动 push / 接受不可前进入新壳，见决策卡 decision-n3.md）。' });
+    note: '前进入新壳被冻结旧壳固有行为阻断：① 后退入旧壳在本装置必整页重载——本装置 Chrome 由 Playwright 以 --disable-back-forward-cache 启动，BFCache 整体关闭（tcp-connections.jsonl 进程 argv 实测）；server no-store 是否独立阻断真实用户浏览器的 BFCache 为读码推断（HTTP 标准语义），未实测；② 重载启动时 URL 同步 effect 调 handleProjectSelect → navigate(\'/\') pushState，清掉跨壳前进项。②为冻结 TS 侧行为，非本包 A patch/boundary 缺陷；修复需 F3 定夺（改 no-store / 去启动 push / 接受不可前进入新壳，决策已转 issue #937）。' });
 });
 
 phaseTest('valid', 'N4 新→旧 「返回旧壳」链接硬跳', async ({ page }) => {
@@ -277,15 +274,19 @@ phaseTest('valid', 'C3 共享键跨跳转不变', async ({ page }) => {
   // localStorage-only snapshot — the gap this case existed to hide.
   await expect.poll(() => page.evaluate(() => sessionStorage.getItem('pilotdeck-active-project')),
     { message: ACTIVE_PROJECT_ASSERT, timeout: 30_000 }).toBeTruthy();
+  // The snapshot is namespaced per storage (fix-r2 P0-3): a key moved across
+  // storages or shadowed by a same-named key in the other storage must break
+  // equality, never pass through a flat merge of the two.
   const before = await page.evaluate(sharedStorageSnapshot);
-  expect(before['auth-token'], 'C1 前置：登录后 auth-token 必须存在').toBeTruthy();
+  expect(before.localStorage['auth-token'], 'C1 前置：登录后 auth-token 必须存在（localStorage 归属）').toBeTruthy();
   await settingsButton(page).click();
   await newShellReady(page);
-  expect(await page.evaluate(sharedStorageSnapshot), '跳到新壳后共享键（localStorage+sessionStorage）必须不变').toEqual(before);
+  expect(await page.evaluate(sharedStorageSnapshot), '跳到新壳后共享键（localStorage+sessionStorage，按 storage 归属）必须不变').toEqual(before);
   await page.getByRole('link', { name: '返回旧壳' }).click();
   await oldShellReady(page);
-  expect(await page.evaluate(sharedStorageSnapshot), '跳回旧壳后共享键（localStorage+sessionStorage）必须不变').toEqual(before);
-  await evidence('C3', { keys: Object.keys(before), activeProject: before[ACTIVE_PROJECT_KEY] ?? null,
+  expect(await page.evaluate(sharedStorageSnapshot), '跳回旧壳后共享键（localStorage+sessionStorage，按 storage 归属）必须不变').toEqual(before);
+  await evidence('C3', { localKeys: Object.keys(before.localStorage), sessionKeys: Object.keys(before.sessionStorage),
+    activeProject: before.sessionStorage[ACTIVE_PROJECT_KEY] ?? null,
     storages: ['localStorage', 'sessionStorage'] });
 });
 
