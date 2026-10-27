@@ -17,6 +17,11 @@ those changes are committed:
     python3 negative.py --check-anchors
     python3 negative.py --list
 
+Cases carry a target: ``test`` runs ``--test edgeclaw_retriever`` (the replay
+and M10 cells), while ``lib`` runs a ``#[cfg(test)]`` unit test in the retriever
+module (the P1-1 atomic-commit guard). Both run one exact test so the bound
+message is the one that has to fail.
+
 Never run this in a shadow repository or alternate source tree. The gateway
 product tree must be committed for the full run (the coordinator runs it after
 this fixture lands); until then only ``--check-anchors`` is available here.
@@ -33,6 +38,7 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 retriever = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/retrieval/retriever.rs'
+tests = root / 'src/pilotdeck-gateway/tests/edgeclaw_retriever.rs'
 
 cases = [
     # The retained recent user-message contents are part of the cache key.
@@ -79,37 +85,27 @@ cases = [
     # TS requires `expiresAt > now`; `>=` keeps the boundary entry alive.
     # oracle: m10_ttl_boundary exact 30_000 boundary miss.
     ('ttl-comparison', retriever,
-     '            && cached.expires_at > (self.clock)()',
-     '            && cached.expires_at >= (self.clock)()',
+     '        if cached.expires_at <= now {',
+     '        if cached.expires_at < now {',
      'm10_ttl_boundary'),
     # resetTransientState must clear the recall cache.
     # oracle: m10_cache_miss_hit_and_reset reset-clears cell.
     ('reset-not-clear', retriever,
-     '''        self.recall_cache
-            .lock()
-            .expect("#767 recall cache lock")
-            .clear();''',
-     '''        let _ = self
-            .recall_cache
-            .lock()
-            .expect("#767 recall cache lock")
-            .len();''',
+     '        self.lock_state().recall_cache.clear();',
+     '        let _ = self.lock_state().recall_cache.len();',
      'm10_cache_miss_hit_and_reset'),
     # The TS set happens after the LLM await; this mutant drops the set, so a
     # reset-during-await result is never cached.
     # oracle: m10_reset_during_await second call must be a cache hit.
     ('cache-never-set', retriever,
-     '''        self.recall_cache
-            .lock()
-            .expect("#767 recall cache lock")
-            .insert(
-                cache_key,
-                RecallCacheEntry {
-                    expires_at: (self.clock)().saturating_add(RECALL_CACHE_TTL_MS),
-                    result: result.clone(),
-                },
-            );''',
-     '''        drop(cache_key);''',
+     '''        state.recall_cache.insert(
+            key,
+            RecallCacheEntry {
+                expires_at: now.saturating_add(RECALL_CACHE_TTL_MS),
+                result: result.clone(),
+            },
+        );''',
+     '''        let _ = key;''',
      'm10_reset_during_await'),
     # Cache hits report elapsedMs = 0.
     # oracle: m10_cache_miss_hit_and_reset normalized hit.
@@ -120,8 +116,8 @@ cases = [
     # Cache hits overwrite lastRecallCacheHit (and keep recallTimeouts).
     # oracle: m10_cache_miss_hit_and_reset normalized-hit stats.
     ('hit-stats', retriever,
-     '        stats.last_recall_cache_hit = true;',
-     '        stats.last_recall_ms = 0.0;',
+     '    stats.last_recall_cache_hit = true;',
+     '    stats.last_recall_ms = 0.0;',
      'm10_cache_miss_hit_and_reset'),
     # Trace text must concatenate UTF-16 units; a UTF-8 round trip drops the
     # lone surrogate in the `mode=<mode>` output summary.
@@ -130,7 +126,55 @@ cases = [
      '            &concat_js(&[&s("mode="), &mode]),',
      '            &JsString::from(format!("mode={}", mode.to_utf8().unwrap_or_default())),',
      'utf16_lone_surrogate_preserved'),
+    # P1-1: splitting the miss commit back into two lock acquisitions lets a
+    # concurrent hit write `cacheHit=true` between the cache insert and the
+    # stats write.
+    # unit guard: the commit hook must still see the state mutex held.
+    ('separate-commit', retriever,
+     '''        #[cfg(test)]
+        self.notify_commit_hook();
+        let previous = state.runtime_stats.clone();''',
+     '''        drop(state);
+        #[cfg(test)]
+        self.notify_commit_hook();
+        let mut state = self.lock_state();
+        let previous = state.runtime_stats.clone();''',
+     'runtime::memory::edgeclaw::retriever::tests::commit_keeps_cache_and_stats_in_one_critical_section'),
+    # P1-2: the old unconditional user path list re-adds the profile that TS
+    # omits when `hasUserSummary` is false.
+    # oracle: empty-user-profile/0 Injected Blocks.
+    ('injected-blocks-user', retriever,
+     '''        let mut blocks: Vec<JsString> = if has_user {
+            user_paths.clone()
+        } else {
+            Vec::new()
+        };''',
+     '''        let mut blocks: Vec<JsString> = user_paths.clone();''',
+     'replay_scenarios'),
+    # P1-3: keeping the first cache entry makes the first completion win
+    # instead of the later one; the controlled-order reverse cell catches it.
+    ('same-key-or-insert', retriever,
+     '''        state.recall_cache.insert(
+            key,
+            RecallCacheEntry {
+                expires_at: now.saturating_add(RECALL_CACHE_TTL_MS),
+                result: result.clone(),
+            },
+        );''',
+     '''        state.recall_cache.entry(key).or_insert_with(|| RecallCacheEntry {
+            expires_at: now.saturating_add(RECALL_CACHE_TTL_MS),
+            result: result.clone(),
+        });''',
+     'm10_same_key_concurrent_reverse'),
+    # P2: an off-by-one request ceiling must hit the bounded wait and print the
+    # calling M10 cell's message (not hang the test suite).
+    ('gated-wait-bound', tests,
+     '            while self.count() < count {',
+     '            while self.count() <= count {',
+     'm10_same_key_concurrent'),
 ]
+
+LIB_TESTS = {'separate-commit'}
 
 EXPECTED = {
     'cache-key-recent': '#767 M10 recent content is part of the cache key',
@@ -144,6 +188,10 @@ EXPECTED = {
     'hit-elapsed': '#767 M10-2 hit elapsedMs is zero',
     'hit-stats': '#767 M10-2 stats lastRecallCacheHit',
     'utf16-concat': '#767 UTF-16 trace output summary keeps the lone surrogate',
+    'separate-commit': '#767 P1-1 cache insert and stats write are one critical section',
+    'injected-blocks-user': '#767 result empty-user-profile/0 (retrieve)',
+    'same-key-or-insert': '#767 M10-9 reverse later completion wins',
+    'gated-wait-bound': '#767 M10-8 same-key concurrent requests: gated transport timed out after 5s',
 }
 
 names = [case[0] for case in cases]
@@ -183,9 +231,15 @@ paths = sorted({case[1] for case in cases})
 
 env = dict(os.environ)
 env['CARGO_TARGET_DIR'] = target
-command = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
-           '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_retriever']
+base_command = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
+                '-p', 'pilotdeck-gateway']
 results = []
+
+
+def test_command(test, case_target):
+    if case_target == 'lib':
+        return base_command + ['--lib', test, '--', '--exact']
+    return base_command + ['--test', 'edgeclaw_retriever', test, '--', '--exact']
 
 
 def classify(log, returncode, expected):
@@ -228,7 +282,7 @@ with mutating_sources(root, paths) as originals:
         try:
             slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
             slots_text = slots.stdout + slots.stderr
-            run = run_owned(command + ['--', '--test-threads=1'],
+            run = run_owned(base_command + ['--test', 'edgeclaw_retriever', '--', '--test-threads=1'],
                             cwd=root, env=env, timeout=600)
             log = slots_text + run.stdout + run.stderr
             returncode = run.returncode
@@ -250,15 +304,15 @@ with mutating_sources(root, paths) as originals:
             slots_text = ''
             log = ''
             returncode = None
+            case_target = 'lib' if name in LIB_TESTS else 'test'
+            command = test_command(test, case_target)
             try:
                 slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
                 slots_text = slots.stdout + slots.stderr
                 original = originals[path].decode()
                 path.write_bytes(original.replace(before, after).encode())
                 try:
-                    run = run_owned(
-                        command + [test, '--', '--exact'],
-                        cwd=root, env=env, timeout=600)
+                    run = run_owned(command, cwd=root, env=env, timeout=600)
                     log = run.stdout + run.stderr
                     returncode = run.returncode
                 finally:
@@ -273,11 +327,12 @@ with mutating_sources(root, paths) as originals:
             if outcome == 'KILLED' and not baseline_ok:
                 outcome, reason = 'INVALID', 'baseline was not green'
             (out / f'{name}.log').write_text(
-                'COMMAND ' + ' '.join(command + [test, '--', '--exact']) + '\n' +
+                'COMMAND ' + ' '.join(command) + '\n' +
                 slots_text + log + f'\nexit={returncode}\nexpected={EXPECTED[name]}\n')
-            results.append({'name': name, 'test': test, 'outcome': outcome,
-                            'reason': reason, 'returncode': returncode,
-                            'anchor': before, 'replacement': after})
+            results.append({'name': name, 'test': test, 'target': case_target,
+                            'outcome': outcome, 'reason': reason,
+                            'returncode': returncode, 'anchor': before,
+                            'replacement': after})
             write_summary(baseline)
             print(f'{name}: {outcome} ({reason}) exit={returncode}', flush=True)
     finally:

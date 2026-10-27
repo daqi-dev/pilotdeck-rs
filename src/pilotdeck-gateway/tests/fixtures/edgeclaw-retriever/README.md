@@ -19,8 +19,15 @@ general 两套工作区与 global 根，再以 `../edgeclaw-llm/stub.mts`（127.
 M10 矩阵另由 `observe.mts::collectMatrix` 用真实 TS 类 + 假 repository /
 gated extractor 生成（缓存层与存储、HTTP 无关，gate 让 await 交错确定）：
 空缓存 / 归一化命中 / 异键 / reset / TTL 29_999 与精确 30_000 边界 /
-reset-during-await / 同键并发。Rust `tests/edgeclaw_retriever.rs` 的
+reset-during-await / 同键并发正序（后完成者 `project` 覆盖）与反序
+（后完成者 `user` 覆盖）。矩阵里的假 repository 与 Rust 空存储一致（空用户
+画像），`user` route 也渲染空 context。Rust `tests/edgeclaw_retriever.rs` 的
 `m10_*` 用例逐格重建这些状态，`recent` / `snapshot` 两个键分量另有独立用例。
+
+`empty-user-profile` 场景用真实 `MemoryRepository`：画像文件存在但被改写成
+没有 `身份背景` 段（`getUserSummary` 返回 files 非空、identityBackground 为空），
+`route=mix` + 项目元数据保持 context 非空，用来金样 `Injected Blocks` 不列
+未注入的画像路径。
 
 生成两次并核字节（从仓库根目录运行；必须 `LANG=en_US.UTF-8` 且移走
 `LC_ALL`，否则 Node 默认 locale 是 `und`）：
@@ -48,9 +55,12 @@ env -u LC_ALL -u LC_MESSAGES LANG=en_US.UTF-8 PDRS_BASELINE="$PDRS_BASELINE" \
 ```
 
 `negative.py` 用 `negative_process.{mutating_sources,run_owned,wait_for_slot}`
-锁定并恢复产品源码。11 个变异体：缓存键漏 `recent` / `snapshot` / `mode`、
+锁定并恢复产品源码。15 个变异体：缓存键漏 `recent` / `snapshot` / `mode`、
 query 归一化失效、TTL 值 30_000→30_001、TTL 比较 `>`→`>=`、reset 不清、
-await 后不 set、命中 `elapsedMs` 非 0、命中不写 stats、trace 拼接退回 UTF-8。脚本先跑一遍未变异
+await 后不 set、命中 `elapsedMs` 非 0、命中不写 stats、trace 拼接退回 UTF-8、
+miss 提交拆回两把锁（P1-1，lib 单测）、Injected Blocks 无条件列画像（P1-2）、
+保留首个缓存项（P1-3）、gated 等待边界差一（P2）。`lib` 用例只跑单测，
+其余跑 `--test edgeclaw_retriever`。脚本先跑一遍未变异
 套件并要求通过，再逐格执行；单格失败不中止，最后打印
 `KILLED`/`SURVIVED`/`INVALID` 汇总，任一非 KILLED 即退出 1。锚点在跑前
 逐条核对，过期打印 `STALE ANCHOR` 并退出 2（不记 SURVIVED）；`could not
@@ -62,8 +72,8 @@ CARGO_TARGET_DIR=/abs/target python3 \
 python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-retriever/negative.py --check-anchors
 ```
 
-本 fixture 与 `retriever.rs` 在提交前不在 HEAD，`mutating_sources` 会按设计
-拒跑；先 `--check-anchors`，完整 11 格由协调者在提交后的宿主执行。
+本 fixture 与 `retriever.rs` 改动在提交前不在 HEAD，`mutating_sources` 会按
+设计拒跑；先 `--check-anchors`，完整 15 格由协调者在提交后的宿主执行。
 
 `_tmp/20261026-issue-767/probe-m10.txt` 是 M10 的真实 TS 探针输出；
 `probe-utf16.txt` 是孤代理码元（`\ud800`）query / mode 在真实 TS trace、

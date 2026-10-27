@@ -1,7 +1,7 @@
 // Executes the unmodified fixed TS ReasoningRetriever over a real
 // MemoryRepository (file-backed workspace + global root) and a loopback stub.
 import assert from 'node:assert/strict';
-import {mkdtempSync, readdirSync, readFileSync, rmSync, statSync} from 'node:fs';
+import {mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, relative} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -164,6 +164,16 @@ export async function collect(baseline: string) {
         {kind: 'retrieve', query: 'Alpha 进展', recentMessages: [message('user', '继续 Alpha')]},
         {kind: 'retrieve', query: '未知项目'},
       ]},
+      // The profile file exists but has no 身份背景 section, so
+      // hasUserSummary() is false while files[0] is present. route=mix plus
+      // project metadata keeps the context non-empty, which is the reachable
+      // case where the old Rust code wrongly listed the profile in
+      // `Injected Blocks`.
+      {name: 'empty-user-profile', mode: 'single', seed: seedSingle, stripUserIdentity: true, steps: [
+        chat('{"route":"mix"}'), chat('{"selected_ids":[]}'),
+      ], operations: [
+        {kind: 'retrieve', query: 'mix with empty user identity'},
+      ]},
       {name: 'service-wrappers', mode: 'single', seed: seedSingle, steps: [
         chat('{"route":"project"}'), chat('{"selected_ids":["@project"]}'),
         chat('{"route":"none"}'),
@@ -196,6 +206,12 @@ export async function collect(baseline: string) {
       const workspaceDir = definition.mode === 'general' ? join(home, '.pilotdeck') : join(root, 'work');
       const repository = new MemoryRepository(join(root, 'data', 'memory.db'), {memoryDir: memory, globalRootDir: globalRoot, workspaceDir});
       const paths = definition.seed(repository);
+      if (definition.stripUserIdentity) {
+        const profile = join(globalRoot, 'UserIdentity', 'user-profile.md');
+        const raw = readFileSync(profile, 'utf8');
+        assert.match(raw, /## 身份背景/);
+        writeFileSync(profile, raw.replace(/## 身份背景\n(?:- .*\n)+/, '## Preferences\n- 用户偏好中文回复。\n'));
+      }
       const steps = definition.steps.map((step) => {
         if (step.body !== undefined && typeof step.body === 'string' && step.body.includes('@')) {
           const body = step.body.replace(/@(\w+)/g, (_m: string, key: string) => paths[key] ?? _m);
@@ -284,7 +300,9 @@ async function collectMatrix(ReasoningRetriever: any, home: string) {
   const repo = {
     getSnapshotVersion: () => 'v1',
     getWorkspaceMode: () => 'single',
-    getUserSummary: () => ({identityBackground: ['背景'], files: [{relativePath: 'global/UserIdentity/user-profile.md', updatedAt: '2026-10-21T00:00:00.000Z'}]}),
+    // The Rust matrix uses an empty store; keep the fake repository identical
+    // so `user` routes also render an empty context.
+    getUserSummary: () => ({identityBackground: [], files: []}),
     getFileMemoryStore: () => ({getProjectMeta: () => null}),
     listMemoryEntries: () => [],
     getMemoryRecordsByIds: () => [],
@@ -338,22 +356,40 @@ async function collectMatrix(ReasoningRetriever: any, home: string) {
     const afterReset = await retriever.retrieve('inflight');
     record('reset-during-await', {firstContext: p.context, secondCacheHit: afterReset.debug?.cacheHit, secondContext: afterReset.context, calls});
 
-    retriever.resetTransientState();
-    calls = 0;
-    let g1!: () => void, g2!: () => void;
-    const gate1 = new Promise<void>((resolve) => { g1 = resolve; });
-    const gate2 = new Promise<void>((resolve) => { g2 = resolve; });
-    let n = 0;
+    // Both calls run concurrently, but the gate release order is controlled so
+    // the record can tell which call's result the cache kept. `call` is read
+    // before the await: the old shape read the shared `n` after it, so both
+    // calls returned the same route and `cachedRoute` could not distinguish
+    // the later setter.
     const realDecide = extractor.decideFileMemoryRoute;
-    extractor.decideFileMemoryRoute = async () => { n += 1; if (n === 1) await gate1; else await gate2; return n === 1 ? 'user' : 'project'; };
-    const c1 = retriever.retrieve('concurrent');
-    const c2 = retriever.retrieve('concurrent');
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    route = 'user';
-    g1(); await c1; g2(); await c2;
-    extractor.decideFileMemoryRoute = realDecide;
-    const c3 = await retriever.retrieve('concurrent');
-    record('same-key-concurrent', {decides: n, calls, cachedRoute: c3.debug?.route, cachedCacheHit: c3.debug?.cacheHit, cachedIntent: c3.intent});
+    const sameKey = async (name: string, later: 1 | 2, expectedRoute: string) => {
+      retriever.resetTransientState();
+      calls = 0;
+      let g1!: () => void, g2!: () => void;
+      const gate1 = new Promise<void>((resolve) => { g1 = resolve; });
+      const gate2 = new Promise<void>((resolve) => { g2 = resolve; });
+      let n = 0;
+      extractor.decideFileMemoryRoute = async () => {
+        const call = ++n;
+        if (call === 1) { await gate1; return 'user'; }
+        await gate2; return 'project';
+      };
+      const c1 = retriever.retrieve('concurrent');
+      const c2 = retriever.retrieve('concurrent');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      let r1, r2;
+      if (later === 2) { g1(); r1 = await c1; g2(); r2 = await c2; }
+      else { g2(); r2 = await c2; g1(); r1 = await c1; }
+      extractor.decideFileMemoryRoute = realDecide;
+      const c3 = await retriever.retrieve('concurrent');
+      if (c3.debug?.route !== expectedRoute) {
+        throw new Error(`${name}: later setter ${expectedRoute} did not win, got ${c3.debug?.route}`);
+      }
+      record(name, {decides: n, calls, firstRoute: r1.debug?.route, secondRoute: r2.debug?.route,
+        cachedRoute: c3.debug?.route, cachedCacheHit: c3.debug?.cacheHit, cachedIntent: c3.intent});
+    };
+    await sameKey('same-key-concurrent', 2, 'project');
+    await sameKey('same-key-concurrent-reverse', 1, 'user');
   } finally {
     Date.now = oldNow;
   }
