@@ -418,6 +418,10 @@ mod array_index_tests {
 mod negctl_922 {
     #[test]
     fn negctl_922_deliberately_fails() {
-        assert_eq!(1 + 1, 3, "#922 negative control: nextest must turn this red");
+        assert_eq!(
+            1 + 1,
+            3,
+            "#922 negative control: nextest must turn this red"
+        );
     }
 }
