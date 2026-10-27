@@ -266,9 +266,24 @@ cases = [
      '        .map(|item| JsValue::String(item.clone()))',
      GENERIC, 'detail/listDetail'),
     # 36. jsonDetail returns the raw JSON value without decoding strings.
+    # The anchor spans the whole `detail(...)` call because fix-r1 added
+    # `json_detail_key`, whose payload line is byte-identical; this keeps the
+    # mutation on the original string-key constructor only.
     ('detail-json-decode',
-     'vec![("json", text::decode_escaped_unicode_value(json, true))],',
-     'vec![("json", json.clone())],',
+     '''    detail(
+        "json",
+        key,
+        label,
+        label_i18n,
+        vec![("json", text::decode_escaped_unicode_value(json, true))],
+    )''',
+     '''    detail(
+        "json",
+        key,
+        label,
+        label_i18n,
+        vec![("json", json.clone())],
+    )''',
      GENERIC, 'detail/jsonDetail'),
 ]
 # Shared-helper rows come from negative_shared.py. They use the generic
