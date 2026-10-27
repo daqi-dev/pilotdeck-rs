@@ -2592,7 +2592,7 @@ impl ModelHttpTransport for ConversionTransport {
                     .map_err(|never| match never {})
                     .boxed(),
             )
-            .unwrap()))
+            .expect("#940 conversion transport response must be valid")))
     }
 }
 struct CountingHtml {
@@ -2669,17 +2669,17 @@ impl HtmlToMarkdown for PausedConverter {
     fn convert(&self, _: &str) -> Result<String, String> {
         self.started
             .lock()
-            .unwrap()
+            .expect("#940 paused start lock is not poisoned")
             .take()
-            .unwrap()
+            .expect("#940 paused start signal must exist")
             .send(())
-            .unwrap();
+            .expect("#940 paused start receiver must be alive");
         // Bounded even when the scheduling regression under test prevents the
         // async half from releasing us; the test then fails instead of hangs.
         let released = self
             .release
             .lock()
-            .unwrap()
+            .expect("#940 paused release lock is not poisoned")
             .recv_timeout(Duration::from_secs(2));
         self.finished.store(true, Ordering::SeqCst);
         released.map_err(|e| e.to_string())?;
@@ -2708,30 +2708,66 @@ fn paused_converter() -> (
 /// from inside turndown. Returning a new abort error here would change parity.
 #[tokio::test]
 async fn html_conversion_parent_abort_keeps_ts_raw_success_and_async_progress() {
-    let (converter, entered, release) = paused_converter();
-    let tool = conversion_tool("<p>x</p>".into(), Some(converter.clone()));
-    let signal = ToolCancellation::default();
-    let pending = tokio::spawn(run_owned_conversion(tool, signal.clone()));
-    entered.await.unwrap();
-    assert!(
-        !converter.finished.load(Ordering::SeqCst),
-        "converter blocked Tokio"
+    let oracle = baseline::oracle(include_str!(
+        "fixtures/web-conversion-lifecycle/oracle.json"
+    ));
+    let cases = items(get(&oracle, "cases"));
+    assert_eq!(
+        cases.len(),
+        2,
+        "#940 normal and abort cases must both exist"
     );
-    signal.cancel();
-    // This timer cannot advance while synchronous conversion owns the worker.
-    tokio::time::sleep(Duration::from_millis(5)).await;
-    assert!(!pending.is_finished());
-    release.send(()).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(1), pending)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(
-        get(&result, "ok").as_object().is_some(),
-        "{}",
-        json(&result)
-    );
+    let html = get(&oracle, "html")
+        .as_string()
+        .expect("#940 oracle HTML must be a string")
+        .to_utf8()
+        .expect("#940 oracle HTML must be UTF-8");
+    for (index, case) in cases.iter().enumerate() {
+        assert_eq!(
+            get(case, "abort").as_bool(),
+            Some(index == 1),
+            "#940 lifecycle cases must be normal then abort"
+        );
+        let (converter, entered, release) = paused_converter();
+        let tool = conversion_tool(html.clone(), Some(converter.clone()));
+        let signal = ToolCancellation::default();
+        let pending = tokio::spawn(run_owned_conversion(tool, signal.clone()));
+        tokio::time::timeout(Duration::from_secs(10), entered)
+            .await
+            .expect("#940 TS replay worker must enter before deadline")
+            .expect("#940 TS replay worker must report entry");
+        assert!(
+            !converter.finished.load(Ordering::SeqCst),
+            "#940 converter must yield Tokio"
+        );
+        if get(case, "abort").as_bool() == Some(true) {
+            signal.cancel();
+        }
+        // TS's synchronous conversion returns after parent abort too; Rust
+        // preserves that result while letting the reactor advance this timer.
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert!(!pending.is_finished(), "#940 conversion must await release");
+        release
+            .send(())
+            .expect("#940 replay worker must accept release");
+        let result = tokio::time::timeout(Duration::from_secs(1), pending)
+            .await
+            .expect("#940 replay conversion must finish before deadline")
+            .expect("#940 replay task must not panic");
+        assert_eq!(
+            stringify_json(&result).expect("#940 actual result must serialize"),
+            stringify_json(get(case, "result")).expect("#940 TS result must serialize"),
+            "#940 real TS raw conversion result"
+        );
+    }
 }
+
+#[test]
+#[ignore = "requires Node v22.22.0 and PDRS_BASELINE"]
+fn web_conversion_lifecycle_regenerates_identically() {
+    baseline::regenerates_identically("web-conversion-lifecycle");
+}
+
 async fn run_owned_conversion(tool: WebFetchTool, signal: ToolCancellation) -> JsValue {
     run(
         &tool,
@@ -2745,27 +2781,39 @@ async fn run_owned_conversion(tool: WebFetchTool, signal: ToolCancellation) -> J
 /// Every blocked closure stands for one conversion's live working set.
 #[tokio::test]
 async fn html_conversion_admission_survives_dropped_requests() {
-    use std::sync::{Condvar, atomic::AtomicUsize};
+    use std::{
+        future::Future,
+        sync::{Condvar, atomic::AtomicUsize},
+    };
 
     struct ConversionBatch {
-        release: (Mutex<bool>, Condvar),
+        release: (Mutex<u8>, Condvar),
         started: tokio::sync::mpsc::UnboundedSender<()>,
+        next: AtomicUsize,
         active: AtomicUsize,
         peak: AtomicUsize,
     }
     impl HtmlToMarkdown for ConversionBatch {
         fn convert(&self, _: &str) -> Result<String, String> {
+            let id = self.next.fetch_add(1, Ordering::SeqCst);
             let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
             self.peak.fetch_max(active, Ordering::SeqCst);
-            self.started.send(()).unwrap();
+            self.started.send(()).expect("#940 start receiver is alive");
             let (lock, wake) = &self.release;
             // Bounded even if the async test driver stops making progress.
-            let (released, _) = wake
-                .wait_timeout_while(lock.lock().unwrap(), Duration::from_secs(20), |v| !*v)
-                .unwrap();
+            // Stage 1 lets only the first old worker and its successors finish.
+            // The other three detached workers retain their CPU permits.
+            let blocked = |stage: &mut u8| *stage == 0 || (*stage == 1 && (1..4).contains(&id));
+            let (mut released, _) = wake
+                .wait_timeout_while(
+                    lock.lock().expect("#940 release lock is not poisoned"),
+                    Duration::from_secs(20),
+                    blocked,
+                )
+                .expect("#940 worker wait is not poisoned");
             self.active.fetch_sub(1, Ordering::SeqCst);
-            if !*released {
-                return Err("test did not release conversion workers".into());
+            if blocked(&mut released) {
+                return Err("#940 test did not release conversion workers".into());
             }
             Ok("converted".into())
         }
@@ -2773,15 +2821,21 @@ async fn html_conversion_admission_survives_dropped_requests() {
     struct ReleaseOnDrop(Arc<ConversionBatch>);
     impl Drop for ReleaseOnDrop {
         fn drop(&mut self) {
-            *self.0.release.0.lock().unwrap() = true;
+            *self
+                .0
+                .release
+                .0
+                .lock()
+                .expect("#940 cleanup lock is not poisoned") = 2;
             self.0.release.1.notify_all();
         }
     }
 
     let (started, mut entered) = tokio::sync::mpsc::unbounded_channel();
     let batch = Arc::new(ConversionBatch {
-        release: (Mutex::new(false), Condvar::new()),
+        release: (Mutex::new(0), Condvar::new()),
         started,
+        next: AtomicUsize::new(0),
         active: AtomicUsize::new(0),
         peak: AtomicUsize::new(0),
     });
@@ -2793,45 +2847,99 @@ async fn html_conversion_admission_survives_dropped_requests() {
     for _ in 0..4 {
         tokio::time::timeout(Duration::from_secs(10), entered.recv())
             .await
-            .expect("all four permits must be usable")
-            .unwrap();
+            .expect("#940 all four permits must be usable")
+            .expect("#940 four workers must report entry");
     }
-    assert_eq!(batch.active.load(Ordering::SeqCst), 4);
+    assert_eq!(
+        batch.active.load(Ordering::SeqCst),
+        4,
+        "#940 initial active workers"
+    );
     // Drop all four callers while their non-interruptible workers remain alive.
     for request in first {
         request.abort();
-        assert!(request.await.unwrap_err().is_cancelled());
+        assert!(
+            request
+                .await
+                .expect_err("#940 caller must be aborted")
+                .is_cancelled(),
+            "#940 caller must report cancellation"
+        );
     }
     let mut queued: Vec<_> = (0..4)
         .map(|_| Box::pin(run_owned_conversion(tool(), ToolCancellation::default())))
         .collect();
     for request in &mut queued {
-        poll_pending(request.as_mut()).await;
+        std::future::poll_fn(|cx| {
+            assert!(
+                request.as_mut().poll(cx).is_pending(),
+                "#940 queued request must wait"
+            );
+            std::task::Poll::Ready(())
+        })
+        .await;
     }
     let fifth = tokio::time::timeout(Duration::from_millis(250), entered.recv()).await;
     assert!(
         fifth.is_err(),
-        "a fifth worker bypassed conversion admission"
+        "#940 a fifth worker bypassed conversion admission"
     );
-    assert_eq!(batch.active.load(Ordering::SeqCst), 4);
-    drop(release);
-    // The queued calls must resume after the detached workers release permits.
+    assert_eq!(
+        batch.active.load(Ordering::SeqCst),
+        4,
+        "#940 abort must retain active workers"
+    );
+    *batch
+        .release
+        .0
+        .lock()
+        .expect("#940 stage lock is not poisoned") = 1;
+    batch.release.1.notify_all();
+    // One old worker can release a slot that all queued calls reuse in turn.
+    // Finishing those calls does not join the three remaining detached workers.
     for request in queued {
         let result = tokio::time::timeout(Duration::from_secs(10), request)
             .await
-            .expect("queued conversion must resume");
+            .expect("#940 queued conversion must resume");
         assert!(
             get(&result, "ok").as_object().is_some(),
-            "{}",
-            json(&result)
+            "#940 queued conversion must succeed: {result:?}"
         );
     }
     for _ in 0..4 {
-        entered.try_recv().expect("all eight conversions must run");
+        entered
+            .try_recv()
+            .expect("#940 all eight conversions must run");
     }
-    assert_eq!(batch.active.load(Ordering::SeqCst), 0);
-    assert_eq!(batch.peak.load(Ordering::SeqCst), 4);
-    eprintln!("8 conversions, 4 dropped callers: peak active workers = 4");
+    assert_eq!(
+        batch.active.load(Ordering::SeqCst),
+        3,
+        "#940 queued completion is not detached completion"
+    );
+    // On this current-thread runtime cleanup cannot run until the drain yields.
+    // This makes removing the drain fail deterministically, without CPU load.
+    let cleanup = tokio::spawn(async move { drop(release) });
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while batch.active.load(Ordering::SeqCst) != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("#940 detached workers must drain within the deadline");
+    assert_eq!(
+        batch.active.load(Ordering::SeqCst),
+        0,
+        "#940 final active workers"
+    );
+    assert_eq!(
+        batch.peak.load(Ordering::SeqCst),
+        4,
+        "#940 peak active workers"
+    );
+    cleanup.await.expect("#940 cleanup task must finish");
+    eprintln!(
+        "#940 8 conversions, 4 dropped callers: queued-complete active = 3; drained active = 0; peak = 4"
+    );
 }
 
 /// Host deadlines/drop can stop waiting immediately. spawn_blocking cannot
