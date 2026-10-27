@@ -374,7 +374,8 @@ async fn replay(only: Option<&str>) {
             .as_object()
             .unwrap()
             .len(),
-        10
+        650,
+        "#303 exact import closure source count"
     );
     assert_eq!(array(oracle.get("scenarios").unwrap()).len(), 86);
     let mut ids = BTreeMap::new();
