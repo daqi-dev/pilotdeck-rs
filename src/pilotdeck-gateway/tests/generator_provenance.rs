@@ -430,9 +430,16 @@ fn regeneration_companions_reject_missing_corrupt_and_symlink_files() {
             count,
             "#280 exact companion count for {fixture}"
         );
+        fs::write(
+            generated.join("oracle.json"),
+            fs::read(committed.join("oracle.json")).expect("#280 read PID manifest"),
+        )
+        .expect("#280 generated PID manifest");
         for name in &names {
-            fs::write(committed.join(name), b"golden").expect("#280 expected companion");
-            fs::write(generated.join(name), b"golden").expect("#280 actual companion");
+            let bytes = fs::read(fixtures.join(fixture).join(name))
+                .expect("#280 read real companion bytes");
+            fs::write(committed.join(name), &bytes).expect("#280 expected companion");
+            fs::write(generated.join(name), &bytes).expect("#280 actual companion");
         }
         let check = || baseline::compare_companion_files(fixture, &generated, &committed);
         check().expect("#280 all companion bytes match");
@@ -464,7 +471,11 @@ fn regeneration_companions_reject_missing_corrupt_and_symlink_files() {
                 );
                 fs::remove_file(generated.join(name)).expect("#280 remove companion symlink");
             }
-            fs::write(generated.join(name), b"golden").expect("#280 restore companion");
+            fs::write(
+                generated.join(name),
+                fs::read(committed.join(name)).expect("#280 read companion for restoration"),
+            )
+            .expect("#280 restore companion");
             check().expect("#280 restored companion matches");
         }
     }
@@ -499,4 +510,205 @@ fn regeneration_companions_reject_missing_corrupt_and_symlink_files() {
         );
     }
     fs::remove_dir_all(root).expect("#280 remove owned companion scratch");
+}
+
+#[test]
+fn regeneration_masks_accept_only_declared_volatile_values() {
+    use baseline::regeneration_masks as masks;
+    use std::{collections::BTreeSet, fs, path::Path};
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let table = include_str!("fixtures/_shared/regeneration-masks.tsv");
+    let mut entries = BTreeSet::new();
+    let mut files = BTreeSet::new();
+    for line in table.lines().filter(|line| !line.starts_with('#')) {
+        let columns: Vec<_> = line.split('\t').collect();
+        assert_eq!(columns.len(), 4, "#280 exact mask table columns");
+        assert!(entries.insert(line), "#280 duplicate mask table entry");
+        assert!(
+            matches!(columns[0], "provider-timing" | "run-registry"),
+            "#280 masks limited to two fixtures"
+        );
+        files.insert((columns[0], columns[1]));
+    }
+    assert_eq!(entries.len(), 836, "#280 fixed mask inventory");
+    let registry =
+        fs::read(fixtures.join("run-registry/oracle.json")).expect("#280 read PID oracle");
+    let old_pid = masks::pid(&registry).expect("#280 committed PID");
+    let new_pid = old_pid + 1;
+    for (fixture, file) in files {
+        let original =
+            fs::read(fixtures.join(fixture).join(file)).expect("#280 read masked artifact");
+        let rules = masks::rules(fixture, file);
+        let spans = masks::scalar_spans(&original);
+        let mut changed = original.clone();
+        for (pointer, span) in spans.iter().rev() {
+            let Some(kind) = rules.get(pointer.as_str()) else {
+                continue;
+            };
+            let token = match *kind {
+                "timer" => b"987654321".to_vec(),
+                "pid" => new_pid.to_string().into_bytes(),
+                "clock" => b"\"2030-01-02T03:04:05.678Z\"".to_vec(),
+                _ => panic!("#280 known mask kinds only"),
+            };
+            changed.splice(span.clone(), token);
+        }
+        masks::compare(
+            fixture,
+            file,
+            &changed,
+            &original,
+            (Some(new_pid), Some(old_pid)),
+        )
+        .unwrap_or_else(|error| panic!("#280 declared volatility accepted: {error}"));
+        for (pointer, span) in &spans {
+            if !rules.contains_key(pointer.as_str()) {
+                continue;
+            }
+            let mut wrong_type = original.clone();
+            wrong_type.splice(span.clone(), b"null".iter().copied());
+            assert!(
+                masks::normalized(fixture, file, &wrong_type, Some(old_pid)).is_err(),
+                "#280 invalid masked scalar rejected: {fixture}/{file}{pointer}"
+            );
+            let mut missing = original.clone();
+            missing.drain(span.clone());
+            assert!(
+                masks::normalized(fixture, file, &missing, Some(old_pid)).is_err(),
+                "#280 missing masked scalar rejected: {fixture}/{file}{pointer}"
+            );
+            if rules.get(pointer.as_str()) == Some(&"pid") && file != "oracle.json" {
+                let mut foreign_pid = original.clone();
+                foreign_pid.splice(span.clone(), b"1".iter().copied());
+                assert!(
+                    masks::normalized(fixture, file, &foreign_pid, Some(old_pid)).is_err(),
+                    "#280 foreign owner PID cannot be masked: {file}{pointer}"
+                );
+            }
+        }
+        // A same-name field outside the exact path must never join the mask set.
+        let extra =
+            b"{\"generatorPid\":123,\"start\":1,\"acceptedAt\":\"2030-01-02T03:04:05.678Z\"}";
+        assert_eq!(
+            masks::normalized(fixture, "unlisted.json", extra, Some(123))
+                .expect("#280 unlisted file"),
+            extra,
+            "#280 unlisted file is byte exact"
+        );
+        assert_eq!(
+            masks::normalized("other-fixture", file, &changed, Some(new_pid))
+                .expect("#280 other fixture"),
+            changed,
+            "#280 other fixture is byte exact"
+        );
+    }
+}
+
+#[test]
+fn regeneration_masks_reject_every_unmasked_scalar() {
+    use baseline::regeneration_masks as masks;
+    use std::{collections::BTreeSet, fs, path::Path};
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let registry =
+        fs::read(fixtures.join("run-registry/oracle.json")).expect("#280 read mutation PID oracle");
+    let pid = masks::pid(&registry).expect("#280 mutation PID");
+    let mut files = BTreeSet::from([
+        ("provider-timing", "oracle.json".to_owned()),
+        ("run-registry", "oracle.json".to_owned()),
+    ]);
+    for file in baseline::companion_names("run-registry", &fixtures.join("run-registry"))
+        .expect("#280 complete companion inventory")
+    {
+        files.insert(("run-registry", file));
+    }
+    let mut rejected = 0;
+    for (fixture, file) in files {
+        let original =
+            fs::read(fixtures.join(fixture).join(&file)).expect("#280 read unmasked artifact");
+        let rules = masks::rules(fixture, &file);
+        let expected = masks::normalized(fixture, &file, &original, Some(pid))
+            .expect("#280 original maskable");
+        for (pointer, span) in masks::scalar_spans(&original) {
+            if rules.contains_key(pointer.as_str()) {
+                continue;
+            }
+            let mut changed = original.clone();
+            // Change one payload byte, preserving valid JSON for strings/numbers.
+            let index = span.start + usize::from(original[span.start] == b'"' && span.len() > 2);
+            changed[index] = if changed[index] == b'1' {
+                b'2'
+            } else if changed[index].is_ascii_digit() {
+                b'1'
+            } else {
+                b'X'
+            };
+            let actual = masks::normalized(fixture, &file, &changed, Some(pid));
+            assert!(
+                actual.is_err() || actual.as_ref().is_ok_and(|bytes| bytes != &expected),
+                "#280 unmasked one-byte corruption rejected: {fixture}/{file}{pointer}"
+            );
+            rejected += 1;
+        }
+        // Formatting and malformed trailing bytes are part of the comparison too.
+        let mut changed = original.clone();
+        changed.push(b' ');
+        assert!(
+            masks::compare(fixture, &file, &changed, &original, (Some(pid), Some(pid))).is_err(),
+            "#280 trailing byte corruption rejected: {fixture}/{file}"
+        );
+    }
+    println!("#280 rejected {rejected} independent unmasked scalar byte mutations");
+    assert!(rejected > 3000, "#280 unmasked corpus coverage");
+}
+
+#[test]
+fn regeneration_masks_reject_invalid_numbers_duplicates_and_bad_tail_changes() {
+    use baseline::regeneration_masks as masks;
+    use std::{fs, path::Path};
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let provider = fs::read(fixtures.join("provider-timing/oracle.json"))
+        .expect("#280 read lexical provider sample");
+    let (_, span) = masks::scalar_spans(&provider)
+        .into_iter()
+        .find(|(pointer, _)| pointer == "/cases/0/timers/0/start")
+        .expect("#280 first timer span");
+    for invalid in [b"+753".as_slice(), b"0753", b"18446744073709551616"] {
+        let mut changed = provider.clone();
+        changed.splice(span.clone(), invalid.iter().copied());
+        let error = masks::normalized("provider-timing", "oracle.json", &changed, None)
+            .expect_err("#280 noncanonical timer number must fail");
+        assert!(
+            error.contains("invalid timer value"),
+            "#280 invalid timer diagnostic: {error}"
+        );
+    }
+    let mut duplicate = provider.clone();
+    duplicate.splice(span.start..span.start, b"0, \"start\": ".iter().copied());
+    let error = masks::normalized("provider-timing", "oracle.json", &duplicate, None)
+        .expect_err("#280 duplicate masked field must fail");
+    assert!(
+        error.contains("duplicate masked path"),
+        "#280 duplicate masked path diagnostic: {error}"
+    );
+    let registry =
+        fs::read(fixtures.join("run-registry/oracle.json")).expect("#280 read tail PID oracle");
+    let pid = masks::pid(&registry).expect("#280 tail PID");
+    for file in ["bad-tail.json", "bad-tail.after.json"] {
+        let original =
+            fs::read(fixtures.join("run-registry").join(file)).expect("#280 read malformed tail");
+        let mut changed = original.clone();
+        let last = changed.last_mut().expect("#280 nonempty malformed tail");
+        *last = if *last == b'X' { b'Y' } else { b'X' };
+        assert!(
+            masks::compare(
+                "run-registry",
+                file,
+                &changed,
+                &original,
+                (Some(pid), Some(pid))
+            )
+            .is_err(),
+            "#280 unscanned bad-tail byte rejected: {file}"
+        );
+    }
 }

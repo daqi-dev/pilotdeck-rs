@@ -3,6 +3,10 @@ use pilotdeck_protocol::{JsValue, parse_json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path, process::Command};
 
+#[allow(dead_code)]
+#[path = "regeneration_masks.rs"]
+pub(crate) mod regeneration_masks;
+
 const BASELINE_COMMIT: &str = "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85";
 
 fn text(value: &JsValue) -> String {
@@ -112,7 +116,8 @@ pub(crate) fn node_command() -> Command {
 
 /// Re-runs `tests/fixtures/<fixture>/generate.mts` against the real TS
 /// baseline (`PDRS_BASELINE`) into a fresh directory and requires a
-/// byte-identical `oracle.json`. Callers are `#[ignore]` tests.
+/// byte-identical `oracle.json`, except the exact clock/PID paths documented
+/// in `_shared/regeneration-masks.tsv`. Callers are `#[ignore]` tests.
 #[allow(dead_code)]
 pub(crate) fn regenerates_identically(fixture: &str) {
     let baseline = std::path::PathBuf::from(
@@ -169,11 +174,13 @@ pub(crate) fn regenerates_identically(fixture: &str) {
         .unwrap_or_else(|error| panic!("#280 {fixture}: {error}"));
     let committed = fs::read(fixtures.join("oracle.json")).expect("#280 read committed oracle");
     // Keep the scratch on mismatch so the differing bytes can be inspected.
-    assert!(
-        generated == committed,
-        "#280 {fixture}/oracle.json differs from the regenerated {}",
-        scratch.join("oracle.json").display()
-    );
+    regeneration_masks::compare(fixture, "oracle.json", &generated, &committed, (None, None))
+        .unwrap_or_else(|error| {
+            panic!(
+                "#280 {fixture}/oracle.json differs from the regenerated {}: {error}",
+                scratch.join("oracle.json").display()
+            )
+        });
     compare_companion_files(fixture, &generator_output, &fixtures)
         .unwrap_or_else(|error| panic!("#280 {fixture}: {error}"));
     assert!(
@@ -192,6 +199,16 @@ pub(crate) fn compare_companion_files(
     committed: &Path,
 ) -> Result<(), String> {
     let names = companion_names(fixture, committed)?;
+    let pids = if fixture == "run-registry" {
+        let read_pid = |root: &Path| -> Result<Option<u32>, String> {
+            let bytes = fs::read(root.join("oracle.json"))
+                .map_err(|error| format!("#280 read PID manifest: {error}"))?;
+            regeneration_masks::pid(&bytes).map(Some)
+        };
+        (read_pid(generated)?, read_pid(committed)?)
+    } else {
+        (None, None)
+    };
     for name in names {
         let path = generated.join(&name);
         let kind = fs::symlink_metadata(&path)
@@ -203,9 +220,8 @@ pub(crate) fn compare_companion_files(
         let actual = fs::read(path).map_err(|error| format!("read companion {name}: {error}"))?;
         let expected = fs::read(committed.join(&name))
             .map_err(|error| format!("read committed companion {name}: {error}"))?;
-        if actual != expected {
-            return Err(format!("companion {name} differs from committed bytes"));
-        }
+        regeneration_masks::compare(fixture, &name, &actual, &expected, pids)
+            .map_err(|error| format!("companion {name} differs from committed bytes: {error}"))?;
     }
     Ok(())
 }
