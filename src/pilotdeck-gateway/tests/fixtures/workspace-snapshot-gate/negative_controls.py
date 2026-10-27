@@ -26,39 +26,75 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 root = Path(__file__).resolve().parents[5]
 if not os.environ.get("CARGO_TARGET_DIR"):
     sys.exit("CARGO_TARGET_DIR must be passed by the caller (rule: no second build tree)")
+if hasattr(os, "geteuid") and os.geteuid() == 0:
+    # Root reads through mode-000 directories, so the EACCES-based tests the
+    # cleanup mutations are judged on cannot fail under root (boundary#3).
+    sys.exit("refusing to run as root: the mode-000 based controls cannot fail there")
 
 LIB = "src/pilotdeck-gateway/src/storage/workspace_snapshot.rs"
 TEST = "src/pilotdeck-gateway/tests/workspace_snapshot.rs"
 
-ESCAPE_CHECK = """                let root_units: Vec<u16> = snapshot_root.encode_utf16().collect();
-                let mut root_prefix = root_units.clone();
-                root_prefix.push(SLASH);
-                if source_units.units() != root_units.as_slice()
-                    && !source_units.units().starts_with(&root_prefix)
-                {
+# fix-r1: the escape guard is the lexical check AND the NOFOLLOW component
+# walk, so the mutant must revert both layers at once to reproduce the
+# pre-hardening read (a single-layer revert is its own mutation below).
+ESCAPE_CHECK = """                if !units_within(&snapshot_root, source_units.units()) {
                     return Err(WorkspaceSnapshotError::ObjectKeyEscape);
                 }
+                let source_text = String::from_utf16_lossy(source_units.units());
+                // #293 fix-r1 (A6.6-SNAPSHOT-OBJECTKEY-001-R1): the lexical
+                // check above cannot see symlinks, and a canonicalize-then-
+                // read would leave a swap-link race. The read below opens the
+                // root once and then every remaining component with
+                // O_NOFOLLOW, so a link in the tree — final component,
+                // dangling, or a mid-directory link — is refused instead of
+                // read, and the boundary check and the open are the same
+                // syscall.
+                let contents =
+                    read_object_within_root(&snapshot_root, source_units.units(), &source_text)?;
 """
-INODE_CHECK = """    if let Some(current) = owned_file(&file.path)
-        && current.dev == file.dev
-        && current.ino == file.ino
-    {
-        let _ = fs::remove_file(&file.path);
-    }"""
-TWO_PATH_ARM = """            message: format!("{message} -> '{}'", to.display()),
-        },
-        None => WorkspaceSnapshotError::Io {
-            code: None,
-            message: String::new(),
-        },"""
-IO_ERROR_ARM = """        None => WorkspaceSnapshotError::Io {
-            code: None,
-            message: String::new(),
-        },
+INODE_CHECK = """    if !owned_file(&graveyard).is_some_and(|current| current.is(file)) {
+        // Someone else's publish sat at the path; put it back unless a newer
+        // file has taken the path in the meantime.
+        if fs::symlink_metadata(&file.path).is_err() {
+            let _ = fs::rename(&graveyard, &file.path);
+        }
+        return;
+    }
+    run_round_hook(hook, SnapshotRoundStage::BeforeOwnedUnlink);
+"""
+GRAVEYARD = """    let graveyard = graveyard_name(&file.path);
+    // Move off the shared publish path first: whatever sits there goes to a
+    // name only this round can reach, so the delete below can never hit a
+    // concurrent round's file however it interleaves.
+    if fs::rename(&file.path, &graveyard).is_err() {
+        return; // already gone, or not movable: nothing provably ours to delete
+    }
+    if !owned_file(&graveyard).is_some_and(|current| current.is(file)) {
+        // Someone else's publish sat at the path; put it back unless a newer
+        // file has taken the path in the meantime.
+        if fs::symlink_metadata(&file.path).is_err() {
+            let _ = fs::rename(&graveyard, &file.path);
+        }
+        return;
+    }
+    run_round_hook(hook, SnapshotRoundStage::BeforeOwnedUnlink);
+    let _ = fs::remove_file(&graveyard);
+"""
+MANIFEST_IDENTITY = """    markers.manifest = Some(owned_manifest.renamed_to(&paths.manifest_path));
+"""
+MARKER_IDENTITY = """    Ok(owned.renamed_to(path))
+"""
+FAILURE_CLEANUP = """                failure_cleanup(&markers, &temporary_dir, self.hook.as_ref());
+"""
+NOFOLLOW_FLAGS = """        let mut flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW;
+"""
+HOST_BOUNDARY = """fn host_boundary_io() -> WorkspaceSnapshotError {
+    WorkspaceSnapshotError::Io {
+        code: None,
+        message: String::new(),
     }
 }
-
-/// `writeFile` (node:fs/promises) behind the snapshot writes"""
+"""
 ARR_PANIC = """    if let JsValue::Array(items) = value {
         items
     } else {
@@ -69,32 +105,60 @@ UNIT = "two_path_message_uses_the_shared_diagnostic"
 
 # (name, file, old, new, cargo test args, kill criterion substring)
 MUTATIONS = [
-    ("objectkey-escape-allowed", LIB, ESCAPE_CHECK, "",
-     ["--test", "workspace_snapshot", "restore_refuses_object_keys_outside"],
+    ("objectkey-escape-allowed", LIB, ESCAPE_CHECK,
+     """                let source_text = String::from_utf16_lossy(source_units.units());
+                let contents =
+                    fs::read(&source_text).map_err(|e| read_object_error(&e, &source_text))?;
+""",
+     ["--test", "workspace_snapshot", "--test", "snapshot_projection"],
      "#293 expected ObjectKeyEscape"),
-    ("cleanup-unconditional-delete", LIB,
-     "                failure_cleanup(&markers, &temporary_dir);",
+    ("objectkey-symlink-followed", LIB, NOFOLLOW_FLAGS,
+     "        let mut flags = OFlags::RDONLY | OFlags::CLOEXEC;",
+     ["--test", "workspace_snapshot", "restore_refuses_object_keys_through_symlinks"],
+     "#293 expected ObjectKeyEscape; a symlinked objectKey must be refused"),
+    ("cleanup-unconditional-delete", LIB, FAILURE_CLEANUP,
      """                let _ = fs::remove_file(&paths.manifest_path);
                 let _ = fs::remove_file(&paths.committed_path);
                 let _ = fs::remove_dir_all(&temporary_dir);""",
      ["--test", "workspace_snapshot", "concurrent_failure_cleanup_keeps"],
      "#293 R1's committed manifest survives"),
     ("cleanup-no-ownership-check", LIB, INODE_CHECK,
-     """    if owned_file(&file.path).is_some() {
-        let _ = fs::remove_file(&file.path);
-    }""",
+     "    run_round_hook(hook, SnapshotRoundStage::BeforeOwnedUnlink);",
      ["--lib", "remove_if_owned_checks_inode_ownership"],
      "the foreign manifest is still readable"),
-    ("two-path-rust-display-fallback", LIB, TWO_PATH_ARM,
-     TWO_PATH_ARM.replace("message: String::new(),", "message: error.to_string(),"),
+    # fix-r1: stat-then-unlink on the shared path with the identity check and
+    # the seam kept — exactly the old check-then-unlink shape (Codex P0-3).
+    ("cleanup-unlink-by-shared-path", LIB, GRAVEYARD,
+     """    if !owned_file(&file.path).is_some_and(|current| current.is(file)) {
+        return;
+    }
+    run_round_hook(hook, SnapshotRoundStage::BeforeOwnedUnlink);
+    let _ = fs::remove_file(&file.path);
+""",
+     ["--test", "workspace_snapshot", "owned_delete_window_cannot_hit"],
+     "#293 the concurrent round's manifest is readable"),
+    # fix-r1: the manifest identity taken from the shared path after the
+    # rename — the old post-rename stat (Codex P0-2).
+    ("ownership-capture-after-rename", LIB, MANIFEST_IDENTITY,
+     "    markers.manifest = owned_file(&paths.manifest_path);",
+     ["--test", "workspace_snapshot", "failing_round_keeps_manifest_renamed_over"],
+     "#293 the concurrent round's manifest is readable"),
+    ("ownership-committed-capture-after-rename", LIB, MARKER_IDENTITY,
+     '    Ok(owned_file(path).expect("#293 atomic marker identity"))',
+     ["--test", "workspace_snapshot", "committed_marker_ownership_survives"],
+     "#293 the concurrent round's marker is readable"),
+    ("host-boundary-rust-display", LIB, HOST_BOUNDARY,
+     """fn host_boundary_io() -> WorkspaceSnapshotError {
+    WorkspaceSnapshotError::Io {
+        code: None,
+        message: "host io failure".into(),
+    }
+}""",
      ["--lib", UNIT],
      "#293 out-of-table errno is the empty-message host boundary"),
-    ("io-error-rust-display-fallback", LIB, IO_ERROR_ARM,
-     IO_ERROR_ARM.replace("message: String::new(),", "message: error.to_string(),"),
-     ["--lib", UNIT],
-     "#293 io_error's out-of-table errno is the same host boundary"),
     ("two-path-no-suffix", LIB,
-     """            message: format!("{message} -> '{}'", to.display()),""",
+     """            message: format!("{message} -> '{}'", to.display()),
+""",
      "            message,",
      ["--lib", UNIT],
      "#293 two-path rename message"),

@@ -712,7 +712,7 @@ fn replay_operation(
             .is_some_and(|id| id.equals_str("escape"))
     {
         let error = actual.err().unwrap_or_else(|| {
-            panic!("#293 {name} op #{index} ({op}): objectKey escape restore must be refused")
+            panic!("#293 {name} op #{index} ({op}): objectKey escape restore must be refused (#293 expected ObjectKeyEscape)")
         });
         let value = error.as_json();
         assert_eq!(
