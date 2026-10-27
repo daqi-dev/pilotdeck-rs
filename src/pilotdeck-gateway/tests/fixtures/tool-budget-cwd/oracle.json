@@ -1,0 +1,61 @@
+{
+  "node": "v22.22.0",
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/context/budget/ToolResultBudget.ts": "e36811d6de03d9122bf92c0fcbb460729a5aa0010351497e6f90edb633869b01"
+  },
+  "cases": [
+    {
+      "name": "relative-normal",
+      "cwdReads": 1,
+      "outcome": {
+        "ok": true,
+        "toolResultsDir": "<root>/files/results"
+      }
+    },
+    {
+      "name": "relative-deleted",
+      "cwdReads": 1,
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, uv_cwd",
+          "syscall": "uv_cwd"
+        }
+      }
+    },
+    {
+      "name": "absolute-normal",
+      "cwdReads": 0,
+      "outcome": {
+        "ok": true,
+        "toolResultsDir": "<root>/files/results"
+      }
+    },
+    {
+      "name": "absolute-deleted",
+      "cwdReads": 0,
+      "outcome": {
+        "ok": true,
+        "toolResultsDir": "<root>/files/results"
+      }
+    },
+    {
+      "name": "relative-warmed-normal",
+      "cwdReads": 1,
+      "outcome": {
+        "ok": true,
+        "toolResultsDir": "<root>/files/results"
+      }
+    },
+    {
+      "name": "relative-warmed-deleted",
+      "cwdReads": 1,
+      "outcome": {
+        "ok": true,
+        "toolResultsDir": "<root>/files/results"
+      }
+    }
+  ]
+}

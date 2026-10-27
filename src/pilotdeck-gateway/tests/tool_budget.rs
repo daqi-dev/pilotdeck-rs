@@ -178,12 +178,15 @@ async fn real_ts_tool_budget_and_apply_tool_results_replay() {
             .unwrap();
         }
         let budget_options = field(case, "budget");
-        let budget = Arc::new(ToolResultBudget::new(ToolResultBudgetOptions {
-            tool_results_dir: tool_results_dir.clone(),
-            max_result_size_chars: optional_usize(budget_options.get("maxResultSizeChars")),
-            max_result_size_tokens: optional_usize(budget_options.get("maxResultSizeTokens")),
-            preview_bytes: optional_usize(budget_options.get("previewBytes")),
-        }));
+        let budget = Arc::new(
+            ToolResultBudget::new(ToolResultBudgetOptions {
+                tool_results_dir: tool_results_dir.clone(),
+                max_result_size_chars: optional_usize(budget_options.get("maxResultSizeChars")),
+                max_result_size_tokens: optional_usize(budget_options.get("maxResultSizeTokens")),
+                preview_bytes: optional_usize(budget_options.get("previewBytes")),
+            })
+            .expect("#885 tool_results_dir is an absolute scratch path"),
+        );
         let prefix = PathBuf::from(budget.spill_path(&"".into()).to_utf8().unwrap())
             .file_name()
             .unwrap()
@@ -301,7 +304,8 @@ async fn spill_rejects_traversal_and_symlink_escapes() {
         max_result_size_chars: Some(1),
         max_result_size_tokens: Some(100),
         preview_bytes: None,
-    });
+    })
+    .expect("#885 tool_results_dir is an absolute scratch path");
     // A traversal-shaped id is sanitised by the TS regex; no path escapes.
     let message = obj(vec![
         ("role", "user".into()),
@@ -348,7 +352,8 @@ async fn spill_rejects_traversal_and_symlink_escapes() {
         max_result_size_chars: Some(1),
         max_result_size_tokens: Some(100),
         preview_bytes: None,
-    });
+    })
+    .expect("#885 tool_results_dir is an absolute scratch path");
     let error = linked_budget
         .apply_to_message(&message, None)
         .await
@@ -365,7 +370,8 @@ async fn spill_rejects_traversal_and_symlink_escapes() {
         max_result_size_chars: Some(1),
         max_result_size_tokens: Some(100),
         preview_bytes: None,
-    });
+    })
+    .expect("#885 tool_results_dir is an absolute scratch path");
     let error = inner_budget
         .apply_to_message(&message, None)
         .await
@@ -401,7 +407,8 @@ async fn spill_rejects_symlinked_copy_source() {
         max_result_size_chars: Some(1),
         max_result_size_tokens: Some(100),
         preview_bytes: None,
-    });
+    })
+    .expect("#885 tool_results_dir is an absolute scratch path");
     let isolated = PathBuf::from(budget.spill_directory().to_utf8().unwrap());
     fs::create_dir_all(&isolated).unwrap();
     std::os::unix::fs::symlink(
@@ -494,7 +501,8 @@ async fn spill_rejects_hardlinked_copy_source() {
         max_result_size_chars: Some(1),
         max_result_size_tokens: Some(100),
         preview_bytes: None,
-    });
+    })
+    .expect("#885 tool_results_dir is an absolute scratch path");
     let isolated = PathBuf::from(budget.spill_directory().to_utf8().unwrap());
     fs::create_dir_all(&isolated).unwrap();
     fs::hard_link(

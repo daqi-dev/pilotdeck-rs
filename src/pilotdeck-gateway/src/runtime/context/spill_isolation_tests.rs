@@ -58,6 +58,7 @@ async fn matrix(relation: &str, event: &str, two: bool) {
                 max_result_size_tokens: Some(100),
                 preview_bytes: Some(100),
             })
+            .expect("#885 tool_results_dir is an absolute scratch path")
             .with_wait_timeout(Duration::from_millis(200)),
         )
     };
@@ -278,8 +279,11 @@ async fn media_stale_owner_cannot_revoke_successor() {
     let scratch = crate::test_scratch::Scratch::new("spill-aba");
     let mut options = ToolResultBudgetOptions::new(scratch.path().join("spill"));
     options.max_result_size_chars = Some(1);
-    let budget =
-        Arc::new(ToolResultBudget::new(options).with_wait_timeout(Duration::from_millis(200)));
+    let budget = Arc::new(
+        ToolResultBudget::new(options)
+            .expect("#885 tool_results_dir is an absolute scratch path")
+            .with_wait_timeout(Duration::from_millis(200)),
+    );
     let msg = pilotdeck_protocol::parse_json(
         r#"{"role":"user","content":[{"type":"image","mimeType":"image/png","data":"abcdefgh"}]}"#,
     )
@@ -373,6 +377,7 @@ async fn media_two_budgets_use_distinct_context_paths() {
             max_result_size_tokens: None,
             preview_bytes: None,
         })
+        .expect("#885 tool_results_dir is an absolute scratch path")
     };
     let msg = pilotdeck_protocol::parse_json(
         r#"{"role":"user","content":[{"type":"image","mimeType":"image/png","data":"abcdefgh"}]}"#,
@@ -403,7 +408,9 @@ async fn slow_leader(follower: bool, media: bool) {
     let mut options =
         ToolResultBudgetOptions::new(scratch.path().join(".pilotdeck/tool-results/s"));
     options.max_result_size_chars = Some(1);
-    let budget = Arc::new(ToolResultBudget::new(options));
+    let budget = Arc::new(
+        ToolResultBudget::new(options).expect("#885 tool_results_dir is an absolute scratch path"),
+    );
     let parked = Arc::new(AtomicBool::new(false));
     let gate = Arc::new((Mutex::new(false), Condvar::new()));
     let (seen, hook_gate) = (parked.clone(), gate.clone());
@@ -508,7 +515,12 @@ async fn slow_media_with_follower() {
 async fn shared_registry_serializes_same_final_path() {
     let _order = SPILL_HOOK_ORDER.lock().unwrap();
     let scratch = crate::test_scratch::Scratch::new("spill-shared-registry");
-    let make = |dir| Arc::new(ToolResultBudget::new(ToolResultBudgetOptions::new(dir)));
+    let make = |dir| {
+        Arc::new(
+            ToolResultBudget::new(ToolResultBudgetOptions::new(dir))
+                .expect("#885 tool_results_dir is an absolute scratch path"),
+        )
+    };
     let a = make(scratch.path().join("s"));
     let b = make(scratch.path().join("./s"));
     let path = a.spill_path(&"same.txt".into());
@@ -557,8 +569,10 @@ async fn shared_registry_serializes_same_final_path() {
 fn wait_bound_is_per_budget() {
     let scratch = crate::test_scratch::Scratch::new("spill-bound");
     let a = ToolResultBudget::new(ToolResultBudgetOptions::new(scratch.path().join("a")))
+        .expect("#885 tool_results_dir is an absolute scratch path")
         .with_wait_timeout(Duration::from_millis(200));
-    let b = ToolResultBudget::new(ToolResultBudgetOptions::new(scratch.path().join("b")));
+    let b = ToolResultBudget::new(ToolResultBudgetOptions::new(scratch.path().join("b")))
+        .expect("#885 tool_results_dir is an absolute scratch path");
     for (budget, bound) in [
         (&a, Duration::from_millis(200)),
         (&b, Duration::from_secs(30)),
@@ -586,8 +600,10 @@ fn wait_bound_is_per_budget() {
 #[test]
 fn dropping_context_releases_retry_paths() {
     let scratch = crate::test_scratch::Scratch::new("spill-drop");
-    let a = ToolResultBudget::new(ToolResultBudgetOptions::new(scratch.path()));
-    let b = ToolResultBudget::new(ToolResultBudgetOptions::new(scratch.path()));
+    let a = ToolResultBudget::new(ToolResultBudgetOptions::new(scratch.path()))
+        .expect("#885 tool_results_dir is an absolute scratch path");
+    let b = ToolResultBudget::new(ToolResultBudgetOptions::new(scratch.path()))
+        .expect("#885 tool_results_dir is an absolute scratch path");
     let mut paths = Vec::new();
     for budget in [&a, &b] {
         let path = budget.spill_path(&"call.txt".into());
