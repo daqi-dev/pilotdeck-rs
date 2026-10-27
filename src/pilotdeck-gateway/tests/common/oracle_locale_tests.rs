@@ -140,6 +140,19 @@ async fn eof_does_not_renew_deadline_or_complete_a_live_child() {
     );
 }
 
+// advance() moves the clock but need not flush the timer driver. Register a
+// later fence before advancing, then await it without polling the collector.
+// Its completion proves the driver has processed the collector's old deadline.
+async fn expire_registered_deadline() {
+    let mut fence = Box::pin(tokio::time::sleep(IDLE_LIMIT + Duration::from_secs(1)));
+    assert!(
+        poll_once(fence.as_mut()).is_pending(),
+        "#926 ready fence: registered before advancing"
+    );
+    tokio::time::advance(IDLE_LIMIT + Duration::from_secs(1)).await;
+    fence.await;
+}
+
 #[tokio::test(start_paused = true)]
 async fn ready_output_and_exit_win_over_overdue_timer() {
     let (mut out_writer, stdout) = tokio::io::duplex(16);
@@ -155,31 +168,60 @@ async fn ready_output_and_exit_win_over_overdue_timer() {
         poll_once(collect.as_mut()).is_pending(),
         "#926 ready: starts pending"
     );
-    // The parent was not polled while the deadline elapsed. All OS events are
-    // now ready; the timer must not hide already available output/completion.
-    tokio::time::advance(Duration::from_secs(31)).await;
-    out_writer
-        .write_all(b"out")
-        .await
-        .expect("#926 ready: stdout write");
+    // Pipes and the exit oneshot model a child held behind explicit gates.
+    // First readiness is delayed beyond half the idle limit, then progress
+    // continues beyond the original total limit without wall-clock sleeps.
+    for _ in 0..3 {
+        tokio::time::advance(Duration::from_secs(20)).await;
+        assert!(
+            poll_once(collect.as_mut()).is_pending(),
+            "#926 ready: held gate remains within idle limit"
+        );
+        out_writer
+            .write_all(b".")
+            .await
+            .expect("#926 ready: release stdout gate");
+        err_writer
+            .write_all(b"!")
+            .await
+            .expect("#926 ready: release stderr gate");
+        assert!(
+            poll_once(collect.as_mut()).is_pending(),
+            "#926 ready: gated progress renews deadline"
+        );
+    }
+    // Deliberately stop polling the parent. Both the old timer and buffered
+    // output must actually be ready, not merely past the timer's deadline.
+    expire_registered_deadline().await;
+    // EOF does not renew the timer. It finishes the already-pending select
+    // and forces the next iteration to evaluate its guards at the late time.
+    // Keeping both streams readable here would renew before either mutant's
+    // loop-top check / select guard could observe the elapsed deadline.
+    drop(out_writer);
     err_writer
         .write_all(b"err")
         .await
         .expect("#926 ready: stderr write");
-    drop(out_writer);
+    assert!(
+        poll_once(collect.as_mut()).is_pending(),
+        "#926 ready: queued output precedes deadline"
+    );
+    // Keep stderr open until after the next expiry. Its EOF forces another
+    // guard evaluation without renewing the timer before the ready exit.
+    expire_registered_deadline().await;
     drop(err_writer);
     done.send(Ok(ExitStatus::from_raw(101 << 8)))
         .expect("#926 ready: send exit");
     let output = collect
         .await
-        .expect("#926 ready: queued events precede deadline");
+        .expect("#926 ready: queued exit precedes deadline");
     assert_eq!(
         output.status.code(),
         Some(101),
         "#926 ready: failure status retained"
     );
-    assert_eq!(output.stdout, b"out", "#926 ready: drain stdout");
-    assert_eq!(output.stderr, b"err", "#926 ready: drain stderr");
+    assert_eq!(output.stdout, b"...", "#926 ready: drain stdout");
+    assert_eq!(output.stderr, b"!!!err", "#926 ready: drain stderr");
 }
 
 #[tokio::test(start_paused = true)]
@@ -197,13 +239,11 @@ async fn ready_exit_without_output_wins_over_overdue_timer() {
         poll_once(collect.as_mut()).is_pending(),
         "#926 exit: starts pending"
     );
+    expire_registered_deadline().await;
+    // Release EOF only after expiry so the next select evaluates its wait
+    // guard at the overdue time, even if the previous select was suspended.
     drop(out_writer);
     drop(err_writer);
-    assert!(
-        poll_once(collect.as_mut()).is_pending(),
-        "#926 exit: EOF still pending"
-    );
-    tokio::time::advance(Duration::from_secs(31)).await;
     done.send(Ok(ExitStatus::from_raw(0)))
         .expect("#926 exit: send exit");
     assert!(
