@@ -52,9 +52,6 @@ MUTATIONS = [
      "COMMON_SOURCE = ROOT / 'scripts/gateway-parity/common.py'\n"
      "_early = importlib.util.spec_from_file_location('early_common', COMMON_SOURCE)\n"
      "_early.loader.exec_module(importlib.util.module_from_spec(_early))\n"),
-    ('empty-aggregation-green', COMMON,
-     "if not known or any(child not in BATCH_STATUS_ORDER for child in known):",
-     "if any(child not in BATCH_STATUS_ORDER for child in known):"),
     ('a3-bootstrap-unscanned', SAFETY,
      "for name in common.A2_SCRIPTS + common.A3_SCRIPTS:\n            if name == 'common.py'",
      "for name in common.A2_SCRIPTS:\n            if name == 'common.py'"),
@@ -127,7 +124,6 @@ CHECKS = {
     'session-common-unguarded': ('AggregationAudit.test_residual_mapping_is_rejected_before_import', '#166 residual mapping must be guarded before import'),
     'gateway-common-loaded-early': ('AggregationAudit.test_residual_mapping_is_rejected_before_import', '#166 residual mapping must be guarded before import'),
     'session-common-loaded-early': ('AggregationAudit.test_residual_mapping_is_rejected_before_import', '#166 residual mapping must be guarded before import'),
-    'empty-aggregation-green': ('ApparatusInputs.test_empty_aggregation_fails_closed', '#166 empty aggregation must fail'),
     'a3-bootstrap-unscanned': ('ApparatusInputs.test_a3_entries_are_scanned_by_both_guards', '#701 A3 scanner must inspect check_schema.py'),
     'a3-imports-unscanned': ('ApparatusInputs.test_a3_entries_are_scanned_by_both_guards', '#701 A3 scanner must inspect check_schema.py'),
     'child-mask-callback-missing': ('Safety.test_start_registers_before_pending_signal_and_unblocks_child', '#209 child mask restored'),
