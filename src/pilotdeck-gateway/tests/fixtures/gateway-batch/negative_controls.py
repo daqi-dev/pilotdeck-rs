@@ -17,6 +17,7 @@ sys.dont_write_bytecode = True
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-166-negative-pyc-')
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import committed_status_contract
 
 ROOT = Path(__file__).resolve().parents[5]
 COMMON = ROOT / 'scripts/gateway-parity/common.py'
@@ -27,23 +28,53 @@ AUDIT = ROOT / 'src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/chec
 NEGATIVE = Path(__file__).resolve()
 SESSION_NEGATIVE = NEGATIVE.parent.parent / 'session-domain-cleanup/negative_controls.py'
 DRIVER_TEST = ROOT / 'src/pilotdeck-gateway/tests/test_metadata_io_driver.py'
+PROCESS = NEGATIVE.parent.parent / 'negative_process.py'
 MUTATIONS = [
     ('nested-scope-erased', AUDIT, "name = '.'.join((*scope, child.name))", "name = child.name"),
     ('duplicate-entry-accepted', AUDIT,
      "if len(functions) != 1 and (markers or key in AGGREGATION_POINTS):",
      "if False and (markers or key in AGGREGATION_POINTS):"),
-    ('definition-time-exit-unchecked', AUDIT,
-     "children = ast.iter_child_nodes(node)",
-     "children = (child for child in ast.iter_child_nodes(node) if not isinstance(child, (ast.ClassDef, ast.Lambda)))"),
-    ('conditional-system-exit-unchecked', AUDIT,
-     "for value in ast.walk(node.exc)",
-     "for value in ([node.exc.func] if isinstance(node.exc, ast.Call) else [node.exc])"),
-    ('system-exit-unchecked', AUDIT,
-     "in ('SystemExit', 'builtins.SystemExit')", "in ('NeverExit',)"),
-    ('sys-exit-unchecked', AUDIT,
-     "in ('sys.exit', 'os._exit')", "in ('os._exit',)"),
-    ('os-exit-unchecked', AUDIT,
-     "in ('sys.exit', 'os._exit')", "in ('sys.exit',)"),
+    ('entry-syntax-open', AUDIT,
+     'if type(node).__name__ not in ENTRY_NODE_TYPES or (',
+     'if False and (type(node).__name__ not in ENTRY_NODE_TYPES) or ('),
+    ('entry-calls-open', AUDIT,
+     "if not approved_operation and name not in ('common.aggregate_status', 'md.common.aggregate_status'):",
+     "if False and not approved_operation and name not in ('common.aggregate_status', 'md.common.aggregate_status'):"),
+    ('entry-raise-open', AUDIT,
+     'if isinstance(node, ast.Raise) and not (',
+     'if False and isinstance(node, ast.Raise) and not ('),
+    ('entry-writes-open', AUDIT,
+     'if not shared_local and hashlib.sha256(syntax_shape(node).encode()).hexdigest() not in ENTRY_WRITES.get(rel, ()):',
+     'if False and not shared_local and hashlib.sha256(syntax_shape(node).encode()).hexdigest() not in ENTRY_WRITES.get(rel, ()):'),
+    ('entry-implicit-writes-open', AUDIT,
+     'if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):',
+     'if False and isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):'),
+    ('entry-fallthrough-open', AUDIT,
+     'if not terminal_block(function.body):',
+     'if False and not terminal_block(function.body):'),
+    ('entry-module-open', AUDIT,
+     '    errors = []\n    template = ast.parse(',
+     '    return []\n    template = ast.parse('),
+    ('shared-exits-open', AUDIT,
+     '    nodes = own_nodes(function)\n    returns = [node.value',
+     '    return True\n    nodes = own_nodes(function)\n    returns = [node.value'),
+    ('shared-local-open', AUDIT,
+     '    if any(isinstance(n, ast.arg) and n.arg == value.id',
+     '    if False and any(isinstance(n, ast.arg) and n.arg == value.id'),
+    ('entry-version-sensitive', AUDIT,
+     'if item is not None and item != []', 'if True'),
+    ('guard-contract-open', PROCESS,
+     'if set(namespace) != names or len(functions) != 1:',
+     'if False and (set(namespace) != names or len(functions) != 1):'),
+    ('guard-exit-fail', PROCESS,
+     "return SimpleNamespace(aggregate_status=namespace['aggregate_status'])",
+     "return SimpleNamespace(aggregate_status=lambda *_: ('BLOCKED', 1))"),
+    ('compile-invalid-not-reached', SESSION_NEGATIVE,
+     "                    compile(changed, str(source), 'exec')",
+     '                    pass  # mutant skips compiler'),
+    ('audit-finding-unbound', SESSION_NEGATIVE,
+     'if not isinstance(failures, list) or message not in failures:',
+     'if False and (not isinstance(failures, list) or message not in failures):'),
     ('gateway-common-unguarded', NEGATIVE,
      "[COMMON, " "*(row[1] for row in selected)]", "[row[1] for row in selected]"),
     ('session-common-unguarded', SESSION_NEGATIVE,
@@ -128,11 +159,20 @@ MUTATIONS = [
 CHECKS = {
     'nested-scope-erased': ('AggregationAudit.test_nested_names_cannot_replace_registered_entry', '#166 nested aggregation must retain scope identity'),
     'duplicate-entry-accepted': ('AggregationAudit.test_duplicate_entries_fail_closed', '#166 duplicate definitions cannot certify entry'),
-    'definition-time-exit-unchecked': ('AggregationAudit.test_definition_time_exits_cannot_hide_in_nested_scopes', '#166 definition-time exit must certify its own code'),
-    'conditional-system-exit-unchecked': ('AggregationAudit.test_explicit_exits_cannot_use_unreachable_returns', '#166 explicit exit must certify its own code'),
-    'system-exit-unchecked': ('AggregationAudit.test_explicit_exits_cannot_use_unreachable_returns', '#166 explicit exit must certify its own code'),
-    'sys-exit-unchecked': ('AggregationAudit.test_explicit_exits_cannot_use_unreachable_returns', '#166 explicit exit must certify its own code'),
-    'os-exit-unchecked': ('AggregationAudit.test_explicit_exits_cannot_use_unreachable_returns', '#166 explicit exit must certify its own code'),
+    'entry-syntax-open': ('AggregationAudit.test_entry_rejects_unregistered_syntax', '#166 entry grammar rejects unknown syntax'),
+    'entry-calls-open': ('AggregationAudit.test_entry_rejects_unregistered_calls', '#166 entry call grammar rejects unknown operations and callbacks'),
+    'entry-raise-open': ('AggregationAudit.test_entry_rejects_noncanonical_raise', '#166 entry raise grammar rejects unknown termination'),
+    'entry-writes-open': ('AggregationAudit.test_entry_rejects_callable_and_table_rebinding', '#166 entry writes cannot replace trusted operations or status tables'),
+    'entry-implicit-writes-open': ('AggregationAudit.test_entry_rejects_callable_and_table_rebinding', '#166 entry writes cannot replace trusted operations or status tables'),
+    'entry-fallthrough-open': ('AggregationAudit.test_entry_requires_terminal_shared_path', '#166 entry cannot fall through to exit zero'),
+    'entry-module-open': ('AggregationAudit.test_module_rejects_unsupported_entry_and_helper_shapes', '#166 module grammar rejects changed launcher or helpers'),
+    'shared-exits-open': ('AggregationAudit.test_shared_returns_rejects_unshared_exits', '#166 every exit value must be shared'),
+    'shared-local-open': ('AggregationAudit.test_local_code_cannot_come_from_another_namespace', '#166 shared exit binding belongs to this function only'),
+    'entry-version-sensitive': ('AggregationAudit.test_entry_fingerprints_ignore_empty_optional_fields', '#166 entry fingerprints ignore absent optional AST fields'),
+    'guard-contract-open': ('AggregationAudit.test_committed_contract_requires_complete_head', '#166 incomplete committed contract must be refused'),
+    'guard-exit-fail': ('AggregationAudit.test_residual_mapping_is_rejected_before_import', '#166 source guard must exit BLOCKED'),
+    'compile-invalid-not-reached': ('AggregationAudit.test_session_suite_continues_after_invalid_mutants', '#166 uncompilable mutant must reach compiler'),
+    'audit-finding-unbound': ('AggregationAudit.test_session_audit_judges_bind_dedicated_findings', '#166 audit judge must reject unrelated or absent findings'),
     'gateway-common-unguarded': ('AggregationAudit.test_residual_mapping_is_rejected_before_import', '#166 residual mapping must be guarded before import'),
     'session-common-unguarded': ('AggregationAudit.test_residual_mapping_is_rejected_before_import', '#166 residual mapping must be guarded before import'),
     'gateway-common-loaded-early': ('AggregationAudit.test_residual_mapping_is_rejected_before_import', '#166 residual mapping must be guarded before import'),
@@ -167,6 +207,35 @@ CHECKS = {
 }
 
 
+def run(out, label, test):
+    script = DRIVER_TEST if test.startswith('AggregationAudit.') else SAFETY
+    result = run_owned([sys.executable, '-I', '-B', str(script), test, '-v'], cwd=ROOT, timeout=120)
+    (out / (label + '.log')).write_text(result.stdout + result.stderr)
+    return result
+
+def record(out, results, name, status, reason):
+    results.append({'mutation': name, 'status': status, 'reason': reason})
+    print(f'{name}: {status}: {reason}', flush=True)
+    (out / 'summary.json').write_text(json.dumps(results, indent=2) + '\n')
+
+
+def load_pristine_common():
+    spec = importlib.util.spec_from_file_location('gateway_batch_common', COMMON)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def require_single_anchor(original, old, name):
+    if original.count(old) != 1:
+        raise ValueError(f'#{name} anchor expired: count={original.count(old)}')
+
+
+def require_positive(result):
+    if result.returncode != 0 or 'Ran 1 test' not in result.stderr:
+        raise RuntimeError('bound positive test did not pass')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True, type=Path)
@@ -174,45 +243,31 @@ def main():
     args = parser.parse_args()
     known = {row[0] for row in MUTATIONS}
     if args.only and (set(args.only) - known or len(args.only) != len(set(args.only))):
-        parser.error('unknown or duplicate --only')
+        common = committed_status_contract(ROOT)
+        return common.aggregate_status('BLOCKED')[1]
     selected = [row for row in MUTATIONS if not args.only or row[0] in args.only]
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
     results = []
 
-    def run(label, test):
-        script = DRIVER_TEST if test.startswith('AggregationAudit.') else SAFETY
-        result = run_owned([sys.executable, '-I', '-B', str(script), test, '-v'], cwd=ROOT, timeout=60)
-        (out / (label + '.log')).write_text(result.stdout + result.stderr)
-        return result
-
-    def record(name, status, reason):
-        results.append({'mutation': name, 'status': status, 'reason': reason})
-        print(f'{name}: {status}: {reason}', flush=True)
-        (out / 'summary.json').write_text(json.dumps(results, indent=2) + '\n')
-
     try:
         with mutating_sources(ROOT, list(dict.fromkeys([COMMON, *(row[1] for row in selected)]))) as originals:
             # Import only after every source, including the verdict table, is pristine.
-            _spec = importlib.util.spec_from_file_location('gateway_batch_common', COMMON)
-            common = importlib.util.module_from_spec(_spec)
-            _spec.loader.exec_module(common)
+            common = load_pristine_common()
             MUTATION_STATUS = common.MUTATION_STATUS
             for name, source, old, new in selected:
                 status, reason = 'INVALID', 'not executed'
                 test, message = CHECKS[name]
                 try:
                     original = originals[source].decode()
-                    if original.count(old) != 1:
-                        raise ValueError(f'#{name} anchor expired: count={original.count(old)}')
+                    require_single_anchor(original, old, name)
                     mutant = original.replace(old, new, 1)
                     compile(mutant, str(source), 'exec')
                     (out / (name + '-compile.log')).write_text('Python compile: PASS\n')
-                    positive = run(name + '-positive', test)
-                    if positive.returncode != 0 or 'Ran 1 test' not in positive.stderr:
-                        raise RuntimeError('bound positive test did not pass')
+                    positive = run(out, name + '-positive', test)
+                    require_positive(positive)
                     source.write_text(mutant)
-                    negative = run(name + '-negative', test)
+                    negative = run(out, name + '-negative', test)
                     text = negative.stdout + negative.stderr
                     if negative.returncode == 0:
                         status, reason = 'SURVIVED', 'bound test passed the mutant'
@@ -225,19 +280,20 @@ def main():
                 finally:
                     source.write_bytes(originals[source])
                 try:
-                    restored = run(name + '-restored', test)
+                    restored = run(out, name + '-restored', test)
                     if restored.returncode != 0:
                         status, reason = 'INVALID', reason + '; restored positive failed'
                 except Exception as error:
                     status, reason = 'INVALID', reason + f'; restoration test: {error}'
-                record(name, status, reason)
+                record(out, results, name, status, reason)
     except Exception as error:
         for row in results:
             row.update(status='INVALID', reason=f'source guard: {error}')
         for name, *_ in selected[len(results):]:
-            record(name, 'INVALID', f'source guard: {error}')
+            record(out, results, name, 'INVALID', f'source guard: {error}')
         (out / 'summary.json').write_text(json.dumps(results, indent=2) + '\n')
-        raise  # A failed guard must never use an unverified verdict module.
+        common = committed_status_contract(ROOT)
+        return common.aggregate_status('BLOCKED')[1]
     counts = {state: sum(row['status'] == state for row in results)
               for state in ('KILLED', 'SURVIVED', 'INVALID')}
     print(json.dumps(counts), flush=True)

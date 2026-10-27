@@ -1269,8 +1269,20 @@ class AggregationAudit(unittest.TestCase):
     def test_duplicate_entries_fail_closed(self):
         result = self.audit_main("def main():\n    return common.aggregate_status('FAIL')[1]\n"
                                  "def main():\n    return 0\n")
+        duplicate = self.ast.parse("def main():\n    return common.aggregate_status('FAIL')[1]\n"
+                                   "def main():\n    return 0\n")
+        point = self.audit['scan_aggregation_tree'](duplicate, 'scripts/gateway-parity/controls/session_domain.py')
+        self.assertIsNone(point[('scripts/gateway-parity/controls/session_domain.py', 'main')][1],
+                          '#166 duplicate definitions cannot certify entry')
         self.assertFalse(result['points']['controls-main']['shared'],
                          '#166 duplicate definitions cannot certify entry')
+
+    def test_shared_returns_rejects_unshared_exits(self):
+        for statement in ('return 0', 'raise SystemExit(0)', 'sys.exit(0)'):
+            function = self.ast.parse('def main():\n    ' + statement +
+                                     "\n    return common.aggregate_status('FAIL')[1]\n").body[0]
+            self.assertFalse(self.audit['shared_returns'](function, 'exit'),
+                             '#166 every exit value must be shared')
 
     def test_explicit_exits_cannot_use_unreachable_returns(self):
         import subprocess
@@ -1311,7 +1323,7 @@ class AggregationAudit(unittest.TestCase):
 
     def test_shared_explicit_exits_are_recognized(self):
         for expression in ("common.aggregate_status('FAIL')[1]", 'code'):
-            for statement in ('raise SystemExit({})', 'sys.exit({})', 'os._exit({})'):
+            for statement in ('raise SystemExit({})', 'sys.exit({})'):
                 with self.subTest(expression=expression, statement=statement):
                     code = ("def main():\n    _, code = common.aggregate_status('FAIL')\n    "
                             + statement.format(expression) + '\n')
@@ -1375,14 +1387,16 @@ class AggregationAudit(unittest.TestCase):
                         except Exception as error:
                             caught = error
                     self.assertEqual(imports, [], '#166 residual mapping must be guarded before import')
-                    self.assertIsInstance(caught, guard.SourceBaselineError, '#166 residual mapping must refuse with source guard')
-                    self.assertIsNone(code, '#166 dirty guard must not return a green code')
-                    self.assertEqual(caught.relative, 'scripts/gateway-parity/common.py',
-                                     '#166 residue refusal must name common.py')
-                    if folder == 'gateway-batch':
-                        rows = json.loads((Path(temp) / 'out/summary.json').read_text())
-                        self.assertEqual([row['status'] for row in rows], ['INVALID'],
-                                         '#166 residue must record INVALID for every selected case')
+                    self.assertIsNone(caught, '#166 source guard must report BLOCKED without traceback')
+                    self.assertEqual(code, 2, '#166 source guard must exit BLOCKED')
+                    report = json.loads((Path(temp) / 'out/summary.json').read_text())
+                    rows = report if folder == 'gateway-batch' else report['mutations']
+                    field = 'status' if folder == 'gateway-batch' else 'verdict'
+                    detail = 'reason' if folder == 'gateway-batch' else 'detail'
+                    self.assertEqual([row[field] for row in rows], ['INVALID'],
+                                     '#166 residue must record INVALID for every selected case')
+                    self.assertIn('source baseline mismatch: scripts/gateway-parity/common.py', rows[0][detail],
+                                  '#166 residue refusal must name common.py')
                     print(f'#166 {folder}: residual INVALID->PASS rejected before import; no writes', flush=True)
 
 
@@ -1397,6 +1411,8 @@ class AggregationAudit(unittest.TestCase):
         names = [row[0] for row in module.MUTATIONS[:2]]
         module.MUTATIONS = [(names[0], module.SOURCE, '#166 absent anchor', 'absent'),
                             (names[1], module.SOURCE, 'def main():', 'def main(:')]
+        self.assertEqual(module.SOURCE.read_text().count('def main():'), 1,
+                         '#166 compile-invalid fixture needs exactly one real main anchor')
         originals = {p: p.read_bytes() for p in (module.SOURCE, module.COMMON_SOURCE)}
 
         @contextlib.contextmanager
@@ -1428,9 +1444,204 @@ class AggregationAudit(unittest.TestCase):
                              '#166 suite must record every selected invalid mutant')
             self.assertEqual([row['verdict'] for row in report['mutations']], ['INVALID', 'INVALID'],
                              '#166 stale and uncompilable mutants are INVALID')
+            self.assertTrue(report['mutations'][0]['detail'].startswith('ValueError:'),
+                            '#166 stale mutant must fail at anchor validation')
+            self.assertTrue(report['mutations'][1]['detail'].startswith('SyntaxError:'),
+                            '#166 uncompilable mutant must reach compiler')
             self.assertEqual(code, 2, '#166 invalid batch must exit BLOCKED')
             self.assertEqual(check.call_count, 1, '#166 invalid suite still runs restored positive')
             self.assertTrue(report['restoredPass'], '#166 invalid suite records restoration separately')
+
+
+    def test_session_audit_judges_bind_dedicated_findings(self):
+        import copy
+        path = self.fixture / 'session-domain-cleanup/negative_controls.py'
+        spec = importlib.util.spec_from_file_location('negative_166_judges', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        names = {'aggregation-exit-bypassed', 'aggregation-direct-return',
+                 'aggregation-branch-exit', 'gateway-aggregation-bypassed'}
+        cases = [row for row in module.MUTATIONS if row[0] in names]
+        self.assertEqual({row[0] for row in cases}, names, '#166 audit judge covers all four source controls')
+        read = Path.read_text
+        for name, source, old, new in cases:
+            with self.subTest(mutation=name):
+                original = read(source)
+                self.assertEqual(original.count(old), 1, '#166 audit judge mutant anchor must be unique')
+                changed = original.replace(old, new, 1)
+                compile(changed, str(source), 'exec')
+                with patch.object(Path, 'read_text', lambda path, *a, **k:
+                                  changed if path == source else read(path, *a, **k)):
+                    result = self.audit['aggregation_audit']()
+                judge = module.JUDGES[name][1]
+                killed, detail = judge([result])
+                self.assertTrue(killed, '#166 audit judge must bind real source mutation: ' + detail)
+                print(f'#166 {name}: {detail}', flush=True)
+                for failures in ([], ['#166 unrelated audit failure'], None):
+                    unrelated = copy.deepcopy(result)
+                    unrelated['failures'] = failures
+                    self.assertFalse(judge([unrelated])[0],
+                                     '#166 audit judge must reject unrelated or absent findings')
+                for rows in ([], [result, result], [dict(result, passed=True)],
+                             [dict(result, mode='unrelated')]):
+                    self.assertFalse(judge(rows)[0], '#166 audit judge requires one failed audit result')
+
+    def test_committed_contract_requires_complete_head(self):
+        path = self.fixture / 'negative_process.py'
+        spec = importlib.util.spec_from_file_location('negative_166_contract', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        source = (self.root / 'scripts/gateway-parity/common.py').read_text()
+        variants = (
+            source.replace('BATCH_STATUS_ORDER =', 'MISSING_ORDER =', 1),
+            source.replace('BATCH_EXIT_CODES =', 'MISSING_CODES =', 1),
+            source.replace('MUTATION_STATUS =', 'MISSING_MUTATIONS =', 1),
+            source.replace('def aggregate_status(', 'def missing_status(', 1),
+            source + '\ndef aggregate_status(*children): return "PASS", 0\n',
+        )
+        for changed in variants:
+            with self.subTest(index=variants.index(changed)):
+                self.assertNotEqual(changed, source, '#166 invalid HEAD fixture must change contract')
+                caught = None
+                with patch.object(module, '_git', return_value=changed.encode()):
+                    try:
+                        module.committed_status_contract(self.root)
+                    except Exception as error:
+                        caught = error
+                self.assertIsInstance(caught, RuntimeError, '#166 incomplete committed contract must be refused')
+                self.assertIn('#166 committed shared status contract is incomplete', str(caught),
+                              '#166 incomplete committed contract must be refused')
+
+    def test_entry_fingerprints_ignore_empty_optional_fields(self):
+        tree = self.ast.parse("def main():\n    return common.aggregate_status('FAIL')[1]\n")
+        shape = self.audit['syntax_shape'](tree)
+        for node in self.ast.walk(tree):
+            for field, value in list(self.ast.iter_fields(node)):
+                if value is None or value == []:
+                    delattr(node, field)
+        self.assertEqual(self.audit['syntax_shape'](tree), shape,
+                         '#166 entry fingerprints ignore absent optional AST fields')
+        tree.body[0].decorator_list = [self.ast.Name(id='unsafe', ctx=self.ast.Load())]
+        self.assertNotEqual(self.audit['syntax_shape'](tree), shape,
+                            '#166 entry fingerprints preserve nonempty fields')
+
+    def entry_errors(self, code, rel='scripts/gateway-parity/controls/session_domain.py'):
+        function = self.ast.parse(code).body[0]
+        compile(code, '<#166 entry probe>', 'exec')
+        return self.audit['entry_errors'](function, rel)
+
+    def test_entry_rejects_unregistered_syntax(self):
+        for statement in ('class Holder: pass', 'def nested(): pass', 'nested = lambda: 0',
+                          'import sys as s', 'from sys import exit', 'global code',
+                          'code := 0'):
+            with self.subTest(statement=statement):
+                statement = '(' + statement + ')' if ':=' in statement else statement
+                errors = self.entry_errors('def main():\n    ' + statement
+                                           + "\n    return common.aggregate_status('FAIL')[1]\n")
+                self.assertTrue(any('unsupported entry syntax' in error for error in errors),
+                                '#166 entry grammar rejects unknown syntax')
+
+    def test_entry_rejects_unregistered_calls(self):
+        for statement in ('exit(0)', 'quit(0)', 'getattr(sys, "exit")(0)',
+                          'exec("raise SystemExit(0)")', 'os._exit(0)',
+                          "sorted([0], key=sys.exit)", "sorted([0], key=exit)"):
+            with self.subTest(statement=statement):
+                errors = self.entry_errors('def main():\n    ' + statement
+                                           + "\n    return common.aggregate_status('FAIL')[1]\n",
+                                           'src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_controls.py')
+                self.assertTrue(any('unregistered direct call' in error for error in errors),
+                                '#166 entry call grammar rejects unknown operations and callbacks')
+
+    def test_entry_rejects_noncanonical_raise(self):
+        for statement in ('raise error', 'raise RuntimeError()', 'raise SystemExit',
+                          'raise (SystemExit(0) if True else RuntimeError())'):
+            with self.subTest(statement=statement):
+                errors = self.entry_errors('def main():\n    ' + statement
+                                           + "\n    return common.aggregate_status('FAIL')[1]\n")
+                self.assertTrue(any('only raise SystemExit' in error for error in errors),
+                                '#166 entry raise grammar rejects unknown termination')
+
+    def test_entry_rejects_callable_and_table_rebinding(self):
+        for statement in ('print = exit', 'common = other', 'SystemExit = print',
+                          "common.BATCH_EXIT_CODES['FAIL'] = 0", "MUTATION_STATUS['INVALID'] = 'PASS'",
+                          'common.aggregate_status = replacement',
+                          "for common.BATCH_EXIT_CODES['FAIL'] in [0]: pass",
+                          "[None for common.BATCH_EXIT_CODES['FAIL'] in [0]]",
+                          "with source as common.BATCH_EXIT_CODES['FAIL']: pass"):
+            with self.subTest(statement=statement):
+                errors = self.entry_errors('def main():\n    ' + statement
+                                           + "\n    return common.aggregate_status('FAIL')[1]\n")
+                self.assertTrue(any('binding' in e or 'assignment' in e for e in errors),
+                                '#166 entry writes cannot replace trusted operations or status tables')
+
+    def test_entry_requires_terminal_shared_path(self):
+        errors = self.entry_errors("def main():\n    if flag:\n        return common.aggregate_status('FAIL')[1]\n")
+        self.assertTrue(any('fall through' in e for e in errors),
+                        '#166 entry cannot fall through to exit zero')
+
+    def test_module_rejects_unsupported_entry_and_helper_shapes(self):
+        rel = 'scripts/gateway-parity/session_domain.py'
+        source = (self.root / rel).read_text()
+        target = self.root / rel
+        cases = (
+            source.replace('raise SystemExit(main())', 'raise SystemExit(0)'),
+            source + '\nprint("after entry")\n',
+            source.replace('def main():', 'def shadow():', 1),
+            source.replace('class EvidenceError(', 'class EvidenceError(', 1).replace(
+                'class EvidenceError(ValueError):',
+                'class EvidenceError(ValueError):\n    getattr(sys, "exit")(0)', 1),
+            source.replace('def load_session_controls():', 'def load_session_controls():\n    exit(0)', 1),
+            source.replace('def main():', 'main = other\n\ndef main():', 1),
+        )
+        read = Path.read_text
+        for changed in cases:
+            with self.subTest(index=cases.index(changed)):
+                self.assertNotEqual(changed, source, '#166 module mutation must change the real source')
+                compile(changed, str(target), 'exec')
+                with patch.object(Path, 'read_text', lambda path, *a, **k:
+                                  changed if path == target else read(path, *a, **k)):
+                    result = self.audit['aggregation_audit']()
+                self.assertFalse(result['passed'], '#166 module grammar rejects changed launcher or helpers')
+
+    def test_fail_closed_review_reproductions(self):
+        # Every r1/r2 bypass plus new, unenumerated operations goes through the
+        # complete inventory. subTest executes every case before unittest sums.
+        statements = (
+            "class Holder:\n    _, code = common.aggregate_status('FAIL')\nreturn code",
+            "def main():\n    return common.aggregate_status('FAIL')[1]\nreturn 0",
+            'raise SystemExit(0)', 'exit(0)', 'quit(0)',
+            'from sys import exit\nexit(0)', 'import sys as s\ns.exit(0)',
+            'from os import _exit\n_exit(0)', 'e = SystemExit(0)\nraise e',
+            'def nested(x: sys.exit(0)): pass', 'def nested() -> sys.exit(0): pass',
+            'def nested(x: sys.exit(0), /): pass', 'def nested(*, x: sys.exit(0)): pass',
+            'def nested(*x: sys.exit(0)): pass', 'def nested(**x: sys.exit(0)): pass',
+            'getattr(sys, "exit")(0)', '(lambda: sys.exit(0))()', 'exec("raise SystemExit(0)")',
+            "common.BATCH_EXIT_CODES['FAIL'] = 0",
+            "sorted([0], key=sys.exit)",
+        )
+        for statement in statements:
+            with self.subTest(statement=statement):
+                code = ('def main():\n' + '\n'.join('    ' + line for line in statement.splitlines())
+                        + "\n    return common.aggregate_status('FAIL')[1]\n")
+                result = self.audit_main(code)
+                self.assertFalse(result['points']['controls-main']['shared'],
+                                 '#166 review bypass must fail the complete entry audit')
+                self.assertFalse(result['passed'], '#166 review bypass must fail the complete entry audit')
+                self.assertTrue(any(':1:' in failure or ':5:' in failure or 'entry contract' in failure
+                                    for failure in result['failures']),
+                                '#166 review rejection must include a source position')
+                print(f'#166 rejected {statement!r}: {result["failures"][0]}', flush=True)
+
+    def test_local_code_cannot_come_from_another_namespace(self):
+        for code in (
+            "def main(code=0):\n    class Holder:\n        _, code = common.aggregate_status('FAIL')\n    return code\n",
+            "def main(code=0):\n    if flag:\n        _, code = common.aggregate_status('FAIL')\n    return code\n",
+            "def main():\n    _, code = common.aggregate_status('FAIL')\n    try:\n        pass\n    except Exception as code:\n        return code\n    return code\n",
+        ):
+            with self.subTest(code=code):
+                function = self.ast.parse(code).body[0]
+                self.assertFalse(self.audit['shared_returns'](function, 'exit'),
+                                 '#166 shared exit binding belongs to this function only')
 
 
 if __name__ == '__main__':

@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-28 重登记候选（#166 fix-r3，AI 代批，待人复核）**：#892 汇总入口审计改为正向语法契约：登记 main 的 AST 语法、调用参数和写入形态固定，模块尾仅 canonical SystemExit(main())；其余模块语句（含类体、助手及 report 聚合函数）按完整 AST 和顺序登记，未知写法直接 FAIL 并定位，不再枚举退出别名。为使真实入口符合契约，`session_domain.py` 仅把延迟 controls 装载与错误 rule 读取提成顶层命名操作；`controls/session_domain.py` 仅提取错误 rule 读取。**本轮只改入口形态，不改判分：阈值、分母、状态全序、退出码表均未改**。仅更新下列两件 SHA256。真实存档复算与原始输出在 `_tmp/20261026-issue-166/fix-r3/real-recompute/`；双非作者终审及人签字由协调者接续。
+
 > **2026-10-28 #166 fix-r2 重登记候选（按协调者三项 P0 修复授权，待两家非作者终审）**：`common.py` 空/全 None 聚合由 PASS 改为 FAIL，保留有实际状态时 None 的可选子项行为；`test_safety.py` 补 A2+A3 实际扫描及注入 A3 同级导入的负例，补 #209 log 失败登记回填测试和专属断言消息。仅更新此两行 sha256；生命周期实现、阈值、分母和评分未改。非冻结 fixture 审计改为限定作用域且拒绝重定义；登记函数中的 Return 与 SystemExit/sys.exit/os._exit 路径逐条校验；两套负控先守卫（始终含 common.py）再导入映射，守卫失败非零退出。证据见 `_tmp/20261026-issue-166/fix-r2/RESULT.md`；真实存档回放与检查原始输出随该目录交付，实际全量负控及双谱系终审待协调者提交后执行。
 
 > **2026-10-28 重登记候选（#166 / #892 / #909 / #701，Refs #209；待两家非作者终审与人复核）**：#166 仅把共享 `NOT_RUN` 出口登记为 **3**，deadline 四格结构和 execution/acceptance 状态仍为 NOT_RUN，PASS=0、FAIL/PASS_WITH_SKIPS=1、BLOCKED=2 不变。#892 的非冻结 fixture AST 守卫枚举直接 status 字典/任意变量/dict(status=)，按登记出口逐分支核对共享函数投影及所有返回变量赋值，嵌套函数调用、独立条件码和报告别名不可替出口背书；直接字典/分支退出码负例已配套，新 gateway 源码负控也纳入审计，两套源码负控的 KILLED/SURVIVED/INVALID 映射共用 common.MUTATION_STATUS。#909 按工单允许的方案删除冻结 prerequisites 的跨 job `ci-check-node` 文本谓词；该职责由 CI 实际执行的 `test_metadata_io_driver.EnvironmentControls` 逐 job 守卫承担，并补四 job 各自删除/后移/条件 setup 的 12 条负控。#701 装置 import 词干取 A2+A3 的 Python 并集；-I 前标准库窗口和姊妹刻意构造沿用人定已知边界。#209 gateway A2 部分未过期：启动/登记与整批清理期间挂起中断；WNOWAIT 保持直接子进程身份，所有实际组信号完成后才 reap；清理错误继续后续组；Darwin 已退出未回收 leader 的 EPERM 仅在成功回收且最终 ESRCH 后解除，拒绝记录保留在原始 audit；损坏的已发布 owner 不作为未发布陈旧锁回收；获取锁即预置 `cleanupPending: true`，覆盖 SIGKILL/OOM 和清理记录写失败；释放前先屏蔽信号再等 guard，未证实清理则保留登记和锁，gateway 不自动接管。进程登记仅覆盖 A2，E1 `session_domain.run_fixture` 未接入 `LIVE_GROUPS`，以及 A1/其他姊妹接管规则仍须 #209 续办（前置于下一次全量对拍/定标）。保留已有 `.guard` flock/owner 目录互操作协议，不在一个成员里单边换锁。本次只重登记 common.py、session_domain.py、run_round.py、test_safety.py、controls/prerequisites.py 五行；不改阈值、分母、归一化、评分、旧差异账本或 A3 schema 冻结。原始证据与边界见 `_tmp/20261026-issue-166/RESULT.md`；此候选不代表 A7 或其他阶段验收完成。
@@ -167,9 +169,9 @@ e36267947be34f26f6f913ae2e0f44109e41e87bf8e54dde692d76ae595ed05b  ../../scripts/
 75fb9a0085c7c2538e63fcf8457a833aa01e3e30d51ac2db6def382fbf7bfad9  ../../scripts/gateway-parity/run_round.py
 5e232da20ce5e16568acff36c24c5ed7d71a36507c1e53beeff03a830ba291d7  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
-7463926664462007cccda95a17e635d245b798a5bc10be53f5a6139b3f4139e3  ../../scripts/gateway-parity/session_domain.py
+82381cf3a1d09a999f015a0b8163a33185bf702225d247fe037bf428dc782ad4  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
-f67c8c99fd65000cfa8685fb819b790a653ebf449eaca507183270af4d2a48bd  ../../scripts/gateway-parity/controls/session_domain.py
+b79058ff9c0e6838f70b7024bd59378b8b32b0bcba95e3ec8cadcf6d1c07ed21  ../../scripts/gateway-parity/controls/session_domain.py
 41b1313fc047e8334a1655b69e277c4bcc451edaf15b79efd37e403e7005dab2  ../../scripts/gateway-parity/fixtures/session-calibration.json
 8ea02eadd41cc6bbf75c1e67c22152f37f6b729007ad1e3a34a190c9ab60188c  ../../scripts/a5-19/observation_rules.mjs
 0248507e617648bd8e81e1a54ae8b448cd7b7a2f14f1542424adc3a83b398c84  ../../scripts/a5-19/run.py
