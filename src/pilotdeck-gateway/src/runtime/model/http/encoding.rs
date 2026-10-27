@@ -20,9 +20,9 @@ use tokio::io::{AsyncBufRead, AsyncRead, BufReader, ReadBuf};
 type Reader = Pin<Box<dyn AsyncBufRead + Send + Sync>>;
 // Node v22.22.0 / undici 6.23.0 rejects the sixth coding before parsing
 // individual tokens (even unknown ones) or allocating any decoder.
-const MAX_CONTENT_ENCODINGS: usize = 5;
+pub(crate) const MAX_CONTENT_ENCODINGS: usize = 5;
 
-pub(super) fn decode_response(
+pub(crate) fn decode_response(
     method: &Method,
     response: Response<ModelBody>,
     follow_redirects: bool,

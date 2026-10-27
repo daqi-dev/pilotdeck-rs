@@ -244,49 +244,41 @@ async fn mcp_get_body_fulfilled_tie_parent_last() {
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_get_body_rejected_continuation_first() {
     check("mcp_get/body/rejected/continuation-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_get_body_rejected_parent_first() {
     check("mcp_get/body/rejected/parent-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_get_body_rejected_tie_parent_first() {
     check("mcp_get/body/rejected/tie-parent-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_get_body_rejected_tie_parent_last() {
     check("mcp_get/body/rejected/tie-parent-last").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_get_body_idle_continuation_first() {
     check("mcp_get/body/idle/continuation-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_get_body_idle_parent_first() {
     check("mcp_get/body/idle/parent-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_get_body_idle_tie_parent_first() {
     check("mcp_get/body/idle/tie-parent-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_get_body_idle_tie_parent_last() {
     check("mcp_get/body/idle/tie-parent-last").await;
 }
@@ -482,49 +474,41 @@ async fn mcp_post_body_fulfilled_tie_parent_last() {
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_post_body_rejected_continuation_first() {
     check("mcp_post/body/rejected/continuation-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_post_body_rejected_parent_first() {
     check("mcp_post/body/rejected/parent-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_post_body_rejected_tie_parent_first() {
     check("mcp_post/body/rejected/tie-parent-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_post_body_rejected_tie_parent_last() {
     check("mcp_post/body/rejected/tie-parent-last").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_post_body_idle_continuation_first() {
     check("mcp_post/body/idle/continuation-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_post_body_idle_parent_first() {
     check("mcp_post/body/idle/parent-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_post_body_idle_tie_parent_first() {
     check("mcp_post/body/idle/tie-parent-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError"]
 async fn mcp_post_body_idle_tie_parent_last() {
     check("mcp_post/body/idle/tie-parent-last").await;
 }

@@ -1,8 +1,8 @@
 # Network cancellation timing fixture (#456 pr1 / pr2)
 
 固定 TS cc7c4e6 + Node v22.22.0 的真实执行共336格，沿用同一个生成器、金样、差异表和反向守卫。
-当前Rust接线336格：274对齐、62差异。pr2b补上MCP GET56、POST48、hooks48，新增111对齐、41差异；#752 修复 web 错误类型名后，ERROR-CLASS 的 34 格（pr1 23 + pr2a 11）转绿，剩余 62 格差异。差异不等于已接受或阶段完成。
-非test产品代码、公开接口和行为不变，仅在两个私有模块追加cfg(test)接线。产品修复归#752。pr2b原始证据与逐格状态见本树 `_tmp/20261026-issue-456c/RESULT.md`；pr2a记录仍在原目录。
+当前Rust接线336格：290对齐、46差异。pr2b补上MCP GET56、POST48、hooks48，新增111对齐、41差异；#752 修复 web 错误类型名后，ERROR-CLASS 的 34 格（pr1 23 + pr2a 11）转绿，剩余 62 格差异；#886 修复 MCP body 错误类型名后，MCP-BODY-ERROR 的 16 格取消 ignore，剩余 46 格差异。差异不等于已接受或阶段完成。
+时序夹具通过两个私有模块的cfg(test)接线复算；产品错误名修复见#752和#886，不改变计时/取消语义。pr2b原始证据与逐格状态见本树 `_tmp/20261026-issue-456c/RESULT.md`；pr2a记录仍在原目录。
 
 | 路径 | timer headers/body/redirect | timer retry-status/error | io-headers | lifecycle | TS合计 | Rust已接线 |
 |---|---:|---:|---:|---:|---:|---:|
@@ -78,17 +78,18 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --test 
 ```
 
 既有默认ignore的重生成守卫复用同一network-timing fixture，重新调用生成器并逐字节比较全部336格。
-integration默认171通过=163对齐+6overdue+1差异守卫+1registry负控，22忽略=21差异+1重生成；两个private lib模块默认114通过=111对齐+2差异守卫+1metadata/trace负控，41忽略=41差异。忽略不等于已批准或阶段通过。
+integration默认171通过=163对齐+6overdue+1差异守卫+1registry负控，22忽略=21差异+1重生成；两个private lib模块默认130通过=127对齐+2差异守卫+1metadata/trace负控，25忽略=25差异。忽略不等于已批准或阶段通过。
 同样先核cargo槽位：`cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib network_timing_tests`。
 
 ## 差异与负控
 
-known_differences.json是TS原值/Rust当前原值/category/test的单一维护表。现62格=pr1的15+pr2a的6+pr2b的41。
+known_differences.json是TS原值/Rust当前原值/category/test的单一维护表。现46格=pr1的15+pr2a的6+pr2b的25。
 历史账本字节不变；pr2b按根因新增PARENT-TIE-002、RETRY-TIE-002、POST-HEADERS-PARENT-003、ERROR-CLASS-003未批准条目。
 #752 修复 web 错误对象的 TS 类型名后，ERROR-CLASS-001（23格）与 ERROR-CLASS-002（11格）
 从表中删除并解除 ignore，更正见两份 R1；PARENT-TIE-001 的 2 格、POST-HEADERS-PARENT-001
 的 5 格因修复后 name 变化同步 Rust 快照（仍因注册序/headers 后取消保留差异），见各自 R1。
-每格严格TS断言并独立ignore；共享registry核三处源码的全部336格集合、测试属性、两个cfg(test)模块接线、TS原值、TS≠Rust、ignore集合/理由和函数格ID绑定。三个默认反向守卫按所属路径逐格重放Rust，未将缺失格过滤成通过。
+#886 修复 MCP body 类型名后，ERROR-CLASS-003 的 16 格从表中删除并解除 ignore；POST-HEADERS-PARENT-003 的 4 格仅更新 Rust.name，仍保留差异，见对应 R1。
+每个剩余差异格严格TS断言并独立ignore；共享registry核三处源码的全部336格集合、测试属性、两个cfg(test)模块接线、TS原值、TS≠Rust、ignore集合/理由和函数格ID绑定。三个默认反向守卫按所属路径逐格重放Rust，未将缺失格过滤成通过。
 改变差异表现或修复后仍保留ignore都会失败；不改产品来迁就期望。
 
 `negative_controls.py /fresh/evidence [control...]`临时变异产品源码，要求独占树；使用mutating_sources验证基线（默认HEAD，未提交候选可用`PDRS_NEGATIVE_BASELINE`指定候选树对象）、锁和恢复，
@@ -108,4 +109,4 @@ cargo均经wait_for_slot/run_owned，正控→预期测试断言失败→恢复�
 `negative_private.py --catalog`列出pr2b的源码变异、具体测试名及断言锚点；运行方式为
 `negative_private.py /fresh/evidence [control...]`，必须由调用方设置CARGO_TARGET_DIR，不另建仓库或target。
 本包未提交时mutating_sources会因cfg(test)接线不匹配HEAD而拒绝全部产品变异；提交后由协调者在宿主执行，不能把拒绝算负控通过。
-内存负控不改源码/金样：registry的194项覆盖新41条差异的TS值/反向值/test/category绑定、三个测试文件属性、三处反向回放守卫及两模块接线；private metadata/trace的848项覆盖所有116个timer格的6个字段、全部152个请求路径。每次必须在绑定断言失败且恢复原值后通过。
+内存负控不改源码/金样：registry的130项覆盖剩余25条private差异的TS值/反向值/test/category绑定、三个测试文件属性、三处反向回放守卫及两模块接线；private metadata/trace的848项覆盖所有116个timer格的6个字段、全部152个请求路径。每次必须在绑定断言失败且恢复原值后通过。

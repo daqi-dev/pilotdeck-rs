@@ -1,0 +1,1177 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/mcp/client/McpClient.ts": "d99e1494bd2e7a28f967e23d8de2e03ce1a019ae33ebc8c917e680c4915a4e91",
+    "src/mcp/protocol/types.ts": "8176ead2cf6d407d93caf96d6b882cf959b81a6f172857dafeae188a82b4e5aa",
+    "src/mcp/runtime/sanitize.ts": "53851ed8c64e37496a98291b5f630c27b5d4231b849a8b6af939f59dc988945a",
+    "src/mcp/runtime/truncate.ts": "b28e609f9df3d7173e92c0570cd75ea1c1e82a3a796d7692f7482bd877c7651b",
+    "src/mcp/runtime/wireName.ts": "311952c3359f583082c440a6bbb99d89bffd75b03cf23b4a6190eb74ac12e630",
+    "src/network/fetch.ts": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f"
+  },
+  "node": "v22.22.0",
+  "sdk": "1.29.0",
+  "requestTimeout": 500,
+  "cases": [
+    {
+      "mode": "json",
+      "name": "plain",
+      "encoding": "",
+      "wire": "7b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "json",
+      "name": "gzip",
+      "encoding": "gzip",
+      "wire": "1f8b0800000000000013ab56ca2acecf2b2a4856b25232d23350d251ca4c51b232d0512a4a2d2ecd2951b2aa562ac9cfcf2956b28aae56ca4bcc4d05aa4bcd4bce4f494d01aa4d492d4e2eca2c28c9cccf038a3fd9b1f6d9b47685c32b41a6e4159496042767a4e62682cda82c00e9cc4fca4a4d2e51aaad8dadad0500045113967a000000",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "json",
+      "name": "br",
+      "encoding": "br",
+      "wire": "1b790000ad0aecb6652b668e2e5d50bc789de8d7227b5b30932c753859445c4a26ad75faba58b6c8189c5c37387009282e697bdb6886c139969a381091a7339dfa7cc18b18b2222ecd833136fa1a8070bcce018b4f5221c10a912cf502",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "json",
+      "name": "deflate",
+      "encoding": "deflate",
+      "wire": "789cab56ca2acecf2b2a4856b25232d23350d251ca4c51b232d0512a4a2d2ecd2951b2aa562ac9cfcf2956b28aae56ca4bcc4d05aa4bcd4bce4f494d01aa4d492d4e2eca2c28c9cccf038a3fd9b1f6d9b47685c32b41a6e4159496042767a4e62682cda82c00e9cc4fca4a4d2e51aaad8dadad0500d9662b4e",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "json",
+      "name": "mixed",
+      "encoding": "gzip, br",
+      "wire": "0b42801f8b0800000000000013ab56ca2acecf2b2a4856b25232d23350d251ca4c51b232d0512a4a2d2ecd2951b2aa562ac9cfcf2956b28aae56ca4bcc4d05aa4bcd4bce4f494d01aa4d492d4e2eca2c28c9cccf038a3fd9b1f6d9b47685c32b41a6e4159496042767a4e62682cda82c00e9cc4fca4a4d2e51aaad8dadad0500045113967a00000003",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "json",
+      "name": "five",
+      "encoding": "gzip,br,gzip,br,gzip",
+      "wire": "1f8b0800000000000013ebf66f90efe660000361c64e86b2ffdc4e4822abc34e699d3bafade511b629c8e89271c0a5c0533e819b8c2e046a79e9ea9dd50cdcb42a4cebe4f9f39a619bbad6859df23ee3cbbacafbacf7397f4f5fc655be9eba7e7aa774344e9e39cfdc657f73e3b79b5bca5a0f6b3b2e7b223a651a8b7afa92676a4d6757e830bc3ce37fcacb572f70d5dadeb56b5919580285a75501ed669e7ed4f94527880100363c5320a4000000",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "json",
+      "name": "six",
+      "encoding": "gzip,br,gzip,br,gzip,br",
+      "wire": "0b57801f8b0800000000000013ebf66f90efe660000361c64e86b2ffdc4e4822abc34e699d3bafade511b629c8e89271c0a5c0533e819b8c2e046a79e9ea9dd50cdcb42a4cebe4f9f39a619bbad6859df23ee3cbbacafbacf7397f4f5fc655be9eba7e7aa774344e9e39cfdc657f73e3b79b5bca5a0f6b3b2e7b223a651a8b7afa92676a4d6757e830bc3ce37fcacb572f70d5dadeb56b5919580285a75501ed669e7ed4f94527880100363c5320a400000003",
+      "result": {
+        "error": {
+          "name": "NetworkFetchError",
+          "code": "network_fetch_failed",
+          "message": "fetch failed"
+        }
+      }
+    },
+    {
+      "mode": "json",
+      "name": "unknown",
+      "encoding": "custom",
+      "wire": "7b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "json",
+      "name": "mixed-unknown",
+      "encoding": "gzip, custom",
+      "wire": "7b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "json",
+      "name": "unknown-six",
+      "encoding": "custom,custom,custom,custom,custom,custom",
+      "wire": "7b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d",
+      "result": {
+        "error": {
+          "name": "NetworkFetchError",
+          "code": "network_fetch_failed",
+          "message": "fetch failed"
+        }
+      }
+    },
+    {
+      "mode": "json",
+      "name": "corrupt",
+      "encoding": "gzip",
+      "wire": "696e76616c696420636f6d7072657373656420626f6479",
+      "result": {
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "terminated"
+        }
+      }
+    },
+    {
+      "mode": "post-sse",
+      "name": "plain",
+      "encoding": "",
+      "wire": "6576656e743a206d6573736167650a646174613a207b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d0a0a",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "post-sse",
+      "name": "gzip",
+      "encoding": "gzip",
+      "wire": "1f8b08000000000000131d8c310e022110007b5e41b6be988b25dfb03416081be572ec12d8333184da1ff8070b7b7bbf627c879ced6466f0822446472cc59e50792bd6e80a5361cac98181ed6684018207330e90b12cb380a920cc7301b3af403662f7901c7bf4ddf5585c0e490253e79fd7f37bbfe9f763bd505a64e7ce18edff714d6bc9c7099d406b87d694fa01ce2cf89491000000",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "post-sse",
+      "name": "br",
+      "encoding": "br",
+      "wire": "1b9000e08cd30db1263cc5339e6f6e7d25be7c8c61fca98a498b4dacc7122475584f167a208936ed36bb462c72a0377cf65c8469492e121461d87031daa47dfeef16c75ccafbc82ac92dadf6c8d9c8536ceeabd0429cb47b4a33fa5f8ad2e48610aaec7dc1c700",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "post-sse",
+      "name": "deflate",
+      "encoding": "deflate",
+      "wire": "789c1d8c310e022110007b5e41b6be988b25dfb03416081be572ec12d8333184da1ff8070b7b7bbf627c879ced6466f0822446472cc59e50792bd6e80a5361cac98181ed6684018207330e90b12cb380a920cc7301b3af403662f7901c7bf4ddf5585c0e490253e79fd7f37bbfe9f763bd505a64e7ce18edff714d6bc9c7099d406b87d694fa01187b32c1",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "post-sse",
+      "name": "mixed",
+      "encoding": "gzip, br",
+      "wire": "0b4b801f8b08000000000000131d8c310e022110007b5e41b6be988b25dfb03416081be572ec12d8333184da1ff8070b7b7bbf627c879ced6466f0822446472cc59e50792bd6e80a5361cac98181ed6684018207330e90b12cb380a920cc7301b3af403662f7901c7bf4ddf5585c0e490253e79fd7f37bbfe9f763bd505a64e7ce18edff714d6bc9c7099d406b87d694fa01ce2cf8949100000003",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "post-sse",
+      "name": "five",
+      "encoding": "gzip,br,gzip,br,gzip",
+      "wire": "1f8b0800000000000013eb8e6890efe660000361c6d90c29ffb9bd9144647b0cf998140518aae31cb7ed9bd1ad7a7f83891887f4d3a23742378c0d5b6ec9ff60e7aeaede9f54d33ee76d4ada87261537779da3f3022ab5afbde00a4e3c75b2b1f16d5a0b6313bb31df848d3a9b1b562a9c2966dcbcdec12ce9fb0499ea2f77bf46c4f07932053f9f7ffd73f5fe97df93f70644a53c3f27f1f67fa16ff6c9e39c731db2dbaf4df9c5784ee7c7948940d730ef9873f9dd6c1003004519d344b6000000",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "post-sse",
+      "name": "six",
+      "encoding": "gzip,br,gzip,br,gzip,br",
+      "wire": "8b60801f8b0800000000000013eb8e6890efe660000361c6d90c29ffb9bd9144647b0cf998140518aae31cb7ed9bd1ad7a7f83891887f4d3a23742378c0d5b6ec9ff60e7aeaede9f54d33ee76d4ada87261537779da3f3022ab5afbde00a4e3c75b2b1f16d5a0b6313bb31df848d3a9b1b562a9c2966dcbcdec12ce9fb0499ea2f77bf46c4f07932053f9f7ffd73f5fe97df93f70644a53c3f27f1f67fa16ff6c9e39c731db2dbaf4df9c5784ee7c7948940d730ef9873f9dd6c1003004519d344b600000003",
+      "result": {
+        "error": {
+          "name": "NetworkFetchError",
+          "code": "network_fetch_failed",
+          "message": "fetch failed"
+        }
+      }
+    },
+    {
+      "mode": "post-sse",
+      "name": "unknown",
+      "encoding": "custom",
+      "wire": "6576656e743a206d6573736167650a646174613a207b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d0a0a",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "post-sse",
+      "name": "mixed-unknown",
+      "encoding": "gzip, custom",
+      "wire": "6576656e743a206d6573736167650a646174613a207b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d0a0a",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "post-sse",
+      "name": "unknown-six",
+      "encoding": "custom,custom,custom,custom,custom,custom",
+      "wire": "6576656e743a206d6573736167650a646174613a207b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d0a0a",
+      "result": {
+        "error": {
+          "name": "NetworkFetchError",
+          "code": "network_fetch_failed",
+          "message": "fetch failed"
+        }
+      }
+    },
+    {
+      "mode": "post-sse",
+      "name": "corrupt",
+      "encoding": "gzip",
+      "wire": "696e76616c696420636f6d7072657373656420626f6479",
+      "result": {
+        "error": {
+          "name": "McpError",
+          "code": -32001,
+          "message": "MCP error -32001: Request timed out"
+        }
+      }
+    },
+    {
+      "mode": "get-sse",
+      "name": "plain",
+      "encoding": "",
+      "wire": "6576656e743a206d6573736167650a646174613a207b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d0a0a",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "get-sse",
+      "name": "gzip",
+      "encoding": "gzip",
+      "wire": "1f8b08000000000000131d8c310e022110007b5e41b6be988b25dfb03416081be572ec12d8333184da1ff8070b7b7bbf627c879ced6466f0822446472cc59e50792bd6e80a5361cac98181ed6684018207330e90b12cb380a920cc7301b3af403662f7901c7bf4ddf5585c0e490253e79fd7f37bbfe9f763bd505a64e7ce18edff714d6bc9c7099d406b87d694fa01ce2cf89491000000",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "get-sse",
+      "name": "br",
+      "encoding": "br",
+      "wire": "1b9000e08cd30db1263cc5339e6f6e7d25be7c8c61fca98a498b4dacc7122475584f167a208936ed36bb462c72a0377cf65c8469492e121461d87031daa47dfeef16c75ccafbc82ac92dadf6c8d9c8536ceeabd0429cb47b4a33fa5f8ad2e48610aaec7dc1c700",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "get-sse",
+      "name": "deflate",
+      "encoding": "deflate",
+      "wire": "789c1d8c310e022110007b5e41b6be988b25dfb03416081be572ec12d8333184da1ff8070b7b7bbf627c879ced6466f0822446472cc59e50792bd6e80a5361cac98181ed6684018207330e90b12cb380a920cc7301b3af403662f7901c7bf4ddf5585c0e490253e79fd7f37bbfe9f763bd505a64e7ce18edff714d6bc9c7099d406b87d694fa01187b32c1",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "get-sse",
+      "name": "mixed",
+      "encoding": "gzip, br",
+      "wire": "0b4b801f8b08000000000000131d8c310e022110007b5e41b6be988b25dfb03416081be572ec12d8333184da1ff8070b7b7bbf627c879ced6466f0822446472cc59e50792bd6e80a5361cac98181ed6684018207330e90b12cb380a920cc7301b3af403662f7901c7bf4ddf5585c0e490253e79fd7f37bbfe9f763bd505a64e7ce18edff714d6bc9c7099d406b87d694fa01ce2cf8949100000003",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "get-sse",
+      "name": "five",
+      "encoding": "gzip,br,gzip,br,gzip",
+      "wire": "1f8b0800000000000013eb8e6890efe660000361c6d90c29ffb9bd9144647b0cf998140518aae31cb7ed9bd1ad7a7f83891887f4d3a23742378c0d5b6ec9ff60e7aeaede9f54d33ee76d4ada87261537779da3f3022ab5afbde00a4e3c75b2b1f16d5a0b6313bb31df848d3a9b1b562a9c2966dcbcdec12ce9fb0499ea2f77bf46c4f07932053f9f7ffd73f5fe97df93f70644a53c3f27f1f67fa16ff6c9e39c731db2dbaf4df9c5784ee7c7948940d730ef9873f9dd6c1003004519d344b6000000",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "get-sse",
+      "name": "six",
+      "encoding": "gzip,br,gzip,br,gzip,br",
+      "wire": "8b60801f8b0800000000000013eb8e6890efe660000361c6d90c29ffb9bd9144647b0cf998140518aae31cb7ed9bd1ad7a7f83891887f4d3a23742378c0d5b6ec9ff60e7aeaede9f54d33ee76d4ada87261537779da3f3022ab5afbde00a4e3c75b2b1f16d5a0b6313bb31df848d3a9b1b562a9c2966dcbcdec12ce9fb0499ea2f77bf46c4f07932053f9f7ffd73f5fe97df93f70644a53c3f27f1f67fa16ff6c9e39c731db2dbaf4df9c5784ee7c7948940d730ef9873f9dd6c1003004519d344b600000003",
+      "result": {
+        "error": {
+          "name": "McpError",
+          "code": -32001,
+          "message": "MCP error -32001: Request timed out"
+        }
+      }
+    },
+    {
+      "mode": "get-sse",
+      "name": "unknown",
+      "encoding": "custom",
+      "wire": "6576656e743a206d6573736167650a646174613a207b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d0a0a",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "get-sse",
+      "name": "mixed-unknown",
+      "encoding": "gzip, custom",
+      "wire": "6576656e743a206d6573736167650a646174613a207b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d0a0a",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "get-sse",
+      "name": "unknown-six",
+      "encoding": "custom,custom,custom,custom,custom,custom",
+      "wire": "6576656e743a206d6573736167650a646174613a207b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d0a0a",
+      "result": {
+        "error": {
+          "name": "McpError",
+          "code": -32001,
+          "message": "MCP error -32001: Request timed out"
+        }
+      }
+    },
+    {
+      "mode": "get-sse",
+      "name": "corrupt",
+      "encoding": "gzip",
+      "wire": "696e76616c696420636f6d7072657373656420626f6479",
+      "result": {
+        "error": {
+          "name": "McpError",
+          "code": -32001,
+          "message": "MCP error -32001: Request timed out"
+        }
+      }
+    },
+    {
+      "mode": "legacy-start",
+      "name": "plain",
+      "encoding": "",
+      "wire": "6576656e743a20656e64706f696e740a646174613a202f706f73740a0a",
+      "result": {
+        "started": true
+      }
+    },
+    {
+      "mode": "legacy-start",
+      "name": "gzip",
+      "encoding": "gzip",
+      "wire": "1f8b08000000000000134b2d4bcd2bb15248cd4b29c8cfcc2be14a492c49b452d02fc82f2ee1e20200bfadaa781d000000",
+      "result": {
+        "started": true
+      }
+    },
+    {
+      "mode": "legacy-start",
+      "name": "br",
+      "encoding": "br",
+      "wire": "0b0e806576656e743a20656e64706f696e740a646174613a202f706f73740a0a03",
+      "result": {
+        "started": true
+      }
+    },
+    {
+      "mode": "legacy-start",
+      "name": "deflate",
+      "encoding": "deflate",
+      "wire": "789c4b2d4bcd2bb15248cd4b29c8cfcc2be14a492c49b452d02fc82f2ee1e202009f8a09e5",
+      "result": {
+        "started": true
+      }
+    },
+    {
+      "mode": "legacy-start",
+      "name": "mixed",
+      "encoding": "gzip, br",
+      "wire": "0b18801f8b08000000000000134b2d4bcd2bb15248cd4b29c8cfcc2be14a492c49b452d02fc82f2ee1e20200bfadaa781d00000003",
+      "result": {
+        "started": true
+      }
+    },
+    {
+      "mode": "legacy-start",
+      "name": "five",
+      "encoding": "gzip,br,gzip,br,gzip",
+      "wire": "1f8b0800000000000013eb566a90efe6600003e1c7d33226bc7f96c0c09c981ffb7ef32de9669b7355d9f32ceadd7e2f9cbebceff9b405dcbfd4bf7c95b34b4abab1bf2cb4552740d69861a5bb109729503333005b513aa04a000000",
+      "result": {
+        "started": true
+      }
+    },
+    {
+      "mode": "legacy-start",
+      "name": "six",
+      "encoding": "gzip,br,gzip,br,gzip,br",
+      "wire": "8b2d801f8b0800000000000013eb566a90efe6600003e1c7d33226bc7f96c0c09c981ffb7ef32de9669b7355d9f32ceadd7e2f9cbebceff9b405dcbfd4bf7c95b34b4abab1bf2cb4552740d69861a5bb109729503333005b513aa04a00000003",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": null,
+          "message": "SSE error: TypeError: fetch failed: too many content-encodings in response: 6, maximum allowed is 5"
+        }
+      }
+    },
+    {
+      "mode": "legacy-start",
+      "name": "unknown",
+      "encoding": "custom",
+      "wire": "6576656e743a20656e64706f696e740a646174613a202f706f73740a0a",
+      "result": {
+        "started": true
+      }
+    },
+    {
+      "mode": "legacy-start",
+      "name": "mixed-unknown",
+      "encoding": "gzip, custom",
+      "wire": "6576656e743a20656e64706f696e740a646174613a202f706f73740a0a",
+      "result": {
+        "started": true
+      }
+    },
+    {
+      "mode": "legacy-start",
+      "name": "unknown-six",
+      "encoding": "custom,custom,custom,custom,custom,custom",
+      "wire": "6576656e743a20656e64706f696e740a646174613a202f706f73740a0a",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": null,
+          "message": "SSE error: TypeError: fetch failed: too many content-encodings in response: 6, maximum allowed is 5"
+        }
+      }
+    },
+    {
+      "mode": "legacy-start",
+      "name": "corrupt",
+      "encoding": "gzip",
+      "wire": "696e76616c696420636f6d7072657373656420626f6479",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": null,
+          "message": "SSE error: TypeError: terminated: incorrect header check"
+        }
+      }
+    },
+    {
+      "mode": "streamable-error",
+      "name": "plain",
+      "encoding": "",
+      "wire": "e68b92e7bb9d20c3a9",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": 400,
+          "message": "Streamable HTTP error: Error POSTing to endpoint: 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "streamable-error",
+      "name": "gzip",
+      "encoding": "gzip",
+      "wire": "1f8b08000000000000137bd63de9f9eeb90a8757020031e0cf8d09000000",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": 400,
+          "message": "Streamable HTTP error: Error POSTing to endpoint: 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "streamable-error",
+      "name": "br",
+      "encoding": "br",
+      "wire": "0b0480e68b92e7bb9d20c3a903",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": 400,
+          "message": "Streamable HTTP error: Error POSTing to endpoint: 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "streamable-error",
+      "name": "deflate",
+      "encoding": "deflate",
+      "wire": "789c7bd63de9f9eeb90a875702001e8905cf",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": 400,
+          "message": "Streamable HTTP error: Error POSTing to endpoint: 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "streamable-error",
+      "name": "mixed",
+      "encoding": "gzip, br",
+      "wire": "8b0e801f8b08000000000000137bd63de9f9eeb90a8757020031e0cf8d0900000003",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": 400,
+          "message": "Streamable HTTP error: Error POSTing to endpoint: 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "streamable-error",
+      "name": "five",
+      "encoding": "gzip,br,gzip,br,gzip",
+      "wire": "1f8b0800000000000013eb966890efe6600003e1d7cfb227bc7f96c0c0fcf055f636fdfa7db74f5e953b7724e1c7831a7df58009920c86ebe7f62b0115320300d50e3c7236000000",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": 400,
+          "message": "Streamable HTTP error: Error POSTing to endpoint: 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "streamable-error",
+      "name": "six",
+      "encoding": "gzip,br,gzip,br,gzip,br",
+      "wire": "8b23801f8b0800000000000013eb966890efe6600003e1d7cfb227bc7f96c0c0fcf055f636fdfa7db74f5e953b7724e1c7831a7df58009920c86ebe7f62b0115320300d50e3c723600000003",
+      "result": {
+        "error": {
+          "name": "NetworkFetchError",
+          "code": "network_fetch_failed",
+          "message": "fetch failed"
+        }
+      }
+    },
+    {
+      "mode": "streamable-error",
+      "name": "unknown",
+      "encoding": "custom",
+      "wire": "e68b92e7bb9d20c3a9",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": 400,
+          "message": "Streamable HTTP error: Error POSTing to endpoint: 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "streamable-error",
+      "name": "mixed-unknown",
+      "encoding": "gzip, custom",
+      "wire": "e68b92e7bb9d20c3a9",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": 400,
+          "message": "Streamable HTTP error: Error POSTing to endpoint: 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "streamable-error",
+      "name": "unknown-six",
+      "encoding": "custom,custom,custom,custom,custom,custom",
+      "wire": "e68b92e7bb9d20c3a9",
+      "result": {
+        "error": {
+          "name": "NetworkFetchError",
+          "code": "network_fetch_failed",
+          "message": "fetch failed"
+        }
+      }
+    },
+    {
+      "mode": "streamable-error",
+      "name": "corrupt",
+      "encoding": "gzip",
+      "wire": "696e76616c696420636f6d7072657373656420626f6479",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": 400,
+          "message": "Streamable HTTP error: Error POSTing to endpoint: null"
+        }
+      }
+    },
+    {
+      "mode": "legacy-error",
+      "name": "plain",
+      "encoding": "",
+      "wire": "e68b92e7bb9d20c3a9",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": null,
+          "message": "Error POSTing to endpoint (HTTP 400): 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "legacy-error",
+      "name": "gzip",
+      "encoding": "gzip",
+      "wire": "1f8b08000000000000137bd63de9f9eeb90a8757020031e0cf8d09000000",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": null,
+          "message": "Error POSTing to endpoint (HTTP 400): 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "legacy-error",
+      "name": "br",
+      "encoding": "br",
+      "wire": "0b0480e68b92e7bb9d20c3a903",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": null,
+          "message": "Error POSTing to endpoint (HTTP 400): 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "legacy-error",
+      "name": "deflate",
+      "encoding": "deflate",
+      "wire": "789c7bd63de9f9eeb90a875702001e8905cf",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": null,
+          "message": "Error POSTing to endpoint (HTTP 400): 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "legacy-error",
+      "name": "mixed",
+      "encoding": "gzip, br",
+      "wire": "8b0e801f8b08000000000000137bd63de9f9eeb90a8757020031e0cf8d0900000003",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": null,
+          "message": "Error POSTing to endpoint (HTTP 400): 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "legacy-error",
+      "name": "five",
+      "encoding": "gzip,br,gzip,br,gzip",
+      "wire": "1f8b0800000000000013eb966890efe6600003e1d7cfb227bc7f96c0c0fcf055f636fdfa7db74f5e953b7724e1c7831a7df58009920c86ebe7f62b0115320300d50e3c7236000000",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": null,
+          "message": "Error POSTing to endpoint (HTTP 400): 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "legacy-error",
+      "name": "six",
+      "encoding": "gzip,br,gzip,br,gzip,br",
+      "wire": "8b23801f8b0800000000000013eb966890efe6600003e1d7cfb227bc7f96c0c0fcf055f636fdfa7db74f5e953b7724e1c7831a7df58009920c86ebe7f62b0115320300d50e3c723600000003",
+      "result": {
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "fetch failed"
+        }
+      }
+    },
+    {
+      "mode": "legacy-error",
+      "name": "unknown",
+      "encoding": "custom",
+      "wire": "e68b92e7bb9d20c3a9",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": null,
+          "message": "Error POSTing to endpoint (HTTP 400): 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "legacy-error",
+      "name": "mixed-unknown",
+      "encoding": "gzip, custom",
+      "wire": "e68b92e7bb9d20c3a9",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": null,
+          "message": "Error POSTing to endpoint (HTTP 400): 拒绝 é"
+        }
+      }
+    },
+    {
+      "mode": "legacy-error",
+      "name": "unknown-six",
+      "encoding": "custom,custom,custom,custom,custom,custom",
+      "wire": "e68b92e7bb9d20c3a9",
+      "result": {
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "fetch failed"
+        }
+      }
+    },
+    {
+      "mode": "legacy-error",
+      "name": "corrupt",
+      "encoding": "gzip",
+      "wire": "696e76616c696420636f6d7072657373656420626f6479",
+      "result": {
+        "error": {
+          "name": "Error",
+          "code": null,
+          "message": "Error POSTing to endpoint (HTTP 400): null"
+        }
+      }
+    },
+    {
+      "mode": "redirect-json",
+      "name": "plain",
+      "encoding": "",
+      "wire": "7b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "redirect-json",
+      "name": "gzip",
+      "encoding": "gzip",
+      "wire": "1f8b0800000000000013ab56ca2acecf2b2a4856b25232d23350d251ca4c51b232d0512a4a2d2ecd2951b2aa562ac9cfcf2956b28aae56ca4bcc4d05aa4bcd4bce4f494d01aa4d492d4e2eca2c28c9cccf038a3fd9b1f6d9b47685c32b41a6e4159496042767a4e62682cda82c00e9cc4fca4a4d2e51aaad8dadad0500045113967a000000",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "redirect-json",
+      "name": "br",
+      "encoding": "br",
+      "wire": "1b790000ad0aecb6652b668e2e5d50bc789de8d7227b5b30932c753859445c4a26ad75faba58b6c8189c5c37387009282e697bdb6886c139969a381091a7339dfa7cc18b18b2222ecd833136fa1a8070bcce018b4f5221c10a912cf502",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "redirect-json",
+      "name": "deflate",
+      "encoding": "deflate",
+      "wire": "789cab56ca2acecf2b2a4856b25232d23350d251ca4c51b232d0512a4a2d2ecd2951b2aa562ac9cfcf2956b28aae56ca4bcc4d05aa4bcd4bce4f494d01aa4d492d4e2eca2c28c9cccf038a3fd9b1f6d9b47685c32b41a6e4159496042767a4e62682cda82c00e9cc4fca4a4d2e51aaad8dadad0500d9662b4e",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "redirect-json",
+      "name": "mixed",
+      "encoding": "gzip, br",
+      "wire": "0b42801f8b0800000000000013ab56ca2acecf2b2a4856b25232d23350d251ca4c51b232d0512a4a2d2ecd2951b2aa562ac9cfcf2956b28aae56ca4bcc4d05aa4bcd4bce4f494d01aa4d492d4e2eca2c28c9cccf038a3fd9b1f6d9b47685c32b41a6e4159496042767a4e62682cda82c00e9cc4fca4a4d2e51aaad8dadad0500045113967a00000003",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "redirect-json",
+      "name": "five",
+      "encoding": "gzip,br,gzip,br,gzip",
+      "wire": "1f8b0800000000000013ebf66f90efe660000361c64e86b2ffdc4e4822abc34e699d3bafade511b629c8e89271c0a5c0533e819b8c2e046a79e9ea9dd50cdcb42a4cebe4f9f39a619bbad6859df23ee3cbbacafbacf7397f4f5fc655be9eba7e7aa774344e9e39cfdc657f73e3b79b5bca5a0f6b3b2e7b223a651a8b7afa92676a4d6757e830bc3ce37fcacb572f70d5dadeb56b5919580285a75501ed669e7ed4f94527880100363c5320a4000000",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "redirect-json",
+      "name": "six",
+      "encoding": "gzip,br,gzip,br,gzip,br",
+      "wire": "0b57801f8b0800000000000013ebf66f90efe660000361c64e86b2ffdc4e4822abc34e699d3bafade511b629c8e89271c0a5c0533e819b8c2e046a79e9ea9dd50cdcb42a4cebe4f9f39a619bbad6859df23ee3cbbacafbacf7397f4f5fc655be9eba7e7aa774344e9e39cfdc657f73e3b79b5bca5a0f6b3b2e7b223a651a8b7afa92676a4d6757e830bc3ce37fcacb572f70d5dadeb56b5919580285a75501ed669e7ed4f94527880100363c5320a400000003",
+      "result": {
+        "error": {
+          "name": "NetworkFetchError",
+          "code": "network_fetch_failed",
+          "message": "fetch failed"
+        }
+      }
+    },
+    {
+      "mode": "redirect-json",
+      "name": "unknown",
+      "encoding": "custom",
+      "wire": "7b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "redirect-json",
+      "name": "mixed-unknown",
+      "encoding": "gzip, custom",
+      "wire": "7b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d",
+      "result": {
+        "value": {
+          "tools": [
+            {
+              "name": "encoded",
+              "description": "中文 é",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "mode": "redirect-json",
+      "name": "unknown-six",
+      "encoding": "custom,custom,custom,custom,custom,custom",
+      "wire": "7b226a736f6e727063223a22322e30222c226964223a302c22726573756c74223a7b22746f6f6c73223a5b7b226e616d65223a22656e636f646564222c226465736372697074696f6e223a22e4b8ade6968720c3a9222c22696e707574536368656d61223a7b2274797065223a226f626a656374227d7d5d7d7d",
+      "result": {
+        "error": {
+          "name": "NetworkFetchError",
+          "code": "network_fetch_failed",
+          "message": "fetch failed"
+        }
+      }
+    },
+    {
+      "mode": "redirect-json",
+      "name": "corrupt",
+      "encoding": "gzip",
+      "wire": "696e76616c696420636f6d7072657373656420626f6479",
+      "result": {
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "terminated"
+        }
+      }
+    }
+  ]
+}
