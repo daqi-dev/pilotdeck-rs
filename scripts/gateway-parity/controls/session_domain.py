@@ -800,10 +800,6 @@ def run_all(output, source=None):
     return report
 
 
-def control_rule(error):
-    return getattr(error, 'rule', 'CONTROL_EXECUTION')
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--case', choices=('all', 'healthy', *CASES), default='all')
@@ -819,7 +815,7 @@ def main():
     try:
         check_case(args.case, args.output.resolve(), args.source)
     except (ValueError, OSError, KeyError, TypeError, StopIteration, subprocess.SubprocessError) as error:
-        result = {'status': 'FAIL', 'rule': control_rule(error), 'detail': str(error)}
+        result = {'status': 'FAIL', 'rule': getattr(error, 'rule', 'CONTROL_EXECUTION'), 'detail': str(error)}
     else:
         result = {'status': 'PASS', 'rule': None}
     result.update(case=args.case, scope='apparatus fixture; not native run evidence')

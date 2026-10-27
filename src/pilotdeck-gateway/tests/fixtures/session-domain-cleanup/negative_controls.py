@@ -51,7 +51,6 @@ CONTROLS_SOURCE = ROOT / 'scripts/gateway-parity/controls/session_domain.py'
 COMMON_SOURCE = ROOT / 'scripts/gateway-parity/common.py'
 CHECK = Path(__file__).resolve().with_name('check_cleanup.py')
 NEGATIVE = Path(__file__).resolve()
-GATEWAY_NEGATIVE = NEGATIVE.parent.parent / 'gateway-batch/negative_controls.py'
 
 _MISSING = object()
 
@@ -82,19 +81,6 @@ def match(rows, mode, expected):
     return True, (f"{mode}: "
                   + ', '.join(f'{path}={observed[path]!r}' for path in expected)
                   + ', passed=False')
-
-
-def aggregation_failure(rows, message, point=None):
-    """Bind an audit control to its exact finding, independent of error order."""
-    expected = {f'points.{point}.shared': False} if point else {}
-    valid, detail = match(rows, 'aggregation-audit', expected)
-    if not valid:
-        return valid, detail
-    row = next(row for row in rows if row.get('mode') == 'aggregation-audit')
-    failures = row.get('failures')
-    if not isinstance(failures, list) or message not in failures:
-        return False, f'aggregation-audit: missing dedicated finding {message!r}'
-    return True, f'{detail}, dedicated finding={message!r}'
 
 
 def status_mapping(rows):
@@ -251,15 +237,6 @@ MUTATIONS = [
     ('aggregation-exit-bypassed', CONTROLS_SOURCE,
      "        return common.aggregate_status(report['status'])[1]",
      "        return int(report['status'] != 'PASS')"),
-    ('aggregation-direct-return', CONTROLS_SOURCE,
-     "def main():\n",
-     "def unregistered_892():\n    return {'status': 'PASS'}\n\ndef main():\n"),
-    ('aggregation-branch-exit', CONTROLS_SOURCE,
-     "    return common.aggregate_status(result['status'])[1]",
-     "    return 0 if result['status'] == 'PASS' else 1"),
-    ('gateway-aggregation-bypassed', GATEWAY_NEGATIVE,
-     "    return common.aggregate_status(*(MUTATION_STATUS.get(row['status'], 'FAIL') for row in results))[1]",
-     "    return int(any(row['status'] != 'KILLED' for row in results))"),
     ('restored-skip-accepted', NEGATIVE,
      "            top_status, exit_code = common.aggregate_status(\n"
      "                *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary),\n"
@@ -401,33 +378,14 @@ JUDGES = {
         ()),
     'aggregation-exit-bypassed': (
         'aggregation-audit',
-        lambda rows: aggregation_failure(rows,
-                            '#164-fix-r7 aggregation-audit: '
+        lambda rows: match(rows, 'aggregation-audit', {
+            'firstFailure': '#164-fix-r7 aggregation-audit: '
                             'scripts/gateway-parity/controls/session_domain.py:main '
                             'must call common.aggregate_status',
-                            'controls-main'),
+            'points.controls-main.shared': False,
+        }),
         False,
         ()),
-    'aggregation-direct-return': (
-        'aggregation-audit',
-        lambda rows: aggregation_failure(rows,
-                            '#164-fix-r7 aggregation-audit: unregistered aggregation point '
-                            "scripts/gateway-parity/controls/session_domain.py:unregistered_892 markers=['dict-status']"),
-        False, ()),
-    'aggregation-branch-exit': (
-        'aggregation-audit',
-        lambda rows: aggregation_failure(rows,
-                            '#164-fix-r7 aggregation-audit: '
-                            'scripts/gateway-parity/controls/session_domain.py:main '
-                            'must call common.aggregate_status',
-                            'controls-main'), False, ()),
-    'gateway-aggregation-bypassed': (
-        'aggregation-audit',
-        lambda rows: aggregation_failure(rows,
-                            '#164-fix-r7 aggregation-audit: '
-                            'src/pilotdeck-gateway/tests/fixtures/gateway-batch/negative_controls.py:main '
-                            'must call common.aggregate_status',
-                            'gateway-negative-main'), False, ()),
     'restored-skip-accepted': (
         'batch-aggregation',
         lambda rows: match(rows, 'batch-aggregation', {

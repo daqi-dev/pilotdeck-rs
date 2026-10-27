@@ -86,7 +86,8 @@ fixture 的 `check_cleanup.py` 与源码负控 `negative_controls.py` 的顶层�
 状态与退出码、calibrate 对 `e1Controls=PASS_WITH_SKIPS` 的映射，以及源码负控
 「恢复正控含平台跳过 → 批次非 PASS/非零」的最终汇总点。
 `check_cleanup.py --mode aggregation-audit` 静态枚举装置内所有顶层状态/退出码
-计算点（含直接返回或任意变量构造的 `status` 字典）：每个登记点的每条返回与返回变量的全部赋值均须来自共享函数；嵌套函数或其他分支的共享调用不能替独立出口背书；未登记点或独立退出码计算即失败；`negative_controls.py` 的 `restored-skip-accepted` 与
+计算点：每个登记点必须调用共享函数，新增未登记点或登记点改用 `int(...)` 直接
+算退出码即失败；`negative_controls.py` 的 `restored-skip-accepted` 与
 `aggregation-exit-bypassed` 分别钉这两条。
 
 报告区分实测成功与验收状态：冻结哈希不符时，即使测量成功，校准总判也为
