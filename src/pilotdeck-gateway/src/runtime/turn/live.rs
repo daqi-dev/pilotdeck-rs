@@ -67,6 +67,7 @@ pub struct InteractionHost {
 pub struct LiveSessionAdapter {
     host_factory: Arc<TurnHostFactory>,
     close_timeout: std::time::Duration,
+    tail: Option<Arc<super::runner::tail::SessionTail>>,
     recorder: Arc<Recorder>,
     history: Arc<dyn Fn() -> Vec<JsValue> + Send + Sync>,
     state: Arc<Mutex<SessionState>>,
@@ -98,6 +99,7 @@ impl LiveSessionAdapter {
     ) -> Self {
         Self {
             close_timeout: crate::host::Limits::default().close_timeout,
+            tail: None,
             recorder,
             history: Arc::new(history),
             host_factory: Arc::new(move |_, recorder| {
@@ -109,6 +111,13 @@ impl LiveSessionAdapter {
             }),
             state: Arc::default(),
         }
+    }
+
+    /// Install session-owned tail dependencies. With no installation, auxiliary
+    /// model and file collection capabilities remain unavailable.
+    pub fn with_tail(mut self, tail: Arc<super::runner::tail::SessionTail>) -> Self {
+        self.tail = Some(tail);
+        self
     }
 
     /// Use the same cleanup budget as the lazy HostClient's Limits.
@@ -130,6 +139,7 @@ impl LiveSessionAdapter {
     ) -> Self {
         Self {
             close_timeout: crate::host::Limits::default().close_timeout,
+            tail: None,
             recorder,
             history: Arc::new(history),
             host_factory: Arc::new(move |identity, recorder| {
@@ -208,6 +218,8 @@ impl LiveSession for LiveSessionAdapter {
         let close_timeout = self.close_timeout;
         let recorder = self.recorder.clone();
         let identity = request.identity.clone();
+        let tail = self.tail.clone();
+        let tail_options = options.clone();
         // Shared between the host-side validation hook (every received event)
         // and finish()'s second, contradiction-only check; see StreamHandler.
         let integrity = Arc::new(StreamIntegrity::new());
@@ -227,7 +239,7 @@ impl LiveSession for LiveSessionAdapter {
                     host = async { host_factory(request.identity.clone(), recorder.clone()).await } => host?,
                 };
                 let pending_host = crate::host::TurnScope::new(inner.clone(), close_timeout);
-                let runner = TurnRunner::new(
+                let mut runner = TurnRunner::new(
                     recorder,
                     lease,
                     request.identity.session_id.clone(),
@@ -235,6 +247,9 @@ impl LiveSession for LiveSessionAdapter {
                 )
                 .with_interaction_events(interaction_events)
                 .with_prompt_hooks(prompt_hooks);
+                if let Some(tail) = tail {
+                    runner = runner.with_tail(tail, cancellation.clone(), tail_options);
+                }
                 // Transfer the actual driver before any host event can arrive.
                 let _ = recording_sender.send(Recording::new(runner, owner));
                 if let Some(manifest) = manifest {
@@ -302,10 +317,21 @@ impl LiveSession for LiveSessionAdapter {
     fn dispose(&self) -> DisposeFuture<'_> {
         let mut state = self.state.lock().unwrap();
         state.disposed = true;
+        if let Some(tail) = &self.tail {
+            tail.dispose();
+        }
         if let Some(cancellation) = &state.active {
             cancellation.cancel(None);
         }
-        Box::pin(async { Ok(()) })
+        let tail = self.tail.clone();
+        Box::pin(async move {
+            if let Some(tail) = tail {
+                tail.close()
+                    .await
+                    .map_err(|e| RuntimeError::new(e.to_string()))?;
+            }
+            Ok(())
+        })
     }
 }
 
@@ -398,9 +424,9 @@ impl LiveTurn for LiveTurnStream {
                     }
                     let runner = self
                         .recording
-                        .as_ref()
+                        .as_mut()
                         .unwrap()
-                        .runner()
+                        .runner_mut()
                         .expect("settled preflight");
                     if let Some(error) = runner.prompt_block_error() {
                         return self
@@ -412,6 +438,7 @@ impl LiveTurn for LiveTurnStream {
                             )
                             .await;
                     }
+                    runner.begin_tail_work();
                     let messages = runner.messages().to_vec();
                     let _ = self.execute_ready.take().unwrap().send(messages);
                 }
@@ -495,6 +522,11 @@ impl LiveTurnStream {
         if let Ok(recording) = self.recording_ready.try_recv() {
             self.recording = Some(recording);
         }
+        if event.get("type") == Some(&"tool_result".into())
+            && let Some(runner) = self.recording.as_mut().and_then(Recording::runner_mut)
+        {
+            runner.observe_tool_result(event.get("result").unwrap_or(&JsValue::Undefined));
+        }
         let action = match event.get("type").and_then(JsValue::as_string) {
             Some(kind) if kind.equals_str("turn_started") => Some(RecordingAction::Start),
             Some(kind) if kind.equals_str("input_accepted") => {
@@ -551,6 +583,15 @@ impl LiveTurnStream {
             .expect("pending event owns recording")
             .settle()
             .await;
+        if self
+            .recording
+            .as_ref()
+            .expect("recording progress")
+            .is_pending()
+        {
+            let mut events = outcome.map_err(|e| RuntimeError::new(e.to_string()))?;
+            return self.deliver_recorded(events.remove(0));
+        }
         let (event, terminal, receipt) = self.pending_event.take().expect("pending event");
         let mut events = match outcome {
             Ok(events) => events,
@@ -1272,7 +1313,10 @@ impl StreamIntegrity {
                 "Stream integrity violation: event after the terminal (premature final).",
             ));
         }
-        if event_type.equals_str("turn_started") || event_type.equals_str("input_accepted") {
+        if super::runner::HOST_LIFECYCLE_EVENTS
+            .iter()
+            .any(|kind| event_type.equals_str(kind))
+        {
             return Err(RuntimeError::new(
                 "Stream integrity violation: host lifecycle event in AgentLoop stream.",
             ));
@@ -1560,6 +1604,24 @@ mod tests {
     }
 
     #[test]
+    fn host_lifecycle_set_is_complete() {
+        assert_eq!(
+            super::super::runner::HOST_LIFECYCLE_EVENTS,
+            ["turn_started", "input_accepted", "user_prompt_submitted"],
+            "#936 host prefix set"
+        );
+        let integrity = StreamIntegrity::new();
+        assert!(
+            integrity
+                .observe_event(&event_of("user_prompt_submitted"))
+                .expect_err("#936 reject user_prompt_submitted")
+                .message
+                .contains("host lifecycle"),
+            "#936 host prefix rejection"
+        );
+    }
+
+    #[test]
     fn host_lifecycle_cannot_justify_a_sidecar_final() {
         let failed = StreamIntegrity::new();
         failed
@@ -1576,7 +1638,7 @@ mod tests {
             host.observe_terminal(outcome("success").as_ref()).is_err(),
             "host status is not loop evidence"
         );
-        for kind in ["turn_started", "input_accepted"] {
+        for kind in super::super::runner::HOST_LIFECYCLE_EVENTS {
             let integrity = StreamIntegrity::new();
             assert!(
                 integrity
@@ -1780,3 +1842,7 @@ mod tests {
 #[cfg(test)]
 #[path = "live_stream_tests.rs"]
 mod stream_tests;
+
+#[cfg(test)]
+#[path = "live_tail_tests.rs"]
+mod tail_tests;

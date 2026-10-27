@@ -72,6 +72,14 @@ if mode in ("live-payload", "live-manifest"):
                           event="manifest", kind="status", text="payload observed",
                           receivedPayload=execute["payload"]))
     send(success_final(2 if mode == "live-manifest" else 1))
+elif mode == "live-tail":
+    from pathlib import Path
+    Path(sys.argv[2], "report.txt").write_text("hello matrix\n")
+    send_event(0, dict(type="tool_result", sessionId=session, turnId=turn,
+        result=dict(type="success", toolCallId="write-1", toolName="write_file", content=[], data=dict(filePath="report.txt"))))
+    send(agent_event(1, dict(result=dict(type="success", sessionId=session, turnId=turn,
+        stopReason="completed", turns=1, finalMessage=dict(role="assistant", content=[dict(type="text",text="done")])),
+        messages=messages), final=True, outcome="completed"))
 elif mode == "live-interaction":
 
     def call(module, payload):

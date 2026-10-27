@@ -24,7 +24,7 @@ cases = [
      'wire && *state == IntegrityState::Initial', '*state == IntegrityState::Initial',
      'observe_source', 'runtime::turn::live::tests::host_lifecycle_cannot_justify_a_sidecar_final', 'host status is not loop evidence'),
     ('host-lifecycle-leak', live,
-     'if event_type.equals_str("turn_started") || event_type.equals_str("input_accepted") {', 'if false && (event_type.equals_str("turn_started") || event_type.equals_str("input_accepted")) {',
+     '.any(|kind| event_type.equals_str(kind))', '.any(|_| false)',
      'observe_source', 'runtime::turn::live::tests::host_lifecycle_cannot_justify_a_sidecar_final', 'host lifecycle leak must be rejected'),
     ('host-failure-not-loop', live,
      'current == IntegrityState::Failed && *self.wire_events.lock().unwrap() > 0', 'current == IntegrityState::Failed',

@@ -41,6 +41,7 @@ impl TurnRunner {
         if self.prompt_submitted {
             return Err(RecorderError::State("Prompt already submitted.".into()));
         }
+        self.start_collector().await;
         let prompt = match input {
             AgentInput::Text(text) => text,
             AgentInput::Blocks(blocks) => {
@@ -124,9 +125,10 @@ impl TurnRunner {
                 self.messages.extend(messages.iter().cloned());
             }
         }
+        self.set_tail_prompt(prompt.clone());
         self.prompt_submitted = true;
         let event = self.event(
-            "user_prompt_submitted",
+            super::HOST_LIFECYCLE_EVENTS[2],
             [("prompt", JsValue::String(prompt))],
         );
         Ok((self, vec![event]))

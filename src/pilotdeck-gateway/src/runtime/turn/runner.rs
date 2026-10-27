@@ -15,6 +15,11 @@ mod recording;
 pub use recording::{Recording, RecordingAction};
 #[path = "runner_prompt.rs"]
 mod prompt;
+#[path = "runner_tail.rs"]
+pub mod tail;
+/// Host-only prefix, shared by emission and sidecar source validation.
+pub const HOST_LIFECYCLE_EVENTS: [&str; 3] =
+    ["turn_started", "input_accepted", "user_prompt_submitted"];
 pub(crate) use prompt::PromptHooks;
 
 #[derive(Clone)]
@@ -56,6 +61,10 @@ pub struct TurnRunner {
     callback_error: Option<String>,
     prompt_hooks: Option<PromptHooks>,
     prompt_submitted: bool,
+    tail: Option<tail::TurnTail>,
+    progress:
+        Option<tokio::sync::mpsc::UnboundedSender<(JsValue, tokio::sync::oneshot::Sender<()>)>>,
+    tail_events: Vec<JsValue>,
     prompt_blocked: bool,
     interaction_events: Option<crate::runtime::project::interaction_events::TurnEvents>,
 }
@@ -81,6 +90,9 @@ impl TurnRunner {
             callback_error: None,
             prompt_hooks: None,
             prompt_submitted: false,
+            tail: None,
+            progress: None,
+            tail_events: vec![],
             prompt_blocked: false,
             interaction_events: None,
         }
@@ -147,7 +159,7 @@ impl TurnRunner {
         self.require(Phase::New)?;
         self.io(|r, s, t| r.start_turn(s, t)).await?;
         self.phase = Phase::Started;
-        let event = self.event("turn_started", []);
+        let event = self.event(HOST_LIFECYCLE_EVENTS[0], []);
         let mut events = vec![event];
         if let Some(port) = &self.interaction_events {
             events.extend(
@@ -164,6 +176,7 @@ impl TurnRunner {
         let accepted = input.accepted_messages();
         let durable: Vec<_> = accepted.iter().cloned().chain(input.synthetic).collect();
         self.messages = input.history;
+        let listing_metadata = input.metadata.clone();
         let written = durable.clone();
         if let Err(error) = self
             .io(move |r, s, t| {
@@ -198,9 +211,15 @@ impl TurnRunner {
             }
             return self.fail_inner(error, persisted).await;
         }
+        let history = self.messages.clone();
+        self.listing(&history, &accepted, listing_metadata.as_ref())
+            .await;
         self.messages.extend(durable);
         self.phase = Phase::Accepted;
-        let event = self.event("input_accepted", [("messages", JsValue::Array(accepted))]);
+        let event = self.event(
+            HOST_LIFECYCLE_EVENTS[1],
+            [("messages", JsValue::Array(accepted))],
+        );
         Ok((self, vec![event]))
     }
     /// Call for the loop's turn_failed, preserving repeated failures but only
@@ -313,6 +332,7 @@ impl TurnRunner {
                 ]))
                 .await;
         }
+        self.finish_artifacts(&result).await;
         let written = result.clone();
         if let Err(error) = self.io(move |r, s, t| r.complete_turn(s, t, written)).await {
             return self
@@ -322,9 +342,13 @@ impl TurnRunner {
                 ]))
                 .await;
         }
+        self.suggestion(&result).await;
+        self.finalize_metadata().await;
         self.phase = Phase::Completed;
         let event = self.event("turn_completed", [("result", result)]);
-        Ok((self, vec![event]))
+        let mut events = std::mem::take(&mut self.tail_events);
+        events.push(event);
+        Ok((self, events))
     }
     /// Catch path: complete first, then best-effort status and visible failure.
     pub async fn fail(self, error: JsValue) -> Transition {
@@ -357,22 +381,44 @@ impl TurnRunner {
             ("completedAt", JsValue::String(now)),
             ("errors", JsValue::Array(vec![persisted])),
         ]);
+        if !self.prompt_blocked {
+            self.finish_artifacts(&result).await;
+        }
         let written = result.clone();
         self.io(move |r, s, t| r.complete_turn(s, t, written))
             .await?;
         if let JsValue::Object(fields) = &mut result {
             fields.insert("errors".into(), JsValue::Array(vec![error.clone()]));
         }
+        if self.prompt_blocked {
+            self.finish_artifacts(&result).await;
+        }
         // TS TurnRunner catch writes another status even after a loop failure.
         // failure_status deduplicates only loop failures, never this catch.
         let status = self.status(&error).await;
+        if self.phase == Phase::Accepted {
+            self.emit_tail(status).await;
+            self.finalize_metadata().await;
+        } else {
+            self.tail_events.push(status);
+        }
         self.phase = Phase::Completed;
-        let events = vec![
-            status,
+        let mut events = std::mem::take(&mut self.tail_events);
+        events.extend([
             self.event("turn_failed", [("error", error)]),
             self.event("turn_completed", [("result", result)]),
-        ];
+        ]);
         Ok((self, events))
+    }
+    async fn emit_tail(&mut self, event: JsValue) {
+        if let Some(progress) = self.progress.as_ref().filter(|_| self.tail.is_some()) {
+            let (ack, resume) = tokio::sync::oneshot::channel();
+            if progress.send((event, ack)).is_ok() {
+                let _ = resume.await;
+            }
+        } else {
+            self.tail_events.push(event);
+        }
     }
     async fn status(&self, error: &JsValue) -> JsValue {
         let message = error.get("message").cloned().unwrap_or(JsValue::Undefined);

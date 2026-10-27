@@ -304,6 +304,39 @@ case!(pass, "pass");
 case!(blocks, "blocks");
 case!(blocks_coerce, "blocks-coerce");
 case!(blocks_null, "blocks-null");
+#[tokio::test]
+async fn blocks_empty() {
+    let f = Fixture::new("", 0);
+    let (runner, _) = f.runner().start().await.expect("#936 empty blocks start");
+    let input = TurnInput {
+        input: AgentInput::Blocks(vec![]),
+        history: vec![],
+        synthetic: vec![],
+        metadata: None,
+    };
+    let (runner, accepted) = runner
+        .accept(input.clone())
+        .await
+        .expect("#936 empty blocks accepted");
+    assert_eq!(
+        accepted[0].get("messages"),
+        Some(&JsValue::Array(input.accepted_messages())),
+        "#936 empty blocks accepted shape"
+    );
+    let (_, events) = tokio::time::timeout(
+        Duration::from_secs(5),
+        runner.submit_prompt(input.input, Cancellation::default()),
+    )
+    .await
+    .expect("#936 empty blocks bound")
+    .expect("#936 empty blocks submit");
+    assert_eq!(
+        events[0].get("prompt"),
+        Some(&"".into()),
+        "#936 empty blocks prompt"
+    );
+    replay_prompt("blocks-empty", row("blocks-empty")).await;
+}
 case!(abort_after_submitted, "abort-after-submitted");
 case!(context, "context");
 case!(block, "block");

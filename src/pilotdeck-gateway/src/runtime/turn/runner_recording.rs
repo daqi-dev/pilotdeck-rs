@@ -130,6 +130,9 @@ pub enum RecordingAction {
 pub struct Recording {
     runner: Option<TurnRunner>,
     pending: Option<Pin<Box<dyn Future<Output = Transition> + Send>>>,
+    progress:
+        Option<tokio::sync::mpsc::UnboundedReceiver<(JsValue, tokio::sync::oneshot::Sender<()>)>>,
+    resume: Option<tokio::sync::oneshot::Sender<()>>,
 }
 impl Recording {
     /// `owner` must be the actual shared active-slot guard when used by a host,
@@ -139,10 +142,18 @@ impl Recording {
         Self {
             runner: Some(runner),
             pending: None,
+            progress: None,
+            resume: None,
         }
     }
     pub fn runner(&self) -> Option<&TurnRunner> {
         self.runner.as_ref()
+    }
+    pub fn is_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+    pub fn runner_mut(&mut self) -> Option<&mut TurnRunner> {
+        self.runner.as_mut()
     }
     pub(crate) fn callback_error(&self) -> Option<String> {
         self.runner.as_ref()?.callback_error.clone()
@@ -159,7 +170,10 @@ impl Recording {
         if self.runner.as_ref().is_none_or(TurnRunner::is_complete) {
             return Err(RecorderError::State("Recording is closed.".into()));
         }
-        let runner = self.runner.take().expect("checked above");
+        let mut runner = self.runner.take().expect("checked above");
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        runner.progress = Some(sender);
+        self.progress = Some(receiver);
         self.pending = Some(Box::pin(async move {
             match action {
                 RecordingAction::Start => runner.start().await,
@@ -178,13 +192,24 @@ impl Recording {
     /// A failed transition consumes its runner; do not replay a possibly
     /// partially persisted write. Call begin only after a successful settle.
     pub async fn settle(&mut self) -> RecorderResult<Vec<JsValue>> {
-        let outcome = self
+        if let Some(resume) = self.resume.take() {
+            let _ = resume.send(());
+        }
+        let pending = self
             .pending
             .as_mut()
-            .ok_or_else(|| RecorderError::State("No recording transition is pending.".into()))?
-            .await;
+            .ok_or_else(|| RecorderError::State("No recording transition is pending.".into()))?;
+        let outcome = tokio::select! {
+            outcome = pending => outcome,
+            Some((event, resume)) = self.progress.as_mut().expect("pending progress").recv() => {
+                self.resume = Some(resume);
+                return Ok(vec![event]);
+            }
+        };
         self.pending = None;
-        let (runner, events) = outcome?;
+        self.progress = None;
+        let (mut runner, events) = outcome?;
+        runner.progress = None;
         self.runner = Some(runner);
         Ok(events)
     }
