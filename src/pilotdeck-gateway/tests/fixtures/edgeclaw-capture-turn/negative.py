@@ -12,7 +12,9 @@ proves the test really executed: an `assertion` diagnostic, or a panic at this
 integration test file for `assert!` / `expect_err` paths. A compile error or a
 different test failing is INVALID evidence. Every mutant is classified before
 the summary; a non-KILLED mutant never aborts the remaining loop, and any
-non-KILLED result exits 1.
+non-KILLED result exits 1. A restored-positive timeout or process-start
+failure is recorded as `restoredPass=false` with its reason instead of
+dropping the already-collected summary.
 """
 import hashlib
 import json
@@ -24,6 +26,45 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 TEST_FILE = 'pilotdeck-gateway/tests/edgeclaw_capture_turn.rs'
+
+
+def restore_positive(run):
+    """Run the restored positive control without discarding the summary.
+
+    A timeout or a process-start failure is evidence about this run, not a
+    reason to lose the per-mutant classification already collected (#774
+    P2-1). The caller records ``restoredPass=false`` plus this reason and
+    still exits nonzero.
+    """
+    try:
+        code = run('restored', '')
+        return code == 0, None if code == 0 else f'exit={code}'
+    except Exception as error:
+        return False, f'{type(error).__name__}: {error}'
+
+
+def summary_payload(*, results, failures, restored, restored_ok,
+                    restored_error, before_sha256, after_sha256):
+    counts = {
+        state: sum(row['status'] == state for row in results)
+        for state in ('KILLED', 'SURVIVED', 'INVALID')
+    }
+    payload = dict(
+        results=results,
+        failures=failures,
+        counts=counts,
+        restored=restored,
+        restoredPass=restored_ok,
+        beforeSha256=before_sha256,
+        afterSha256=after_sha256,
+    )
+    if restored_error is not None:
+        payload['restoredError'] = restored_error
+    return payload
+
+
+def write_summary(output, payload):
+    (output / 'summary.json').write_text(json.dumps(payload, indent=2) + '\n')
 
 
 def main():
@@ -88,9 +129,33 @@ def main():
             '            Some(JsValue::Null) => String::new(),',
             'malformed_session_id_matches_ts_startswith_failure',
             'panic',
-            # Bind both halves: the named test's own rejection wording and the
-            # TS product text it is supposed to match (#786).
-            "#786 non-string sessionId must reject like isAlwaysOnSession (TS: reading 'startsWith')",
+            # Rejection-only control: the product error text has its own
+            # mutant below, so this anchor must not borrow the test's
+            # `expected` wording (#786 / #774 P2-2).
+            '#786 non-string sessionId must reject like isAlwaysOnSession',
+        ),
+        mutate(
+            'malformed-session-wrong-error-text',
+            prepare,
+            '''            Some(JsValue::Null) => {
+                return Err(ModuleError::new(
+                    "Cannot read properties of null (reading 'startsWith')",
+                )
+                .into());
+            }
+''',
+            '''            Some(JsValue::Null) => {
+                return Err(ModuleError::new(
+                    "#774 wrong product error text",
+                )
+                .into());
+            }
+''',
+            'malformed_session_id_matches_ts_startswith_failure',
+            'panic',
+            # Exclusive message of the product-error-text assertion at
+            # edgeclaw_capture_turn.rs:413-416: still Err, but wrong text.
+            '#786 product error must contain the TS text',
         ),
         mutate(
             'supports-capture-turn-removed',
@@ -238,28 +303,27 @@ def main():
                 for path in files
             }
             assert all(restored.values()), restored
-        restored_ok = run('restored', '') == 0
-        counts = {
-            state: sum(row['status'] == state for row in results)
-            for state in ('KILLED', 'SURVIVED', 'INVALID')
-        }
-        (output / 'summary.json').write_text(json.dumps(dict(
+        restored_ok, restored_error = restore_positive(run)
+        payload = summary_payload(
             results=results,
             failures=failures,
-            counts=counts,
             restored=restored,
-            restoredPass=restored_ok,
-            beforeSha256={path.name: hashlib.sha256(
+            restored_ok=restored_ok,
+            restored_error=restored_error,
+            before_sha256={path.name: hashlib.sha256(
                 originals[path].encode()).hexdigest() for path in files},
-            afterSha256={path.name: hashlib.sha256(
+            after_sha256={path.name: hashlib.sha256(
                 path.read_bytes()).hexdigest() for path in files},
-        ), indent=2) + '\n')
+        )
+        write_summary(output, payload)
+        counts = payload['counts']
         print('summary: ' + ', '.join(
             f'{state}={count}' for state, count in counts.items()), flush=True)
         if failures or not restored_ok:
+            detail = f'; restored_error={restored_error}' if restored_error else ''
             print(
                 f'NOT KILLED: {", ".join(failures) or "<none>"}; '
-                f'restored_passed={restored_ok}',
+                f'restored_passed={restored_ok}{detail}',
                 file=sys.stderr,
             )
             sys.exit(1)

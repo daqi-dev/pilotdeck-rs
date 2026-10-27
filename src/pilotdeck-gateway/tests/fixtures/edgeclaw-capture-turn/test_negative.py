@@ -1,0 +1,72 @@
+"""#774 P2-1: a restored-positive failure must not drop ``summary.json``.
+
+These are in-memory stubs: they never start cargo, mutate a product source or
+touch the real evidence directory.
+"""
+import importlib.util
+import json
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+
+FIXTURE = Path(__file__).resolve().parent
+SPEC = importlib.util.spec_from_file_location(
+    'edgeclaw_capture_turn_negative', FIXTURE / 'negative.py')
+negative = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(negative)
+
+
+class RestoredPositiveFailure(unittest.TestCase):
+    def test_timeout_still_writes_summary(self):
+        def timed_out(name, test):
+            raise subprocess.TimeoutExpired(['cargo', 'test'], 600)
+
+        restored_ok, restored_error = negative.restore_positive(timed_out)
+        self.assertFalse(restored_ok, '#774 restore timeout must not pass')
+        self.assertIn('TimeoutExpired', restored_error,
+                      '#774 restore timeout reason must name the exception')
+
+        payload = negative.summary_payload(
+            results=[dict(name='malformed-session-wrong-error-text',
+                          status='KILLED')],
+            failures=[],
+            restored={'prepare.rs': True},
+            restored_ok=restored_ok,
+            restored_error=restored_error,
+            before_sha256={'prepare.rs': 'before'},
+            after_sha256={'prepare.rs': 'after'},
+        )
+        with tempfile.TemporaryDirectory(prefix='pdrs-774-negative-') as tmp:
+            negative.write_summary(Path(tmp), payload)
+            summary = json.loads((Path(tmp) / 'summary.json').read_text())
+        self.assertFalse(summary['restoredPass'],
+                         '#774 summary must record restoredPass=false')
+        self.assertEqual(summary['restoredError'], restored_error,
+                         '#774 summary must keep the restore failure reason')
+        self.assertEqual(summary['counts'],
+                         {'KILLED': 1, 'SURVIVED': 0, 'INVALID': 0},
+                         '#774 summary must keep the classified mutants')
+
+    def test_start_failure_still_has_reason(self):
+        def missing_cargo(name, test):
+            raise FileNotFoundError('cargo missing')
+
+        restored_ok, restored_error = negative.restore_positive(missing_cargo)
+        self.assertFalse(restored_ok,
+                         '#774 restore start failure must not pass')
+        self.assertIn('FileNotFoundError', restored_error,
+                      '#774 restore start failure reason must name the exception')
+
+    def test_nonzero_exit_has_reason(self):
+        def failed(name, test):
+            return 1
+
+        restored_ok, restored_error = negative.restore_positive(failed)
+        self.assertFalse(restored_ok, '#774 nonzero restore must not pass')
+        self.assertEqual(restored_error, 'exit=1',
+                         '#774 nonzero restore reason must carry the exit code')
+
+
+if __name__ == '__main__':
+    unittest.main()
