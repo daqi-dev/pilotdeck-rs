@@ -1218,5 +1218,220 @@ class WatchdogControls(unittest.TestCase):
             killpg.assert_called_once_with(123,driver.signal.SIGKILL)
 
 
+class AggregationAudit(unittest.TestCase):
+    """#166/#892 full inventory and real source-guard regressions, no source writes."""
+
+    def setUp(self):
+        import ast
+        from types import SimpleNamespace
+        self.ast = ast
+        self.root = Path(__file__).resolve().parents[3]
+        self.fixture = self.root / 'src/pilotdeck-gateway/tests/fixtures'
+        path = self.fixture / 'session-domain-cleanup/check_cleanup.py'
+        source = path.read_text()
+        self.audit = dict(ast=ast, Path=Path, ROOT=self.root, __file__=str(path),
+                          md=SimpleNamespace(common=SimpleNamespace(aggregate_status=lambda *a: None)))
+        exec(compile(source[source.index('AGGREGATION_POINTS ='):source.index('\ndef control_failure(')],
+                     str(path), 'exec'), self.audit)
+
+    def test_current_inventory_passes(self):
+        result = self.audit['aggregation_audit']()
+        self.assertTrue(result['passed'], f'#166 audit baseline must pass: {result["failures"]}')
+
+    def audit_main(self, code):
+        target = self.root / 'scripts/gateway-parity/controls/session_domain.py'
+        tree = self.ast.parse(target.read_text())
+        replacement = self.ast.parse(code).body
+        tree.body = [part for node in tree.body for part in (
+            replacement if isinstance(node, self.ast.FunctionDef) and node.name == 'main' else [node])]
+        changed = self.ast.unparse(tree)
+        compile(changed, str(target), 'exec')
+        read = Path.read_text
+        with patch.object(Path, 'read_text', lambda path, *a, **k:
+                          changed if path == target else read(path, *a, **k)):
+            return self.audit['aggregation_audit']()
+
+    def test_nested_names_cannot_replace_registered_entry(self):
+        for inner in ('def main():', 'async def main():', 'class Holder:\n    def main():'):
+            with self.subTest(inner=inner):
+                lines = inner.splitlines()
+                nested = '\n'.join('    ' + line for line in lines)
+                body_indent = '        ' if len(lines) == 1 else '            '
+                code = ('def main():\n' + nested + '\n' + body_indent
+                        + "return common.aggregate_status('FAIL')[1]\n    return 0\n")
+                result = self.audit_main(code)
+                self.assertFalse(result['passed'], '#166 nested names must not certify outer entry')
+                self.assertFalse(result['points']['controls-main']['shared'],
+                                 '#166 nested names must not certify outer entry')
+                self.assertTrue(any(row['function'].startswith('main.') for row in result['unclassified']),
+                                '#166 nested aggregation must retain scope identity')
+
+    def test_duplicate_entries_fail_closed(self):
+        result = self.audit_main("def main():\n    return common.aggregate_status('FAIL')[1]\n"
+                                 "def main():\n    return 0\n")
+        self.assertFalse(result['points']['controls-main']['shared'],
+                         '#166 duplicate definitions cannot certify entry')
+
+    def test_explicit_exits_cannot_use_unreachable_returns(self):
+        import subprocess
+        import sys
+        for statement in ('raise SystemExit(0)', 'raise SystemExit', 'raise SystemExit()',
+                          'raise builtins.SystemExit(0)', 'sys.exit(0)', 'sys.exit()', 'os._exit(0)',
+                          'raise (SystemExit(0) if True else RuntimeError())'):
+            with self.subTest(statement=statement):
+                code = (f'def main():\n    {statement}\n'
+                        "    return common.aggregate_status('FAIL')[1]\n")
+                result = self.audit_main(code)
+                self.assertFalse(result['points']['controls-main']['shared'],
+                                 '#166 explicit exit must certify its own code: ' + statement)
+                actual = subprocess.run([sys.executable, '-I', '-B', '-c',
+                                         'import sys, os, builtins\n' + code + '\nmain()\n'],
+                                        capture_output=True, timeout=5)
+                self.assertEqual(actual.returncode, 0, '#166 bypass runtime probe must exit zero')
+                print(f'#166 runtime {statement}: exit={actual.returncode}', flush=True)
+
+    def test_definition_time_exits_cannot_hide_in_nested_scopes(self):
+        import subprocess
+        import sys
+        for definition in ('class Holder(sys.exit(0)):\n    pass',
+                           'class Holder:\n    sys.exit(0)',
+                           'def nested(code=sys.exit(0)):\n    pass',
+                           '@sys.exit(0)\ndef nested():\n    pass',
+                           'nested = lambda code=sys.exit(0): None'):
+            with self.subTest(definition=definition):
+                code = ('def main():\n' + '\n'.join('    ' + line for line in definition.splitlines())
+                        + "\n    return common.aggregate_status('FAIL')[1]\n")
+                result = self.audit_main(code)
+                self.assertFalse(result['points']['controls-main']['shared'],
+                                 '#166 definition-time exit must certify its own code')
+                actual = subprocess.run([sys.executable, '-I', '-B', '-c',
+                                         'import sys\n' + code + '\nmain()\n'],
+                                        capture_output=True, timeout=5)
+                self.assertEqual(actual.returncode, 0, '#166 definition-time runtime probe must exit zero')
+
+    def test_shared_explicit_exits_are_recognized(self):
+        for expression in ("common.aggregate_status('FAIL')[1]", 'code'):
+            for statement in ('raise SystemExit({})', 'sys.exit({})', 'os._exit({})'):
+                with self.subTest(expression=expression, statement=statement):
+                    code = ("def main():\n    _, code = common.aggregate_status('FAIL')\n    "
+                            + statement.format(expression) + '\n')
+                    result = self.audit_main(code)
+                    self.assertTrue(result['passed'],
+                                    f'#166 shared explicit exit must pass: {result["failures"]}')
+
+    def test_residual_mapping_is_rejected_before_import(self):
+        import contextlib
+        import importlib.machinery
+        import json
+        import sys
+        for folder in ('gateway-batch', 'session-domain-cleanup'):
+            with self.subTest(folder=folder), tempfile.TemporaryDirectory() as temp:
+                path = self.fixture / folder / 'negative_controls.py'
+                common_path = self.root / 'scripts/gateway-parity/common.py'
+                pristine = common_path.read_bytes()
+                residue = pristine.replace(b"'INVALID': 'BLOCKED'", b"'INVALID': 'PASS'")
+                self.assertNotEqual(residue, pristine, '#166 residue probe must change mapping')
+                raw_read = Path.read_bytes
+                write_text = Path.write_text
+                get_data = importlib.machinery.SourceFileLoader.get_data
+                imports = []
+
+                def data(loader, name):
+                    if Path(name) == common_path:
+                        imports.append(name)
+                        return residue
+                    return get_data(loader, name)
+
+                def git(_root, *args):
+                    if args[0] == 'show':
+                        return raw_read(self.root / args[1].split(':', 1)[1])
+                    return b''  # clean tracked-product index fixture; no subprocess
+
+                def evidence_only(path, *args, **kwargs):
+                    self.assertTrue(path.is_relative_to(Path(temp).resolve()), '#166 dirty guard must never write source')
+                    return write_text(path, *args, **kwargs)
+
+                with patch.object(importlib.machinery.SourceFileLoader, 'get_data', data):
+                    spec = importlib.util.spec_from_file_location('negative_166_' + folder, path)
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    guard = sys.modules['negative_process']
+                    row = next(row for row in module.MUTATIONS
+                               if Path(row[1]) != common_path)
+                    argv = ['negative_controls.py', '--output', str(Path(temp) / 'out'), '--only', row[0]]
+                    caught = None
+                    code = None
+                    with patch.object(guard, '_git', git), \
+                            patch.object(guard, 'tree_lock', return_value=contextlib.nullcontext()), \
+                            patch.object(Path, 'read_bytes', lambda p: residue if p == common_path else raw_read(p)), \
+                            patch.object(Path, 'write_text', evidence_only), \
+                            patch.object(Path, 'write_bytes', side_effect=AssertionError('#166 dirty guard must never write')), \
+                            patch.object(module, 'run_owned', side_effect=AssertionError('#166 dirty guard must never run child')), \
+                            patch.object(module.sys, 'argv', argv):
+                        if hasattr(module, 'pgrep_launcher'):
+                            module.pgrep_launcher = lambda: ''
+                        try:
+                            code = module.main()
+                        except Exception as error:
+                            caught = error
+                    self.assertEqual(imports, [], '#166 residual mapping must be guarded before import')
+                    self.assertIsInstance(caught, guard.SourceBaselineError, '#166 residual mapping must refuse with source guard')
+                    self.assertIsNone(code, '#166 dirty guard must not return a green code')
+                    self.assertEqual(caught.relative, 'scripts/gateway-parity/common.py',
+                                     '#166 residue refusal must name common.py')
+                    if folder == 'gateway-batch':
+                        rows = json.loads((Path(temp) / 'out/summary.json').read_text())
+                        self.assertEqual([row['status'] for row in rows], ['INVALID'],
+                                         '#166 residue must record INVALID for every selected case')
+                    print(f'#166 {folder}: residual INVALID->PASS rejected before import; no writes', flush=True)
+
+
+    def test_session_suite_continues_after_invalid_mutants(self):
+        import contextlib
+        import json
+        from types import SimpleNamespace
+        path = self.fixture / 'session-domain-cleanup/negative_controls.py'
+        spec = importlib.util.spec_from_file_location('negative_166_continue', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        names = [row[0] for row in module.MUTATIONS[:2]]
+        module.MUTATIONS = [(names[0], module.SOURCE, '#166 absent anchor', 'absent'),
+                            (names[1], module.SOURCE, 'def main():', 'def main(:')]
+        originals = {p: p.read_bytes() for p in (module.SOURCE, module.COMMON_SOURCE)}
+
+        @contextlib.contextmanager
+        def guard(*_a, **_k):
+            yield originals
+
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp).resolve() / 'out'
+            write_text = Path.write_text
+
+            def evidence_only(path, *a, **k):
+                self.assertTrue(path.is_relative_to(output), '#166 invalid mutants must never write source')
+                return write_text(path, *a, **k)
+
+            restored = SimpleNamespace(returncode=0, stdout='', stderr='')
+            summary = {'status': 'PASS', 'results': [
+                {'mode': 'wiring', 'passed': True, 'status': 'PASS_WITH_CLEANUP_UNVERIFIED'}]}
+            with patch.object(module, 'mutating_sources', guard), \
+                    patch.object(module, 'pgrep_launcher', return_value=''), \
+                    patch.object(module, 'run_check', return_value=restored) as check, \
+                    patch.object(module, 'read_summary', return_value=(summary, None)), \
+                    patch.object(module.sys, 'argv', ['negative_controls.py', '--output', str(output)]), \
+                    patch.object(module.sys, 'platform', 'darwin'), \
+                    patch.object(Path, 'write_text', evidence_only), \
+                    patch.object(Path, 'write_bytes', lambda path, value: len(value)):
+                code = module.main()
+            report = json.loads((output / 'summary.json').read_text())
+            self.assertEqual([row['mutation'] for row in report['mutations']], names,
+                             '#166 suite must record every selected invalid mutant')
+            self.assertEqual([row['verdict'] for row in report['mutations']], ['INVALID', 'INVALID'],
+                             '#166 stale and uncompilable mutants are INVALID')
+            self.assertEqual(code, 2, '#166 invalid batch must exit BLOCKED')
+            self.assertEqual(check.call_count, 1, '#166 invalid suite still runs restored positive')
+            self.assertTrue(report['restoredPass'], '#166 invalid suite records restoration separately')
+
+
 if __name__ == '__main__':
     unittest.main()

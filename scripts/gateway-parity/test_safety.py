@@ -271,7 +271,7 @@ class Safety(unittest.TestCase):
         def popen(*_args, **kwargs):
             blocked = common.signal.pthread_sigmask(common.signal.SIG_BLOCK, set())
             self.assertTrue(common.DEFERRED_SIGNALS <= blocked, '#209 spawn-registration signal window')
-            self.assertIs(kwargs['preexec_fn'], common.unblock_child_signals, '#209 child mask restored')
+            self.assertIs(kwargs.get('preexec_fn'), common.unblock_child_signals, '#209 child mask restored')
             os.kill(os.getpid(), common.signal.SIGINT)
             return child
 
@@ -282,7 +282,9 @@ class Safety(unittest.TestCase):
             self.assertEqual([row[0] for row in entries], [child], '#209 cleanup list published before signal')
         with patch.object(common.signal, 'pthread_sigmask') as mask:
             common.unblock_child_signals()
-            mask.assert_called_once_with(common.signal.SIG_UNBLOCK, common.DEFERRED_SIGNALS)
+            self.assertEqual(mask.call_args_list,
+                             [unittest.mock.call(common.signal.SIG_UNBLOCK, common.DEFERRED_SIGNALS)],
+                             '#209 child signals must be unblocked')
 
     def test_spawn_failure_closes_log_without_registering(self):
         runner = _load('run_round', common.SCRIPT / 'run_round.py')
@@ -293,7 +295,7 @@ class Safety(unittest.TestCase):
                 runner.start_owned(entries, log, {}, ['fixture'])
             self.assertFalse(common.LIVE_GROUPS, '#209 failed spawn has no owned group')
             self.assertFalse(entries, '#209 failed spawn has no process entry')
-        log.close.assert_called_once()
+        self.assertEqual(log.close.call_count, 1, '#209 failed spawn closes log')
 
     def test_cleanup_continues_after_oserror_and_defers_whole_batch(self):
         runner = _load('run_round', common.SCRIPT / 'run_round.py')
@@ -315,7 +317,18 @@ class Safety(unittest.TestCase):
             self.assertEqual(calls, [424242, 424241], '#209 cleanup must reach every group before interrupt')
             self.assertIn(424242, common.LIVE_GROUPS, '#209 failed group remains owned')
         for _, log, _ in entries:
-            log.close.assert_called_once()
+            self.assertEqual(log.close.call_count, 1, '#209 cleanup closes every log')
+
+    def test_cleanup_log_error_restores_all_registrations(self):
+        runner = _load('run_round', common.SCRIPT / 'run_round.py')
+        log = unittest.mock.Mock()
+        log.close.side_effect = OSError('#209 close failed')
+        child = SimpleNamespace(pid=424242, returncode=0)
+        with patch.object(common, 'LIVE_GROUPS', set()), \
+                patch.object(runner, 'stop_owned', return_value={'allStopped': True, 'errors': []}):
+            audit = runner.cleanup_owned([(child, log, {})])
+            self.assertEqual(common.LIVE_GROUPS, {child.pid}, '#209 cleanup error restores registrations')
+            self.assertFalse(audit['allStopped'], '#209 cleanup log error cannot pass')
 
     def test_stop_owned_proves_absence_and_keeps_all_failure_shapes(self):
         runner = _load('run_round', common.SCRIPT / 'run_round.py')
@@ -546,6 +559,14 @@ class ApparatusInputs(unittest.TestCase):
             self.assertEqual(common.aggregate_status(common.MUTATION_STATUS[verdict]), expected,
                              '#166 source control verdict mapping')
 
+    def test_empty_aggregation_fails_closed(self):
+        for children in ((), (None,), (None, None)):
+            with self.subTest(children=children):
+                self.assertEqual(common.aggregate_status(*children), ('FAIL', 1),
+                                 '#166 empty aggregation must fail')
+        self.assertEqual(common.aggregate_status('PASS', None), ('PASS', 0),
+                         '#166 optional child does not erase an executed child')
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='pdrs-apparatus-inputs-')
         self.addCleanup(self.tmp.cleanup)
@@ -610,14 +631,14 @@ class ApparatusInputs(unittest.TestCase):
         # ``from common import`` and being shadowed before the scan (fix-r6 P1).
         folder = Path(__file__).resolve().parent
         blocks = {}
-        for name in common.A2_SCRIPTS:
+        for name in common.A2_SCRIPTS + common.A3_SCRIPTS:
             if name == 'common.py' or not name.endswith('.py'):
                 continue
             text = (folder / name).read_text(encoding='utf-8')
             if 'common' not in text and '_load(' not in text:
                 continue
             start = text.find(BOOTSTRAP_START)
-            self.assertNotEqual(start, -1, f'{name}: missing apparatus bootstrap')
+            self.assertNotEqual(start, -1, f'#701 {name}: missing apparatus bootstrap')
             end = text.find(BOOTSTRAP_END, start)
             self.assertNotEqual(end, -1, f'{name}: unterminated apparatus bootstrap')
             blocks[name] = text[start:end + len(BOOTSTRAP_END)]
@@ -641,12 +662,30 @@ class ApparatusInputs(unittest.TestCase):
         # Covers entries that do not mention ``common`` but still import a
         # sibling module by name; sys.path lookup is the P1 bypass in both cases.
         folder = Path(__file__).resolve().parent
-        for name in common.A2_SCRIPTS:
+        for name in common.A2_SCRIPTS + common.A3_SCRIPTS:
             if not name.endswith('.py') or name == 'common.py':
                 continue
             text = (folder / name).read_text(encoding='utf-8')
-            self.assertNotRegex(text, r'sys[.]path[.]insert', name)
-            self.assertNotRegex(text, APPARATUS_IMPORT, name)
+            self.assertNotRegex(text, r'sys[.]path[.]insert', '#701 apparatus path lookup: ' + name)
+            self.assertNotRegex(text, APPARATUS_IMPORT, '#701 apparatus sibling import: ' + name)
+
+    def test_a3_entries_are_scanned_by_both_guards(self):
+        folder = Path(__file__).resolve().parent
+        read = Path.read_text
+        target = folder / 'check_schema.py'
+        for method in ('test_a2_entries_share_one_verbatim_path_bootstrap',
+                       'test_a2_entries_never_resolve_apparatus_through_sys_path'):
+            with self.subTest(method=method):
+                baseline = unittest.TestResult()
+                ApparatusInputs(method).run(baseline)
+                self.assertTrue(baseline.wasSuccessful(), '#701 A3 scanner positive must pass')
+                result = unittest.TestResult()
+                with patch.object(Path, 'read_text', lambda path, *a, **k:
+                                  read(path, *a, **k) + ('\nimport common\n' if path == target else '')):
+                    ApparatusInputs(method).run(result)
+                self.assertFalse(result.errors, '#701 A3 scanner must fail its bound assertion')
+                self.assertEqual(len(result.failures), 1, '#701 A3 scanner must inspect check_schema.py')
+                self.assertIn('#701', result.failures[0][1], '#701 A3 scanner requires dedicated failure')
 
     def test_apparatus_import_pattern_covers_import_lists(self):
         # A hand-maintained tuple can silently miss an A2 module; the

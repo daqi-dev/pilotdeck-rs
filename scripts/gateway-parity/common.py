@@ -55,9 +55,9 @@ MUTATION_STATUS = {'KILLED': 'PASS', 'SURVIVED': 'FAIL', 'INVALID': 'BLOCKED'}
 
 
 def aggregate_status(*children):
-    """Most pessimistic child ``(status, exit_code)``; unknown -> FAIL/1."""
+    """Most pessimistic child ``(status, exit_code)``; unknown/empty -> FAIL/1."""
     known = [child for child in children if child is not None]
-    if any(child not in BATCH_STATUS_ORDER for child in known):
+    if not known or any(child not in BATCH_STATUS_ORDER for child in known):
         return 'FAIL', BATCH_EXIT_CODES['FAIL']
     status = max(known, key=BATCH_STATUS_ORDER.index, default='PASS')
     return status, BATCH_EXIT_CODES[status]
