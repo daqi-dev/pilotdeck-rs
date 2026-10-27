@@ -110,7 +110,10 @@ tests = {
 # incidental crash; the message fragment proves the intended assertion fired.
 failure_fragments = {
     'allow-rule-drops-port': '#933-2: exactly one allow rule, directly after the network deny',
-    'marker-ignored': '#933-2: the default profile must not carry the allow rule',
+    # marker-ignored relaxes the default profile too, so the pinned base-profile
+    # hash fires first (it subsumes the mock_gateway=False equality further
+    # down, which can never fail before it); bind to that hash assertion.
+    'marker-ignored': '#933-2: the base TS profile changed',
     'marker-truthy': '#933-1:',
     'profile-binding-ignored': '#933-3:',
     'gateway-probe-skipped': '#933-4:',
