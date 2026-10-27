@@ -116,7 +116,11 @@ impl ModelHttpTransport for Peer {
 }
 
 fn text(value: &JsValue) -> String {
-    value.as_string().unwrap().to_utf8().unwrap()
+    value
+        .as_string()
+        .expect("#922 oracle string")
+        .to_utf8()
+        .expect("#922 oracle string UTF-8")
 }
 
 fn array(value: &JsValue) -> &[JsValue] {
@@ -203,7 +207,7 @@ fn case<'a>(oracle: &'a JsValue, name: &str) -> &'a JsValue {
     array(model_mock::get(oracle, "cases"))
         .iter()
         .find(|case| text(model_mock::get(case, "name")) == name)
-        .unwrap_or_else(|| panic!("missing oracle case {name}"))
+        .unwrap_or_else(|| panic!("#922 missing oracle case {name}"))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -566,7 +570,12 @@ fn loopback_reply(value: &JsValue) -> LoopbackReply {
         Some(headers) => headers
             .entries()
             .iter()
-            .map(|(name, value)| (name.to_utf8().unwrap(), text(value)))
+            .map(|(name, value)| {
+                (
+                    name.to_utf8().expect("#922 reply header UTF-8"),
+                    text(value),
+                )
+            })
             .collect(),
         None => Vec::new(),
     };
@@ -602,9 +611,14 @@ impl Drop for Loopback {
 }
 
 fn start_loopback(case: &JsValue) -> Loopback {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    listener.set_nonblocking(true).unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("#922 bind loopback");
+    listener
+        .set_nonblocking(true)
+        .expect("#922 nonblocking loopback");
+    let origin = format!(
+        "http://{}",
+        listener.local_addr().expect("#922 loopback address")
+    );
     let requests = Arc::new(Mutex::new(Vec::new()));
     let stop = Arc::new(AtomicBool::new(false));
     let recorded = requests.clone();
@@ -612,7 +626,7 @@ fn start_loopback(case: &JsValue) -> Loopback {
     let behavior = text(model_mock::get(case, "behavior"));
     let body = model_mock::get(case, "httpBody")
         .as_string()
-        .map(|value| value.to_utf8().unwrap())
+        .map(|value| value.to_utf8().expect("#922 oracle URL/body UTF-8"))
         .unwrap_or_default();
     let replies: Vec<LoopbackReply> = model_mock::items(model_mock::get(case, "replies"))
         .iter()
@@ -622,8 +636,12 @@ fn start_loopback(case: &JsValue) -> Loopback {
         while !flag.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((mut socket, _)) => {
-                    socket.set_nonblocking(false).unwrap();
-                    socket.set_nodelay(true).unwrap();
+                    socket
+                        .set_nonblocking(false)
+                        .expect("#922 blocking accepted socket");
+                    socket
+                        .set_nodelay(true)
+                        .expect("#922 accepted socket nodelay");
                     let behavior = behavior.clone();
                     let body = body.clone();
                     let replies = replies.clone();
@@ -663,7 +681,11 @@ fn write_loopback_head(socket: &mut std::net::TcpStream, reply: &LoopbackReply) 
     for (name, value) in &reply.headers {
         head.push_str(&format!("{name}: {value}\r\n"));
     }
-    head.push_str(&format!("content-length: {length}\r\n\r\n"));
+    // Each handler serves exactly one request. Advertise that before the
+    // client can pool a completed response and race this socket's drop.
+    head.push_str(&format!(
+        "content-length: {length}\r\nconnection: close\r\n\r\n"
+    ));
     socket
         .write_all(head.as_bytes())
         .and_then(|()| socket.flush())
@@ -714,7 +736,7 @@ fn serve_loopback(
     let method = start.next().unwrap_or_default().to_string();
     let path = start.next().unwrap_or_default().to_string();
     let index = {
-        let mut recorded = recorded.lock().unwrap();
+        let mut recorded = recorded.lock().expect("#922 record loopback request");
         recorded.push(RecordedRequest {
             method,
             path,
@@ -731,7 +753,7 @@ fn serve_loopback(
             let bytes = delayed_body.as_bytes();
             let split = bytes.len() / 2;
             let response_head = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
                 bytes.len()
             );
             if socket.write_all(response_head.as_bytes()).is_err()
@@ -787,6 +809,178 @@ fn recorded_requests_json(records: &[RecordedRequest]) -> JsValue {
     )
 }
 
+/// A one-request server cannot advertise HTTP/1.1's default persistence.
+/// Inspect actual wire headers, including both header-writing paths.
+fn assert_loopback_declares_close(name: &str) {
+    let oracle = baseline::oracle(TIMEOUT_ORACLE);
+    let server = start_loopback(case(&oracle, name));
+    let address = server
+        .origin
+        .strip_prefix("http://")
+        .expect("#922 loopback origin");
+    let mut socket = std::net::TcpStream::connect(address).expect("#922 connect header probe");
+    socket
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("#922 bound header probe");
+    socket
+        .write_all(b"POST /probe HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{}")
+        .expect("#922 send header probe");
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        let mut byte = [0];
+        socket
+            .read_exact(&mut byte)
+            .expect("#922 read header probe before deadline");
+        head.push(byte[0]);
+        assert!(head.len() <= 16_384, "#922 bounded response head");
+    }
+    let head = String::from_utf8(head).expect("#922 response head UTF-8");
+    let connection: Vec<_> = head
+        .lines()
+        .filter_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            key.eq_ignore_ascii_case("connection")
+                .then(|| value.trim().to_ascii_lowercase())
+        })
+        .collect();
+    assert_eq!(
+        connection,
+        ["close"],
+        "#922 {name}: one-shot loopback must declare connection close"
+    );
+}
+
+#[test]
+fn loopback_scripted_replies_declare_connection_close() {
+    // The first case is complete; the second advertises a truncated body.
+    for name in [
+        "loopback-last-body-read-error",
+        "loopback-body-read-error-then-second",
+    ] {
+        assert_loopback_declares_close(name);
+    }
+}
+
+#[test]
+fn loopback_delayed_body_declares_connection_close() {
+    assert_loopback_declares_close("loopback-body-outlives-request-timeout");
+}
+
+/// Hold the first response's socket open after its handler returns. A pooled
+/// client must open the fallback connection, never send to this one-shot peer.
+/// Detect an actual second request on the old socket; a timeout is not evidence.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn loopback_fallback_does_not_reuse_completed_one_shot_socket() {
+    let oracle = baseline::oracle(TIMEOUT_ORACLE);
+    let case = case(&oracle, "loopback-last-body-read-error");
+    let replies: Vec<_> = model_mock::items(model_mock::get(case, "replies"))
+        .iter()
+        .map(loopback_reply)
+        .collect();
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("#922 bind fallback probe");
+    let origin = format!(
+        "http://{}",
+        listener.local_addr().expect("#922 fallback address")
+    );
+    listener
+        .set_nonblocking(true)
+        .expect("#922 nonblocking fallback listener");
+    let worker = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let accept = || loop {
+            match listener.accept() {
+                Ok((socket, _)) => {
+                    socket
+                        .set_nonblocking(false)
+                        .expect("#922 blocking first probe socket");
+                    break socket;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "#922 fallback accept deadline");
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) => panic!("#922 fallback accept: {error}"),
+            }
+        };
+        let recorded = Mutex::new(Vec::new());
+        let mut first = accept();
+        serve_loopback(&mut first, "reply", "", &replies, &recorded);
+        assert_eq!(
+            recorded.lock().expect("#922 first probe records").len(),
+            1,
+            "#922 first request must be fully recorded before probing reuse"
+        );
+        // Keep ownership until a new connection arrives or the old one is
+        // incorrectly reused. No scheduler delay determines the verdict.
+        first
+            .set_nonblocking(true)
+            .expect("#922 nonblocking first socket");
+        loop {
+            let mut byte = [0];
+            match first.read(&mut byte) {
+                Ok(n) if n > 0 => {
+                    return (true, recorded.into_inner().expect("#922 reuse records"));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => panic!("#922 inspect completed socket: {error}"),
+            }
+            match listener.accept() {
+                Ok((mut second, _)) => {
+                    second
+                        .set_nonblocking(false)
+                        .expect("#922 blocking second probe socket");
+                    serve_loopback(&mut second, "reply", "", &replies, &recorded);
+                    return (false, recorded.into_inner().expect("#922 fallback records"));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => panic!("#922 accept second connection: {error}"),
+            }
+            assert!(
+                Instant::now() < deadline,
+                "#922 no fallback traffic before deadline"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+    });
+    let mut provider = model_mock::get(case, "provider")
+        .as_object()
+        .cloned()
+        .expect("#922 fallback provider");
+    provider.insert(
+        "url".into(),
+        JsValue::String(format!("{origin}/api").into()),
+    );
+    let result = tokio::time::timeout(
+        Duration::from_secs(6),
+        complete_model(
+            &HyperModelTransport::new(),
+            model_mock::get(case, "request"),
+            &config(&JsValue::Object(provider)),
+            &StreamOptions::default(),
+        ),
+    )
+    .await;
+    let (reused, recorded) = worker.join().expect("#922 fallback probe worker");
+    assert!(
+        !reused,
+        "#922 fallback must not reuse a one-shot response socket"
+    );
+    let error = result
+        .expect("#922 fallback client deadline")
+        .expect_err("#922 truncated final response must fail");
+    assert_eq!(
+        model_mock::json(&recorded_requests_json(&recorded)),
+        model_mock::json(model_mock::get(case, "requests")),
+        "#922 fallback must preserve both exact requests"
+    );
+    assert_eq!(
+        model_mock::json(&model_mock::thrown(&error)),
+        model_mock::json(model_mock::get(case, "thrown")),
+        "#922 fallback must preserve final body error"
+    );
+}
+
 /// Replay the TS loopback fixture through the real `HyperModelTransport`.
 /// This is the timeout case the mock table cannot express: a real accepted
 /// socket that never sends headers, a delayed body that outlives the request
@@ -796,7 +990,7 @@ fn recorded_requests_json(records: &[RecordedRequest]) -> JsValue {
 async fn native_complete_timeout_uses_provider_timeout_and_ignores_stream_timeout() {
     let oracle = baseline::oracle(TIMEOUT_ORACLE);
     let cases = array(model_mock::get(&oracle, "cases"));
-    assert_eq!(cases.len(), 17, "unexpected timeout oracle size");
+    assert_eq!(cases.len(), 17, "#922 unexpected timeout oracle size");
     for case in cases {
         let name = text(model_mock::get(case, "name"));
         let server = start_loopback(case);
@@ -804,11 +998,11 @@ async fn native_complete_timeout_uses_provider_timeout_and_ignores_stream_timeou
             let mut provider = model_mock::get(case, "provider")
                 .as_object()
                 .cloned()
-                .unwrap();
+                .expect("#922 timeout oracle provider");
             let oracle_url = provider
                 .get("url")
                 .and_then(|value| value.as_string())
-                .map(|value| value.to_utf8().unwrap())
+                .map(|value| value.to_utf8().expect("#922 oracle URL/body UTF-8"))
                 .unwrap_or_default();
             let path = oracle_url
                 .strip_prefix("http://mock.local")
@@ -845,38 +1039,44 @@ async fn native_complete_timeout_uses_provider_timeout_and_ignores_stream_timeou
         )
         .await;
         let elapsed = started.elapsed();
-        let recorded = server.requests.lock().unwrap().clone();
+        let recorded = server
+            .requests
+            .lock()
+            .expect("#922 snapshot loopback requests")
+            .clone();
         assert_eq!(
             model_mock::json(&recorded_requests_json(&recorded)),
             model_mock::json(model_mock::get(case, "requests")),
-            "{name}: wire requests"
+            "#922 {name}: wire requests; result={result:?}"
         );
         assert_eq!(
             recorded.len(),
-            model_mock::get(case, "requestCount").as_number().unwrap() as usize,
-            "{name}: loopback request count"
+            model_mock::get(case, "requestCount")
+                .as_number()
+                .expect("#922 oracle request count") as usize,
+            "#922 {name}: loopback request count"
         );
         if let Some(expected) = case.get("response") {
-            let value = result.unwrap_or_else(|error| panic!("{name}: {error:?}"));
+            let value = result.unwrap_or_else(|error| panic!("#922 {name}: {error:?}"));
             assert_eq!(
                 model_mock::json(&value),
                 model_mock::json(expected),
-                "{name}"
+                "#922 {name}"
             );
         } else if let Some(expected) = case.get("thrown") {
-            let error = result.expect_err(&name);
+            let error = result.expect_err(&format!("#922 {name}: expected error"));
             assert_eq!(
                 model_mock::json(&model_mock::thrown(&error)),
                 model_mock::json(expected),
-                "{name}"
+                "#922 {name}"
             );
         }
         let minimum = model_mock::get(case, "elapsedAtLeastMs")
             .as_number()
-            .unwrap() as u64;
+            .expect("#922 oracle elapsed bound") as u64;
         assert!(
             elapsed >= Duration::from_millis(minimum),
-            "{name}: completed after {elapsed:?}, expected at least {minimum}ms"
+            "#922 {name}: completed after {elapsed:?}, expected at least {minimum}ms"
         );
         // Per-case upper bound derived by the generator from the baseline's
         // requested timer/body delay plus documented scheduler slack. The old
@@ -885,10 +1085,10 @@ async fn native_complete_timeout_uses_provider_timeout_and_ignores_stream_timeou
         // scenario.
         let maximum = model_mock::get(case, "elapsedAtMostMs")
             .as_number()
-            .unwrap() as u64;
+            .expect("#922 oracle elapsed bound") as u64;
         assert!(
             elapsed <= Duration::from_millis(maximum),
-            "{name}: completed after {elapsed:?}, upper bound {maximum}ms; a timer longer than the baseline's requested delay is a failure"
+            "#922 {name}: completed after {elapsed:?}, upper bound {maximum}ms; a timer longer than the baseline's requested delay is a failure"
         );
     }
 }
