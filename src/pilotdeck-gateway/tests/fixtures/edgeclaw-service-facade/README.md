@@ -64,3 +64,7 @@ CARGO_TARGET_DIR=/abs/target python3 \
   src/pilotdeck-gateway/tests/fixtures/edgeclaw-service-facade/negative.py \
   _tmp/20261026-issue-775/negative-service-facade
 ```
+
+Pass mutant names after the output directory to run a single binding (for
+example `closed-capture-empty-not-early`). Without names the runner executes
+the full set and still summarises every mutant before exiting.
