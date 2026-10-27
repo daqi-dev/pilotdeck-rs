@@ -1560,7 +1560,10 @@ fn file_history_backup_refuses_preplanted_links() {
         let file = root.path().join("doc.txt");
         fs::write(&victim, "victim\n").unwrap();
         fs::write(&file, "original\n").unwrap();
-        let name = get_backup_file_name(&resolve_node_path(file.to_str().unwrap()), 1);
+        let name = get_backup_file_name(
+            &resolve_node_path(file.to_str().unwrap()).expect("#879 resolve absolute backup path"),
+            1,
+        );
         let backup = backups.join(&name);
         if symlink {
             std::os::unix::fs::symlink(&victim, &backup).unwrap();
@@ -1659,7 +1662,19 @@ fn file_history_replay_and_conflict_round_trip() {
 
 #[test]
 fn resolve_node_path_normalizes_dotdot() {
-    assert_eq!(resolve_node_path("/tmp/a/../b/./c"), "/tmp/b/c");
-    assert_eq!(resolve_node_path("/tmp/a/b/../../c"), "/tmp/c");
-    assert_eq!(resolve_node_path("/"), "/");
+    assert_eq!(
+        resolve_node_path("/tmp/a/../b/./c").expect("#879 resolve dot segments"),
+        "/tmp/b/c",
+        "#879 normalize dot segments"
+    );
+    assert_eq!(
+        resolve_node_path("/tmp/a/b/../../c").expect("#879 resolve parent segments"),
+        "/tmp/c",
+        "#879 normalize parent segments"
+    );
+    assert_eq!(
+        resolve_node_path("/").expect("#879 resolve root"),
+        "/",
+        "#879 retain root"
+    );
 }
