@@ -7,6 +7,13 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 const sentinel = process.argv[2];
+// The connect-denial check must test the port the apparatus derives from
+// MOCK_PORT (#933 fix-r3): run_round passes it here; no literal in this file.
+const port = Number(process.argv[3]);
+if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+  console.error('usage: isolation_probe.mjs <sentinel> <port>');
+  process.exit(1);
+}
 const denied = fn => {
   try { fn(); return false; }
   catch (error) { return ['EPERM', 'EACCES'].includes(error.code); }
@@ -17,7 +24,7 @@ const socketDenied = await new Promise(resolve => {
   server.listen(0, '127.0.0.1', () => server.close(() => resolve(false)));
 });
 const connectDenied = await new Promise(resolve => {
-  const socket = net.createConnection({ host: '127.0.0.1', port: 28999 });
+  const socket = net.createConnection({ host: '127.0.0.1', port });
   socket.once('error', error => resolve(['EPERM', 'EACCES'].includes(error.code)));
   socket.once('connect', () => { socket.destroy(); resolve(false); });
   socket.setTimeout(1000, () => { socket.destroy(); resolve(false); });

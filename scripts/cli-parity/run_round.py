@@ -170,11 +170,21 @@ def _unblock_in_child():
 
 
 def spawn(*args, **kwargs):
-    """启动进程组并登记，两步之间不可被信号打断（gate-final concurrency P1：登记窗口）。"""
-    with deferred_signals():
-        # 子进程会继承信号掩码；exec 前解除挂起，被测进程按正常信号语义运行（TERM 清理也才有效）
-        proc = subprocess.Popen(*args, preexec_fn=_unblock_in_child, **kwargs)
-        LIVE_GROUPS.add(proc.pid)  # start_new_session：pid 即 pgid
+    """启动进程组并登记，两步之间不可被信号打断（gate-final concurrency P1：登记窗口）。
+
+    #933 fix-r3 P1-1：解除屏蔽的瞬间排队的信号即投递，可能先于本函数返回——
+    任何异常路径都先回收自己登记的进程组再上抛，调用者永远不会接手一个
+    「已登记却拿不到句柄」的孤儿进程组（回收失败则保持登记，锁保留）。"""
+    proc = None
+    try:
+        with deferred_signals():
+            # 子进程会继承信号掩码；exec 前解除挂起，被测进程按正常信号语义运行（TERM 清理也才有效）
+            proc = subprocess.Popen(*args, preexec_fn=_unblock_in_child, **kwargs)
+            LIVE_GROUPS.add(proc.pid)  # start_new_session：pid 即 pgid
+    except BaseException:
+        if proc is not None:
+            stop_group(proc)  # 回收失败时保持登记：锁保留，fail-closed
+        raise
     return proc
 
 
@@ -220,8 +230,17 @@ def capture(argv, env, cwd, stdin, timeout):
     record = {'status': 'ERROR', 'timedOut': False, 'processTree': []}
     events, data = [], {'stdout': bytearray(), 'stderr': bytearray()}
     started = time.monotonic()
-    proc = spawn(argv, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, start_new_session=True, umask=0o077)
+    proc = None
+    try:
+        # #933 fix-r3 P1-1：句柄必须先入库，排队信号才能投递；否则该窗口里的
+        # 异常会让已登记的进程组成为孤儿。投递点落在 except 里 → 先回收再上抛。
+        with deferred_signals():
+            proc = spawn(argv, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, start_new_session=True, umask=0o077)
+    except BaseException:
+        if proc is not None:
+            stop_group(proc)
+        raise
     record['pid'] = proc.pid
     selector = selectors.DefaultSelector()
     try:
@@ -279,11 +298,23 @@ def preflight(output, runtime, profile, node):
         evidence['driverProcess'] = next(row for row in process_table() if row['pid'] == os.getpid())
     except (Blocked, OSError) as error:
         evidence['errors'].append(str(error))
-    proc = spawn(['/usr/bin/sandbox-exec', '-f', str(profile), str(node),
-                             str(SCRIPT / 'isolation_probe.mjs'), str(sentinel)],
-                            cwd=runtime / 'project', env=environment(runtime, SCENARIOS[0]),
-                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            start_new_session=True, umask=0o077)
+    proc = None
+    try:
+        # #933 fix-r3 P1-1：同 capture()——句柄入库前不解除屏蔽。
+        # #933 fix-r3 P2：探针的 connectDenied 检查必须测由 MOCK_PORT 派生的
+        # 端口，探针从 argv[3] 读取，自身不持有任何端口字面量。
+        with deferred_signals():
+            proc = spawn(['/usr/bin/sandbox-exec', '-f', str(profile), str(node),
+                          str(SCRIPT / 'isolation_probe.mjs'), str(sentinel), str(MOCK_PORT)],
+                         cwd=runtime / 'project', env=environment(runtime, SCENARIOS[0]),
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         start_new_session=True, umask=0o077)
+    except BaseException:
+        if proc is not None:
+            audit = stop_group(proc)
+            if not audit['allStopped']:
+                raise CleanupBlocked('isolation probe cleanup failed; retaining shared lock')
+        raise
     stdout, stderr = b'', b''
     try:
         stdout, stderr = proc.communicate(b'', timeout=10)
@@ -316,6 +347,13 @@ def preflight(output, runtime, profile, node):
     return evidence
 
 
+def mock_listening_line(port):
+    """The readiness line the mock gateway prints itself once its bind is
+    committed. Python and Node each write a copy of this text (#933); the ping
+    unit test binds the two together so neither side can drift alone."""
+    return f'mock-gateway listening on 127.0.0.1:{port}'
+
+
 def mock_gateway_preflight(output, runtime, node, profile):
     """Start the #933 mock gateway outside the sandbox, then prove the relaxed
     profile still denies every network surface except 127.0.0.1:28999.
@@ -334,14 +372,17 @@ def mock_gateway_preflight(output, runtime, node, profile):
     logs.mkdir()
     # Node writes stdout to a file synchronously on POSIX, so this line is
     # observable in the log as soon as the listen callback fires.
-    listening = f'mock-gateway listening on 127.0.0.1:{MOCK_PORT}'
+    listening = mock_listening_line(MOCK_PORT)
     proc = None
     with (logs / 'stdout.log').open('wb') as stdout_log, (logs / 'stderr.log').open('wb') as stderr_log:
         try:
-            proc = spawn([node, str(SCRIPT / 'mock_gateway.mjs'), str(MOCK_PORT)],
-                         env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C', 'PILOTDECK_MOCK_TOKEN': TOKEN},
-                         stdin=subprocess.DEVNULL, stdout=stdout_log, stderr=stderr_log,
-                         start_new_session=True, umask=0o077)
+            # #933 fix-r3 P1-1：句柄入库前不解除屏蔽——投递点落在 try 内，
+            # 下面的 except 才能看到 proc 并 stop_group（评审 P1 复现的窗口）。
+            with deferred_signals():
+                proc = spawn([node, str(SCRIPT / 'mock_gateway.mjs'), str(MOCK_PORT)],
+                             env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C', 'PILOTDECK_MOCK_TOKEN': TOKEN},
+                             stdin=subprocess.DEVNULL, stdout=stdout_log, stderr=stderr_log,
+                             start_new_session=True, umask=0o077)
             # Everything past spawn() is inside the guard: a profile read
             # failure or a delivered signal must still stop the mock.
             evidence = {'status': 'BLOCKED', 'errors': [], 'profilePath': str(profile),
@@ -569,7 +610,10 @@ def main():
             try:
                 if mock_ids:
                     fixture(runtime)
-                    mock_proc, mock_isolation = mock_gateway_preflight(output, runtime, node['path'], ts_mock_profile)
+                    # #933 fix-r3 P1-1：交接窗口同样覆盖元组解包——句柄入库
+                    # （mock_proc 赋值）后才解除屏蔽，finally 才停得掉 mock。
+                    with deferred_signals():
+                        mock_proc, mock_isolation = mock_gateway_preflight(output, runtime, node['path'], ts_mock_profile)
                     runtime.rename(output / 'mock-preflight-tree')
                 first = run_round(output, runtime, profile, isolation, 'ts-1', provenance, args.timeout,
                                   mock_profile=ts_mock_profile, mock_isolation=mock_isolation)

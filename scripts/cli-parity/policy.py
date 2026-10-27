@@ -12,6 +12,26 @@ from common import MOCK_PORT, SCRIPT
 MOCK_GATEWAY_ALLOW = f'(allow network-outbound (remote ip "localhost:{MOCK_PORT}"))'
 
 
+def checkout_only_ancestors(script_dir=SCRIPT):
+    """#933-2 (fix-r3): the ancestor directory objects a profile owes to the
+    checkout tree alone — script_dir's chain minus the ancestors the fixed
+    system read paths already contribute (a checkout under /usr/local shares
+    /usr with /usr/lib: that item is not the checkout's to erase, or a digest
+    normalized there would differ from one taken in any other checkout).
+
+    The pinned-digest test erases exactly these whole items (and only inside
+    the file-read-metadata rule) so the guard holds in every checkout,
+    whatever its path, depth or script; the test's scenario inputs are
+    synthetic and share no ancestor with a real checkout. script_dir itself is
+    the probe file's immediate parent, so it is part of the list."""
+    fixed = [Path('/System'), Path('/usr/lib'), Path('/Library/Apple'),
+             Path('/opt/homebrew/Cellar'), Path('/opt/homebrew/opt'),
+             Path('/'), Path('/dev/null'), Path('/dev/urandom'), Path('/dev/random')]
+    shared = {parent for path in fixed for parent in path.parents}
+    return [path for path in (script_dir, *script_dir.parents)
+            if path not in shared and str(path) != '/']
+
+
 def sandbox_profile(runtime, baseline, binary, side, mock_gateway=False):
     if side not in ('ts', 'rust'):
         raise ValueError('unknown sandbox side')
