@@ -1,22 +1,22 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-28 00:35 · by Claude Code 协调者（按待办盘点 _tmp/20261027-backlog-audit/report.md 刷新）
-- #925 | review | doing | **#741 pr5f 跟踪单**（补开）：r3 在跑
-- #774 | impl | doing | r2 两家无 P0/P1 → DeepSeek fix-r2（P2×2 + 顺带 #786 第 1、2 条）→ 一家复核
-- #775 | review | doing | edgeclaw-18 f9f7ea527 → r1（opus + Codex）
-- #347 | impl | doing | P2 批 1（MCP：#347 + #401）→ GLM
-- #280 | impl | doing | P2 批 2（生成器溯源：#303 #280 #305 #911，不碰 edgeclaw-*）→ Codex
-- #927 | impl | doing | F3 前置：真实部署双壳共存验证包（决策卡放行）→ GLM；之后 #61.1
-- #926 | impl | doing | #887 catalog_locale_contract 高负载假红 → Codex
-- p2-batch-3-http | impl | ready | P2 批 3（#411 #360-3/4 #860，model/http.rs 真实 TCP）→ Codex，等 #280 / #926 空出
+updated: 2026-10-28 02:12 · by Claude Code 协调者
+- #925 | review | doing | **#741 pr5f** r3 两家 0/0 + 本机负控 15/15 → **PR #932** 等绿自动入队
+- #774 | impl | doing | r3 opus 0/0、Codex P2×2 → DeepSeek fix-r3（末轮，只修 P2-a）→ 一家复核
+- #775 | review | doing | fix-r2 b6bbf2889 → r2 重跑（main 上 round6 负控要求 target=src/target，neg.sh 加软链）；opus + Codex
+- #347 | review | doing | P2 批 1（#347 + #401）GLM 交付 444a03813 → r1（macmini → opus + Codex）
+- #280 | impl | doing | P2 批 2 首轮交付 a8e31c8a2（+ gitleaks 放行 7474efe06）；自报 7 变异 / 5 负控 / 17 守卫未完 → Codex 接续 fix-r1
+- #927 | review | doing | F3 前置共存验证包 GLM 交付 22dd555b5 → r1（本机 Node22 负控 → opus + Codex）；之后 #61.1
+- #926 | review | doing | r2 两家 0/0 + macmini 14/14 → **PR #931** 等绿自动入队
+- #411 | impl | doing | P2 批 3（#411 #360-3/4 #860，model/http.rs 真实 TCP）→ Codex（wt-p2b3）
 - p2-batch-4-negctl | impl | blocked | P2 批 4（负控共享库 #782 #835 #902 #786-3 + P1 #818 #819）→ DeepSeek，等 #813 合入
 - p2-batch-5a-frozen | impl | ready | P2 批 5a（gateway-parity 冻结装置一次重登记 #166 #892 #909 #701 #209）→ DeepSeek，与 #813 错开（同模块）
-- d0-pr2 | coord | ready | D0-pr2 决策卡：cli-parity 放开 loopback + mock gateway（解锁 D1 SDK 四命令、D2 cron；cli-parity 无冻结登记）→ 先写卡
-- a8-pr3 | impl | ready | A8.2-pr3 U4 manager / A8.1-pr3 U11 skills external（未开启组件，不依赖 turn）→ 开单
-- #293-regrade | coord | ready | #293 restore objectKey 越界读 / 并发 capture 删他人快照 → 按 memory p2-followup-regrade 复核是否升 P0（先 TS 实测）
-- #922 | review | doing | **PR #923**（nextest + 清 #919）→ r1（opus + GLM）；负对照草稿 **#924**（故意失败测试）待 CI；两次 CI 耗时对照
-- #741 | review | doing | **关键路径**。pr5d #901、pr5e #913 已合入；**pr5f r3**（rebase 到 main 后，neg-for-diff 16 个负控 + opus + GLM，PR 全 diff）→ 开 PR；之后 #742（pr6a，矩阵已就绪）
+- #933 | impl | doing | D0-pr2：决策卡 state/decisions-20261028-d0-pr2.md（A，AI 代批待复核）→ GLM；顺带 #245
+- #929 | impl | doing | A8.1-pr3 U11 r1：Codex P0（external 正文无限等待绕过 timeoutMs）+ P1×7 → DeepSeek fix-r1
+- #934 | impl | doing | A8.2-pr3 U4 manager projection（未开启组件）→ DeepSeek
+- #293 | impl | doing | 先 TS 实测复级（越界读 / 并发删他人快照 / 零场景假 PASS 按 P0 处理）再整包修 10 条 → GLM
+- #741 | review | doing | **关键路径**。pr5d #901、pr5e #913 已合入；pr5f → PR #932 入队中；合入后立即派 #742（pr6a-2，同一实现方 Codex）
 - #742 | impl | blocked | pr6a-2，接 #741 pr5d（同模块同一实现方）；任务书在 pr5d 评审期预写
 - #743 | impl | blocked | pr6a-3，接 #741（同一实现方）
 - #745 | impl | blocked | pr6a-5，等 #743 #744
@@ -24,8 +24,8 @@ updated: 2026-10-28 00:35 · by Claude Code 协调者（按待办盘点 _tmp/202
 - #749 | impl | blocked | pr6c 原生隔离 WS 入口，等 #748（#590 前置）
 - #589 | impl | blocked | 拆为 #741–#748（+#749），全部合入后关
 - #751 | impl | doing | -4…-16 + #868 已合入；-17 #774 r2；**-18 #775 已派 DeepSeek**（轻并发，M18 矩阵先实测）；文件复活 #917（P2）；-19～-21 按前置依次
-- #813 | impl | doing | r11 宿主：plugin-runtime/panic-negative 自加的 restore-old-logic 锚点未随 #849 的 panic_message 改写同步 → DeepSeek fix-r12（带更正重派）；r11 评审在跑
-- #879 | impl | blocked | pr1/pr2/pr3 + tool_budget 已合入；剩 projector（等 #741）与 **#889（GLM，兄弟负控判杀，前置于 #879 关单）**
+- #813 | review | doing | fix-r13 3c7e9b559（turn-submit 负控逐变异绑定完整 step 消息）→ r13（GLM + Codex，作者含 Claude）
+- #879 | impl | blocked | pr1/pr2/pr3 + tool_budget 已合入；剩 projector（等 #741）与 **#889 fix-r1 a3004306b → r2（opus + Codex）**
 - #818 | impl | blocked | 等 #813 共享件合入
 - #819 | impl | blocked | 等 #813 共享件合入
 - #835 | impl | blocked | turn-submit 负控，等 #813 合入
@@ -1718,3 +1718,64 @@ updated: 2026-10-28 00:35 · by Claude Code 协调者（按待办盘点 _tmp/202
 - 00:10 #774 r2：macmini 负控 4 套全过、定向过，lib 唯一失败 catalog_locale_contract（#887 新测试，子进程 30 s 时限，macmini 负载 32–42 超时）→ review-phase2 正确拦下；开 **#926**（计时假红，派 Codex）；#774 改本机 lib 复核（仅允许 #926 那一条失败）后起 opus + Codex。
 - 00:23 **按待办盘点执行**（报告 `_tmp/20261027-backlog-audit/report.md`）：关 #683 #569 #456 #744（各核对应 PR 已合、#744 做收尾自查）；看板改 11 个（#401 #122 #123 #124 #61 → Todo；#685 #195 #589 #47 → Blocked；#127 #58 → In Progress）。新派：P2 批 1 MCP（#347+#401 → GLM）、P2 批 2 生成器溯源（#303 #280 #305 #911 → Codex）、**F3 前置共存验证包 #927 → GLM**（前端阶段 10-18 后首次推进）。#775 收货 → r1；#774 r2 两家无 P0/P1 → fix-r2（P2 + #786 第 1、2 条）。READY 补入批 3 HTTP / 批 4 负控（等 #813）/ 批 5a 冻结重登记 / D0-pr2 决策卡 / A8-pr3 / #293 复级。未做：board 与 8 张决策卡入库（主仓检出在旧分支 tmp-ci-dispatch，需单独 PR）。
 - 00:30 #924 负对照成立（nextest 在 negctl_922 FAIL：4169 passed / 1 failed）→ 关 PR、删临时分支与 worktree。**#923 首个 CI 红**：model_complete `loopback-last-body-read-error` TS 金样 2 个请求、Rust 只记到 1 个——main 上 cargo test 一直绿，疑 nextest 每测试一进程 / 更高负载暴露装置竞态 → Codex fix-r1（先两执行器各连跑 20 次定性，禁用重试 / 串行掩盖）。#889（GLM）交付写到 20261027-issue-889（日期目录不一致），收货 a359b2413 → r1 宿主 disk low（macmini 36G：#813 runner cargo-target 123G）→ after-813-chain.sh 等 #813 链结束清它后重起；memory 坑 12。
+- 00:32 **状态文件入库 PR #928**（claude/state-sync-20261028，临时 worktree 自 origin/main）：board 三方合并（READY 取现行版、main 侧 #589 fix-r3/r4 叙述段保留并核对无遗漏）+ 8 张决策卡入库；挂自动入队。今后 board / 决策卡跟随产品 PR 或每两小时一次同步 PR。
+- 00:39 #926（Codex）6c36cfa56：locale 契约子进程只跑单测 + 无进展期限（修复版 0.16–0.23 s，原版两机各 10 次未复现，如实不称已证明）→ r1（opus + GLM）。开 **#929 A8.1-pr3 U11 skills external** → DeepSeek。
+- 00:43 #775 r1：opus 0/0；Codex **P0**（重复 capture 的 logger 回调经 Weak 调 save_settings 重入同锁自锁，读码推断）+ P1×4 + P2×2 → DeepSeek fix-r1（先写有界复现，再锁外回调；P1 先 TS 实测）。#774 fix-r2（P2 + #786 第 1、2 条）b9e9c5f4d → r3：macmini disk low（#813 runner 占 140G）→ 改本机 phase-local-node22；**该脚本两处缺陷**（CJK 紧跟 $rc、未导出 $E 致负控写 /），树干净未变异，修后重跑（含新推导的 capture-turn 负控）。
+- 00:47 **#922 fix-r1（Codex）3f361a32f**：#923 CI 那次失败定性为**测试装置 HTTP 连接契约**——单请求 loopback 服务端未发 `Connection: close`，Hyper 把回退请求复用到旧连接（原猜测「响应后才登记」被实测否定；两执行器各 20 次 0 失败，如实不称复现原 CI）；改为显式 close + 确定性复用探针，产品回退逻辑与 17 金样未动 → 推送重跑 CI、r2 增量（opus + GLM）。macmini 负载 54、余 29G（#813 runner 140G）→ #813 链结束前不再新起 macmini 链，本机兜底。本机 cargo 5/4（Codex 沙箱计数不可见，已知）。
+- 00:53 #926 r1 宿主：负控 12/14，timer-before-ready-output / -exit 存活（期限起算点无测试钉住）→ Codex fix-r1（确定性门闩用例）。#813 r12：宿主全过（9 套负控）；Codex P1（turn-submit marker 仍为场景前缀，同 case 前置步骤失败可冒充——fix-r8 已知遗留）；等 GLM r12 合并派修。
+- 00:56 pr5f r3 macmini 链 FAILED 原因三类且都非 pr5f：① host-event-pump neg-for-diff v1 未逐变异（IndexError）② prompt-hooks / ③ start-notices 的 regeneration INVALID（Node v26）；其余 13 套全 KILLED、turn-gates summary 17 mutants restored。评审因宿主失败未起 → 停 after-r3（它只补了 ①②、且要走已超载的 macmini），改 phase-local-node22 一次补跑 ①②③（15 项）+ 本机 lib + opus + GLM。
+- 00:57 pr5f 本机补跑首起即「树脏」：被停的 after-r3 已在跑 prompt-hooks regeneration（KILLED 1/1、已还原），phase-local 恰在变异期间核树 → 判脏拒跑（守卫正确）。确认无孤儿、树干净后重起。
+- 00:58 #813 r12：GLM P1（8 个兄弟 runner 仍裸 marker 判杀）——4 个已在 #818/#819，4 个为 10-26 后新装置 → 补开 **#930（C 批）**，决策卡 state/decisions-20261028-813-r12-sibling.md（AI 代批：已另案即降档，#813 关单前三批须派出）；Codex P1（turn-submit marker 场景前缀，本 PR 范围）→ DeepSeek fix-r13。macmini 负载 54 → #813 链已结束，after-813-chain 将清 runner 缓存并重起 #889。
+- 01:01 两小时交接 → `_tmp/20261028-handoff-0101.md`。#922 r2 opus 0/0、GLM 0/0 → #923 正文贴 r2 块与修复说明，挂自动入队。#928 队列第 1。
+- 01:07 #775 fix-r1（DeepSeek）bab16b05c：P0 有界复现成立（HEAD 5 s 超时）→ 锁内 clone 快照、回调锁外、统一锁序 + 负控 capture-holds-indexer-lock；P1×4 实测修 → r2（opus + Codex；重点核 clone 快照是否丢重复抑制状态、与 #770 查插单锁不变量冲突）。
+- 01:10 **#928（状态文件入库）合入** 0f979da41（noreply）：board 与 8 张决策卡在 GitHub 可见；临时 worktree 回收。下一次同步随下个两小时交接或产品 PR。
+- 01:17 #923 全绿、队列第 1。P5 首跑实测：测试步骤 804 → 667 s，nextest 源码安装首跑 218 s（缓存未命中），rust job 1109 s；缓存命中后估 ≈ 15 分钟墙钟。写入 assessment.md。本机负载 43、cargo 7/4（wt-280 / 813 / 926 三个 Codex/DeepSeek worker 并发编译 + 本机 phase-local 两路，沙箱 worker 看不到闸门）→ 本轮不加编译类单。
+- 01:17 #889 r1：宿主 3 套全过；Codex **P0**（negative_suite.failed_tests 扫全日志、cell_hits 全日志搜 marker → 另一测试 panic 回显可致假 KILLED，合成日志复现）+ opus P1（file-history-cwd / tool-budget-cwd 同反模式）→ GLM fix-r1。
+- 01:19 #775 r2 宿主：edgeclaw-entries 两个 rc=2（**neg-for-diff 未识别 argparse --out 型**，v3 已修）+ service-facade closed-capture-empty-not-early INVALID（fix-r1 锁外路径后绑定漂移）→ DeepSeek fix-r2（只修这项）。评审未起，fix-r2 后整轮重跑。
+- 01:23 #347（MCP 批）、#927（F3 共存）两个 GLM worker 均撞 3600 s 时限（#347 已写 RESULT / commit-message 但无 final.patch；#927 做到冒烟诊断）→ dispatch-resume 接续（GLM 时限放宽到 5400 s，接续头文案改为「重启或时限」）。
+- 01:27 **#923（#922 CI 提速 P5 nextest + 清 #919）合入** 2c599945f（noreply，Closes 自动关 #922 #919），wt-922 回收。CI 提速 P3–P7 全部落地。
+- 01:31 静默轮：12 条线全在跑（pr5f / #774 本机兜底在负控，#775 #813 #889 修复，#347 #927 GLM 接续，#280 Codex，#926 #929 评审）。本机负载 40、cargo 5/4 → 不加单。
+- 01:43 #929 r1：宿主 6/6 + 全过、opus 0/0；Codex **P0**（external 响应正文无限等待绕过 timeoutMs）+ P1×7 → DeepSeek fix-r1（P0 先有界复现，P1 逐条 TS 实测，优先复用 #867/#886 超时与正文封装）。
+- 01:53 #926 r2 两家 0/0 + macmini 14/14 → 开 PR #931 等绿入队；#774 r3 本机 lib 唯一红为 html_compat 计时（负载 54，非本单 diff）→ 低负载单跑 3 次后起 opus + Codex；#775 r2 负控挂在 main 上 round6 脚本要求 target=src/target（装置不匹配）→ 软链后重跑；磁盘 234 → 删 926/775 在审树缓存 −42 GiB。
+- 02:04 pr5f #741k r3 两家 0/0 + 本机负控 15/15、lib=0 → **开 PR #932（Closes #925）**等绿入队；#774 r3 opus 0/0、Codex P2×2（汇总写出、错误文本负控）→ DeepSeek fix-r3（末轮）；#813 fix-r13、#347、#280 收货推送；#280 gitleaks 5 条为基线源文件 SHA-256 误报（逐个复算）→ 精确值放行；#280 自报 7 变异 / 5 负控 / 17 守卫未完 → Codex 接续；#813 r13（GLM + Codex）、#347 r1（opus + Codex）上 macmini；磁盘再清 3 棵 → 137 GiB。
+- 02:11 新派 4 单：P2 批 3 HTTP **#411**（Codex）、**#293** 先 TS 复级再整包修（GLM，越界读 / 并发删快照 / 零场景假 PASS 按 P0）、**D0-pr2 #933**（决策卡 decisions-20261028-d0-pr2：mock 场景只放开 127.0.0.1:28999，18789 必须 EPERM 负控；AI 代批待复核 → GLM）、**A8.2-pr3 U4 manager #934**（补开 issue → DeepSeek）。#889 fix-r1 收货 → r2（opus + Codex）；#927 收货 → r1（本机 Node22 负控 → opus + Codex）。READY 刷新（41 条，--check OK）。树 17/24、磁盘 ~140 GiB。
+- 02:13 #931（#926）入合并队列；#932 pr5f 等 CI；#273 第 2 条（--exact 子进程空跑）+ 同类扫描 → GLM。
+- 02:16 #929 fix-r1 收货 039a84aa9（P0 有界复现 → 0.25 s 修复、P1×7 Node 实测）→ r2（opus + Codex）；#927 r1：Codex P0 + P1×3、Claude boundary P0（**两家独立命中**：coexist errors 不参与判分 → 假 PASS）→ GLM fix-r1（N3 改判据退回、出决策卡草稿转人）。
+- 02:18 #774 fix-r3 收货 cc2069620（P2×2；顺带 anchor_selfcheck +1 行，与 #889 同改共享件需留意）→ r4 复核（opus + Codex）。
+- 02:20 #932 pr5f CI 红：合并构建里 negative_anchor_selfcheck 失败——main 上 #827 钉住的豁免结构信号与 fix-r1 改走 run_cases 失配（队列语义冲突）→ rebase origin/main + 同步两条信号（bfe359f75，Claude）→ 本机 no-run / 自检 / turn 核验中，增量交 GLM + DeepSeek 审。#347 r1：Codex P1×4（并发半清理、ERR_INVALID_ARG_TYPE、constructor 名、负控绑定）、Claude 0/0、宿主全过 → GLM fix-r1。
+- 02:22 #775 r2 宿主全过（round6 软链后 rc=0）、Claude 0/0、Codex P1×1（saveSettings 负零）→ DeepSeek fix-r3（末轮）。
+- 02:28 pr5f queue-fix 332a948bc：本机 no-run / negative_anchor_selfcheck / runtime::turn（529 passed）全过；GLM 增量 0/0、DeepSeek 增量 P1（live_negative 是否仍有 mutations 表）由 CI 检查器实测信号 ['table:cases','table:mutations'] 回答、P2 理由文本已补 → force-with-lease 推送；GLM 全量 r4 出新结果块后更新 PR 体再入队。
+- 02:29 **#931 合入** b0686157c（noreply），#926 关；wt-926 归档回收。
+- 02:31 #929 r2 宿主负控 skills-tree-files 失败：main 上旧脚本断言 CARGO_TARGET_DIR 必须是树内 src/target（同类第 2 次，#775 round6 为第 1 次；全仓 11 个脚本同型）→ **neg-for-diff.sh v4**：这类脚本自动前缀 CARGO_TARGET_DIR=$PWD/src/target；#929 r2 重跑。
+- 02:35 #813 r13：宿主全过、Codex 0/0、GLM 0/0（P2×4 均为「将来登记某类 marker 时变松」→ P2-c 开 **#935**，前置于 P2 批 4，同改 negative_panic 共享件）→ rebase origin/main（16 提交，无冲突，锚点自检 errors=0）→ 本机 no-run / 自检 / turn + GLM 全量结果块，过了开 PR。
+- 02:37 #775 fix-r3 收货 979808bf4（clampInt 负零按 TS Math.max 投影）→ r3 复核（opus + Codex）。
+- 02:44 pr5f：GLM r4 全量 0/0（P2×2）→ P2-a 四处裸 next().await 包 bounded（256ca6349，Claude；host_factory 15 passed）已推，GLM 全量 r5 + DeepSeek 增量在审；P2-2 空 blocks 未对拍 → **#936**（前置于 #742）。#813 P2×4 → #935。#411 P2 批 3 收货 2764cb302 + gitleaks 放行测试叶子私钥前缀（照既有 4 个 tls.json 写法，+ 需转义）→ r1（macmini 59 变异 → opus + GLM）。#774 r4 两家 0/0 + 宿主全过 → 待 rebase 开 PR。#280 fix-r1：5 项新负控 KILLED、17 守卫 15 PASS（driver 因我回收 wt-926 时 du 报错退出——回收前没查别树进程扫全局 du）→ 本机补跑 2 未跑 + 5 曾失败守卫 + clippy。
+- 02:46 **两小时交接** → `_tmp/20261028-handoff-0246.md`（在途 PR 3 条待收尾：#932 / #813 / #774；评审 4、实现 7；新规则 neg-for-diff v4、gitleaks + 转义）。
+- 02:54 #813 全量 GLM r14 P1（notify-window 负控缺未变异基线 → 可假 KILLED）→ Claude 补基线（首跑因 --nocapture 打断 ok 行被判 INVALID，证明 fail-closed；去 --nocapture 后基线绿 → KILLED）5f0915503 → GLM 全量 r15 + Codex 增量。#775 r3（末轮后）Codex P1：f64::max 对 ±0 不保证 → Claude 显式归一（min≥0 取 +0）+ 负控改锚 → 本机 facade 测试 + 全负控中，之后 GLM + Codex。#273 / #934 收货 → r1（opus + Codex）。#927 fix-r1 收货 9f614be4c（三态计分、N3 恢复原判据诚实 FAIL）→ **决策单 #937（N3 前进回新壳：建议 C 接受不可前进）** → r2（本机负控 → opus + Codex）。
+- 02:55 #813 r15 Codex 增量 P2（基线异常缺 summary，仍非零退出）→ 并入 #935（免再废一轮全量块）；GLM 全量 r15 在跑。#280 本机守卫：上轮 5 失败中 3 个 + 2 未跑全 PASS（沙箱限制所致）、clippy 0；provider-timing / run-registry 恒红（金样含原始计时 / PID）→ Codex fix-r2（逐字段掩码 + 负控，不整文件跳过）。#774 rebase 后本机三项全过，等 opus 全量结果块。
+- 03:06 磁盘 208 → 删 5 棵在审树缓存 −72 GiB。**#932** 换 GLM r5 全量块（check-pr-gate PASS）再入队；**#938（#813）**、**#939（#774）** 开 PR 挂入队。#775 Claude 修复 9edc20bbf 推送 → r4（GLM + Codex）。修复轮 4 派：#929 fix-r2（dsh，P0 owner 取消丢唤醒）、#927 fix-r2（GLM，3 P0 计分假 PASS）、#889 fix-r2（GLM，P0 普通文案冒充专属断言）、#273 fix-r1（GLM，负控 -q 致 6/6 INVALID）。
+- 03:07 #293 GLM 中途 exit=1（有 patch 无 RESULT）→ 接续重派；复级 3 条升 P0（零场景假 PASS、objectKey 越界读、并发清理删他人快照；后两条 TS 实测同样缺陷 → Rust 加固 + 新增 2 条未批准偏离）已记 issue。
+- 03:10 #933 GLM 同样 3600 s 整点被杀（SBPL 实测已完成：28999 可连、18789 / 29000 EPERM）→ 接续；**根因**：dispatch-issue / dispatch-fix 写死 glm_impl 3600 s（同类第 4 次：#347 #927 #293 #933）→ 改 7200 / 5400，记 memory glm-timeout-3600。
+- 03:11 #934 r1：宿主 8/8 KILLED + 全过、Claude 0/0、Codex P1×4（半写会话隐藏、内部会话过滤时机、响应形状只比 ID、非法参数错误形状）→ DeepSeek fix-r1。
+- 03:24 #932 CI 红在 web_tools html_conversion_admission_survives_dropped_requests（active=3≠0，与 pr5f 无关、main 近 5 次绿）→ 重跑失败 job + 挂完成后入队；开 **#940**（疑准入许可早于 worker 结束释放）→ Codex 有界复现。#775 r4 Codex P1（我上一版 min<0 分支撤销上界截断）→ copysign 修复 + Node 六组单测 + 手动负控 cedfe8cae → r5（GLM + Codex）。#347 GLM 3600 s 被杀 → 接续。
+- 03:26 #280 fix-r2 收货 b2f920b46（provider-timing 682 处 timer.start、run-registry 138 日期 + 16 PID 精确掩码 TSV；9173 个非掩码标量单字节破坏全拒）→ 本机 Node22：两外部负控 + config-changes 负控 + generator_provenance 全部 ignored 守卫 → lib → opus + GLM。
+- 03:29 #411 r1 macmini：model-http-encoding 55/55、provider-http-boundaries 58/59 KILLED；唯一 INVALID 为 generator-wire-snapshot（重生成类，macmini Node v26 已知坑）；model-complete rc=2 是 neg-for-diff 给无位置参数脚本传了目录 → **neg-for-diff v5** 修；本机 Node22 补跑这两项 → opus + GLM。
+- 03:31 #293 GLM 接续完成 5b8d4208e（3 P0 + 7 P2；手工逐变异 8/8 KILLED）→ r1（macmini → opus + Codex；Codex 若被安全过滤中断改 DeepSeek）。
+- 03:34 **#939（#774）合入** c08bfa8ac（noreply）。#932 CI 重跑（attempt 2）同一断言 active=3≠0 再红 → 在该合并提交上确定性，非偶发；其他分支近 30 次失败运行无此用例失败；pr5f 无文件触及 web_tools → 本机 pr5f 树单跑 5 次复现中，#940 Codex 在 main 上查准入许可时序。
+- 03:36 #774 树回收归档。#347 fix-r1 收货 f2b24cb22 → r2（opus + Codex）。#775 r5 Codex 0/0（GLM 在跑）。#927 fix-r2 收货 142617db1（三处计分假 PASS 修）→ r3（本机负控 → opus + Codex）。
+- 03:37 #293 r1 macmini：workspace-snapshot-gate 8/8、snapshot-projection 17/18（唯一 INVALID generator-guard-bypassed = 生成器类，Node v26 坑）→ 本机 Node22 补跑该项 → lib → opus + Codex。
+- 03:51 **#938（#813）合入** 35efa8ee4（noreply）→ 解锁派 **P2 批 4a #818**（#818 #819 #930 判杀迁共享件 → DeepSeek；首次 dsh MALFORMED_RESPONSE、接续时 dispatch-resume 给相对路径 dsh 分支 cd 后找不到 → 绝对路径重起）、**批 5a #166**（gateway-parity 冻结装置重登记 → Codex）；批 4b（#935 #782 #835 #902 #786-3）等 4a。#932 本机 pr5f 单跑 web_tools 5/5 绿、CI Linux 两次红 → rebase 最新 main 5674ddd9c 重触发 CI（结果块按指纹沿用 PASS）。#775 r5 两家 0/0 → GLM 全量块后开 PR；#927 r3 两家 0/0 → opus 全量块后开 PR（Refs #927，N3 待 #937）。#933 收货 → 本机 Node22 负控 → opus + Codex；#889 r3、#273 r2、#929 r3 起。macmini 有一份来历不明的官方预编译 Node v22.22.0（~/opt，10-23 放入）：按红线不擅用，待人定。
+- 03:55 磁盘 228 GiB / 负载 61 → 暂停新增写入，清 741k / 927 / 293 / 889 / 273 / 929 / 347 缓存（rm 在高负载下很慢）。**#941（#927）开 PR**（Refs #927，N3 待 #937）挂入队。#293 r1：Codex P0×3（objectKey 符号链接绕过、发布后读 inode、比对与 unlink 非原子）+ P1×2、Claude P1 → 修复任务书已备，磁盘回落后派 GLM。
+- 03:56 清理完成（293 / 889 / 273 / 929 / 347 共 −68 GiB）→ 派 #293 fix-r1（GLM，3 P0 TOCTOU / 符号链接加固）。
+- 04:03 #932 第三次 CI 红（同用例 active=2）→ **#940 Codex 交付** e839ea883：本机原版 799/800 复现（main 也偶发）；产品 RAII 正确，测试在 B/C/D 仍 active 时断言 → 两阶段确定性钩子 + 有界回落等待，不降断言；负控 early-permit-release / fifth-slot KILLED → r1（macmini → opus + GLM），合入后 #932 重跑 CI。
+- 04:03 #933 fix-r1 收货 7e5a56e42（3 项负控 INVALID 修）→ 重跑 r1（本机 Node22 负控 + test_cli_parity → opus + Codex）。下次两小时交接约 04:46。
+- 04:09 #411 r1b：本机补跑 generator-wire 1/1 + model-complete 21/21 KILLED、lib=0；opus 0/0、GLM P1（README / 偏离条目仍写负控未完成——事实已 59/59）→ Claude 改文档 → 推送后 GLM 全量块。#273 r2 宿主 6/6 + 两家 0/0 → rebase + opus 全量块后开 PR。
+- 04:10 #280 r1 本机：两外部负控 3/3、config-changes 24/24 KILLED；全部 ignored 守卫并行 144/146（builtin-tools 生成器未处理 error、provider-timing 掩码外差异）→ 串行单跑各 3 次区分负载致不稳 / 真问题。
+- 04:17 #941（#927）CI 绿、入队中。#775 全量 GLM r6 P1×2（README 1e20 覆盖声明不实、decode_js 用 serde_json 丢 oracle 键序——均尺子类，按 CLAUDE.md 不适用修复轮上限放行）→ DeepSeek fix-r4。#280 串行单跑 builtin-tools 1/3、provider-timing 2/2 → Codex fix-r3（末轮：判定生成器自身不稳 vs #280 引入）。#273 全量 Claude P2×5 → 1/2/5 当轮修（GLM fix-r2），3/4 开 **#942**（前置于 D 阶段收尾）。#411 推送 cce6207d9 → GLM 全量块在跑。
+- 04:19 **P2 批 5a #166 收货**（Codex；#166 #892 #909 #701 + #209 gateway A2 部分；FROZEN 五行 sha256 重登记、无判分语义改动自报；39 源码变异待宿主）→ 推送后本机 Node22：gateway-batch 14 + session-cleanup 25 负控 + test_safety → opus + Codex（重点：是否改判分语义、#909 删谓词是否变松）。
+- 04:27 **#941（#927）合入** c72231194（noreply）。macmini 磁盘 21G → macmini-trim + 清 741k/889 runner 缓存 → 148G；#940 r1、#929 r3 因磁盘拒跑 → 重起。#166 本机负控两度假失败均为我方环境：① 后台 & 继承 SIGINT=SIG_IGN（新 sigint-default.py 包装，记 memory）② 我手跑 test_safety 留 __pycache__ 被装置未登记脚本守卫拒绝 → 清理 + PYTHONDONTWRITEBYTECODE 重跑。#347 r2 session-domain 负控又一种 src/target 断言写法 → **neg-for-diff v6** → 重起。#933 r1 Codex P1×5（装置）→ GLM fix-r2。#889 r3 Codex P0（stdout 回显旧 panic 旁路假 KILLED）→ GLM fix-r3（末轮）。
+- 04:30 #940 r1 macmini：web-conversion-lifecycle 7/8 KILLED，唯一 INVALID regeneration（Node v26 坑）→ 本机 Node22 补跑该项 → opus + GLM。
+- 04:32 **#943（#411 #860 #360，P2 批 3）开 PR**：GLM 全量 0/0；作者含 Claude（gitleaks 放行 + 文档）→ 补 DeepSeek 增量 0/0（P2×3 当轮：gitleaks 实测贴 PR、粒度说明、证据路径）→ 挂入队。
+- 04:36 #166 fix-r1 收货：SURVIVED 系负控期望写错（检查器已登记点兜底确实判 FAIL），只改期望 → 重跑本机负控 → opus + Codex。
+- 04:42 #775 fix-r4 收货（1e20 声明按 Node 实测改正 + decode_js 保序）→ 推送后 r7（macmini → GLM + Codex）。
+- 04:45 **两小时交接** → `_tmp/20261028-handoff-0445.md`。
