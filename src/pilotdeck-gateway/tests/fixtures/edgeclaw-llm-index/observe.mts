@@ -36,8 +36,23 @@ const NOTE_OK = JSON.stringify({skip: false, reason: '', name: '笔记名', desc
 // so it reaches the wire (and the oracle) as ASCII `\\ud800` and only the
 // inner parse sees the code unit itself.
 const SURROGATE = String.fromCharCode(0xd800);
+const SURROGATE_LOW = String.fromCharCode(0xdc00);
+const BACKSLASH = String.fromCharCode(0x5c);
 const SUR_NOTE = JSON.stringify({name: 'X', description: 'd', markdown: 'm'}).replace('X', SURROGATE);
 const SUR_LABELS = JSON.stringify({should_store: true, labels: [{type: 'user', reason: 'X', evidence: 'e'}]}).replace('"reason":"X"', `"reason":"${SURROGATE}"`);
+// `JSON.stringify` would escape both the backslash and a lone surrogate, so
+// the raw `\<surrogate>` sequence — an invalid JSON escape that V8 rejects
+// while an even backslash run stays legal (fix-r3 ts-probe) — is spliced in
+// after stringifying, exactly like the lone surrogate above.
+const bsLabels = (reason: string) =>
+  JSON.stringify({should_store: true, labels: [{type: 'user', reason: 'X', evidence: 'e'}]}).replace('"reason":"X"', `"reason":"${reason}"`);
+const BS_HIGH_LABELS = bsLabels(BACKSLASH + SURROGATE);
+const BS_LOW_LABELS = bsLabels(BACKSLASH + SURROGATE_LOW);
+const BS_PAIR_LABELS = bsLabels(BACKSLASH + BACKSLASH + SURROGATE);
+const bsDecision = (reason: string) =>
+  JSON.stringify({decision: 'create_new', selected_project_id: '', reason: 'X'}).replace('"reason":"X"', `"reason":"${reason}"`);
+const BS_HIGH_DECISION = bsDecision(BACKSLASH + SURROGATE);
+const BS_PAIR_DECISION = bsDecision(BACKSLASH + BACKSLASH + SURROGATE);
 // `metaDeep`/`shortlistDeep` are construction markers: the deep value is
 // built on both sides from `{field, depth}` instead of being recorded, both
 // because V8's own JSON.stringify cannot record it and because serde_json's
@@ -101,6 +116,9 @@ function specs() {
   classify('classify-http-400', [bad(400)]);
   classify('classify-agent-empty', [ok('responses', JSON_RESULT([LABEL('user')]))], {agentId: ''});
   classify('classify-lone-surrogate-reason', [ok('responses', SUR_LABELS)]);
+  classify('classify-backslash-surrogate-high', [ok('responses', BS_HIGH_LABELS)]);
+  classify('classify-backslash-surrogate-low', [ok('responses', BS_LOW_LABELS)]);
+  classify('classify-backslash-pair-surrogate', [ok('responses', BS_PAIR_LABELS)]);
   classify('classify-meta-description-number', [ok('responses', JSON_RESULT([LABEL('user')]))], {meta: {description: 5}});
   classify('classify-deep-meta', [ok('responses', JSON_RESULT([LABEL('user')]))], {metaDeep: DEEP});
   classify('classify-no-model', [ok('responses', JSON_RESULT([LABEL('user')]))], {noModel: true});
@@ -185,6 +203,8 @@ function specs() {
   select('select-http-400', [bad(400)]);
   select('select-bad-json', [ok('responses', '{"decision":}')]);
   select('select-lone-surrogate-reason', [ok('responses', DECISION('create_new', '', SURROGATE))]);
+  select('select-backslash-surrogate-high', [ok('responses', BS_HIGH_DECISION)]);
+  select('select-backslash-pair-surrogate', [ok('responses', BS_PAIR_DECISION)]);
   select('select-candidate-name-number', [ok('responses', DECISION('attach_existing', 'p1', 'r'))], {candidate: {type: 'project', name: 5, description: 'd'}});
   select('select-deep-shortlist', [ok('responses', DECISION('create_new', '', 'r'))], {shortlistDeep: DEEP});
   select('select-no-model', [ok('responses', DECISION('create_new', '', 'r'))], {noModel: true});

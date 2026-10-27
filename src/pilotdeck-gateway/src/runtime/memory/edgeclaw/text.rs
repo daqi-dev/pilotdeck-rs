@@ -801,12 +801,30 @@ fn line_starts_with(value: &JsString, prefix: &str) -> bool {
     false
 }
 
+/// UTF-16 JSON text as a Rust string for `parse_json`. An unpaired surrogate is
+/// only legal inside a JSON string, where `\uXXXX` denotes the same unit; one
+/// that would follow an escaping backslash must stay invalid, so it becomes
+/// U+FFFD instead of a `\uXXXX` escape (odd/even backslash parity, as V8 and
+/// `JSON.parse` see it). Anywhere else both forms are a syntax error. Shared by
+/// index-side model output, `safeJsonParse` and sender hints (#768 fix-r3, same
+/// semantics as the Dream projection in #771).
 pub(crate) fn json_text(units: &[u16]) -> String {
     let mut out = String::with_capacity(units.len());
-    for unit in char::decode_utf16(units.iter().copied()) {
-        match unit {
-            Ok(c) => out.push(c),
-            Err(error) => out.push_str(&format!("\\u{:04x}", error.unpaired_surrogate())),
+    let mut backslashes = 0usize;
+    for item in char::decode_utf16(units.iter().copied()) {
+        match item {
+            Ok(c) => {
+                out.push(c);
+                backslashes = if c == '\\' { backslashes + 1 } else { 0 };
+            }
+            Err(error) => {
+                if backslashes % 2 == 1 {
+                    out.push('\u{FFFD}');
+                } else {
+                    out.push_str(&format!("\\u{:04x}", error.unpaired_surrogate()));
+                }
+                backslashes = 0;
+            }
         }
     }
     out
