@@ -7,6 +7,7 @@ import io
 from pathlib import Path
 import sys
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -235,6 +236,45 @@ for name, path, pattern, replacement in mutants:
         self.run_check(1, label='helper-tests-registration-removed')
         CHECK.UNSUPPORTED[name] = PRODUCTION_UNSUPPORTED[name]
         self.run_check(label='helper-tests-registration-restored')
+
+    def test_llm_helper_exception_is_exact_and_signal_checked(self):
+        name = 'edgeclaw-llm/test_controls.py'
+        self.move_script(name)
+        body = "def test_guard():\n    originals = {}\n    exec('pass')\n    cases = []\n"
+        self.write(body)
+        self.assertIn('snapshot dynamic write', self.run_check(1, label='#827 llm-helper unregistered'),
+                      '#827 llm-helper must require registration')
+        reason = PRODUCTION_UNSUPPORTED.get(name)
+        self.assertEqual(reason, PRODUCTION_UNSUPPORTED['test_negative_process.py'],
+                         '#827 llm-helper must use the shared guard test reason')
+        CHECK.UNSUPPORTED[name] = reason
+        CHECK.UNSUPPORTED_SIGNALS[name] = PRODUCTION_UNSUPPORTED_SIGNALS.get(name, set())
+        for broken in ('missing-signals', 'extra-signal', 'removed-registration', 'missing-file'):
+            self.write(body)
+            self.assertIn('checked=0 unsupported=1 anchors=0 errors=0',
+                          self.run_check(label='#827 llm-helper original'),
+                          '#827 llm-helper registered signal must pass')
+            if broken == 'missing-signals':
+                CHECK.UNSUPPORTED_SIGNALS[name] = set()
+            elif broken == 'extra-signal':
+                self.write(body + "mutants = [('sample', source, 'before', 'after')]\n")
+            elif broken == 'removed-registration':
+                del CHECK.UNSUPPORTED[name]
+            else:
+                self.script.unlink()
+            self.run_check(1, label=f'#827 llm-helper {broken}')
+            CHECK.UNSUPPORTED[name] = reason
+            CHECK.UNSUPPORTED_SIGNALS[name] = PRODUCTION_UNSUPPORTED_SIGNALS.get(name, set())
+            self.write(body)
+            self.run_check(label='#827 llm-helper restored')
+        other = self.fixtures / 'renamed/test_controls.py'
+        other.parent.mkdir()
+        other.write_text(self.base + body)
+        self.assertIn('ERROR renamed/test_controls.py: unsupported snapshot dynamic write',
+                      self.run_check(1, label='#827 llm-helper renamed'),
+                      '#827 llm-helper registration must not extend to another path')
+        other.unlink()
+        self.run_check(label='#827 llm-helper renamed restored')
 
     def test_dictionary_rows_and_new_keys_check_every_anchor(self):
         body = """mutants = {'first': (source, 'before', 'after')}
@@ -598,36 +638,124 @@ mutants = [('sample', source, text, part + 'after')]
                 self.write(declaration + table)
                 self.run_check(label='#827 capture-read restored')
 
-    def test_snapshot_assign_requires_module_scope_or_registered_function(self):
+    def test_snapshot_assign_requires_unconditional_module_or_function_scope(self):
         declaration = "originals = {'alias.rs': source.read_text()}\n"
         table = "mutants = [('sample', source, 'before', 'after')]\n"
-        for wrapper in ('if True:\n{}', 'for i in [0]:\n{}', 'def main():\n{}', 'class Scope:\n{}',
-                        'with unknown():\n{}'):
-            self.write(declaration + table)
-            self.run_check(label='#827 declaration-scope original')
-            self.write(wrapper.format('    ' + declaration) + table)
-            self.assertIn('requires a module-level Assign', self.run_check(1, label='#827 declaration-scope rejected'),
-                          '#827 declaration-scope must reject unregistered contexts')
-            self.write(declaration + table)
-            self.run_check(label='#827 declaration-scope restored')
-        for (filename, mapping), function in CHECK.SNAPSHOT_FUNCTIONS.items():
-            with self.subTest(filename=filename):
-                self.move_script(filename)
-                body = f'def {function}():\n    {declaration}' + table
-                # These files have unrelated file-specific row contracts; test
-                # the declaration guard directly, without inventing rows for them.
-                self.write(body)
-                CHECK.Static(self.script, self.root, ast.parse(self.script.read_text()))
-                for broken in (body.replace(f'def {function}():', 'def renamed():'),
-                               body + declaration,
-                               body.replace('    originals', '    if True:\n        originals')):
-                    self.write(broken)
-                    with self.assertRaisesRegex(CHECK.Unsupported, 'unsupported snapshot binding',
-                                                msg='#827 registered-function must stay exact and unique'):
-                        CHECK.Static(self.script, self.root, ast.parse(self.script.read_text()))
-                self.write(body)
-                CHECK.Static(self.script, self.root, ast.parse(self.script.read_text()))
-                print(f'#827 registered-function {filename}: original=PASS broken=REJECTED restored=PASS')
+        for scope in ('', 'def main():\n', 'def arbitrary_name():\n', 'async def collect():\n'):
+            good = scope + (textwrap.indent(declaration + table, '    ') if scope else declaration + table)
+            for wrapper in ('if True:\n', 'for i in [0]:\n', 'class Scope:\n', 'with unknown():\n'):
+                self.write(good)
+                self.run_check(label='#827 declaration-scope original')
+                bad = wrapper + textwrap.indent(declaration, '    ') + table
+                self.write(scope + (textwrap.indent(bad, '    ') if scope else bad))
+                self.assertIn('requires an unconditional module/function Assign',
+                              self.run_check(1, label='#827 declaration-scope rejected'),
+                              '#827 declaration-scope must reject conditional or class contexts')
+                self.write(good)
+                self.run_check(label='#827 declaration-scope restored')
+
+    def test_snapshot_function_values_and_paths_stay_in_scope(self):
+        for name in ('originals', 'snapshots'):
+            for expression in ("{'alias.rs': source.read_text()}",
+                               "{p.name: p.read_text() for p in [source]}"):
+                key = 'alias.rs' if 'alias.rs' in expression else 'example.rs'
+                declaration = f'{name} = {expression}\n'
+                for target, before in ((repr(key), "'before'"), ('source', f'{name}[{key!r}]')):
+                    table = f"mutants = [('sample', {target}, {before}, 'after')]\n"
+                    good = 'def renamed():\n' + textwrap.indent(declaration + table, '    ')
+                    for bad, diagnostic in (
+                        ('def renamed():\n' + textwrap.indent(declaration, '    ') + table, 'unsupported snapshot'),
+                        ('def renamed():\n' + textwrap.indent(declaration, '    ')
+                         + 'def sibling():\n' + textwrap.indent(table, '    '), 'unsupported snapshot'),
+                        ('def renamed():\n' + textwrap.indent(table + declaration, '    '), 'unresolved'),
+                        (good + declaration, 'unsupported snapshot'),
+                    ):
+                        self.write(good)
+                        self.run_check(label='#827 function-snapshot original')
+                        self.write(bad)
+                        self.assertIn(diagnostic, self.run_check(1, label='#827 function-snapshot rejected'),
+                                      '#827 function-snapshot values and paths must retain local ownership')
+                        self.write(good)
+                        self.run_check(label='#827 function-snapshot restored')
+        # A subscript update is resolved before named(); it must obey the same guard.
+        declaration = "originals = {}\noriginals['alias.rs'] = source.read_text()\n"
+        table = "mutants = [('sample', source, originals['alias.rs'], 'after')]\n"
+        good = 'def collect():\n' + textwrap.indent(declaration + table, '    ')
+        self.write(good)
+        self.run_check(label='#827 function-update original')
+        self.write('def collect():\n' + textwrap.indent(declaration, '    ') + table)
+        self.assertIn('across function scopes', self.run_check(1, label='#827 function-update rejected'),
+                      '#827 function-update must retain local ownership')
+        self.write(good)
+        self.run_check(label='#827 function-update restored')
+
+    def test_snapshot_function_updates_cannot_cross_scopes(self):
+        declaration = "originals = {'alias.rs': source.read_text()}\n"
+        for scope in ('', 'def collect():\n'):
+            for update in ("originals['alias.rs'] = source.read_text()\n", "originals.pop('unused.rs', None)\n"):
+                for target, before in (("'alias.rs'", "'before'"), ('source', "originals['alias.rs']")):
+                    table = f"mutants = [('sample', {target}, {before}, 'after')]\n"
+                    body = declaration + update + table
+                    good = scope + (textwrap.indent(body, '    ') if scope else body)
+                    self.write(good)
+                    self.run_check(label='#827 update-scope original')
+                    body = declaration + 'def never_called():\n' + textwrap.indent(update, '    ') + table
+                    self.write(scope + (textwrap.indent(body, '    ') if scope else body))
+                    self.assertIn('snapshot update across function scopes',
+                                  self.run_check(1, label='#827 update-scope rejected'),
+                                  '#827 update-scope must not execute uncalled nested updates')
+                    self.write(good)
+                    self.run_check(label='#827 update-scope restored')
+
+    def test_snapshot_empty_placeholder_is_a_generic_capture_binding(self):
+        for filename in ('sample/negative.py', 'arbitrary/control.py'):
+            self.move_script(filename)
+            for name in ('originals', 'snapshots'):
+                for constructor in ('mutating_sources', 'negative_process.mutating_sources'):
+                    body = (f'from negative_process import mutating_sources\nimport negative_process\n{name} = {{}}\n'
+                            f'with {constructor}(root, [source]) as {name}:\n'
+                            f"    mutants = [('sample', source, {name}[source], b'after')]\n")
+                    self.write(body)
+                    self.run_check(label='#827 placeholder original')
+                    # Change the observed snapshot value, keeping the real source intact.
+                    self.write(body.replace(f'{name}[source]', f"{name}[source].decode().replace('before', 'missing')")
+                               .replace("b'after'", "'after'"))
+                    self.assertIn('expected=1 actual=0', self.run_check(1, label='#827 placeholder changed-value'),
+                                  '#827 placeholder must resolve the capture value')
+                    self.write(body)
+                    self.run_check(label='#827 placeholder restored')
+
+    def test_snapshot_placeholder_rejects_noncanonical_pairs(self):
+        for name in ('originals', 'snapshots'):
+            prefix = 'from negative_process import mutating_sources\n'
+            initial = f'{name} = {{}}\n'
+            capture = f'with mutating_sources(root, [source]) as {name}:\n    pass\n'
+            table = "mutants = [('sample', source, 'before', 'after')]\n"
+            good = prefix + initial + capture + table
+            for pair in (
+                initial.replace('{}', "{'key': 'value'}") + capture,
+                initial + f"value = {name}['key']\n" + capture,
+                initial + f"{name}['key'] = 'value'\n" + capture,
+                initial + capture.replace('[source]', f"[\n    {name}['key']\n]"),
+                initial + capture + initial,
+                capture + initial,
+                initial + capture.replace('mutating_sources(root, [source])', 'unknown()'),
+                initial + 'if True:\n' + textwrap.indent(capture, '    '),
+                'if True:\n' + textwrap.indent(initial, '    ') + capture,
+                initial + 'def collect():\n' + textwrap.indent(capture, '    '),
+                'def collect():\n' + textwrap.indent(initial + capture, '    '),
+            ):
+                self.write(good)
+                self.run_check(label='#827 placeholder-pair original')
+                self.write(prefix + pair + table)
+                self.run_check(1, label='#827 placeholder-pair rejected')
+                self.write(good)
+                self.run_check(label='#827 placeholder-pair restored')
+            self.write(good.replace('from negative_process import', 'from unknown import'))
+            self.assertIn('snapshot constructor', self.run_check(1, label='#827 placeholder-constructor rejected'),
+                          '#827 placeholder must retain official constructor validation')
+            self.write(good)
+            self.run_check(label='#827 placeholder-constructor restored')
 
     def test_snapshot_comprehension_tracks_real_paths(self):
         other = self.root / 'src/other/example.rs'

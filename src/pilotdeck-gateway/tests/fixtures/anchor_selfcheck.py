@@ -13,7 +13,9 @@ optional nonempty {name: positive integer} declaration of *source occurrences*, 
 from replace(..., 1)'s replacement limit. Unknown formats fail closed.
 
 Snapshot names have one Assign or one official mutating_sources with-as binding.
-Assigns are module-level except the exact existing main() declarations below.
+An unread module-level empty dictionary before its sole official capture counts
+as one binding. Assigns may also belong to a top-level function, without a file
+allowlist; local dictionaries must be consumed in that same function scope.
 Dictionary keys retain their read expression; dynamic namespace writes fail closed.
 """
 import argparse
@@ -45,6 +47,7 @@ UNSUPPORTED = {
     'negative_oracle_guard.py': 'JSON provenance corruption, no source before fragments',
     'test_negative_process.py': 'unit tests of the shared process/source guard',
     'test_negative_suite.py': 'unit tests of the shared mutation suite runner',
+    'edgeclaw-llm/test_controls.py': 'unit tests of the shared process/source guard',
     'background-output/test_negative.py': 'unit tests of the mutation runner',
     'background-panic/test_negative_controls.py': 'mutation helper unit tests on in-memory strings/JSON, no product source replacement table',
     'session-admission/test_negative.py': 'mutation boundary unit tests on in-memory product text, no product source replacement table',
@@ -79,6 +82,7 @@ UNSUPPORTED_SIGNALS = {
     'native-topology/run.py': {'table:CASES'},
     'native-topology/controls.py': {'call:mutate'},
     'negative_oracle_guard.py': {'table:CASES'},
+    'edgeclaw-llm/test_controls.py': {'table:cases'},
     'turn-runner/negative_controls.py': {'table:mutations', 'call:mutate'},
     'turn-runner/runner_negative.py': {'table:mutations', 'call:mutate'},
     'turn-runner/input_negative.py': {'table:mutations', 'call:mutate'},
@@ -121,14 +125,6 @@ SCOPED_ROWS = {
     ('turn-runner/recording_negative.py', 'text-value'): 'from_agent_input',
 }
 SOURCE_SUFFIXES = {'.rs', '.py', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'}
-# Existing declarative snapshots inside main(); other Assigns stay module-level.
-# These exceptions never permit a second binding or a conditional initializer.
-SNAPSHOT_FUNCTIONS = {
-    ('session-abort-contract/negative.py', 'originals'): 'main',
-    ('session-admission/negative.py', 'originals'): 'main',
-    ('session-owner/negative.py', 'originals'): 'main',
-    ('edgeclaw-capture-turn/negative.py', 'originals'): 'main',
-}
 
 
 class Unsupported(ValueError):
@@ -232,6 +228,10 @@ class Static:
         # Resolution uses statement line numbers; refuse ambiguous same-line
         # deletion/update/read ordering instead of guessing column order.
         for line, _, _ in self.original_updates:
+            origin = self.captures.get('originals')
+            declared = origin.lineno if origin else next((n for n, _ in self.defs.get('originals', [])), 0)
+            if self.function_at(declared) is not self.function_at(line):
+                raise Unsupported('unsupported snapshot update across function scopes')
             if sum(isinstance(node, ast.stmt) and node.lineno == line for node in ast.walk(tree)) != 1:
                 raise Unsupported('unsupported same-line snapshot update')
 
@@ -252,6 +252,8 @@ class Static:
         for name, sites in bindings.items():
             if not sites:
                 continue
+            if self.empty_snapshot_placeholder(name, sites):
+                sites = sorted(sites, key=lambda node: node.lineno)[1:]
             if len(sites) != 1:
                 raise Unsupported(f'unsupported snapshot binding: {name} must have exactly one declaration')
             site = sites[0]
@@ -287,6 +289,28 @@ class Static:
                               'getattr', '__getattribute__', '__import__'}:
                     raise Unsupported(f'unsupported snapshot dynamic write: {symbol}')
 
+    def empty_snapshot_placeholder(self, name, sites):
+        """A never-observed module placeholder is part of its sole capture."""
+        if len(sites) != 2:
+            return False
+        first, second = sorted(sites, key=lambda node: node.lineno)
+        initial, capture = self.parents.get(first), self.parents.get(second)
+        owner = self.parents.get(capture)
+        if not (isinstance(initial, ast.Assign) and initial.targets == [first]
+                and self.parents.get(initial) is self.tree
+                and isinstance(initial.value, ast.Dict) and not initial.value.keys
+                and isinstance(capture, ast.withitem) and capture.optional_vars is second
+                and isinstance(owner, ast.With) and self.parents.get(owner) is self.tree
+                and isinstance(capture.context_expr, ast.Call)
+                and initial.lineno < owner.lineno):
+            return False
+        # Include multiline with arguments and earlier context-manager items;
+        # they execute before the as-target receives the snapshot.
+        return not any(isinstance(node, ast.Name) and node.id == name
+                       and isinstance(node.ctx, ast.Load)
+                       and node.lineno <= capture.context_expr.end_lineno
+                       for node in ast.walk(self.tree))
+
     def check_snapshot_constructor(self, call):
         symbol = 'mutating_sources' if isinstance(call.func, ast.Name) else 'negative_process'
         bindings = [node for node in ast.walk(self.tree) if symbol in bound_names(node)]
@@ -305,7 +329,6 @@ class Static:
         raise Unsupported('unsupported snapshot constructor: require unique official import and two arguments')
 
     def check_snapshot_declaration(self, declaration, name):
-        relative = self.script.relative_to(self.root / 'src/pilotdeck-gateway/tests/fixtures').as_posix()
         parent = self.parents.get(declaration)
         while parent is not self.tree:
             if isinstance(parent, ast.With) and all(
@@ -313,10 +336,19 @@ class Static:
                     ('mutating_sources', 'negative_process.mutating_sources') for item in parent.items):
                 parent = self.parents[parent]
                 continue
-            if (isinstance(parent, ast.FunctionDef) and self.parents.get(parent) is self.tree
-                    and SNAPSHOT_FUNCTIONS.get((relative, name)) == parent.name):
+            if (isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and self.parents.get(parent) is self.tree):
                 return
-            raise Unsupported(f'unsupported snapshot binding: {name} requires a module-level Assign')
+            raise Unsupported(f'unsupported snapshot binding: {name} requires an unconditional module/function Assign')
+
+    def snapshot_definitions(self, name, line):
+        definitions = self.defs.get(name, [])
+        if definitions:
+            declared = definitions[-1][0]
+            scope = self.function_at(declared)
+            if scope is not None and scope is not self.function_at(line):
+                raise Unsupported('unsupported snapshot read across function scopes')
+        return [(n, value) for n, value in definitions if n < line]
 
     def named(self, name, line, local):
         if name in local:
@@ -330,7 +362,8 @@ class Static:
             base = self.value(call.args[0], call.lineno, local)
             paths = self.value(call.args[1], call.lineno, local)
             return {path: self.confined(Path(base) / path).read_bytes() for path in paths}
-        choices = [(n, value) for n, value in self.defs.get(name, []) if n < line]
+        choices = (self.snapshot_definitions(name, line) if name in ('originals', 'snapshots')
+                   else [(n, value) for n, value in self.defs.get(name, []) if n < line])
         if not choices:
             raise Unsupported(f'unresolved name {name}')
         n, value = choices[-1]
@@ -402,7 +435,7 @@ class Static:
         if isinstance(node, ast.Subscript):
             if isinstance(node.value, ast.Name) and node.value.id == 'originals':
                 key = self.value(node.slice, line, local)
-                definition = max((n for n, _ in self.defs.get('originals', []) if n < line), default=0)
+                definition = max((n for n, _ in self.snapshot_definitions('originals', line)), default=0)
                 for n, subscript, expression in reversed(self.original_updates):
                     if definition < n < line and self.value(subscript, n, local) == key:
                         if expression is None:
@@ -488,8 +521,8 @@ class Static:
             return self.confined(value)
         if isinstance(value, str):
             # A filename key must map to its actual read path, never a basename search.
-            definitions = [(n, mapping) for n, mapping in self.defs.get('originals', []) if n < line]
-            byte_definitions = [(n, mapping) for n, mapping in self.defs.get('snapshots', []) if n < line]
+            definitions = self.snapshot_definitions('originals', line)
+            byte_definitions = self.snapshot_definitions('snapshots', line)
             if definitions and byte_definitions:
                 raise Unsupported('ambiguous snapshot mappings for filename key')
             definitions = definitions or byte_definitions
