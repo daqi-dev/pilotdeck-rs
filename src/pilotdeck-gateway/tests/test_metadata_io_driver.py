@@ -2,6 +2,7 @@
 import importlib.util
 import os
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -138,18 +139,46 @@ class EnvironmentControls(unittest.TestCase):
 
     def test_required_check_gates_observer_failure_instead_of_skipping(self):
         text = (Path(__file__).resolve().parents[3]/'.github/workflows/ci.yml').read_text()
-        self.assertEqual(text.count('\n  check:\n'), 1)
-        check = text.split('\n  check:\n', 1)[1].split('\n  gateway-schema-baseline:', 1)[0]
-        self.assertIn('\n    needs: metadata-observer\n', '\n'+check)
-        self.assertIn('\n    if: ${{ always() }}\n', '\n'+check)
-        gate = check.split('    steps:\n', 1)[1].split('      - uses:', 1)[0]
-        self.assertIn("        if: ${{ always() && needs.metadata-observer.result != 'success' }}\n", gate)
-        self.assertIn('        working-directory: .\n', gate)
-        self.assertIn('        run: exit 1\n', gate)
-        self.assertNotIn('continue-on-error:', gate)
+        self.assertEqual(text.count('\n  check:\n'), 1, '#904 one required check job')
+        check = text.split('\n  check:\n', 1)[1].split('\n  rust:', 1)[0]
+        self.assertNotRegex(check, r'(?m)^  [\w-]+:', '#904 check ends before next job')
+        self.assertEqual(re.findall(r'^    needs: (.*)$', check, re.M),
+                         ['[metadata-observer, rust, a51-coverage]'], '#904 exact required needs')
+        self.assertEqual(re.findall(r'^    if: (.*)$', check, re.M),
+                         ['${{ always() }}'], '#904 check always runs')
+        self.assertEqual(check.count('    steps:\n'), 1, '#904 check has steps')
+        steps = re.split(r'^      - ', check.split('    steps:\n', 1)[1], flags=re.M)[1:]
+        self.assertEqual(len(steps), 3, '#904 exactly three rejection steps')
+        for job in ('metadata-observer', 'rust', 'a51-coverage'):
+            condition = "${{ always() && needs." + job + ".result != 'success' }}"
+            gates = [step for step in steps
+                     if re.findall(r'^        if: (.*)$', step, re.M) == [condition]]
+            self.assertEqual(len(gates), 1, f'#904 {job} rejects every non-success')
+            self.assertEqual(re.findall(r'^        run: (.*)$', gates[0], re.M),
+                             ['exit 1'], f'#904 {job} rejection exits one')
+        self.assertNotIn('continue-on-error:', check, '#904 check cannot ignore failure')
+        self.assertEqual(text.count('\n  metadata-observer:\n'), 1, '#904 one observer job')
         observer = text.split('\n  metadata-observer:\n', 1)[1].split('\n  check:', 1)[0]
-        self.assertNotIn('continue-on-error:', observer)
-        self.assertIn('run: node src/pilotdeck-gateway/tests/test_metadata_observer.mjs', observer)
+        self.assertNotIn('continue-on-error:', observer, '#904 observer cannot ignore failure')
+        self.assertIn('run: node src/pilotdeck-gateway/tests/test_metadata_observer.mjs', observer,
+                      '#904 observer generation control runs')
+
+    def test_each_npm_job_sets_up_its_own_node_before_installing(self):
+        text = (Path(__file__).resolve().parents[3]/'.github/workflows/ci.yml').read_text()
+        jobs = re.split(r'^  ([\w-]+):\n', text, flags=re.M)
+        npm_jobs = []
+        for name, body in zip(jobs[1::2], jobs[2::2]):
+            steps = re.split(r'^      - ', body, flags=re.M)[1:]
+            node_steps = [i for i, step in enumerate(steps)
+                          if re.search(r'^(?:uses:|        uses:) actions/setup-node@v4$', step, re.M)
+                          and not re.search(r'^(?:if:|        if:)', step, re.M)]
+            for i, step in enumerate(steps):
+                if re.search(r'^(?:run: |        run: |          )npm ci\b', step, re.M):
+                    npm_jobs.append(name)
+                    self.assertTrue(any(node < i for node in node_steps),
+                                    f'#904 {name} setup-node must precede npm ci in its own job')
+        self.assertEqual(set(npm_jobs), {'rust', 'a51-coverage', 'gateway-schema-baseline'},
+                         '#904 all three npm jobs are checked')
 
     def test_target_output_overlap_file_and_nonempty_target_are_rejected_without_writes(self):
         target = self.root/'new-target'
