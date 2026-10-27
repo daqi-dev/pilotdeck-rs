@@ -806,8 +806,8 @@ fn line_starts_with(value: &JsString, prefix: &str) -> bool {
 /// that would follow an escaping backslash must stay invalid, so it becomes
 /// U+FFFD instead of a `\uXXXX` escape (odd/even backslash parity, as V8 and
 /// `JSON.parse` see it). Anywhere else both forms are a syntax error. Shared by
-/// index-side model output, `safeJsonParse` and sender hints (#768 fix-r3, same
-/// semantics as the Dream projection in #771).
+/// index-side model output (#768 fix-r3), Dream model output (#771 fix-r3),
+/// `safeJsonParse` and sender hints.
 pub(crate) fn json_text(units: &[u16]) -> String {
     let mut out = String::with_capacity(units.len());
     let mut backslashes = 0usize;

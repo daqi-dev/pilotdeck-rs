@@ -1058,9 +1058,10 @@ fn normalize_dream_file_project_status(value: Option<&JsValue>) -> JsString {
 fn parse_model_json(raw: &JsString) -> Result<JsValue, LlmError> {
     let envelope = extract_first_json_object(raw).map_err(envelope_error)?;
     // `JSON.parse` runs on a JavaScript string, which may hold unpaired
-    // surrogates. Project them as `\uXXXX` escapes (the shared `json_text`)
-    // instead of `from_utf16_lossy`'s U+FFFD replacement; the original units
-    // are also what V8 quotes in a SyntaxError message.
+    // surrogates. The shared `json_text` projects a legal lone surrogate as a
+    // `\uXXXX` escape, but keeps one after an odd run of backslashes invalid
+    // (as V8 sees `\<surrogate>`); the original units are also what V8 quotes
+    // in a SyntaxError message.
     let text = json_text(envelope.units());
     parse_json(&text).map_err(|error| LlmError {
         name: "SyntaxError",
