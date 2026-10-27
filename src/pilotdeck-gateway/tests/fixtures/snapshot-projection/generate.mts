@@ -218,6 +218,110 @@ class Recorder {
 
 const scenarios: any[] = [];
 const scratch = await mkdtemp('/tmp/pdrs-a66p4-');
+
+/**
+ * General workspace storage id over a raw marker spelling whose lexical
+ * `resolve` is pilotHome but whose `statSync(raw)` fails: `missing/..` hits
+ * ENOENT and `symlink/..` points through a file (ENOTDIR). TS must fall
+ * through to the p-general marker; a resolver that stats the normalized path
+ * would let `p-a-raw-marker` own the id.
+ */
+async function recordRawMarkerScenario(kind: 'missing' | 'symlink') {
+  const name = `storage-id-${kind}-dotdot`;
+  const dir = join(scratch, name);
+  const project = join(dir, 'project');
+  const pilotHome = join(dir, 'pilot-home');
+  const storageRoot = join(dir, 'storage');
+  const snapshotRoot = join(storageRoot, 'snapshots');
+  for (const path of [project, pilotHome, storageRoot]) {
+    await mkdir(path, { recursive: true });
+  }
+  await writeFile(join(pilotHome, 'pilotdeck.yaml'), PIPELINE_YAML, 'utf8');
+  const symlinks: Array<{ path: string; target: string }> = [];
+  if (kind === 'symlink') {
+    const notADir = join(pilotHome, 'not-a-dir');
+    await writeFile(notADir, 'x', 'utf8');
+    await symlink(notADir, join(pilotHome, 'link'));
+    symlinks.push({
+      path: '<dir>/pilot-home/link',
+      target: '<dir>/pilot-home/not-a-dir',
+    });
+  }
+  const rawMarker = `${pilotHome}/${kind === 'missing' ? 'missing' : 'link'}/..`;
+  for (const [id, marker] of [
+    ['p-a-raw-marker', rawMarker],
+    ['p-general', pilotHome],
+  ] as const) {
+    const registry = join(pilotHome, 'projects', id);
+    await mkdir(registry, { recursive: true });
+    await writeFile(join(registry, '.cwd'), `${marker}\n`, 'utf8');
+  }
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    PILOTDECK_STORAGE_ROOT: storageRoot,
+    PILOTDECK_SNAPSHOT_ROOT: snapshotRoot,
+  };
+  const local = createLocalGateway({
+    projectRoot: project,
+    pilotHome,
+    fallbackProjectRoot: project,
+    env,
+  });
+  const partition = join(
+    snapshotRoot,
+    'workspaces',
+    'p-general',
+    'sessions',
+    's',
+    'snapshots',
+    'snap-raw-marker',
+  );
+  await mkdir(partition, { recursive: true });
+  await writeFile(join(partition, 'manifest.json'), JSON.stringify({
+    snapshotId: 'snap-raw-marker',
+    workspaceId: 'p-general',
+    sessionId: 's',
+    turnId: 't',
+    runId: 'r',
+    phase: 'pre_user',
+    createdAt: '2026-01-01T00:00:04.000Z',
+    entries: [],
+  }, null, 2));
+  const recorder = new Recorder(dir);
+  (recorder as any).gateway = local.gateway;
+  await recorder.call('snapshotList', { projectKey: pilotHome });
+  const listed = recorder.operations[0].outcome.ok;
+  assert.deepEqual(
+    listed.items.map((snapshot: any) => snapshot.snapshotId),
+    ['snap-raw-marker'],
+    `${name}: the General workspace owns the storage id`,
+  );
+  scenarios.push({
+    name,
+    tree: await recordTree(storageRoot, dir),
+    snapshotRoot: '<dir>/storage/snapshots',
+    absoluteFile: null,
+    projects: [{ key: '<dir>/pilot-home', workspaceId: 'p-general' }],
+    fallbackProjectRoot: '<dir>/project',
+    gateway: true,
+    native: {
+      pilotHome: '<dir>/pilot-home',
+      cwd: '<dir>',
+      projects: [
+        { id: 'p-a-raw-marker', marker: `<dir>/pilot-home/${kind === 'missing' ? 'missing' : 'link'}/..` },
+        { id: 'p-general', marker: '<dir>/pilot-home' },
+      ],
+      files: kind === 'symlink'
+        ? [{ path: '<dir>/pilot-home/not-a-dir', content: 'x' }]
+        : [],
+      symlinks,
+    },
+    operations: recorder.operations,
+  });
+  local.dispose();
+  console.log(`${name}: operations=${recorder.operations.length}`);
+}
+
 try {
   // Ownership negative control: the historical fixed path and a real sentinel
   // outside the guarded tree must both be refused before any rm call.
@@ -918,12 +1022,16 @@ try {
           { id: 'p-gone', marker: '<dir>/gone-project' },
         ],
         files: [{ path: '<dir>/not-a-dir', content: 'x' }],
+        symlinks: [],
       },
       operations: recorder.operations,
     });
     local.dispose();
     console.log(`gateway-native: operations=${recorder.operations.length}`);
   }
+
+  await recordRawMarkerScenario('missing');
+  await recordRawMarkerScenario('symlink');
 
   const oracle = {
     sourceCommit: provenance.ref,
@@ -949,13 +1057,19 @@ try {
     'restore-missing-target',
     'restore-partial',
     'gateway-native',
+    'storage-id-missing-dotdot',
+    'storage-id-symlink-dotdot',
   ]) {
     assert.ok(scenarios.some((scenario) => scenario.name === name), `missing scenario ${name}`);
   }
-  assert.equal(scenarios.length, 7);
+  assert.equal(scenarios.length, 9);
   assert.equal(scenarios[0].operations.length, 44, 'projection operation count is pinned');
   const native = scenarios.find((scenario) => scenario.name === 'gateway-native');
   assert.equal(native.operations.length, 58, 'gateway-native operation count is pinned');
+  for (const name of ['storage-id-missing-dotdot', 'storage-id-symlink-dotdot']) {
+    const scenario = scenarios.find((candidate) => candidate.name === name);
+    assert.equal(scenario.operations.length, 1, `${name} operation count is pinned`);
+  }
   await mkdir(output, { recursive: true });
   await writeFile(join(output, 'oracle.json'), text, { flag: 'wx' });
   console.log(`wrote ${join(output, 'oracle.json')} (${text.length} bytes)`);

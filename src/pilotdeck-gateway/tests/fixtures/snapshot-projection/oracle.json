@@ -2263,7 +2263,8 @@
             "path": "<dir>/not-a-dir",
             "content": "x"
           }
-        ]
+        ],
+        "symlinks": []
       },
       "operations": [
         {
@@ -3250,6 +3251,194 @@
           },
           "restoreDir": false,
           "targetTree": []
+        }
+      ]
+    },
+    {
+      "name": "storage-id-missing-dotdot",
+      "tree": [
+        {
+          "path": "snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general/sessions/s",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general/sessions/s/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general/sessions/s/snapshots/snap-raw-marker",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general/sessions/s/snapshots/snap-raw-marker/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogInNuYXAtcmF3LW1hcmtlciIsCiAgIndvcmtzcGFjZUlkIjogInAtZ2VuZXJhbCIsCiAgInNlc3Npb25JZCI6ICJzIiwKICAidHVybklkIjogInQiLAogICJydW5JZCI6ICJyIiwKICAicGhhc2UiOiAicHJlX3VzZXIiLAogICJjcmVhdGVkQXQiOiAiMjAyNi0wMS0wMVQwMDowMDowNC4wMDBaIiwKICAiZW50cmllcyI6IFtdCn0="
+        }
+      ],
+      "snapshotRoot": "<dir>/storage/snapshots",
+      "absoluteFile": null,
+      "projects": [
+        {
+          "key": "<dir>/pilot-home",
+          "workspaceId": "p-general"
+        }
+      ],
+      "fallbackProjectRoot": "<dir>/project",
+      "gateway": true,
+      "native": {
+        "pilotHome": "<dir>/pilot-home",
+        "cwd": "<dir>",
+        "projects": [
+          {
+            "id": "p-a-raw-marker",
+            "marker": "<dir>/pilot-home/missing/.."
+          },
+          {
+            "id": "p-general",
+            "marker": "<dir>/pilot-home"
+          }
+        ],
+        "files": [],
+        "symlinks": []
+      },
+      "operations": [
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/pilot-home"
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "snap-raw-marker",
+                  "workspaceId": "p-general",
+                  "sessionId": "s",
+                  "turnId": "t",
+                  "runId": "r",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:04.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-general/sessions/s/snapshots/snap-raw-marker/manifest.json"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "storage-id-symlink-dotdot",
+      "tree": [
+        {
+          "path": "snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general/sessions/s",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general/sessions/s/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general/sessions/s/snapshots/snap-raw-marker",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general/sessions/s/snapshots/snap-raw-marker/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogInNuYXAtcmF3LW1hcmtlciIsCiAgIndvcmtzcGFjZUlkIjogInAtZ2VuZXJhbCIsCiAgInNlc3Npb25JZCI6ICJzIiwKICAidHVybklkIjogInQiLAogICJydW5JZCI6ICJyIiwKICAicGhhc2UiOiAicHJlX3VzZXIiLAogICJjcmVhdGVkQXQiOiAiMjAyNi0wMS0wMVQwMDowMDowNC4wMDBaIiwKICAiZW50cmllcyI6IFtdCn0="
+        }
+      ],
+      "snapshotRoot": "<dir>/storage/snapshots",
+      "absoluteFile": null,
+      "projects": [
+        {
+          "key": "<dir>/pilot-home",
+          "workspaceId": "p-general"
+        }
+      ],
+      "fallbackProjectRoot": "<dir>/project",
+      "gateway": true,
+      "native": {
+        "pilotHome": "<dir>/pilot-home",
+        "cwd": "<dir>",
+        "projects": [
+          {
+            "id": "p-a-raw-marker",
+            "marker": "<dir>/pilot-home/link/.."
+          },
+          {
+            "id": "p-general",
+            "marker": "<dir>/pilot-home"
+          }
+        ],
+        "files": [
+          {
+            "path": "<dir>/pilot-home/not-a-dir",
+            "content": "x"
+          }
+        ],
+        "symlinks": [
+          {
+            "path": "<dir>/pilot-home/link",
+            "target": "<dir>/pilot-home/not-a-dir"
+          }
+        ]
+      },
+      "operations": [
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/pilot-home"
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "snap-raw-marker",
+                  "workspaceId": "p-general",
+                  "sessionId": "s",
+                  "turnId": "t",
+                  "runId": "r",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:04.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-general/sessions/s/snapshots/snap-raw-marker/manifest.json"
+                }
+              ]
+            }
+          }
         }
       ]
     }
