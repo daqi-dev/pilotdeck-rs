@@ -75,8 +75,11 @@ def main():
     def run(label, test):
         slots = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=600, interval=10)
         save(f'{label}.slots.log', slots.stdout + slots.stderr)
+        # No -q: cargo forwards it to libtest as --quiet, and the kill check
+        # below needs the per-test "test <name> ... FAILED" line that quiet
+        # mode replaces with "<name> --- FAILED".
         result = run_owned([
-            'cargo', 'test', '-q', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway',
+            'cargo', 'test', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway',
             '--test', 'transcript_resolve', test, '--', '--exact', '--nocapture',
         ], cwd=root, env=env, timeout=600)
         log = result.stdout + result.stderr
