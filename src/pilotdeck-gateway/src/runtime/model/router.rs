@@ -377,6 +377,18 @@ impl RouterRuntime {
         self.store.clear();
     }
 
+    /// #879 stats-cwd fixture: the JSONL path actually selected by the
+    /// runtime-owned collector, so a test can observe `with_deps` rather than
+    /// replay a path it computed itself.
+    #[cfg(test)]
+    pub(crate) fn stats_jsonl_path(&self) -> Option<std::path::PathBuf> {
+        self.stats
+            .lock()
+            .expect("router stats")
+            .journal_path()
+            .map(std::path::PathBuf::from)
+    }
+
     pub fn config(&self) -> &RouterConfig {
         &self.config
     }

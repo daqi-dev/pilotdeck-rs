@@ -38,6 +38,14 @@ DELETED_ABSOLUTE = ['absolute_deleted_cwd', 'tilde_deleted_cwd',
 ANY_CELL = {'absolute-guard'}
 NORMAL_RELATIVE = ['relative_normal_cwd', 'empty_normal_cwd',
                    'empty_home_unset_normal_cwd', 'empty_home_child_normal_cwd']
+# Every cell that reads the home for its path, for the runtime entry's home
+# selection. `disabled-*` returns before any home is read and `file-path-*`
+# uses `config.filePath`, so a wrong home is invisible in both.
+ENABLED = [f'{kind}_{state}_cwd'
+           for kind in ('relative', 'empty', 'absolute', 'tilde', 'tilde_child',
+                        'unset', 'empty_home_tilde', 'empty_home_unset',
+                        'empty_home_child')
+           for state in ('normal', 'deleted')]
 MUTATIONS = [
     ('cwd-fallback', STATS, CWD,
      '    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));',
@@ -80,6 +88,10 @@ MUTATIONS = [
                         .map_err(|error| RouterRuntimeError::new("ENOENT", error.to_string()))?,
                 };''',
      DELETED_RELATIVE, RUNTIME),
+    ('runtime-home', ROUTER,
+     'TokenStatsCollector::new(Some(&stats_config), None)',
+     'TokenStatsCollector::new(Some(&stats_config), Some(std::path::Path::new("/wrong")))',
+     ENABLED, RUNTIME),
     ('router-code', ROUTER, 'std::io::ErrorKind::NotFound => "ENOENT",',
      'std::io::ErrorKind::NotFound => "BROKEN",', DELETED_RELATIVE, RUNTIME),
     ('router-message', ROUTER, 'RouterRuntimeError::new(code, error.to_string())',
@@ -124,8 +136,9 @@ def run(out, label, env):
 
 
 def passed(result, log):
+    # One bounded child per entry: 22 cells x collector/runtime = 44 receipts.
     return (result.returncode == 0 and '22 passed; 0 failed; 2 ignored;' in log
-            and log.count('PDRS_VERIFIED_CHILD ') == 22)
+            and log.count('PDRS_VERIFIED_CHILD ') == 44)
 
 
 def failure_reason(result, log, name, tests, marker):
@@ -143,10 +156,17 @@ def failure_reason(result, log, name, tests, marker):
 
 
 def cell_hits(log, tests, marker):
-    """Split declared cells into dedicated-marker kills and unrelated panics."""
+    """Split declared cells into dedicated-marker kills and unrelated panics.
+
+    A cell that passes its first bounded child prints a receipt before the
+    second child fails, so libtest's `... FAILED` can land on the next line.
+    Read the authoritative failure list instead of requiring that adjacency.
+    """
+    failed = {line.strip() for line in log.splitlines()
+              if line.startswith(f'    {PREFIX}')}
     hit, unrelated = [], []
     for test in tests:
-        if f'{PREFIX}{test} ... FAILED' not in log:
+        if f'{PREFIX}{test}' not in failed:
             continue
         (hit if f'{marker} {case_name(test)}' in log else unrelated).append(test)
     return hit, unrelated

@@ -262,6 +262,14 @@ impl TokenStatsCollector {
         self.enabled
     }
 
+    /// #879 stats-cwd fixture: expose the path actually selected by the
+    /// constructor so the runtime entry can be observed without replaying a
+    /// path computed by the test.
+    #[cfg(test)]
+    pub(crate) fn journal_path(&self) -> Option<&Path> {
+        self.jsonl_path.as_deref()
+    }
+
     pub fn observe(&mut self, record: &mut JsValue) {
         if !self.enabled {
             return;
