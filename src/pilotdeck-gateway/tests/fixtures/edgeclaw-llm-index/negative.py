@@ -11,8 +11,11 @@ mutant; only a source-restore failure aborts immediately, because a wrong
 source tree would poison every later verdict. The final summary exits
 non-zero when any mutant is not KILLED.
 
-index.rs is a new file, so mutating_sources refuses it until the coordinator
-commits; only --check-anchors runs pre-commit.
+index.rs was a new file in the first round and text.rs changed in fix-r3, so
+`mutating_sources` refuses both until the coordinator commits them; only
+--check-anchors runs pre-commit. Samples on an uncommitted tree can set
+NEGATIVE_BASELINE to a commit that holds the working tree's bytes (a dangling
+`git stash create`-style commit); never use a shadow repo or second build dir.
 """
 import os
 import re
@@ -24,6 +27,7 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/index.rs'
+text = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/text.rs'
 cases = [
     ('dedupe-seen', source, 'if seen.contains(&kind)', 'if false', 'result classify-dedupe'),
     ('should-store-truthy', source, 'parsed.get("should_store").is_some_and(js_truthy)', 'parsed.get("should_store").is_some()', 'result classify-should-store-null'),
@@ -60,6 +64,10 @@ cases = [
     # fix-r2: the receiver expression, never the value, is the message).
     ('truncated-list-slice-message', source, '(input.candidate.{field} ?? []).slice is not a function', '(input.candidate.{field} ?? []).slice is not a method', 'warnings select-candidate-decisions-number'),
     ('truncated-list-map-message', source, '(input.candidate.{field} ?? []).slice(...).map is not a function', '(input.candidate.{field} ?? []).slice(...).map is not a method', 'warnings select-candidate-constraints-string'),
+    # -- fix-r3: the shared JSON projection must keep `\<lone surrogate>` an
+    # invalid escape (odd backslash run); expanding it re-legalizes the JSON
+    # the real TS entry rejects (review P1, ts-probe.out).
+    ('surrogate-backslash-reject', text, 'if backslashes % 2 == 1 {', 'if backslashes % 2 == 2 {', 'result classify-backslash-surrogate-high'),
 ]
 
 # A mutant is killed only by its named assertion in its exact test's panic block.
@@ -90,6 +98,7 @@ messages = {
     'select-warning-prefix': 'warnings select-shortlist-missing-description',
     'truncated-list-slice-message': 'warnings select-candidate-decisions-number',
     'truncated-list-map-message': 'warnings select-candidate-constraints-string',
+    'surrogate-backslash-reject': 'result classify-backslash-surrogate-high',
 }
 
 def classify(completed, test, message):
@@ -113,18 +122,18 @@ def classify(completed, test, message):
     # Match the assertion line, never an expected string embedded in left/right data.
     return 'KILLED' if re.search(r'^(?:assertion .* failed: )?' + re.escape(message) + r'$', panic, re.M) else 'INVALID'
 
-def anchors(text):
+def anchors(texts):
     stale = []
     for name, path, before, _, _ in cases:
-        contents = text if path == source else path.read_text()
-        if contents.count(before) != 1:
-            stale.append((name, contents.count(before)))
+        count = texts[path].count(before)
+        if count != 1:
+            stale.append((name, count))
     assert set(messages) == {case[0] for case in cases}, 'every mutant needs its own named assertion'
     if stale:
         for name, count in stale: print(f'STALE ANCHOR {name}: {count} matches', file=sys.stderr)
         raise SystemExit(2)
 
-anchors(source.read_text())
+anchors({path: path.read_text() for path in (source, text)})
 if sys.argv[1:] == ['--check-anchors']:
     print(f'{len(cases)} unique anchors; no mutation')
     raise SystemExit(0)
@@ -162,10 +171,13 @@ def run(name, test, message):
 
 verdicts = {}
 failed = []
-# This guard intentionally rejects a new uncommitted source file. Do not bypass it.
-with mutating_sources(root, [source]) as originals:
-    original = originals[source].decode()
-    anchors(original)
+# This guard intentionally rejects uncommitted product sources. Do not bypass it;
+# an uncommitted tree can pass NEGATIVE_BASELINE (a commit holding exactly the
+# working-tree bytes) instead, never a shadow repo or second build directory.
+baseline_commit = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
+with mutating_sources(root, [source, text], baseline=baseline_commit) as snapshots:
+    originals = {path: snapshots[path].decode() for path in (source, text)}
+    anchors(originals)
     for name, path, before, after, message in cases:
         if selected and name not in selected: continue
         assert message == messages[name], 'case message must match its named assertion'
@@ -178,12 +190,12 @@ with mutating_sources(root, [source]) as originals:
             print(f'{name}: {verdicts[name]}', flush=True)
             continue
         try:
-            path.write_text(original.replace(before, after))
+            path.write_text(originals[path].replace(before, after))
             outcome = run(name, 'oracle_matrix', message)
         finally:
             # A restore failure aborts immediately: every later verdict would
             # be measured against a poisoned source.
-            path.write_bytes(originals[path])
+            path.write_bytes(snapshots[path])
         restored = run(name + '-restored', 'oracle_matrix', message)
         verdicts[name] = f'{"SURVIVED" if outcome == "PASS" else outcome}; restored={restored}'
         print(f'{name}: {verdicts[name]}', flush=True)

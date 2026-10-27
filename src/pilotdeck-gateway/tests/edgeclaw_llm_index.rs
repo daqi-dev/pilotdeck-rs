@@ -407,7 +407,7 @@ async fn oracle_matrix() {
         }
         count += 1;
     }
-    assert_eq!(count, 93, "every oracle case replays");
+    assert_eq!(count, 98, "every oracle case replays");
 }
 
 #[test]

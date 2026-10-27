@@ -3336,6 +3336,320 @@
     },
     {
       "spec": {
+        "name": "classify-backslash-surrogate-high",
+        "kind": "classify",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"should_store\\\":true,\\\"labels\\\":[{\\\"type\\\":\\\"user\\\",\\\"reason\\\":\\\"\\\\\\ud800\\\",\\\"evidence\\\":\\\"e\\\"}]}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        }
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "shouldStore": false,
+            "labels": []
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/responses",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "3578",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"input\":[{\"role\":\"system\",\"content\":\"You classify one focus user turn for a long-term memory indexing pipeline.\\n\\nYou are only deciding categories. Do not generate the memory file yet.\\n\\nRules:\\n- Base the decision on the focus user turn first.\\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\\n- Assistant text is context only. Never classify something that exists only in assistant wording.\\n- A turn can match multiple categories, but at most once per category.\\n- Allowed categories:\\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\\n- Identity test: only use user when the focus turn is describing the user as a person.\\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\\n- If the user explicitly says \\\"请记住\\\", \\\"帮我记住\\\", or \\\"remember this\\\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\\n- If nothing durable should be remembered, return should_store=false and labels=[].\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"should_store\\\": true,\\n  \\\"labels\\\": [\\n    {\\n      \\\"type\\\": \\\"user | project | feedback\\\",\\n      \\\"reason\\\": \\\"why this category applies\\\",\\n      \\\"evidence\\\": \\\"short quote or evidence summary from the focus turn\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"current_project_meta\\\": null,\\n  \\\"focus_user_turn\\\": {\\n    \\\"role\\\": \\\"user\\\",\\n    \\\"content\\\": \\\"u2 请记住我是达达，一名工程师\\\"\\n  },\\n  \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n    \\\"turn_index\\\": 1,\\n    \\\"messages\\\": [\\n      {\\n        \\\"role\\\": \\\"user\\\",\\n        \\\"content\\\": \\\"u2 请记住我是达达，一名工程师\\\"\\n      },\\n      {\\n        \\\"role\\\": \\\"assistant\\\",\\n        \\\"content\\\": \\\"a2 已记住\\\"\\n      }\\n    ]\\n  },\\n  \\\"previous_turns\\\": [\\n    {\\n      \\\"turn_index\\\": 1,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"u1 我在做 Rust 移植\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a1 好的\\\"\\n        }\\n      ]\\n    }\\n  ],\\n  \\\"next_turns\\\": [\\n    {\\n      \\\"turn_index\\\": 1,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"u3 另外回复请用中文\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a3 好的\\\"\\n        }\\n      ]\\n    },\\n    {\\n      \\\"turn_index\\\": 2,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"u4 明天继续\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a4 行\\\"\\n        }\\n      ]\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ],
+        "debug": [
+          {
+            "requestLabel": "Memory turn classification",
+            "systemPrompt": "You classify one focus user turn for a long-term memory indexing pipeline.\n\nYou are only deciding categories. Do not generate the memory file yet.\n\nRules:\n- Base the decision on the focus user turn first.\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\n- Assistant text is context only. Never classify something that exists only in assistant wording.\n- A turn can match multiple categories, but at most once per category.\n- Allowed categories:\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\n- Identity test: only use user when the focus turn is describing the user as a person.\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\n- If the user explicitly says \"请记住\", \"帮我记住\", or \"remember this\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\n- If nothing durable should be remembered, return should_store=false and labels=[].\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"should_store\": true,\n  \"labels\": [\n    {\n      \"type\": \"user | project | feedback\",\n      \"reason\": \"why this category applies\",\n      \"evidence\": \"short quote or evidence summary from the focus turn\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"current_project_meta\": null,\n  \"focus_user_turn\": {\n    \"role\": \"user\",\n    \"content\": \"u2 请记住我是达达，一名工程师\"\n  },\n  \"focus_turn_with_neighbor_assistant_context\": {\n    \"turn_index\": 1,\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": \"u2 请记住我是达达，一名工程师\"\n      },\n      {\n        \"role\": \"assistant\",\n        \"content\": \"a2 已记住\"\n      }\n    ]\n  },\n  \"previous_turns\": [\n    {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u1 我在做 Rust 移植\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a1 好的\"\n        }\n      ]\n    }\n  ],\n  \"next_turns\": [\n    {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u3 另外回复请用中文\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a3 好的\"\n        }\n      ]\n    },\n    {\n      \"turn_index\": 2,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u4 明天继续\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a4 行\"\n        }\n      ]\n    }\n  ]\n}",
+            "rawResponse": "{\"should_store\":true,\"labels\":[{\"type\":\"user\",\"reason\":\"\\\ud800\",\"evidence\":\"e\"}]}",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "Unexpected token '\ud800', ...\"reason\":\"\\\ud800\",\"eviden\"... is not valid JSON"
+          }
+        ],
+        "warnings": [
+          "[clawxmemory] memory turn classification fallback: SyntaxError: Unexpected token '\ud800', ...\"reason\":\"\\\ud800\",\"eviden\"... is not valid JSON"
+        ],
+        "calls": 1
+      }
+    },
+    {
+      "spec": {
+        "name": "classify-backslash-surrogate-low",
+        "kind": "classify",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"should_store\\\":true,\\\"labels\\\":[{\\\"type\\\":\\\"user\\\",\\\"reason\\\":\\\"\\\\\\udc00\\\",\\\"evidence\\\":\\\"e\\\"}]}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        }
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "shouldStore": false,
+            "labels": []
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/responses",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "3578",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"input\":[{\"role\":\"system\",\"content\":\"You classify one focus user turn for a long-term memory indexing pipeline.\\n\\nYou are only deciding categories. Do not generate the memory file yet.\\n\\nRules:\\n- Base the decision on the focus user turn first.\\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\\n- Assistant text is context only. Never classify something that exists only in assistant wording.\\n- A turn can match multiple categories, but at most once per category.\\n- Allowed categories:\\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\\n- Identity test: only use user when the focus turn is describing the user as a person.\\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\\n- If the user explicitly says \\\"请记住\\\", \\\"帮我记住\\\", or \\\"remember this\\\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\\n- If nothing durable should be remembered, return should_store=false and labels=[].\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"should_store\\\": true,\\n  \\\"labels\\\": [\\n    {\\n      \\\"type\\\": \\\"user | project | feedback\\\",\\n      \\\"reason\\\": \\\"why this category applies\\\",\\n      \\\"evidence\\\": \\\"short quote or evidence summary from the focus turn\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"current_project_meta\\\": null,\\n  \\\"focus_user_turn\\\": {\\n    \\\"role\\\": \\\"user\\\",\\n    \\\"content\\\": \\\"u2 请记住我是达达，一名工程师\\\"\\n  },\\n  \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n    \\\"turn_index\\\": 1,\\n    \\\"messages\\\": [\\n      {\\n        \\\"role\\\": \\\"user\\\",\\n        \\\"content\\\": \\\"u2 请记住我是达达，一名工程师\\\"\\n      },\\n      {\\n        \\\"role\\\": \\\"assistant\\\",\\n        \\\"content\\\": \\\"a2 已记住\\\"\\n      }\\n    ]\\n  },\\n  \\\"previous_turns\\\": [\\n    {\\n      \\\"turn_index\\\": 1,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"u1 我在做 Rust 移植\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a1 好的\\\"\\n        }\\n      ]\\n    }\\n  ],\\n  \\\"next_turns\\\": [\\n    {\\n      \\\"turn_index\\\": 1,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"u3 另外回复请用中文\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a3 好的\\\"\\n        }\\n      ]\\n    },\\n    {\\n      \\\"turn_index\\\": 2,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"u4 明天继续\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a4 行\\\"\\n        }\\n      ]\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ],
+        "debug": [
+          {
+            "requestLabel": "Memory turn classification",
+            "systemPrompt": "You classify one focus user turn for a long-term memory indexing pipeline.\n\nYou are only deciding categories. Do not generate the memory file yet.\n\nRules:\n- Base the decision on the focus user turn first.\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\n- Assistant text is context only. Never classify something that exists only in assistant wording.\n- A turn can match multiple categories, but at most once per category.\n- Allowed categories:\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\n- Identity test: only use user when the focus turn is describing the user as a person.\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\n- If the user explicitly says \"请记住\", \"帮我记住\", or \"remember this\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\n- If nothing durable should be remembered, return should_store=false and labels=[].\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"should_store\": true,\n  \"labels\": [\n    {\n      \"type\": \"user | project | feedback\",\n      \"reason\": \"why this category applies\",\n      \"evidence\": \"short quote or evidence summary from the focus turn\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"current_project_meta\": null,\n  \"focus_user_turn\": {\n    \"role\": \"user\",\n    \"content\": \"u2 请记住我是达达，一名工程师\"\n  },\n  \"focus_turn_with_neighbor_assistant_context\": {\n    \"turn_index\": 1,\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": \"u2 请记住我是达达，一名工程师\"\n      },\n      {\n        \"role\": \"assistant\",\n        \"content\": \"a2 已记住\"\n      }\n    ]\n  },\n  \"previous_turns\": [\n    {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u1 我在做 Rust 移植\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a1 好的\"\n        }\n      ]\n    }\n  ],\n  \"next_turns\": [\n    {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u3 另外回复请用中文\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a3 好的\"\n        }\n      ]\n    },\n    {\n      \"turn_index\": 2,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u4 明天继续\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a4 行\"\n        }\n      ]\n    }\n  ]\n}",
+            "rawResponse": "{\"should_store\":true,\"labels\":[{\"type\":\"user\",\"reason\":\"\\\udc00\",\"evidence\":\"e\"}]}",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "Unexpected token '\udc00', ...\"reason\":\"\\\udc00\",\"eviden\"... is not valid JSON"
+          }
+        ],
+        "warnings": [
+          "[clawxmemory] memory turn classification fallback: SyntaxError: Unexpected token '\udc00', ...\"reason\":\"\\\udc00\",\"eviden\"... is not valid JSON"
+        ],
+        "calls": 1
+      }
+    },
+    {
+      "spec": {
+        "name": "classify-backslash-pair-surrogate",
+        "kind": "classify",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"should_store\\\":true,\\\"labels\\\":[{\\\"type\\\":\\\"user\\\",\\\"reason\\\":\\\"\\\\\\\\\\ud800\\\",\\\"evidence\\\":\\\"e\\\"}]}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        }
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "shouldStore": true,
+            "labels": [
+              {
+                "type": "user",
+                "reason": "\\\ud800",
+                "evidence": "e"
+              }
+            ]
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/responses",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "3578",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"input\":[{\"role\":\"system\",\"content\":\"You classify one focus user turn for a long-term memory indexing pipeline.\\n\\nYou are only deciding categories. Do not generate the memory file yet.\\n\\nRules:\\n- Base the decision on the focus user turn first.\\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\\n- Assistant text is context only. Never classify something that exists only in assistant wording.\\n- A turn can match multiple categories, but at most once per category.\\n- Allowed categories:\\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\\n- Identity test: only use user when the focus turn is describing the user as a person.\\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\\n- If the user explicitly says \\\"请记住\\\", \\\"帮我记住\\\", or \\\"remember this\\\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\\n- If nothing durable should be remembered, return should_store=false and labels=[].\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"should_store\\\": true,\\n  \\\"labels\\\": [\\n    {\\n      \\\"type\\\": \\\"user | project | feedback\\\",\\n      \\\"reason\\\": \\\"why this category applies\\\",\\n      \\\"evidence\\\": \\\"short quote or evidence summary from the focus turn\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"current_project_meta\\\": null,\\n  \\\"focus_user_turn\\\": {\\n    \\\"role\\\": \\\"user\\\",\\n    \\\"content\\\": \\\"u2 请记住我是达达，一名工程师\\\"\\n  },\\n  \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n    \\\"turn_index\\\": 1,\\n    \\\"messages\\\": [\\n      {\\n        \\\"role\\\": \\\"user\\\",\\n        \\\"content\\\": \\\"u2 请记住我是达达，一名工程师\\\"\\n      },\\n      {\\n        \\\"role\\\": \\\"assistant\\\",\\n        \\\"content\\\": \\\"a2 已记住\\\"\\n      }\\n    ]\\n  },\\n  \\\"previous_turns\\\": [\\n    {\\n      \\\"turn_index\\\": 1,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"u1 我在做 Rust 移植\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a1 好的\\\"\\n        }\\n      ]\\n    }\\n  ],\\n  \\\"next_turns\\\": [\\n    {\\n      \\\"turn_index\\\": 1,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"u3 另外回复请用中文\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a3 好的\\\"\\n        }\\n      ]\\n    },\\n    {\\n      \\\"turn_index\\\": 2,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"u4 明天继续\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a4 行\\\"\\n        }\\n      ]\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ],
+        "debug": [
+          {
+            "requestLabel": "Memory turn classification",
+            "systemPrompt": "You classify one focus user turn for a long-term memory indexing pipeline.\n\nYou are only deciding categories. Do not generate the memory file yet.\n\nRules:\n- Base the decision on the focus user turn first.\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\n- Assistant text is context only. Never classify something that exists only in assistant wording.\n- A turn can match multiple categories, but at most once per category.\n- Allowed categories:\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\n- Identity test: only use user when the focus turn is describing the user as a person.\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\n- If the user explicitly says \"请记住\", \"帮我记住\", or \"remember this\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\n- If nothing durable should be remembered, return should_store=false and labels=[].\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"should_store\": true,\n  \"labels\": [\n    {\n      \"type\": \"user | project | feedback\",\n      \"reason\": \"why this category applies\",\n      \"evidence\": \"short quote or evidence summary from the focus turn\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"current_project_meta\": null,\n  \"focus_user_turn\": {\n    \"role\": \"user\",\n    \"content\": \"u2 请记住我是达达，一名工程师\"\n  },\n  \"focus_turn_with_neighbor_assistant_context\": {\n    \"turn_index\": 1,\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": \"u2 请记住我是达达，一名工程师\"\n      },\n      {\n        \"role\": \"assistant\",\n        \"content\": \"a2 已记住\"\n      }\n    ]\n  },\n  \"previous_turns\": [\n    {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u1 我在做 Rust 移植\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a1 好的\"\n        }\n      ]\n    }\n  ],\n  \"next_turns\": [\n    {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u3 另外回复请用中文\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a3 好的\"\n        }\n      ]\n    },\n    {\n      \"turn_index\": 2,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u4 明天继续\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a4 行\"\n        }\n      ]\n    }\n  ]\n}",
+            "rawResponse": "{\"should_store\":true,\"labels\":[{\"type\":\"user\",\"reason\":\"\\\\\ud800\",\"evidence\":\"e\"}]}",
+            "parsedResult": {
+              "should_store": true,
+              "labels": [
+                {
+                  "type": "user",
+                  "reason": "\\\ud800",
+                  "evidence": "e"
+                }
+              ]
+            }
+          }
+        ],
+        "warnings": [],
+        "calls": 1
+      }
+    },
+    {
+      "spec": {
         "name": "classify-meta-description-number",
         "kind": "classify",
         "api": "responses",
@@ -10807,6 +11121,390 @@
               "decision": "create_new",
               "selected_project_id": "",
               "reason": "\ud800"
+            }
+          }
+        ],
+        "warnings": [],
+        "calls": 1
+      }
+    },
+    {
+      "spec": {
+        "name": "select-backslash-surrogate-high",
+        "kind": "select",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"decision\\\":\\\"create_new\\\",\\\"selected_project_id\\\":\\\"\\\",\\\"reason\\\":\\\"\\\\\\ud800\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "candidate": {
+          "type": "project",
+          "name": "候选 项目",
+          "description": "候选描述",
+          "rule": "回复用中文",
+          "summary": "摘要",
+          "why": "原因",
+          "howToApply": "应用",
+          "stage": "阶段",
+          "decisions": [
+            "决定一",
+            "决定二",
+            "d0",
+            "d1",
+            "d2",
+            "d3",
+            "d4",
+            "d5",
+            "d6",
+            "d7",
+            "d8",
+            "d9",
+            "d10"
+          ],
+          "constraints": [
+            "约束一"
+          ],
+          "nextSteps": [
+            "下一步"
+          ],
+          "blockers": [
+            "阻塞"
+          ],
+          "timeline": [
+            "时间线"
+          ],
+          "notes": [
+            "备注"
+          ]
+        },
+        "candidatePreview": "## 候选预览\n正文 😀",
+        "recentUserMessages": [
+          {
+            "role": "user",
+            "content": "最近消息 1"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 2"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 3"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 4"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 5"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 6"
+          }
+        ],
+        "shortlist": [
+          {
+            "projectId": "p1",
+            "projectName": "项目一",
+            "description": "描述一",
+            "status": "active",
+            "updatedAt": "2026-01-02T03:04:05.678Z",
+            "score": 0.9,
+            "exact": 1,
+            "source": "query",
+            "matchedText": "匹配 文本"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "项目二",
+            "description": "描述二",
+            "status": "archived",
+            "updatedAt": "2025-12-31T23:59:59.999Z",
+            "score": 0.5,
+            "exact": 0,
+            "source": "recent",
+            "matchedText": "p2 匹配"
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "decision": "create_new",
+            "reason": "Project assignment failed; creating a new General project is safer than forcing an existing project."
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/responses",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2929",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"input\":[{\"role\":\"system\",\"content\":\"You assign a newly generated long-term memory item to a General Chat project.\\nThis is index-time memory assignment, not recall.\\nReturn JSON only with decision, selected_project_id, and reason.\\ndecision must be one of: attach_existing, create_new.\\nThe primary evidence is candidate_memory_preview: the memory item that will be written.\\nUse the focus user turn and recent user messages only as supporting context for disambiguation.\\nChoose attach_existing only when the candidate clearly belongs to exactly one existing General project.\\nChoose create_new when the candidate is a new project, evidence is insufficient, multiple projects remain plausible, or the match is only a broad domain similarity.\\nDo not attach just because projects share a category such as SaaS, copywriting, Xiaohongshu, marketing, planning, or content creation.\\nAll shortlist projects are General-local assignment targets; never infer or write to an external workspace.\\nIf decision is attach_existing, selected_project_id must be one id from the shortlist.\\nIf decision is create_new, selected_project_id must be an empty string.\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"candidate\\\": {\\n    \\\"type\\\": \\\"project\\\",\\n    \\\"name\\\": \\\"候选 项目\\\",\\n    \\\"description\\\": \\\"候选描述\\\",\\n    \\\"rule\\\": \\\"回复用中文\\\",\\n    \\\"summary\\\": \\\"摘要\\\",\\n    \\\"why\\\": \\\"原因\\\",\\n    \\\"how_to_apply\\\": \\\"应用\\\",\\n    \\\"stage\\\": \\\"阶段\\\",\\n    \\\"decisions\\\": [\\n      \\\"决定一\\\",\\n      \\\"决定二\\\",\\n      \\\"d0\\\",\\n      \\\"d1\\\",\\n      \\\"d2\\\",\\n      \\\"d3\\\",\\n      \\\"d4\\\",\\n      \\\"d5\\\",\\n      \\\"d6\\\",\\n      \\\"d7\\\"\\n    ],\\n    \\\"constraints\\\": [\\n      \\\"约束一\\\"\\n    ],\\n    \\\"next_steps\\\": [\\n      \\\"下一步\\\"\\n    ],\\n    \\\"blockers\\\": [\\n      \\\"阻塞\\\"\\n    ],\\n    \\\"timeline\\\": [\\n      \\\"时间线\\\"\\n    ],\\n    \\\"notes\\\": [\\n      \\\"备注\\\"\\n    ]\\n  },\\n  \\\"candidate_memory_preview\\\": \\\"## 候选预览 正文 😀\\\",\\n  \\\"focus_user_turn\\\": \\\"u2 请记住我是达达，一名工程师\\\",\\n  \\\"recent_user_messages\\\": [\\n    \\\"最近消息 3\\\",\\n    \\\"最近消息 4\\\",\\n    \\\"最近消息 5\\\",\\n    \\\"最近消息 6\\\"\\n  ],\\n  \\\"shortlist\\\": [\\n    {\\n      \\\"project_id\\\": \\\"p1\\\",\\n      \\\"project_name\\\": \\\"项目一\\\",\\n      \\\"description\\\": \\\"描述一\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"updated_at\\\": \\\"2026-01-02T03:04:05.678Z\\\",\\n      \\\"shortlist_score\\\": 0.9,\\n      \\\"shortlist_exact\\\": 1,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"匹配 文本\\\"\\n    },\\n    {\\n      \\\"project_id\\\": \\\"p2\\\",\\n      \\\"project_name\\\": \\\"项目二\\\",\\n      \\\"description\\\": \\\"描述二\\\",\\n      \\\"status\\\": \\\"archived\\\",\\n      \\\"updated_at\\\": \\\"2025-12-31T23:59:59.999Z\\\",\\n      \\\"shortlist_score\\\": 0.5,\\n      \\\"shortlist_exact\\\": 0,\\n      \\\"shortlist_source\\\": \\\"recent\\\",\\n      \\\"matched_text\\\": \\\"p2 匹配\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ],
+        "debug": [
+          {
+            "requestLabel": "File memory project assignment",
+            "systemPrompt": "You assign a newly generated long-term memory item to a General Chat project.\nThis is index-time memory assignment, not recall.\nReturn JSON only with decision, selected_project_id, and reason.\ndecision must be one of: attach_existing, create_new.\nThe primary evidence is candidate_memory_preview: the memory item that will be written.\nUse the focus user turn and recent user messages only as supporting context for disambiguation.\nChoose attach_existing only when the candidate clearly belongs to exactly one existing General project.\nChoose create_new when the candidate is a new project, evidence is insufficient, multiple projects remain plausible, or the match is only a broad domain similarity.\nDo not attach just because projects share a category such as SaaS, copywriting, Xiaohongshu, marketing, planning, or content creation.\nAll shortlist projects are General-local assignment targets; never infer or write to an external workspace.\nIf decision is attach_existing, selected_project_id must be one id from the shortlist.\nIf decision is create_new, selected_project_id must be an empty string.",
+            "userPrompt": "{\n  \"candidate\": {\n    \"type\": \"project\",\n    \"name\": \"候选 项目\",\n    \"description\": \"候选描述\",\n    \"rule\": \"回复用中文\",\n    \"summary\": \"摘要\",\n    \"why\": \"原因\",\n    \"how_to_apply\": \"应用\",\n    \"stage\": \"阶段\",\n    \"decisions\": [\n      \"决定一\",\n      \"决定二\",\n      \"d0\",\n      \"d1\",\n      \"d2\",\n      \"d3\",\n      \"d4\",\n      \"d5\",\n      \"d6\",\n      \"d7\"\n    ],\n    \"constraints\": [\n      \"约束一\"\n    ],\n    \"next_steps\": [\n      \"下一步\"\n    ],\n    \"blockers\": [\n      \"阻塞\"\n    ],\n    \"timeline\": [\n      \"时间线\"\n    ],\n    \"notes\": [\n      \"备注\"\n    ]\n  },\n  \"candidate_memory_preview\": \"## 候选预览 正文 😀\",\n  \"focus_user_turn\": \"u2 请记住我是达达，一名工程师\",\n  \"recent_user_messages\": [\n    \"最近消息 3\",\n    \"最近消息 4\",\n    \"最近消息 5\",\n    \"最近消息 6\"\n  ],\n  \"shortlist\": [\n    {\n      \"project_id\": \"p1\",\n      \"project_name\": \"项目一\",\n      \"description\": \"描述一\",\n      \"status\": \"active\",\n      \"updated_at\": \"2026-01-02T03:04:05.678Z\",\n      \"shortlist_score\": 0.9,\n      \"shortlist_exact\": 1,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"匹配 文本\"\n    },\n    {\n      \"project_id\": \"p2\",\n      \"project_name\": \"项目二\",\n      \"description\": \"描述二\",\n      \"status\": \"archived\",\n      \"updated_at\": \"2025-12-31T23:59:59.999Z\",\n      \"shortlist_score\": 0.5,\n      \"shortlist_exact\": 0,\n      \"shortlist_source\": \"recent\",\n      \"matched_text\": \"p2 匹配\"\n    }\n  ]\n}",
+            "rawResponse": "{\"decision\":\"create_new\",\"selected_project_id\":\"\",\"reason\":\"\\\ud800\"}",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "Unexpected token '\ud800', ...\"reason\":\"\\\ud800\"}\" is not valid JSON"
+          }
+        ],
+        "warnings": [
+          "[clawxmemory] file memory project assignment fallback: SyntaxError: Unexpected token '\ud800', ...\"reason\":\"\\\ud800\"}\" is not valid JSON"
+        ],
+        "calls": 1
+      }
+    },
+    {
+      "spec": {
+        "name": "select-backslash-pair-surrogate",
+        "kind": "select",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"decision\\\":\\\"create_new\\\",\\\"selected_project_id\\\":\\\"\\\",\\\"reason\\\":\\\"\\\\\\\\\\ud800\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "candidate": {
+          "type": "project",
+          "name": "候选 项目",
+          "description": "候选描述",
+          "rule": "回复用中文",
+          "summary": "摘要",
+          "why": "原因",
+          "howToApply": "应用",
+          "stage": "阶段",
+          "decisions": [
+            "决定一",
+            "决定二",
+            "d0",
+            "d1",
+            "d2",
+            "d3",
+            "d4",
+            "d5",
+            "d6",
+            "d7",
+            "d8",
+            "d9",
+            "d10"
+          ],
+          "constraints": [
+            "约束一"
+          ],
+          "nextSteps": [
+            "下一步"
+          ],
+          "blockers": [
+            "阻塞"
+          ],
+          "timeline": [
+            "时间线"
+          ],
+          "notes": [
+            "备注"
+          ]
+        },
+        "candidatePreview": "## 候选预览\n正文 😀",
+        "recentUserMessages": [
+          {
+            "role": "user",
+            "content": "最近消息 1"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 2"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 3"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 4"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 5"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 6"
+          }
+        ],
+        "shortlist": [
+          {
+            "projectId": "p1",
+            "projectName": "项目一",
+            "description": "描述一",
+            "status": "active",
+            "updatedAt": "2026-01-02T03:04:05.678Z",
+            "score": 0.9,
+            "exact": 1,
+            "source": "query",
+            "matchedText": "匹配 文本"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "项目二",
+            "description": "描述二",
+            "status": "archived",
+            "updatedAt": "2025-12-31T23:59:59.999Z",
+            "score": 0.5,
+            "exact": 0,
+            "source": "recent",
+            "matchedText": "p2 匹配"
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "decision": "create_new",
+            "reason": "\\\ud800"
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/responses",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2929",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"input\":[{\"role\":\"system\",\"content\":\"You assign a newly generated long-term memory item to a General Chat project.\\nThis is index-time memory assignment, not recall.\\nReturn JSON only with decision, selected_project_id, and reason.\\ndecision must be one of: attach_existing, create_new.\\nThe primary evidence is candidate_memory_preview: the memory item that will be written.\\nUse the focus user turn and recent user messages only as supporting context for disambiguation.\\nChoose attach_existing only when the candidate clearly belongs to exactly one existing General project.\\nChoose create_new when the candidate is a new project, evidence is insufficient, multiple projects remain plausible, or the match is only a broad domain similarity.\\nDo not attach just because projects share a category such as SaaS, copywriting, Xiaohongshu, marketing, planning, or content creation.\\nAll shortlist projects are General-local assignment targets; never infer or write to an external workspace.\\nIf decision is attach_existing, selected_project_id must be one id from the shortlist.\\nIf decision is create_new, selected_project_id must be an empty string.\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"candidate\\\": {\\n    \\\"type\\\": \\\"project\\\",\\n    \\\"name\\\": \\\"候选 项目\\\",\\n    \\\"description\\\": \\\"候选描述\\\",\\n    \\\"rule\\\": \\\"回复用中文\\\",\\n    \\\"summary\\\": \\\"摘要\\\",\\n    \\\"why\\\": \\\"原因\\\",\\n    \\\"how_to_apply\\\": \\\"应用\\\",\\n    \\\"stage\\\": \\\"阶段\\\",\\n    \\\"decisions\\\": [\\n      \\\"决定一\\\",\\n      \\\"决定二\\\",\\n      \\\"d0\\\",\\n      \\\"d1\\\",\\n      \\\"d2\\\",\\n      \\\"d3\\\",\\n      \\\"d4\\\",\\n      \\\"d5\\\",\\n      \\\"d6\\\",\\n      \\\"d7\\\"\\n    ],\\n    \\\"constraints\\\": [\\n      \\\"约束一\\\"\\n    ],\\n    \\\"next_steps\\\": [\\n      \\\"下一步\\\"\\n    ],\\n    \\\"blockers\\\": [\\n      \\\"阻塞\\\"\\n    ],\\n    \\\"timeline\\\": [\\n      \\\"时间线\\\"\\n    ],\\n    \\\"notes\\\": [\\n      \\\"备注\\\"\\n    ]\\n  },\\n  \\\"candidate_memory_preview\\\": \\\"## 候选预览 正文 😀\\\",\\n  \\\"focus_user_turn\\\": \\\"u2 请记住我是达达，一名工程师\\\",\\n  \\\"recent_user_messages\\\": [\\n    \\\"最近消息 3\\\",\\n    \\\"最近消息 4\\\",\\n    \\\"最近消息 5\\\",\\n    \\\"最近消息 6\\\"\\n  ],\\n  \\\"shortlist\\\": [\\n    {\\n      \\\"project_id\\\": \\\"p1\\\",\\n      \\\"project_name\\\": \\\"项目一\\\",\\n      \\\"description\\\": \\\"描述一\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"updated_at\\\": \\\"2026-01-02T03:04:05.678Z\\\",\\n      \\\"shortlist_score\\\": 0.9,\\n      \\\"shortlist_exact\\\": 1,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"匹配 文本\\\"\\n    },\\n    {\\n      \\\"project_id\\\": \\\"p2\\\",\\n      \\\"project_name\\\": \\\"项目二\\\",\\n      \\\"description\\\": \\\"描述二\\\",\\n      \\\"status\\\": \\\"archived\\\",\\n      \\\"updated_at\\\": \\\"2025-12-31T23:59:59.999Z\\\",\\n      \\\"shortlist_score\\\": 0.5,\\n      \\\"shortlist_exact\\\": 0,\\n      \\\"shortlist_source\\\": \\\"recent\\\",\\n      \\\"matched_text\\\": \\\"p2 匹配\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ],
+        "debug": [
+          {
+            "requestLabel": "File memory project assignment",
+            "systemPrompt": "You assign a newly generated long-term memory item to a General Chat project.\nThis is index-time memory assignment, not recall.\nReturn JSON only with decision, selected_project_id, and reason.\ndecision must be one of: attach_existing, create_new.\nThe primary evidence is candidate_memory_preview: the memory item that will be written.\nUse the focus user turn and recent user messages only as supporting context for disambiguation.\nChoose attach_existing only when the candidate clearly belongs to exactly one existing General project.\nChoose create_new when the candidate is a new project, evidence is insufficient, multiple projects remain plausible, or the match is only a broad domain similarity.\nDo not attach just because projects share a category such as SaaS, copywriting, Xiaohongshu, marketing, planning, or content creation.\nAll shortlist projects are General-local assignment targets; never infer or write to an external workspace.\nIf decision is attach_existing, selected_project_id must be one id from the shortlist.\nIf decision is create_new, selected_project_id must be an empty string.",
+            "userPrompt": "{\n  \"candidate\": {\n    \"type\": \"project\",\n    \"name\": \"候选 项目\",\n    \"description\": \"候选描述\",\n    \"rule\": \"回复用中文\",\n    \"summary\": \"摘要\",\n    \"why\": \"原因\",\n    \"how_to_apply\": \"应用\",\n    \"stage\": \"阶段\",\n    \"decisions\": [\n      \"决定一\",\n      \"决定二\",\n      \"d0\",\n      \"d1\",\n      \"d2\",\n      \"d3\",\n      \"d4\",\n      \"d5\",\n      \"d6\",\n      \"d7\"\n    ],\n    \"constraints\": [\n      \"约束一\"\n    ],\n    \"next_steps\": [\n      \"下一步\"\n    ],\n    \"blockers\": [\n      \"阻塞\"\n    ],\n    \"timeline\": [\n      \"时间线\"\n    ],\n    \"notes\": [\n      \"备注\"\n    ]\n  },\n  \"candidate_memory_preview\": \"## 候选预览 正文 😀\",\n  \"focus_user_turn\": \"u2 请记住我是达达，一名工程师\",\n  \"recent_user_messages\": [\n    \"最近消息 3\",\n    \"最近消息 4\",\n    \"最近消息 5\",\n    \"最近消息 6\"\n  ],\n  \"shortlist\": [\n    {\n      \"project_id\": \"p1\",\n      \"project_name\": \"项目一\",\n      \"description\": \"描述一\",\n      \"status\": \"active\",\n      \"updated_at\": \"2026-01-02T03:04:05.678Z\",\n      \"shortlist_score\": 0.9,\n      \"shortlist_exact\": 1,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"匹配 文本\"\n    },\n    {\n      \"project_id\": \"p2\",\n      \"project_name\": \"项目二\",\n      \"description\": \"描述二\",\n      \"status\": \"archived\",\n      \"updated_at\": \"2025-12-31T23:59:59.999Z\",\n      \"shortlist_score\": 0.5,\n      \"shortlist_exact\": 0,\n      \"shortlist_source\": \"recent\",\n      \"matched_text\": \"p2 匹配\"\n    }\n  ]\n}",
+            "rawResponse": "{\"decision\":\"create_new\",\"selected_project_id\":\"\",\"reason\":\"\\\\\ud800\"}",
+            "parsedResult": {
+              "decision": "create_new",
+              "selected_project_id": "",
+              "reason": "\\\ud800"
             }
           }
         ],

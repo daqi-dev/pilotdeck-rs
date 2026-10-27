@@ -808,7 +808,9 @@ fn number_text(number: f64) -> String {
 /// `classifyMemoryTurn` and `selectIndexProject`. V8's JSON.parse keeps
 /// unpaired surrogates inside string literals, so the envelope goes through
 /// [`text::json_text`] (escape-only conversion) instead of lossy UTF-8; the
-/// codec decodes the escapes back into the original code units.
+/// codec decodes the escapes back into the original code units. A surrogate
+/// after an odd run of backslashes stays an invalid escape there (U+FFFD),
+/// exactly where V8 rejects `\<surrogate>`.
 fn strict_parse(raw: &JsString) -> Result<JsValue, LlmError> {
     let envelope =
         extract_first_json_object(raw).map_err(|error| LlmError::new(error.message()))?;
