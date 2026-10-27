@@ -3,7 +3,8 @@
 
 Every mutation is attempted and recorded as KILLED / SURVIVED / INVALID before
 the script exits; the first failure does not abort the run. Run by name in
-small batches. Uncommitted source is intentionally refused.
+small batches. Uncommitted source is intentionally refused unless the caller
+points NEGATIVE_BASELINE at a temporary commit object for a pre-submit sample.
 """
 import difflib
 import json
@@ -28,8 +29,13 @@ CWD = '''    let cwd = std::env::current_dir().map_err(|error| {
     })?;'''
 DELETED_RELATIVE = ['relative_deleted_cwd', 'empty_deleted_cwd',
                     'empty_home_unset_deleted_cwd', 'empty_home_child_deleted_cwd']
+# `tilde_deleted_cwd` is unreachable for the `absolute-guard` mutant: a bare
+# `PILOT_HOME="~"` returns at stats.rs:1215 before `expanded.is_absolute()`.
+# Requiring all four cells turns a correct three-cell kill into INVALID (#879b).
+# Only this mutation accepts any declared cell; every other row still needs all.
 DELETED_ABSOLUTE = ['absolute_deleted_cwd', 'tilde_deleted_cwd',
                     'tilde_child_deleted_cwd', 'unset_deleted_cwd']
+ANY_CELL = {'absolute-guard'}
 NORMAL_RELATIVE = ['relative_normal_cwd', 'empty_normal_cwd',
                    'empty_home_unset_normal_cwd', 'empty_home_child_normal_cwd']
 MUTATIONS = [
@@ -122,19 +128,39 @@ def passed(result, log):
             and log.count('PDRS_VERIFIED_CHILD ') == 22)
 
 
-def failure_reason(result, log):
+def failure_reason(result, log, name, tests, marker):
     if result.returncode == 0:
         return 'assertion did not fail'
     if 'error[' in log or 'could not compile' in log:
         return 'compile failure'
-    return 'setup or timeout failure'
+    hit, unrelated = cell_hits(log, tests, marker)
+    if unrelated:
+        return f'declared cells failed without the dedicated marker: {unrelated}'
+    missed = [test for test in tests if test not in hit]
+    if name in ANY_CELL:
+        return f'no declared cell was red with the marker: {missed}'
+    return f'declared cells stayed green: {missed}'
 
 
-def killed(result, log, tests, marker):
-    return (result.returncode == 101 and 'panicked at' in log
-            and all(f'{PREFIX}{test} ... FAILED' in log
-                    and f'{marker} {case_name(test)}' in log
-                    for test in tests))
+def cell_hits(log, tests, marker):
+    """Split declared cells into dedicated-marker kills and unrelated panics."""
+    hit, unrelated = [], []
+    for test in tests:
+        if f'{PREFIX}{test} ... FAILED' not in log:
+            continue
+        (hit if f'{marker} {case_name(test)}' in log else unrelated).append(test)
+    return hit, unrelated
+
+
+def killed(result, log, name, tests, marker):
+    if result.returncode != 101 or 'panicked at' not in log:
+        return False
+    if 'error[' in log or 'could not compile' in log:
+        return False
+    hit, unrelated = cell_hits(log, tests, marker)
+    if unrelated:
+        return False
+    return len(hit) == len(tests) if name not in ANY_CELL else bool(hit)
 
 
 def record(results, name, status, reason):
@@ -156,13 +182,16 @@ def main():
     if not mutations or (selected and len(mutations) != len(selected)):
         raise SystemExit('unknown or duplicate mutation')
     check_anchors(mutations)
-    # Include the assertions, inputs and oracle in the same HEAD guard.
+    # Include the assertions, inputs and oracle in the same HEAD guard. The
+    # default is HEAD; NEGATIVE_BASELINE only lets a pre-submit sample point at
+    # a temporary `git stash create`/`commit-tree` object without moving HEAD.
+    baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
     paths = [STATS, ROUTER, FIXTURE / 'regression.rs', FIXTURE / 'oracle.json',
              FIXTURE / 'generate.mts', Path(__file__).resolve()]
     results = []
     for name, source, old, new, tests, marker in mutations:
         try:
-            with mutating_sources(ROOT, paths) as originals:
+            with mutating_sources(ROOT, paths, baseline=baseline) as originals:
                 original = originals[source].decode()
                 if original.count(old) != 1:
                     raise RuntimeError('stale anchor after locking')
@@ -180,16 +209,17 @@ def main():
                 if negative.returncode == 0:
                     record(results, name, 'SURVIVED', f'assertion did not fail on {tests}')
                     continue
-                if not killed(negative, log, tests, marker):
-                    reason = failure_reason(negative, log)
+                if not killed(negative, log, name, tests, marker):
+                    reason = failure_reason(negative, log, name, tests, marker)
                     record(results, name, 'INVALID', f'{reason}; expected RED on {tests}')
                     continue
-            with mutating_sources(ROOT, paths):
+                hits, _ = cell_hits(log, tests, marker)
+            with mutating_sources(ROOT, paths, baseline=baseline):
                 restored, log = run(out, f'{name}-restored', env)
                 if not passed(restored, log):
                     record(results, name, 'INVALID', 'restored run is not green')
                     continue
-            record(results, name, 'KILLED', ', '.join(tests))
+            record(results, name, 'KILLED', ', '.join(hits))
         except subprocess.TimeoutExpired:
             record(results, name, 'INVALID', 'timeout')
         except Exception as error:  # apparatus or setup error, never a kill
