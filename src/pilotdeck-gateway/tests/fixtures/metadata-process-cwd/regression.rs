@@ -114,12 +114,12 @@ fn cwd_worker() {
         .expect("#879 setup: runtime");
     let saved = std::env::current_dir().expect("#879 setup: saved cwd");
     std::env::set_current_dir(Path::new(&root).join("cwd")).expect("#879 setup: enter cwd");
-    let store = crate::config::store::ConfigStore::new(crate::config::store::StoreOptions::new(
-        &home,
-        input,
-        env.clone(),
-    ))
-    .expect("#879 setup: healthy store before deletion");
+    let mut store_options = crate::config::store::StoreOptions::new(&home, input, env.clone());
+    // input models the cwd/project root; "." selects that real project even
+    // for the empty-input case, without changing the absent-project contract.
+    store_options.project = Some(".".into());
+    let store = crate::config::store::ConfigStore::new(store_options)
+        .expect("#879 setup: healthy store before deletion");
     if name.ends_with("-deleted") {
         fs::remove_dir(Path::new(&root).join("cwd")).expect("#879 setup: delete cwd");
         assert!(
@@ -151,15 +151,33 @@ fn cwd_worker() {
             "#879 {entry} outcome: {name}"
         );
     }
-    let expected_error = row["global"]["outcome"].get("error");
+    let pilot_project = match crate::config::project_config_path(Path::new(input), Some(".")) {
+        Ok(path) => path_outcome(
+            Ok(path.expect("#879 pilot-project must select a project")),
+            &root,
+        ),
+        Err(error) => {
+            assert!(
+                !error.requires_host && error.diagnostics.is_empty(),
+                "#879 pilot-project cwd is not a validation/host error"
+            );
+            json!({"error": {"name":error.name, "code":error.code,
+                "message":error.message.to_utf8().expect("#879 pilot-project error UTF-8"), "syscall":"uv_cwd"}})
+        }
+    };
+    assert_eq!(
+        pilot_project, row["pilot-project"]["outcome"],
+        "#879 pilot-project outcome: {name}"
+    );
+    let expected_error = row["pilot-project"]["outcome"].get("error");
     for (entry, result) in [
         (
             "load-project",
-            crate::config::load_project(&home, Path::new(input), &env, None).map(|_| ()),
+            crate::config::load_project(&home, Path::new(input), &env, Some(".")).map(|_| ()),
         ),
         (
             "load-snapshot",
-            crate::config::load_snapshot(&home, Path::new(input), &env, None, 1.0, "fixture")
+            crate::config::load_snapshot(&home, Path::new(input), &env, Some("."), 1.0, "fixture")
                 .map(|_| ()),
         ),
         (
@@ -168,7 +186,9 @@ fn cwd_worker() {
         ),
     ] {
         if let Some(expected) = expected_error {
-            let error = result.expect_err("#879 config must propagate cwd failure");
+            let error = result.expect_err(&format!(
+                "#879 config must propagate cwd failure: {entry}/{name}"
+            ));
             assert_eq!(
                 json!({"name":error.name, "code":error.code, "message":error.message.to_utf8().expect("#879 config error UTF-8")}),
                 json!({"name":expected["name"], "code":expected["code"], "message":expected["message"]}),
@@ -186,10 +206,12 @@ fn cwd_worker() {
         let loaded =
             protocol::load_mcp_server_config(Path::new(input), config_home, &SystemEnvironment);
         if let Some(expected) = row[entry]["outcome"].get("error") {
-            let error = loaded.expect_err("#879 loader must propagate cwd failure");
+            let error = loaded.expect_err(&format!(
+                "#879 loader must propagate cwd failure: {entry}/{name}"
+            ));
             assert!(
                 matches!(error, protocol::McpConfigLoadError::Cwd(_)),
-                "#879 loader cwd variant"
+                "#879 loader cwd variant: {entry}/{name}"
             );
             assert_eq!(
                 error.to_string(),
@@ -232,10 +254,6 @@ fn cwd_worker() {
         };
         let expected = if id == "ordinary" {
             json!({"cwd":null,"command":"__PILOTDECK_PROJECT_ROOT__","args":["__PILOTDECK_FUNASR_RUNTIME_ROOT__"]})
-        } else if id == "browser-use" && name.starts_with("absolute-") && name.ends_with("-deleted")
-        {
-            // Existing host-injected BuiltinMcpPaths difference; TS also probes Playwright cwd.
-            json!({"cwd":"<root>/project","command":"__PILOTDECK_PROJECT_ROOT__","args":["__PILOTDECK_FUNASR_RUNTIME_ROOT__"]})
         } else {
             row[if id == "browser-use" { "browser" } else { id }]["outcome"].clone()
         };

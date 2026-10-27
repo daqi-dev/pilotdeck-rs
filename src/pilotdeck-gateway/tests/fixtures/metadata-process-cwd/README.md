@@ -17,4 +17,12 @@ node --disable-warning=ExperimentalWarning --import "$PDRS_BASELINE/node_modules
 
 重生成守卫：`metadata::process_cwd_tests::metadata_process_cwd_regenerates_identically`（ignored）。原始 stdout 由执行者保存，oracle 记录固定 commit 与原版文件 SHA-256。
 
-负控：`negative_controls.py <全新输出目录> [变异名…]`，调用者必须设置 CARGO_TARGET_DIR。22 个变异全部记 KILLED / SURVIVED / INVALID，任一非 KILLED 非零；过期锚点、未提交源码、编译或环境失败都记 INVALID，绝不当 kill。只使用默认 HEAD 守卫。整套多轮重编可能超过 20 分钟，提交后由协调者在宿主分批执行；本树未提交，不绕过守卫。
+负控：`negative_controls.py <全新输出目录> [变异名…]`，调用者必须设置 CARGO_TARGET_DIR。26 个变异全部记 KILLED / SURVIVED / INVALID，任一非 KILLED 非零；过期锚点、未提交源码、编译或环境失败都记 INVALID，绝不当 kill。只使用默认 HEAD 守卫。整套多轮重编可能超过 20 分钟，提交后由协调者在宿主分批执行；本树未提交，不绕过守卫。
+
+fix-r2：pilot-project 八格直接消费 oracle；loader/store 以 Some(".") 选择 input 对应的真实项目。
+project_config_path 保留 absent/empty project 跳过语义，其相对 cwd 路径失败会返回 uv_cwd。
+browser-use 不再覆盖 absolute-deleted 金样；删除未批准差异 A6.5-MCP-BROWSER-CWD-001。
+
+每个变异只改一个源码站点。`--check` 只检查锚点；`--compile-only <全新目录> [变异名…]`
+逐个应用并运行 `cargo check --tests` 后恢复，汇总 COMPILED / INVALID；正式运行也会先编译再判断 KILLED。
+两种模式都使用调用方的 CARGO_TARGET_DIR 和共享 HEAD 守卫。负控期间同树禁止其他 cargo。
