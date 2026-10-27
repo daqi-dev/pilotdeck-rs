@@ -11,6 +11,10 @@ literal loops, but overwriting keys is rejected. Byte anchors count raw bytes.
 Paths/constants are interpreted by a small AST allowlist. ANCHOR_COUNTS is an
 optional nonempty {name: positive integer} declaration of *source occurrences*, distinct
 from replace(..., 1)'s replacement limit. Unknown formats fail closed.
+
+Snapshot names have one Assign or one official mutating_sources with-as binding.
+Assigns are module-level except the exact existing main() declarations below.
+Dictionary keys retain their read expression; dynamic namespace writes fail closed.
 """
 import argparse
 import ast
@@ -117,10 +121,40 @@ SCOPED_ROWS = {
     ('turn-runner/recording_negative.py', 'text-value'): 'from_agent_input',
 }
 SOURCE_SUFFIXES = {'.rs', '.py', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'}
+# Existing declarative snapshots inside main(); other Assigns stay module-level.
+# These exceptions never permit a second binding or a conditional initializer.
+SNAPSHOT_FUNCTIONS = {
+    ('session-abort-contract/negative.py', 'originals'): 'main',
+    ('session-admission/negative.py', 'originals'): 'main',
+    ('session-owner/negative.py', 'originals'): 'main',
+    ('edgeclaw-capture-turn/negative.py', 'originals'): 'main',
+}
 
 
 class Unsupported(ValueError):
     pass
+
+
+def bound_names(node):
+    """Include Python bindings whose names are strings rather than Name nodes."""
+    if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        return {node.id}
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return {node.name}
+    if isinstance(node, ast.arg):
+        return {node.arg}
+    if isinstance(node, ast.alias):
+        return {node.asname or node.name.split('.')[0]}
+    if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+        return {node.name} if node.name else set()
+    if isinstance(node, ast.MatchMapping):
+        return {node.rest} if node.rest else set()
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return set(node.names)
+    # Added in Python 3.12; keep the checker usable with earlier interpreters.
+    if type(node).__name__ in ('TypeVar', 'ParamSpec', 'TypeVarTuple'):
+        return {node.name}
+    return set()
 
 
 @dataclass
@@ -141,8 +175,10 @@ class Static:
         self.script, self.root = script, root
         self.tree = tree
         self.defs = {}
+        self.captures = {}
         self.original_updates = []
         self.parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+        self.check_snapshot_bindings()
         for node in ast.walk(tree):
             if isinstance(node, ast.Name) and node.id in ('originals', 'snapshots') and isinstance(node.ctx, ast.Load):
                 parent = self.parents[node]
@@ -204,16 +240,110 @@ class Static:
         name = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
         return name if name in ('originals', 'snapshots') else None
 
+    def check_snapshot_bindings(self):
+        """Keep the original declaration; never resolve a read through a rebind."""
+        bindings = {name: [] for name in ('originals', 'snapshots')}
+        present = False
+        for node in ast.walk(self.tree):
+            present |= bool(self.snapshot_name(node))
+            for name in bound_names(node).intersection(bindings):
+                bindings[name].append(node)
+                present = True
+        for name, sites in bindings.items():
+            if not sites:
+                continue
+            if len(sites) != 1:
+                raise Unsupported(f'unsupported snapshot binding: {name} must have exactly one declaration')
+            site = sites[0]
+            declaration = self.parents.get(site)
+            if not isinstance(site, ast.Name) or not isinstance(site.ctx, ast.Store):
+                raise Unsupported(f'unsupported snapshot binding: {name}')
+            if (isinstance(declaration, ast.Assign) and len(declaration.targets) == 1
+                    and declaration.targets[0] is site):
+                self.check_snapshot_declaration(declaration, name)
+                continue
+            if (isinstance(declaration, ast.withitem) and declaration.optional_vars is site
+                    and isinstance(self.parents.get(declaration), ast.With)
+                    and isinstance(declaration.context_expr, ast.Call)
+                    and ast.unparse(declaration.context_expr.func) in
+                    ('mutating_sources', 'negative_process.mutating_sources')):
+                self.check_snapshot_constructor(declaration.context_expr)
+                self.captures[name] = declaration.context_expr
+                continue
+            raise Unsupported(f'unsupported snapshot binding: {name} requires Assign or mutating_sources with-as')
+        if present:
+            for node in ast.walk(self.tree):
+                # Reject aliases of the capability as well as direct calls.
+                symbol = (node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute)
+                          else node.name if isinstance(node, ast.alias) else None)
+                parent = self.parents.get(node)
+                # Existing runner diagnostics inspect a callable's display name.
+                # No callable/namespace capability is obtained by this shape.
+                if (symbol == 'getattr' and isinstance(parent, ast.Call) and parent.func is node
+                        and len(parent.args) in (2, 3) and not parent.keywords
+                        and isinstance(parent.args[1], ast.Constant) and parent.args[1].value == '__name__'):
+                    continue
+                if symbol in {'globals', 'locals', 'vars', 'setattr', 'delattr', 'exec', 'eval', '__dict__',
+                              'getattr', '__getattribute__', '__import__'}:
+                    raise Unsupported(f'unsupported snapshot dynamic write: {symbol}')
+
+    def check_snapshot_constructor(self, call):
+        symbol = 'mutating_sources' if isinstance(call.func, ast.Name) else 'negative_process'
+        bindings = [node for node in ast.walk(self.tree) if symbol in bound_names(node)]
+        if len(bindings) == 1 and isinstance(bindings[0], ast.alias):
+            imported = bindings[0]
+            statement = self.parents[imported]
+            official = (isinstance(statement, ast.ImportFrom) and statement.module == 'negative_process'
+                        and statement.level == 0 and imported.name == 'mutating_sources' if symbol == 'mutating_sources'
+                        else isinstance(statement, ast.Import) and imported.name == 'negative_process')
+            rewritten = any(isinstance(node, ast.Attribute) and node.attr == 'mutating_sources'
+                            and isinstance(node.ctx, (ast.Store, ast.Del)) for node in ast.walk(self.tree))
+            if (official and self.parents.get(statement) is self.tree and statement.lineno < call.lineno
+                    and not rewritten and len(call.args) == 2
+                    and all(k.arg in ('baseline', 'lock_timeout') for k in call.keywords)):
+                return
+        raise Unsupported('unsupported snapshot constructor: require unique official import and two arguments')
+
+    def check_snapshot_declaration(self, declaration, name):
+        relative = self.script.relative_to(self.root / 'src/pilotdeck-gateway/tests/fixtures').as_posix()
+        parent = self.parents.get(declaration)
+        while parent is not self.tree:
+            if isinstance(parent, ast.With) and all(
+                    isinstance(item.context_expr, ast.Call) and ast.unparse(item.context_expr.func) in
+                    ('mutating_sources', 'negative_process.mutating_sources') for item in parent.items):
+                parent = self.parents[parent]
+                continue
+            if (isinstance(parent, ast.FunctionDef) and self.parents.get(parent) is self.tree
+                    and SNAPSHOT_FUNCTIONS.get((relative, name)) == parent.name):
+                return
+            raise Unsupported(f'unsupported snapshot binding: {name} requires a module-level Assign')
+
     def named(self, name, line, local):
         if name in local:
             return local[name]
         if name == '__file__':
             return str(self.script)
+        if name in self.captures:
+            call = self.captures[name]
+            if call.lineno >= line or self.function_at(call.lineno) is not self.function_at(line):
+                raise Unsupported('unsupported snapshot read before capture or across function scopes')
+            base = self.value(call.args[0], call.lineno, local)
+            paths = self.value(call.args[1], call.lineno, local)
+            return {path: self.confined(Path(base) / path).read_bytes() for path in paths}
         choices = [(n, value) for n, value in self.defs.get(name, []) if n < line]
         if not choices:
             raise Unsupported(f'unresolved name {name}')
         n, value = choices[-1]
+        if name in ('originals', 'snapshots') and isinstance(value, ast.DictComp):
+            return {key: self.value(expression, n, bound)
+                    for key, expression, bound in self.snapshot_items(value, n, local)}
         return self.value(value, n, local)
+
+    def function_at(self, line):
+        frames = [node for node in ast.walk(self.tree)
+                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+                  and node.lineno <= line <= node.end_lineno]
+        return max(frames, key=lambda node: node.lineno, default=None)
 
     def confined(self, path):
         path = (self.root / path).resolve()
@@ -270,9 +400,6 @@ class Static:
             if isinstance(obj, Path) and node.attr in ('parent', 'parents', 'name', 'stem'):
                 return getattr(obj, node.attr)
         if isinstance(node, ast.Subscript):
-            if isinstance(node.value, ast.Name) and node.value.id == 'snapshots':
-                path = self.value(node.slice, line, local)
-                return self.confined(path).read_bytes()
             if isinstance(node.value, ast.Name) and node.value.id == 'originals':
                 key = self.value(node.slice, line, local)
                 definition = max((n for n, _ in self.defs.get('originals', []) if n < line), default=0)
@@ -314,6 +441,8 @@ class Static:
                         return obj.with_name(args[0])
                     if method == 'read_text' and not args:
                         return self.confined(obj).read_text(encoding='utf-8')
+                    if method == 'read_bytes' and not args:
+                        return self.confined(obj).read_bytes()
                     if method == 'glob' and len(args) == 1:
                         return sorted(self.confined(obj).glob(args[0]))
                 if isinstance(obj, bytes) and method == 'decode' and not args:
@@ -358,12 +487,12 @@ class Static:
         if isinstance(value, Path):
             return self.confined(value)
         if isinstance(value, str):
-            if value.startswith('src/'):
-                return self.confined(self.root / value)
-            if value.startswith('pilotdeck-gateway/'):
-                return self.confined(self.root / 'src' / value)
             # A filename key must map to its actual read path, never a basename search.
             definitions = [(n, mapping) for n, mapping in self.defs.get('originals', []) if n < line]
+            byte_definitions = [(n, mapping) for n, mapping in self.defs.get('snapshots', []) if n < line]
+            if definitions and byte_definitions:
+                raise Unsupported('ambiguous snapshot mappings for filename key')
+            definitions = definitions or byte_definitions
             definition = definitions[-1][0] if definitions else 0
             for n, subscript, expression in reversed(self.original_updates):
                 if definition < n < line and self.value(subscript, n, local) == value:
@@ -371,10 +500,18 @@ class Static:
                         raise Unsupported(f'removed snapshot key: {value!r}')
                     return self.snapshot_target(expression, n, local)
             for n, mapping in definitions[-1:]:
-                if isinstance(mapping, ast.Dict):
-                    for key, expression in zip(mapping.keys, mapping.values):
-                        if self.value(key, n, local) == value:
-                            return self.snapshot_target(expression, n, local)
+                matches = [(expression, bound) for key, expression, bound in self.snapshot_items(mapping, n, local)
+                           if key == value]
+                if matches:
+                    # Literal dictionaries have deterministic last-key-wins order.
+                    expression, bound = matches[-1]
+                    return self.snapshot_target(expression, n, bound)
+                if not value.startswith(('src/', 'pilotdeck-gateway/')):
+                    raise Unsupported(f'unresolved source path: missing snapshot key {value!r}')
+            if value.startswith('src/'):
+                return self.confined(self.root / value)
+            if value.startswith('pilotdeck-gateway/'):
+                return self.confined(self.root / 'src' / value)
             for base in ('source', 'SRC', 'module'):
                 try:
                     folder = self.named(base, line, local)
@@ -384,15 +521,39 @@ class Static:
                     return self.confined(folder / value)
         raise Unsupported(f'unresolved source path: {value!r}')
 
+    def snapshot_items(self, mapping, line, local):
+        """Keep the value AST and loop locals so keys retain their actual origin."""
+        if isinstance(mapping, ast.Dict):
+            for key, expression in zip(mapping.keys, mapping.values):
+                if key is None:
+                    raise Unsupported('unsupported snapshot dictionary unpacking')
+                yield self.value(key, line, local), expression, local
+        elif isinstance(mapping, ast.DictComp):
+            if (len(mapping.generators) != 1 or mapping.generators[0].ifs
+                    or mapping.generators[0].is_async):
+                raise Unsupported('only unconditional single-loop snapshot comprehensions are supported')
+            generator = mapping.generators[0]
+            keys = set()
+            for item in self.value(generator.iter, line, local):
+                bound = self.bind(generator.target, item, local)
+                key = self.value(mapping.key, line, bound)
+                # Glob/set iteration order is not a stable last-key-wins oracle.
+                if key in keys:
+                    raise Unsupported('ambiguous snapshot origin from duplicate comprehension keys')
+                keys.add(key)
+                yield key, mapping.value, bound
+        else:
+            raise Unsupported('unsupported snapshot mapping initializer')
+
     def snapshot_target(self, expression, line, local):
         """Follow the receiver through transforms, preserving the latest read."""
         if isinstance(expression, ast.Call) and isinstance(expression.func, ast.Attribute):
-            if expression.func.attr == 'read_text':
+            if expression.func.attr in ('read_text', 'read_bytes'):
                 return self.target(expression.func.value, line, local)
-            if expression.func.attr in ('replace', 'strip'):
+            if expression.func.attr in ('replace', 'strip', 'decode'):
                 return self.snapshot_target(expression.func.value, line, local)
         if (isinstance(expression, ast.Subscript) and isinstance(expression.value, ast.Name)
-                and expression.value.id == 'originals'):
+                and expression.value.id in ('originals', 'snapshots')):
             return self.target(expression.slice, line, local)
         raise Unsupported('unresolved source path: unsupported snapshot origin')
 
@@ -740,16 +901,7 @@ def submit_mapping(static, name):
                 if not (isinstance(parent, ast.Attribute) and parent.attr == 'get'
                         and isinstance(call, ast.Call) and call.func is parent):
                     raise Unsupported(f'{name}: unsupported override mapping escape')
-        binding = None
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            binding = node.name
-        elif isinstance(node, ast.arg):
-            binding = node.arg
-        elif isinstance(node, ast.alias):
-            binding = node.asname or node.name.split('.')[0]
-        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
-            binding = node.name
-        if binding == name:
+        if not isinstance(node, ast.Name) and name in bound_names(node):
             raise Unsupported(f'{name}: unsupported override mapping binding')
     result = static.value(value, line, {})
     if not isinstance(result, dict):
@@ -835,17 +987,7 @@ anchor_kind, anchor = mutant_anchor.get(name, ('message', marker))
                       if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)}
     watched = {'unwrap_site', 'anchor', 'anchor_kind'}
     for node in ast.walk(static.tree):
-        bindings = set()
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)) and node not in allowed_writes:
-            bindings.add(node.id)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node is not helper:
-            bindings.add(node.name)
-        elif isinstance(node, ast.arg):
-            bindings.add(node.arg)
-        elif isinstance(node, ast.alias):
-            bindings.add(node.asname or node.name.split('.')[0])
-        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
-            bindings.add(node.name)
+        bindings = bound_names(node) if node not in allowed_writes and node is not helper else set()
         if bindings & watched:
             raise Unsupported(f'{name}: unsupported location binding: {sorted(bindings & watched)}')
     rust = static.named('rust', calls[0].lineno, local)
