@@ -10,6 +10,7 @@ from pathlib import Path
 import selectors
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -17,8 +18,8 @@ import time
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, OPENSSL_CONFIG, ROOT, SCRIPT, SCENARIOS, baseline_path, digest, environment,
-                    env_summary, fixture, hashes, output_path, parity_lock, per_stream_scenarios, save, snapshot, staged_skills_identity)
+from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, MOCK_PORT, OPENSSL_CONFIG, ROOT, SCRIPT, SCENARIOS, TOKEN, baseline_path, digest, environment,
+                    env_summary, fixture, hashes, mock_gateway_scenarios, output_path, parity_lock, per_stream_scenarios, save, snapshot, staged_skills_identity)
 from compare import compare
 from policy import sandbox_profile
 
@@ -315,6 +316,110 @@ def preflight(output, runtime, profile, node):
     return evidence
 
 
+def ensure_loopback_free(port):
+    """The mock must own its port exclusively before any round starts (#933:
+    an occupied port blocks the whole run; there is no fallback port)."""
+    probe = socket.socket()
+    try:
+        probe.bind(('127.0.0.1', port))
+    except OSError as error:
+        raise Blocked(f'mock gateway port {port} is occupied; refusing to run: {error}') from error
+    finally:
+        probe.close()
+
+
+def mock_gateway_preflight(output, runtime, node, profile):
+    """Start the #933 mock gateway outside the sandbox, then prove the relaxed
+    profile still denies every network surface except 127.0.0.1:28999.
+
+    Returns (proc, evidence); the caller stops the registered process inside
+    the parity lock. Any failure stops the mock before propagating, so a dead
+    or half-started mock can never back a later round."""
+    ensure_loopback_free(MOCK_PORT)
+    logs = output / 'mock-gateway'
+    logs.mkdir()
+    stdout_log = (logs / 'stdout.log').open('wb')
+    stderr_log = (logs / 'stderr.log').open('wb')
+    proc = spawn([node, str(SCRIPT / 'mock_gateway.mjs'), str(MOCK_PORT)],
+                 env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C', 'PILOTDECK_MOCK_TOKEN': TOKEN},
+                 stdin=subprocess.DEVNULL, stdout=stdout_log, stderr=stderr_log,
+                 start_new_session=True, umask=0o077)
+    evidence = {'status': 'BLOCKED', 'errors': [], 'profilePath': str(profile),
+                'profileText': profile.read_text(), 'profileSha256': digest(profile),
+                'probeProfileSha256': digest(profile), 'mockProcess': {
+                    'pid': proc.pid, 'argv': [node, str(SCRIPT / 'mock_gateway.mjs'), str(MOCK_PORT)],
+                    'token': {'redacted': True, 'length': len(TOKEN),
+                              'sha256': hashlib.sha256(TOKEN.encode()).hexdigest()}}}
+    try:
+        deadline = time.monotonic() + 10
+        while True:
+            if proc.poll() is not None:
+                raise Blocked(f'mock gateway exited before readiness: code {proc.returncode}')
+            try:
+                with socket.create_connection(('127.0.0.1', MOCK_PORT), timeout=0.25):
+                    break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise Blocked('mock gateway did not accept connections within 10s')
+                time.sleep(0.05)
+        # The probe script itself must be readable under the relaxed profile;
+        # only runtime paths are, so run the copy inside the runtime fixture.
+        probe_script = runtime / 'gateway-isolation-probe.mjs'
+        shutil.copyfile(SCRIPT / 'gateway_isolation_probe.mjs', probe_script)
+        # Keep the path short: macOS sun_path is 104 bytes.
+        unix_path = runtime / 'tmp' / 'gw-probe.sock'
+        listener = socket.socket(socket.AF_UNIX)
+        listener.bind(str(unix_path))
+        listener.listen(4)
+        try:
+            record, streams, _ = capture(['/usr/bin/sandbox-exec', '-f', str(profile), node,
+                                          str(probe_script), str(MOCK_PORT), '18789', '29000', str(unix_path)],
+                                         environment(runtime, SCENARIOS[0]), runtime / 'project', b'', 10)
+        finally:
+            listener.close()
+            unix_path.unlink(missing_ok=True)
+        evidence['exitCode'] = record['exitCode']
+        evidence['audit'] = record['audit']
+        evidence['probeCleanup'] = {'unixSocketRemoved': not unix_path.exists()}
+        if not record['audit']['allStopped']:
+            evidence['errors'].append('gateway isolation probe cleanup failed')
+        if record['status'] != 'DONE' or record['exitCode'] != 0:
+            evidence['errors'].append('gateway isolation probe failed: '
+                                      + streams['stderr'].decode(errors='replace')[:1000])
+        else:
+            try:
+                evidence['gatewayProbe'] = json.loads(streams['stdout'])
+            except ValueError:
+                evidence['errors'].append('gateway isolation probe emitted no JSON report')
+        if not evidence['errors']:
+            evidence['status'] = 'PASS'
+        save(output / 'mock-gateway.json', evidence)
+        if not record['audit']['allStopped']:
+            raise CleanupBlocked('gateway isolation probe cleanup failed; retaining shared lock')
+        if evidence['status'] != 'PASS':
+            raise Blocked('; '.join(evidence['errors']))
+        return proc, evidence
+    except BaseException:
+        # The mock is never left running for a later round on any failure path.
+        audit = stop_group(proc)
+        if not audit['allStopped']:
+            raise CleanupBlocked('mock gateway cleanup failed; retaining shared lock')
+        raise
+    finally:
+        stdout_log.close()
+        stderr_log.close()
+
+
+def _denied_node_exec(record, streams):
+    """Classify a Node exec attempt under a profile that must deny it."""
+    stderr = streams['stderr']
+    denied = record['status'] == 'DONE' and record['timedOut'] is False and record['exitCode'] not in (None, 0) and not streams['stdout'] and b'execvp' in stderr and any(
+        s in stderr for s in (b'Operation not permitted', b'Permission denied'))
+    proof = {'denied': denied, 'exitCode': record['exitCode'], 'stdoutHex': streams['stdout'].hex(),
+             'stderrHex': stderr.hex(), 'audit': record['audit'], 'status': record['status'], 'timedOut': record['timedOut']}
+    return denied, proof
+
+
 def rust_isolation(output, runtime, profile, node, ts_isolation):
     """The common probe uses the TS policy; Rust is its restricted policy.
 
@@ -323,11 +428,7 @@ def rust_isolation(output, runtime, profile, node, ts_isolation):
     """
     record, streams, _ = capture(['/usr/bin/sandbox-exec', '-f', str(profile), node, '--version'],
                                  environment(runtime, SCENARIOS[0]), runtime / 'project', b'', 10)
-    stderr = streams['stderr']
-    denied = record['status'] == 'DONE' and record['timedOut'] is False and record['exitCode'] not in (None, 0) and not streams['stdout'] and b'execvp' in stderr and any(
-        s in stderr for s in (b'Operation not permitted', b'Permission denied'))
-    proof = {'denied': denied, 'exitCode': record['exitCode'], 'stdoutHex': streams['stdout'].hex(),
-             'stderrHex': stderr.hex(), 'audit': record['audit'], 'status': record['status'], 'timedOut': record['timedOut']}
+    denied, proof = _denied_node_exec(record, streams)
     evidence = {**ts_isolation, 'profilePath': str(profile), 'profileText': profile.read_text(),
                 'profileSha256': digest(profile), 'nodeExec': proof, 'status': 'PASS' if denied else 'BLOCKED'}
     save(output / 'rust-isolation.json', evidence)
@@ -338,9 +439,30 @@ def rust_isolation(output, runtime, profile, node, ts_isolation):
     return evidence
 
 
-def run_round(output, runtime, profile, isolation, side, provenance, timeout):
+def rust_mock_isolation(output, runtime, profile, node, ts_mock_isolation):
+    """#933: the rust-mock profile opens only 28999 outbound; Node exec must
+    stay denied under it, exactly like the base Rust policy."""
+    record, streams, _ = capture(['/usr/bin/sandbox-exec', '-f', str(profile), node, '--version'],
+                                 environment(runtime, SCENARIOS[0]), runtime / 'project', b'', 10)
+    denied, proof = _denied_node_exec(record, streams)
+    evidence = {**ts_mock_isolation, 'profilePath': str(profile), 'profileText': profile.read_text(),
+                'profileSha256': digest(profile), 'nodeExec': proof, 'status': 'PASS' if denied else 'BLOCKED'}
+    save(output / 'rust-mock-isolation.json', evidence)
+    if not record['audit']['allStopped']:
+        raise CleanupBlocked('Rust mock Node-denial probe cleanup failed')
+    if not denied:
+        raise Blocked('Rust mock sandbox did not prove Node exec denied')
+    return evidence
+
+
+def run_round(output, runtime, profile, isolation, side, provenance, timeout, mock_profile=None, mock_isolation=None):
     if baseline_identity(Path(provenance['baseline']['path'])) != provenance['baseline']:
         raise Blocked('baseline changed before round')
+    mock_ids = mock_gateway_scenarios(SCENARIOS)
+    if mock_ids and (mock_profile is None or mock_isolation is None):
+        # A marked scenario run under the base profile would fail to connect
+        # without any isolation evidence for the relaxed profile: refuse early.
+        raise Blocked(f'{side}: mock gateway scenarios {sorted(mock_ids)} require a mock profile and isolation evidence')
     folder = output / side
     folder.mkdir()
     (folder / 'cases').mkdir()
@@ -348,6 +470,8 @@ def run_round(output, runtime, profile, isolation, side, provenance, timeout):
     run = {'schema': 1, 'kind': 'cli-d0-recording', 'origin': 'live-os-sandbox', 'side': actual_side, 'status': 'RUNNING',
            'runtime': str(runtime), 'scenarios': [s['id'] for s in SCENARIOS],
            'apparatus': hashes(), 'isolation': isolation, 'provenance': provenance}
+    if mock_isolation is not None:
+        run['mockIsolation'] = mock_isolation
     save(folder / 'round.json', run)
     for scenario in SCENARIOS:
         case = folder / 'cases' / scenario['id']
@@ -359,14 +483,18 @@ def run_round(output, runtime, profile, isolation, side, provenance, timeout):
             command.append(str(Path(provenance['baseline']['path']) / 'dist/src/cli/pilotdeck.js'))
         command.extend(scenario['argv'])
         env = environment(runtime, scenario)
-        if digest(profile) != isolation['profileSha256']:
+        # #933: marked scenarios run under the relaxed mock profile; every other
+        # scenario keeps the byte-identical base profile of the previous batch.
+        scenario_profile = mock_profile if scenario['id'] in mock_ids else profile
+        binding = mock_isolation if (mock_isolation is not None and scenario['id'] in mock_ids) else isolation
+        if digest(scenario_profile) != binding['profileSha256']:
             raise Blocked('sandbox profile changed before scenario')
-        sandbox_argv = ['/usr/bin/sandbox-exec', '-f', str(profile), *command]
+        sandbox_argv = ['/usr/bin/sandbox-exec', '-f', str(scenario_profile), *command]
         record, streams, events = capture(sandbox_argv,
                                            env, runtime / 'project', bytes.fromhex(scenario['stdinHex']), timeout)
         record.update(argv=scenario['argv'], executedArgv=command, stdinHex=scenario['stdinHex'],
                       cwd=str(runtime / 'project'), env=env_summary(env), sandboxArgv=sandbox_argv,
-                      profileSha256=digest(profile))
+                      profileSha256=digest(scenario_profile))
         for name, value in streams.items():
             (case / f'{name}.bin').write_bytes(value)
         save(case / 'events.json', events)
@@ -376,7 +504,7 @@ def run_round(output, runtime, profile, isolation, side, provenance, timeout):
         print(f'{side} {scenario["id"]}: {record["status"]} exit={record["exitCode"]}', flush=True)
         if not record['audit']['allStopped']:
             raise CleanupBlocked(f'{side}/{scenario["id"]}: cleanup failed; retaining shared lock')
-        if record['profileSha256'] != isolation['profileSha256']:
+        if record['profileSha256'] != binding['profileSha256']:
             raise Blocked('sandbox profile changed during scenario')
         if record['status'] != 'DONE':
             raise Blocked(f'{side}/{scenario["id"]}: incomplete recording')
@@ -407,6 +535,7 @@ def main():
     staged = staged_skills = None
     try:
         per_stream_scenarios(SCENARIOS)
+        mock_ids = mock_gateway_scenarios(SCENARIOS)
         if sys.platform != 'darwin' or not Path('/usr/bin/sandbox-exec').is_file():
             raise Blocked('D0-pr1 requires macOS sandbox-exec; no unconfined fallback')
         baseline = baseline_path(args.baseline)
@@ -424,6 +553,10 @@ def main():
             raise Blocked('Rust candidate must not be the TS runtime or source')
         profile = output / 'ts.sb'
         profile.write_text(sandbox_profile(runtime, baseline, node['path'], 'ts'))
+        ts_mock_profile = None
+        if mock_ids:
+            ts_mock_profile = output / 'ts-mock.sb'
+            ts_mock_profile.write_text(sandbox_profile(runtime, baseline, node['path'], 'ts', mock_gateway=True))
         with parity_lock() as owner:
             # Stop before other runners may consider the lease expired. The
             # handler raises through capture's finally so owned groups are reaped.
@@ -433,40 +566,63 @@ def main():
             fixture(runtime)
             isolation = preflight(output, runtime, profile, node['path'])
             runtime.rename(output / 'preflight-tree')
-            first = run_round(output, runtime, profile, isolation, 'ts-1', provenance, args.timeout)
-            second = run_round(output, runtime, profile, isolation, 'ts-2', provenance, args.timeout)
-            summary['selfComparison'] = compare(first, second)
-            save(output / 'self-comparison.json', summary['selfComparison'])
-            if summary['selfComparison']['status'] != 'PASS':
-                summary['status'] = 'FAIL'
-            else:
-                from controls import run_controls
-                summary['controls'] = run_controls(first, output / 'controls')
-                summary['status'] = summary['controls']['status']
-                if args.rust_bin:
-                    staged = stage_rust(output, expected_rust, baseline)
-                    # The Rust round reads this copy, not baseline/skills; re-checked below.
-                    staged_skills = staged_skills_identity(output / 'rust-stage/skills')
-                    rust_profile = output / 'rust.sb'
-                    rust_profile.write_text(sandbox_profile(runtime, baseline, staged['path'], 'rust'))
+            mock_proc = mock_isolation = None
+            try:
+                if mock_ids:
                     fixture(runtime)
-                    rust_probe = rust_isolation(output, runtime, rust_profile, node['path'], isolation)
-                    runtime.rename(output / 'rust-preflight-tree')
-                    rust_provenance = {**expected_rust, 'stagedExecutable': staged, 'stagedSkills': staged_skills, 'baseline': identity,
-                                       'node': node, 'opensslConfig': OPENSSL_CONFIG}
-                    candidate = run_round(output, runtime, rust_profile, rust_probe, 'rust', rust_provenance, args.timeout)
-                    summary['rustComparison'] = compare(first, candidate, expected_rust)
-                    if summary['rustComparison']['status'] != 'PASS':
-                        summary['status'] = 'FAIL'
-            # Ensure baseline executable and observed source/build were unchanged during recording.
-            if executable(args.node) != node or baseline_identity(baseline) != identity:
-                raise Blocked('baseline/runtime changed during recording')
-            if args.rust_bin and rust_identity(args.rust_bin, args.rust_source) != expected_rust:
-                raise Blocked('Rust executable/source HEAD changed during recording')
-            if staged and executable(staged['path']) != staged:
-                raise Blocked('staged Rust binary changed during recording')
-            if staged and staged_skills_identity(output / 'rust-stage/skills') != staged_skills:
-                raise Blocked('staged Rust skills changed during recording')
+                    mock_proc, mock_isolation = mock_gateway_preflight(output, runtime, node['path'], ts_mock_profile)
+                    runtime.rename(output / 'mock-preflight-tree')
+                first = run_round(output, runtime, profile, isolation, 'ts-1', provenance, args.timeout,
+                                  mock_profile=ts_mock_profile, mock_isolation=mock_isolation)
+                second = run_round(output, runtime, profile, isolation, 'ts-2', provenance, args.timeout,
+                                   mock_profile=ts_mock_profile, mock_isolation=mock_isolation)
+                summary['selfComparison'] = compare(first, second)
+                save(output / 'self-comparison.json', summary['selfComparison'])
+                if summary['selfComparison']['status'] != 'PASS':
+                    summary['status'] = 'FAIL'
+                else:
+                    from controls import run_controls
+                    summary['controls'] = run_controls(first, output / 'controls')
+                    summary['status'] = summary['controls']['status']
+                    if args.rust_bin:
+                        staged = stage_rust(output, expected_rust, baseline)
+                        # The Rust round reads this copy, not baseline/skills; re-checked below.
+                        staged_skills = staged_skills_identity(output / 'rust-stage/skills')
+                        rust_profile = output / 'rust.sb'
+                        rust_profile.write_text(sandbox_profile(runtime, baseline, staged['path'], 'rust'))
+                        fixture(runtime)
+                        rust_probe = rust_isolation(output, runtime, rust_profile, node['path'], isolation)
+                        runtime.rename(output / 'rust-preflight-tree')
+                        rust_mock_profile = rust_mock = None
+                        if mock_ids:
+                            rust_mock_profile = output / 'rust-mock.sb'
+                            rust_mock_profile.write_text(sandbox_profile(runtime, baseline, staged['path'], 'rust', mock_gateway=True))
+                            fixture(runtime)
+                            rust_mock = rust_mock_isolation(output, runtime, rust_mock_profile, node['path'], mock_isolation)
+                            runtime.rename(output / 'rust-mock-preflight-tree')
+                        rust_provenance = {**expected_rust, 'stagedExecutable': staged, 'stagedSkills': staged_skills, 'baseline': identity,
+                                           'node': node, 'opensslConfig': OPENSSL_CONFIG}
+                        candidate = run_round(output, runtime, rust_profile, rust_probe, 'rust', rust_provenance, args.timeout,
+                                              mock_profile=rust_mock_profile, mock_isolation=rust_mock)
+                        summary['rustComparison'] = compare(first, candidate, expected_rust)
+                        if summary['rustComparison']['status'] != 'PASS':
+                            summary['status'] = 'FAIL'
+                # Ensure baseline executable and observed source/build were unchanged during recording.
+                if executable(args.node) != node or baseline_identity(baseline) != identity:
+                    raise Blocked('baseline/runtime changed during recording')
+                if args.rust_bin and rust_identity(args.rust_bin, args.rust_source) != expected_rust:
+                    raise Blocked('Rust executable/source HEAD changed during recording')
+                if staged and executable(staged['path']) != staged:
+                    raise Blocked('staged Rust binary changed during recording')
+                if staged and staged_skills_identity(output / 'rust-stage/skills') != staged_skills:
+                    raise Blocked('staged Rust skills changed during recording')
+            finally:
+                if mock_proc is not None:
+                    # All rounds share one mock; stop it while still holding the
+                    # lock so a surviving process keeps the lease retained.
+                    audit = stop_group(mock_proc)
+                    if not audit['allStopped']:
+                        raise CleanupBlocked('mock gateway cleanup failed; retaining shared lock')
     except (RuntimeError, OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as error:
         summary['status'] = 'BLOCKED'
         summary['error'] = str(error)

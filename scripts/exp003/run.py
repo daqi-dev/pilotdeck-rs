@@ -14,6 +14,10 @@ ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / '_tmp/20261014-exp003'
 SCRIPT = ROOT / 'scripts/exp003'
 TOKEN = 'exp003-isolated-test-token'
+# Admission tuple: the baseline products every exp003 stage needs on disk.
+# test_regressions.py references this constant instead of duplicating it (#245).
+REQUIRED_BASELINE_FILES = ('dist/src/cli/pilotdeck.js', 'dist/src/gateway/client/GatewayWsClient.js',
+                           'node_modules/tsx/dist/loader.mjs', 'ui/server/index.js')
 PROCESSES = []
 RESULTS = {}
 LISTENERS = []
@@ -185,9 +189,7 @@ def main():
     args = parser.parse_args()
     baseline = Path(args.baseline or os.environ.get('PDRS_BASELINE') or ROOT / 'resources/PilotDeck').resolve()
     # Gateway and driver use dist; ui/server uses the tsx loader.
-    missing = [name for name in ('dist/src/cli/pilotdeck.js', 'dist/src/gateway/client/GatewayWsClient.js',
-                                'node_modules/tsx/dist/loader.mjs', 'ui/server/index.js')
-               if not (baseline / name).is_file()]
+    missing = [name for name in REQUIRED_BASELINE_FILES if not (baseline / name).is_file()]
     if missing:
         parser.error(f'baseline at {baseline} lacks {missing}; pass --baseline or set PDRS_BASELINE')
     OUT.mkdir(parents=True, exist_ok=True)
