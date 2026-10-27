@@ -23,6 +23,8 @@ pub mod messages;
 mod node_fs;
 #[path = "retrieval/helpers.rs"]
 pub mod retrieval;
+#[path = "retrieval/retriever.rs"]
+pub mod retriever;
 pub mod storage;
 pub mod text;
 
