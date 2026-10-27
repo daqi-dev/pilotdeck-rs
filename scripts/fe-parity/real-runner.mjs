@@ -54,7 +54,7 @@ export function validateRealRegistration(rows, inventory, mode) {
 export async function startRuntime(env, log, children, entrypoint = 'real-launch.mjs') {
   assertRealExecutionEnv(env);
   await assertRealGitBin(env);
-  if (!['real-launch.mjs', 'deploy-launch.mjs'].includes(entrypoint)) throw new Error('Unknown owned runtime entrypoint');
+  if (!['real-launch.mjs', 'deploy-launch.mjs', 'coexist-launch.mjs'].includes(entrypoint)) throw new Error('Unknown owned runtime entrypoint');
   const handle = await open(log, 'wx');
   const child = spawn(process.execPath, [resolve(root, 'scripts/fe-parity', entrypoint)], {
     cwd: root, detached: true, stdio: ['ignore', handle.fd, handle.fd],

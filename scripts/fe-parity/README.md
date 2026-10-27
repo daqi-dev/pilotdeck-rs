@@ -416,7 +416,7 @@ R14 替代第 7/9/10/11/12 轮的 updater 父链条件：操作者已安装的�
 
 ## B 类部署矩阵（issue #58 第 4 项）
 
-`--suite blackbox-deploy --frontends old` 是旧前端的隔离部署入口；每格自动 **起 → 等原生 bridge/token 和模块 health → 跑 unchanged spec → 收自有进程组**。`--profiles` 默认 `staffdeck,minimal,replacement`，可选其中的非重复子集；native 两格始终作为辅助格纳入。新侧从 F3 才接入，本入口拒绝 new、old,new 和 `--reconcile`，不会把探针算成设置页实现。
+`--suite blackbox-deploy --frontends old` 是旧前端的隔离部署入口；每格自动 **起 → 等原生 bridge/token 和模块 health → 跑 unchanged spec → 收自有进程组**。`--profiles` 默认 `staffdeck,minimal,replacement`，可选其中的非重复子集；native 两格始终作为辅助格纳入。#927 起新侧配对入口开放：`--frontends new` / `old,new` 只把 native-auth 一格接到 #927 共存部署上如实记录（探针无设置页 → 原件 FAIL），其余格记 `NOT_RUN_NEW_SIDE`，**不改判分**；`--reconcile` 仍拒绝，不会把探针算成设置页实现。
 
 基线实际支持四种部署：StaffDeck（`products/pilotdeck-staffdeck-sop/profiles/formal-host.yaml`）、minimal（`formal-minimal.yaml`）、replacement（`replacement-knowledge.yaml`）、native（`formal-native.yaml`）。native 必须单列：`real-auth-native` 测 agent-route 设置，而 minimal 的 `frontend.businessModules: {}`（`formal-minimal.yaml:22–23`）没有这个设置模块。route-matrix 在 `ui/e2e/formal-route-matrix.spec.mjs:24–37` 检查 SOP/Knowledge 不渲染，只适用于 native/minimal/replacement，不能在启用这些页面的 StaffDeck 上假跑。
 
@@ -511,3 +511,26 @@ B 原始行/分区/总体继续 **FAIL**，floor 仍 9 身份 / 18 实例，old2
 `failureSignature` 和 `matchesStaleFailure` 语义原样：timedOut 不生成签名。`compareStaleRows` 对标记身份始终输出 **NEEDS_HUMAN_CONFIRMATION**、计数 `needsHumanConfirmation`，不加入 matchingIds，也不消费失败诊断；即使双侧恰好都在登记断言 failed，整体仍 FAIL。原始 PASS/FAIL/timeout、provenance/retry/report errors 均保留；没有人工确认的自动开绿入口。未标记身份继续原 MATCHED_FAIL/FAIL 规则，D 的 4 条、17 执行 / 11 cascade / 13 PASS 校准不变。B 单侧 JSON/console/Markdown 也显示待确认及证据，exact `matchedFailCondition` 只说明当前原件是否满足旧侧断言条件，不代表自动配对；formal mobile 条件满足、desktop 不满足是正常结果。
 
 离线自检增加缺证据、借身份、exact failed/timeout/PASS/skip 配对仍红和未标记身份通过正控。old2/old3 原件重新对账均 **FAIL，5/9 身份、11/18 实例，1 个待确认身份**。完整复核、验证记录、更正后的第 3 轮结论及 `coordinator-b-old4` 命令见 `_tmp/RESULT.md`「第 4 轮」。本轮不提交、不改 state/、不启动需要 listen 的部分；P2 esbuild/短命 node env 证据由协调者另记。
+
+
+## #927 F3 前置：真实部署双壳共存验证包
+
+`node scripts/fe-parity/run.mjs --suite coexist --frontends old` 落地计划 004 F3 选项 A 的最小可回退双入口托管，并实测双向导航 × 共享键 × 回退开关。选 A 而非 B（exp007 前置反代）的判断：B 已有 mock 级证据且明确不能当 F1/S5 放行依据，本包要补的正是「真实 A patch 零证据」这一格；A 的补丁约 20 行、单一 env 开关（关 = 字节等价回旧行为）、独立 diff 只打进部署副本。
+
+部署副本 `_build/fe-parity/coexist-deploy/pilotdeck/`：rsync 只读基线（排除 .git/node_modules/dist/work/evidence，node_modules 符号链接回基线只读使用）；`ui/dist` 来自 `build-old.mjs` 信任产物（基线里来历不明的旧 dist 不用）；`ui/new-shell` 由 `build-new.py` 探针产物 + `ui-rs/shared/boundary.js` + xterm 资产组装，引用统一重写到 `/probe/leptos` 前缀；A 补丁打在副本 `ui/server/index.js`（`/probe/leptos` 静态挂载 + `app.get('*')` 顶部 `PILOTDECK_NEW_SHELL=1` 时的 `/settings` 严格段边界分支），原件与补丁后文件留档 `a-patch.original.js` / `a-patch.patched.js`。旧 bundle 的 `dist/index.html` 注入一行 boundary-boot（先于 React router 的 module script）。
+
+runtime 为基线自己的 `createRuntimeSupervisor` **start-built** 模式（server + 冻结 TS gateway，无 Vite；SPA 由 ui/server 静态 + catchall 提供，A 补丁才会被真实命中）。端口 28420（server，即 origin）/28421（gateway）/28422（预留 vite），mock LLM 28379，全部 127.0.0.1。隔离 HOME/XDG/TMP/PILOT_HOME 与 D 同款；`coexist-launch.mjs` 在 spawn 边界断言 `assertCoexistExecutionEnv`。
+
+三阶段各为独立部署（同一副本、各自 runDir/auth.db）：**valid**（配置 ready）跑 S1/N1/N3/N3b/N4/N5/C1/C2a/C2b/C3/D1；**invalid**（agent.model 指向未声明 provider，旧壳渲染 ModelConfigurationErrorScreen）跑 N2（唯一 `<Link to="/settings/models">` 入口）；**rollback**（开关 unset 重启）跑 R1/R2（`/settings` 回旧 bundle、`.pilotdeck-settings-app` 真渲染）。导航判据用 `window.__coexistMarker`：跨壳必须整页加载（marker 消失），SPA 路由则保留。D3（流式断口帧）不在本包冒充验证，待 F5；跨壳视觉闪烁等仅人眼项在 RESULT 单列「待人工验收」。
+
+跨壳 history 遍历的实测边界（N3/N3b，#927 发现，非本包机制缺陷）：后退离开新壳落旧壳成立；但**由旧壳出发的任何遍历都回不到新壳**——冻结 TS server 对 shell 文档发 `Cache-Control: no-store`（旧壳永不命中 BFCache，后退入旧壳必整页重载），重载启动时 `AppShellV2.tsx:207-223` 的 URL 同步 effect 调 `handleProjectSelect → navigate('/')`（pushState），把跨壳前进项清掉并隔离已迁前缀。两项均在冻结 TS 侧；N3b 将该行为特征化为断言（防静默假装前进入新壳可用），修复路径待 F3 定夺（改 no-store / 去启动 push / 接受不可前进入新壳）。
+
+共享键契约：C1 登录态互通（探针以同一 `auth-token` 挂载，其 `/api/projects/probe/sessions` 请求 Authorization 头 === 旧壳 token，返回旧壳无需重登）；C2 草稿跨壳保留（旧壳 `draft_input_<project>:<sessionId|'new'>` 与探针 `draft_input_probe:s` 双向，丢即 FAIL）；C3 跨跳转共享键不变。已知回退形态如实记录：rollback 下旧壳 sidebar navigate 仍被 client boundary 硬跳一次，由旧 bundle 在 `/settings` 整页加载接住。
+
+离线正控/负控：`node --test scripts/fe-parity/coexist-boundary.test.mjs scripts/fe-parity/coexist-patch.test.mjs`（无 listen/Chrome）。浏览器级负控按本仓负控规则放 `src/pilotdeck-gateway/tests/fixtures/fe-coexist/negative_controls.py`（声明式 mutations 表；新增文件提交前不在 HEAD，`mutating_sources` 拒跑时由协调者宿主执行）。B 新侧配对：`--suite blackbox-deploy --frontends new`（或 `old,new`）只跑 native-auth 格（冻结 `real-auth-native.spec.mjs` 原样对共存部署），其余格 `NOT_RUN_NEW_SIDE` 列理由；新侧结果不参与判分变绿。
+
+```sh
+node scripts/fe-parity/run.mjs --suite coexist --frontends old
+node scripts/fe-parity/run.mjs --suite blackbox-deploy --frontends new   # 新侧配对（native-auth only，诚实 FAIL）
+node --test scripts/fe-parity/coexist-boundary.test.mjs scripts/fe-parity/coexist-patch.test.mjs
+```

@@ -1,6 +1,8 @@
 // Probe-only router/history boundary. Install before either router is initialized.
-export function installBoundary(win, hardNavigate = (url, replace) => replace ? win.location.replace(url) : win.location.assign(url)) {
-  const isNew = pathname => pathname === '/probe' || pathname.startsWith('/probe/');
+// prefixes defaults to the exp007 probe prefix; the #927 coexistence deployment
+// installs it with ['/settings'] so the migrated prefix switches bundles.
+export function installBoundary(win, hardNavigate = (url, replace) => replace ? win.location.replace(url) : win.location.assign(url), prefixes = ['/probe']) {
+  const isNew = pathname => prefixes.some(prefix => pathname === prefix || pathname.startsWith(prefix + '/'));
   const loadedShell = isNew(win.location.pathname);
   const history = win.history;
   const originalPush = history.pushState;

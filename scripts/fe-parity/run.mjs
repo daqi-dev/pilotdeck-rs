@@ -14,6 +14,8 @@ import { startFrontend } from './serve.mjs';
 import { runReal, assertCanonicalAncestor } from './real-runner.mjs';
 import { runDeploy } from './deploy-runner.mjs';
 import { assertDeployExecutionEnv, selectDeployCells } from './deploy-matrix.mjs';
+import { assertCoexistExecutionEnv } from './coexist-deploy.mjs';
+import { runCoexist, runCoexistNativeAuth } from './coexist-runner.mjs';
 const { values } = parseArgs({ options: {
   help: { type: 'boolean' }, 'self-check': { type: 'boolean' }, 'network-self-check': { type: 'boolean' },
   reconcile: { type: 'boolean' }, suite: { type: 'string', default: 'skeleton' },
@@ -32,6 +34,8 @@ if (values.help) {
   node scripts/fe-parity/run.mjs --suite real --real-mode all --frontends old
   node scripts/fe-parity/run.mjs --suite real --real-mode onboarding --frontends old
   node scripts/fe-parity/run.mjs --suite blackbox-deploy --profiles staffdeck,minimal,replacement --frontends old
+  node scripts/fe-parity/run.mjs --suite blackbox-deploy --frontends new      (#927 pairing: new side = native-auth via the coexistence deployment, honest record, no scoring change)
+  node scripts/fe-parity/run.mjs --suite coexist --frontends old              (#927 F3 coexistence phases: valid/invalid/rollback)
   node scripts/fe-parity/run.mjs --suite real --reconcile --frontends old,new --old-report <ready JSON> --old-report <onboarding JSON> --new-report <ready JSON> --new-report <onboarding JSON>
   node scripts/fe-parity/run.mjs --suite skeleton --frontends old,new
   node scripts/fe-parity/run.mjs --reconcile --old-report <JSON> --new-report <JSON>
@@ -47,15 +51,20 @@ Single-side PASS means calibration only. The probe's missing chat is FAIL, never
 Mock-UI suites: 28376/28377/28378. Real: 3010/5180/18798, onboarding 3011/5181/18799, LLM 28379.
 All bind 127.0.0.1; real requires --frontends old, checks idle ports, keeps data in worktree real-run/.
 B: 28410/28411/28412, replacement Knowledge 28413, shared mock LLM 28379; both native auxiliary cells included.
+#927 coexist: 28420/28421 (server/gateway; start-built, origin = server port) + shared mock LLM 28379.
 B outputs strict per-cell accounting. Missing StaffDeck runtime stays BLOCKED/FAIL, never skip/PASS.
 See README.md for known incomplete mock deployment coverage and coordinator commands.`);
   process.exit(0);
 }
 const frontends = values.frontends.split(','), profiles = values.profiles.split(',');
 if (!['old', 'new', 'old,new'].includes(values.frontends)) throw new Error('frontends must be old, new or old,new');
-if (!['skeleton', 'streaming-scroll', 'a-class', 'baseline', 'real', 'blackbox-deploy'].includes(values.suite)) throw new Error('Unknown suite');
-const isolatedSuite = ['real', 'blackbox-deploy'].includes(values.suite);
-if (values.suite === 'blackbox-deploy' && (values.frontends !== 'old' || values.reconcile || values['network-self-check'])) throw new Error('B deployment currently supports old execution/offline self-check only; new starts at F3');
+if (!['skeleton', 'streaming-scroll', 'a-class', 'baseline', 'real', 'blackbox-deploy', 'coexist'].includes(values.suite)) throw new Error('Unknown suite');
+const isolatedSuite = ['real', 'blackbox-deploy', 'coexist'].includes(values.suite);
+// #927: B opens its new-side matrix entry for pairing only. The new side runs
+// exactly the native-auth cell against the F3 coexistence deployment; every
+// other cell is recorded NOT_RUN_NEW_SIDE. It never changes B scoring.
+if (values.suite === 'blackbox-deploy' && (values.reconcile || values['network-self-check'])) throw new Error('B deployment supports execution/offline self-check only');
+if (values.suite === 'coexist' && (values.frontends !== 'old' || values.reconcile || values['network-self-check'])) throw new Error('Coexist runs the F3 phases itself; pairing entry points live in blackbox-deploy');
 if (!['all', 'ready', 'onboarding'].includes(values['real-mode'])) throw new Error('Invalid real mode');
 if (values.suite === 'real') {
   if (values['network-self-check']) throw new Error('Real does not support network-self-check');
@@ -90,7 +99,9 @@ async function command(args, env = {}) {
     // The whole-baseline inventory must retain its historical undefined route
     // title. B's profile-bearing env is used only for explicit cell listings.
     if (!env.PILOTDECK_E2E_RUN_DIR) env = realExecutionEnv(process.env, { output, runDir: resolve(output, 'preflight'), mode: 'ready' });
-    if (env.FE_SUITE === 'blackbox-deploy') assertDeployExecutionEnv(env); else assertRealExecutionEnv(env);
+    if (env.FE_SUITE === 'blackbox-deploy') assertDeployExecutionEnv(env);
+    else if (env.FE_SUITE === 'coexist') assertCoexistExecutionEnv(env);
+    else assertRealExecutionEnv(env);
     await prepareRealOSDirectories(env);
   }
   return new Promise((resolveResult, reject) => {
@@ -102,7 +113,7 @@ async function command(args, env = {}) {
       cwd: root, detached: true, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'],
     });
     // Only this owned CLI (never the runtime supervisor) can authorize Chrome.
-    child.fePlaywright = ['real.config.mjs', 'deploy.config.mjs'].some(file => args.includes(resolve(root, 'scripts/fe-parity', file))) && !args.includes('--list');
+    child.fePlaywright = ['real.config.mjs', 'deploy.config.mjs', 'coexist.config.mjs', 'coexist-native.config.mjs'].some(file => args.includes(resolve(root, 'scripts/fe-parity', file))) && !args.includes('--list');
     child.feBrowserTmp = env.TMPDIR;
     if (isolatedSuite) child.feServiceHome = env.HOME;
     children.add(child); let stdout = '', stderr = '';
@@ -204,23 +215,67 @@ try {
   } else if (values.suite === 'blackbox-deploy') {
     result.offline = await selfCheck({ assets: false, frontends });
     if (result.offline.status !== 'PASS') throw new Error('B deployment offline preflight failed; see result.json');
-    const deploy = await runDeploy({ output, inventory, cells: selectDeployCells(profiles), command, children, isInterrupted: () => interrupted });
-    result.deploy = deploy;
-    result.accounting = { old: deploy.accounting, status: deploy.accounting.status, errors: deploy.accounting.errors };
-    printAccount('old', deploy.accounting);
-    for (const cell of Object.values(deploy.accounting.partitions)) console.log(`B ${cell.cell}: 应执行数 ${cell.expected} vs 实际执行数 ${cell.executed}; profile 排除 ${cell.profileExclusions}; ${cell.status}`);
-    console.log(`B 全矩阵实例 ${deploy.accounting.instanceExecuted}/${deploy.accounting.instanceExpected}; BLOCKED ${deploy.accounting.blocked}; TCP/process audit ${deploy.audit.status}`);
-    for (const row of deploy.accounting.baselineStale) console.log(`B baseline-stale ${row.title}: ${row.status}; MATCHED_FAIL 旧侧条件 ${row.matchedFailCondition ? '满足' : '不满足'}${row.pairedConsistency === 'NEEDS_HUMAN_CONFIRMATION' ? '（旧侧结果不确定：不计 MATCHED_FAIL，需人工确认）' : ''}; ${row.pairedConsistency}; 行为覆盖 0`);
-    for (const error of deploy.accounting.errors) console.error(error);
-    await writeFile(resolve(output, 'deploy-parity.md'), table(deploy.accounting.rows, result.accounting) + '\n\n' +
-      '| 部署格 | 应执行 | 实际执行 | profile 排除 | 状态 |\n|---|---|---|---|---|\n' +
-      Object.values(deploy.accounting.partitions).map(cell => `| ${cell.cell} | ${cell.expected} | ${cell.executed} | ${cell.profileExclusions} | ${cell.status} |`).join('\n') + '\n\n' +
-      '| 基线失效身份 | 原始状态 | MATCHED_FAIL 旧侧条件 | 双侧一致性 | 行为覆盖 | 证明 |\n|---|---|---|---|---|---|\n' +
-      deploy.accounting.baselineStale.map(row => `| ${row.title} | ${row.status} | ${row.matchedFailCondition ? '满足' : '不满足'} | ${row.pairedConsistency} | 0 | ${row.baselineStale.proofScript}${row.baselineStale.oldSideNondeterminism ? `; ${row.baselineStale.oldSideNondeterminism.proofScript} --verify; trace 路径/哈希/时间戳见 result.json` : ''} |`).join('\n') + `\n\nNEEDS_HUMAN_CONFIRMATION：${deploy.accounting.needsHumanConfirmation} 身份；整体 ${deploy.accounting.status}。\n`);
-    result.baselineExecution = { expected: inventory.length, actual: deploy.accounting.executed,
-      status: 'PARTIAL_B_SUITE_ONLY', reason: 'Only requested B profiles/native auxiliary; source denominator 72 unchanged; A/C/D NOT_RUN' };
-    result.status = deploy.accounting.status === 'PASS'
-      ? (profiles.length === 3 ? 'PASS_SINGLE_FRONTEND_ONLY' : 'PASS_PARTIAL_B_PROFILES_ONLY') : 'FAIL';
+    let deploy = null, native = null;
+    if (frontends.includes('old')) {
+      deploy = await runDeploy({ output, inventory, cells: selectDeployCells(profiles), command, children, isInterrupted: () => interrupted });
+      result.deploy = deploy;
+      result.accounting = { old: deploy.accounting, status: deploy.accounting.status, errors: deploy.accounting.errors };
+      printAccount('old', deploy.accounting);
+      for (const cell of Object.values(deploy.accounting.partitions)) console.log(`B ${cell.cell}: 应执行数 ${cell.expected} vs 实际执行数 ${cell.executed}; profile 排除 ${cell.profileExclusions}; ${cell.status}`);
+      console.log(`B 全矩阵实例 ${deploy.accounting.instanceExecuted}/${deploy.accounting.instanceExpected}; BLOCKED ${deploy.accounting.blocked}; TCP/process audit ${deploy.audit.status}`);
+      for (const row of deploy.accounting.baselineStale) console.log(`B baseline-stale ${row.title}: ${row.status}; MATCHED_FAIL 旧侧条件 ${row.matchedFailCondition ? '满足' : '不满足'}${row.pairedConsistency === 'NEEDS_HUMAN_CONFIRMATION' ? '（旧侧结果不确定：不计 MATCHED_FAIL，需人工确认）' : ''}; ${row.pairedConsistency}; 行为覆盖 0`);
+      for (const error of deploy.accounting.errors) console.error(error);
+    }
+    if (frontends.includes('new')) {
+      // #927 pairing entry: the new side is the #927 coexistence deployment
+      // running the frozen native-auth spec verbatim. Honest record only; the
+      // new side can never turn the B suite green (no scoring change).
+      native = await runCoexistNativeAuth({ output, command, children, isInterrupted: () => interrupted });
+      result.deployNew = native;
+      for (const row of native.newSide.rows) console.log(`B 新侧 ${row.cell}: ${row.status} — ${row.reason}`);
+      for (const row of native.accounting.rows) console.log(`B 新侧配对原件 ${row.title}: ${row.status}`);
+      for (const error of native.accounting.errors) console.error(error);
+    }
+    await writeFile(resolve(output, 'deploy-parity.md'), (deploy
+      ? table(deploy.accounting.rows, result.accounting) + '\n\n'
+        + '| 部署格 | 应执行 | 实际执行 | profile 排除 | 状态 |\n|---|---|---|---|---|\n'
+        + Object.values(deploy.accounting.partitions).map(cell => `| ${cell.cell} | ${cell.expected} | ${cell.executed} | ${cell.profileExclusions} | ${cell.status} |`).join('\n') + '\n\n'
+        + '| 基线失效身份 | 原始状态 | MATCHED_FAIL 旧侧条件 | 双侧一致性 | 行为覆盖 | 证明 |\n|---|---|---|---|---|---|\n'
+        + deploy.accounting.baselineStale.map(row => `| ${row.title} | ${row.status} | ${row.matchedFailCondition ? '满足' : '不满足'} | ${row.pairedConsistency} | 0 | ${row.baselineStale.proofScript}${row.baselineStale.oldSideNondeterminism ? `; ${row.baselineStale.oldSideNondeterminism.proofScript} --verify; trace 路径/哈希/时间戳见 result.json` : ''} |`).join('\n')
+        + `\n\nNEEDS_HUMAN_CONFIRMATION：${deploy.accounting.needsHumanConfirmation} 身份；旧侧整体 ${deploy.accounting.status}。\n\n`
+      : '') + (native
+        ? '| B 新侧（#927 配对，不改判分） | 状态 | 理由 |\n|---|---|---|\n'
+          + native.newSide.rows.map(row => `| ${row.cell} | ${row.status} | ${row.reason} |`).join('\n') + '\n'
+        : ''));
+    if (deploy) {
+      result.baselineExecution = { expected: inventory.length, actual: deploy.accounting.executed,
+        status: 'PARTIAL_B_SUITE_ONLY', reason: 'Only requested B profiles/native auxiliary; source denominator 72 unchanged; A/C/D NOT_RUN' };
+    } else {
+      result.baselineExecution = { expected: inventory.length, actual: 0, status: 'NOT_RUN_NEW_SIDE_ONLY', reason: 'B new-side pairing only; the old side was not requested' };
+    }
+    if (native?.newSide.rows.some(row => row.status === 'FAIL')) {
+      // The new side's honest record (the probe has no settings pages yet).
+      result.status = 'FAIL';
+    } else if (deploy) {
+      result.status = deploy.accounting.status === 'PASS'
+        ? (profiles.length === 3 ? 'PASS_SINGLE_FRONTEND_ONLY' : 'PASS_PARTIAL_B_PROFILES_ONLY') : 'FAIL';
+    } else result.status = 'FAIL';
+  } else if (values.suite === 'coexist') {
+    result.offline = await selfCheck({ assets: false, frontends });
+    if (result.offline.status !== 'PASS') throw new Error('Coexist preflight failed; see result.json');
+    const coexist = await runCoexist({ output, command, children, isInterrupted: () => interrupted });
+    result.coexist = coexist;
+    result.accounting = { old: coexist.accounting, status: coexist.accounting.status, errors: coexist.accounting.errors };
+    for (const row of coexist.accounting.rows) console.log(`coexist ${row.phase} ${row.status} ${row.title}${row.reason ? ` — ${row.reason}` : ''}`);
+    for (const error of coexist.accounting.errors) console.error(error);
+    const cell = value => String(value).replaceAll('|', '\\|').replaceAll('\n', ' ');
+    await writeFile(resolve(output, 'coexist-parity.md'), '# F3 双壳共存矩阵（#927）\n\n'
+      + '| 阶段 | 用例 | 状态 | 理由 |\n|---|---|---|---|\n'
+      + coexist.accounting.rows.map(row => `| ${cell(row.phase)} | ${cell(row.title)} | ${cell(row.status)} | ${cell(row.reason ?? '')} |`).join('\n')
+      + `\n\n应执行 ${coexist.accounting.expected}；实际通过 ${coexist.accounting.executed}；TCP/process audit ${coexist.audit.status}。\n`);
+    result.baselineExecution = { expected: inventory.length, actual: 0, status: 'NOT_RUN_COEXIST_ONLY',
+      reason: 'F3 coexistence package has its own denominator; the baseline 72 were not executed' };
+    result.status = coexist.accounting.status === 'PASS' ? 'PASS_COEXIST_SUITE_ONLY' : 'FAIL';
   } else if (values.suite === 'real' && values.reconcile) {
     result.offline = await selfCheck({ assets: false, frontends });
     if (result.offline.status !== 'PASS') throw new Error('Real pair offline preflight failed; see result.json');
