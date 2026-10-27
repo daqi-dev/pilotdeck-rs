@@ -9,6 +9,7 @@ pub mod connection;
 pub mod context;
 pub mod hooks;
 pub mod interaction;
+pub mod manager;
 pub mod mcp;
 pub mod memory;
 pub mod model;
