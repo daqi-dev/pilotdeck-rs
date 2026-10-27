@@ -257,9 +257,11 @@ def environment(runtime, scenario):
     env = {key: str(runtime / value) for key, value in paths.items()}
     env.update(LANG='C', LC_ALL='C', TZ='UTC', TERM='dumb', NO_COLOR='1',
                ANALYTICS_ENABLED='0', DOCKER_CONTAINER='1', COMMIT_HASH=HEAD,
-               PILOTDECK_GATEWAY_PORT='28999', PILOTDECK_GATEWAY_HOST='127.0.0.1',
-               PILOTDECK_GATEWAY_URL='ws://127.0.0.1:28999/ws',
-               PILOTDECK_SDK_GATEWAY_URL='ws://127.0.0.1:28999/ws')
+               # #933: all four gateway coordinates derive from MOCK_PORT, the
+               # same constant the sandbox allow rule is built from.
+               PILOTDECK_GATEWAY_PORT=str(MOCK_PORT), PILOTDECK_GATEWAY_HOST='127.0.0.1',
+               PILOTDECK_GATEWAY_URL=f'ws://127.0.0.1:{MOCK_PORT}/ws',
+               PILOTDECK_SDK_GATEWAY_URL=f'ws://127.0.0.1:{MOCK_PORT}/ws')
     if scenario['token']:
         env['PILOTDECK_SDK_AUTH_TOKEN'] = TOKEN
     # Scenario-specific variables naming a path under the runtime; they may add

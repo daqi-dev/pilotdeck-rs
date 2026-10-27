@@ -1,4 +1,5 @@
 """Contract tests use clearly synthetic recordings, never calibration evidence."""
+import base64
 import hashlib
 from contextlib import contextmanager, nullcontext, redirect_stdout
 import io
@@ -18,12 +19,32 @@ from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, MOCK_PORT, OPENSSL_CONFIG, SCRIPT, SCENARIOS, TOKEN, baseline_path, environment, env_summary, fixture,
+from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, MOCK_PORT, OPENSSL_CONFIG, ROOT, SCRIPT, SCENARIOS, TOKEN, baseline_path, environment, env_summary, fixture,
                     digest_plain, read_plain, hashes, initial_tree, mock_gateway_scenarios, output_path, parity_lock, per_stream_scenarios, save, snapshot, staged_skills_identity)
 from compare import coalesce, compare, comparison_view, expected_stdout, load_round, GATEWAY_PROBE_CHECKS, PROBE_CHECKS
 from controls import run_controls
 from host_negative_controls import check_exec_control, main as host_control_main
-from run_round import baseline_identity, capture, check_budget, ensure_loopback_free, main, mock_gateway_preflight, run_round, rust_isolation, sandbox_profile, stage_rust
+from policy import MOCK_GATEWAY_ALLOW
+from run_round import baseline_identity, capture, check_budget, main, mock_gateway_preflight, run_round, rust_isolation, sandbox_profile, stage_rust, stop_group
+
+
+def canonical_profile_digest(text, script_dir=SCRIPT):
+    """#933-2: digest a sandbox profile with the checkout paths normalized.
+
+    With the test's synthetic runtime/baseline/binary inputs, the only
+    checkout-dependent content of a profile is the probe-script entry and the
+    ancestor directory objects of its tree (a run's live runtime lives under
+    the same tree). Erasing that whole chain before hashing mirrors the
+    scenarios.md oracle convention ({runtime} binding): the pinned digest must
+    hold in any checkout, whatever its path or depth, not only in the one that
+    first recorded it. Synthetic inputs and system paths pass through; the
+    root '/' itself is shared with fixed system paths and is never erased."""
+    canonical = text.replace(f'(literal "{script_dir}/isolation_probe.mjs")',
+                             '(literal "<probe-script>")')
+    for path in (script_dir, *script_dir.parents):
+        if str(path) != '/':
+            canonical = canonical.replace(f' (literal "{path}")', '')
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def bind_policy(run):
@@ -909,13 +930,22 @@ class ContractTests(unittest.TestCase):
         runtime, baseline = Path('/synthetic/runtime'), Path('/synthetic/baseline')
         ts = sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts')
         rust = sandbox_profile(runtime, baseline, '/synthetic/rust-stage/bin/pilotdeck', 'rust')
-        self.assertEqual(hashlib.sha256(ts.encode()).hexdigest(),
-                         '417478336777c56d5f38c7b64d399246fe96f5a539c546c1a4059d0bd202e95c',
+        # The pinned digests hash the checkout-normalized profile text: the
+        # guard must hold in any checkout, not only the recording one.
+        self.assertEqual(canonical_profile_digest(ts),
+                         'a219a5c182598ebc4ecf2aba668ea26763cdf91453c34ec45d55309c617a710a',
                          '#933-2: the base TS profile changed')
-        self.assertEqual(hashlib.sha256(rust.encode()).hexdigest(),
+        self.assertEqual(canonical_profile_digest(rust),
                          'bed18fec0f5b10d0011f068799f1643f6c82d3d0776f3872375f94e92124b86e',
                          '#933-2: the base Rust profile changed')
-        relax = '(allow network-outbound (remote ip "localhost:28999"))\n'
+        # Recomputed under a different checkout root, the same pinned digest:
+        # only the probe-script chain moved, and the normalization erases it.
+        with patch('policy.SCRIPT', Path('/another-checkout/scripts/cli-parity')):
+            other = sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts')
+        self.assertEqual(canonical_profile_digest(other, Path('/another-checkout/scripts/cli-parity')),
+                         canonical_profile_digest(ts),
+                         '#933-2: the pinned digests must be checkout-independent')
+        relax = f'(allow network-outbound (remote ip "localhost:{MOCK_PORT}"))\n'
         for side, base in (('ts', ts), ('rust', rust)):
             binary = '/synthetic/unit-test-only' if side == 'ts' else '/synthetic/rust-stage/bin/pilotdeck'
             with self.subTest(side=side):
@@ -931,6 +961,14 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'boolean',
                                     msg='#933-2: a non-boolean mock_gateway must be refused'):
             sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts', mock_gateway='true')
+        # The allow rule and every gateway coordinate derive from one constant,
+        # so the sandbox surface and the CLI's gateway URL cannot drift apart.
+        self.assertEqual(MOCK_GATEWAY_ALLOW, f'(allow network-outbound (remote ip "localhost:{MOCK_PORT}"))',
+                         '#933-2: the allow rule must be derived from MOCK_PORT')
+        env = environment(runtime, {'token': False})
+        for key in ('PILOTDECK_GATEWAY_PORT', 'PILOTDECK_GATEWAY_URL', 'PILOTDECK_SDK_GATEWAY_URL'):
+            self.assertIn(str(MOCK_PORT), env[key],
+                          f'#933-2: {key} must be derived from MOCK_PORT')
 
     def test_mock_scenario_binds_mock_profile_and_others_base(self):
         # #933-3: each scenario must be bound to its own profile evidence.
@@ -1017,37 +1055,183 @@ class ContractTests(unittest.TestCase):
                       '#933-4: mock evidence without a marked scenario must fail presence')
 
     def test_occupied_mock_port_blocks_round(self):
-        # #933-5: an occupied 28999 refuses the whole run; there is no fallback.
-        listener = socket.socket()
-        listener.bind(('127.0.0.1', MOCK_PORT))
-        listener.listen(1)
-        self.addCleanup(listener.close)
-        # Message-carrying refusals: the #933 negative controls bind to these
-        # assertions, so neither may fail message-less.
-        try:
-            ensure_loopback_free(MOCK_PORT)
-        except Blocked as error:
-            self.assertIn('occupied', str(error), '#933-5: the refusal must name the occupied port')
-        else:
-            self.fail('#933-5: an occupied 28999 must refuse the run; there is no fallback port')
+        # #933-5: the mock owns 28999 by binding it itself (no check-then-use
+        # preflight); an occupied port — or any other early exit — must Block
+        # the whole round, and the refusal must fire before the probe runs.
+        class FakeMock:
+            def __init__(self, exitcode):
+                self.pid, self.returncode = 999_000_001, exitcode
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self, timeout=None):
+                return self.returncode
+
         profile = self.root / 'occupied.sb'
         profile.write_text('synthetic policy')
-        # The mutated path (port check disabled) stays deterministic: with spawn
-        # and capture patched, a run that misses the refusal fails the bound
-        # assertion instead of erroring somewhere inside the preflight.
         (self.root / 'tmp').mkdir()
-        with patch('run_round.spawn') as spawned, patch('run_round.capture') as captured:
-            spawned.return_value.poll.return_value = None
-            captured.return_value = ({'status': 'DONE', 'timedOut': False, 'exitCode': 0,
-                                      'audit': {'allStopped': True, 'remaining': [], 'errors': []}},
-                                     {'stdout': b'{}', 'stderr': b''}, [])
+        # Case 1: a real mock against a genuinely occupied 28999 — the owned
+        # process cannot bind and exits; the round must refuse to continue.
+        node = shutil.which('node')
+        if node is not None:
+            listener = socket.socket()
+            listener.bind(('127.0.0.1', MOCK_PORT))
+            listener.listen(1)
+            self.addCleanup(listener.close)
+            output = self.root / 'occupied-real'
+            output.mkdir()
             try:
-                mock_gateway_preflight(self.root, self.root, '/synthetic/node', profile)
+                mock_gateway_preflight(output, self.root, node, profile)
             except Blocked as error:
-                self.assertIn('occupied', str(error), '#933-5: preflight must refuse an occupied port')
+                self.assertIn('exited before listening', str(error),
+                              '#933-5: an occupied 28999 must make the owned mock exit and Block the round')
             else:
-                self.fail('#933-5: mock_gateway_preflight must refuse an occupied 28999 before spawning')
-            spawned.assert_not_called()
+                self.fail('#933-5: an occupied 28999 must Block the round; there is no fallback port')
+        # Case 2: the mock process is already dead — the refusal precedes any probe.
+        output = self.root / 'occupied-dead'
+        output.mkdir()
+        with patch('run_round.spawn', return_value=FakeMock(1)), \
+             patch('run_round.capture') as captured, patch('run_round.stop_group') as stopped:
+            stopped.return_value = {'allStopped': True, 'remaining': [], 'errors': []}
+            try:
+                mock_gateway_preflight(output, self.root, '/synthetic/node', profile)
+            except Blocked as error:
+                self.assertIn('exited before listening', str(error),
+                              '#933-5: an early-exiting mock must Block the round before any probe')
+            else:
+                self.fail('#933-5: an early-exiting mock must refuse the round, not pass the preflight')
+            captured.assert_not_called()
+            stopped.assert_called_once()
+        # Case 3: the mock confirmed listening, then died — the aliveness
+        # re-check after the probe must still Block the round.
+        output = self.root / 'occupied-after'
+        output.mkdir()
+
+        def dying_spawn(argv, **kwargs):
+            kwargs['stdout'].write(f'mock-gateway listening on 127.0.0.1:{MOCK_PORT}\n'.encode())
+            kwargs['stdout'].flush()
+            return FakeMock(1)
+
+        record = {'status': 'DONE', 'timedOut': False, 'exitCode': 0,
+                  'audit': {'allStopped': True, 'remaining': [], 'errors': []}}
+        with patch('run_round.spawn', side_effect=dying_spawn), \
+             patch('run_round.capture', return_value=(record, {'stdout': b'{}', 'stderr': b''}, [])), \
+             patch('run_round.stop_group') as stopped:
+            stopped.return_value = {'allStopped': True, 'remaining': [], 'errors': []}
+            try:
+                mock_gateway_preflight(output, self.root, '/synthetic/node', profile)
+            except Blocked as error:
+                self.assertIn('exited after readiness', str(error),
+                              '#933-5: a mock that dies after readiness must Block the round')
+            else:
+                self.fail('#933-5: a dead mock after readiness must refuse the round, not pass the preflight')
+            stopped.assert_called_once()
+
+    def test_mock_gateway_answers_ping_with_pong(self):
+        # #933-7 (review P1-2): a valid RFC 6455 ping must be answered with a
+        # pong carrying the same payload, and must not close the connection.
+        node = shutil.which('node')
+        if node is None:
+            self.skipTest('node is required to exercise the mock gateway')
+        probe = socket.socket()
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+        probe.close()
+        logs = self.root / 'mock-ping'
+        logs.mkdir()
+        with (logs / 'stdout.log').open('wb') as out, (logs / 'stderr.log').open('wb') as err:
+            proc = subprocess.Popen([node, str(SCRIPT / 'mock_gateway.mjs'), str(port)],
+                                    env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C',
+                                         'PILOTDECK_MOCK_TOKEN': TOKEN},
+                                    stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                                    start_new_session=True)
+            self.addCleanup(stop_group, proc)
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    connection = socket.create_connection(('127.0.0.1', port), timeout=10)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline or proc.poll() is not None:
+                        self.fail('#933-7: the mock gateway did not start listening')
+                    time.sleep(0.05)
+            self.addCleanup(connection.close)
+            connection.settimeout(10)
+
+            def read_exact(count):
+                data = b''
+                while len(data) < count:
+                    chunk = connection.recv(count - len(data))
+                    if not chunk:
+                        raise AssertionError(
+                            '#933-7: the mock closed the connection during the ping exchange')
+                    data += chunk
+                return data
+
+            def send_frame(opcode, payload):
+                mask = os.urandom(4)
+                masked = bytes(byte ^ mask[index & 3] for index, byte in enumerate(payload))
+                connection.sendall(bytes([0x80 | opcode, 0x80 | len(masked)]) + mask + masked)
+
+            key = base64.b64encode(os.urandom(16)).decode()
+            connection.sendall(('GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n'
+                                'Connection: Upgrade\r\nSec-WebSocket-Key: ' + key +
+                                '\r\nSec-WebSocket-Version: 13\r\n\r\n').encode())
+            response = b''
+            while b'\r\n\r\n' not in response:
+                chunk = connection.recv(4096)
+                if not chunk:
+                    self.fail('#933-7: the mock closed the connection before the handshake')
+                response += chunk
+            self.assertTrue(response.startswith(b'HTTP/1.1 101 '),
+                            '#933-7: the mock must complete the websocket upgrade')
+            # Two pings: the second proves the connection survived the first
+            # exchange instead of being closed right after one pong.
+            for payload in (b'ping', b'second-ping'):
+                with self.subTest(payload=payload):
+                    send_frame(0x9, payload)
+                    header = read_exact(2)
+                    body = read_exact(header[1] & 0x7f)
+                    self.assertEqual((header[0], header[1], body), (0x8a, len(payload), payload),
+                                     '#933-7: a ping must be answered with a pong carrying the same '
+                                     'payload, not with a close or a dropped connection')
+            send_frame(0x8, b'')
+            header = read_exact(2)
+            self.assertEqual(header[0] & 0x0f, 0x8,
+                             '#933-7: the mock must echo the client close')
+
+    def test_preflight_failure_after_spawn_stops_the_mock(self):
+        # #933-8 (review P1-3): any failure after spawn() — here an unreadable
+        # profile — must stop the registered mock before the error propagates.
+        node = shutil.which('node')
+        if node is None:
+            self.skipTest('node is required to exercise the mock gateway')
+        output = self.root / 'cleanup-window'
+        output.mkdir()
+        procs = []
+        real_spawn = sys.modules['run_round'].spawn
+
+        def recording_spawn(*args, **kwargs):
+            proc = real_spawn(*args, **kwargs)
+            procs.append(proc)
+            return proc
+
+        def stop_any_leak():
+            # The assertion below may fire on a leaked mock (negative-control
+            # mutant); the test itself must never leave it behind.
+            for proc in procs:
+                if proc.poll() is None:
+                    stop_group(proc)
+        self.addCleanup(stop_any_leak)
+        with patch('run_round.spawn', side_effect=recording_spawn):
+            with self.assertRaises(OSError,
+                                   msg='#933-8: the unreadable profile must still surface its failure'):
+                mock_gateway_preflight(output, self.root, node, self.root / 'missing.sb')
+        self.assertIsNotNone(procs[0].poll(),
+                             '#933-8: a preflight failure after spawn must stop the mock before propagating')
+        self.assertNotIn(procs[0].pid, LIVE_GROUPS,
+                         '#933-8: the stopped mock must leave the live-group registry')
 
     def test_run_round_selects_the_mock_profile_per_scenario(self):
         # #933-6: run_round must run marked scenarios under the mock profile.
