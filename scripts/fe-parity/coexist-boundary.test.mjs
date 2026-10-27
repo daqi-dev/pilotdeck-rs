@@ -48,8 +48,9 @@ test('cross-shell pushState hard-navigates instead of SPA routing (old -> new)',
 test('cross-shell replaceState hard-navigates with replace (no duplicate entry)', () => {
   const b = fakeWindow('/settings', ['/settings']);
   b.win.history.replaceState({}, '', '/');
-  assert.deepEqual(b.hard, [{ url: 'http://127.0.0.1:28420/', replace: true }]);
-  assert.deepEqual(b.passthrough, []);
+  assert.deepEqual(b.hard, [{ url: 'http://127.0.0.1:28420/', replace: true }],
+    'cross replaceState 必须 hardNavigate(replace=true)（不产生重复历史项）');
+  assert.deepEqual(b.passthrough, [], 'cross replaceState must not reach the wrapped router');
 });
 
 test('same-shell navigation passes through to the wrapped router', () => {
@@ -118,5 +119,6 @@ test('default prefixes keep the exp007 /probe semantics', () => {
   b.win.history.pushState({}, '', '/settings');
   assert.deepEqual(b.passthrough.map(item => item.url), ['/settings'], '/settings stays old shell under default prefixes');
   b.win.history.pushState({}, '', '/probe/leptos');
-  assert.deepEqual(b.hard.map(item => item.url), ['http://127.0.0.1:28420/probe/leptos']);
+  assert.deepEqual(b.hard.map(item => item.url), ['http://127.0.0.1:28420/probe/leptos'],
+    '默认 prefixes 必须保留 /probe 边界（exp007 语义）');
 });

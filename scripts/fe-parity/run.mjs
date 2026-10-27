@@ -229,7 +229,9 @@ try {
     if (frontends.includes('new')) {
       // #927 pairing entry: the new side is the #927 coexistence deployment
       // running the frozen native-auth spec verbatim. Honest record only; the
-      // new side can never turn the B suite green (no scoring change).
+      // new side can never turn the B suite green — but its honest native-auth
+      // FAIL (the probe has no settings pages until F3+ migration) does make
+      // the overall B verdict FAIL, which is exactly what is reported below.
       native = await runCoexistNativeAuth({ output, command, children, isInterrupted: () => interrupted });
       result.deployNew = native;
       for (const row of native.newSide.rows) console.log(`B 新侧 ${row.cell}: ${row.status} — ${row.reason}`);
@@ -272,10 +274,16 @@ try {
     await writeFile(resolve(output, 'coexist-parity.md'), '# F3 双壳共存矩阵（#927）\n\n'
       + '| 阶段 | 用例 | 状态 | 理由 |\n|---|---|---|---|\n'
       + coexist.accounting.rows.map(row => `| ${cell(row.phase)} | ${cell(row.title)} | ${cell(row.status)} | ${cell(row.reason ?? '')} |`).join('\n')
-      + `\n\n应执行 ${coexist.accounting.expected}；实际通过 ${coexist.accounting.executed}；TCP/process audit ${coexist.audit.status}。\n`);
+      + `\n\n应执行 ${coexist.accounting.expected}；实际通过 ${coexist.accounting.executed}；总状态 ${coexist.accounting.status}；TCP/process audit ${coexist.audit.status}。\n`
+      + (coexist.accounting.errors.length
+        ? '\n## 执行/账目错误（ERROR 依据）\n\n' + coexist.accounting.errors.map(error => `- ${cell(error)}`).join('\n') + '\n'
+        : ''));
     result.baselineExecution = { expected: inventory.length, actual: 0, status: 'NOT_RUN_COEXIST_ONLY',
       reason: 'F3 coexistence package has its own denominator; the baseline 72 were not executed' };
-    result.status = coexist.accounting.status === 'PASS' ? 'PASS_COEXIST_SUITE_ONLY' : 'FAIL';
+    // Three-state pass-through: PASS / FAIL (behavioural) / ERROR (invalid
+    // evidence: report errors, registration drift, fatal orchestration). An
+    // execution error never credits the suite.
+    result.status = coexist.accounting.status === 'PASS' ? 'PASS_COEXIST_SUITE_ONLY' : coexist.accounting.status;
   } else if (values.suite === 'real' && values.reconcile) {
     result.offline = await selfCheck({ assets: false, frontends });
     if (result.offline.status !== 'PASS') throw new Error('Real pair offline preflight failed; see result.json');

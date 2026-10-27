@@ -1,6 +1,6 @@
 # F2：双前端对拍、流式黑盒与基线 72 例 runner
 
-旧入口是固定基线 `ui/` 的完整静态 Vite bundle，新入口仍是 `ui-rs/probe-leptos` 探针。`skeleton` / `streaming-scroll` / `baseline` 两入口代理到一个 mock backend，顺序运行，固定 127.0.0.1:28376（mock）/28377（old）/28378（new）。这三个套件不启动基线 dev server、gateway 或真实 `ui/server`。`real`（D 类）与 `blackbox-deploy`（B 类）使用隔离的真实 runtime 和本地 mock LLM，见文末；B 当前只跑 old，StaffDeck 依赖缺失保持 BLOCKED。
+旧入口是固定基线 `ui/` 的完整静态 Vite bundle，新入口仍是 `ui-rs/probe-leptos` 探针。`skeleton` / `streaming-scroll` / `baseline` 两入口代理到一个 mock backend，顺序运行，固定 127.0.0.1:28376（mock）/28377（old）/28378（new）。这三个套件不启动基线 dev server、gateway 或真实 `ui/server`。`real`（D 类）与 `blackbox-deploy`（B 类）使用隔离的真实 runtime 和本地 mock LLM，见文末；B 以旧侧为主，#927 起新侧 native-auth 配对入口开放（见文末），StaffDeck 依赖缺失保持 BLOCKED。
 
 原三个独立套件：`skeleton`（3 例登录/HTTP/WS）、`streaming-scroll`（legacy / timeline 各 4 例，共 8 例聊天黑盒）、`baseline`（直接复用基线 15 spec，循环展开 72 例）。新增用例不冲抵 72 分母。`streaming-scroll` 可以单独作为 F5 前置校准；`skeleton` 保留第一 PR 的完整基线缺口闸门，仍总 exit 1。**本 PR 只做离线构建与自检；旧侧黑盒通过和 #61 真实报告验收仍须协调者运行后确认。**
 
@@ -416,7 +416,7 @@ R14 替代第 7/9/10/11/12 轮的 updater 父链条件：操作者已安装的�
 
 ## B 类部署矩阵（issue #58 第 4 项）
 
-`--suite blackbox-deploy --frontends old` 是旧前端的隔离部署入口；每格自动 **起 → 等原生 bridge/token 和模块 health → 跑 unchanged spec → 收自有进程组**。`--profiles` 默认 `staffdeck,minimal,replacement`，可选其中的非重复子集；native 两格始终作为辅助格纳入。#927 起新侧配对入口开放：`--frontends new` / `old,new` 只把 native-auth 一格接到 #927 共存部署上如实记录（探针无设置页 → 原件 FAIL），其余格记 `NOT_RUN_NEW_SIDE`，**不改判分**；`--reconcile` 仍拒绝，不会把探针算成设置页实现。
+`--suite blackbox-deploy --frontends old` 是旧前端的隔离部署入口；每格自动 **起 → 等原生 bridge/token 和模块 health → 跑 unchanged spec → 收自有进程组**。`--profiles` 默认 `staffdeck,minimal,replacement`，可选其中的非重复子集；native 两格始终作为辅助格纳入。#927 起新侧配对入口开放：`--frontends new` / `old,new` 只把 native-auth 一格接到 #927 共存部署上如实记录（探针无设置页 → 原件 FAIL），其余格记 `NOT_RUN_NEW_SIDE`。**判分语义（如实）**：新侧永远不能把 B 变绿，但新侧 native-auth 的诚实 FAIL 会把 B 总状态记 FAIL（F3+ 迁移完成前这是预期形态，不是回归）；`--reconcile` 仍拒绝，不会把探针算成设置页实现。
 
 基线实际支持四种部署：StaffDeck（`products/pilotdeck-staffdeck-sop/profiles/formal-host.yaml`）、minimal（`formal-minimal.yaml`）、replacement（`replacement-knowledge.yaml`）、native（`formal-native.yaml`）。native 必须单列：`real-auth-native` 测 agent-route 设置，而 minimal 的 `frontend.businessModules: {}`（`formal-minimal.yaml:22–23`）没有这个设置模块。route-matrix 在 `ui/e2e/formal-route-matrix.spec.mjs:24–37` 检查 SOP/Knowledge 不渲染，只适用于 native/minimal/replacement，不能在启用这些页面的 StaffDeck 上假跑。
 
@@ -523,14 +523,17 @@ runtime 为基线自己的 `createRuntimeSupervisor` **start-built** 模式（se
 
 三阶段各为独立部署（同一副本、各自 runDir/auth.db）：**valid**（配置 ready）跑 S1/N1/N3/N3b/N4/N5/C1/C2a/C2b/C3/D1；**invalid**（agent.model 指向未声明 provider，旧壳渲染 ModelConfigurationErrorScreen）跑 N2（唯一 `<Link to="/settings/models">` 入口）；**rollback**（开关 unset 重启）跑 R1/R2（`/settings` 回旧 bundle、`.pilotdeck-settings-app` 真渲染）。导航判据用 `window.__coexistMarker`：跨壳必须整页加载（marker 消失），SPA 路由则保留。D3（流式断口帧）不在本包冒充验证，待 F5；跨壳视觉闪烁等仅人眼项在 RESULT 单列「待人工验收」。
 
-跨壳 history 遍历的实测边界（N3/N3b，#927 发现，非本包机制缺陷）：后退离开新壳落旧壳成立；但**由旧壳出发的任何遍历都回不到新壳**——冻结 TS server 对 shell 文档发 `Cache-Control: no-store`（旧壳永不命中 BFCache，后退入旧壳必整页重载），重载启动时 `AppShellV2.tsx:207-223` 的 URL 同步 effect 调 `handleProjectSelect → navigate('/')`（pushState），把跨壳前进项清掉并隔离已迁前缀。两项均在冻结 TS 侧；N3b 将该行为特征化为断言（防静默假装前进入新壳可用），修复路径待 F3 定夺（改 no-store / 去启动 push / 接受不可前进入新壳）。
+跨壳 history 遍历（N3/N3b，#927 发现）：**N3 是原验收格，照原判据执行**——旧壳侧出发的 goForward 进入 `/settings` 必须落新 bundle；当前实测被冻结旧壳固有行为阻断（见下），该格如实记 FAIL（不改成「特征化通过」），总状态 FAIL，修复或接受缺口为 F3 决策项（决策卡 `decision-n3.md`：改 no-store / 去启动 push / 接受不可前进入新壳）。根因（N3b 特征化为断言，变更即红）：后退入旧壳在本装置必整页重载——**本装置 Chrome 由 Playwright 以 `--disable-back-forward-cache` 启动，BFCache 整体关闭**（`tcp-connections.jsonl` 进程 argv 实测）；「冻结 TS server 对 shell 文档发 no-store 会使真实用户浏览器不命中 BFCache」为读码推断（HTTP 标准语义），未在本装置对照实测。重载启动时 `AppShellV2.tsx:207-223` 的 URL 同步 effect 调 `handleProjectSelect → navigate('/')`（pushState），把跨壳前进项清掉并隔离已迁前缀。两项均在冻结 TS 侧，非本包 A patch/boundary 缺陷。
 
-共享键契约：C1 登录态互通（探针以同一 `auth-token` 挂载，其 `/api/projects/probe/sessions` 请求 Authorization 头 === 旧壳 token，返回旧壳无需重登）；C2 草稿跨壳保留（旧壳 `draft_input_<project>:<sessionId|'new'>` 与探针 `draft_input_probe:s` 双向，丢即 FAIL）；C3 跨跳转共享键不变。已知回退形态如实记录：rollback 下旧壳 sidebar navigate 仍被 client boundary 硬跳一次，由旧 bundle 在 `/settings` 整页加载接住。
+共享键契约：C1 登录态互通（探针以同一 `auth-token` 挂载，其 `/api/projects/probe/sessions` 请求 Authorization 头 === 旧壳 token，返回旧壳无需重登）；C2 草稿跨壳保留（旧壳 `draft_input_<project>:<sessionId|'new'>` 与探针 `draft_input_probe:s` 双向，丢即 FAIL）；C3 跨跳转共享键不变——快照同时采 **localStorage 与 sessionStorage**（活动项目键 `pilotdeck-active-project` 在 sessionStorage，`AppShellV2.tsx:163` 写入），且先断言该键实际存在再比较（快照函数单源于 `coexist-shared-keys.mjs`，浏览器与离线 oracle 跑同一份字节）。已知回退形态如实记录：rollback 下旧壳 sidebar navigate 仍被 client boundary 硬跳一次，由旧 bundle 在 `/settings` 整页加载接住。
 
-离线正控/负控：`node --test scripts/fe-parity/coexist-boundary.test.mjs scripts/fe-parity/coexist-patch.test.mjs`（无 listen/Chrome）。浏览器级负控按本仓负控规则放 `src/pilotdeck-gateway/tests/fixtures/fe-coexist/negative_controls.py`（声明式 mutations 表；新增文件提交前不在 HEAD，`mutating_sources` 拒跑时由协调者宿主执行）。B 新侧配对：`--suite blackbox-deploy --frontends new`（或 `old,new`）只跑 native-auth 格（冻结 `real-auth-native.spec.mjs` 原样对共存部署），其余格 `NOT_RUN_NEW_SIDE` 列理由；新侧结果不参与判分变绿。
+计分三态（fix-r1，P0）：`coexistAccounting.status` ∈ PASS / FAIL / ERROR——`ERROR` = 证据无效（任一阶段 `report.errors` 非空、注册漂移即 executed 与登记多重集不等、fatal 编排错误），`FAIL` = 行为失败或身份缺失，`PASS` = 14 例全绿且无错误；执行错误永不折算成 PASS，run.mjs 透传三态。并发：装配（`rm -rf` 部署副本）前先 `assertCoexistPortsFree`——第二个入口必须 fail-closed 退出，而不是毁掉第一个入口正在服务的副本；跨进程互斥沿用协调者 `/tmp/pdrs-parity.lock` 惯例。
+
+离线正控/负控：`node --test scripts/fe-parity/coexist-boundary.test.mjs scripts/fe-parity/coexist-patch.test.mjs scripts/fe-parity/coexist-accounting.test.mjs scripts/fe-parity/coexist-self-check.test.mjs`（无 listen/Chrome）。`coexist-patch.test.mjs` 用 `executeOptionAPatchBranch` **真实执行**部署模板（不再镜像谓词）；`coexist-accounting.test.mjs` 合成 Playwright 报告验证三态；`coexist-self-check.test.mjs` 核对 COEXIST_CASES↔spec 注册、C3 快照覆盖、S1/C3 接线与 `assertCoexistExecutionEnv` 拒绝用例。浏览器级负控按本仓负控规则放 `src/pilotdeck-gateway/tests/fixtures/fe-coexist/negative_controls.py`（声明式 mutations 表，19 变异：boundary 10 + 部署模板 3 + 计分/目录 3 + C3 快照/接线 3；新增文件提交前不在 HEAD，`mutating_sources` 拒跑时由协调者宿主执行）。B 新侧配对：`--suite blackbox-deploy --frontends new`（或 `old,new`）只跑 native-auth 格（冻结 `real-auth-native.spec.mjs` 原样对共存部署），其余格 `NOT_RUN_NEW_SIDE` 列理由；新侧不能把 B 变绿，但其诚实 FAIL 会使 B 总状态 FAIL。
 
 ```sh
-node scripts/fe-parity/run.mjs --suite coexist --frontends old
+node scripts/fe-parity/run.mjs --suite coexist --frontends old    # 当前预期：N3 原验收格 FAIL → 总状态 FAIL（F3 决策项）
 node scripts/fe-parity/run.mjs --suite blackbox-deploy --frontends new   # 新侧配对（native-auth only，诚实 FAIL）
-node --test scripts/fe-parity/coexist-boundary.test.mjs scripts/fe-parity/coexist-patch.test.mjs
+node --test scripts/fe-parity/coexist-boundary.test.mjs scripts/fe-parity/coexist-patch.test.mjs \
+  scripts/fe-parity/coexist-accounting.test.mjs scripts/fe-parity/coexist-self-check.test.mjs
 ```

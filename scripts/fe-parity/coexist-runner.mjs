@@ -22,7 +22,7 @@ export const COEXIST_CASES = Object.freeze({
   valid: Object.freeze([
     'S1 开关开：GET /settings 新 bundle、GET /settingsX 旧 bundle（HTTP 严格段边界）',
     'N1 旧→新 navigate()：sidebar Settings 硬跳新 bundle',
-    'N3 前进/后退跨壳遍历：新壳侧出发 goBack 落旧壳',
+    'N3 前进/后退跨壳遍历（原验收格）：旧壳侧出发 goForward 进入 /settings 必须落新 bundle',
     'N3b 前进入新壳（特征化）：旧壳重载后其启动导航清除跨壳前进项',
     'N4 新→旧 「返回旧壳」链接硬跳',
     'N5 新→旧 history 原语被拦截硬跳',
@@ -70,12 +70,22 @@ async function waitCoexistReady(runtime, env, isInterrupted, audit, phase) {
   }
   throw new Error(`Timed out waiting for coexist ${phase} runtime (server); see ${runtime.log}`);
 }
+// Three verdict states, mirroring the sibling accountings in accounting.mjs
+// (report.errors folded in at accounting.mjs:324, NOT_RUN for a missing
+// identity): PASS = every registered identity passed and no execution error;
+// FAIL = a behavioural failure or a missing identity; ERROR = invalid
+// evidence (a report execution error, registration drift such as a duplicate
+// or missing identity, or a fatal orchestration error). An execution error
+// never credits the suite, and neither does a duplicate failed instance
+// masked by a passing first match: the executed-title multiset must equal the
+// registration exactly.
 export function coexistAccounting(reports, runs) {
   const rows = [], errors = [];
   for (const run of runs) {
     const titles = run.frontend === 'new' ? null : COEXIST_CASES[run.phase];
     const report = reports[run.label];
     const tests = report ? reportCases(report, run.testDir) : [];
+    for (const error of report?.errors || []) errors.push(`coexist ${run.phase} execution error: ${error.message || String(error)}`);
     if (titles) {
       const executed = tests.filter(row => !row.results.every(result => result.status === 'skipped')).map(row => row.title);
       if (report && JSON.stringify([...executed].sort()) !== JSON.stringify([...titles].sort())) {
@@ -100,16 +110,18 @@ export function coexistAccounting(reports, runs) {
         status: 'NOT_RUN', reason: 'no result in the native pairing report' });
     }
   }
-  const status = rows.length && rows.every(row => row.status === 'PASS') ? 'PASS' : 'FAIL';
+  const status = errors.length ? 'ERROR' : rows.length && rows.every(row => row.status === 'PASS') ? 'PASS' : 'FAIL';
   return { rows, status, errors, executed: rows.filter(row => row.status === 'PASS').length, expected: rows.length };
 }
 // B-class new-side pairing matrix: only the native-auth cell executes (against
 // this package's coexistence deployment); every other cell is recorded
 // NOT_RUN_NEW_SIDE, never silently skipped. No scoring change: the new side can
-// never turn the B suite green.
+// never turn the B suite green (its own status stays FAIL), but its honest
+// native-auth FAIL does surface in run.mjs's B verdict.
 export function newSideAccounting(nativeReport, executed) {
+  const nativeRows = nativeReport?.rows ?? [];
   const rows = DEPLOY_CELLS.map(cell => cell.id === 'native-auth'
-    ? { cell: cell.id, status: nativeReport?.rows.some(row => row.status === 'PASS') ? 'PASS' : 'FAIL',
+    ? { cell: cell.id, status: nativeRows.length && nativeRows.every(row => row.status === 'PASS') ? 'PASS' : 'FAIL',
         reason: 'executed against the #927 coexistence deployment (real native TS, switch on); the probe has no settings pages, an honest FAIL is expected until F3+ migration' }
     : { cell: cell.id, status: 'NOT_RUN_NEW_SIDE',
         reason: '目标路由未迁移：新侧只接 native-auth 配对；其余 profile 的 vite 内存生成模块不适用于静态共存部署' });
@@ -174,6 +186,9 @@ async function runCoexistRuns({ output, command, children, isInterrupted, runs }
 }
 export async function runCoexist({ output, command, children, isInterrupted, phases = PHASES }) {
   if (phases.some(phase => !PHASES.includes(phase)) || new Set(phases).size !== phases.length) throw new Error('Invalid coexist phases');
+  // Ports before assembly: a second entry point must fail closed here instead
+  // of rm -rf-ing the deployment copy another run is currently serving.
+  await assertCoexistPortsFree();
   // Assembly is outside the audit: it neither listens nor spawns.
   await assembleCoexistDeployment(output);
   const runs = COEXIST_RUNS().filter(run => phases.includes(run.phase));
@@ -188,7 +203,7 @@ export async function runCoexist({ output, command, children, isInterrupted, pha
     await writeFile(resolve(output, 'coexist-fatal.log'), (error.stack || error.message) + '\n');
     const accounting = coexistAccounting(reports, runs);
     accounting.errors.push(`coexist fatal audit/orchestration error: ${error.message}`);
-    accounting.status = 'FAIL';
+    accounting.status = 'ERROR';
     return { accounting, executions: [], reports, fatalError: error.stack || error.message,
       audit: { status: 'FAIL', log: 'tcp-connections.jsonl', reason: 'Coexist phases did not complete with a successful final audit' } };
   }
@@ -196,13 +211,15 @@ export async function runCoexist({ output, command, children, isInterrupted, pha
 // B-class new-side pairing: the single native-auth cell against the coexistence
 // deployment. Old cells stay untouched; the new side never changes B scoring.
 export async function runCoexistNativeAuth({ output, command, children, isInterrupted }) {
+  // Same ordering guard as runCoexist: never destroy a copy another run serves.
+  await assertCoexistPortsFree();
   await assembleCoexistDeployment(output);
   try {
     const result = await runCoexistRuns({ output, command, children, isInterrupted, runs: [NATIVE_RUN] });
     return { ...result, newSide: newSideAccounting(result.accounting, result.executions.length > 0) };
   } catch (error) {
     await writeFile(resolve(output, 'coexist-fatal.log'), (error.stack || error.message) + '\n');
-    return { accounting: { rows: [], status: 'FAIL', errors: [`coexist native pairing fatal error: ${error.message}`] },
+    return { accounting: { rows: [], status: 'ERROR', errors: [`coexist native pairing fatal error: ${error.message}`] },
       executions: [], newSide: newSideAccounting(null, false), fatalError: error.stack || error.message,
       audit: { status: 'FAIL', log: 'tcp-connections.jsonl', reason: 'Native pairing did not complete with a successful final audit' } };
   }

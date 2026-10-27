@@ -5,6 +5,8 @@
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ownedPath, requireUI } from '../env.mjs';
+import { NEW_SHELL_ENTRY_MARKER } from '../coexist-deploy.mjs';
+import { ACTIVE_PROJECT_ASSERT, ACTIVE_PROJECT_KEY, sharedStorageSnapshot } from '../coexist-shared-keys.mjs';
 const { test, expect } = requireUI('@playwright/test');
 
 const phase = process.env.FE_COEXIST_PHASE;
@@ -56,25 +58,21 @@ const marker = page => page.evaluate(() => window.__coexistMarker);
 const navType = page => page.evaluate(() => performance.getEntriesByType('navigation')?.[0]?.type);
 const draftKeys = page => page.evaluate(() =>
   Object.fromEntries(Object.entries(localStorage).filter(([key]) => key.startsWith('draft_input_'))));
-const sharedKeys = page => page.evaluate(() => {
-  const shared = {};
-  for (const key of Object.keys(localStorage)) {
-    if (key === 'auth-token' || key === 'pilotdeck-active-project' || key.startsWith('draft_input_')) shared[key] = localStorage.getItem(key);
-  }
-  return shared;
-});
+// C3 snapshots BOTH storages through the shared helper: the old shell keeps
+// the active-project key in sessionStorage, which a localStorage-only walk
+// cannot see.
 
 phaseTest('valid', 'S1 开关开：GET /settings 新 bundle、GET /settingsX 旧 bundle（HTTP 严格段边界）', async ({ request }) => {
   const migrated = await request.get('/settings');
   expect(migrated.status()).toBe(200);
   const migratedBody = await migrated.text();
-  expect(migratedBody, '/settings 必须回新 shell 入口').toContain('/probe/leptos/boundary-boot.js');
+  expect(migratedBody, '/settings 必须回新 shell 入口（新壳专属 probe 入口模块）').toContain(NEW_SHELL_ENTRY_MARKER);
   const sibling = await request.get('/settingsX');
   expect(sibling.status()).toBe(200);
   const siblingBody = await sibling.text();
   expect(siblingBody, '严格段边界：/settingsX 必须保持旧 bundle').toContain('id="root"');
-  // boundary-boot 是双壳共用的注入脚本；判别新 bundle 用探针自己的入口模块。
-  expect(siblingBody, '严格段边界：/settingsX 不得引用探针入口模块').not.toContain('/probe/leptos/probe.js');
+  // boundary-boot.js 双壳共用不能作判据；探针入口模块只被新壳 HTML 引用。
+  expect(siblingBody, '严格段边界：/settingsX 不得引用探针入口模块').not.toContain(NEW_SHELL_ENTRY_MARKER);
   await evidence('S1', { migratedStatus: migrated.status(), siblingStatus: sibling.status() });
 });
 
@@ -116,38 +114,47 @@ async function chromeHistory(page) {
   } finally { await cdp.detach(); }
 }
 
-// N3 measures the cross-shell traversal that the frozen old shell leaves
-// reachable: departing from the new shell, a history back traversal lands the
-// old shell at the pre-jump entry with a full document load (the frozen server
-// serves the shell document with Cache-Control no-store, so BFCache never
-// applies — D5 observation, not an assertion). The reverse direction (any
-// traversal arriving in the new shell) is structurally blocked by the old
-// shell's own boot navigation and is characterized in N3b.
-phaseTest('valid', 'N3 前进/后退跨壳遍历：新壳侧出发 goBack 落旧壳', async ({ page }) => {
+// N3 is the ORIGINAL acceptance cell from issue #927: a traversal departing
+// from the old shell (forward, after crossing to the new shell and coming
+// back) must land the new bundle at /settings. Measured today it does NOT
+// (the frozen old shell's reload boot navigation prunes the forward entry,
+// characterized in N3b): the case therefore records an honest FAIL against
+// the original criterion instead of being re-scored as a characterization
+// pass. The remediation options are a human decision (decision card
+// decision-n3.md: change no-store / drop the boot push / accept no forward).
+phaseTest('valid', 'N3 前进/后退跨壳遍历（原验收格）：旧壳侧出发 goForward 进入 /settings 必须落新 bundle', async ({ page }) => {
   await signInOldShell(page);
   await oldShellReady(page);
-  const from = page.url(); // 登录后旧壳停在项目路由（如 /p/general），后退应回到这里
+  const from = page.url(); // 登录后旧壳停在项目路由（如 /p/general）
   await settingsButton(page).click();
   await newShellReady(page);
-  const beforeBack = await chromeHistory(page);
   await page.goBack();
   await expect(page).toHaveURL(from);
   await oldShellReady(page);
-  const backType = await navType(page);
-  await evidence('N3', { beforeBack, backType, url: page.url(),
-    note: 'D4 对账：跨壳后退为跨文档导航，落在正确壳，状态由 URL+storage 重建；' +
-      'D5 观察项：server 对 shell 文档发 no-store → 旧壳不命中 BFCache，后退=整页加载（本 Chrome 实测：普通页与持 WebSocket 页均可命中 BFCache）；' +
-      '反方向（由旧壳遍历回新壳）受旧壳启动导航阻断，特征化于 N3b，待 F3 定夺；跨壳视觉闪烁仅人眼（待人工验收）' });
+  const fwd = await page.goForward();
+  await expect(page).toHaveURL('/settings');
+  await newShellReady(page);
+  await evidence('N3', { from, url: page.url(), goForwardResponse: fwd ? fwd.status() : null,
+    note: '原验收格照原判据执行（评审 P1-1）：旧壳侧出发的前进必须落新 bundle。' +
+      '当前实测被冻结旧壳固有行为阻断（整页重载后启动 pushState 清跨壳前进项，根因特征化见 N3b，决策卡 decision-n3.md 待 F3 定夺）。' +
+      'BFCache 归因如实标注：本装置 Chrome 由 Playwright 以 --disable-back-forward-cache 启动，BFCache 整体关闭；' +
+      '「server no-store 使旧壳不命中 BFCache」为读码推断（HTTP 标准语义），未在本装置实测。' +
+      'D4 对账：跨壳后退为跨文档导航，落在正确壳，状态由 URL+storage 重建；跨壳视觉闪烁仅人眼（待人工验收）。' });
 });
 
-// N3b characterizes the blocked cell: after the old shell fully reloads (which
-// every back into it does), its boot navigation runs handleProjectSelect →
-// navigate('/') — a same-document pushState (AppShellV2.tsx:207-223 syncs the
-// URL project back afterwards) — which replaces the cross-shell forward entry,
-// so goForward has nothing to traverse into the new shell. This is frozen
-// old-shell behaviour, not a defect of the A patch or the boundary; the test
-// pins it so that any change (old-shell fix, cache header change, BFCache)
-// forces a re-characterization instead of silently pretending forward works.
+// N3b characterizes the blocked cell (root-cause evidence for N3's honest
+// FAIL): after the old shell fully reloads (which every back into it does in
+// this harness — Playwright launches Chrome with --disable-back-forward-cache,
+// so BFCache is off regardless of cache headers; whether the server's no-store
+// would independently keep a real-user browser out of BFCache is 读码推断,
+// standard HTTP semantics, not measured here), its boot navigation runs
+// handleProjectSelect → navigate('/') — a same-document pushState
+// (AppShellV2.tsx:207-223 syncs the URL project back afterwards) — which
+// replaces the cross-shell forward entry, so goForward has nothing to
+// traverse into the new shell. This is frozen old-shell behaviour, not a
+// defect of the A patch or the boundary; the test pins it so that any change
+// (old-shell fix, cache header change, BFCache) forces a re-characterization
+// instead of silently pretending forward works.
 phaseTest('valid', 'N3b 前进入新壳（特征化）：旧壳重载后其启动导航清除跨壳前进项', async ({ page }) => {
   await recordHistoryMutations(page);
   await signInOldShell(page);
@@ -173,7 +180,7 @@ phaseTest('valid', 'N3b 前进入新壳（特征化）：旧壳重载后其启�
   expect(page.url(), '前进项已被清除，goForward 不得再导航（特征化断言，待 F3 定夺）').toContain('/p/general');
   await oldShellReady(page);
   await evidence('N3b', { appended, afterPrune, mutations, goForwardResponse: fwd ? fwd.status() : null,
-    note: '前进入新壳被冻结旧壳固有行为阻断：① server 对 shell 文档发 no-store → 后退入旧壳必整页重载（本 Chrome 可 BFCache 普通页/持 WS 页）；② 重载启动时 URL 同步 effect 调 handleProjectSelect → navigate(\'/\') pushState，清掉跨壳前进项。两者均在冻结 TS 侧，非本包 A patch/boundary 缺陷；修复需 F3 定夺（改 no-store / 去启动 push / 接受不可前进入新壳）。' });
+    note: '前进入新壳被冻结旧壳固有行为阻断：① 后退入旧壳在本装置必整页重载——本装置 Chrome 由 Playwright 以 --disable-back-forward-cache 启动，BFCache 整体关闭（tcp-connections.jsonl 进程 argv 实测）；server no-store 是否独立阻断真实用户浏览器的 BFCache 为读码推断（HTTP 标准语义），未实测；② 重载启动时 URL 同步 effect 调 handleProjectSelect → navigate(\'/\') pushState，清掉跨壳前进项。②为冻结 TS 侧行为，非本包 A patch/boundary 缺陷；修复需 F3 定夺（改 no-store / 去启动 push / 接受不可前进入新壳，见决策卡 decision-n3.md）。' });
 });
 
 phaseTest('valid', 'N4 新→旧 「返回旧壳」链接硬跳', async ({ page }) => {
@@ -265,15 +272,21 @@ phaseTest('valid', 'C2b 探针 composer 草稿跨壳保留', async ({ page }) =>
 phaseTest('valid', 'C3 共享键跨跳转不变', async ({ page }) => {
   await signInOldShell(page);
   await oldShellReady(page);
-  const before = await sharedKeys(page);
-  expect(before['auth-token']).toBeTruthy();
+  // The active-project key must actually exist before any equality claim:
+  // it lives in sessionStorage (AppShellV2.tsx:163), invisible to a
+  // localStorage-only snapshot — the gap this case existed to hide.
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem('pilotdeck-active-project')),
+    { message: ACTIVE_PROJECT_ASSERT, timeout: 30_000 }).toBeTruthy();
+  const before = await page.evaluate(sharedStorageSnapshot);
+  expect(before['auth-token'], 'C1 前置：登录后 auth-token 必须存在').toBeTruthy();
   await settingsButton(page).click();
   await newShellReady(page);
-  expect(await sharedKeys(page), '跳到新壳后共享键必须不变').toEqual(before);
+  expect(await page.evaluate(sharedStorageSnapshot), '跳到新壳后共享键（localStorage+sessionStorage）必须不变').toEqual(before);
   await page.getByRole('link', { name: '返回旧壳' }).click();
   await oldShellReady(page);
-  expect(await sharedKeys(page), '跳回旧壳后共享键必须不变').toEqual(before);
-  await evidence('C3', { keys: Object.keys(before), activeProject: before['pilotdeck-active-project'] ?? null });
+  expect(await page.evaluate(sharedStorageSnapshot), '跳回旧壳后共享键（localStorage+sessionStorage）必须不变').toEqual(before);
+  await evidence('C3', { keys: Object.keys(before), activeProject: before[ACTIVE_PROJECT_KEY] ?? null,
+    storages: ['localStorage', 'sessionStorage'] });
 });
 
 phaseTest('valid', 'D1 /ws 跨壳往返重连（D1 对账）', async ({ page }) => {
