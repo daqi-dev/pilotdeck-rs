@@ -1,10 +1,13 @@
 // Calls the fixed TS DreamRewriteRunner directly on a real MemoryRepository.
 // Every expected value in oracle.json comes from these calls; no value is
 // synthesized by the Rust side.
-import {mkdirSync, readdirSync, readFileSync, rmSync} from 'node:fs';
+import {mkdirSync, readdirSync, readFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
 import {pathToFileURL} from 'node:url';
 import {join, resolve} from 'node:path';
 import {freezeClock} from '../edgeclaw-file-memory/observe.mts';
+import {removeOwned} from '../_shared/generator_guard.mjs';
+import {createRunScratch, removeRunScratch} from '../_shared/run_scratch.mjs';
 
 export const NOW = '2026-10-22T00:00:00.000Z';
 const ROOT = 'src/context/memory/edgeclaw-memory-core/src';
@@ -209,12 +212,18 @@ async function runCase(baseline, scratch, home, spec) {
       const records = filtered.length > 0
         ? repository.getMemoryRecordsByIds(filtered.map((entry) => entry.relativePath), 5000)
         : [];
+      // The entries snapshot can outlive a record: model "the file vanished
+      // before recordsByPath was read" by dropping the last N records.
+      const dropRecords = spec.dropRecords ?? 0;
+      const visibleRecords = dropRecords > 0
+        ? records.slice(0, Math.max(0, records.length - dropRecords))
+        : records;
       const projectMeta = spec.projectMeta
         ? (spec.projectMeta === 'current' ? store.getProjectMeta() : store.getProjectMeta(spec.projectMeta)) ?? undefined
         : undefined;
       const pool = wanted === 'feedback' ? 'FEEDBACK' : 'PROJECT';
       script = resolveTokens(script, Object.fromEntries(filtered.map((entry, index) => [`${pool}${index}`, entry.relativePath])));
-      expected.input = jsonSafe({kind: spec.kind, entries: filtered, records, projectMeta});
+      expected.input = jsonSafe({kind: spec.kind, entries: filtered, records: visibleRecords, projectMeta});
       const extractor = new ScriptedExtractor(script);
       const runner = new DreamRewriteRunner(repository, extractor, {logger});
       const {trace} = traceSeed(hashText);
@@ -222,7 +231,7 @@ async function runCase(baseline, scratch, home, spec) {
         trace,
         kind: spec.kind,
         entries: filtered,
-        recordsByPath: new Map(records.map((record) => [record.relativePath, record])),
+        recordsByPath: new Map(visibleRecords.map((record) => [record.relativePath, record])),
         ...(projectMeta ? {projectMeta} : {}),
       });
       expected.result = jsonSafe(result);
@@ -261,6 +270,7 @@ async function runCase(baseline, scratch, home, spec) {
       kind: spec.kind,
       projectMeta: spec.projectMeta,
       ensureMeta: spec.ensureMeta ?? false,
+      ...(spec.dropRecords ? {dropRecords: spec.dropRecords} : {}),
       script,
       startedAt: NOW,
       randomSuffix: SUFFIX,
@@ -270,7 +280,7 @@ async function runCase(baseline, scratch, home, spec) {
   } finally {
     Math.random = savedRandom;
     repository.close();
-    rmSync(dir, {recursive: true, force: true});
+    await removeOwned(scratch, dir, {recursive: true});
   }
 }
 
@@ -286,8 +296,20 @@ function candidate(kind, name, description, body, projectId) {
 }
 
 export async function collect(baseline) {
-  const scratch = resolve(process.env.PDRS_RUNNER_SCRATCH || '/tmp/pdrs-dream-runner-observe');
-  rmSync(scratch, {recursive: true, force: true});
+  // A fresh mkdtemp root per collect() call: concurrent generators must not
+  // share HOME / SQLite paths, and this run only removes the root it owns.
+  const scratch = createRunScratch(
+    process.env.PDRS_RUNNER_SCRATCH || tmpdir(),
+    'pdrs-dream-runner-observe-',
+  );
+  try {
+    return await collectCases(baseline, scratch.owned);
+  } finally {
+    await removeRunScratch(scratch);
+  }
+}
+
+async function collectCases(baseline, scratch) {
   const home = join(scratch, 'home');
   mkdirSync(home, {recursive: true});
   process.env.HOME = home;
@@ -429,6 +451,28 @@ export async function collect(baseline) {
       {
         method: 'refineDreamCluster',
         result: {summary: 'No refined file.', file: null},
+      },
+    ],
+  });
+
+  await add({
+    name: 'category-missing-record',
+    method: 'runCategoryDream',
+    mode: 'single',
+    kind: 'project',
+    setup: {candidates: [projectA, projectB]},
+    selection: {type: 'project'},
+    // Both headers form a valid cluster, but only one record is visible to
+    // the runner: the plan-output detail must gain the same skip warning as
+    // the result (TS stores one live droppedWarnings array).
+    dropRecords: 1,
+    script: [
+      {
+        method: 'planDreamClusters',
+        result: {
+          summary: 'Found one duplicate project cluster.',
+          clusters: [{memberRelativePaths: ['$PROJECT0', '$PROJECT1'], reason: 'duplicate content'}],
+        },
       },
     ],
   });

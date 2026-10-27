@@ -2034,6 +2034,301 @@
       }
     },
     {
+      "name": "category-missing-record",
+      "method": "runCategoryDream",
+      "mode": "single",
+      "setup": {
+        "candidates": [
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha Plan",
+            "description": "alpha plan",
+            "body": "## Goal\nShip alpha.\n"
+          },
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha Notes",
+            "description": "alpha notes",
+            "body": "## Goal\nShip the alpha release.\n"
+          }
+        ]
+      },
+      "selection": {
+        "type": "project"
+      },
+      "kind": "project",
+      "ensureMeta": false,
+      "dropRecords": 1,
+      "script": [
+        {
+          "method": "planDreamClusters",
+          "result": {
+            "summary": "Found one duplicate project cluster.",
+            "clusters": [
+              {
+                "memberRelativePaths": [
+                  "Project/alpha-notes-39eef8668c.md",
+                  "Project/alpha-plan-b6003d6838.md"
+                ],
+                "reason": "duplicate content"
+              }
+            ]
+          }
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "input": {
+          "kind": "project",
+          "entries": [
+            {
+              "name": "Alpha Notes",
+              "description": "alpha notes",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-notes-39eef8668c.md",
+              "relativePath": "Project/alpha-notes-39eef8668c.md",
+              "absolutePath": "$ROOT/Project/alpha-notes-39eef8668c.md"
+            },
+            {
+              "name": "Alpha Plan",
+              "description": "alpha plan",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-plan-b6003d6838.md",
+              "relativePath": "Project/alpha-plan-b6003d6838.md",
+              "absolutePath": "$ROOT/Project/alpha-plan-b6003d6838.md"
+            }
+          ],
+          "records": [
+            {
+              "name": "Alpha Notes",
+              "description": "alpha notes",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-notes-39eef8668c.md",
+              "relativePath": "Project/alpha-notes-39eef8668c.md",
+              "absolutePath": "$ROOT/Project/alpha-notes-39eef8668c.md",
+              "content": "## Goal\nShip the alpha release.",
+              "preview": "Goal Ship the alpha release."
+            }
+          ]
+        },
+        "result": {
+          "plannedClusters": 1,
+          "refinedClusters": 0,
+          "deletedFiles": 0,
+          "droppedWarnings": [
+            "Skipped project cluster 1 because fewer than 2 files could be loaded."
+          ]
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "project_header_scan",
+              "title": "Project Header Scan",
+              "status": "success",
+              "inputSummary": "2 active project files",
+              "outputSummary": "Loaded 2 project headers for cluster planning.",
+              "details": [
+                {
+                  "key": "project-header-summary",
+                  "label": "Project Header Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "inputFiles",
+                      "value": "2"
+                    },
+                    {
+                      "label": "scannedHeaders",
+                      "value": "2"
+                    },
+                    {
+                      "label": "headerScanLimit",
+                      "value": "200"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-headers",
+                  "label": "Project Headers",
+                  "kind": "list",
+                  "items": [
+                    "Project/alpha-notes-39eef8668c.md | Alpha Notes | 2026-10-22T00:00:00.000Z",
+                    "Project/alpha-plan-b6003d6838.md | Alpha Plan | 2026-10-22T00:00:00.000Z"
+                  ]
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_header_scan",
+                "fallback": "Project Header Scan"
+              }
+            },
+            {
+              "stepId": "dream_trace_17dc607638:step:2",
+              "kind": "project_cluster_plan",
+              "title": "Project Cluster Plan",
+              "status": "success",
+              "inputSummary": "2 project headers",
+              "outputSummary": "Found one duplicate project cluster.",
+              "details": [
+                {
+                  "key": "project-cluster-summary",
+                  "label": "Project Cluster Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "plannerClusters",
+                      "value": "1"
+                    },
+                    {
+                      "label": "acceptedClusters",
+                      "value": "1"
+                    },
+                    {
+                      "label": "droppedClusters",
+                      "value": "0"
+                    },
+                    {
+                      "label": "clusterMaxFiles",
+                      "value": "8"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-cluster-plan-output",
+                  "label": "Project Cluster Plan Output",
+                  "kind": "json",
+                  "json": {
+                    "summary": "Found one duplicate project cluster.",
+                    "plannerClusters": [
+                      {
+                        "memberRelativePaths": [
+                          "Project/alpha-notes-39eef8668c.md",
+                          "Project/alpha-plan-b6003d6838.md"
+                        ],
+                        "reason": "duplicate content"
+                      }
+                    ],
+                    "acceptedClusters": [
+                      {
+                        "memberRelativePaths": [
+                          "Project/alpha-notes-39eef8668c.md",
+                          "Project/alpha-plan-b6003d6838.md"
+                        ],
+                        "reason": "duplicate content"
+                      }
+                    ],
+                    "droppedWarnings": [
+                      "Skipped project cluster 1 because fewer than 2 files could be loaded."
+                    ]
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_cluster_plan",
+                "fallback": "Project Cluster Plan"
+              }
+            }
+          ],
+          "mutations": [],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "planDreamClusters",
+            "input": {
+              "kind": "project",
+              "headers": [
+                {
+                  "relativePath": "Project/alpha-notes-39eef8668c.md",
+                  "name": "Alpha Notes",
+                  "description": "alpha notes",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "relativePath": "Project/alpha-plan-b6003d6838.md",
+                  "name": "Alpha Plan",
+                  "description": "alpha plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                }
+              ]
+            }
+          }
+        ],
+        "logs": [],
+        "tree": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Alpha Plan](project.meta.md) — alpha plan\n\n## Project Memory\n- [Alpha Notes](Project/alpha-notes-39eef8668c.md) — alpha notes\n- [Alpha Plan](Project/alpha-plan-b6003d6838.md) — alpha plan\n"
+          },
+          {
+            "relativePath": "Project/alpha-notes-39eef8668c.md",
+            "content": "---\nname: Alpha Notes\ndescription: alpha notes\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip the alpha release.\n"
+          },
+          {
+            "relativePath": "Project/alpha-plan-b6003d6838.md",
+            "content": "---\nname: Alpha Plan\ndescription: alpha plan\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip alpha.\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Alpha Plan\ndescription: alpha plan\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nalpha plan\n"
+          }
+        ]
+      }
+    },
+    {
       "name": "category-refine-null",
       "method": "runCategoryDream",
       "mode": "single",

@@ -27,6 +27,7 @@ use std::{
     future::Future,
     path::Path,
     pin::Pin,
+    process::Command,
     sync::{Arc, Mutex},
 };
 
@@ -544,6 +545,16 @@ fn replay(name: &str) {
             .filter_map(JsValue::as_object)
             .cloned()
             .collect();
+        // Same "entries outlived the record file" fixture as observe.mts:
+        // drop the last N records before building recordsByPath.
+        let mut records = records;
+        let drop_records = case
+            .get("dropRecords")
+            .and_then(JsValue::as_number)
+            .unwrap_or(0.0) as usize;
+        if drop_records > 0 {
+            records.truncate(records.len().saturating_sub(drop_records));
+        }
         let project_meta = case
             .get("projectMeta")
             .filter(|value| !value.is_undefined())
@@ -686,6 +697,10 @@ fn category_dropped_clusters() {
     replay("category-dropped-clusters");
 }
 #[test]
+fn category_missing_record() {
+    replay("category-missing-record");
+}
+#[test]
 fn category_refine_null() {
     replay("category-refine-null");
 }
@@ -736,6 +751,23 @@ fn meta_review_general() {
 #[test]
 fn meta_review_mirror() {
     replay("meta-review-mirror");
+}
+
+#[test]
+fn scratch_root_is_run_exclusive() {
+    let shared = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/_shared");
+    let output = Command::new("node")
+        .arg("--test")
+        .arg(shared.join("run_scratch.test.mjs"))
+        .arg(shared.join("observe_scratch.test.mjs"))
+        .output()
+        .expect("#773 node must be available for the scratch-root test");
+    assert!(
+        output.status.success(),
+        "#773 scratch roots must be exclusive and owned\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
 }
 
 #[test]

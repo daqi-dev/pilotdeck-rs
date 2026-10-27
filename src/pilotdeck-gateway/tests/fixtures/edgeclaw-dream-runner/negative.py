@@ -26,6 +26,8 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 runner = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/dream/runner.rs'
+run_scratch = root / 'src/pilotdeck-gateway/tests/fixtures/_shared/run_scratch.mjs'
+observe = root / 'src/pilotdeck-gateway/tests/fixtures/edgeclaw-dream-runner/observe.mts'
 
 mutations = [
     # 1. The header step's i18n key loses the trace prefix.
@@ -138,6 +140,50 @@ mutations = [
      'let message = self.js_message();',
      'let message = JsString::from(String::from_utf16_lossy(self.js_message().units()));',
      'merge_plan_error_lone_surrogate'),
+    # 20. Cluster-load warnings never reach the plan-output trace detail.
+    ('plan-output-missing-record-sync', runner,
+     '''        sync_plan_output_warnings(
+            trace,
+            plan_step_index,
+            &concat(&[&kind_label, &"-cluster-plan-output".into()]),
+            &dropped_warnings,
+        );''',
+     '''        sync_plan_output_warnings(
+            trace,
+            plan_step_index,
+            &concat(&[&kind_label, &"-cluster-plan-output".into()]),
+            &[],
+        );''',
+     'category_missing_record'),
+    # 21. The summary KV is recomputed instead of keeping its push-time count.
+    ('plan-dropped-kv-recomputed', runner,
+     '''                "droppedClusters".into(),
+                JsValue::Number(dropped_warnings.len() as f64),''',
+     '''                "droppedClusters".into(),
+                JsValue::Number((dropped_warnings.len() + 1) as f64),''',
+     'category_missing_record'),
+    # 22. Every scratch allocation reuses one fixed child instead of mkdtemp.
+    ('run-scratch-fixed-root', run_scratch,
+     '  return {root, owned: mkdtempSync(join(root, prefix))};',
+     '''  const fixed = join(root, prefix);
+  mkdirSync(fixed, {recursive: true});
+  return {root, owned: fixed};''',
+     'scratch_root_is_run_exclusive'),
+    # 23. The generator reopens the shared fixed stage path at startup.
+    ('observe-fixed-scratch', observe,
+     '''  const scratch = createRunScratch(
+    process.env.PDRS_RUNNER_SCRATCH || tmpdir(),
+    'pdrs-dream-runner-observe-',
+  );''',
+     "  const scratch = {root: '/tmp', owned: '/tmp/pdrs-dream-runner-observe'};",
+     'scratch_root_is_run_exclusive'),
+    # 24. The ownership guard is gone, so the run parent itself is deleted.
+    ('run-scratch-parent-delete', run_scratch,
+     '''  if (resolve(owned) === resolve(root)) {
+    throw new Error(`#773 remove refused: ${owned} is the run parent, not an owned child`);
+  }''',
+     '',
+     'scratch_root_is_run_exclusive'),
 ]
 
 fragments = {
@@ -160,17 +206,23 @@ fragments = {
     'merge-error-empty-message': '#773 logs merge-plan-error-empty-message',
     'merge-error-empty-name': '#773 logs merge-plan-error-empty-name',
     'merge-error-lossy-message': '#773 logs merge-plan-error-lone-surrogate',
+    'plan-output-missing-record-sync': '#773 trace category-missing-record',
+    'plan-dropped-kv-recomputed': '#773 trace category-missing-record',
+    'run-scratch-fixed-root': '#773 scratch roots must be distinct mkdtemp dirs',
+    'observe-fixed-scratch': '#773 dream-runner observe must allocate its scratch through createRunScratch',
+    'run-scratch-parent-delete': '#773 remove refused: the run parent must not be removed',
 }
 
 if '--check-anchors' in sys.argv:
-    source = runner.read_text()
-    bad = [(name, source.count(before)) for name, _path, before, _after, _test in mutations
-           if source.count(before) != 1]
-    for name, count in bad:
-        print(f'STALE ANCHOR {name}: {count} matches in {runner.relative_to(root)}')
+    sources = {path: path.read_text() for _name, path, _before, _after, _test in mutations}
+    bad = [(name, path, sources[path].count(before))
+           for name, path, before, _after, _test in mutations
+           if sources[path].count(before) != 1]
+    for name, path, count in bad:
+        print(f'STALE ANCHOR {name}: {count} matches in {path.relative_to(root)}')
     if bad:
         sys.exit(2)
-    print(f'OK {len(mutations)} anchors in {runner.relative_to(root)}')
+    print(f'OK {len(mutations)} anchors in {len(sources)} files')
     sys.exit(0)
 
 out = Path(sys.argv[1]).resolve()

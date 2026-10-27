@@ -521,6 +521,14 @@ impl<'a> DreamRewriteRunner<'a> {
             &output,
             &plan_options,
         );
+        // TS keeps one `droppedWarnings` array in both the result and the
+        // plan-output detail (`dream-review.ts:630,673,688`). Cluster-load
+        // warnings appended below must reach that same trace detail; the
+        // summary KV and step status stay at their push-time values.
+        let plan_step_index = match trace.get("steps") {
+            Some(JsValue::Array(items)) => items.len().saturating_sub(1),
+            _ => 0,
+        };
 
         let record_by_path: HashMap<JsString, JsObject> = records
             .iter()
@@ -733,6 +741,13 @@ impl<'a> DreamRewriteRunner<'a> {
                 &options,
             );
         }
+
+        sync_plan_output_warnings(
+            trace,
+            plan_step_index,
+            &concat(&[&kind_label, &"-cluster-plan-output".into()]),
+            &dropped_warnings,
+        );
 
         Ok(CategoryDreamResult {
             planned_clusters: clusters.len() as f64,
@@ -1488,6 +1503,55 @@ fn json_detail(key: &JsString, label: &JsString, json: JsValue) -> JsObject {
     out.insert("kind".into(), "json".into());
     out.insert("json".into(), json);
     out
+}
+
+/// Replace one already-pushed `json` detail's `droppedWarnings` array.
+/// TS stores the live `droppedWarnings` reference in the plan-output detail
+/// (`dream-review.ts:630,673,688`), so warnings appended while clusters load
+/// are visible in the final trace without moving the step or recomputing its
+/// summary KV / status.
+fn sync_plan_output_warnings(
+    trace: &mut JsObject,
+    step_index: usize,
+    detail_key: &JsString,
+    warnings: &[JsValue],
+) {
+    let Some(JsValue::Array(steps)) = trace.get("steps") else {
+        return;
+    };
+    let mut steps = steps.clone();
+    let Some(step) = steps.get(step_index).and_then(JsValue::as_object).cloned() else {
+        return;
+    };
+    let Some(JsValue::Array(details)) = step.get("details") else {
+        return;
+    };
+    let mut details = details.clone();
+    let mut found = false;
+    for detail in &mut details {
+        let Some(object) = detail.as_object() else {
+            continue;
+        };
+        if object.get("key").and_then(JsValue::as_string) != Some(detail_key) {
+            continue;
+        }
+        let Some(mut json) = object.get("json").and_then(JsValue::as_object).cloned() else {
+            continue;
+        };
+        json.insert("droppedWarnings".into(), JsValue::Array(warnings.to_vec()));
+        let mut updated = object.clone();
+        updated.insert("json".into(), JsValue::Object(json));
+        *detail = JsValue::Object(updated);
+        found = true;
+        break;
+    }
+    if !found {
+        return;
+    }
+    let mut step = step;
+    step.insert("details".into(), JsValue::Array(details));
+    steps[step_index] = JsValue::Object(step);
+    trace.insert("steps".into(), JsValue::Array(steps));
 }
 
 fn push_mutation(
