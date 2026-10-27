@@ -197,7 +197,7 @@ fn outcome(result: Result<JsValue>, root: &str, keep_mtime: bool) -> JsValue {
                     if e.code.is_empty() {
                         JsValue::Null
                     } else {
-                        e.code.as_str().into()
+                        JsValue::String(e.code.clone())
                     },
                 ),
             ]);
@@ -207,7 +207,7 @@ fn outcome(result: Result<JsValue>, root: &str, keep_mtime: bool) -> JsValue {
             if e.name != "TypeError" {
                 fields.insert(
                     "message".into(),
-                    normalize(&e.message.as_str().into(), root, false),
+                    normalize(&JsValue::String(e.message.clone()), root, false),
                 );
             }
             if let Some(v) = &e.validation {
@@ -495,11 +495,15 @@ fn real_ts_scenarios_match_outcomes_and_file_trees() {
 fn error_classes_keep_ts_names_codes_and_messages() {
     let e = SkillError::validation(json(r#"{"ok":false}"#));
     assert_eq!(
-        (e.name, e.code.as_str(), e.message.as_str()),
+        (
+            e.name,
+            String::from_utf16_lossy(e.code.units()),
+            String::from_utf16_lossy(e.message.units()),
+        ),
         (
             "SkillValidationError",
-            "validation_failed",
-            "Validation failed."
+            "validation_failed".to_owned(),
+            "Validation failed.".to_owned()
         )
     );
     assert!(e.is_manager_error());
@@ -619,7 +623,7 @@ async fn facade_routes_each_method_to_the_selected_port() {
                 // Without a key the default project is native.
                 let e = called.expect_err("#929 native validate/scan input is incomplete");
                 assert!(
-                    !e.requires_host && e.code != "SKILL_MODULE_DISABLED",
+                    !e.requires_host && !e.code.equals_str("SKILL_MODULE_DISABLED"),
                     "#929 native validate/scan must not use an external/disabled port"
                 );
                 continue;
@@ -629,8 +633,8 @@ async fn facade_routes_each_method_to_the_selected_port() {
                 assert_eq!(
                     compact(&object([
                         ("name", e.name.into()),
-                        ("code", e.code.as_str().into()),
-                        ("message", e.message.as_str().into()),
+                        ("code", JsValue::String(e.code.clone())),
+                        ("message", JsValue::String(e.message.clone())),
                     ])),
                     compact(expected),
                     "#929 disabled port error for {method:?}"
@@ -735,25 +739,30 @@ fn unmeasured_errnos_require_the_host() {
         for errno in crate::node_io::unmeasured_errnos(method.wire()) {
             let e = SkillError::io(&io(errno), "stat", Some("/x")).admit(method.wire());
             assert!(
-                e.requires_host && e.code == "NODE_IO_REQUIRED" && e.message.is_empty(),
+                e.requires_host && e.code.equals_str("NODE_IO_REQUIRED") && e.message.is_empty(),
                 "{} {errno}",
                 method.wire()
             );
         }
     }
     let e = SkillError::io(&io(libc::ENOTDIR), "scandir", Some("/x")).admit("skill_list");
+    assert!(!e.requires_host);
     assert_eq!(
-        (e.requires_host, e.message.as_str()),
-        (false, "ENOTDIR: not a directory, scandir '/x'")
+        String::from_utf16_lossy(e.message.units()),
+        "ENOTDIR: not a directory, scandir '/x'"
     );
     // Outside the libuv table: never a Rust Display string.
     assert!(SkillError::io(&io(123456), "stat", None).requires_host);
     assert!(SkillError::io(&io::Error::other("x"), "stat", None).requires_host);
     // Domain and JS errors carry no errno and pass untouched.
     let e = SkillError::manager("conflict", "x").admit("skill_list");
-    assert!(!e.requires_host && e.code == "conflict");
+    assert!(!e.requires_host && e.code.equals_str("conflict"));
     assert_eq!(
-        SkillError::io_pair(&io(libc::EEXIST), "symlink", "/a", "/b").message,
+        String::from_utf16_lossy(
+            SkillError::io_pair(&io(libc::EEXIST), "symlink", "/a", "/b")
+                .message
+                .units()
+        ),
         "EEXIST: file already exists, symlink '/a' -> '/b'"
     );
 }
@@ -779,11 +788,12 @@ fn deep_arrays_never_overflow_the_stack() {
         input
     };
     let e = m.list(&with("cursor", "")).unwrap_err();
-    assert_eq!(e.code, "invalid_input");
+    assert!(e.code.equals_str("invalid_input"));
     let e = m.read(&with("slug", r#""scope":"user""#)).unwrap_err();
+    assert_eq!(e.name, "RangeError");
     assert_eq!(
-        (e.name, e.message.as_str()),
-        ("RangeError", "Maximum call stack size exceeded")
+        String::from_utf16_lossy(e.message.units()),
+        "Maximum call stack size exceeded"
     );
     let e = m.list(&with("scope", "")).unwrap_err();
     assert_eq!(e.name, "RangeError");

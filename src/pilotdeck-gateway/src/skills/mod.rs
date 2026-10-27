@@ -483,7 +483,7 @@ impl SkillManager {
 
 // ------------------------------------------------------------------ helpers
 
-fn invalid_input(message: impl Into<String>) -> SkillError {
+fn invalid_input(message: impl Into<JsString>) -> SkillError {
     SkillError::manager("invalid_input", message)
 }
 
