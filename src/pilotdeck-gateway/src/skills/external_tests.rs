@@ -84,16 +84,26 @@ impl ScriptedTransport {
         }
     }
     fn seen(&self) -> Vec<ModuleHttpRequest> {
-        self.seen.lock().unwrap().clone()
+        self.seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
     fn exhausted(&self) -> bool {
-        self.replies.lock().unwrap().is_empty()
+        self.replies
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_empty()
     }
 }
 impl ModuleHttpTransport for ScriptedTransport {
     fn send<'a>(&'a self, request: ModuleHttpRequest) -> ModuleHttpFuture<'a> {
         Box::pin(async move {
-            let index = self.seen.lock().unwrap().len();
+            let index = self
+                .seen
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .len();
             let expected = self
                 .expected
                 .get(index)
@@ -141,11 +151,14 @@ impl ModuleHttpTransport for ScriptedTransport {
                 actual_body, expected_body,
                 "#929 request {index} body must match TS byte for byte"
             );
-            self.seen.lock().unwrap().push(request);
+            self.seen
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(request);
             let reply = self
                 .replies
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .pop_front()
                 .unwrap_or_else(|| panic!("#929 no TS HTTP reply for request {index}"));
             Ok(ModuleHttpResponse {
@@ -305,13 +318,19 @@ impl HarnessTransport {
         }
     }
     pub(super) fn seen(&self) -> Vec<ModuleHttpRequest> {
-        self.seen.lock().unwrap().clone()
+        self.seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 }
 impl ModuleHttpTransport for HarnessTransport {
     fn send<'a>(&'a self, request: ModuleHttpRequest) -> ModuleHttpFuture<'a> {
         Box::pin(async move {
-            self.seen.lock().unwrap().push(request.clone());
+            self.seen
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(request.clone());
             let path = url::Url::parse(&request.url)
                 .expect("#929 harness URL")
                 .path()
@@ -473,7 +492,10 @@ async fn external_manifest_is_loaded_once_per_port() {
     let (a, b) = tokio::join!(first, second);
     a.expect("#929 concurrent list");
     b.expect("#929 concurrent read");
-    let seen = transport.seen.lock().unwrap();
+    let seen = transport
+        .seen
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let manifests = seen
         .iter()
         .filter(|request| request.method == "GET")
@@ -505,7 +527,10 @@ struct DynamicTransport {
 impl ModuleHttpTransport for DynamicTransport {
     fn send<'a>(&'a self, request: ModuleHttpRequest) -> ModuleHttpFuture<'a> {
         Box::pin(async move {
-            self.seen.lock().unwrap().push(request.clone());
+            self.seen
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(request.clone());
             if request.method == "GET" {
                 return Ok(ModuleHttpResponse {
                     status: 200,
@@ -986,10 +1011,11 @@ async fn over_limit_body_keeps_the_timeout_priority() {
     );
     let error = outcome
         .expect("#929 over-limit body outer deadline")
-        .expect_err("#929 over-limit body must reach the shared deadline and MODULE_TIMEOUT, not an early protocol error");
+        .expect_err("#929 over-limit body must fail with a module error");
     assert!(
         error.code.equals_str("MODULE_TIMEOUT"),
-        "#929 over-limit body keeps the timeout priority, got {:?} message {:?} after {:?}",
+        "#929 over-limit body must reach the shared deadline and MODULE_TIMEOUT, not an early protocol error; \
+         #929 over-limit body keeps the timeout priority, got {:?} message {:?} after {:?}",
         error.code,
         error.message,
         started.elapsed()
@@ -1049,7 +1075,10 @@ struct RecordingTransport {
 impl ModuleHttpTransport for RecordingTransport {
     fn send<'a>(&'a self, request: ModuleHttpRequest) -> ModuleHttpFuture<'a> {
         Box::pin(async move {
-            self.seen.lock().unwrap().push(request);
+            self.seen
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(request);
             Err(ModuleTransportError::Unavailable)
         })
     }
@@ -1077,7 +1106,10 @@ async fn oversized_timeout_uses_the_node_timer_clamp() {
             error.code.equals_str("MODULE_TRANSPORT_UNAVAILABLE"),
             "#929 timeout probe keeps the transport code"
         );
-        let seen = transport.seen.lock().unwrap();
+        let seen = transport
+            .seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let request = seen
             .first()
             .expect("#929 timeout probe must record the manifest request");
@@ -1238,7 +1270,10 @@ struct FlightTransport {
 impl ModuleHttpTransport for FlightTransport {
     fn send<'a>(&'a self, request: ModuleHttpRequest) -> ModuleHttpFuture<'a> {
         Box::pin(async move {
-            self.seen.lock().unwrap().push(request.clone());
+            self.seen
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(request.clone());
             if request.method == "GET" {
                 let call = self
                     .manifest_calls
@@ -1318,8 +1353,11 @@ async fn concurrent_manifest_failure_is_shared_by_every_waiter() {
     transport.release.notify_one();
     let first = first.await.expect("#929 first join");
     let second = second.await.expect("#929 second join");
-    let first = first.expect_err("#929 first manifest failure must surface");
-    let second = second.expect_err("#929 concurrent waiter must receive the same manifest failure");
+    let first = first.expect_err("#929 first manifest failure must surface to its owner");
+    let second = second.expect_err(
+        "#929 first manifest failure must surface to the concurrent waiter; \
+         #929 concurrent waiter must receive the same manifest failure",
+    );
     assert!(
         first.code.equals_str("MODULE_TRANSPORT_UNAVAILABLE")
             && second.code.equals_str("MODULE_TRANSPORT_UNAVAILABLE"),
@@ -1362,7 +1400,10 @@ struct CancelTransport {
 impl ModuleHttpTransport for CancelTransport {
     fn send<'a>(&'a self, request: ModuleHttpRequest) -> ModuleHttpFuture<'a> {
         Box::pin(async move {
-            self.seen.lock().unwrap().push(request.clone());
+            self.seen
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(request.clone());
             if request.method == "GET" {
                 let call = self
                     .manifest_calls
