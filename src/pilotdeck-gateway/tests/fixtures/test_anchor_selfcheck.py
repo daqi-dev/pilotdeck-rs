@@ -667,19 +667,117 @@ mutants = [('sample', source, text, part + 'after')]
         for name in ('originals', 'snapshots'):
             declaration = f"{name} = {{'alias.rs': source.read_text()}}\n"
             table = f"mutants = [('sample', source, {name}['alias.rs'], 'after')]\n"
-            for argument in (name, f'data={name}'):
-                self.write(declaration + f'consume({argument})\n' + table)
-                self.run_check(label='#827 direct-argument accepted')
-                self.write(declaration + f'consume([{name}])\n' + table)
-                self.assertIn('mapping escape', self.run_check(1, label='#827 indirect-argument rejected'),
-                              '#827 indirect-argument must not inherit the direct-argument exception')
-                self.write(declaration + f'consume({argument})\n' + table)
-                self.run_check(label='#827 direct-argument restored')
+            good = declaration + f'copy = dict({name})\nconsume(dict({name}))\n' + table
+            for statement in (
+                f'consume({name})', f'consume(data={name})', f'consume([{name}])',
+                f'consume(consume({name}))', f'consume(data=consume({name}))',
+                f'builtins.dict({name})', f'factory()({name})',
+                f'dict({name}, other)', f'dict({name}, extra=1)', f'dict(data={name})',
+                f'dict({name}, **{{}})', f'dict({name}, *[])',
+                f'dict(*{name})', f'dict(**{name})', f'dict(*[{name}])',
+            ):
+                with self.subTest(name=name, statement=statement):
+                    self.write(good)
+                    self.run_check(label='#827 exact-dict original')
+                    self.write(declaration + statement + '\n' + table)
+                    self.assertIn('unsupported snapshot', self.run_check(1, label='#827 exact-dict rejected'),
+                                  '#827 exact-dict must reject every other call shape')
+                    self.write(good)
+                    self.run_check(label='#827 exact-dict restored')
         self.check_snapshot_occurrences((
             'alias = SNAPSHOT', 'return_value = [SNAPSHOT]',
             'consume(*SNAPSHOT)', 'consume(**SNAPSHOT)',
             'SNAPSHOT()', 'for item in SNAPSHOT:\n    pass',
         ), 'mapping escape', 'unknown-occurrence')
+
+    def test_snapshot_call_arguments_cannot_mutate_mapping(self):
+        self.check_snapshot_occurrences((
+            "import operator\noperator.setitem(SNAPSHOT, 'alias.rs', 'missing')",
+            "from operator import setitem\nsetitem(SNAPSHOT, 'alias.rs', 'missing')",
+            "dict.__setitem__(SNAPSHOT, 'alias.rs', 'missing')",
+            "dict.update(SNAPSHOT, {'alias.rs': 'missing'})",
+            'dict.clear(SNAPSHOT)',
+            "def change(data):\n    data['alias.rs'] = 'missing'\nchange(SNAPSHOT)",
+            "def change(data):\n    data['alias.rs'] = 'missing'\nchange(data=SNAPSHOT)",
+        ), 'unsupported snapshot', 'call-mutation')
+
+    def test_snapshot_read_chains_reject_mutating_methods(self):
+        for name in ('originals', 'snapshots'):
+            declaration = (f"import json\n{name} = {{'alias.rs': source.read_text(), "
+                           "'nested': json.loads('{\"list\": []}')}\n")
+            table = f"mutants = [('sample', source, {name}['alias.rs'], 'after')]\n"
+            for statement in (
+                "SNAPSHOT['nested'].update({'value': 'missing'})",
+                "SNAPSHOT['nested']['list'].append('missing')",
+                "SNAPSHOT['nested'].clear()",
+                "SNAPSHOT['nested'].pop('list')",
+                "SNAPSHOT['nested'].unknown_method()",
+                "SNAPSHOT['nested']()",
+                "SNAPSHOT.get('nested').update({'value': 'missing'})",
+                "SNAPSHOT['alias.rs'].split().append('missing')",
+                "SNAPSHOT['alias.rs'].split()[0].unknown_method()",
+                "SNAPSHOT['nested'].field.clear()",
+            ):
+                with self.subTest(name=name, statement=statement):
+                    self.write(declaration + table)
+                    self.run_check(label='#827 read-method original')
+                    self.write(declaration + statement.replace('SNAPSHOT', name) + '\n' + table)
+                    self.assertIn('unsupported snapshot read method',
+                                  self.run_check(1, label='#827 read-method rejected'),
+                                  '#827 read-method must reject mutations at every chain depth')
+                    self.write(declaration + table)
+                    self.run_check(label='#827 read-method restored')
+
+    def test_snapshot_read_chains_preserve_concrete_readonly_methods(self):
+        for name in ('originals', 'snapshots'):
+            declaration = f"{name} = {{'alias.rs': source.read_text(), 'bytes': source.read_bytes()}}\n"
+            table = f"mutants = [('sample', source, {name}['alias.rs'], 'after')]\n"
+            for expression in (
+                "SNAPSHOT['bytes'].decode()", "SNAPSHOT['alias.rs'].count('before')",
+                "SNAPSHOT['alias.rs'].encode()", "SNAPSHOT['alias.rs'].replace('before', 'after')",
+                "SNAPSHOT['alias.rs'].split()", "SNAPSHOT['alias.rs'].strip()",
+                "SNAPSHOT['bytes'].decode().split()[0].strip().count('before')",
+                "SNAPSHOT.get('alias.rs').strip()",
+            ):
+                with self.subTest(name=name, expression=expression):
+                    good = declaration + expression.replace('SNAPSHOT', name) + '\n' + table
+                    self.write(good)
+                    self.run_check(label='#827 readonly-chain original')
+                    self.write(good.replace(expression.replace('SNAPSHOT', name),
+                                            expression.replace('SNAPSHOT', name) + '.clear()'))
+                    self.assertIn('unsupported snapshot read method',
+                                  self.run_check(1, label='#827 readonly-chain rejected'),
+                                  '#827 readonly-chain must not end validation at the first Call')
+                    self.write(good)
+                    self.run_check(label='#827 readonly-chain restored')
+
+    def test_snapshot_transformed_reads_cannot_be_write_targets(self):
+        self.check_snapshot_occurrences((
+            "SNAPSHOT['alias.rs'].split()[0] = 'missing'",
+            "del SNAPSHOT['alias.rs'].split()[0]",
+            "SNAPSHOT.get('alias.rs').field = 'missing'",
+        ), 'unsupported snapshot nested mapping write', 'chained-write')
+
+    def test_snapshot_mapping_views_reject_method_chains(self):
+        self.check_snapshot_occurrences((
+            'SNAPSHOT.items().clear()', 'SNAPSHOT.keys().clear()', 'SNAPSHOT.values().clear()',
+        ), 'unsupported snapshot read method', 'view-read-method')
+
+    def test_snapshot_get_rejects_starred_arguments(self):
+        for name in ('originals', 'snapshots'):
+            declaration = f"{name} = {{'alias.rs': source.read_text()}}\npair = ('alias.rs', None)\n"
+            table = f"mutants = [('sample', source, {name}['alias.rs'], 'after')]\n"
+            good = declaration + f"{name}.get('alias.rs', None)\n" + table
+            for arguments in ('*pair', "'alias.rs', *pair", "*pair, None"):
+                with self.subTest(name=name, arguments=arguments):
+                    self.write(good)
+                    self.run_check(label='#827 get-starred original')
+                    self.write(declaration + f'{name}.get({arguments})\n' + table)
+                    self.assertIn('unsupported snapshot mapping method',
+                                  self.run_check(1, label='#827 get-starred rejected'),
+                                  '#827 get-starred must reject unpacked positional arguments')
+                    self.write(good)
+                    self.run_check(label='#827 get-starred restored')
 
     def test_snapshot_compatibility_mapping_calls_have_exact_shapes(self):
         declaration = "originals = {'alias.rs': source.read_text()}\n"

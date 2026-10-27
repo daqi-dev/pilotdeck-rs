@@ -18,10 +18,11 @@ as one binding. Assigns may also belong to a top-level function, without a file
 allowlist; local dictionaries must be consumed in that same function scope.
 Dictionary keys retain their read expression; unknown snapshot syntax fails closed.
 Snapshot occurrences are allowlisted: canonical bindings, subscript reads and
-direct call arguments. Existing modeled originals[key] assignments, literal
+exact dict(name) copies. Existing modeled originals[key] assignments, literal
 pop(key, None) statements and read-only mapping calls remain compatibility forms.
 Attribute names and string literals equal to a snapshot name are never aliases.
-Direct call arguments are allowed syntax; callees are not executed or proven pure.
+Read chains allow only the concrete methods in SNAPSHOT_READ_METHODS. This is a
+syntax check, not execution or general Python alias/purity analysis.
 """
 import argparse
 import ast
@@ -131,6 +132,9 @@ SCOPED_ROWS = {
 }
 SOURCE_SUFFIXES = {'.rs', '.py', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'}
 SNAPSHOT_NAMES = {'originals', 'snapshots'}
+# Fixture receivers use count/decode/encode/replace/split; strip is an existing
+# modeled transform covered by test_snapshot_target_follows_rebased_transform_chain.
+SNAPSHOT_READ_METHODS = {'count', 'decode', 'encode', 'replace', 'split', 'strip'}
 
 
 class Unsupported(ValueError):
@@ -215,6 +219,20 @@ class Static:
         name = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
         return name if name in SNAPSHOT_NAMES else None
 
+    def check_snapshot_read(self, access):
+        """Follow every receiver, including calls followed by further accesses."""
+        while True:
+            owner = self.parents.get(access)
+            if isinstance(owner, (ast.Subscript, ast.Attribute)) and owner.value is access:
+                if not isinstance(owner.ctx, ast.Load):
+                    raise Unsupported('unsupported snapshot nested mapping write')
+            elif isinstance(owner, ast.Call) and owner.func is access:
+                if not isinstance(access, ast.Attribute) or access.attr not in SNAPSHOT_READ_METHODS:
+                    raise Unsupported('unsupported snapshot read method')
+            else:
+                return
+            access = owner
+
     def check_snapshot_uses(self, bindings):
         """Every occurrence needs a known meaning, regardless of its namespace."""
         for node in ast.walk(self.tree):
@@ -247,27 +265,24 @@ class Static:
                     if isinstance(parent.ctx, ast.Load):
                         # Reads may be transformed but must not become nested
                         # assignment/deletion targets such as originals[k][i].
-                        access = parent
-                        owner = self.parents.get(access)
-                        while isinstance(owner, (ast.Subscript, ast.Attribute)) and owner.value is access:
-                            if not isinstance(owner.ctx, ast.Load):
-                                raise Unsupported('unsupported snapshot nested mapping write')
-                            access, owner = owner, self.parents.get(owner)
+                        self.check_snapshot_read(parent)
                         continue
                     if (node.id == 'originals' and isinstance(parent.ctx, ast.Store)
                             and isinstance(self.parents.get(parent), ast.Assign)
                             and self.parents[parent].targets == [parent]):
                         continue  # Existing modeled originals[key] = expression.
-                if (isinstance(parent, ast.Call) and node in parent.args
-                        or isinstance(parent, ast.keyword) and parent.arg is not None
-                        and isinstance(self.parents.get(parent), ast.Call)):
+                if (isinstance(parent, ast.Call) and isinstance(parent.func, ast.Name)
+                        and parent.func.id == 'dict' and parent.args == [node] and not parent.keywords):
                     continue
                 if isinstance(parent, ast.Attribute):
                     call = self.parents.get(parent)
                     if isinstance(call, ast.Call) and call.func is parent:
                         if parent.attr in ('items', 'keys', 'values') and not call.args and not call.keywords:
+                            self.check_snapshot_read(call)
                             continue
-                        if parent.attr == 'get' and 1 <= len(call.args) <= 2 and not call.keywords:
+                        if (parent.attr == 'get' and 1 <= len(call.args) <= 2 and not call.keywords
+                                and not any(isinstance(arg, ast.Starred) for arg in call.args)):
+                            self.check_snapshot_read(call)
                             continue
                         if (node.id == 'originals' and parent.attr == 'pop' and len(call.args) == 2
                                 and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)
