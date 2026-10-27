@@ -15,6 +15,8 @@ use std::{
 };
 
 use crate::test_baseline as baseline;
+#[path = "runner_notice_tests.rs"]
+mod notices;
 struct Store {
     disk: JsonlTranscriptStore,
     fault: String,
@@ -28,11 +30,16 @@ struct Store {
 }
 impl TranscriptStore for Store {
     fn append(&self, key: &TranscriptKey, entry: &JsValue) -> StoreResult<()> {
-        if let Some((started, release)) = self.gate.lock().unwrap().take() {
-            started.send(()).unwrap();
+        if let Some((started, release)) = self
+            .gate
+            .lock()
+            .expect("#741 notice store gate lock")
+            .take()
+        {
+            started.send(()).expect("#741 notice gate entered receiver");
             release
                 .recv_timeout(Duration::from_secs(10))
-                .expect("bounded I/O gate");
+                .expect("#741 notice bounded I/O gate");
         }
         if entry.get("type") == Some(&self.fault.as_str().into())
             && self
@@ -57,7 +64,7 @@ struct Fixture {
 impl Fixture {
     fn new(fault: &str, failures: usize) -> Self {
         let root = std::env::temp_dir().join(format!("pdrs-runner-{}", uuid::Uuid::new_v4()));
-        fs::create_dir(&root).unwrap();
+        fs::create_dir(&root).expect("#741 notice fixture directory");
         let key = TranscriptKey {
             project_root: root.clone(),
             pilot_home: root.join("home"),
@@ -84,7 +91,10 @@ impl Fixture {
             .writer()
             .clone();
         let duplicate = self.store.fault == "duplicate";
-        *writer.test_sources.lock().unwrap() = Some((
+        *writer
+            .test_sources
+            .lock()
+            .expect("#741 notice writer sources") = Some((
             Arc::new(|| Ok("2026-10-26T00:00:00.000Z".into())),
             Arc::new(move || {
                 let id = ids.fetch_add(1, Ordering::SeqCst) + 1;
@@ -94,7 +104,7 @@ impl Fixture {
         let recorder = Arc::new(Recorder::from_writer(writer));
         let mut runner = TurnRunner::new(
             recorder,
-            Arc::new(self.registry.acquire(None).unwrap()),
+            Arc::new(self.registry.acquire(None).expect("#741 notice lease")),
             "s".into(),
             "t".into(),
         );
@@ -104,7 +114,7 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.root).unwrap();
+        fs::remove_dir_all(&self.root).expect("#741 notice fixture cleanup");
     }
 }
 fn array(v: &JsValue) -> Vec<JsValue> {
