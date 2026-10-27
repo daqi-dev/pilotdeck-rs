@@ -11,8 +11,8 @@ the script prints the aggregate KILLED/SURVIVED/INVALID lists and exits 1 if
 anything was not killed.
 
 `mutating_sources` requires the product tree to match the baseline. The fix-r1
-product changes are not committed before the coordinator commits them, so a
-normal run is expected to refuse here; the author tree only runs
+and fix-r2 product changes are not committed before the coordinator commits
+them, so a normal run is expected to refuse here; the author tree only runs
 ``--check-anchors``.
 Never use a shadow git or a second build directory. cargo always uses the
 caller's ``CARGO_TARGET_DIR`` and ``wait_for_slot``.
@@ -112,9 +112,32 @@ mutations = [
      'meta_review_mirror'),
     # 16. The merge planning warning loses its "planning" wording.
     ('merge-warning-prefix', runner,
-     '"[clawxmemory] General project meta merge planning failed: {}"',
-     '"[clawxmemory] General project meta merge failed: {}"',
+     '&"[clawxmemory] General project meta merge planning failed: ".into(),',
+     '&"[clawxmemory] General project meta merge failed: ".into(),',
      'merge_plan_error'),
+    # 17. `String(error)` keeps ": " when the message is empty.
+    ('merge-error-empty-message', runner,
+     '''        if message.is_empty() {
+            return name;
+        }''',
+     '''        if message.is_empty() && !message.is_empty() {
+            return name;
+        }''',
+     'merge_plan_error_empty_message'),
+    # 18. `String(error)` prefixes ": " even when the name is empty.
+    ('merge-error-empty-name', runner,
+     '''        if name.is_empty() {
+            return message;
+        }''',
+     '''        if name.is_empty() && !name.is_empty() {
+            return message;
+        }''',
+     'merge_plan_error_empty_name'),
+    # 19. The warning's message is decoded lossily, replacing a lone surrogate.
+    ('merge-error-lossy-message', runner,
+     'let message = self.js_message();',
+     'let message = JsString::from(String::from_utf16_lossy(self.js_message().units()));',
+     'merge_plan_error_lone_surrogate'),
 ]
 
 fragments = {
@@ -134,6 +157,9 @@ fragments = {
     'meta-preview-separator': '#773 trace meta-review-update',
     'meta-review-mirror-branch': '#773 trace meta-review-mirror',
     'merge-warning-prefix': '#773 logs merge-plan-error',
+    'merge-error-empty-message': '#773 logs merge-plan-error-empty-message',
+    'merge-error-empty-name': '#773 logs merge-plan-error-empty-name',
+    'merge-error-lossy-message': '#773 logs merge-plan-error-lone-surrogate',
 }
 
 if '--check-anchors' in sys.argv:

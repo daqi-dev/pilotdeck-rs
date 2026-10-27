@@ -49,7 +49,7 @@ PDRS_BASELINE="$PDRS_BASELINE" cargo test --manifest-path src/Cargo.toml \
 ## 负控
 
 `negative.py` 用 `negative_process.mutating_sources` 锁定并恢复 `runner.rs`，
-先校验 16 个变异锚点恰好各出现一次（过期报 `STALE ANCHOR` 并退出 2，不冒充
+先校验 19 个变异锚点恰好各出现一次（过期报 `STALE ANCHOR` 并退出 2，不冒充
 SURVIVED），再对**本次选中变异的目测试去重**逐个跑未变异源码，任一目标测试
 未通过即拒绝判杀并以 1 退出；逐格只跑该变异绑定的 `#[test]`，要求测试本身
 失败（`test <name> ... FAILED`）且日志出现该格专属的 `#773 ...` 断言消息。
@@ -57,8 +57,14 @@ SURVIVED），再对**本次选中变异的目测试去重**逐个跑未变异�
 最后再核一次；逐项汇总 KILLED/SURVIVED/INVALID，任一非 KILLED 即非零退出。
 cargo 强制使用调用方 `CARGO_TARGET_DIR` 并走 `run_owned` + `wait_for_slot`。
 
-fix-r1 的产品改动在提交前与 HEAD 不一致，`mutating_sources` 会按设计拒绝；
-本树只跑 `python3 .../negative.py --check-anchors`，全量由协调者在宿主提交后跑：
+其中 `merge-error-empty-message` / `merge-error-empty-name` /
+`merge-error-lossy-message` 分别绑定 fix-r2 的三个
+`merge-plan-error-*` 金样，覆盖 `Error.prototype.toString()` 的空 message、
+空 name 与孤代理 UTF-16 边界。
+
+fix-r1 / fix-r2 的产品改动在提交前与 HEAD 不一致，`mutating_sources` 会按设计
+拒绝；本树只跑 `python3 .../negative.py --check-anchors`，全量由协调者在宿主
+提交后跑：
 
 ```sh
 cd <tree>

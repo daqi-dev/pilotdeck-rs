@@ -44,7 +44,13 @@ class ScriptedExtractor {
     const recorded = jsonSafe(input);
     this.calls.push({method, input: recorded});
     if (step.debug !== undefined) input.debugTrace?.(step.debug);
-    if (step.throws !== undefined) throw new Error(step.throws);
+    if (step.throws !== undefined) {
+      const error = new Error(step.throws);
+      // `Object.assign(new Error('x'), {name: ''})` retains a custom empty
+      // name through the catch; `String(error)` then omits the separator.
+      if (step.throwsName !== undefined) error.name = step.throwsName;
+      throw error;
+    }
     return jsonSafe(step.result);
   }
 
@@ -486,6 +492,49 @@ export async function collect(baseline) {
       {
         method: 'planGeneralProjectMetaMerges',
         throws: 'fixture model failed',
+      },
+    ],
+  });
+
+  // Three `Error.prototype.toString()` / raw-UTF-16 boundaries from review
+  // fix-r2: an empty message drops `name + ": "`, an empty name drops the
+  // separator, and a lone surrogate stays a lone surrogate.
+  await add({
+    name: 'merge-plan-error-empty-message',
+    method: 'mergeGeneralProjectMetas',
+    mode: 'general',
+    setup: {metas: [metaA, metaB]},
+    script: [
+      {
+        method: 'planGeneralProjectMetaMerges',
+        throws: '',
+      },
+    ],
+  });
+
+  await add({
+    name: 'merge-plan-error-empty-name',
+    method: 'mergeGeneralProjectMetas',
+    mode: 'general',
+    setup: {metas: [metaA, metaB]},
+    script: [
+      {
+        method: 'planGeneralProjectMetaMerges',
+        throws: 'x',
+        throwsName: '',
+      },
+    ],
+  });
+
+  await add({
+    name: 'merge-plan-error-lone-surrogate',
+    method: 'mergeGeneralProjectMetas',
+    mode: 'general',
+    setup: {metas: [metaA, metaB]},
+    script: [
+      {
+        method: 'planGeneralProjectMetaMerges',
+        throws: '\ud800',
       },
     ],
   });

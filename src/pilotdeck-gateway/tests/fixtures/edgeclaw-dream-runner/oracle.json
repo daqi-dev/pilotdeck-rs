@@ -3018,6 +3018,565 @@
       }
     },
     {
+      "name": "merge-plan-error-empty-message",
+      "method": "mergeGeneralProjectMetas",
+      "mode": "general",
+      "setup": {
+        "metas": [
+          {
+            "projectId": "p1",
+            "projectName": "Alpha",
+            "description": "alpha project",
+            "status": "active"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "Beta",
+            "description": "beta project",
+            "status": "active"
+          }
+        ]
+      },
+      "ensureMeta": false,
+      "script": [
+        {
+          "method": "planGeneralProjectMetaMerges",
+          "throws": ""
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "result": {
+          "mergedProjects": 0,
+          "deletedProjects": 0,
+          "relinkedFiles": 0,
+          "planSummary": "Dream skipped General project merge planning because the model request failed: ",
+          "droppedWarnings": [
+            "Dream skipped General project merge planning because the model request failed: "
+          ],
+          "groups": []
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "general_project_merge",
+              "title": "General Project Merge",
+              "status": "warning",
+              "inputSummary": "2 local general projects",
+              "outputSummary": "Dream skipped General project merge planning because the model request failed: ",
+              "details": [
+                {
+                  "key": "general-project-merge-summary",
+                  "label": "General Project Merge Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "projectNodes",
+                      "value": "2"
+                    },
+                    {
+                      "label": "plannerGroups",
+                      "value": "0"
+                    },
+                    {
+                      "label": "droppedGroups",
+                      "value": "1"
+                    },
+                    {
+                      "label": "mergedProjects",
+                      "value": "0"
+                    },
+                    {
+                      "label": "deletedProjects",
+                      "value": "0"
+                    },
+                    {
+                      "label": "relinkedFiles",
+                      "value": "0"
+                    }
+                  ]
+                },
+                {
+                  "key": "general-project-merge-plan",
+                  "label": "General Project Merge Plan",
+                  "kind": "json",
+                  "json": {
+                    "summary": "Dream skipped General project merge planning because the model request failed: ",
+                    "plannerGroups": [],
+                    "acceptedGroups": [],
+                    "droppedWarnings": [
+                      "Dream skipped General project merge planning because the model request failed: "
+                    ]
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.general_project_merge",
+                "fallback": "General Project Merge"
+              }
+            }
+          ],
+          "mutations": [],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "planGeneralProjectMetaMerges",
+            "input": {
+              "projectMetas": [
+                {
+                  "projectId": "p1",
+                  "projectName": "Alpha",
+                  "description": "alpha project",
+                  "status": "active",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "projectId": "p2",
+                  "projectName": "Beta",
+                  "description": "beta project",
+                  "status": "active",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                }
+              ]
+            }
+          }
+        ],
+        "logs": [
+          "[clawxmemory] General project meta merge planning failed: Error"
+        ],
+        "tree": [
+          {
+            "relativePath": "GeneralProjects/alpha-p1.md",
+            "content": "---\nname: Alpha\ndescription: alpha project\ntype: general_project_meta\nscope: project\nproject_id: p1\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nalpha project\n\n## Status\nactive\n"
+          },
+          {
+            "relativePath": "GeneralProjects/beta-p2.md",
+            "content": "---\nname: Beta\ndescription: beta project\ntype: general_project_meta\nscope: project\nproject_id: p2\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nbeta project\n\n## Status\nactive\n"
+          },
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## General Projects\n- [Alpha](GeneralProjects/alpha-p1.md) — alpha project\n- [Beta](GeneralProjects/beta-p2.md) — beta project\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "merge-plan-error-empty-name",
+      "method": "mergeGeneralProjectMetas",
+      "mode": "general",
+      "setup": {
+        "metas": [
+          {
+            "projectId": "p1",
+            "projectName": "Alpha",
+            "description": "alpha project",
+            "status": "active"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "Beta",
+            "description": "beta project",
+            "status": "active"
+          }
+        ]
+      },
+      "ensureMeta": false,
+      "script": [
+        {
+          "method": "planGeneralProjectMetaMerges",
+          "throws": "x",
+          "throwsName": ""
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "result": {
+          "mergedProjects": 0,
+          "deletedProjects": 0,
+          "relinkedFiles": 0,
+          "planSummary": "Dream skipped General project merge planning because the model request failed: x",
+          "droppedWarnings": [
+            "Dream skipped General project merge planning because the model request failed: x"
+          ],
+          "groups": []
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "general_project_merge",
+              "title": "General Project Merge",
+              "status": "warning",
+              "inputSummary": "2 local general projects",
+              "outputSummary": "Dream skipped General project merge planning because the model request failed: x",
+              "details": [
+                {
+                  "key": "general-project-merge-summary",
+                  "label": "General Project Merge Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "projectNodes",
+                      "value": "2"
+                    },
+                    {
+                      "label": "plannerGroups",
+                      "value": "0"
+                    },
+                    {
+                      "label": "droppedGroups",
+                      "value": "1"
+                    },
+                    {
+                      "label": "mergedProjects",
+                      "value": "0"
+                    },
+                    {
+                      "label": "deletedProjects",
+                      "value": "0"
+                    },
+                    {
+                      "label": "relinkedFiles",
+                      "value": "0"
+                    }
+                  ]
+                },
+                {
+                  "key": "general-project-merge-plan",
+                  "label": "General Project Merge Plan",
+                  "kind": "json",
+                  "json": {
+                    "summary": "Dream skipped General project merge planning because the model request failed: x",
+                    "plannerGroups": [],
+                    "acceptedGroups": [],
+                    "droppedWarnings": [
+                      "Dream skipped General project merge planning because the model request failed: x"
+                    ]
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.general_project_merge",
+                "fallback": "General Project Merge"
+              }
+            }
+          ],
+          "mutations": [],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "planGeneralProjectMetaMerges",
+            "input": {
+              "projectMetas": [
+                {
+                  "projectId": "p1",
+                  "projectName": "Alpha",
+                  "description": "alpha project",
+                  "status": "active",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "projectId": "p2",
+                  "projectName": "Beta",
+                  "description": "beta project",
+                  "status": "active",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                }
+              ]
+            }
+          }
+        ],
+        "logs": [
+          "[clawxmemory] General project meta merge planning failed: x"
+        ],
+        "tree": [
+          {
+            "relativePath": "GeneralProjects/alpha-p1.md",
+            "content": "---\nname: Alpha\ndescription: alpha project\ntype: general_project_meta\nscope: project\nproject_id: p1\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nalpha project\n\n## Status\nactive\n"
+          },
+          {
+            "relativePath": "GeneralProjects/beta-p2.md",
+            "content": "---\nname: Beta\ndescription: beta project\ntype: general_project_meta\nscope: project\nproject_id: p2\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nbeta project\n\n## Status\nactive\n"
+          },
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## General Projects\n- [Alpha](GeneralProjects/alpha-p1.md) — alpha project\n- [Beta](GeneralProjects/beta-p2.md) — beta project\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "merge-plan-error-lone-surrogate",
+      "method": "mergeGeneralProjectMetas",
+      "mode": "general",
+      "setup": {
+        "metas": [
+          {
+            "projectId": "p1",
+            "projectName": "Alpha",
+            "description": "alpha project",
+            "status": "active"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "Beta",
+            "description": "beta project",
+            "status": "active"
+          }
+        ]
+      },
+      "ensureMeta": false,
+      "script": [
+        {
+          "method": "planGeneralProjectMetaMerges",
+          "throws": "\ud800"
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "result": {
+          "mergedProjects": 0,
+          "deletedProjects": 0,
+          "relinkedFiles": 0,
+          "planSummary": "Dream skipped General project merge planning because the model request failed: \ud800",
+          "droppedWarnings": [
+            "Dream skipped General project merge planning because the model request failed: \ud800"
+          ],
+          "groups": []
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "general_project_merge",
+              "title": "General Project Merge",
+              "status": "warning",
+              "inputSummary": "2 local general projects",
+              "outputSummary": "Dream skipped General project merge planning because the model request failed: \ud800",
+              "details": [
+                {
+                  "key": "general-project-merge-summary",
+                  "label": "General Project Merge Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "projectNodes",
+                      "value": "2"
+                    },
+                    {
+                      "label": "plannerGroups",
+                      "value": "0"
+                    },
+                    {
+                      "label": "droppedGroups",
+                      "value": "1"
+                    },
+                    {
+                      "label": "mergedProjects",
+                      "value": "0"
+                    },
+                    {
+                      "label": "deletedProjects",
+                      "value": "0"
+                    },
+                    {
+                      "label": "relinkedFiles",
+                      "value": "0"
+                    }
+                  ]
+                },
+                {
+                  "key": "general-project-merge-plan",
+                  "label": "General Project Merge Plan",
+                  "kind": "json",
+                  "json": {
+                    "summary": "Dream skipped General project merge planning because the model request failed: \ud800",
+                    "plannerGroups": [],
+                    "acceptedGroups": [],
+                    "droppedWarnings": [
+                      "Dream skipped General project merge planning because the model request failed: \ud800"
+                    ]
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.general_project_merge",
+                "fallback": "General Project Merge"
+              }
+            }
+          ],
+          "mutations": [],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "planGeneralProjectMetaMerges",
+            "input": {
+              "projectMetas": [
+                {
+                  "projectId": "p1",
+                  "projectName": "Alpha",
+                  "description": "alpha project",
+                  "status": "active",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "projectId": "p2",
+                  "projectName": "Beta",
+                  "description": "beta project",
+                  "status": "active",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                }
+              ]
+            }
+          }
+        ],
+        "logs": [
+          "[clawxmemory] General project meta merge planning failed: Error: \ud800"
+        ],
+        "tree": [
+          {
+            "relativePath": "GeneralProjects/alpha-p1.md",
+            "content": "---\nname: Alpha\ndescription: alpha project\ntype: general_project_meta\nscope: project\nproject_id: p1\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nalpha project\n\n## Status\nactive\n"
+          },
+          {
+            "relativePath": "GeneralProjects/beta-p2.md",
+            "content": "---\nname: Beta\ndescription: beta project\ntype: general_project_meta\nscope: project\nproject_id: p2\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nbeta project\n\n## Status\nactive\n"
+          },
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## General Projects\n- [Alpha](GeneralProjects/alpha-p1.md) — alpha project\n- [Beta](GeneralProjects/beta-p2.md) — beta project\n"
+          }
+        ]
+      }
+    },
+    {
       "name": "merge-invalid-groups",
       "method": "mergeGeneralProjectMetas",
       "mode": "general",

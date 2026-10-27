@@ -61,14 +61,32 @@ impl fmt::Display for DreamRunnerError {
 }
 impl std::error::Error for DreamRunnerError {}
 impl DreamRunnerError {
-    /// `String(error)` as Node renders an `Error`: `<name>: <message>`.
-    /// `planSummary` uses `error.message` instead (`dream-review.ts:836-838`).
-    fn js_string(&self) -> String {
-        let (name, message) = match self {
-            Self::Llm(error) => (error.name, error.message.clone()),
-            Self::Memory(error) => (error.js_name(), error.js_message()),
+    /// `error.message` as the `planSummary` template appends it
+    /// (`dream-review.ts:836-838`). Raw UTF-16 is kept: a lone surrogate is a
+    /// valid JS string unit and must not become U+FFFD.
+    fn js_message(&self) -> JsString {
+        match self {
+            Self::Llm(error) => error.message.clone(),
+            Self::Memory(error) => error.js_message(),
+        }
+    }
+
+    /// `String(error)` = `Error.prototype.toString()`: the empty side is
+    /// omitted, otherwise `<name>: <message>`. Both sides keep raw UTF-16 so
+    /// the logger sees the same units Node hands it.
+    fn js_string(&self) -> JsString {
+        let name: JsString = match self {
+            Self::Llm(error) => error.name.into(),
+            Self::Memory(error) => error.js_name().into(),
         };
-        format!("{name}: {}", String::from_utf16_lossy(message.units()))
+        let message = self.js_message();
+        if name.is_empty() {
+            return message;
+        }
+        if message.is_empty() {
+            return name;
+        }
+        concat(&[&name, &": ".into(), &message])
     }
 }
 impl From<FileMemoryError> for DreamRunnerError {
@@ -149,9 +167,11 @@ pub trait DreamEnvironment: Send + Sync {
 /// TS `LoggerLike` (`dream-review.ts:28-34`). The runner only calls `warn`;
 /// the other levels stay available so the later `run()` package can reuse the
 /// same seam. Mirrors `DreamReviewRunnerOptions.logger`, which is optional.
+/// `warn` takes a [`JsString`] because TS hands the template literal's raw
+/// UTF-16 units to the logger, including lone surrogates.
 pub trait DreamLogger: Send + Sync {
     fn info(&self, _message: &str) {}
-    fn warn(&self, _message: &str) {}
+    fn warn(&self, _message: &JsString) {}
     fn error(&self, _message: &str) {}
 }
 
@@ -797,15 +817,15 @@ impl<'a> DreamRewriteRunner<'a> {
                 Err(error) => {
                     let message = concat(&[
                         &"Dream skipped General project merge planning because the model request failed: ".into(),
-                        &error.to_string().into(),
+                        &error.js_message(),
                     ]);
                     result.plan_summary = Some(message.clone());
                     result.dropped_warnings.push(JsValue::String(message));
                     if let Some(logger) = self.logger {
-                        logger.warn(&format!(
-                            "[clawxmemory] General project meta merge planning failed: {}",
-                            error.js_string()
-                        ));
+                        logger.warn(&concat(&[
+                            &"[clawxmemory] General project meta merge planning failed: ".into(),
+                            &error.js_string(),
+                        ]));
                     }
                 }
             }
