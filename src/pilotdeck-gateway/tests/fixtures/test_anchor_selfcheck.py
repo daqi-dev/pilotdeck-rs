@@ -596,6 +596,126 @@ mutants = [('sample', source, text, part + 'after')]
             self.write(declaration + 'label = ' + expression + '\n' + table)
             self.run_check(label='#827 display-name restored')
 
+    def check_snapshot_occurrences(self, statements, diagnostic, label):
+        """Paired controls use the real scanner, never execute mutation scripts."""
+        for name in ('originals', 'snapshots'):
+            declaration = f"{name} = {{'alias.rs': source.read_text()}}\n"
+            table = f"mutants = [('sample', source, {name}['alias.rs'], 'after')]\n"
+            for statement in statements:
+                with self.subTest(name=name, statement=statement):
+                    self.write(declaration + table)
+                    self.run_check(label=f'#827 {label} original')
+                    self.write(declaration + statement.replace('SNAPSHOT', name) + '\n' + table)
+                    self.assertIn(diagnostic, self.run_check(1, label=f'#827 {label} rejected'),
+                                  f'#827 {label} must reject the unsupported occurrence')
+                    self.write(declaration + table)
+                    self.run_check(label=f'#827 {label} restored')
+
+    def test_snapshot_attribute_occurrences_fail_closed(self):
+        self.check_snapshot_occurrences((
+            "sys.modules[__name__].SNAPSHOT = {'alias.rs': 'other'}",
+            'with x as mod.SNAPSHOT:\n    pass',
+            'del mod.SNAPSHOT',
+            'alias = mod.SNAPSHOT',
+            'consume(mod.SNAPSHOT)',
+            'mod.SNAPSHOT.clear()',
+            'alias = sys.modules[__name__].SNAPSHOT; alias.clear()',
+            "mod.SNAPSHOT['alias.rs'] = 'other'",
+            'mod.SNAPSHOT += {}',
+        ), 'unsupported snapshot attribute', 'attribute-occurrence')
+        # A namespace reference is forbidden even without a bare Name binding.
+        self.write('consume(module.originals)\nmutants = [("sample", source, "before", "after")]\n')
+        self.assertIn('unsupported snapshot attribute', self.run_check(1, label='#827 unbound-attribute rejected'),
+                      '#827 unbound-attribute must not require a bare snapshot Name')
+
+    def test_snapshot_namespace_keys_fail_closed(self):
+        self.check_snapshot_occurrences((
+            "namespace['SNAPSHOT'] = {}",
+            "del namespace['SNAPSHOT']",
+            "consume(namespace['SNAPSHOT'])",
+            "operator.setitem(namespace, 'SNAPSHOT', {})",
+            "operator.attrgetter('SNAPSHOT')(module)",
+            "key = 'SNAPSHOT'; namespace[key] = {}",
+            "getattr(module, 'SNAPSHOT')",
+            "setattr(module, 'SNAPSHOT', {})",
+            "globals()['SNAPSHOT'] = {}",
+            "vars(module)['SNAPSHOT'] = {}",
+            "module.__dict__['SNAPSHOT'] = {}",
+        ), 'unsupported snapshot dynamic write', 'namespace-key')
+
+    def test_snapshot_reads_cannot_be_nested_write_targets(self):
+        self.check_snapshot_occurrences((
+            "SNAPSHOT['alias.rs'][0] = 'other'",
+            "del SNAPSHOT['alias.rs'][0]",
+            "SNAPSHOT['alias.rs'][0] += 'other'",
+            "SNAPSHOT['alias.rs'].field = 'other'",
+            "del SNAPSHOT['alias.rs'].field",
+            "with x as SNAPSHOT['alias.rs'][0]:\n    pass",
+        ), 'unsupported snapshot nested mapping write', 'nested-write')
+
+    def test_snapshot_non_name_identifier_fields_fail_closed(self):
+        self.check_snapshot_occurrences((
+            'namespace.update(SNAPSHOT={})',
+            'from module import SNAPSHOT as alias',
+            'import SNAPSHOT as alias',
+            'import package.SNAPSHOT as alias',
+            'from package.SNAPSHOT import value as alias',
+            'match value:\n    case Container(SNAPSHOT=alias):\n        pass',
+        ), 'unsupported snapshot named occurrence', 'named-occurrence')
+
+    def test_snapshot_call_arguments_and_unknown_uses(self):
+        for name in ('originals', 'snapshots'):
+            declaration = f"{name} = {{'alias.rs': source.read_text()}}\n"
+            table = f"mutants = [('sample', source, {name}['alias.rs'], 'after')]\n"
+            for argument in (name, f'data={name}'):
+                self.write(declaration + f'consume({argument})\n' + table)
+                self.run_check(label='#827 direct-argument accepted')
+                self.write(declaration + f'consume([{name}])\n' + table)
+                self.assertIn('mapping escape', self.run_check(1, label='#827 indirect-argument rejected'),
+                              '#827 indirect-argument must not inherit the direct-argument exception')
+                self.write(declaration + f'consume({argument})\n' + table)
+                self.run_check(label='#827 direct-argument restored')
+        self.check_snapshot_occurrences((
+            'alias = SNAPSHOT', 'return_value = [SNAPSHOT]',
+            'consume(*SNAPSHOT)', 'consume(**SNAPSHOT)',
+            'SNAPSHOT()', 'for item in SNAPSHOT:\n    pass',
+        ), 'mapping escape', 'unknown-occurrence')
+
+    def test_snapshot_compatibility_mapping_calls_have_exact_shapes(self):
+        declaration = "originals = {'alias.rs': source.read_text()}\n"
+        table = "mutants = [('sample', source, originals['alias.rs'], 'after')]\n"
+        for good, bad in (
+            ('originals.items()', "originals.items('extra')"),
+            ('originals.keys()', 'originals.keys(default=None)'),
+            ('originals.values()', 'originals.values(None)'),
+            ("originals.get('alias.rs')", "originals.get('alias.rs', None, 'extra')"),
+            ("originals.get('alias.rs', None)", "originals.get('alias.rs', default=None)"),
+        ):
+            with self.subTest(good=good, bad=bad):
+                self.write(declaration + good + '\n' + table)
+                self.run_check(label='#827 compatibility-call original')
+                self.write(declaration + bad + '\n' + table)
+                self.assertIn('mapping method', self.run_check(1, label='#827 compatibility-call rejected'),
+                              '#827 compatibility-call must match the complete modeled shape')
+                self.write(declaration + good + '\n' + table)
+                self.run_check(label='#827 compatibility-call restored')
+        self.write(declaration + "alias = originals['alias.rs'] = 'other'\n" + table)
+        self.assertIn('mapping escape or write', self.run_check(1, label='#827 chained-update rejected'),
+                      '#827 chained-update must not inherit the single-target update exception')
+
+    def test_snapshot_dictionary_unpacking_is_rejected_in_subscript_values(self):
+        for name in ('originals', 'snapshots'):
+            declaration = f"{name} = {{'alias.rs': source.read_text()}}\n"
+            table = f"mutants = [('sample', source, {name}['alias.rs'], 'after')]\n"
+            self.write(declaration + table)
+            self.run_check(label='#827 dict-unpack original')
+            self.write(declaration.replace("{'alias.rs': source.read_text()}",
+                                           "{**{'alias.rs': source.read_text()}}") + table)
+            self.assertIn('snapshot dictionary unpacking', self.run_check(1, label='#827 dict-unpack rejected'),
+                          '#827 dict-unpack must fail through Unsupported rather than an uncaught exception')
+            self.write(declaration + table)
+            self.run_check(label='#827 dict-unpack restored')
+
     def test_snapshot_unique_with_preserves_existing_contexts(self):
         for constructor in ('mutating_sources', 'negative_process.mutating_sources'):
             for wrapper in ('{}', 'def main():\n{}', 'for iteration in [0]:\n{}'):

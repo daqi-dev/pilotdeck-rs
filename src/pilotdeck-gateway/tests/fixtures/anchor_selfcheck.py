@@ -16,7 +16,12 @@ Snapshot names have one Assign or one official mutating_sources with-as binding.
 An unread module-level empty dictionary before its sole official capture counts
 as one binding. Assigns may also belong to a top-level function, without a file
 allowlist; local dictionaries must be consumed in that same function scope.
-Dictionary keys retain their read expression; dynamic namespace writes fail closed.
+Dictionary keys retain their read expression; unknown snapshot syntax fails closed.
+Snapshot occurrences are allowlisted: canonical bindings, subscript reads and
+direct call arguments. Existing modeled originals[key] assignments, literal
+pop(key, None) statements and read-only mapping calls remain compatibility forms.
+Attribute names and string literals equal to a snapshot name are never aliases.
+Direct call arguments are allowed syntax; callees are not executed or proven pure.
 """
 import argparse
 import ast
@@ -125,6 +130,7 @@ SCOPED_ROWS = {
     ('turn-runner/recording_negative.py', 'text-value'): 'from_agent_input',
 }
 SOURCE_SUFFIXES = {'.rs', '.py', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'}
+SNAPSHOT_NAMES = {'originals', 'snapshots'}
 
 
 class Unsupported(ValueError):
@@ -174,40 +180,9 @@ class Static:
         self.captures = {}
         self.original_updates = []
         self.parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-        self.check_snapshot_bindings()
+        bindings = self.check_snapshot_bindings()
+        self.check_snapshot_uses(bindings)
         for node in ast.walk(tree):
-            if isinstance(node, ast.Name) and node.id in ('originals', 'snapshots') and isinstance(node.ctx, ast.Load):
-                parent = self.parents[node]
-                call = self.parents.get(parent)
-                if not (isinstance(parent, ast.Subscript) and parent.value is node
-                        or isinstance(parent, ast.Attribute) and isinstance(call, ast.Call) and call.func is parent):
-                    raise Unsupported('unsupported snapshot mapping escape')
-            # Unknown snapshot writes must never fall through to a basename
-            # path guess. Only bare originals[key] = expression is modeled.
-            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and self.snapshot_name(node.func.value)
-                    and node.func.attr not in ('get', 'items', 'keys', 'values')):
-                # user-dialog-channel drops an unused test snapshot. Track the
-                # removal so a later read/target cannot resurrect that key.
-                if (ast.unparse(node.func) == 'originals.pop' and len(node.args) == 2
-                        and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)
-                        and isinstance(node.args[1], ast.Constant) and node.args[1].value is None
-                        and not node.keywords and isinstance(self.parents[node], ast.Expr)):
-                    self.original_updates.append((node.lineno, node.args[0], None))
-                else:
-                    raise Unsupported('unsupported snapshot mapping method')
-            if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):
-                name = self.snapshot_name(node.value)
-                if name and not (name == 'originals' and isinstance(node.value, ast.Name)
-                                 and isinstance(self.parents[node], ast.Assign)):
-                    raise Unsupported('unsupported snapshot mapping write')
-            if (isinstance(node, ast.Attribute) and node.attr in ('originals', 'snapshots')
-                    and isinstance(node.ctx, (ast.Store, ast.Del))):
-                raise Unsupported('unsupported snapshot attribute binding')
-            if isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.Delete)):
-                targets = node.targets if isinstance(node, ast.Delete) else [node.target]
-                if any(self.snapshot_name(target) for target in targets):
-                    raise Unsupported('unsupported snapshot mapping write')
             if isinstance(node, ast.Assign):
                 for target in node.targets:
                     if isinstance(target, ast.Name):
@@ -238,11 +213,77 @@ class Static:
     @staticmethod
     def snapshot_name(node):
         name = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
-        return name if name in ('originals', 'snapshots') else None
+        return name if name in SNAPSHOT_NAMES else None
+
+    def check_snapshot_uses(self, bindings):
+        """Every occurrence needs a known meaning, regardless of its namespace."""
+        for node in ast.walk(self.tree):
+            if isinstance(node, ast.Attribute) and node.attr in SNAPSHOT_NAMES:
+                raise Unsupported('unsupported snapshot attribute binding or access')
+            # A literal can name a namespace entry even through an unrecognized
+            # accessor (or one imported under an alias). Do not enumerate APIs.
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in SNAPSHOT_NAMES:
+                raise Unsupported('unsupported snapshot dynamic write: literal namespace key')
+            # Some identifiers are AST string fields, not Name nodes (keyword
+            # arguments, import aliases and class-pattern attributes included).
+            # Unknown syntax must not silently acquire another spelling of the
+            # snapshot namespace. Only Name.id proceeds to the use allowlist.
+            for field, value in ast.iter_fields(node):
+                if isinstance(node, ast.Name) and field == 'id':
+                    continue
+                if isinstance(node, (ast.alias, ast.ImportFrom)) and field in ('name', 'module') and isinstance(value, str):
+                    values = value.split('.')
+                else:
+                    values = value if isinstance(value, list) else [value]
+                if any(isinstance(item, str) and item in SNAPSHOT_NAMES for item in values):
+                    raise Unsupported('unsupported snapshot named occurrence')
+            if not isinstance(node, ast.Name) or node.id not in SNAPSHOT_NAMES:
+                continue
+            if node in bindings:
+                continue
+            parent = self.parents.get(node)
+            if isinstance(node.ctx, ast.Load):
+                if isinstance(parent, ast.Subscript) and parent.value is node:
+                    if isinstance(parent.ctx, ast.Load):
+                        # Reads may be transformed but must not become nested
+                        # assignment/deletion targets such as originals[k][i].
+                        access = parent
+                        owner = self.parents.get(access)
+                        while isinstance(owner, (ast.Subscript, ast.Attribute)) and owner.value is access:
+                            if not isinstance(owner.ctx, ast.Load):
+                                raise Unsupported('unsupported snapshot nested mapping write')
+                            access, owner = owner, self.parents.get(owner)
+                        continue
+                    if (node.id == 'originals' and isinstance(parent.ctx, ast.Store)
+                            and isinstance(self.parents.get(parent), ast.Assign)
+                            and self.parents[parent].targets == [parent]):
+                        continue  # Existing modeled originals[key] = expression.
+                if (isinstance(parent, ast.Call) and node in parent.args
+                        or isinstance(parent, ast.keyword) and parent.arg is not None
+                        and isinstance(self.parents.get(parent), ast.Call)):
+                    continue
+                if isinstance(parent, ast.Attribute):
+                    call = self.parents.get(parent)
+                    if isinstance(call, ast.Call) and call.func is parent:
+                        if parent.attr in ('items', 'keys', 'values') and not call.args and not call.keywords:
+                            continue
+                        if parent.attr == 'get' and 1 <= len(call.args) <= 2 and not call.keywords:
+                            continue
+                        if (node.id == 'originals' and parent.attr == 'pop' and len(call.args) == 2
+                                and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)
+                                and isinstance(call.args[1], ast.Constant) and call.args[1].value is None
+                                and not call.keywords and isinstance(self.parents.get(call), ast.Expr)):
+                            # Preserve the existing removal model: a later read
+                            # or filename target must not resurrect this key.
+                            self.original_updates.append((call.lineno, call.args[0], None))
+                            continue
+                    raise Unsupported('unsupported snapshot mapping method')
+            raise Unsupported('unsupported snapshot mapping escape or write')
 
     def check_snapshot_bindings(self):
         """Keep the original declaration; never resolve a read through a rebind."""
         bindings = {name: [] for name in ('originals', 'snapshots')}
+        allowed = set()
         present = False
         for node in ast.walk(self.tree):
             present |= bool(self.snapshot_name(node))
@@ -253,7 +294,9 @@ class Static:
             if not sites:
                 continue
             if self.empty_snapshot_placeholder(name, sites):
-                sites = sorted(sites, key=lambda node: node.lineno)[1:]
+                placeholder, capture = sorted(sites, key=lambda node: node.lineno)
+                allowed.add(placeholder)
+                sites = [capture]
             if len(sites) != 1:
                 raise Unsupported(f'unsupported snapshot binding: {name} must have exactly one declaration')
             site = sites[0]
@@ -263,6 +306,7 @@ class Static:
             if (isinstance(declaration, ast.Assign) and len(declaration.targets) == 1
                     and declaration.targets[0] is site):
                 self.check_snapshot_declaration(declaration, name)
+                allowed.add(site)
                 continue
             if (isinstance(declaration, ast.withitem) and declaration.optional_vars is site
                     and isinstance(self.parents.get(declaration), ast.With)
@@ -271,6 +315,7 @@ class Static:
                     ('mutating_sources', 'negative_process.mutating_sources')):
                 self.check_snapshot_constructor(declaration.context_expr)
                 self.captures[name] = declaration.context_expr
+                allowed.add(site)
                 continue
             raise Unsupported(f'unsupported snapshot binding: {name} requires Assign or mutating_sources with-as')
         if present:
@@ -288,6 +333,7 @@ class Static:
                 if symbol in {'globals', 'locals', 'vars', 'setattr', 'delattr', 'exec', 'eval', '__dict__',
                               'getattr', '__getattribute__', '__import__'}:
                     raise Unsupported(f'unsupported snapshot dynamic write: {symbol}')
+        return allowed
 
     def empty_snapshot_placeholder(self, name, sites):
         """A never-observed module placeholder is part of its sole capture."""
@@ -367,7 +413,7 @@ class Static:
         if not choices:
             raise Unsupported(f'unresolved name {name}')
         n, value = choices[-1]
-        if name in ('originals', 'snapshots') and isinstance(value, ast.DictComp):
+        if name in SNAPSHOT_NAMES and isinstance(value, (ast.Dict, ast.DictComp)):
             return {key: self.value(expression, n, bound)
                     for key, expression, bound in self.snapshot_items(value, n, local)}
         return self.value(value, n, local)
