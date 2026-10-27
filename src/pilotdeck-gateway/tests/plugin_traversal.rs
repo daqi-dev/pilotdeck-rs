@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 #[cfg(unix)]
 use std::{
     collections::HashSet,
+    io::Read,
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
@@ -96,17 +97,30 @@ impl Drop for ReapedChild {
 #[cfg(unix)]
 fn wait_for_traversal(mut child: ReapedChild, label: &str) {
     let start = Instant::now();
-    loop {
-        if let Some(status) = child.0.try_wait().expect("traversal child wait") {
-            assert!(status.success(), "{label} child failed: {status}");
-            return;
+    let status = loop {
+        if let Some(status) = child.0.try_wait().expect("#273 traversal child wait") {
+            break status;
         }
         assert!(
             start.elapsed() < Duration::from_secs(20),
             "{label} hang guard exceeded 20s; child killed and reaped"
         );
         std::thread::sleep(Duration::from_millis(5));
+    };
+    let mut stdout = String::new();
+    if let Some(mut pipe) = child.0.stdout.take() {
+        let _ = pipe.read_to_string(&mut stdout);
     }
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.0.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    // #273: libtest exits 0 even when --exact matches nothing after a rename;
+    // only the summary line proves the traversal child really ran its test.
+    assert!(
+        status.success() && stdout.contains("1 passed") && stdout.contains("0 failed"),
+        "#273 traversal rerun matched no test: {label}: {status}\n{stdout}\n{stderr}"
+    );
 }
 
 #[cfg(unix)]
@@ -157,7 +171,7 @@ fn clique(k: usize) {
         }
     }
     let child = ReapedChild(
-        Command::new(std::env::current_exe().unwrap())
+        Command::new(std::env::current_exe().expect("#273 clique child path"))
             .args([
                 "--exact",
                 "plugin_markdown_clique_child",
@@ -167,8 +181,10 @@ fn clique(k: usize) {
             .env("PDRS_PLUGIN_CLIQUE_BASE", &base)
             .env("PDRS_PLUGIN_CLIQUE_SIZE", k.to_string())
             .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
-            .unwrap(),
+            .expect("#273 clique child spawn"),
     );
     wait_for_traversal(child, "markdown clique");
 }
@@ -754,12 +770,14 @@ fn plugin_markdown_alias_dag() {
     let base = scratch.path().join("deep-dag");
     alias_dag(&base, 24);
     let child = ReapedChild(
-        Command::new(std::env::current_exe().unwrap())
+        Command::new(std::env::current_exe().expect("#273 DAG child path"))
             .args(["--exact", "plugin_markdown_alias_dag_child", "--ignored"])
             .env("PDRS_PLUGIN_DAG_BASE", &base)
             .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
-            .unwrap(),
+            .expect("#273 DAG child spawn"),
     );
     wait_for_traversal(child, "alias DAG");
 }
