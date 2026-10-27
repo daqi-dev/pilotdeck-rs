@@ -704,7 +704,10 @@ fn replay_operation(
     // restore instead of copying root-external content into the target
     // workspace, so this operation's oracle outcome is replaced by the
     // divergence assertion below. The dedicated branch runs before the
-    // generic comparison so a negative control sees this message.
+    // generic comparison so a negative control sees this message — the
+    // parenthesized "#293 expected ObjectKeyEscape" in the panic below is
+    // that control's kill criterion
+    // (tests/fixtures/workspace-snapshot-gate/negative_controls.py).
     if name == "projection"
         && op == "snapshotRestore"
         && field(&raw_input, "snapshotId")

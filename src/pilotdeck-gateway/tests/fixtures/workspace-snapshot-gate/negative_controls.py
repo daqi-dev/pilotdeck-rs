@@ -7,6 +7,11 @@ output folder. Every mutant runs (never aborting on the first failure), is
 compile-checked first — a mutant that cannot compile is INVALID, not KILLED —
 and the summary exits nonzero on anything but KILLED.
 
+Every bound failure point is deterministic (a missing directory, a planted
+manifest.json directory, a held seam): no mode-000 dependency, so the controls
+also fail identically under root (fix-r2, boundary#1: the old root refusal
+and its indistinguishable exit code are gone with the EACCES tests).
+
 Because `mutating_sources` proves the tree equals HEAD, this must run after
 the #293 patch is committed; a pre-commit working tree is refused on purpose.
 
@@ -26,10 +31,6 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 root = Path(__file__).resolve().parents[5]
 if not os.environ.get("CARGO_TARGET_DIR"):
     sys.exit("CARGO_TARGET_DIR must be passed by the caller (rule: no second build tree)")
-if hasattr(os, "geteuid") and os.geteuid() == 0:
-    # Root reads through mode-000 directories, so the EACCES-based tests the
-    # cleanup mutations are judged on cannot fail under root (boundary#3).
-    sys.exit("refusing to run as root: the mode-000 based controls cannot fail there")
 
 LIB = "src/pilotdeck-gateway/src/storage/workspace_snapshot.rs"
 TEST = "src/pilotdeck-gateway/tests/workspace_snapshot.rs"
@@ -52,40 +53,6 @@ ESCAPE_CHECK = """                if !units_within(&snapshot_root, source_units.
                 let contents =
                     read_object_within_root(&snapshot_root, source_units.units(), &source_text)?;
 """
-INODE_CHECK = """    if !owned_file(&graveyard).is_some_and(|current| current.is(file)) {
-        // Someone else's publish sat at the path; put it back unless a newer
-        // file has taken the path in the meantime.
-        if fs::symlink_metadata(&file.path).is_err() {
-            let _ = fs::rename(&graveyard, &file.path);
-        }
-        return;
-    }
-    run_round_hook(hook, SnapshotRoundStage::BeforeOwnedUnlink);
-"""
-GRAVEYARD = """    let graveyard = graveyard_name(&file.path);
-    // Move off the shared publish path first: whatever sits there goes to a
-    // name only this round can reach, so the delete below can never hit a
-    // concurrent round's file however it interleaves.
-    if fs::rename(&file.path, &graveyard).is_err() {
-        return; // already gone, or not movable: nothing provably ours to delete
-    }
-    if !owned_file(&graveyard).is_some_and(|current| current.is(file)) {
-        // Someone else's publish sat at the path; put it back unless a newer
-        // file has taken the path in the meantime.
-        if fs::symlink_metadata(&file.path).is_err() {
-            let _ = fs::rename(&graveyard, &file.path);
-        }
-        return;
-    }
-    run_round_hook(hook, SnapshotRoundStage::BeforeOwnedUnlink);
-    let _ = fs::remove_file(&graveyard);
-"""
-MANIFEST_IDENTITY = """    markers.manifest = Some(owned_manifest.renamed_to(&paths.manifest_path));
-"""
-MARKER_IDENTITY = """    Ok(owned.renamed_to(path))
-"""
-FAILURE_CLEANUP = """                failure_cleanup(&markers, &temporary_dir, self.hook.as_ref());
-"""
 NOFOLLOW_FLAGS = """        let mut flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW;
 """
 HOST_BOUNDARY = """fn host_boundary_io() -> WorkspaceSnapshotError {
@@ -100,6 +67,17 @@ ARR_PANIC = """    if let JsValue::Array(items) = value {
     } else {
         panic!("#293 oracle field {context} is not an array: {value:?}")
     }"""
+
+# fix-r2: the fallback per-file publish over an occupied partition — the two
+# renames in order (marker first, manifest last) are one anchor, and the
+# mutant swaps them wholesale.
+FALLBACK_ORDER = """            fs::rename(&staged_marker, &paths.committed_path).map_err(|e| {
+                two_path_message(&e, "rename", &staged_marker, &paths.committed_path).to_string()
+            })?;
+            fs::rename(&staged_manifest, &paths.manifest_path).map_err(|e| {
+                two_path_message(&e, "rename", &staged_manifest, &paths.manifest_path).to_string()
+            })?;
+"""
 
 UNIT = "two_path_message_uses_the_shared_diagnostic"
 
@@ -116,37 +94,6 @@ MUTATIONS = [
      "        let mut flags = OFlags::RDONLY | OFlags::CLOEXEC;",
      ["--test", "workspace_snapshot", "restore_refuses_object_keys_through_symlinks"],
      "#293 expected ObjectKeyEscape; a symlinked objectKey must be refused"),
-    ("cleanup-unconditional-delete", LIB, FAILURE_CLEANUP,
-     """                let _ = fs::remove_file(&paths.manifest_path);
-                let _ = fs::remove_file(&paths.committed_path);
-                let _ = fs::remove_dir_all(&temporary_dir);""",
-     ["--test", "workspace_snapshot", "concurrent_failure_cleanup_keeps"],
-     "#293 R1's committed manifest survives"),
-    ("cleanup-no-ownership-check", LIB, INODE_CHECK,
-     "    run_round_hook(hook, SnapshotRoundStage::BeforeOwnedUnlink);",
-     ["--lib", "remove_if_owned_checks_inode_ownership"],
-     "the foreign manifest is still readable"),
-    # fix-r1: stat-then-unlink on the shared path with the identity check and
-    # the seam kept — exactly the old check-then-unlink shape (Codex P0-3).
-    ("cleanup-unlink-by-shared-path", LIB, GRAVEYARD,
-     """    if !owned_file(&file.path).is_some_and(|current| current.is(file)) {
-        return;
-    }
-    run_round_hook(hook, SnapshotRoundStage::BeforeOwnedUnlink);
-    let _ = fs::remove_file(&file.path);
-""",
-     ["--test", "workspace_snapshot", "owned_delete_window_cannot_hit"],
-     "#293 the concurrent round's manifest is readable"),
-    # fix-r1: the manifest identity taken from the shared path after the
-    # rename — the old post-rename stat (Codex P0-2).
-    ("ownership-capture-after-rename", LIB, MANIFEST_IDENTITY,
-     "    markers.manifest = owned_file(&paths.manifest_path);",
-     ["--test", "workspace_snapshot", "failing_round_keeps_manifest_renamed_over"],
-     "#293 the concurrent round's manifest is readable"),
-    ("ownership-committed-capture-after-rename", LIB, MARKER_IDENTITY,
-     '    Ok(owned_file(path).expect("#293 atomic marker identity"))',
-     ["--test", "workspace_snapshot", "committed_marker_ownership_survives"],
-     "#293 the concurrent round's marker is readable"),
     ("host-boundary-rust-display", LIB, HOST_BOUNDARY,
      """fn host_boundary_io() -> WorkspaceSnapshotError {
     WorkspaceSnapshotError::Io {
@@ -177,6 +124,70 @@ MUTATIONS = [
      "];",
      ["--test", "workspace_snapshot", "scenarios_match_ts_outcomes"],
      "#322 workspace-snapshot corpus is pinned"),
+    # fix-r2: the TS catch-block deletion, restored on the failure arm — the
+    # unconditional unlink of the shared publish paths that every r1/r2 P0
+    # was a rediscovery of. M4's survivor assertion must catch it.
+    ("cleanup-unconditional-delete", LIB,
+     """                failure_cleanup(&staging);
+""",
+     """                let _ = fs::remove_file(&paths.manifest_path);
+                let _ = fs::remove_file(&paths.committed_path);
+                failure_cleanup(&staging);
+""",
+     ["--test", "workspace_snapshot", "concurrent_failure_cleanup_keeps"],
+     "#293 R1's committed manifest survives"),
+    # fix-r2: the registered divergence — the walk skips the root's .staging
+    # so an in-flight round is never a listed snapshot. Renaming the skip
+    # target lets the staged manifest through, and M7 must catch it.
+    ("staging-listed", LIB,
+     """        if root_level && name == ".staging" {
+""",
+     """        if root_level && name == ".staging-listed" {
+""",
+     ["--test", "workspace_snapshot", "list_ignores_in_flight"],
+     "#293 an in-flight staging manifest is not listed"),
+    # fix-r2: the fallback publish order — marker first, so a publish
+    # interrupted between the two renames leaves the registered residue
+    # (a marker whose early-exit reports Committed) instead of a markerless
+    # manifest. The swap is the pre-fix order; M6 must catch it.
+    ("fallback-order", LIB, FALLBACK_ORDER,
+     """            fs::rename(&staged_manifest, &paths.manifest_path).map_err(|e| {
+                two_path_message(&e, "rename", &staged_manifest, &paths.manifest_path).to_string()
+            })?;
+            fs::rename(&staged_marker, &paths.committed_path).map_err(|e| {
+                two_path_message(&e, "rename", &staged_marker, &paths.committed_path).to_string()
+            })?;
+""",
+     ["--test", "workspace_snapshot", "fallback_publish_writes"],
+     "#293 the committed marker is published before the manifest"),
+    # fix-r2: dropping the manifest publish still reports Committed while the
+    # concurrent round's manifest stays in place; M3's last-writer assertion
+    # must catch the silent stale read.
+    ("fallback-drops-manifest", LIB, FALLBACK_ORDER,
+     """            let _ = &staged_manifest;
+""",
+     ["--test", "workspace_snapshot", "publish_over_a_concurrent"],
+     "#293 the last writer's manifest wins"),
+    # fix-r2: the failure cleanup must remove this round's own staging
+    # directory; skipping the removal leaks the private area into the
+    # snapshot root, and M4's cleanup assertion must catch it.
+    ("staging-leak", LIB,
+     """    let _ = fs::remove_dir_all(staging);
+""",
+     """    let _ = staging;
+""",
+     ["--test", "workspace_snapshot", "concurrent_failure_cleanup_keeps"],
+     "#293 R2 removed its own staging directory"),
+    # fix-r2: the staging rename IS the publish. A rename onto itself succeeds
+    # without publishing, so nothing lands on the partition and M1's lib
+    # assertion must catch it.
+    ("publish-noop", LIB,
+     """    match fs::rename(staging, &paths.partition) {
+""",
+     """    match fs::rename(staging, staging) {
+""",
+     ["--lib", "commit_publishes_the_staging_directory_atomically"],
+     "#293 the partition directory exists after the publish"),
 ]
 
 selected = sys.argv[2:]
