@@ -2,9 +2,11 @@
 """#273: subprocess --exact reruns must prove the libtest summary, not just exit 0.
 
 Run after committing the candidate. Never bypass negative_process's HEAD guard.
-Each case renames the hardcoded --exact filter (or the call-site test name that
-feeds it) so the child binary runs zero tests and still exits 0; every bound
-parent test must then fail at its "#273 ... rerun matched no test" assertion.
+Each case either renames the hardcoded --exact filter (or the call-site test
+name that feeds it) so the child binary runs zero tests and still exits 0, or
+switches a worker child to libtest's terse format which drops the per-test
+"test <name> ... ok" line; every bound parent test must then fail at its
+"#273 ... rerun matched no test" assertion.
 """
 import argparse
 import difflib
@@ -31,6 +33,12 @@ CARGO_TARGETS = {
         ['-p', 'pilotdeck-gateway', '--test', 'edgeclaw_snapshots'],
     'plugin_markdown_alias_dag':
         ['-p', 'pilotdeck-gateway', '--test', 'plugin_traversal'],
+    'plugin_markdown_clique_03':
+        ['-p', 'pilotdeck-gateway', '--test', 'plugin_traversal'],
+    'concurrent_clear_and_writes_match_real_ts':
+        ['-p', 'pilotdeck-gateway', '--test', 'edgeclaw_entries'],
+    'concurrent_stage_and_swap_matches_real_ts':
+        ['-p', 'pilotdeck-gateway', '--test', 'edgeclaw_snapshots'],
 }
 
 
@@ -38,6 +46,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path, help='fresh evidence directory')
     parser.add_argument('mutations', nargs='*')
+    # HEAD after the candidate is committed. Before that, a pre-commit full run
+    # can pass the SHA printed by "git stash create" (a dangling commit of the
+    # current working tree, no ref moved): every mutated byte is still checked
+    # against, and restored to, that recorded tree.
+    parser.add_argument('--baseline', default='HEAD')
     args = parser.parse_args()
     if not os.environ.get('CARGO_TARGET_DIR'):
         parser.error('CARGO_TARGET_DIR must be supplied by the caller')
@@ -53,8 +66,8 @@ def main():
     env['CARGO_PROFILE_TEST_DEBUG'] = 'line-tables-only'
     mutations = [
         ('umask-exact-rename', cli_source,
-         '"skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp",',
-         '"skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp_renamed",',
+         '"skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp"',
+         '"skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp_renamed"',
          'skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp',
          '#273 umask rerun matched no test'),
         ('dateparse-exact-rename', dateparse_source,
@@ -78,10 +91,30 @@ def main():
          'ts_databases_and_trees_replay_snapshot_lifecycle',
          '#273 snapshot locale rerun matched no test'),
         ('traversal-exact-rename', traversal_source,
-         '"plugin_markdown_alias_dag_child",',
-         '"plugin_markdown_alias_dag_child_renamed",',
+         '"--exact", "plugin_markdown_alias_dag_child", "--ignored"',
+         '"--exact", "plugin_markdown_alias_dag_child_renamed", "--ignored"',
          'plugin_markdown_alias_dag',
-         '#273 traversal rerun matched no test'),
+         '#273 traversal rerun matched no test: alias DAG'),
+        # The clique child shares wait_for_traversal with the DAG child but is
+        # spawned by the plugin_markdown_clique_0{3,7} and _1{0,20} parents.
+        ('clique-exact-rename', traversal_source,
+         '"--exact",\n                "plugin_markdown_clique_child",',
+         '"--exact",\n                "plugin_markdown_clique_child_renamed",',
+         'plugin_markdown_clique_03',
+         '#273 traversal rerun matched no test: markdown clique'),
+        # Renaming a worker's --exact filter would only hit the 20 s boot
+        # barrier timeout (an unattributable hang), so sever the receipt
+        # instead: terse drops the per-test line the summary check requires.
+        ('entries-worker-terse', entries_source,
+         '"--nocapture",',
+         '"--format=terse",',
+         'concurrent_clear_and_writes_match_real_ts',
+         '#273 entries worker rerun matched no test'),
+        ('snapshots-worker-terse', snapshots_source,
+         '"--nocapture",',
+         '"--format=terse",',
+         'concurrent_stage_and_swap_matches_real_ts',
+         '#273 snapshot worker rerun matched no test'),
     ]
     if args.mutations:
         selected = set(args.mutations)
@@ -124,7 +157,7 @@ def main():
 
     summary = []
     for name, source, old, new, test, assertion in mutations:
-        with mutating_sources(root, [source]) as snapshots:
+        with mutating_sources(root, [source], baseline=args.baseline) as snapshots:
             original = snapshots[source]
             content = original.decode()
             if content.count(old) != 1:
@@ -147,7 +180,7 @@ def main():
                 status, reason = 'INVALID', 'positive control did not pass the bound test'
         # Restoration and SHA validation belong to mutating_sources, including on failure.
         assert source.read_bytes() == original, f'{name}: source not restored'
-        with mutating_sources(root, [source]):
+        with mutating_sources(root, [source], baseline=args.baseline):
             result, restored = run(f'{name}-restored', test)
             if positive and not passed(result, test, restored):
                 status, reason = 'INVALID', reason + '; restored bound test did not pass'

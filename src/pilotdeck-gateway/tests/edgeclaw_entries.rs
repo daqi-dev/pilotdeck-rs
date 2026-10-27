@@ -15,6 +15,8 @@ use std::{
 };
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/exact_receipt.rs"]
+mod exact_receipt;
 const ORACLE: &str = include_str!("fixtures/edgeclaw-entries/oracle.json");
 const NOW: &str = "2026-10-22T00:00:00.000Z";
 struct Scratch(PathBuf);
@@ -576,9 +578,9 @@ fn locale(test: &str) -> bool {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     // #273: libtest exits 0 even when --exact matches nothing after a rename;
-    // only the summary line proves the locale rerun really ran the test.
+    // only the libtest receipt proves the locale rerun really ran the test.
     assert!(
-        output.status.success() && stdout.contains("1 passed") && stdout.contains("0 failed"),
+        exact_receipt::single_pass(&output.status, test, &stdout),
         "#273 entries locale rerun matched no test ({test}): {status}\n{stdout}\n{stderr}",
         status = output.status
     );
@@ -876,8 +878,11 @@ fn concurrent_clear_and_writes_match_real_ts() {
     fs::create_dir(s.0.join("signals")).unwrap();
     let mut children = Children(vec![]);
     for id in ["one", "two"] {
+        // #273: worker logs go to regular files under signals/ (excluded from
+        // the disk comparison). Never pipes: a blocked worker cannot fill a
+        // file and wedge the barrier protocol, and the log outlives the Child.
         children.0.push(
-            Command::new(std::env::current_exe().unwrap())
+            Command::new(std::env::current_exe().expect("#273 entries worker path"))
                 .args([
                     "--exact",
                     "concurrent_clear_and_writes_match_real_ts",
@@ -885,9 +890,16 @@ fn concurrent_clear_and_writes_match_real_ts() {
                 ])
                 .env("PDRS_ENTRIES_WORKER_ROOT", &s.0)
                 .env("PDRS_ENTRIES_WORKER_ID", id)
-                .stdout(std::process::Stdio::null())
+                .stdout(
+                    fs::File::create(s.0.join("signals").join(format!("worker-{id}.stdout")))
+                        .expect("#273 entries worker log create"),
+                )
+                .stderr(
+                    fs::File::create(s.0.join("signals").join(format!("worker-{id}.stderr")))
+                        .expect("#273 entries worker log create"),
+                )
                 .spawn()
-                .unwrap(),
+                .expect("#273 entries worker spawn"),
         );
         wait_signal(&s.0, &format!("boot-{id}"));
     }
@@ -897,8 +909,22 @@ fn concurrent_clear_and_writes_match_real_ts() {
     wait_signal(&s.0, "result-two");
     signal(&s.0, "release");
     wait_signal(&s.0, "result-one");
-    for child in &mut children.0 {
-        assert!(child.wait().unwrap().success());
+    for (child, id) in children.0.iter_mut().zip(["one", "two"]) {
+        let status = child.wait().expect("#273 entries worker wait");
+        // A missing log reads as empty and fails here — exit 0 alone never
+        // proves the worker really ran its test.
+        let stdout = fs::read_to_string(s.0.join("signals").join(format!("worker-{id}.stdout")))
+            .unwrap_or_default();
+        let stderr = fs::read_to_string(s.0.join("signals").join(format!("worker-{id}.stderr")))
+            .unwrap_or_default();
+        assert!(
+            exact_receipt::single_pass(
+                &status,
+                "concurrent_clear_and_writes_match_real_ts",
+                &stdout
+            ),
+            "#273 entries worker rerun matched no test ({id}): {status}\n{stdout}\n{stderr}"
+        );
     }
     let results = ["one", "two"].map(|id| {
         serde_json::from_slice::<Value>(

@@ -68,9 +68,9 @@ fn run_topologies(standalone: bool) {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             // #273: libtest exits 0 even when --exact matches nothing after a
-            // rename; only the summary line proves the topology child really ran.
+            // rename; only the libtest receipt proves the topology child ran.
             assert!(
-                status.success() && stdout.contains("1 passed") && stdout.contains("0 failed"),
+                crate::test_exact_receipt::single_pass(&status, CHILD, &stdout),
                 "#273 lock topology rerun matched no test: {topology}/{cache}: {status}\n{stdout}\n{stderr}"
             );
         }

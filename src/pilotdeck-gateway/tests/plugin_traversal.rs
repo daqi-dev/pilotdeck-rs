@@ -1,6 +1,8 @@
 //! Real TS observations and explicitly approved security/boundedness deviations.
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/exact_receipt.rs"]
+mod exact_receipt;
 #[path = "common/scratch.rs"]
 mod scratch;
 use pilotdeck_gateway::runtime::plugins::{PluginSource, loader};
@@ -95,7 +97,7 @@ impl Drop for ReapedChild {
 // Poll completion before checking the deadline so a descheduled parent accepts
 // a child which has already finished. Drop also reaps on wait errors/panics.
 #[cfg(unix)]
-fn wait_for_traversal(mut child: ReapedChild, label: &str) {
+fn wait_for_traversal(mut child: ReapedChild, child_test: &str, label: &str) {
     let start = Instant::now();
     let status = loop {
         if let Some(status) = child.0.try_wait().expect("#273 traversal child wait") {
@@ -116,9 +118,9 @@ fn wait_for_traversal(mut child: ReapedChild, label: &str) {
         let _ = pipe.read_to_string(&mut stderr);
     }
     // #273: libtest exits 0 even when --exact matches nothing after a rename;
-    // only the summary line proves the traversal child really ran its test.
+    // only the libtest receipt proves the traversal child really ran its test.
     assert!(
-        status.success() && stdout.contains("1 passed") && stdout.contains("0 failed"),
+        exact_receipt::single_pass(&status, child_test, &stdout),
         "#273 traversal rerun matched no test: {label}: {status}\n{stdout}\n{stderr}"
     );
 }
@@ -186,7 +188,7 @@ fn clique(k: usize) {
             .spawn()
             .expect("#273 clique child spawn"),
     );
-    wait_for_traversal(child, "markdown clique");
+    wait_for_traversal(child, "plugin_markdown_clique_child", "markdown clique");
 }
 #[test]
 #[cfg(unix)]
@@ -779,7 +781,7 @@ fn plugin_markdown_alias_dag() {
             .spawn()
             .expect("#273 DAG child spawn"),
     );
-    wait_for_traversal(child, "alias DAG");
+    wait_for_traversal(child, "plugin_markdown_alias_dag_child", "alias DAG");
 }
 
 #[test]

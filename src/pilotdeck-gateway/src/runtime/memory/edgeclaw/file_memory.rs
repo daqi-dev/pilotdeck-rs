@@ -3118,8 +3118,14 @@ mod mutation_security_tests {
         }
         let output = child.wait_with_output().unwrap();
         let stdout = String::from_utf8_lossy(&output.stdout);
+        // #273: same libtest receipt criterion as the exact-rerun sites — a
+        // renamed filter would otherwise pass vacuously with exit 0.
         assert!(
-            output.status.success() && stdout.contains("1 passed"),
+            crate::test_exact_receipt::single_pass(
+                &output.status,
+                "runtime::memory::edgeclaw::file_memory::mutation_security_tests::mutation_clear_deep_tree_with_low_fd_limit",
+                &stdout
+            ),
             "low-fd clear: {}\n{stdout}\n{}",
             output.status,
             String::from_utf8_lossy(&output.stderr)
