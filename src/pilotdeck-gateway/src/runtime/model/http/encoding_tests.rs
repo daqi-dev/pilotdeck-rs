@@ -44,6 +44,14 @@ struct Server {
     task: JoinHandle<Vec<u8>>,
 }
 async fn server(case: &Value, streaming: bool) -> Server {
+    server_with_disconnect_hook(case, streaming, None).await
+}
+type DisconnectHook = oneshot::Receiver<(oneshot::Sender<bool>, JoinHandle<Vec<u8>>)>;
+async fn server_with_disconnect_hook(
+    case: &Value,
+    streaming: bool,
+    on_request: Option<DisconnectHook>,
+) -> Server {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("#867 loopback bind");
@@ -86,6 +94,17 @@ async fn server(case: &Value, streaming: bool) -> Server {
             assert!(size > 0, "#867 request payload not truncated");
             request.extend_from_slice(&chunk[..size]);
         }
+        if let Some(on_request) = on_request {
+            let (release, predecessor) = bounded(on_request)
+                .await
+                .expect("#867 redirect disconnect hook installed");
+            release
+                .send(true)
+                .expect("#867 redirect disconnect trigger");
+            bounded(predecessor)
+                .await
+                .expect("#867 redirect predecessor closed before target response");
+        }
         let (wire, tail) = if streaming {
             (unhex(&case["prefix"]), unhex(&case["tail"]))
         } else {
@@ -97,9 +116,20 @@ async fn server(case: &Value, streaming: bool) -> Server {
         } else {
             format!("Content-Length: {}\r\n", wire.len())
         };
+        let encodings = case["encoding"]
+            .as_array()
+            .map(|values| values.iter().map(text).collect::<Vec<_>>())
+            .unwrap_or_else(|| vec![text(&case["encoding"])]);
+        let encoding_headers = encodings
+            .iter()
+            .map(|value| format!("Content-Encoding: {value}\r\n"))
+            .collect::<String>();
+        let location = case
+            .get("location")
+            .map(|value| format!("Location: {}\r\n", text(value)))
+            .unwrap_or_default();
         let head = format!(
-            "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Encoding: {}\r\n{framing}Connection: keep-alive\r\n\r\n",
-            text(&case["encoding"])
+            "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\n{encoding_headers}{location}{framing}Connection: keep-alive\r\n\r\n"
         );
         bounded(socket.write_all(head.as_bytes()))
             .await
@@ -157,11 +187,23 @@ async fn response(url: &str, method: &str) -> Response<ModelBody> {
         .expect("#867 HTTP response")
 }
 async fn response_result(url: &str, method: &str) -> TransportResult {
-    let request = Request::builder()
+    response_result_with_follow_mode(url, method, false).await
+}
+async fn response_result_with_follow_mode(
+    url: &str,
+    method: &str,
+    follow_redirects: bool,
+) -> TransportResult {
+    let mut request = Request::builder()
         .method(method)
         .uri(url)
         .body(Full::new(Bytes::new()))
         .expect("#867 wire request");
+    if follow_redirects {
+        request
+            .extensions_mut()
+            .insert(crate::fetch_redirect::FollowRedirects);
+    }
     bounded(transport().send(request)).await
 }
 
@@ -201,6 +243,138 @@ async fn encoding_layer_limit_matches_node() {
     }
 }
 
+#[tokio::test]
+async fn encoding_token_boundaries_match_node() {
+    for case in corpus()["tokenBoundaries"]
+        .as_array()
+        .expect("#867 token cases")
+    {
+        let peer = server(case, false).await;
+        let result = response_result(&peer.url, "GET").await;
+        if let Some(error) = case["result"].get("error") {
+            let failure = result.expect_err("#867 token boundary rejects excess codings");
+            assert_eq!(
+                failure.message,
+                text(error),
+                "#867 token boundary fetch failure"
+            );
+            assert_eq!(failure.cause_code, None, "#867 token boundary cause code");
+        } else {
+            let response = result.expect("#867 token boundary accepts response");
+            assert_eq!(
+                u64::from(response.status().as_u16()),
+                case["result"]["status"]
+                    .as_u64()
+                    .expect("#867 token status"),
+                "#867 token boundary status"
+            );
+            let body = bounded(response.into_body().collect())
+                .await
+                .expect("#867 token boundary body");
+            assert_eq!(
+                hex(&body.to_bytes()),
+                text(&case["result"]["hex"]),
+                "#867 token boundary bytes: {}",
+                case["name"]
+            );
+        }
+        bounded(peer.task).await.expect("#867 token server task");
+    }
+}
+
+#[tokio::test]
+async fn encoding_redirects_match_node_follow() {
+    for case in corpus()["redirects"]
+        .as_array()
+        .expect("#867 redirect cases")
+    {
+        // Provider fetches use shared follow; web URL fetching calls the
+        // transport directly with manual redirects. Exercise both modes.
+        let follows = case["redirect"] == "follow"
+            && case["location"].as_str().is_some_and(|v| !v.is_empty())
+            && case["status"] != 200;
+        let disconnect = case["bodyState"] == "disconnect";
+        let (install_hook, hook) = oneshot::channel();
+        let target = if follows {
+            Some(server_with_disconnect_hook(&json!({
+                "encoding": if case["targetSix"] == true {"gzip,gzip,gzip,gzip,gzip,gzip"} else {"identity"},
+                "wire": hex(b"target-ok"),
+            }), false, disconnect.then_some(hook)).await)
+        } else {
+            None
+        };
+        let mut initial = case.clone();
+        if let Some(target) = &target {
+            initial["location"] = json!(target.url);
+        }
+        let streaming = case.get("bodyState").is_some();
+        initial["prefix"] = json!("78");
+        initial["tail"] = json!("");
+        initial["finish"] = json!("disconnect");
+        let peer = server(&initial, streaming).await;
+        let (release, peer_task) = if disconnect {
+            install_hook
+                .send((peer.release, peer.task))
+                .expect("#867 redirect install disconnect hook");
+            (None, None)
+        } else {
+            (Some(peer.release), Some(peer.task))
+        };
+        let transport = transport();
+        let result = if follows {
+            bounded(crate::fetch_redirect::follow(
+                url::Url::parse(&peer.url).expect("#867 redirect URL"),
+                hyper::Method::GET,
+                hyper::HeaderMap::new(),
+                Bytes::new(),
+                || TransportFailure::fetch_failed(None),
+                |request| transport.send(request),
+            ))
+            .await
+        } else {
+            // Observe terminal rejection at the transport boundary too: an
+            // erroneously followed empty Location would otherwise fail later
+            // with the same outer error after issuing an extra request.
+            response_result_with_follow_mode(&peer.url, "GET", case["redirect"] == "follow").await
+        };
+        if let Some(error) = case["result"].get("error") {
+            let failure = result.expect_err("#867 redirect checks terminal codings");
+            assert_eq!(failure.message, text(error), "#867 redirect fetch failure");
+        } else {
+            let response = result.expect("#867 redirect skips intermediate codings");
+            assert_eq!(
+                u64::from(response.status().as_u16()),
+                case["result"]["status"]
+                    .as_u64()
+                    .expect("#867 redirect status"),
+                "#867 redirect target status"
+            );
+            let body = bounded(response.into_body().collect())
+                .await
+                .expect("#867 redirect target body");
+            assert_eq!(
+                &body.to_bytes()[..],
+                text(&case["result"]["text"]).as_bytes(),
+                "#867 redirect target bytes"
+            );
+        }
+        if streaming && !disconnect {
+            release
+                .expect("#867 redirect pending predecessor handle")
+                .send(false)
+                .expect("#867 redirect predecessor release");
+        }
+        if let Some(task) = peer_task {
+            bounded(task).await.expect("#867 redirect server task");
+        }
+        if let Some(target) = target {
+            bounded(target.task)
+                .await
+                .expect("#867 redirect target task");
+        }
+    }
+}
+
 fn size_body(case: &Value) -> ModelBody {
     // Split compressed input too: the decoder must refill across wire chunks.
     let wire = unhex(&case["wire"]);
@@ -215,7 +389,7 @@ fn size_body(case: &Value) -> ModelBody {
         .header("content-encoding", text(&case["encoding"]))
         .body(ControlledBody(receiver).boxed())
         .expect("#867 size response");
-    encoding::decode_response(&hyper::Method::GET, response)
+    encoding::decode_response(&hyper::Method::GET, response, false)
         .expect("#867 size encoding accepted")
         .into_body()
 }
@@ -610,7 +784,7 @@ async fn compressed_wire_progress_preserves_both_idle_clocks() {
             .header("content-encoding", "gzip")
             .body(ControlledBody(receiver).boxed())
             .expect("#867 controlled response");
-        let mut body = encoding::decode_response(&hyper::Method::GET, source)
+        let mut body = encoding::decode_response(&hyper::Method::GET, source, false)
             .expect("#867 controlled encoding accepted")
             .into_body();
         let wire = unhex(&corpus()["endings"][0]["prefix"]);

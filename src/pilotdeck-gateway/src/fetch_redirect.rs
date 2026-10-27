@@ -198,6 +198,10 @@ where
     }
 }
 
+/// Internal request metadata; never sent as a wire header.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FollowRedirects;
+
 /// Follow 301/302/303/307/308 like undici and return the first non-redirect
 /// response (its body unread). Every network-level refusal maps to `failed()`
 /// (TS `TypeError: fetch failed`).
@@ -231,6 +235,9 @@ where
             .body(Full::new(body.clone()))
             .map_err(|_| failed())?;
         *request.headers_mut() = headers.clone();
+        // Content decoding must know whether this intermediate response will
+        // be followed; direct transports also serve manual-redirect clients.
+        request.extensions_mut().insert(FollowRedirects);
         let response = send(request).await?;
         let status = response.status().as_u16();
         if !(matches!(status, 301 | 302 | 303 | 307 | 308)

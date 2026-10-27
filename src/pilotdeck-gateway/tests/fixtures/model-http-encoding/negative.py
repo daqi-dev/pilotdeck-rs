@@ -20,6 +20,23 @@ source = root / 'src/pilotdeck-gateway/src/runtime/model/http/encoding.rs'
 http = root / 'src/pilotdeck-gateway/src/runtime/model/http.rs'
 fetch = root / 'src/pilotdeck-gateway/src/fetch_redirect.rs'
 CASES = [
+    ('redirect-follow-marker', fetch, 'request.extensions_mut().insert(FollowRedirects);', 'request.extensions_mut().remove::<FollowRedirects>();', 'encoding_redirects_match_node_follow'),
+    ('redirect-manual-mode', source, 'let will_follow = follow_redirects', 'let will_follow = (follow_redirects || !follow_redirects)', 'encoding_redirects_match_node_follow'),
+    ('redirect-decode-intermediate', source, 'if will_follow {', 'if false && will_follow {', 'encoding_redirects_match_node_follow'),
+    ('redirect-status-301', source, '301 | 302 | 303 | 307 | 308', '302 | 303 | 307 | 308', 'encoding_redirects_match_node_follow'),
+    ('redirect-status-302', source, '301 | 302 | 303 | 307 | 308', '301 | 303 | 307 | 308', 'encoding_redirects_match_node_follow'),
+    ('redirect-status-303', source, '301 | 302 | 303 | 307 | 308', '301 | 302 | 307 | 308', 'encoding_redirects_match_node_follow'),
+    ('redirect-status-307', source, '301 | 302 | 303 | 307 | 308', '301 | 302 | 303 | 308', 'encoding_redirects_match_node_follow'),
+    ('redirect-status-308', source, '301 | 302 | 303 | 307 | 308', '301 | 302 | 303 | 307', 'encoding_redirects_match_node_follow'),
+    ('redirect-any-status', source, 'matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308)', 'true', 'encoding_redirects_match_node_follow'),
+    ('redirect-no-location', source, '&& !location.is_empty();', '&& (location.is_empty() || !location.is_empty());', 'encoding_redirects_match_node_follow'),
+    ('redirect-empty-location', source, '&& !location.is_empty();', '&& (response.headers().contains_key(hyper::header::LOCATION) || !location.is_empty());', 'encoding_redirects_match_node_follow'),
+    ('token-count-empty', source, '.map(|s| s.trim().to_ascii_lowercase())', '.map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty())', 'encoding_token_boundaries_match_node'),
+    ('token-multiline', source, '.get_all(hyper::header::CONTENT_ENCODING)\n        .iter()', '.get_all(hyper::header::CONTENT_ENCODING)\n        .iter().take(1)', 'encoding_token_boundaries_match_node'),
+    ('token-empty-chain', source, '.all(|s| matches!(s.as_str(), "gzip" | "x-gzip" | "deflate" | "br"))', '.any(|s| matches!(s.as_str(), "gzip" | "x-gzip" | "deflate" | "br"))', 'encoding_token_boundaries_match_node'),
+    ('token-empty-value', source, 'if encodings.len() > MAX_CONTENT_ENCODINGS {', 'if encodings.len() > MAX_CONTENT_ENCODINGS || encoding.is_empty() {', 'encoding_token_boundaries_match_node'),
+    ('token-null-204', source, '101 | 204 | 205 | 304', '101 | 205 | 304', 'encoding_token_boundaries_match_node'),
+    ('token-null-304', source, '101 | 204 | 205 | 304', '101 | 204 | 205', 'encoding_token_boundaries_match_node'),
     ('encoding-layer-cap', source, 'if encodings.len() > MAX_CONTENT_ENCODINGS {', 'if false && encodings.len() > MAX_CONTENT_ENCODINGS {', 'encoding_layer_limit_matches_node'),
     ('encoding-layer-exact', source, 'if encodings.len() > MAX_CONTENT_ENCODINGS {', 'if encodings.len() >= MAX_CONTENT_ENCODINGS {', 'encoding_layer_limit_matches_node'),
     ('encoding-layer-unknown', source, 'if encodings.len() > MAX_CONTENT_ENCODINGS {', 'if encodings.len() > MAX_CONTENT_ENCODINGS && !encodings.iter().any(|s| s == "custom" || s == "identity") {', 'encoding_layer_limit_matches_node'),
@@ -58,6 +75,8 @@ CASES = [
 
 ]
 MESSAGES = {
+    'encoding_redirects_match_node_follow': ['#867 redirect skips intermediate codings', '#867 redirect checks terminal codings'],
+    'encoding_token_boundaries_match_node': ['#867 token boundary rejects excess codings', '#867 token boundary accepts response', '#867 token boundary body', '#867 token boundary bytes'],
     'encoding_layer_limit_matches_node': ['#867 encoding layer cap rejects before body decoding', '#867 encoding layer cap accepts five and HEAD'],
     'decoded_size_boundary_rejects_before_text_allocation': ['#867 decoded size cap rejects excess bytes', '#867 decoded size cap runs before text allocation'],
     'decoded_size_boundary_shared_text_reader': ['#867 shared decoded size cap rejects excess bytes'],

@@ -22,13 +22,34 @@ type Reader = Pin<Box<dyn AsyncBufRead + Send + Sync>>;
 // individual tokens (even unknown ones) or allocating any decoder.
 const MAX_CONTENT_ENCODINGS: usize = 5;
 
-pub(super) fn decode_response(method: &Method, response: Response<ModelBody>) -> TransportResult {
+pub(super) fn decode_response(
+    method: &Method,
+    response: Response<ModelBody>,
+    follow_redirects: bool,
+) -> TransportResult {
     if method == Method::HEAD || matches!(response.status().as_u16(), 101 | 204 | 205 | 304) {
         return Ok(response.map(|_| {
             Full::new(Bytes::new())
                 .map_err(|never| match never {})
                 .boxed()
         }));
+    }
+    // fetch_redirect::follow marks its requests; direct transports also serve
+    // manual clients. Undici skips decoding intermediate redirect responses,
+    // including the coding count, before dropping their possibly endless body.
+    // An empty Location is falsy in undici and must still pass the count check.
+    let location = response
+        .headers()
+        .get_all(hyper::header::LOCATION)
+        .iter()
+        .map(|v| String::from_utf8_lossy(v.as_bytes()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let will_follow = follow_redirects
+        && matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308)
+        && !location.is_empty();
+    if will_follow {
+        return Ok(response);
     }
     let encoding = response
         .headers()
@@ -45,7 +66,7 @@ pub(super) fn decode_response(method: &Method, response: Response<ModelBody>) ->
         return Err(TransportFailure::fetch_failed(None));
     }
     // undici abandons the entire decoder chain on any unknown coding (identity
-    // included), rather than partially decoding a representation it cannot read.
+    // and empty tokens included), rather than partially decoding the body.
     if !encodings
         .iter()
         .all(|s| matches!(s.as_str(), "gzip" | "x-gzip" | "deflate" | "br"))
