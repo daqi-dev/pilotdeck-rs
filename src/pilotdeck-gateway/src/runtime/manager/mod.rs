@@ -11,17 +11,21 @@
 //! - browsers: the host-injected manager browser provider, whose successful
 //!   result is returned unchanged.
 //!
-//! `TranscriptSessionCatalog` is the native JSONL bridge to the existing
-//! read-only `AsyncTranscriptAdapter::list_sessions`; it never writes and does
-//! not change that shared adapter. A store that does not advertise `list`
-//! surfaces the TS `ProjectSessionCatalogUnavailableError` instead of falling
-//! back to a guessed empty list.
+//! `TranscriptSessionCatalog` is the native JSONL file catalog selected by
+//! `createLocalGateway.ts:685` (`createNodeSessionCatalog` ->
+//! `SessionList.ts::listProjectSessions`), not the unrelated
+//! `AsyncTranscriptStorageAdapter` projection. It reads head/tail lite
+//! snapshots, keeps the committed prefix when an append leaves a half-written
+//! tail, filters `always-on-*` sessions before opening any file, and emits the
+//! TS field order including `cwd`. It never writes and does not change the
+//! shared transcript adapter.
 //!
 //! The browser success path is provider-driven, not a permanent
 //! `CAPABILITY_UNAVAILABLE`: an absent provider produces the TS gateway-method
 //! error, while an injected provider owns both values and errors.
 
 mod catalog;
+mod file_catalog;
 mod projection;
 #[cfg(test)]
 mod tests;

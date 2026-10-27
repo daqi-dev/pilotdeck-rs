@@ -25,6 +25,8 @@ pub use transcript_adapter::{
     TranscriptStore, TranscriptWriter, sanitize_session_id,
 };
 
+pub(crate) use transcript_adapter::slice_index;
+
 pub use ledger::{
     KnownTerminal, OperationIdentity, OperationRecovery, OperationResolution,
     SessionOperationLedger, TranscriptSink, UnknownTerminal,

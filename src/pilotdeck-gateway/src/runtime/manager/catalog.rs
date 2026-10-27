@@ -6,11 +6,16 @@
 //! `sessionKey` (`createLocalGateway.ts:1259-1268`). The catalog is read-only:
 //! the writer owns the transcript and the catalog only observes already durable
 //! sessions.
+//!
+//! [`TranscriptSessionCatalog`] is the native JSONL implementation selected by
+//! `createLocalGateway.ts:685` (`createNodeSessionCatalog` -> `SessionList.ts`).
+//! Its projection and partial-tail semantics live in [`super::file_catalog`].
 
+use super::file_catalog;
 use super::projection::ManagerError;
-use crate::storage::{AdapterError, AsyncTranscriptAdapter, ProjectKey};
+use crate::storage::{AsyncTranscriptAdapter, ProjectKey, slice_index};
 use pilotdeck_protocol::JsValue;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 /// TS `managerSessions` passes the literal `limit: 100` and no cursor.
 pub(crate) const MANAGER_SESSION_LIMIT: f64 = 100.0;
@@ -109,24 +114,22 @@ impl GatewaySessionCatalogConsumer {
     }
 }
 
-/// Native JSONL bridge over the existing read-only transcript adapter.
+/// Native JSONL bridge over the TS file catalog.
 ///
-/// The adapter already owns record projection (`project_session_info`) and the
-/// TS `listSessions` limit/offset math. This wrapper adds only the catalog
-/// contract above it: the internal-session filter and the unavailable error.
-/// Filtering happens before pagination, exactly like `listProjectSessions`
-/// (`SessionList.ts:23-51`).
+/// `createLocalGateway.ts:685` uses `createNodeSessionCatalog`, whose `list`
+/// is `SessionList.ts::listProjectSessions`. That provider reads JSONL files
+/// directly; it does not use the `AsyncTranscriptStorageAdapter` projection.
+/// The adapter is retained only for the project chat-directory mapping, which
+/// is the same `getPilotProjectChatDir` seam the host already owns.
 pub struct TranscriptSessionCatalog {
-    adapter: Arc<AsyncTranscriptAdapter>,
+    chat_dir: Arc<dyn Fn(&ProjectKey) -> PathBuf + Send + Sync>,
 }
 
 impl TranscriptSessionCatalog {
     pub fn new(adapter: Arc<AsyncTranscriptAdapter>) -> Self {
-        Self { adapter }
-    }
-
-    pub fn adapter(&self) -> &Arc<AsyncTranscriptAdapter> {
-        &self.adapter
+        Self {
+            chat_dir: Arc::new(move |project| adapter.project_chat_dir(project)),
+        }
     }
 }
 
@@ -136,60 +139,23 @@ impl SessionCatalogPort for TranscriptSessionCatalog {
             project_root: input.project_root.clone(),
             pilot_home: input.pilot_home.clone(),
         };
-        // Read the whole ordered list, filter catalog-internal sessions, then
-        // apply the same slice semantics as TS. Asking the adapter for a page
-        // first would let an internal helper consume the manager's limit.
-        let sessions = match self.adapter.list_sessions(&project, None, None) {
-            Some(Ok(sessions)) => sessions,
-            Some(Err(error)) => return Err(adapter_error(error)),
-            None => return Err(ManagerError::catalog_unavailable()),
-        };
-        let sessions = sessions
-            .into_iter()
-            .filter(|session| input.include_internal || !is_internal_session(session))
-            .collect();
-        Ok(paginate(sessions, input.offset.unwrap_or(0.0), input.limit))
+        // Filter `always-on-*` names before opening any file (P1-2), then sort
+        // by mtime and apply JS `slice` pagination (P2 negative-end).
+        let sessions = file_catalog::list_sessions(
+            &(self.chat_dir)(&project),
+            &input.project_root,
+            input.include_internal,
+        );
+        Ok(paginate(
+            sessions.into_iter().map(|(_, info)| info).collect(),
+            input.offset.unwrap_or(0.0),
+            input.limit,
+        ))
     }
-}
-
-/// `mergeMetadata`-style provider errors keep their JS name/code in the
-/// existing adapter test oracle; reuse that exact mapping here.
-fn adapter_error(error: AdapterError) -> ManagerError {
-    match error {
-        AdapterError::Validation { code, message } => ManagerError::new(
-            "SessionEventValidationError",
-            Some(code.to_owned()),
-            message,
-        ),
-        AdapterError::Type(message) => ManagerError::plain("TypeError", message),
-        AdapterError::Range(message) => ManagerError::plain("RangeError", message),
-        AdapterError::ProjectionUnavailable(message) => {
-            ManagerError::plain("ProjectionUnavailable", message)
-        }
-        AdapterError::Domain { code, message } => ManagerError::new(
-            "SessionDomainValidationError",
-            Some(code.to_owned()),
-            message,
-        ),
-        AdapterError::Store(error) => ManagerError::plain("Error", error.to_string()),
-    }
-}
-
-fn is_internal_session(session: &JsValue) -> bool {
-    let Some(session_id) = session.get("sessionId").and_then(JsValue::as_string) else {
-        return false;
-    };
-    let units = session_id.units();
-    ["discovery", "workspace", "report"].iter().any(|kind| {
-        let prefix: Vec<u16> = format!("always-on-{kind}").encode_utf16().collect();
-        if !units.starts_with(&prefix) {
-            return false;
-        }
-        matches!(units.get(prefix.len()), Some(0x3a | 0x2d))
-    })
 }
 
 fn paginate(sessions: Vec<JsValue>, offset: f64, limit: Option<f64>) -> Vec<JsValue> {
+    // `Math.max(0, offset ?? 0)`; a NaN offset stays NaN and `slice` maps it 0.
     let offset = if offset.is_nan() {
         offset
     } else {
@@ -208,16 +174,4 @@ fn paginate(sessions: Vec<JsValue>, offset: f64, limit: Option<f64>) -> Vec<JsVa
         .skip(start)
         .take(end.saturating_sub(start))
         .collect()
-}
-
-/// `Array.prototype.slice` index conversion over a finite array: NaN and
-/// negatives clamp to 0, values at/above the length clamp to the length.
-fn slice_index(value: f64, len: usize) -> usize {
-    if value.is_nan() || value <= 0.0 {
-        0
-    } else if value >= len as f64 {
-        len
-    } else {
-        value as usize
-    }
 }

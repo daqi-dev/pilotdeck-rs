@@ -1349,7 +1349,7 @@ fn relative(from: &Path, to: &Path) -> String {
     parts.join("/")
 }
 /// Array.prototype.slice index (ToIntegerOrInfinity, negative from the end).
-fn slice_index(value: f64, len: usize) -> usize {
+pub(crate) fn slice_index(value: f64, len: usize) -> usize {
     let value = if value.is_nan() { 0.0 } else { value.trunc() };
     if value < 0.0 {
         (len as f64 + value).max(0.0) as usize

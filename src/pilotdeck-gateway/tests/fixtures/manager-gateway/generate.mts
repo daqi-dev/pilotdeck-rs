@@ -167,6 +167,7 @@ type Operation = {
   name: string;
   method: 'manager_sessions' | 'manager_browsers';
   params: any;
+  paramsUndefined?: boolean;
   catalog: any;
   browser: any;
 };
@@ -184,6 +185,12 @@ const operations: Operation[] = [
   { name: 'sessions-unknown-project', method: 'manager_sessions', params: { projectKey: '<dir>/unknown' }, catalog: { items: [S1] }, browser: { result: browserResult } },
   { name: 'sessions-catalog-structured-error', method: 'manager_sessions', params: { projectKey: '<dir>' }, catalog: { error: { name: 'DialogGatewayError', code: 'CATALOG_DOWN', message: 'catalog offline' } }, browser: { result: browserResult } },
   { name: 'sessions-catalog-raw-error', method: 'manager_sessions', params: { projectKey: '<dir>' }, catalog: { error: { name: 'TypeError', message: 'catalog exploded' } }, browser: { result: browserResult } },
+  { name: 'sessions-null-params', method: 'manager_sessions', params: null, catalog: { items: [S1] }, browser: { result: browserResult } },
+  { name: 'sessions-undefined-params', method: 'manager_sessions', params: undefined, paramsUndefined: true, catalog: { items: [S1] }, browser: { result: browserResult } },
+  { name: 'sessions-projectKey-number', method: 'manager_sessions', params: { projectKey: 42 }, catalog: { items: [S1] }, browser: { result: browserResult } },
+  { name: 'sessions-projectKey-array', method: 'manager_sessions', params: { projectKey: [] }, catalog: { items: [S1] }, browser: { result: browserResult } },
+  { name: 'sessions-projectKey-object', method: 'manager_sessions', params: { projectKey: {} }, catalog: { items: [S1] }, browser: { result: browserResult } },
+  { name: 'sessions-projectKey-bool', method: 'manager_sessions', params: { projectKey: true }, catalog: { items: [S1] }, browser: { result: browserResult } },
   { name: 'browsers-success', method: 'manager_browsers', params: { projectKey: '<dir>', sessionKey: 's-1' }, catalog: { items: [S1] }, browser: { result: browserResult } },
   { name: 'browsers-empty', method: 'manager_browsers', params: { projectKey: '<dir>' }, catalog: { items: [S1] }, browser: { result: { items: [] } } },
   { name: 'browsers-missing-session', method: 'manager_browsers', params: { projectKey: '<dir>' }, catalog: { items: [S1] }, browser: { result: browserResult } },
@@ -202,7 +209,7 @@ try {
     const browserStart = browserCalls.length;
     let outcome: any;
     try {
-      const params = expand(operation.params);
+      const params = operation.paramsUndefined ? undefined : expand(operation.params);
       const value = operation.method === 'manager_sessions'
         ? await local.gateway.managerSessions(params as never)
         : await local.gateway.managerBrowsers(params as never);
@@ -238,11 +245,45 @@ try {
   const line1 = sessionLine('matrix prompt one', 1);
   const line2 = sessionLine('matrix prompt two', 2);
   const line3 = sessionLine('matrix prompt three', 3);
+  const line4 = sessionLine('matrix prompt four', 4);
+  const line5 = sessionLine('matrix prompt five', 5);
+  const metadataLine = (metadata: any, sequence: number) => JSON.stringify({
+    type: 'session_metadata',
+    sessionId: `matrix-session-${sequence}`,
+    turnId: 'turn-1',
+    createdAt: '2026-10-18T00:00:00.000Z',
+    sequence,
+    metadata,
+  }) + '\n';
+  const boundaryLine = (sessionId: string, sequence: number) => JSON.stringify({
+    type: 'control_boundary',
+    sessionId,
+    turnId: 'turn-1',
+    createdAt: '2026-10-18T00:00:00.000Z',
+    sequence,
+    boundary: { kind: 'compact' },
+  }) + '\n';
   const file = (name: string, content: string, mtime: number) => ({ name, content, mtime });
+  const fiveFiles = [
+    file('s-1.jsonl', line1, 1_700_000_000_000),
+    file('s-2.jsonl', line2, 1_700_000_001_000),
+    file('s-3.jsonl', line3, 1_700_000_002_000),
+    file('s-4.jsonl', line4, 1_700_000_003_000),
+    file('s-5.jsonl', line5, 1_700_000_004_000),
+  ];
   const matrixCases = [
     { name: 'empty', includeInternal: false, files: [] as any[] },
     { name: 'before-append', includeInternal: false, files: [] as any[] },
     { name: 'committed', includeInternal: false, files: [file('s-1.jsonl', line1, 1_700_000_000_000)] },
+    { name: 'tail-partial-existing', includeInternal: false, files: [
+      file('s-1.jsonl', line1 + line2.slice(0, Math.floor(line2.length / 2)), 1_700_000_000_000),
+    ] },
+    { name: 'metadata-title-spaces', includeInternal: false, files: [
+      file('meta-1.jsonl', line1 + metadataLine({
+        title: '  title  ', aiTitle: 'ai', tag: 'tag-1',
+        parentSessionId: 'parent-1', forkedFromTurnId: 'fork-1',
+      }, 9), 1_700_000_000_500),
+    ] },
     { name: 'internal-hidden', includeInternal: false, files: [
       file('s-1.jsonl', line1, 1_700_000_000_000),
       file('always-on-discovery:1.jsonl', line2, 1_700_000_001_000),
@@ -250,6 +291,14 @@ try {
     { name: 'internal-included', includeInternal: true, files: [
       file('s-1.jsonl', line1, 1_700_000_000_000),
       file('always-on-discovery:1.jsonl', line2, 1_700_000_001_000),
+    ] },
+    { name: 'internal-compact-default', includeInternal: false, files: [
+      file('normal.jsonl', line1, 1_700_000_000_000),
+      file('always-on-discovery:1.jsonl', line2 + boundaryLine('always-on-discovery:1', 2), 1_700_000_001_000),
+    ] },
+    { name: 'internal-compact-included', includeInternal: true, files: [
+      file('normal.jsonl', line1, 1_700_000_000_000),
+      file('always-on-discovery:1.jsonl', line2 + boundaryLine('always-on-discovery:1', 2), 1_700_000_001_000),
     ] },
     { name: 'partial-skipped', includeInternal: false, files: [
       file('s-1.jsonl', line1, 1_700_000_000_000),
@@ -264,6 +313,9 @@ try {
       file('s-1.jsonl', line1, 1_700_000_000_000),
       file('s-2.jsonl', line2, 1_700_000_001_000),
     ] },
+    { name: 'pagination-negative-limit', includeInternal: false, limit: -1, offset: 0, files: fiveFiles },
+    { name: 'pagination-negative-end', includeInternal: false, limit: -6, offset: 1, files: fiveFiles },
+    { name: 'pagination-fractional', includeInternal: false, limit: 1.5, offset: 0, files: fiveFiles },
   ];
   const matrix: any[] = [];
   for (const matrixCase of matrixCases) {
