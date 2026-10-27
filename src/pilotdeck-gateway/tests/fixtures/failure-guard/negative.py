@@ -66,7 +66,6 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
 
     accumulate = 'accumulate-success-does-not-reset-and-trip-latches'
     model_window = 'model-window-and-reset'
-    exact = 'exact-wins-and-utf16-label'
     longest = 'longest-prefix-shared-across-subagent'
     mutants = [
         mutation('tool-threshold-plus-one', guard, '*failures < limit', '*failures < limit + 1.0',
@@ -76,7 +75,7 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
         mutation('model-threshold-plus-one', guard, 'self.model_failures < limit',
             'self.model_failures < limit + 1.0', marker=guard_trip_marker(model_window, 3)),
         mutation('model-threshold-minus-one', guard, 'self.model_failures < limit',
-            'self.model_failures < limit - 1.0', marker=guard_trip_marker(model_window, 3)),
+            'self.model_failures < limit - 1.0', marker=guard_trip_marker(model_window, 2)),
     ]
     mutants += [
         mutation('counted-classification-wrong', guard, '"tool_unavailable",', '"permission_denied",',
@@ -87,8 +86,12 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
             marker=guard_trip_marker(accumulate, 4)),
         mutation('success-clears-window', guard, 'if !is(result, "type", "error") {', 'if !is(result, "type", "error") { self.tool_failures.clear();',
             marker=guard_trip_marker(accumulate, 4)),
+        # #813 fix-r10: the disabled latch cannot show on a fresh guard
+        # (`tripped` is already false, so `&& false` is a no-op). It first
+        # shows after the accumulate trip: action 6 re-counts mcp__db__exact
+        # and returns a second trip where the gold is null.
         mutation('trip-latch-ignored', guard, 'if self.tripped || ok ||', 'if (self.tripped && false) || ok ||',
-            marker=guard_trip_marker(exact, 0)),
+            marker=guard_trip_marker(accumulate, 6)),
         mutation('trip-message-changed', guard, '次，已自动停止，请稍后重试', '次，已自动停止，请重试',
             marker=guard_message_marker(accumulate, 4)),
         mutation('disabled-policy-observed', submit, '.filter(|config| truthy(field(config, "enabled")))', '.filter(|config| { let _ = config; true })', 'guard-disabled',
@@ -139,7 +142,17 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
     try:
         (out / 'original-sha256.json').write_text(json.dumps({str(p.relative_to(repo)): hashlib.sha256(data).hexdigest() for p, data in original.items()}, indent=2) + '\n')
         for control in selected:
-            assert time.monotonic() < deadline, 'overall 30 minute deadline'
+            # #813 fix-r10: a failure must not shorten the run. Record the
+            # remaining controls as INVALID at the deadline instead of
+            # aborting, so one host round exposes every mismatch (#813 r8
+            # stopped at the first INVALID and hid the rest).
+            if time.monotonic() >= deadline:
+                summary.append(dict(name=control['name'], case=control.get('case'), marker=control.get('marker'),
+                    before=control.get('before'), after=control.get('after'), pid=None, reaped=False,
+                    exit=None, timed_out=False, valid=False, reason='overall 30 minute deadline'))
+                (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+                print(f'{control["name"]}: INVALID (overall 30 minute deadline)', flush=True)
+                continue
             assert all(p.read_bytes() == data for p, data in original.items()), 'concurrent source edit'
             slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=10)
             while slots.returncode == 1:
@@ -176,11 +189,22 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
                 and named_test_killed(raw, control['test'], marker, control.get('target'))
                 and 'could not compile' not in raw))
             (out / f'{control["name"]}.log').write_text('COMMAND ' + ' '.join(cmd) + '\n' + slots.stdout + slots.stderr + raw + f'\nexit={returncode} timed_out={timed_out}\n')
+            if valid:
+                reason = 'killed' if marker is not None else 'baseline passed'
+            elif timed_out:
+                reason = 'timeout (watchdog), not an assertion failure'
+            elif 'could not compile' in raw:
+                reason = 'compile error'
+            elif returncode == 0:
+                reason = 'survived (test passed)'
+            elif returncode != 101:
+                reason = f'unexpected exit {returncode}'
+            else:
+                reason = 'failed without the declared marker'
             # run_owned reaps the group itself, so the leader pid is not exported.
-            summary.append(dict(name=control['name'], case=control.get('case'), marker=marker, before=control.get('before'), after=control.get('after'), pid=None, reaped=True, exit=returncode, timed_out=timed_out, valid=valid))
+            summary.append(dict(name=control['name'], case=control.get('case'), marker=marker, before=control.get('before'), after=control.get('after'), pid=None, reaped=True, exit=returncode, timed_out=timed_out, valid=valid, reason=reason))
             (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
-            print(f'{control["name"]}: {"PASS" if valid else "INVALID"} exit={returncode}', flush=True)
-            if not valid: break
+            print(f'{control["name"]}: {"PASS" if valid else "INVALID"} exit={returncode} ({reason})', flush=True)
     finally:
         assert all(p.read_bytes() == data for p, data in original.items()), 'original bytes not restored'
         (out / 'restored-sha256.json').write_text(json.dumps({str(p.relative_to(repo)): hashlib.sha256(data).hexdigest() for p, data in original.items()}, indent=2) + '\n')
