@@ -319,17 +319,23 @@ impl Drop for ToolResultBudget {
 }
 
 impl ToolResultBudget {
-    pub fn new(options: ToolResultBudgetOptions) -> Self {
+    /// #885: the TS constructor runs `resolve(options.toolResultsDir)`
+    /// (`ToolResultBudget.ts:94`). An absolute input never reads process cwd,
+    /// so a deleted cwd cannot fail it; a relative input propagates Node's
+    /// `uv_cwd` diagnostic instead of silently resolving against `/`.
+    pub fn new(options: ToolResultBudgetOptions) -> Result<Self, ToolBudgetError> {
         let raw = JsString::from(options.tool_results_dir.to_string_lossy().as_ref());
         let tool_results_dir = if is_absolute(&raw) {
             normalize(&raw)
         } else {
-            let cwd = std::env::current_dir()
-                .map(|path| JsString::from(path.to_string_lossy().as_ref()))
-                .unwrap_or_else(|_| JsString::from("/"));
-            join(&cwd, &raw)
+            let cwd = std::env::current_dir().map_err(|error| {
+                ToolBudgetError::new(
+                    crate::node_io::diagnostic_or_unknown(&error, "uv_cwd", None).1,
+                )
+            })?;
+            join(&JsString::from(cwd.to_string_lossy().as_ref()), &raw)
         };
-        Self {
+        Ok(Self {
             max_result_size_chars: options
                 .max_result_size_chars
                 .unwrap_or(DEFAULT_MAX_RESULT_SIZE_CHARS),
@@ -345,7 +351,7 @@ impl ToolResultBudget {
                 replacements: HashMap::new(),
                 next_read_file_alias_index: 1,
             })),
-        }
+        })
     }
 
     pub fn tool_results_dir(&self) -> &JsString {
@@ -1716,6 +1722,10 @@ fn create_read_file_alias_in(
 #[path = "spill_isolation_tests.rs"]
 mod isolation;
 
+#[cfg(all(test, unix))]
+#[path = "../../../tests/fixtures/tool-budget-cwd/regression.rs"]
+mod cwd_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1903,7 +1913,8 @@ mod tests {
             max_result_size_chars: Some(1),
             max_result_size_tokens: Some(100),
             preview_bytes: None,
-        });
+        })
+        .expect("#885 tool_results_dir is an absolute scratch path");
         let error = budget
             .persist_artifact(
                 &JsString::from(scratch.path().join("spill/call.txt").to_str().unwrap()),
@@ -1946,7 +1957,8 @@ mod tests {
             max_result_size_chars: Some(1),
             max_result_size_tokens: Some(100),
             preview_bytes: None,
-        });
+        })
+        .expect("#885 tool_results_dir is an absolute scratch path");
         let error = budget
             .persist_artifact(
                 &JsString::from(scratch.path().join("spill/call.txt").to_str().unwrap()),
@@ -1999,7 +2011,8 @@ mod tests {
             max_result_size_chars: Some(1),
             max_result_size_tokens: Some(100),
             preview_bytes: None,
-        });
+        })
+        .expect("#885 tool_results_dir is an absolute scratch path");
         let path = JsString::from(scratch.path().join("spill/call.txt").to_str().unwrap());
         let error = budget
             .persist_artifact(&path, &JsString::from("0123456789"))
@@ -2054,7 +2067,8 @@ mod tests {
             max_result_size_chars: Some(1),
             max_result_size_tokens: Some(100),
             preview_bytes: None,
-        });
+        })
+        .expect("#885 tool_results_dir is an absolute scratch path");
         let spill_file = PathBuf::from(budget.spill_path(&"call-1.txt".into()).to_utf8().unwrap());
         let alias_file = project.join("refs/result-0001.txt");
         let prefix = scratch.path().to_string_lossy().into_owned();
@@ -2226,7 +2240,8 @@ mod tests {
             max_result_size_chars: Some(1),
             max_result_size_tokens: Some(100),
             preview_bytes: None,
-        });
+        })
+        .expect("#885 tool_results_dir is an absolute scratch path");
         let spill_file = PathBuf::from(budget.spill_path(&"call-1.txt".into()).to_utf8().unwrap());
         fs::create_dir_all(scratch.path().join("proj")).unwrap();
         let spill_target = spill_file.to_string_lossy().into_owned();
@@ -2386,6 +2401,7 @@ mod tests {
             max_result_size_tokens: Some(100),
             preview_bytes: None,
         })
+        .expect("#885 tool_results_dir is an absolute scratch path")
         .with_wait_timeout(Duration::from_millis(200));
         let spill_file = PathBuf::from(budget.spill_path(&"call-1.txt".into()).to_utf8().unwrap());
         fs::create_dir_all(scratch.path().join("proj")).unwrap();
@@ -2537,7 +2553,8 @@ expired attempt was returned; the expired attempt is isolated",
             max_result_size_chars: Some(1),
             max_result_size_tokens: Some(100),
             preview_bytes: None,
-        });
+        })
+        .expect("#885 tool_results_dir is an absolute scratch path");
         let message = object([
             ("role", "user".into()),
             (
@@ -2663,6 +2680,7 @@ expired attempt was returned; the expired attempt is isolated",
             max_result_size_tokens: Some(100),
             preview_bytes: None,
         })
+        .expect("#885 tool_results_dir is an absolute scratch path")
         .with_wait_timeout(Duration::from_millis(200));
         let message = object([
             ("role", "user".into()),
@@ -2764,7 +2782,8 @@ expired attempt was returned; the expired attempt is isolated",
             max_result_size_chars: Some(1),
             max_result_size_tokens: Some(100),
             preview_bytes: None,
-        });
+        })
+        .expect("#885 tool_results_dir is an absolute scratch path");
         let error = budget
             .create_read_file_alias(&JsString::from(source.to_str().unwrap()), "txt")
             .await
@@ -2822,7 +2841,8 @@ expired attempt was returned; the expired attempt is isolated",
             max_result_size_chars: Some(1),
             max_result_size_tokens: Some(100),
             preview_bytes: None,
-        });
+        })
+        .expect("#885 tool_results_dir is an absolute scratch path");
         let error = budget
             .create_read_file_alias(&JsString::from(source.to_str().unwrap()), "txt")
             .await
@@ -2894,7 +2914,8 @@ expired attempt was returned; the expired attempt is isolated",
             max_result_size_chars: Some(1),
             max_result_size_tokens: Some(100),
             preview_bytes: None,
-        });
+        })
+        .expect("#885 tool_results_dir is an absolute scratch path");
         let message = object([
             ("role", "user".into()),
             (
@@ -3012,7 +3033,8 @@ expired attempt was returned; the expired attempt is isolated",
             max_result_size_chars: Some(1),
             max_result_size_tokens: Some(100),
             preview_bytes: None,
-        });
+        })
+        .expect("#885 tool_results_dir is an absolute scratch path");
         let result = if copy {
             budget
                 .create_read_file_alias(&JsString::from(source.to_str().unwrap()), "txt")

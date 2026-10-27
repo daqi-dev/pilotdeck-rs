@@ -769,7 +769,8 @@ async fn budget_spills_are_readable_by_archive() {
     let dir = root.path().join(".pilotdeck/tool-results/fixture");
     let mut options = ToolResultBudgetOptions::new(&dir);
     options.max_result_size_chars = Some(1);
-    let budget = ToolResultBudget::new(options);
+    let budget =
+        ToolResultBudget::new(options).expect("#885 tool_results_dir is an absolute scratch path");
     let body = "原始字节\nXXXXXXXX";
     let msg = pilotdeck_protocol::parse_json(&serde_json::json!({"role":"user","content":[{"type":"tool_result","toolCallId":"call","content":[{"type":"text","text":body}]}]}).to_string()).unwrap();
     let text = budget

@@ -111,7 +111,8 @@ impl ContextStorageResources {
     /// the TS spill port, whose `node:fs/promises` writes run off the event
     /// loop, and the storage rule in `runtime/context/instructions.rs` (#637).
     /// Per-session setup keeps one synchronous `current_dir` read on the
-    /// caller thread (a single getcwd, no spill I/O; `ToolResultBudget::new`).
+    /// caller thread (a single getcwd, no spill I/O; `ToolResultBudget::new`,
+    /// which #885 turns into an error for a deleted cwd and a relative dir).
     /// Cancellation: one text result's whole persistence sequence — spill
     /// write, alias copy and replacement-cache registration — is a single
     /// blocking task behind one await, and a spawned blocking task is never
@@ -158,9 +159,13 @@ impl ContextStorageResources {
         let project_root = options
             .host_workspace_root
             .unwrap_or_else(|| self.project_root.clone());
-        let tool_result_budget = Arc::new(ToolResultBudget::new(ToolResultBudgetOptions::new(
-            tool_results_dir,
-        )));
+        // #885: the constructor's `resolve` may reject a relative spill dir
+        // against a deleted cwd; TS's throw surfaces as a session-creation
+        // failure here too.
+        let tool_result_budget = Arc::new(
+            ToolResultBudget::new(ToolResultBudgetOptions::new(tool_results_dir))
+                .map_err(|error| RuntimeError::new(error.to_string()))?,
+        );
         let memory_retrieval_timeout_ms = self
             .snapshot
             .get("config")
