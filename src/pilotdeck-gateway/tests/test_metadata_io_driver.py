@@ -137,48 +137,68 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(len(driver.SOURCE_FILES), 15)
         self.assertEqual(set(driver.SOURCE_FILES), expected)
 
-    def test_required_check_gates_observer_failure_instead_of_skipping(self):
+    def ci_jobs(self):
         text = (Path(__file__).resolve().parents[3]/'.github/workflows/ci.yml').read_text()
-        self.assertEqual(text.count('\n  check:\n'), 1, '#904 one required check job')
-        check = text.split('\n  check:\n', 1)[1].split('\n  rust:', 1)[0]
-        self.assertNotRegex(check, r'(?m)^  [\w-]+:', '#904 check ends before next job')
+        self.assertEqual(text.count('\njobs:\n'), 1, '#904 one jobs mapping')
+        parts = re.split(r'^  ([\w-]+):\n', text.split('\njobs:\n', 1)[1], flags=re.M)
+        names = parts[1::2]
+        self.assertEqual(len(names), len(set(names)), '#904 unique job names')
+        return dict(zip(names, parts[2::2]))
+
+    def ci_steps(self, name, body):
+        self.assertEqual(len(re.findall(r'^    steps:$', body, re.M)), 1,
+                         f'#904 {name} has one steps sequence')
+        return re.split(r'^      - ', body.split('    steps:\n', 1)[1], flags=re.M)[1:]
+
+    def ci_run_commands(self, step):
+        runs = re.findall(r'^(?:run: |        run: )([^\n]*)(?:\n((?:(?:          [^\n]*|[ \t]*)(?:\n|$))*))?',
+                          step, re.M)
+        return [line.strip() for command, block in runs
+                for line in (block.splitlines() if command in ('|', '>', '|-', '>-', '|+', '>+')
+                             else [command]) if line.strip()]
+
+    def test_required_check_gates_observer_failure_instead_of_skipping(self):
+        jobs = self.ci_jobs()
+        required = ('metadata-observer', 'rust', 'a51-coverage')
+        for name in ('check', *required):
+            self.assertIn(name, jobs, f'#904 required job {name} exists')
+            self.assertNotIn('continue-on-error:', jobs[name], f'#904 {name} cannot ignore failure')
+        check = jobs['check']
         self.assertEqual(re.findall(r'^    needs: (.*)$', check, re.M),
-                         ['[metadata-observer, rust, a51-coverage]'], '#904 exact required needs')
+                         ['[' + ', '.join(required) + ']'], '#904 exact required needs')
         self.assertEqual(re.findall(r'^    if: (.*)$', check, re.M),
                          ['${{ always() }}'], '#904 check always runs')
-        self.assertEqual(check.count('    steps:\n'), 1, '#904 check has steps')
-        steps = re.split(r'^      - ', check.split('    steps:\n', 1)[1], flags=re.M)[1:]
+        steps = self.ci_steps('check', check)
         self.assertEqual(len(steps), 3, '#904 exactly three rejection steps')
-        for job in ('metadata-observer', 'rust', 'a51-coverage'):
+        for job in required:
             condition = "${{ always() && needs." + job + ".result != 'success' }}"
             gates = [step for step in steps
                      if re.findall(r'^        if: (.*)$', step, re.M) == [condition]]
             self.assertEqual(len(gates), 1, f'#904 {job} rejects every non-success')
             self.assertEqual(re.findall(r'^        run: (.*)$', gates[0], re.M),
                              ['exit 1'], f'#904 {job} rejection exits one')
-        self.assertNotIn('continue-on-error:', check, '#904 check cannot ignore failure')
-        self.assertEqual(text.count('\n  metadata-observer:\n'), 1, '#904 one observer job')
-        observer = text.split('\n  metadata-observer:\n', 1)[1].split('\n  check:', 1)[0]
-        self.assertNotIn('continue-on-error:', observer, '#904 observer cannot ignore failure')
-        self.assertIn('run: node src/pilotdeck-gateway/tests/test_metadata_observer.mjs', observer,
-                      '#904 observer generation control runs')
+        observer_steps = self.ci_steps('metadata-observer', jobs['metadata-observer'])
+        self.assertTrue(any(self.ci_run_commands(step)
+                            == ['node src/pilotdeck-gateway/tests/test_metadata_observer.mjs']
+                            for step in observer_steps), '#904 observer generation control runs')
 
     def test_each_npm_job_sets_up_its_own_node_before_installing(self):
-        text = (Path(__file__).resolve().parents[3]/'.github/workflows/ci.yml').read_text()
-        jobs = re.split(r'^  ([\w-]+):\n', text, flags=re.M)
-        npm_jobs = []
-        for name, body in zip(jobs[1::2], jobs[2::2]):
-            steps = re.split(r'^      - ', body, flags=re.M)[1:]
+        runtime_jobs = set()
+        for name, body in self.ci_jobs().items():
+            steps = self.ci_steps(name, body)
             node_steps = [i for i, step in enumerate(steps)
                           if re.search(r'^(?:uses:|        uses:) actions/setup-node@v4$', step, re.M)
                           and not re.search(r'^(?:if:|        if:)', step, re.M)]
             for i, step in enumerate(steps):
-                if re.search(r'^(?:run: |        run: |          )npm ci\b', step, re.M):
-                    npm_jobs.append(name)
+                # Only run fields/scripts count; names, comments and env values do not.
+                commands = self.ci_run_commands(step)
+                if any(re.search(r'''(?:^['"]?|\s)(?:npm (?:ci|install|i)\b|npx |node )''', command)
+                       for command in commands if not command.lstrip().startswith('#')):
+                    runtime_jobs.add(name)
                     self.assertTrue(any(node < i for node in node_steps),
-                                    f'#904 {name} setup-node must precede npm ci in its own job')
-        self.assertEqual(set(npm_jobs), {'rust', 'a51-coverage', 'gateway-schema-baseline'},
-                         '#904 all three npm jobs are checked')
+                                    f'#904 {name} setup-node must precede Node commands in its own job')
+        self.assertEqual(runtime_jobs, {'metadata-observer', 'rust', 'a51-coverage', 'gateway-schema-baseline'},
+                         '#904 all four Node jobs are checked')
 
     def test_target_output_overlap_file_and_nonempty_target_are_rejected_without_writes(self):
         target = self.root/'new-target'
