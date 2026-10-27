@@ -1,0 +1,4465 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/context/memory/edgeclaw-memory-core/src/core/file-memory.ts": "c64b368fa7fa329cbecb475b22972860bbc133444606017132c6edbf27ed3ad6",
+    "src/context/memory/edgeclaw-memory-core/src/core/general-projects.ts": "3a5512939027cc32efde9cd218e4bb400300a28fda6f9ac07391d75b56244e40",
+    "src/context/memory/edgeclaw-memory-core/src/core/pipeline/heartbeat.ts": "c4f1247e983948bc47a83c1308cd2a158bce097335c41f4b42d9de6babd125fc",
+    "src/context/memory/edgeclaw-memory-core/src/core/review/dream-review.ts": "ddc7d016152096f0dfb9ce63bc661b34f683a7cea3491d9cfd1c1365c8d3d1b7",
+    "src/context/memory/edgeclaw-memory-core/src/core/skills/llm-extraction.ts": "6cde29bc33b1d2fccfcfa5ee507941b2280c6960254da28794ac18845224372e",
+    "src/context/memory/edgeclaw-memory-core/src/core/storage/sqlite.ts": "92ee83f07aaefc070850a6ac366fbc75924b2efdaa45f9f9999ed0d3d25e5093",
+    "src/context/memory/edgeclaw-memory-core/src/core/trace-i18n.ts": "2d4a4e6d1d86539ff294b5d016e51ef3a131575e2d5be4da14aeca24b8dc4f0c",
+    "src/context/memory/edgeclaw-memory-core/src/core/types.ts": "abc773ea38e2ba98d83aa7bad1d4672fac3d2f01fb5ad992e8d0382912ee7f99",
+    "src/context/memory/edgeclaw-memory-core/src/core/utils/id.ts": "5d8f83f1a5d56b696829ffe8a26dff2505b6bb6317acd4e4ca9772219e0bd1f9",
+    "src/context/memory/edgeclaw-memory-core/src/core/utils/text.ts": "c582cc42b3acae4bc5b8502f2ad6abd6577e2eb03e7ae41b966e0cceba5f654e"
+  },
+  "nodeVersion": "v22.22.0",
+  "clockMs": 1792627200000,
+  "randoms": [
+    0.25,
+    0.5,
+    0.75,
+    0.125,
+    0.375,
+    0.625,
+    0.875,
+    0.0625,
+    0.1875,
+    0.3125,
+    0.4375,
+    0.5625,
+    0.6875,
+    0.8125,
+    0.9375,
+    0.03125,
+    0.09375,
+    0.15625,
+    0.21875,
+    0.28125
+  ],
+  "cases": [
+    {
+      "name": "category-project-cluster",
+      "method": "runCategoryDream",
+      "mode": "single",
+      "setup": {
+        "candidates": [
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha Plan",
+            "description": "alpha plan",
+            "body": "## Goal\nShip alpha.\n"
+          },
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha Notes",
+            "description": "alpha notes",
+            "body": "## Goal\nShip the alpha release.\n"
+          }
+        ]
+      },
+      "selection": {
+        "type": "project"
+      },
+      "kind": "project",
+      "ensureMeta": false,
+      "script": [
+        {
+          "method": "planDreamClusters",
+          "debug": {
+            "request": "cluster-plan"
+          },
+          "result": {
+            "summary": "Found one duplicate project cluster.",
+            "clusters": [
+              {
+                "memberRelativePaths": [
+                  "Project/alpha-notes-39eef8668c.md",
+                  "Project/alpha-plan-b6003d6838.md"
+                ],
+                "reason": "duplicate content"
+              }
+            ]
+          }
+        },
+        {
+          "method": "refineDreamCluster",
+          "debug": {
+            "request": "cluster-refine"
+          },
+          "result": {
+            "summary": "Merged the duplicate project memories.",
+            "file": {
+              "name": "Alpha Merged",
+              "description": "merged alpha",
+              "markdown": "# Alpha\n\nMerged body."
+            }
+          }
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "input": {
+          "kind": "project",
+          "entries": [
+            {
+              "name": "Alpha Notes",
+              "description": "alpha notes",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-notes-39eef8668c.md",
+              "relativePath": "Project/alpha-notes-39eef8668c.md",
+              "absolutePath": "$ROOT/Project/alpha-notes-39eef8668c.md"
+            },
+            {
+              "name": "Alpha Plan",
+              "description": "alpha plan",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-plan-b6003d6838.md",
+              "relativePath": "Project/alpha-plan-b6003d6838.md",
+              "absolutePath": "$ROOT/Project/alpha-plan-b6003d6838.md"
+            }
+          ],
+          "records": [
+            {
+              "name": "Alpha Notes",
+              "description": "alpha notes",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-notes-39eef8668c.md",
+              "relativePath": "Project/alpha-notes-39eef8668c.md",
+              "absolutePath": "$ROOT/Project/alpha-notes-39eef8668c.md",
+              "content": "## Goal\nShip the alpha release.",
+              "preview": "Goal Ship the alpha release."
+            },
+            {
+              "name": "Alpha Plan",
+              "description": "alpha plan",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-plan-b6003d6838.md",
+              "relativePath": "Project/alpha-plan-b6003d6838.md",
+              "absolutePath": "$ROOT/Project/alpha-plan-b6003d6838.md",
+              "content": "## Goal\nShip alpha.",
+              "preview": "Goal Ship alpha."
+            }
+          ]
+        },
+        "result": {
+          "plannedClusters": 1,
+          "refinedClusters": 1,
+          "deletedFiles": 2,
+          "droppedWarnings": []
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "project_header_scan",
+              "title": "Project Header Scan",
+              "status": "success",
+              "inputSummary": "2 active project files",
+              "outputSummary": "Loaded 2 project headers for cluster planning.",
+              "details": [
+                {
+                  "key": "project-header-summary",
+                  "label": "Project Header Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "inputFiles",
+                      "value": "2"
+                    },
+                    {
+                      "label": "scannedHeaders",
+                      "value": "2"
+                    },
+                    {
+                      "label": "headerScanLimit",
+                      "value": "200"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-headers",
+                  "label": "Project Headers",
+                  "kind": "list",
+                  "items": [
+                    "Project/alpha-notes-39eef8668c.md | Alpha Notes | 2026-10-22T00:00:00.000Z",
+                    "Project/alpha-plan-b6003d6838.md | Alpha Plan | 2026-10-22T00:00:00.000Z"
+                  ]
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_header_scan",
+                "fallback": "Project Header Scan"
+              }
+            },
+            {
+              "stepId": "dream_trace_17dc607638:step:2",
+              "kind": "project_cluster_plan",
+              "title": "Project Cluster Plan",
+              "status": "success",
+              "inputSummary": "2 project headers",
+              "outputSummary": "Found one duplicate project cluster.",
+              "details": [
+                {
+                  "key": "project-cluster-summary",
+                  "label": "Project Cluster Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "plannerClusters",
+                      "value": "1"
+                    },
+                    {
+                      "label": "acceptedClusters",
+                      "value": "1"
+                    },
+                    {
+                      "label": "droppedClusters",
+                      "value": "0"
+                    },
+                    {
+                      "label": "clusterMaxFiles",
+                      "value": "8"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-cluster-plan-output",
+                  "label": "Project Cluster Plan Output",
+                  "kind": "json",
+                  "json": {
+                    "summary": "Found one duplicate project cluster.",
+                    "plannerClusters": [
+                      {
+                        "memberRelativePaths": [
+                          "Project/alpha-notes-39eef8668c.md",
+                          "Project/alpha-plan-b6003d6838.md"
+                        ],
+                        "reason": "duplicate content"
+                      }
+                    ],
+                    "acceptedClusters": [
+                      {
+                        "memberRelativePaths": [
+                          "Project/alpha-notes-39eef8668c.md",
+                          "Project/alpha-plan-b6003d6838.md"
+                        ],
+                        "reason": "duplicate content"
+                      }
+                    ],
+                    "droppedWarnings": []
+                  }
+                }
+              ],
+              "promptDebug": {
+                "request": "cluster-plan"
+              },
+              "titleI18n": {
+                "key": "trace.step.project_cluster_plan",
+                "fallback": "Project Cluster Plan"
+              }
+            },
+            {
+              "stepId": "dream_trace_17dc607638:step:3",
+              "kind": "project_cluster_refine",
+              "title": "Project Cluster Refine #1",
+              "status": "success",
+              "inputSummary": "2 project files",
+              "outputSummary": "Merged the duplicate project memories.",
+              "details": [
+                {
+                  "key": "project-cluster-1",
+                  "label": "Project Cluster",
+                  "kind": "json",
+                  "json": {
+                    "members": [
+                      "Project/alpha-notes-39eef8668c.md",
+                      "Project/alpha-plan-b6003d6838.md"
+                    ],
+                    "reason": "duplicate content",
+                    "newFile": "Project/alpha-merged-aac62e2c14.md",
+                    "deletedFiles": [
+                      "Project/alpha-notes-39eef8668c.md",
+                      "Project/alpha-plan-b6003d6838.md"
+                    ]
+                  }
+                }
+              ],
+              "promptDebug": {
+                "request": "cluster-refine"
+              },
+              "titleI18n": {
+                "key": "trace.step.project_cluster_refine",
+                "fallback": "Project Cluster Refine"
+              }
+            }
+          ],
+          "mutations": [
+            {
+              "mutationId": "mutation_9ead54658d",
+              "action": "delete",
+              "relativePath": "Project/alpha-notes-39eef8668c.md"
+            },
+            {
+              "mutationId": "mutation_8bf5f2182b",
+              "action": "delete",
+              "relativePath": "Project/alpha-plan-b6003d6838.md"
+            },
+            {
+              "mutationId": "mutation_cb4b0916db",
+              "action": "write",
+              "relativePath": "Project/alpha-merged-aac62e2c14.md",
+              "candidateType": "project",
+              "name": "Alpha Merged",
+              "description": "merged alpha",
+              "preview": "Alpha Merged body."
+            }
+          ],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "planDreamClusters",
+            "input": {
+              "kind": "project",
+              "headers": [
+                {
+                  "relativePath": "Project/alpha-notes-39eef8668c.md",
+                  "name": "Alpha Notes",
+                  "description": "alpha notes",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "relativePath": "Project/alpha-plan-b6003d6838.md",
+                  "name": "Alpha Plan",
+                  "description": "alpha plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                }
+              ]
+            }
+          },
+          {
+            "method": "refineDreamCluster",
+            "input": {
+              "kind": "project",
+              "records": [
+                {
+                  "entryId": "Project/alpha-notes-39eef8668c.md",
+                  "relativePath": "Project/alpha-notes-39eef8668c.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Alpha Notes",
+                  "description": "alpha notes",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip the alpha release.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                },
+                {
+                  "entryId": "Project/alpha-plan-b6003d6838.md",
+                  "relativePath": "Project/alpha-plan-b6003d6838.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Alpha Plan",
+                  "description": "alpha plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip alpha.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "tree": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Alpha Plan](project.meta.md) — alpha plan\n\n## Project Memory\n- [Alpha Merged](Project/alpha-merged-aac62e2c14.md) — merged alpha\n"
+          },
+          {
+            "relativePath": "Project/alpha-merged-aac62e2c14.md",
+            "content": "---\nname: Alpha Merged\ndescription: merged alpha\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n# Alpha\n\nMerged body.\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Alpha Plan\ndescription: alpha plan\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nalpha plan\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "category-feedback-cluster",
+      "method": "runCategoryDream",
+      "mode": "single",
+      "setup": {
+        "candidates": [
+          {
+            "type": "feedback",
+            "scope": "project",
+            "name": "Use tabs",
+            "description": "formatting rule",
+            "body": "Rule: use tabs.\n"
+          },
+          {
+            "type": "feedback",
+            "scope": "project",
+            "name": "Use two-space tabs",
+            "description": "formatting rule duplicate",
+            "body": "Rule: indent with tabs.\n"
+          }
+        ]
+      },
+      "selection": {
+        "type": "feedback"
+      },
+      "kind": "feedback",
+      "ensureMeta": false,
+      "script": [
+        {
+          "method": "planDreamClusters",
+          "result": {
+            "summary": "Found one duplicate feedback cluster.",
+            "clusters": [
+              {
+                "memberRelativePaths": [
+                  "Feedback/use-tabs-1bdde1a031.md",
+                  "Feedback/use-two-space-tabs-fe39e48aea.md"
+                ],
+                "reason": "same rule"
+              }
+            ]
+          }
+        },
+        {
+          "method": "refineDreamCluster",
+          "result": {
+            "summary": "Merged the formatting feedback.",
+            "file": {
+              "name": "Use tabs",
+              "description": "formatting rule",
+              "markdown": "Rule: use tabs."
+            }
+          }
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "input": {
+          "kind": "feedback",
+          "entries": [
+            {
+              "name": "Use tabs",
+              "description": "formatting rule",
+              "type": "feedback",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "use-tabs-1bdde1a031.md",
+              "relativePath": "Feedback/use-tabs-1bdde1a031.md",
+              "absolutePath": "$ROOT/Feedback/use-tabs-1bdde1a031.md"
+            },
+            {
+              "name": "Use two-space tabs",
+              "description": "formatting rule duplicate",
+              "type": "feedback",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "use-two-space-tabs-fe39e48aea.md",
+              "relativePath": "Feedback/use-two-space-tabs-fe39e48aea.md",
+              "absolutePath": "$ROOT/Feedback/use-two-space-tabs-fe39e48aea.md"
+            }
+          ],
+          "records": [
+            {
+              "name": "Use tabs",
+              "description": "formatting rule",
+              "type": "feedback",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "use-tabs-1bdde1a031.md",
+              "relativePath": "Feedback/use-tabs-1bdde1a031.md",
+              "absolutePath": "$ROOT/Feedback/use-tabs-1bdde1a031.md",
+              "content": "Rule: use tabs.",
+              "preview": "Rule: use tabs."
+            },
+            {
+              "name": "Use two-space tabs",
+              "description": "formatting rule duplicate",
+              "type": "feedback",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "use-two-space-tabs-fe39e48aea.md",
+              "relativePath": "Feedback/use-two-space-tabs-fe39e48aea.md",
+              "absolutePath": "$ROOT/Feedback/use-two-space-tabs-fe39e48aea.md",
+              "content": "Rule: indent with tabs.",
+              "preview": "Rule: indent with tabs."
+            }
+          ]
+        },
+        "result": {
+          "plannedClusters": 1,
+          "refinedClusters": 1,
+          "deletedFiles": 2,
+          "droppedWarnings": []
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "feedback_header_scan",
+              "title": "Feedback Header Scan",
+              "status": "success",
+              "inputSummary": "2 active feedback files",
+              "outputSummary": "Loaded 2 feedback headers for cluster planning.",
+              "details": [
+                {
+                  "key": "feedback-header-summary",
+                  "label": "Feedback Header Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "inputFiles",
+                      "value": "2"
+                    },
+                    {
+                      "label": "scannedHeaders",
+                      "value": "2"
+                    },
+                    {
+                      "label": "headerScanLimit",
+                      "value": "200"
+                    }
+                  ]
+                },
+                {
+                  "key": "feedback-headers",
+                  "label": "Feedback Headers",
+                  "kind": "list",
+                  "items": [
+                    "Feedback/use-tabs-1bdde1a031.md | Use tabs | 2026-10-22T00:00:00.000Z",
+                    "Feedback/use-two-space-tabs-fe39e48aea.md | Use two-space tabs | 2026-10-22T00:00:00.000Z"
+                  ]
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.feedback_header_scan",
+                "fallback": "Feedback Header Scan"
+              }
+            },
+            {
+              "stepId": "dream_trace_17dc607638:step:2",
+              "kind": "feedback_cluster_plan",
+              "title": "Feedback Cluster Plan",
+              "status": "success",
+              "inputSummary": "2 feedback headers",
+              "outputSummary": "Found one duplicate feedback cluster.",
+              "details": [
+                {
+                  "key": "feedback-cluster-summary",
+                  "label": "Feedback Cluster Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "plannerClusters",
+                      "value": "1"
+                    },
+                    {
+                      "label": "acceptedClusters",
+                      "value": "1"
+                    },
+                    {
+                      "label": "droppedClusters",
+                      "value": "0"
+                    },
+                    {
+                      "label": "clusterMaxFiles",
+                      "value": "8"
+                    }
+                  ]
+                },
+                {
+                  "key": "feedback-cluster-plan-output",
+                  "label": "Feedback Cluster Plan Output",
+                  "kind": "json",
+                  "json": {
+                    "summary": "Found one duplicate feedback cluster.",
+                    "plannerClusters": [
+                      {
+                        "memberRelativePaths": [
+                          "Feedback/use-tabs-1bdde1a031.md",
+                          "Feedback/use-two-space-tabs-fe39e48aea.md"
+                        ],
+                        "reason": "same rule"
+                      }
+                    ],
+                    "acceptedClusters": [
+                      {
+                        "memberRelativePaths": [
+                          "Feedback/use-tabs-1bdde1a031.md",
+                          "Feedback/use-two-space-tabs-fe39e48aea.md"
+                        ],
+                        "reason": "same rule"
+                      }
+                    ],
+                    "droppedWarnings": []
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.feedback_cluster_plan",
+                "fallback": "Feedback Cluster Plan"
+              }
+            },
+            {
+              "stepId": "dream_trace_17dc607638:step:3",
+              "kind": "feedback_cluster_refine",
+              "title": "Feedback Cluster Refine #1",
+              "status": "success",
+              "inputSummary": "2 feedback files",
+              "outputSummary": "Merged the formatting feedback.",
+              "details": [
+                {
+                  "key": "feedback-cluster-1",
+                  "label": "Feedback Cluster",
+                  "kind": "json",
+                  "json": {
+                    "members": [
+                      "Feedback/use-tabs-1bdde1a031.md",
+                      "Feedback/use-two-space-tabs-fe39e48aea.md"
+                    ],
+                    "reason": "same rule",
+                    "newFile": "Feedback/use-tabs-1bdde1a031.md",
+                    "deletedFiles": [
+                      "Feedback/use-tabs-1bdde1a031.md",
+                      "Feedback/use-two-space-tabs-fe39e48aea.md"
+                    ]
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.feedback_cluster_refine",
+                "fallback": "Feedback Cluster Refine"
+              }
+            }
+          ],
+          "mutations": [
+            {
+              "mutationId": "mutation_3293847635",
+              "action": "delete",
+              "relativePath": "Feedback/use-tabs-1bdde1a031.md"
+            },
+            {
+              "mutationId": "mutation_2eec69e072",
+              "action": "delete",
+              "relativePath": "Feedback/use-two-space-tabs-fe39e48aea.md"
+            },
+            {
+              "mutationId": "mutation_55fac4724d",
+              "action": "write",
+              "relativePath": "Feedback/use-tabs-1bdde1a031.md",
+              "candidateType": "feedback",
+              "name": "Use tabs",
+              "description": "formatting rule",
+              "preview": "Rule: use tabs."
+            }
+          ],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "planDreamClusters",
+            "input": {
+              "kind": "feedback",
+              "headers": [
+                {
+                  "relativePath": "Feedback/use-tabs-1bdde1a031.md",
+                  "name": "Use tabs",
+                  "description": "formatting rule",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "relativePath": "Feedback/use-two-space-tabs-fe39e48aea.md",
+                  "name": "Use two-space tabs",
+                  "description": "formatting rule duplicate",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                }
+              ]
+            }
+          },
+          {
+            "method": "refineDreamCluster",
+            "input": {
+              "kind": "feedback",
+              "records": [
+                {
+                  "entryId": "Feedback/use-tabs-1bdde1a031.md",
+                  "relativePath": "Feedback/use-tabs-1bdde1a031.md",
+                  "type": "feedback",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Use tabs",
+                  "description": "formatting rule",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "Rule: use tabs.",
+                  "feedback": {
+                    "rule": "",
+                    "why": "",
+                    "howToApply": "",
+                    "notes": []
+                  }
+                },
+                {
+                  "entryId": "Feedback/use-two-space-tabs-fe39e48aea.md",
+                  "relativePath": "Feedback/use-two-space-tabs-fe39e48aea.md",
+                  "type": "feedback",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Use two-space tabs",
+                  "description": "formatting rule duplicate",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "Rule: indent with tabs.",
+                  "feedback": {
+                    "rule": "",
+                    "why": "",
+                    "howToApply": "",
+                    "notes": []
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "tree": [
+          {
+            "relativePath": "Feedback/use-tabs-1bdde1a031.md",
+            "content": "---\nname: Use tabs\ndescription: formatting rule\ntype: feedback\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\nRule: use tabs.\n"
+          },
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Current Project](project.meta.md) — formatting rule\n\n## Feedback Memory\n- [Use tabs](Feedback/use-tabs-1bdde1a031.md) — formatting rule\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Current Project\ndescription: formatting rule\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nformatting rule\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "category-empty",
+      "method": "runCategoryDream",
+      "mode": "single",
+      "setup": {},
+      "selection": {
+        "type": "project"
+      },
+      "kind": "project",
+      "ensureMeta": false,
+      "script": [],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "input": {
+          "kind": "project",
+          "entries": [],
+          "records": []
+        },
+        "result": {
+          "plannedClusters": 0,
+          "refinedClusters": 0,
+          "deletedFiles": 0,
+          "droppedWarnings": []
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "project_header_scan",
+              "title": "Project Header Scan",
+              "status": "skipped",
+              "inputSummary": "0 active project files",
+              "outputSummary": "No active project files were available for cluster planning.",
+              "details": [
+                {
+                  "key": "project-header-summary",
+                  "label": "Project Header Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "inputFiles",
+                      "value": "0"
+                    },
+                    {
+                      "label": "scannedHeaders",
+                      "value": "0"
+                    },
+                    {
+                      "label": "headerScanLimit",
+                      "value": "200"
+                    }
+                  ]
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_header_scan",
+                "fallback": "Project Header Scan"
+              }
+            },
+            {
+              "stepId": "dream_trace_17dc607638:step:2",
+              "kind": "project_cluster_plan",
+              "title": "Project Cluster Plan",
+              "status": "skipped",
+              "inputSummary": "0 project headers",
+              "outputSummary": "Dream skipped project cluster planning because fewer than 2 files were available.",
+              "titleI18n": {
+                "key": "trace.step.project_cluster_plan",
+                "fallback": "Project Cluster Plan"
+              }
+            }
+          ],
+          "mutations": [],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [],
+        "tree": []
+      }
+    },
+    {
+      "name": "category-skip-single",
+      "method": "runCategoryDream",
+      "mode": "single",
+      "setup": {
+        "candidates": [
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha Plan",
+            "description": "alpha plan",
+            "body": "## Goal\nShip alpha.\n"
+          }
+        ]
+      },
+      "selection": {
+        "type": "project"
+      },
+      "kind": "project",
+      "ensureMeta": false,
+      "script": [],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "input": {
+          "kind": "project",
+          "entries": [
+            {
+              "name": "Alpha Plan",
+              "description": "alpha plan",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-plan-b6003d6838.md",
+              "relativePath": "Project/alpha-plan-b6003d6838.md",
+              "absolutePath": "$ROOT/Project/alpha-plan-b6003d6838.md"
+            }
+          ],
+          "records": [
+            {
+              "name": "Alpha Plan",
+              "description": "alpha plan",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-plan-b6003d6838.md",
+              "relativePath": "Project/alpha-plan-b6003d6838.md",
+              "absolutePath": "$ROOT/Project/alpha-plan-b6003d6838.md",
+              "content": "## Goal\nShip alpha.",
+              "preview": "Goal Ship alpha."
+            }
+          ]
+        },
+        "result": {
+          "plannedClusters": 0,
+          "refinedClusters": 0,
+          "deletedFiles": 0,
+          "droppedWarnings": []
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "project_header_scan",
+              "title": "Project Header Scan",
+              "status": "success",
+              "inputSummary": "1 active project files",
+              "outputSummary": "Loaded 1 project headers for cluster planning.",
+              "details": [
+                {
+                  "key": "project-header-summary",
+                  "label": "Project Header Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "inputFiles",
+                      "value": "1"
+                    },
+                    {
+                      "label": "scannedHeaders",
+                      "value": "1"
+                    },
+                    {
+                      "label": "headerScanLimit",
+                      "value": "200"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-headers",
+                  "label": "Project Headers",
+                  "kind": "list",
+                  "items": [
+                    "Project/alpha-plan-b6003d6838.md | Alpha Plan | 2026-10-22T00:00:00.000Z"
+                  ]
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_header_scan",
+                "fallback": "Project Header Scan"
+              }
+            },
+            {
+              "stepId": "dream_trace_17dc607638:step:2",
+              "kind": "project_cluster_plan",
+              "title": "Project Cluster Plan",
+              "status": "skipped",
+              "inputSummary": "1 project headers",
+              "outputSummary": "Dream skipped project cluster planning because fewer than 2 files were available.",
+              "titleI18n": {
+                "key": "trace.step.project_cluster_plan",
+                "fallback": "Project Cluster Plan"
+              }
+            }
+          ],
+          "mutations": [],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [],
+        "tree": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Alpha Plan](project.meta.md) — alpha plan\n\n## Project Memory\n- [Alpha Plan](Project/alpha-plan-b6003d6838.md) — alpha plan\n"
+          },
+          {
+            "relativePath": "Project/alpha-plan-b6003d6838.md",
+            "content": "---\nname: Alpha Plan\ndescription: alpha plan\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip alpha.\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Alpha Plan\ndescription: alpha plan\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nalpha plan\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "category-general-scope",
+      "method": "runCategoryDream",
+      "mode": "general",
+      "setup": {
+        "metas": [
+          {
+            "projectId": "p1",
+            "projectName": "Alpha",
+            "description": "alpha project",
+            "status": "active"
+          }
+        ],
+        "candidates": [
+          {
+            "type": "project",
+            "scope": "project",
+            "projectId": "p1",
+            "name": "Alpha Plan",
+            "description": "alpha plan",
+            "body": "## Goal\nShip alpha.\n"
+          },
+          {
+            "type": "project",
+            "scope": "project",
+            "projectId": "p1",
+            "name": "Alpha Notes",
+            "description": "alpha notes",
+            "body": "## Goal\nShip the alpha release.\n"
+          }
+        ]
+      },
+      "selection": {
+        "type": "project",
+        "projectId": "p1"
+      },
+      "kind": "project",
+      "projectMeta": "p1",
+      "ensureMeta": false,
+      "script": [
+        {
+          "method": "planDreamClusters",
+          "result": {
+            "summary": "Found one duplicate project cluster.",
+            "clusters": [
+              {
+                "memberRelativePaths": [
+                  "Project/alpha-notes-eb3553fba9.md",
+                  "Project/alpha-plan-d1189ae245.md"
+                ],
+                "reason": "overlapping goals"
+              }
+            ]
+          }
+        },
+        {
+          "method": "refineDreamCluster",
+          "result": {
+            "summary": "Merged the duplicate project memories.",
+            "file": {
+              "name": "Alpha Merged",
+              "description": "merged alpha",
+              "markdown": "# Alpha\n\nMerged body."
+            }
+          }
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "input": {
+          "kind": "project",
+          "entries": [
+            {
+              "name": "Alpha Notes",
+              "description": "alpha notes",
+              "type": "project",
+              "scope": "project",
+              "projectId": "p1",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-notes-eb3553fba9.md",
+              "relativePath": "Project/alpha-notes-eb3553fba9.md",
+              "absolutePath": "$ROOT/Project/alpha-notes-eb3553fba9.md"
+            },
+            {
+              "name": "Alpha Plan",
+              "description": "alpha plan",
+              "type": "project",
+              "scope": "project",
+              "projectId": "p1",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-plan-d1189ae245.md",
+              "relativePath": "Project/alpha-plan-d1189ae245.md",
+              "absolutePath": "$ROOT/Project/alpha-plan-d1189ae245.md"
+            }
+          ],
+          "records": [
+            {
+              "name": "Alpha Notes",
+              "description": "alpha notes",
+              "type": "project",
+              "scope": "project",
+              "projectId": "p1",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-notes-eb3553fba9.md",
+              "relativePath": "Project/alpha-notes-eb3553fba9.md",
+              "absolutePath": "$ROOT/Project/alpha-notes-eb3553fba9.md",
+              "content": "## Goal\nShip the alpha release.",
+              "preview": "Goal Ship the alpha release."
+            },
+            {
+              "name": "Alpha Plan",
+              "description": "alpha plan",
+              "type": "project",
+              "scope": "project",
+              "projectId": "p1",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-plan-d1189ae245.md",
+              "relativePath": "Project/alpha-plan-d1189ae245.md",
+              "absolutePath": "$ROOT/Project/alpha-plan-d1189ae245.md",
+              "content": "## Goal\nShip alpha.",
+              "preview": "Goal Ship alpha."
+            }
+          ],
+          "projectMeta": {
+            "projectId": "p1",
+            "projectName": "Alpha",
+            "description": "alpha project",
+            "status": "active",
+            "createdAt": "2026-10-22T00:00:00.000Z",
+            "updatedAt": "2026-10-22T00:00:00.000Z",
+            "relativePath": "GeneralProjects/alpha-p1.md",
+            "absolutePath": "$ROOT/GeneralProjects/alpha-p1.md"
+          }
+        },
+        "result": {
+          "plannedClusters": 1,
+          "refinedClusters": 1,
+          "deletedFiles": 2,
+          "droppedWarnings": []
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "project_header_scan",
+              "title": "Project · Alpha Header Scan",
+              "status": "success",
+              "inputSummary": "2 active project files",
+              "outputSummary": "Loaded 2 project headers for cluster planning.",
+              "details": [
+                {
+                  "key": "project-header-summary",
+                  "label": "Project Header Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "projectId",
+                      "value": "p1"
+                    },
+                    {
+                      "label": "projectName",
+                      "value": "Alpha"
+                    },
+                    {
+                      "label": "inputFiles",
+                      "value": "2"
+                    },
+                    {
+                      "label": "scannedHeaders",
+                      "value": "2"
+                    },
+                    {
+                      "label": "headerScanLimit",
+                      "value": "200"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-headers",
+                  "label": "Project Headers",
+                  "kind": "list",
+                  "items": [
+                    "Project/alpha-notes-eb3553fba9.md | Alpha Notes | 2026-10-22T00:00:00.000Z",
+                    "Project/alpha-plan-d1189ae245.md | Alpha Plan | 2026-10-22T00:00:00.000Z"
+                  ]
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_header_scan",
+                "fallback": "Project Header Scan"
+              }
+            },
+            {
+              "stepId": "dream_trace_17dc607638:step:2",
+              "kind": "project_cluster_plan",
+              "title": "Project · Alpha Cluster Plan",
+              "status": "success",
+              "inputSummary": "2 project headers",
+              "outputSummary": "Found one duplicate project cluster.",
+              "details": [
+                {
+                  "key": "project-cluster-summary",
+                  "label": "Project Cluster Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "projectId",
+                      "value": "p1"
+                    },
+                    {
+                      "label": "projectName",
+                      "value": "Alpha"
+                    },
+                    {
+                      "label": "plannerClusters",
+                      "value": "1"
+                    },
+                    {
+                      "label": "acceptedClusters",
+                      "value": "1"
+                    },
+                    {
+                      "label": "droppedClusters",
+                      "value": "0"
+                    },
+                    {
+                      "label": "clusterMaxFiles",
+                      "value": "8"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-cluster-plan-output",
+                  "label": "Project Cluster Plan Output",
+                  "kind": "json",
+                  "json": {
+                    "summary": "Found one duplicate project cluster.",
+                    "plannerClusters": [
+                      {
+                        "memberRelativePaths": [
+                          "Project/alpha-notes-eb3553fba9.md",
+                          "Project/alpha-plan-d1189ae245.md"
+                        ],
+                        "reason": "overlapping goals"
+                      }
+                    ],
+                    "acceptedClusters": [
+                      {
+                        "memberRelativePaths": [
+                          "Project/alpha-notes-eb3553fba9.md",
+                          "Project/alpha-plan-d1189ae245.md"
+                        ],
+                        "reason": "overlapping goals"
+                      }
+                    ],
+                    "droppedWarnings": []
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_cluster_plan",
+                "fallback": "Project Cluster Plan"
+              }
+            },
+            {
+              "stepId": "dream_trace_17dc607638:step:3",
+              "kind": "project_cluster_refine",
+              "title": "Project · Alpha Cluster Refine #1",
+              "status": "success",
+              "inputSummary": "2 project files",
+              "outputSummary": "Merged the duplicate project memories.",
+              "details": [
+                {
+                  "key": "project-cluster-1",
+                  "label": "Project Cluster",
+                  "kind": "json",
+                  "json": {
+                    "projectId": "p1",
+                    "projectName": "Alpha",
+                    "members": [
+                      "Project/alpha-notes-eb3553fba9.md",
+                      "Project/alpha-plan-d1189ae245.md"
+                    ],
+                    "reason": "overlapping goals",
+                    "newFile": "Project/alpha-merged-a36f8a09ce.md",
+                    "deletedFiles": [
+                      "Project/alpha-notes-eb3553fba9.md",
+                      "Project/alpha-plan-d1189ae245.md"
+                    ]
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_cluster_refine",
+                "fallback": "Project Cluster Refine"
+              }
+            }
+          ],
+          "mutations": [
+            {
+              "mutationId": "mutation_5abe4acfa2",
+              "action": "delete",
+              "relativePath": "Project/alpha-notes-eb3553fba9.md"
+            },
+            {
+              "mutationId": "mutation_9a9e3d3624",
+              "action": "delete",
+              "relativePath": "Project/alpha-plan-d1189ae245.md"
+            },
+            {
+              "mutationId": "mutation_59e432d6ed",
+              "action": "write",
+              "relativePath": "Project/alpha-merged-a36f8a09ce.md",
+              "candidateType": "project",
+              "name": "Alpha Merged",
+              "description": "merged alpha",
+              "preview": "Alpha Merged body."
+            }
+          ],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "planDreamClusters",
+            "input": {
+              "kind": "project",
+              "headers": [
+                {
+                  "relativePath": "Project/alpha-notes-eb3553fba9.md",
+                  "name": "Alpha Notes",
+                  "description": "alpha notes",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "relativePath": "Project/alpha-plan-d1189ae245.md",
+                  "name": "Alpha Plan",
+                  "description": "alpha plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                }
+              ]
+            }
+          },
+          {
+            "method": "refineDreamCluster",
+            "input": {
+              "kind": "project",
+              "records": [
+                {
+                  "entryId": "Project/alpha-notes-eb3553fba9.md",
+                  "relativePath": "Project/alpha-notes-eb3553fba9.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "p1",
+                  "isTmp": false,
+                  "name": "Alpha Notes",
+                  "description": "alpha notes",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip the alpha release.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                },
+                {
+                  "entryId": "Project/alpha-plan-d1189ae245.md",
+                  "relativePath": "Project/alpha-plan-d1189ae245.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "p1",
+                  "isTmp": false,
+                  "name": "Alpha Plan",
+                  "description": "alpha plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip alpha.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "tree": [
+          {
+            "relativePath": "GeneralProjects/alpha-p1.md",
+            "content": "---\nname: Alpha\ndescription: alpha project\ntype: general_project_meta\nscope: project\nproject_id: p1\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nalpha project\n\n## Status\nactive\n"
+          },
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## General Projects\n- [Alpha](GeneralProjects/alpha-p1.md) — alpha project\n\n## Project Memory\n- [Alpha Merged](Project/alpha-merged-a36f8a09ce.md) — merged alpha\n"
+          },
+          {
+            "relativePath": "Project/alpha-merged-a36f8a09ce.md",
+            "content": "---\nname: Alpha Merged\ndescription: merged alpha\ntype: project\nscope: project\nproject_id: p1\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n# Alpha\n\nMerged body.\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "category-dropped-clusters",
+      "method": "runCategoryDream",
+      "mode": "single",
+      "setup": {
+        "candidates": [
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha Plan",
+            "description": "alpha plan",
+            "body": "## Goal\nShip alpha.\n"
+          },
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha Notes",
+            "description": "alpha notes",
+            "body": "## Goal\nShip the alpha release.\n"
+          }
+        ]
+      },
+      "selection": {
+        "type": "project"
+      },
+      "kind": "project",
+      "ensureMeta": false,
+      "script": [
+        {
+          "method": "planDreamClusters",
+          "result": {
+            "summary": "Planner returned overlapping and low-quality clusters.",
+            "clusters": [
+              {
+                "memberRelativePaths": [
+                  "Project/alpha-plan.md"
+                ],
+                "reason": "only one file"
+              },
+              {
+                "memberRelativePaths": [
+                  "Project/alpha-notes-39eef8668c.md",
+                  "Project/alpha-plan-b6003d6838.md"
+                ],
+                "reason": "same project"
+              },
+              {
+                "memberRelativePaths": [
+                  "Project/alpha-notes-39eef8668c.md",
+                  "Project/alpha-plan-b6003d6838.md"
+                ],
+                "reason": "overlap"
+              }
+            ]
+          }
+        },
+        {
+          "method": "refineDreamCluster",
+          "result": {
+            "summary": "No refined file.",
+            "file": null
+          }
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "input": {
+          "kind": "project",
+          "entries": [
+            {
+              "name": "Alpha Notes",
+              "description": "alpha notes",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-notes-39eef8668c.md",
+              "relativePath": "Project/alpha-notes-39eef8668c.md",
+              "absolutePath": "$ROOT/Project/alpha-notes-39eef8668c.md"
+            },
+            {
+              "name": "Alpha Plan",
+              "description": "alpha plan",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-plan-b6003d6838.md",
+              "relativePath": "Project/alpha-plan-b6003d6838.md",
+              "absolutePath": "$ROOT/Project/alpha-plan-b6003d6838.md"
+            }
+          ],
+          "records": [
+            {
+              "name": "Alpha Notes",
+              "description": "alpha notes",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-notes-39eef8668c.md",
+              "relativePath": "Project/alpha-notes-39eef8668c.md",
+              "absolutePath": "$ROOT/Project/alpha-notes-39eef8668c.md",
+              "content": "## Goal\nShip the alpha release.",
+              "preview": "Goal Ship the alpha release."
+            },
+            {
+              "name": "Alpha Plan",
+              "description": "alpha plan",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-plan-b6003d6838.md",
+              "relativePath": "Project/alpha-plan-b6003d6838.md",
+              "absolutePath": "$ROOT/Project/alpha-plan-b6003d6838.md",
+              "content": "## Goal\nShip alpha.",
+              "preview": "Goal Ship alpha."
+            }
+          ]
+        },
+        "result": {
+          "plannedClusters": 1,
+          "refinedClusters": 0,
+          "deletedFiles": 0,
+          "droppedWarnings": [
+            "Dropped cluster because it had fewer than 2 valid files: only one file",
+            "Dropped low-quality cluster because the reason only referenced same-project membership without concrete overlap/conflict: Project/alpha-notes-39eef8668c.md, Project/alpha-plan-b6003d6838.md"
+          ]
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "project_header_scan",
+              "title": "Project Header Scan",
+              "status": "success",
+              "inputSummary": "2 active project files",
+              "outputSummary": "Loaded 2 project headers for cluster planning.",
+              "details": [
+                {
+                  "key": "project-header-summary",
+                  "label": "Project Header Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "inputFiles",
+                      "value": "2"
+                    },
+                    {
+                      "label": "scannedHeaders",
+                      "value": "2"
+                    },
+                    {
+                      "label": "headerScanLimit",
+                      "value": "200"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-headers",
+                  "label": "Project Headers",
+                  "kind": "list",
+                  "items": [
+                    "Project/alpha-notes-39eef8668c.md | Alpha Notes | 2026-10-22T00:00:00.000Z",
+                    "Project/alpha-plan-b6003d6838.md | Alpha Plan | 2026-10-22T00:00:00.000Z"
+                  ]
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_header_scan",
+                "fallback": "Project Header Scan"
+              }
+            },
+            {
+              "stepId": "dream_trace_17dc607638:step:2",
+              "kind": "project_cluster_plan",
+              "title": "Project Cluster Plan",
+              "status": "success",
+              "inputSummary": "2 project headers",
+              "outputSummary": "Planner returned overlapping and low-quality clusters.",
+              "details": [
+                {
+                  "key": "project-cluster-summary",
+                  "label": "Project Cluster Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "plannerClusters",
+                      "value": "3"
+                    },
+                    {
+                      "label": "acceptedClusters",
+                      "value": "1"
+                    },
+                    {
+                      "label": "droppedClusters",
+                      "value": "2"
+                    },
+                    {
+                      "label": "clusterMaxFiles",
+                      "value": "8"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-cluster-plan-output",
+                  "label": "Project Cluster Plan Output",
+                  "kind": "json",
+                  "json": {
+                    "summary": "Planner returned overlapping and low-quality clusters.",
+                    "plannerClusters": [
+                      {
+                        "memberRelativePaths": [
+                          "Project/alpha-plan.md"
+                        ],
+                        "reason": "only one file"
+                      },
+                      {
+                        "memberRelativePaths": [
+                          "Project/alpha-notes-39eef8668c.md",
+                          "Project/alpha-plan-b6003d6838.md"
+                        ],
+                        "reason": "same project"
+                      },
+                      {
+                        "memberRelativePaths": [
+                          "Project/alpha-notes-39eef8668c.md",
+                          "Project/alpha-plan-b6003d6838.md"
+                        ],
+                        "reason": "overlap"
+                      }
+                    ],
+                    "acceptedClusters": [
+                      {
+                        "memberRelativePaths": [
+                          "Project/alpha-notes-39eef8668c.md",
+                          "Project/alpha-plan-b6003d6838.md"
+                        ],
+                        "reason": "overlap"
+                      }
+                    ],
+                    "droppedWarnings": [
+                      "Dropped cluster because it had fewer than 2 valid files: only one file",
+                      "Dropped low-quality cluster because the reason only referenced same-project membership without concrete overlap/conflict: Project/alpha-notes-39eef8668c.md, Project/alpha-plan-b6003d6838.md"
+                    ]
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_cluster_plan",
+                "fallback": "Project Cluster Plan"
+              }
+            },
+            {
+              "stepId": "dream_trace_17dc607638:step:3",
+              "kind": "project_cluster_refine",
+              "title": "Project Cluster Refine #1",
+              "status": "warning",
+              "inputSummary": "2 project files",
+              "outputSummary": "Dream could not synthesize a refined project file for this cluster.",
+              "details": [
+                {
+                  "key": "project-cluster-1",
+                  "label": "Project Cluster",
+                  "kind": "json",
+                  "json": {
+                    "members": [
+                      "Project/alpha-notes-39eef8668c.md",
+                      "Project/alpha-plan-b6003d6838.md"
+                    ],
+                    "reason": "overlap"
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_cluster_refine",
+                "fallback": "Project Cluster Refine"
+              }
+            }
+          ],
+          "mutations": [],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "planDreamClusters",
+            "input": {
+              "kind": "project",
+              "headers": [
+                {
+                  "relativePath": "Project/alpha-notes-39eef8668c.md",
+                  "name": "Alpha Notes",
+                  "description": "alpha notes",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "relativePath": "Project/alpha-plan-b6003d6838.md",
+                  "name": "Alpha Plan",
+                  "description": "alpha plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                }
+              ]
+            }
+          },
+          {
+            "method": "refineDreamCluster",
+            "input": {
+              "kind": "project",
+              "records": [
+                {
+                  "entryId": "Project/alpha-notes-39eef8668c.md",
+                  "relativePath": "Project/alpha-notes-39eef8668c.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Alpha Notes",
+                  "description": "alpha notes",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip the alpha release.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                },
+                {
+                  "entryId": "Project/alpha-plan-b6003d6838.md",
+                  "relativePath": "Project/alpha-plan-b6003d6838.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Alpha Plan",
+                  "description": "alpha plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip alpha.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "tree": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Alpha Plan](project.meta.md) — alpha plan\n\n## Project Memory\n- [Alpha Notes](Project/alpha-notes-39eef8668c.md) — alpha notes\n- [Alpha Plan](Project/alpha-plan-b6003d6838.md) — alpha plan\n"
+          },
+          {
+            "relativePath": "Project/alpha-notes-39eef8668c.md",
+            "content": "---\nname: Alpha Notes\ndescription: alpha notes\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip the alpha release.\n"
+          },
+          {
+            "relativePath": "Project/alpha-plan-b6003d6838.md",
+            "content": "---\nname: Alpha Plan\ndescription: alpha plan\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip alpha.\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Alpha Plan\ndescription: alpha plan\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nalpha plan\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "category-refine-null",
+      "method": "runCategoryDream",
+      "mode": "single",
+      "setup": {
+        "candidates": [
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha Plan",
+            "description": "alpha plan",
+            "body": "## Goal\nShip alpha.\n"
+          },
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha Notes",
+            "description": "alpha notes",
+            "body": "## Goal\nShip the alpha release.\n"
+          }
+        ]
+      },
+      "selection": {
+        "type": "project"
+      },
+      "kind": "project",
+      "ensureMeta": false,
+      "script": [
+        {
+          "method": "planDreamClusters",
+          "result": {
+            "summary": "Found one duplicate project cluster.",
+            "clusters": [
+              {
+                "memberRelativePaths": [
+                  "Project/alpha-notes-39eef8668c.md",
+                  "Project/alpha-plan-b6003d6838.md"
+                ],
+                "reason": "duplicate content"
+              }
+            ]
+          }
+        },
+        {
+          "method": "refineDreamCluster",
+          "result": {
+            "summary": "Model could not synthesize a file.",
+            "file": null
+          }
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "input": {
+          "kind": "project",
+          "entries": [
+            {
+              "name": "Alpha Notes",
+              "description": "alpha notes",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-notes-39eef8668c.md",
+              "relativePath": "Project/alpha-notes-39eef8668c.md",
+              "absolutePath": "$ROOT/Project/alpha-notes-39eef8668c.md"
+            },
+            {
+              "name": "Alpha Plan",
+              "description": "alpha plan",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-plan-b6003d6838.md",
+              "relativePath": "Project/alpha-plan-b6003d6838.md",
+              "absolutePath": "$ROOT/Project/alpha-plan-b6003d6838.md"
+            }
+          ],
+          "records": [
+            {
+              "name": "Alpha Notes",
+              "description": "alpha notes",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-notes-39eef8668c.md",
+              "relativePath": "Project/alpha-notes-39eef8668c.md",
+              "absolutePath": "$ROOT/Project/alpha-notes-39eef8668c.md",
+              "content": "## Goal\nShip the alpha release.",
+              "preview": "Goal Ship the alpha release."
+            },
+            {
+              "name": "Alpha Plan",
+              "description": "alpha plan",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-plan-b6003d6838.md",
+              "relativePath": "Project/alpha-plan-b6003d6838.md",
+              "absolutePath": "$ROOT/Project/alpha-plan-b6003d6838.md",
+              "content": "## Goal\nShip alpha.",
+              "preview": "Goal Ship alpha."
+            }
+          ]
+        },
+        "result": {
+          "plannedClusters": 1,
+          "refinedClusters": 0,
+          "deletedFiles": 0,
+          "droppedWarnings": []
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "project_header_scan",
+              "title": "Project Header Scan",
+              "status": "success",
+              "inputSummary": "2 active project files",
+              "outputSummary": "Loaded 2 project headers for cluster planning.",
+              "details": [
+                {
+                  "key": "project-header-summary",
+                  "label": "Project Header Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "inputFiles",
+                      "value": "2"
+                    },
+                    {
+                      "label": "scannedHeaders",
+                      "value": "2"
+                    },
+                    {
+                      "label": "headerScanLimit",
+                      "value": "200"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-headers",
+                  "label": "Project Headers",
+                  "kind": "list",
+                  "items": [
+                    "Project/alpha-notes-39eef8668c.md | Alpha Notes | 2026-10-22T00:00:00.000Z",
+                    "Project/alpha-plan-b6003d6838.md | Alpha Plan | 2026-10-22T00:00:00.000Z"
+                  ]
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_header_scan",
+                "fallback": "Project Header Scan"
+              }
+            },
+            {
+              "stepId": "dream_trace_17dc607638:step:2",
+              "kind": "project_cluster_plan",
+              "title": "Project Cluster Plan",
+              "status": "success",
+              "inputSummary": "2 project headers",
+              "outputSummary": "Found one duplicate project cluster.",
+              "details": [
+                {
+                  "key": "project-cluster-summary",
+                  "label": "Project Cluster Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "plannerClusters",
+                      "value": "1"
+                    },
+                    {
+                      "label": "acceptedClusters",
+                      "value": "1"
+                    },
+                    {
+                      "label": "droppedClusters",
+                      "value": "0"
+                    },
+                    {
+                      "label": "clusterMaxFiles",
+                      "value": "8"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-cluster-plan-output",
+                  "label": "Project Cluster Plan Output",
+                  "kind": "json",
+                  "json": {
+                    "summary": "Found one duplicate project cluster.",
+                    "plannerClusters": [
+                      {
+                        "memberRelativePaths": [
+                          "Project/alpha-notes-39eef8668c.md",
+                          "Project/alpha-plan-b6003d6838.md"
+                        ],
+                        "reason": "duplicate content"
+                      }
+                    ],
+                    "acceptedClusters": [
+                      {
+                        "memberRelativePaths": [
+                          "Project/alpha-notes-39eef8668c.md",
+                          "Project/alpha-plan-b6003d6838.md"
+                        ],
+                        "reason": "duplicate content"
+                      }
+                    ],
+                    "droppedWarnings": []
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_cluster_plan",
+                "fallback": "Project Cluster Plan"
+              }
+            },
+            {
+              "stepId": "dream_trace_17dc607638:step:3",
+              "kind": "project_cluster_refine",
+              "title": "Project Cluster Refine #1",
+              "status": "warning",
+              "inputSummary": "2 project files",
+              "outputSummary": "Dream could not synthesize a refined project file for this cluster.",
+              "details": [
+                {
+                  "key": "project-cluster-1",
+                  "label": "Project Cluster",
+                  "kind": "json",
+                  "json": {
+                    "members": [
+                      "Project/alpha-notes-39eef8668c.md",
+                      "Project/alpha-plan-b6003d6838.md"
+                    ],
+                    "reason": "duplicate content"
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_cluster_refine",
+                "fallback": "Project Cluster Refine"
+              }
+            }
+          ],
+          "mutations": [],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "planDreamClusters",
+            "input": {
+              "kind": "project",
+              "headers": [
+                {
+                  "relativePath": "Project/alpha-notes-39eef8668c.md",
+                  "name": "Alpha Notes",
+                  "description": "alpha notes",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "relativePath": "Project/alpha-plan-b6003d6838.md",
+                  "name": "Alpha Plan",
+                  "description": "alpha plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                }
+              ]
+            }
+          },
+          {
+            "method": "refineDreamCluster",
+            "input": {
+              "kind": "project",
+              "records": [
+                {
+                  "entryId": "Project/alpha-notes-39eef8668c.md",
+                  "relativePath": "Project/alpha-notes-39eef8668c.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Alpha Notes",
+                  "description": "alpha notes",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip the alpha release.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                },
+                {
+                  "entryId": "Project/alpha-plan-b6003d6838.md",
+                  "relativePath": "Project/alpha-plan-b6003d6838.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Alpha Plan",
+                  "description": "alpha plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip alpha.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "tree": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Alpha Plan](project.meta.md) — alpha plan\n\n## Project Memory\n- [Alpha Notes](Project/alpha-notes-39eef8668c.md) — alpha notes\n- [Alpha Plan](Project/alpha-plan-b6003d6838.md) — alpha plan\n"
+          },
+          {
+            "relativePath": "Project/alpha-notes-39eef8668c.md",
+            "content": "---\nname: Alpha Notes\ndescription: alpha notes\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip the alpha release.\n"
+          },
+          {
+            "relativePath": "Project/alpha-plan-b6003d6838.md",
+            "content": "---\nname: Alpha Plan\ndescription: alpha plan\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip alpha.\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Alpha Plan\ndescription: alpha plan\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nalpha plan\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "merge-basic",
+      "method": "mergeGeneralProjectMetas",
+      "mode": "general",
+      "setup": {
+        "metas": [
+          {
+            "projectId": "p1",
+            "projectName": "Alpha",
+            "description": "alpha project",
+            "status": "active"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "Beta",
+            "description": "beta project",
+            "status": "active"
+          },
+          {
+            "projectId": "p3",
+            "projectName": "Gamma",
+            "description": "gamma project",
+            "status": "paused"
+          }
+        ],
+        "candidates": [
+          {
+            "type": "project",
+            "scope": "project",
+            "projectId": "p2",
+            "name": "Beta Plan",
+            "description": "beta plan",
+            "body": "## Goal\nShip beta.\n"
+          }
+        ]
+      },
+      "ensureMeta": false,
+      "script": [
+        {
+          "method": "planGeneralProjectMetaMerges",
+          "debug": {
+            "request": "merge-plan"
+          },
+          "result": {
+            "summary": "Found one duplicate General project node.",
+            "mergeGroups": [
+              {
+                "keeperProjectId": "p1",
+                "duplicateProjectIds": [
+                  "p2"
+                ],
+                "reason": "duplicate"
+              }
+            ]
+          }
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "result": {
+          "mergedProjects": 1,
+          "deletedProjects": 1,
+          "relinkedFiles": 1,
+          "planSummary": "Found one duplicate General project node.",
+          "droppedWarnings": [],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "keeperProjectName": "Alpha",
+              "mergedProjectIds": [
+                "p2"
+              ],
+              "reason": "duplicate",
+              "relinkedFiles": [
+                "Project/beta-plan-5c2bfcb1eb.md"
+              ]
+            }
+          ]
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "general_project_merge",
+              "title": "General Project Merge",
+              "status": "success",
+              "inputSummary": "3 local general projects",
+              "outputSummary": "Merged 1 duplicate General project nodes and relinked 1 memory files.",
+              "details": [
+                {
+                  "key": "general-project-merge-summary",
+                  "label": "General Project Merge Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "projectNodes",
+                      "value": "3"
+                    },
+                    {
+                      "label": "plannerGroups",
+                      "value": "1"
+                    },
+                    {
+                      "label": "droppedGroups",
+                      "value": "0"
+                    },
+                    {
+                      "label": "mergedProjects",
+                      "value": "1"
+                    },
+                    {
+                      "label": "deletedProjects",
+                      "value": "1"
+                    },
+                    {
+                      "label": "relinkedFiles",
+                      "value": "1"
+                    }
+                  ]
+                },
+                {
+                  "key": "general-project-merge-plan",
+                  "label": "General Project Merge Plan",
+                  "kind": "json",
+                  "json": {
+                    "summary": "Found one duplicate General project node.",
+                    "plannerGroups": [
+                      {
+                        "keeperProjectId": "p1",
+                        "duplicateProjectIds": [
+                          "p2"
+                        ],
+                        "reason": "duplicate"
+                      }
+                    ],
+                    "acceptedGroups": [
+                      {
+                        "keeperProjectId": "p1",
+                        "keeperProjectName": "Alpha",
+                        "mergedProjectIds": [
+                          "p2"
+                        ],
+                        "reason": "duplicate",
+                        "relinkedFiles": [
+                          "Project/beta-plan-5c2bfcb1eb.md"
+                        ]
+                      }
+                    ],
+                    "droppedWarnings": []
+                  }
+                }
+              ],
+              "promptDebug": {
+                "request": "merge-plan"
+              },
+              "titleI18n": {
+                "key": "trace.step.general_project_merge",
+                "fallback": "General Project Merge"
+              }
+            }
+          ],
+          "mutations": [
+            {
+              "mutationId": "mutation_5ef416be9c",
+              "action": "delete_project",
+              "projectId": "p2",
+              "projectName": "Beta",
+              "relativePath": "GeneralProjects/beta-p2.md"
+            },
+            {
+              "mutationId": "mutation_f76a36af6e",
+              "action": "write",
+              "relativePath": "Project/beta-plan-5c2bfcb1eb.md"
+            }
+          ],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "planGeneralProjectMetaMerges",
+            "input": {
+              "projectMetas": [
+                {
+                  "projectId": "p1",
+                  "projectName": "Alpha",
+                  "description": "alpha project",
+                  "status": "active",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "projectId": "p2",
+                  "projectName": "Beta",
+                  "description": "beta project",
+                  "status": "active",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "projectId": "p3",
+                  "projectName": "Gamma",
+                  "description": "gamma project",
+                  "status": "paused",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                }
+              ]
+            }
+          }
+        ],
+        "tree": [
+          {
+            "relativePath": "GeneralProjects/alpha-p1.md",
+            "content": "---\nname: Alpha\ndescription: alpha project\ntype: general_project_meta\nscope: project\nproject_id: p1\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nalpha project\n\n## Status\nactive\n"
+          },
+          {
+            "relativePath": "GeneralProjects/gamma-p3.md",
+            "content": "---\nname: Gamma\ndescription: gamma project\ntype: general_project_meta\nscope: project\nproject_id: p3\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\ngamma project\n\n## Status\npaused\n"
+          },
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## General Projects\n- [Alpha](GeneralProjects/alpha-p1.md) — alpha project\n- [Gamma](GeneralProjects/gamma-p3.md) — gamma project\n\n## Project Memory\n- [Beta Plan](Project/beta-plan-5c2bfcb1eb.md) — beta plan\n"
+          },
+          {
+            "relativePath": "Project/beta-plan-5c2bfcb1eb.md",
+            "content": "---\nname: Beta Plan\ndescription: beta plan\ntype: project\nscope: project\nproject_id: p1\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip beta.\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "merge-skip-single",
+      "method": "mergeGeneralProjectMetas",
+      "mode": "general",
+      "setup": {
+        "metas": [
+          {
+            "projectId": "p1",
+            "projectName": "Alpha",
+            "description": "alpha project",
+            "status": "active"
+          }
+        ]
+      },
+      "ensureMeta": false,
+      "script": [],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "result": {
+          "mergedProjects": 0,
+          "deletedProjects": 0,
+          "relinkedFiles": 0,
+          "planSummary": "Fewer than two General project nodes were available for merge planning.",
+          "droppedWarnings": [],
+          "groups": []
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "general_project_merge",
+              "title": "General Project Merge",
+              "status": "skipped",
+              "inputSummary": "1 local general projects",
+              "outputSummary": "Fewer than two General project nodes were available for merge planning.",
+              "details": [
+                {
+                  "key": "general-project-merge-summary",
+                  "label": "General Project Merge Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "projectNodes",
+                      "value": "1"
+                    },
+                    {
+                      "label": "plannerGroups",
+                      "value": "0"
+                    },
+                    {
+                      "label": "droppedGroups",
+                      "value": "0"
+                    },
+                    {
+                      "label": "mergedProjects",
+                      "value": "0"
+                    },
+                    {
+                      "label": "deletedProjects",
+                      "value": "0"
+                    },
+                    {
+                      "label": "relinkedFiles",
+                      "value": "0"
+                    }
+                  ]
+                },
+                {
+                  "key": "general-project-merge-plan",
+                  "label": "General Project Merge Plan",
+                  "kind": "json",
+                  "json": {
+                    "summary": "Fewer than two General project nodes were available for merge planning.",
+                    "plannerGroups": [],
+                    "acceptedGroups": [],
+                    "droppedWarnings": []
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.general_project_merge",
+                "fallback": "General Project Merge"
+              }
+            }
+          ],
+          "mutations": [],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [],
+        "tree": [
+          {
+            "relativePath": "GeneralProjects/alpha-p1.md",
+            "content": "---\nname: Alpha\ndescription: alpha project\ntype: general_project_meta\nscope: project\nproject_id: p1\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nalpha project\n\n## Status\nactive\n"
+          },
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## General Projects\n- [Alpha](GeneralProjects/alpha-p1.md) — alpha project\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "merge-plan-error",
+      "method": "mergeGeneralProjectMetas",
+      "mode": "general",
+      "setup": {
+        "metas": [
+          {
+            "projectId": "p1",
+            "projectName": "Alpha",
+            "description": "alpha project",
+            "status": "active"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "Beta",
+            "description": "beta project",
+            "status": "active"
+          }
+        ]
+      },
+      "ensureMeta": false,
+      "script": [
+        {
+          "method": "planGeneralProjectMetaMerges",
+          "throws": "fixture model failed"
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "result": {
+          "mergedProjects": 0,
+          "deletedProjects": 0,
+          "relinkedFiles": 0,
+          "planSummary": "Dream skipped General project merge planning because the model request failed: fixture model failed",
+          "droppedWarnings": [
+            "Dream skipped General project merge planning because the model request failed: fixture model failed"
+          ],
+          "groups": []
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "general_project_merge",
+              "title": "General Project Merge",
+              "status": "warning",
+              "inputSummary": "2 local general projects",
+              "outputSummary": "Dream skipped General project merge planning because the model request failed: fixture model failed",
+              "details": [
+                {
+                  "key": "general-project-merge-summary",
+                  "label": "General Project Merge Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "projectNodes",
+                      "value": "2"
+                    },
+                    {
+                      "label": "plannerGroups",
+                      "value": "0"
+                    },
+                    {
+                      "label": "droppedGroups",
+                      "value": "1"
+                    },
+                    {
+                      "label": "mergedProjects",
+                      "value": "0"
+                    },
+                    {
+                      "label": "deletedProjects",
+                      "value": "0"
+                    },
+                    {
+                      "label": "relinkedFiles",
+                      "value": "0"
+                    }
+                  ]
+                },
+                {
+                  "key": "general-project-merge-plan",
+                  "label": "General Project Merge Plan",
+                  "kind": "json",
+                  "json": {
+                    "summary": "Dream skipped General project merge planning because the model request failed: fixture model failed",
+                    "plannerGroups": [],
+                    "acceptedGroups": [],
+                    "droppedWarnings": [
+                      "Dream skipped General project merge planning because the model request failed: fixture model failed"
+                    ]
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.general_project_merge",
+                "fallback": "General Project Merge"
+              }
+            }
+          ],
+          "mutations": [],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "planGeneralProjectMetaMerges",
+            "input": {
+              "projectMetas": [
+                {
+                  "projectId": "p1",
+                  "projectName": "Alpha",
+                  "description": "alpha project",
+                  "status": "active",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "projectId": "p2",
+                  "projectName": "Beta",
+                  "description": "beta project",
+                  "status": "active",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                }
+              ]
+            }
+          }
+        ],
+        "tree": [
+          {
+            "relativePath": "GeneralProjects/alpha-p1.md",
+            "content": "---\nname: Alpha\ndescription: alpha project\ntype: general_project_meta\nscope: project\nproject_id: p1\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nalpha project\n\n## Status\nactive\n"
+          },
+          {
+            "relativePath": "GeneralProjects/beta-p2.md",
+            "content": "---\nname: Beta\ndescription: beta project\ntype: general_project_meta\nscope: project\nproject_id: p2\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nbeta project\n\n## Status\nactive\n"
+          },
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## General Projects\n- [Alpha](GeneralProjects/alpha-p1.md) — alpha project\n- [Beta](GeneralProjects/beta-p2.md) — beta project\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "merge-invalid-groups",
+      "method": "mergeGeneralProjectMetas",
+      "mode": "general",
+      "setup": {
+        "metas": [
+          {
+            "projectId": "p1",
+            "projectName": "Alpha",
+            "description": "alpha project",
+            "status": "active"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "Beta",
+            "description": "beta project",
+            "status": "active"
+          },
+          {
+            "projectId": "p3",
+            "projectName": "Gamma",
+            "description": "gamma project",
+            "status": "paused"
+          }
+        ],
+        "candidates": [
+          {
+            "type": "project",
+            "scope": "project",
+            "projectId": "p2",
+            "name": "Beta Plan",
+            "description": "beta plan",
+            "body": "## Goal\nShip beta.\n"
+          }
+        ]
+      },
+      "ensureMeta": false,
+      "script": [
+        {
+          "method": "planGeneralProjectMetaMerges",
+          "result": {
+            "summary": "Planner returned invalid groups.",
+            "mergeGroups": [
+              {
+                "keeperProjectId": "missing",
+                "duplicateProjectIds": [
+                  "p2"
+                ]
+              },
+              {
+                "keeperProjectId": "p1",
+                "duplicateProjectIds": [
+                  "missing"
+                ]
+              },
+              {
+                "keeperProjectId": "p1",
+                "duplicateProjectIds": [
+                  "p1"
+                ]
+              },
+              {
+                "keeperProjectId": "p1",
+                "duplicateProjectIds": []
+              },
+              {
+                "keeperProjectId": "p1",
+                "duplicateProjectIds": [
+                  "p2"
+                ]
+              },
+              {
+                "keeperProjectId": "p1",
+                "duplicateProjectIds": [
+                  "p3"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "result": {
+          "mergedProjects": 1,
+          "deletedProjects": 1,
+          "relinkedFiles": 1,
+          "planSummary": "Planner returned invalid groups.",
+          "droppedWarnings": [
+            "Dropped group 1: unknown keeper project id missing.",
+            "Dropped group 2: unknown duplicate project id missing.",
+            "Dropped group 3: keeper project id was also listed as a duplicate.",
+            "Dropped group 4: no duplicate project ids were supplied.",
+            "Dropped group 6: project id p1 was already used in another merge group."
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "keeperProjectName": "Alpha",
+              "mergedProjectIds": [
+                "p2"
+              ],
+              "reason": "Model identified these project metas as duplicates.",
+              "relinkedFiles": [
+                "Project/beta-plan-5c2bfcb1eb.md"
+              ]
+            }
+          ]
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "general_project_merge",
+              "title": "General Project Merge",
+              "status": "success",
+              "inputSummary": "3 local general projects",
+              "outputSummary": "Merged 1 duplicate General project nodes and relinked 1 memory files.",
+              "details": [
+                {
+                  "key": "general-project-merge-summary",
+                  "label": "General Project Merge Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "projectNodes",
+                      "value": "3"
+                    },
+                    {
+                      "label": "plannerGroups",
+                      "value": "6"
+                    },
+                    {
+                      "label": "droppedGroups",
+                      "value": "5"
+                    },
+                    {
+                      "label": "mergedProjects",
+                      "value": "1"
+                    },
+                    {
+                      "label": "deletedProjects",
+                      "value": "1"
+                    },
+                    {
+                      "label": "relinkedFiles",
+                      "value": "1"
+                    }
+                  ]
+                },
+                {
+                  "key": "general-project-merge-plan",
+                  "label": "General Project Merge Plan",
+                  "kind": "json",
+                  "json": {
+                    "summary": "Planner returned invalid groups.",
+                    "plannerGroups": [
+                      {
+                        "keeperProjectId": "missing",
+                        "duplicateProjectIds": [
+                          "p2"
+                        ]
+                      },
+                      {
+                        "keeperProjectId": "p1",
+                        "duplicateProjectIds": [
+                          "missing"
+                        ]
+                      },
+                      {
+                        "keeperProjectId": "p1",
+                        "duplicateProjectIds": [
+                          "p1"
+                        ]
+                      },
+                      {
+                        "keeperProjectId": "p1",
+                        "duplicateProjectIds": []
+                      },
+                      {
+                        "keeperProjectId": "p1",
+                        "duplicateProjectIds": [
+                          "p2"
+                        ]
+                      },
+                      {
+                        "keeperProjectId": "p1",
+                        "duplicateProjectIds": [
+                          "p3"
+                        ]
+                      }
+                    ],
+                    "acceptedGroups": [
+                      {
+                        "keeperProjectId": "p1",
+                        "keeperProjectName": "Alpha",
+                        "mergedProjectIds": [
+                          "p2"
+                        ],
+                        "reason": "Model identified these project metas as duplicates.",
+                        "relinkedFiles": [
+                          "Project/beta-plan-5c2bfcb1eb.md"
+                        ]
+                      }
+                    ],
+                    "droppedWarnings": [
+                      "Dropped group 1: unknown keeper project id missing.",
+                      "Dropped group 2: unknown duplicate project id missing.",
+                      "Dropped group 3: keeper project id was also listed as a duplicate.",
+                      "Dropped group 4: no duplicate project ids were supplied.",
+                      "Dropped group 6: project id p1 was already used in another merge group."
+                    ]
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.general_project_merge",
+                "fallback": "General Project Merge"
+              }
+            }
+          ],
+          "mutations": [
+            {
+              "mutationId": "mutation_5ef416be9c",
+              "action": "delete_project",
+              "projectId": "p2",
+              "projectName": "Beta",
+              "relativePath": "GeneralProjects/beta-p2.md"
+            },
+            {
+              "mutationId": "mutation_f76a36af6e",
+              "action": "write",
+              "relativePath": "Project/beta-plan-5c2bfcb1eb.md"
+            }
+          ],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "planGeneralProjectMetaMerges",
+            "input": {
+              "projectMetas": [
+                {
+                  "projectId": "p1",
+                  "projectName": "Alpha",
+                  "description": "alpha project",
+                  "status": "active",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "projectId": "p2",
+                  "projectName": "Beta",
+                  "description": "beta project",
+                  "status": "active",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "projectId": "p3",
+                  "projectName": "Gamma",
+                  "description": "gamma project",
+                  "status": "paused",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                }
+              ]
+            }
+          }
+        ],
+        "tree": [
+          {
+            "relativePath": "GeneralProjects/alpha-p1.md",
+            "content": "---\nname: Alpha\ndescription: alpha project\ntype: general_project_meta\nscope: project\nproject_id: p1\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nalpha project\n\n## Status\nactive\n"
+          },
+          {
+            "relativePath": "GeneralProjects/gamma-p3.md",
+            "content": "---\nname: Gamma\ndescription: gamma project\ntype: general_project_meta\nscope: project\nproject_id: p3\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\ngamma project\n\n## Status\npaused\n"
+          },
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## General Projects\n- [Alpha](GeneralProjects/alpha-p1.md) — alpha project\n- [Gamma](GeneralProjects/gamma-p3.md) — gamma project\n\n## Project Memory\n- [Beta Plan](Project/beta-plan-5c2bfcb1eb.md) — beta plan\n"
+          },
+          {
+            "relativePath": "Project/beta-plan-5c2bfcb1eb.md",
+            "content": "---\nname: Beta Plan\ndescription: beta plan\ntype: project\nscope: project\nproject_id: p1\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip beta.\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "meta-review-update",
+      "method": "runProjectMetaReview",
+      "mode": "single",
+      "setup": {
+        "candidates": [
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha Plan",
+            "description": "alpha plan",
+            "body": "## Goal\nShip alpha.\n"
+          },
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha Notes",
+            "description": "alpha notes",
+            "body": "## Goal\nShip alpha faster.\n"
+          },
+          {
+            "type": "feedback",
+            "scope": "project",
+            "name": "Prefer Rust",
+            "description": "language rule",
+            "body": "Rule: prefer Rust.\n"
+          }
+        ]
+      },
+      "projectMeta": "current",
+      "ensureMeta": false,
+      "script": [
+        {
+          "method": "reviewDreamProjectMeta",
+          "debug": {
+            "request": "meta-review"
+          },
+          "result": {
+            "shouldUpdate": true,
+            "projectMeta": {
+              "projectName": "Renamed Alpha",
+              "description": "new alpha description",
+              "status": "paused"
+            },
+            "reason": "Reviewed two project files and one feedback file."
+          }
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "result": {
+          "updated": true,
+          "reason": "Reviewed two project files and one feedback file."
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "project_meta_review",
+              "title": "Project Meta Review · Alpha Plan",
+              "status": "success",
+              "inputSummary": "2 project files + 1 feedback files",
+              "outputSummary": "Reviewed two project files and one feedback file.",
+              "details": [
+                {
+                  "key": "project-meta-review-summary",
+                  "label": "Project Meta Review Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "projectId",
+                      "value": "current_project"
+                    },
+                    {
+                      "label": "projectName",
+                      "value": "Alpha Plan"
+                    },
+                    {
+                      "label": "recentProjectFiles",
+                      "value": "2"
+                    },
+                    {
+                      "label": "recentFeedbackFiles",
+                      "value": "1"
+                    },
+                    {
+                      "label": "metaUpdated",
+                      "value": "yes"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-meta-review-input",
+                  "label": "Project Meta Review Input",
+                  "kind": "json",
+                  "json": {
+                    "currentMeta": {
+                      "projectId": "current_project",
+                      "projectName": "Alpha Plan",
+                      "description": "alpha plan",
+                      "status": "in_progress",
+                      "createdAt": "2026-10-22T00:00:00.000Z",
+                      "updatedAt": "2026-10-22T00:00:00.000Z",
+                      "relativePath": "project.meta.md",
+                      "absolutePath": "$ROOT/project.meta.md"
+                    },
+                    "recentProjectFiles": [
+                      "Project/alpha-notes-39eef8668c.md",
+                      "Project/alpha-plan-b6003d6838.md"
+                    ],
+                    "recentFeedbackFiles": [
+                      "Feedback/prefer-rust-946eddee2f.md"
+                    ]
+                  }
+                }
+              ],
+              "promptDebug": {
+                "request": "meta-review"
+              },
+              "titleI18n": {
+                "key": "trace.step.project_meta_review",
+                "fallback": "Project Meta Review"
+              }
+            }
+          ],
+          "mutations": [
+            {
+              "mutationId": "mutation_cddbfd4817",
+              "action": "write",
+              "relativePath": "project.meta.md",
+              "preview": "Renamed Alpha | paused"
+            }
+          ],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "reviewDreamProjectMeta",
+            "input": {
+              "currentMeta": {
+                "projectId": "current_project",
+                "projectName": "Alpha Plan",
+                "description": "alpha plan",
+                "status": "in_progress",
+                "updatedAt": "2026-10-22T00:00:00.000Z"
+              },
+              "recentProjectRecords": [
+                {
+                  "entryId": "Project/alpha-notes-39eef8668c.md",
+                  "relativePath": "Project/alpha-notes-39eef8668c.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Alpha Notes",
+                  "description": "alpha notes",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip alpha faster.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                },
+                {
+                  "entryId": "Project/alpha-plan-b6003d6838.md",
+                  "relativePath": "Project/alpha-plan-b6003d6838.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Alpha Plan",
+                  "description": "alpha plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip alpha.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                }
+              ],
+              "recentFeedbackRecords": [
+                {
+                  "entryId": "Feedback/prefer-rust-946eddee2f.md",
+                  "relativePath": "Feedback/prefer-rust-946eddee2f.md",
+                  "type": "feedback",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Prefer Rust",
+                  "description": "language rule",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "Rule: prefer Rust.",
+                  "feedback": {
+                    "rule": "",
+                    "why": "",
+                    "howToApply": "",
+                    "notes": []
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "tree": [
+          {
+            "relativePath": "Feedback/prefer-rust-946eddee2f.md",
+            "content": "---\nname: Prefer Rust\ndescription: language rule\ntype: feedback\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\nRule: prefer Rust.\n"
+          },
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Renamed Alpha](project.meta.md) — new alpha description\n\n## Project Memory\n- [Alpha Notes](Project/alpha-notes-39eef8668c.md) — alpha notes\n- [Alpha Plan](Project/alpha-plan-b6003d6838.md) — alpha plan\n\n## Feedback Memory\n- [Prefer Rust](Feedback/prefer-rust-946eddee2f.md) — language rule\n"
+          },
+          {
+            "relativePath": "Project/alpha-notes-39eef8668c.md",
+            "content": "---\nname: Alpha Notes\ndescription: alpha notes\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip alpha faster.\n"
+          },
+          {
+            "relativePath": "Project/alpha-plan-b6003d6838.md",
+            "content": "---\nname: Alpha Plan\ndescription: alpha plan\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip alpha.\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Renamed Alpha\ndescription: new alpha description\nstatus: paused\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\ndream_updated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nnew alpha description\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "meta-review-keep",
+      "method": "runProjectMetaReview",
+      "mode": "single",
+      "setup": {
+        "candidates": [
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha Plan",
+            "description": "alpha plan",
+            "body": "## Goal\nShip alpha.\n"
+          },
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha Notes",
+            "description": "alpha notes",
+            "body": "## Goal\nShip alpha faster.\n"
+          }
+        ]
+      },
+      "projectMeta": "current",
+      "ensureMeta": false,
+      "script": [
+        {
+          "method": "reviewDreamProjectMeta",
+          "result": {
+            "shouldUpdate": false,
+            "projectMeta": {},
+            "reason": "Reviewed the project files and kept the metadata."
+          }
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "result": {
+          "updated": false,
+          "reason": "Reviewed the project files and kept the metadata."
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "project_meta_review",
+              "title": "Project Meta Review · Alpha Plan",
+              "status": "skipped",
+              "inputSummary": "2 project files + 0 feedback files",
+              "outputSummary": "Reviewed the project files and kept the metadata.",
+              "details": [
+                {
+                  "key": "project-meta-review-summary",
+                  "label": "Project Meta Review Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "projectId",
+                      "value": "current_project"
+                    },
+                    {
+                      "label": "projectName",
+                      "value": "Alpha Plan"
+                    },
+                    {
+                      "label": "recentProjectFiles",
+                      "value": "2"
+                    },
+                    {
+                      "label": "recentFeedbackFiles",
+                      "value": "0"
+                    },
+                    {
+                      "label": "metaUpdated",
+                      "value": "no"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-meta-review-input",
+                  "label": "Project Meta Review Input",
+                  "kind": "json",
+                  "json": {
+                    "currentMeta": {
+                      "projectId": "current_project",
+                      "projectName": "Alpha Plan",
+                      "description": "alpha plan",
+                      "status": "in_progress",
+                      "createdAt": "2026-10-22T00:00:00.000Z",
+                      "updatedAt": "2026-10-22T00:00:00.000Z",
+                      "relativePath": "project.meta.md",
+                      "absolutePath": "$ROOT/project.meta.md"
+                    },
+                    "recentProjectFiles": [
+                      "Project/alpha-notes-39eef8668c.md",
+                      "Project/alpha-plan-b6003d6838.md"
+                    ],
+                    "recentFeedbackFiles": []
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_meta_review",
+                "fallback": "Project Meta Review"
+              }
+            }
+          ],
+          "mutations": [],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "reviewDreamProjectMeta",
+            "input": {
+              "currentMeta": {
+                "projectId": "current_project",
+                "projectName": "Alpha Plan",
+                "description": "alpha plan",
+                "status": "in_progress",
+                "updatedAt": "2026-10-22T00:00:00.000Z"
+              },
+              "recentProjectRecords": [
+                {
+                  "entryId": "Project/alpha-notes-39eef8668c.md",
+                  "relativePath": "Project/alpha-notes-39eef8668c.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Alpha Notes",
+                  "description": "alpha notes",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip alpha faster.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                },
+                {
+                  "entryId": "Project/alpha-plan-b6003d6838.md",
+                  "relativePath": "Project/alpha-plan-b6003d6838.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Alpha Plan",
+                  "description": "alpha plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip alpha.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                }
+              ],
+              "recentFeedbackRecords": []
+            }
+          }
+        ],
+        "tree": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Alpha Plan](project.meta.md) — alpha plan\n\n## Project Memory\n- [Alpha Notes](Project/alpha-notes-39eef8668c.md) — alpha notes\n- [Alpha Plan](Project/alpha-plan-b6003d6838.md) — alpha plan\n"
+          },
+          {
+            "relativePath": "Project/alpha-notes-39eef8668c.md",
+            "content": "---\nname: Alpha Notes\ndescription: alpha notes\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip alpha faster.\n"
+          },
+          {
+            "relativePath": "Project/alpha-plan-b6003d6838.md",
+            "content": "---\nname: Alpha Plan\ndescription: alpha plan\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip alpha.\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Alpha Plan\ndescription: alpha plan\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nalpha plan\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "meta-review-empty",
+      "method": "runProjectMetaReview",
+      "mode": "single",
+      "setup": {},
+      "projectMeta": "current",
+      "ensureMeta": true,
+      "script": [],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "result": {
+          "updated": false,
+          "reason": "Dream kept the current project metadata unchanged."
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "project_meta_review",
+              "title": "Project Meta Review · Current Project",
+              "status": "skipped",
+              "inputSummary": "0 project files + 0 feedback files",
+              "outputSummary": "Dream kept the current project metadata unchanged.",
+              "details": [
+                {
+                  "key": "project-meta-review-summary",
+                  "label": "Project Meta Review Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "projectId",
+                      "value": "current_project"
+                    },
+                    {
+                      "label": "projectName",
+                      "value": "Current Project"
+                    },
+                    {
+                      "label": "recentProjectFiles",
+                      "value": "0"
+                    },
+                    {
+                      "label": "recentFeedbackFiles",
+                      "value": "0"
+                    },
+                    {
+                      "label": "metaUpdated",
+                      "value": "no"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-meta-review-input",
+                  "label": "Project Meta Review Input",
+                  "kind": "json",
+                  "json": {
+                    "currentMeta": {
+                      "projectId": "current_project",
+                      "projectName": "Current Project",
+                      "description": "Current project memory.",
+                      "status": "in_progress",
+                      "createdAt": "2026-10-22T00:00:00.000Z",
+                      "updatedAt": "2026-10-22T00:00:00.000Z",
+                      "relativePath": "project.meta.md",
+                      "absolutePath": "$ROOT/project.meta.md"
+                    },
+                    "recentProjectFiles": [],
+                    "recentFeedbackFiles": []
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_meta_review",
+                "fallback": "Project Meta Review"
+              }
+            }
+          ],
+          "mutations": [],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [],
+        "tree": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Current Project](project.meta.md) — Current project memory.\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Current Project\ndescription: Current project memory.\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nCurrent project memory.\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "meta-review-general",
+      "method": "runProjectMetaReview",
+      "mode": "general",
+      "setup": {
+        "metas": [
+          {
+            "projectId": "p1",
+            "projectName": "Alpha",
+            "description": "alpha project",
+            "status": "active"
+          }
+        ],
+        "candidates": [
+          {
+            "type": "project",
+            "scope": "project",
+            "projectId": "p1",
+            "name": "Alpha Plan",
+            "description": "alpha plan",
+            "body": "## Goal\nShip alpha.\n"
+          }
+        ]
+      },
+      "projectMeta": "p1",
+      "ensureMeta": false,
+      "script": [
+        {
+          "method": "reviewDreamProjectMeta",
+          "result": {
+            "shouldUpdate": false,
+            "projectMeta": {
+              "projectName": "Alpha",
+              "description": "alpha project",
+              "status": "active"
+            },
+            "reason": "Reviewed the project file and kept the metadata."
+          }
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "result": {
+          "updated": false,
+          "reason": "Reviewed the project file and kept the metadata."
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "project_meta_review",
+              "title": "Project Meta Review · Alpha",
+              "status": "skipped",
+              "inputSummary": "1 project files + 0 feedback files",
+              "outputSummary": "Reviewed the project file and kept the metadata.",
+              "details": [
+                {
+                  "key": "project-meta-review-summary",
+                  "label": "Project Meta Review Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "projectId",
+                      "value": "p1"
+                    },
+                    {
+                      "label": "projectName",
+                      "value": "Alpha"
+                    },
+                    {
+                      "label": "recentProjectFiles",
+                      "value": "1"
+                    },
+                    {
+                      "label": "recentFeedbackFiles",
+                      "value": "0"
+                    },
+                    {
+                      "label": "metaUpdated",
+                      "value": "no"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-meta-review-input",
+                  "label": "Project Meta Review Input",
+                  "kind": "json",
+                  "json": {
+                    "currentMeta": {
+                      "projectId": "p1",
+                      "projectName": "Alpha",
+                      "description": "alpha project",
+                      "status": "active",
+                      "createdAt": "2026-10-22T00:00:00.000Z",
+                      "updatedAt": "2026-10-22T00:00:00.000Z",
+                      "relativePath": "GeneralProjects/alpha-p1.md",
+                      "absolutePath": "$ROOT/GeneralProjects/alpha-p1.md"
+                    },
+                    "recentProjectFiles": [
+                      "Project/alpha-plan-d1189ae245.md"
+                    ],
+                    "recentFeedbackFiles": []
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_meta_review",
+                "fallback": "Project Meta Review"
+              }
+            }
+          ],
+          "mutations": [],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "reviewDreamProjectMeta",
+            "input": {
+              "currentMeta": {
+                "projectId": "p1",
+                "projectName": "Alpha",
+                "description": "alpha project",
+                "status": "active",
+                "updatedAt": "2026-10-22T00:00:00.000Z"
+              },
+              "recentProjectRecords": [
+                {
+                  "entryId": "Project/alpha-plan-d1189ae245.md",
+                  "relativePath": "Project/alpha-plan-d1189ae245.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "p1",
+                  "isTmp": false,
+                  "name": "Alpha Plan",
+                  "description": "alpha plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip alpha.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                }
+              ],
+              "recentFeedbackRecords": []
+            }
+          }
+        ],
+        "tree": [
+          {
+            "relativePath": "GeneralProjects/alpha-p1.md",
+            "content": "---\nname: Alpha\ndescription: alpha project\ntype: general_project_meta\nscope: project\nproject_id: p1\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nalpha project\n\n## Status\nactive\n"
+          },
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## General Projects\n- [Alpha](GeneralProjects/alpha-p1.md) — alpha project\n\n## Project Memory\n- [Alpha Plan](Project/alpha-plan-d1189ae245.md) — alpha plan\n"
+          },
+          {
+            "relativePath": "Project/alpha-plan-d1189ae245.md",
+            "content": "---\nname: Alpha Plan\ndescription: alpha plan\ntype: project\nscope: project\nproject_id: p1\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip alpha.\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "meta-review-mirror",
+      "method": "runProjectMetaReview",
+      "mode": "general",
+      "setup": {
+        "metas": [
+          {
+            "projectId": "mirror",
+            "projectName": "Alpha mirror",
+            "description": "mirrored alpha",
+            "status": "active",
+            "sourceKind": "workspace_external_mirror",
+            "sourceWorkspacePath": "/fixture/Mirror",
+            "sourceProjectId": "current_project"
+          }
+        ],
+        "candidates": [
+          {
+            "type": "feedback",
+            "scope": "project",
+            "projectId": "mirror",
+            "name": "Local mirror feedback",
+            "description": "local rule",
+            "body": "Rule: local.\n"
+          }
+        ],
+        "external": {
+          "name": "mirror-ext",
+          "workspace": "/fixture/Mirror",
+          "candidates": [
+            {
+              "type": "project",
+              "scope": "project",
+              "name": "Mirrored plan",
+              "description": "mirrored plan",
+              "body": "## Goal\nShip mirror.\n"
+            },
+            {
+              "type": "feedback",
+              "scope": "project",
+              "name": "Mirrored feedback",
+              "description": "mirrored rule",
+              "body": "Rule: mirror.\n"
+            }
+          ]
+        }
+      },
+      "projectMeta": "mirror",
+      "ensureMeta": false,
+      "script": [
+        {
+          "method": "reviewDreamProjectMeta",
+          "result": {
+            "shouldUpdate": false,
+            "projectMeta": {
+              "projectName": "Alpha mirror",
+              "description": "mirrored alpha",
+              "status": "active"
+            },
+            "reason": "Reviewed mirrored project files."
+          }
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "result": {
+          "updated": false,
+          "reason": "Reviewed mirrored project files."
+        },
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "project_meta_review",
+              "title": "Project Meta Review · Alpha mirror",
+              "status": "skipped",
+              "inputSummary": "1 project files + 2 feedback files",
+              "outputSummary": "Reviewed mirrored project files.",
+              "details": [
+                {
+                  "key": "project-meta-review-summary",
+                  "label": "Project Meta Review Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "projectId",
+                      "value": "mirror"
+                    },
+                    {
+                      "label": "projectName",
+                      "value": "Alpha mirror"
+                    },
+                    {
+                      "label": "recentProjectFiles",
+                      "value": "1"
+                    },
+                    {
+                      "label": "recentFeedbackFiles",
+                      "value": "2"
+                    },
+                    {
+                      "label": "metaUpdated",
+                      "value": "no"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-meta-review-input",
+                  "label": "Project Meta Review Input",
+                  "kind": "json",
+                  "json": {
+                    "currentMeta": {
+                      "projectId": "mirror",
+                      "projectName": "Alpha mirror",
+                      "description": "mirrored alpha",
+                      "status": "active",
+                      "sourceKind": "workspace_external_mirror",
+                      "sourceWorkspacePath": "/fixture/Mirror",
+                      "sourceProjectId": "current_project",
+                      "createdAt": "2026-10-22T00:00:00.000Z",
+                      "updatedAt": "2026-10-22T00:00:00.000Z",
+                      "relativePath": "GeneralProjects/alpha-mirror-mirror.md",
+                      "absolutePath": "$ROOT/GeneralProjects/alpha-mirror-mirror.md"
+                    },
+                    "recentProjectFiles": [
+                      "external:f89cbe578c:Project/mirrored-plan-e8b81ad661.md"
+                    ],
+                    "recentFeedbackFiles": [
+                      "external:f89cbe578c:Feedback/mirrored-feedback-3eeb86939e.md",
+                      "Feedback/local-mirror-feedback-f0baec8687.md"
+                    ]
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_meta_review",
+                "fallback": "Project Meta Review"
+              }
+            }
+          ],
+          "mutations": [],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "reviewDreamProjectMeta",
+            "input": {
+              "currentMeta": {
+                "projectId": "mirror",
+                "projectName": "Alpha mirror",
+                "description": "mirrored alpha",
+                "status": "active",
+                "updatedAt": "2026-10-22T00:00:00.000Z",
+                "sourceKind": "workspace_external_mirror",
+                "sourceWorkspacePath": "/fixture/Mirror",
+                "sourceProjectId": "current_project"
+              },
+              "recentProjectRecords": [
+                {
+                  "entryId": "external:f89cbe578c:Project/mirrored-plan-e8b81ad661.md",
+                  "relativePath": "external:f89cbe578c:Project/mirrored-plan-e8b81ad661.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Mirrored plan",
+                  "description": "mirrored plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip mirror.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                }
+              ],
+              "recentFeedbackRecords": [
+                {
+                  "entryId": "external:f89cbe578c:Feedback/mirrored-feedback-3eeb86939e.md",
+                  "relativePath": "external:f89cbe578c:Feedback/mirrored-feedback-3eeb86939e.md",
+                  "type": "feedback",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Mirrored feedback",
+                  "description": "mirrored rule",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "Rule: mirror.",
+                  "feedback": {
+                    "rule": "",
+                    "why": "",
+                    "howToApply": "",
+                    "notes": []
+                  }
+                },
+                {
+                  "entryId": "Feedback/local-mirror-feedback-f0baec8687.md",
+                  "relativePath": "Feedback/local-mirror-feedback-f0baec8687.md",
+                  "type": "feedback",
+                  "scope": "project",
+                  "projectId": "mirror",
+                  "isTmp": false,
+                  "name": "Local mirror feedback",
+                  "description": "local rule",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "Rule: local.",
+                  "feedback": {
+                    "rule": "",
+                    "why": "",
+                    "howToApply": "",
+                    "notes": []
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "tree": [
+          {
+            "relativePath": "Feedback/local-mirror-feedback-f0baec8687.md",
+            "content": "---\nname: Local mirror feedback\ndescription: local rule\ntype: feedback\nscope: project\nproject_id: mirror\nupdated_at: 2026-10-22T00:00:00.000Z\n---\nRule: local.\n"
+          },
+          {
+            "relativePath": "GeneralProjects/alpha-mirror-mirror.md",
+            "content": "---\nname: Alpha mirror\ndescription: mirrored alpha\ntype: general_project_meta\nscope: project\nproject_id: mirror\nsource_kind: workspace_external_mirror\nsource_workspace_path: /fixture/Mirror\nsource_project_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nmirrored alpha\n\n## Status\nactive\n\n## Source\n- This project mirrors a read-only external workspace project.\n- Source workspace: /fixture/Mirror\n- Source project id: current_project\n"
+          },
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## General Projects\n- [Alpha mirror](GeneralProjects/alpha-mirror-mirror.md) — mirrored alpha\n\n## Feedback Memory\n- [Local mirror feedback](Feedback/local-mirror-feedback-f0baec8687.md) — local rule\n"
+          }
+        ]
+      }
+    }
+  ]
+}
