@@ -113,6 +113,10 @@ pub use markdown::{get_plugin_command_name, load_plugin_commands, load_standalon
 use pilotdeck_protocol::{JsValue, json_syntax, parse_json};
 use std::{fs, path::Path};
 
+pub(super) fn join_directory(base: &Path, child: &str) -> PathBuf {
+    config::join_path(base, child)
+}
+
 pub(super) fn resolve_directory(base: &Path, child: &str) -> PathBuf {
     config::resolve_path(&config::join_path(base, child))
 }

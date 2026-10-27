@@ -679,7 +679,7 @@ fn decode_list_cursor(value: &JsValue, signature: &str) -> Result<f64> {
 
 /// Node's legacy base64/base64url decoder: each UTF-16 unit is truncated to a
 /// byte, illegal characters are skipped and `=` ends decoding.
-fn base64_lenient(units: &[u16]) -> Vec<u8> {
+pub(crate) fn base64_lenient(units: &[u16]) -> Vec<u8> {
     let (mut out, mut acc, mut bits) = (vec![], 0u32, 0);
     for &unit in units {
         let c = unit as u8;

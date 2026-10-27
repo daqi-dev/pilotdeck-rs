@@ -60,6 +60,7 @@ pub use options::{PilotExtensionPaths, PluginRuntimeOptions};
 
 // ─────────────────────────────────────────────────────────── sub-modules
 
+pub mod catalog;
 mod contributions;
 pub mod loader;
 mod options;
