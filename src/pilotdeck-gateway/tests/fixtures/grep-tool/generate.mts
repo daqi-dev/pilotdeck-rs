@@ -1,3 +1,4 @@
+import { executeFile } from '../_shared/ripgrep-subprocess.mjs';
 // Real TS recordings for the builtin `grep` tool (A6.5-pr4b).
 // Run with the fixed baseline checkout and Node 22:
 //   PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
@@ -90,7 +91,7 @@ let current: any;
 const execute = async (input: any) => {
   const cwd = join(scratch, current.cwd);
   current.context ??= contextFor({}, cwd);
-  const definition = createGrepTool();
+  const definition = createGrepTool({ subprocess: { executeFile } });
   let result: any = null;
   try {
     const output = await definition.execute(input, current.context);

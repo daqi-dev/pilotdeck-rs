@@ -18,6 +18,12 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 值，所以 `glob --sort=modified` 的顺序不依赖文件创建时刻。带 `modelMultimodal` 的
 调用把该 context 片段记入 `calls[].context`，回放时注入同一字段。
 
+`glob` 显式注入 `../_shared/ripgrep-subprocess.mjs`：同步执行真实 bundled ripgrep，stdin 为
+`ignore`（本夹具不提供 stdin 或取消 signal），退出码、stdout、stderr 原样交回 TS。
+这样固定了基线 `SubprocessPort` 在 rg 提前退出后 `stdin.end("")` 的 EPIPE 竞态；
+spawn 错误和超时仍抛出，未吞错误。PDF 的 mupdf 解析保持原样，原金样字节不变。
+`../_shared/ripgrep-subprocess.test.mjs` 覆盖退出码 0/1/2、提前退出、启动失败和永不退出的子进程。
+
 ## 范围切分
 
 本夹具只覆盖 `read_file`、`glob`、`get_current_time`；`grep` 已在 A6.5-pr4b

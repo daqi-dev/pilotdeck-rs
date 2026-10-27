@@ -14,6 +14,7 @@ const phases = ['headers','body','response_text','count'];
 const events = ['fulfilled','rejected','idle'];
 const orders = ['continuation-first','parent-first','tie-parent-first','tie-parent-last'];
 for (const protocol of protocols) for (const phase of phases) for (const event of events) for (const order of orders) {
+  let captured = false;
   for(let attempt=0;attempt<10;attempt++){
   const id = `${protocol}/${phase}/${event}/${order}`;
   const controller = new AbortController();
@@ -73,11 +74,17 @@ for (const protocol of protocols) for (const phase of phases) for (const event o
   const observable=phase==='count'?{name:null,message:result.estimatorError??null,retries:0,source:result.source,tokens:result.tokens}:{name:result.name??(error&&Object.hasOwn(error.raw??{},'name')?error.raw.name:null)??(error?'ModelProviderError':null),message:result.message??error?.message??null,retries:retries.length,delivery:result.name?'throw':error?'event':'ok'};
   const completion=timers.find(t=>t.kind===(idle?(phase==='response_text'&&protocol!=='google'?'body-timeout':'watchdog'):'completion'));
   const pt=timers.find(t=>t.kind==='parent');
-  if(order.startsWith('tie')&&completion&&pt&&pt.start+pt.delay!==completion.start+completion.delay){console.error(JSON.stringify({id,attempt,discard:'different actual Node deadlines',timers}));await sleep(60);continue;}
-  if(order.startsWith('tie')&&completion&&pt)assert.equal(timers.indexOf(pt)<timers.indexOf(completion),parentFirst,`${id}: actual registration order`);
-  console.log(JSON.stringify({id,protocol,phase,event,order,reachable:calls>0,rawErrorName:error?.raw?.name??null,timers,timeline,result,retries,observable}));
-  await sleep(60);break;
+  if(calls>0) {
+    assert.ok(completion&&pt, `#280 ${id}: missing actual Node timers`);
+    const gap = pt.start + pt.delay - completion.start - completion.delay;
+    const ordered = order==='continuation-first' ? gap>0 : order==='parent-first' ? gap<0 : gap===0;
+    if(!ordered){console.error(JSON.stringify({id,attempt,discard:'different actual Node deadlines',gap,timers}));await sleep(60);continue;}
+    assert.equal(timers.indexOf(pt)<timers.indexOf(completion),parentFirst,`#280 ${id}: actual registration order`);
   }
+  console.log(JSON.stringify({id,protocol,phase,event,order,reachable:calls>0,rawErrorName:error?.raw?.name??null,timers,timeline,result,retries,observable}));
+  captured = true;await sleep(60);break;
+  }
+  assert.ok(captured, `#280 ${protocol}/${phase}/${event}/${order}: exhausted actual-deadline candidates`);
 }
 
 for(const protocol of protocols){
