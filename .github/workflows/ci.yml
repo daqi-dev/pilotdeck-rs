@@ -78,16 +78,9 @@ jobs:
           "$HOME/.cargo/bin/rg" --version
       - name: 测试
         run: cargo test --all
-      - name: B2 冻结与批准依据（干净检出）
+      - name: smoke provider 装置正负控（含 Rust probe）
         working-directory: .
-        run: |
-          python3 -I scripts/test-approval-provenance.py
-          python3 -I scripts/test-review-deepseek.py
-          python3 -I scripts/test-review-roles.py
-          python3 -I scripts/test-smoke-real-provider.py
-          bash scripts/test-pdrs-loop.sh
-          python3 -I scripts/check-approval-provenance.py
-          python3 -I scripts/ui-server-parity/check_frozen.py
+        run: python3 -I scripts/test-smoke-real-provider.py
       - name: C · parity 冻结装置（干净检出）
         working-directory: .
         run: python3 -I scripts/parity/check_frozen.py
@@ -131,6 +124,15 @@ jobs:
     steps:
       # 校验器只读当前检出文件，不读取 Git 历史，默认浅检出即可。
       - uses: actions/checkout@v4
+      - name: B2 冻结与批准依据（干净检出）
+        working-directory: .
+        run: |
+          python3 -I scripts/test-approval-provenance.py
+          python3 -I scripts/test-review-deepseek.py
+          python3 -I scripts/test-review-roles.py
+          bash scripts/test-pdrs-loop.sh
+          python3 -I scripts/check-approval-provenance.py
+          python3 -I scripts/ui-server-parity/check_frozen.py
       - uses: actions/setup-node@v4
         with:
           node-version: 20
