@@ -1242,7 +1242,18 @@ fn clamp_int(value: Option<&JsValue>, fallback: f64, min: i64, max: i64) -> f64 
         _ => None,
     };
     match numeric {
-        Some(number) if number.is_finite() => number.floor().min(max as f64).max(min as f64),
+        Some(number) if number.is_finite() => {
+            let clamped = number.floor().min(max as f64).max(min as f64);
+            // `f64::max` / `min` may return either zero when +0 and -0 compare
+            // equal; JS `Math.max` ranks +0 above -0, so normalise explicitly.
+            if clamped != 0.0 {
+                clamped
+            } else if min >= 0 {
+                0.0 // Math.max(+0, ±0) is +0
+            } else {
+                number.floor() // min < 0: JS keeps the floor's zero sign
+            }
+        }
         _ => fallback,
     }
 }

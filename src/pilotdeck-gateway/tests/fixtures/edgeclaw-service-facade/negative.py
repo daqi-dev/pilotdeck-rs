@@ -166,8 +166,8 @@ MUTANTS = [
     mutation(
         'settings-negative-zero',
         STORAGE,
-        'number.floor().min(max as f64).max(min as f64)',
-        'number.floor().clamp(min as f64, max as f64)',
+        '0.0 // Math.max(+0, ±0) is +0',
+        'number.floor() // mutated: keep -0',
         test='save_settings_projects_negative_zero_like_ts',
     ),
 ]
