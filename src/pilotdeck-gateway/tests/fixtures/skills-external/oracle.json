@@ -1717,6 +1717,606 @@
           "message": "Successful module response contains failure fields."
         }
       }
+    },
+    {
+      "name": "manifest-bom",
+      "method": "list",
+      "binding": {
+        "enabled": true,
+        "implementationId": "test.skills",
+        "contract": "pilotdeck.skills/v1",
+        "transport": "module-http-v2",
+        "endpoint": "http://127.0.0.1:<port>",
+        "manifestPath": "/module-manifest",
+        "callPath": "/v2/module/call",
+        "timeoutMs": 2000,
+        "methods": [
+          "list",
+          "read",
+          "write",
+          "create",
+          "delete",
+          "import",
+          "validate",
+          "scan"
+        ]
+      },
+      "input": {
+        "projectKey": "/p"
+      },
+      "http": [
+        {
+          "status": 200,
+          "body": "﻿{\"protocolVersion\":\"2.0\",\"implementationId\":\"test.skills\",\"contract\":\"pilotdeck.skills/v1\",\"transport\":\"module-http-v2\",\"methods\":[\"list\",\"read\",\"write\",\"create\",\"delete\",\"import\",\"validate\",\"scan\"]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"kind\":\"response\",\"messageId\":\"provider-response\",\"inReplyTo\":\"module-http-1\",\"requestId\":\"skills-management-list-1\",\"ok\":true,\"payload\":{\"result\":{\"operation\":\"list\",\"marker\":\"success\"}}}"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/module-manifest",
+          "contentType": null,
+          "authorization": null,
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/v2/module/call",
+          "contentType": "application/json",
+          "authorization": null,
+          "body": "{\"kind\":\"request\",\"method\":\"module_call\",\"messageId\":\"module-http-1\",\"runId\":\"skills-management\",\"operationId\":\"skills-management\",\"requestId\":\"skills-management-list-1\",\"module\":\"skills\",\"payload\":{\"operation\":\"list\",\"input\":{\"projectKey\":\"/p\"}}}"
+        }
+      ],
+      "outcome": {
+        "result": {
+          "operation": "list",
+          "marker": "success"
+        }
+      }
+    },
+    {
+      "name": "response-bom",
+      "method": "list",
+      "binding": {
+        "enabled": true,
+        "implementationId": "test.skills",
+        "contract": "pilotdeck.skills/v1",
+        "transport": "module-http-v2",
+        "endpoint": "http://127.0.0.1:<port>",
+        "manifestPath": "/module-manifest",
+        "callPath": "/v2/module/call",
+        "timeoutMs": 2000,
+        "methods": [
+          "list",
+          "read",
+          "write",
+          "create",
+          "delete",
+          "import",
+          "validate",
+          "scan"
+        ]
+      },
+      "input": {
+        "projectKey": "/p"
+      },
+      "http": [
+        {
+          "status": 200,
+          "body": "{\"protocolVersion\":\"2.0\",\"implementationId\":\"test.skills\",\"contract\":\"pilotdeck.skills/v1\",\"transport\":\"module-http-v2\",\"methods\":[\"list\",\"read\",\"write\",\"create\",\"delete\",\"import\",\"validate\",\"scan\"]}"
+        },
+        {
+          "status": 200,
+          "body": "﻿{\"kind\":\"response\",\"messageId\":\"provider-response\",\"inReplyTo\":\"module-http-1\",\"requestId\":\"skills-management-list-1\",\"ok\":true,\"payload\":{\"result\":{\"operation\":\"list\",\"marker\":\"success\"}}}"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/module-manifest",
+          "contentType": null,
+          "authorization": null,
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/v2/module/call",
+          "contentType": "application/json",
+          "authorization": null,
+          "body": "{\"kind\":\"request\",\"method\":\"module_call\",\"messageId\":\"module-http-1\",\"runId\":\"skills-management\",\"operationId\":\"skills-management\",\"requestId\":\"skills-management-list-1\",\"module\":\"skills\",\"payload\":{\"operation\":\"list\",\"input\":{\"projectKey\":\"/p\"}}}"
+        }
+      ],
+      "outcome": {
+        "result": {
+          "operation": "list",
+          "marker": "success"
+        }
+      }
+    },
+    {
+      "name": "response-truncated",
+      "method": "list",
+      "binding": {
+        "enabled": true,
+        "implementationId": "test.skills",
+        "contract": "pilotdeck.skills/v1",
+        "transport": "module-http-v2",
+        "endpoint": "http://127.0.0.1:<port>",
+        "manifestPath": "/module-manifest",
+        "callPath": "/v2/module/call",
+        "timeoutMs": 2000,
+        "methods": [
+          "list",
+          "read",
+          "write",
+          "create",
+          "delete",
+          "import",
+          "validate",
+          "scan"
+        ]
+      },
+      "input": {
+        "projectKey": "/p"
+      },
+      "http": [
+        {
+          "status": 200,
+          "body": "{\"protocolVersion\":\"2.0\",\"implementationId\":\"test.skills\",\"contract\":\"pilotdeck.skills/v1\",\"transport\":\"module-http-v2\",\"methods\":[\"list\",\"read\",\"write\",\"create\",\"delete\",\"import\",\"validate\",\"scan\"]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"kind\":"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/module-manifest",
+          "contentType": null,
+          "authorization": null,
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/v2/module/call",
+          "contentType": "application/json",
+          "authorization": null,
+          "body": "{\"kind\":\"request\",\"method\":\"module_call\",\"messageId\":\"module-http-1\",\"runId\":\"skills-management\",\"operationId\":\"skills-management\",\"requestId\":\"skills-management-list-1\",\"module\":\"skills\",\"payload\":{\"operation\":\"list\",\"input\":{\"projectKey\":\"/p\"}}}"
+        }
+      ],
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "MODULE_PROTOCOL_INCOMPATIBLE",
+          "message": "Module HTTP response must contain JSON."
+        }
+      }
+    },
+    {
+      "name": "lone-surrogate-code",
+      "method": "list",
+      "binding": {
+        "enabled": true,
+        "implementationId": "test.skills",
+        "contract": "pilotdeck.skills/v1",
+        "transport": "module-http-v2",
+        "endpoint": "http://127.0.0.1:<port>",
+        "manifestPath": "/module-manifest",
+        "callPath": "/v2/module/call",
+        "timeoutMs": 2000,
+        "methods": [
+          "list",
+          "read",
+          "write",
+          "create",
+          "delete",
+          "import",
+          "validate",
+          "scan"
+        ]
+      },
+      "input": {
+        "projectKey": "/p"
+      },
+      "http": [
+        {
+          "status": 200,
+          "body": "{\"protocolVersion\":\"2.0\",\"implementationId\":\"test.skills\",\"contract\":\"pilotdeck.skills/v1\",\"transport\":\"module-http-v2\",\"methods\":[\"list\",\"read\",\"write\",\"create\",\"delete\",\"import\",\"validate\",\"scan\"]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"kind\":\"response\",\"messageId\":\"provider-response\",\"inReplyTo\":\"module-http-1\",\"requestId\":\"skills-management-list-1\",\"ok\":false,\"code\":\"PROVIDER\\ud800\",\"error\":{\"code\":\"PROVIDER\\ud800\",\"message\":\"provider exploded\",\"retryability\":\"safe\"}}"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/module-manifest",
+          "contentType": null,
+          "authorization": null,
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/v2/module/call",
+          "contentType": "application/json",
+          "authorization": null,
+          "body": "{\"kind\":\"request\",\"method\":\"module_call\",\"messageId\":\"module-http-1\",\"runId\":\"skills-management\",\"operationId\":\"skills-management\",\"requestId\":\"skills-management-list-1\",\"module\":\"skills\",\"payload\":{\"operation\":\"list\",\"input\":{\"projectKey\":\"/p\"}}}"
+        }
+      ],
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "PROVIDER\ud800",
+          "message": "provider exploded",
+          "retryability": "safe"
+        }
+      }
+    },
+    {
+      "name": "lone-surrogate-message",
+      "method": "list",
+      "binding": {
+        "enabled": true,
+        "implementationId": "test.skills",
+        "contract": "pilotdeck.skills/v1",
+        "transport": "module-http-v2",
+        "endpoint": "http://127.0.0.1:<port>",
+        "manifestPath": "/module-manifest",
+        "callPath": "/v2/module/call",
+        "timeoutMs": 2000,
+        "methods": [
+          "list",
+          "read",
+          "write",
+          "create",
+          "delete",
+          "import",
+          "validate",
+          "scan"
+        ]
+      },
+      "input": {
+        "projectKey": "/p"
+      },
+      "http": [
+        {
+          "status": 200,
+          "body": "{\"protocolVersion\":\"2.0\",\"implementationId\":\"test.skills\",\"contract\":\"pilotdeck.skills/v1\",\"transport\":\"module-http-v2\",\"methods\":[\"list\",\"read\",\"write\",\"create\",\"delete\",\"import\",\"validate\",\"scan\"]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"kind\":\"response\",\"messageId\":\"provider-response\",\"inReplyTo\":\"module-http-1\",\"requestId\":\"skills-management-list-1\",\"ok\":false,\"code\":\"SKILL_PROVIDER_FAILED\",\"error\":{\"code\":\"SKILL_PROVIDER_FAILED\",\"message\":\"bad\\ud800\",\"retryability\":\"safe\"}}"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/module-manifest",
+          "contentType": null,
+          "authorization": null,
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/v2/module/call",
+          "contentType": "application/json",
+          "authorization": null,
+          "body": "{\"kind\":\"request\",\"method\":\"module_call\",\"messageId\":\"module-http-1\",\"runId\":\"skills-management\",\"operationId\":\"skills-management\",\"requestId\":\"skills-management-list-1\",\"module\":\"skills\",\"payload\":{\"operation\":\"list\",\"input\":{\"projectKey\":\"/p\"}}}"
+        }
+      ],
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "SKILL_PROVIDER_FAILED",
+          "message": "bad\ud800",
+          "retryability": "safe"
+        }
+      }
+    },
+    {
+      "name": "message-error-missing-id",
+      "method": "list",
+      "binding": {
+        "enabled": true,
+        "implementationId": "test.skills",
+        "contract": "pilotdeck.skills/v1",
+        "transport": "module-http-v2",
+        "endpoint": "http://127.0.0.1:<port>",
+        "manifestPath": "/module-manifest",
+        "callPath": "/v2/module/call",
+        "timeoutMs": 2000,
+        "methods": [
+          "list",
+          "read",
+          "write",
+          "create",
+          "delete",
+          "import",
+          "validate",
+          "scan"
+        ]
+      },
+      "input": {
+        "projectKey": "/p"
+      },
+      "http": [
+        {
+          "status": 200,
+          "body": "{\"protocolVersion\":\"2.0\",\"implementationId\":\"test.skills\",\"contract\":\"pilotdeck.skills/v1\",\"transport\":\"module-http-v2\",\"methods\":[\"list\",\"read\",\"write\",\"create\",\"delete\",\"import\",\"validate\",\"scan\"]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"kind\":\"error\"}"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/module-manifest",
+          "contentType": null,
+          "authorization": null,
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/v2/module/call",
+          "contentType": "application/json",
+          "authorization": null,
+          "body": "{\"kind\":\"request\",\"method\":\"module_call\",\"messageId\":\"module-http-1\",\"runId\":\"skills-management\",\"operationId\":\"skills-management\",\"requestId\":\"skills-management-list-1\",\"module\":\"skills\",\"payload\":{\"operation\":\"list\",\"input\":{\"projectKey\":\"/p\"}}}"
+        }
+      ],
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "MODULE_PROTOCOL_INCOMPATIBLE",
+          "message": "Message messageId is required."
+        }
+      }
+    },
+    {
+      "name": "message-request-missing-field",
+      "method": "list",
+      "binding": {
+        "enabled": true,
+        "implementationId": "test.skills",
+        "contract": "pilotdeck.skills/v1",
+        "transport": "module-http-v2",
+        "endpoint": "http://127.0.0.1:<port>",
+        "manifestPath": "/module-manifest",
+        "callPath": "/v2/module/call",
+        "timeoutMs": 2000,
+        "methods": [
+          "list",
+          "read",
+          "write",
+          "create",
+          "delete",
+          "import",
+          "validate",
+          "scan"
+        ]
+      },
+      "input": {
+        "projectKey": "/p"
+      },
+      "http": [
+        {
+          "status": 200,
+          "body": "{\"protocolVersion\":\"2.0\",\"implementationId\":\"test.skills\",\"contract\":\"pilotdeck.skills/v1\",\"transport\":\"module-http-v2\",\"methods\":[\"list\",\"read\",\"write\",\"create\",\"delete\",\"import\",\"validate\",\"scan\"]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"kind\":\"request\",\"messageId\":\"provider-response\",\"method\":\"module_call\",\"payload\":{}}"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/module-manifest",
+          "contentType": null,
+          "authorization": null,
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/v2/module/call",
+          "contentType": "application/json",
+          "authorization": null,
+          "body": "{\"kind\":\"request\",\"method\":\"module_call\",\"messageId\":\"module-http-1\",\"runId\":\"skills-management\",\"operationId\":\"skills-management\",\"requestId\":\"skills-management-list-1\",\"module\":\"skills\",\"payload\":{\"operation\":\"list\",\"input\":{\"projectKey\":\"/p\"}}}"
+        }
+      ],
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "MODULE_PROTOCOL_INCOMPATIBLE",
+          "message": "Module call field runId is required."
+        }
+      }
+    },
+    {
+      "name": "message-event-missing-field",
+      "method": "list",
+      "binding": {
+        "enabled": true,
+        "implementationId": "test.skills",
+        "contract": "pilotdeck.skills/v1",
+        "transport": "module-http-v2",
+        "endpoint": "http://127.0.0.1:<port>",
+        "manifestPath": "/module-manifest",
+        "callPath": "/v2/module/call",
+        "timeoutMs": 2000,
+        "methods": [
+          "list",
+          "read",
+          "write",
+          "create",
+          "delete",
+          "import",
+          "validate",
+          "scan"
+        ]
+      },
+      "input": {
+        "projectKey": "/p"
+      },
+      "http": [
+        {
+          "status": 200,
+          "body": "{\"protocolVersion\":\"2.0\",\"implementationId\":\"test.skills\",\"contract\":\"pilotdeck.skills/v1\",\"transport\":\"module-http-v2\",\"methods\":[\"list\",\"read\",\"write\",\"create\",\"delete\",\"import\",\"validate\",\"scan\"]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"kind\":\"event\"}"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/module-manifest",
+          "contentType": null,
+          "authorization": null,
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/v2/module/call",
+          "contentType": "application/json",
+          "authorization": null,
+          "body": "{\"kind\":\"request\",\"method\":\"module_call\",\"messageId\":\"module-http-1\",\"runId\":\"skills-management\",\"operationId\":\"skills-management\",\"requestId\":\"skills-management-list-1\",\"module\":\"skills\",\"payload\":{\"operation\":\"list\",\"input\":{\"projectKey\":\"/p\"}}}"
+        }
+      ],
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "MODULE_PROTOCOL_INCOMPATIBLE",
+          "message": "Event field eventType is required."
+        }
+      }
+    },
+    {
+      "name": "message-error-invalid-retryability",
+      "method": "list",
+      "binding": {
+        "enabled": true,
+        "implementationId": "test.skills",
+        "contract": "pilotdeck.skills/v1",
+        "transport": "module-http-v2",
+        "endpoint": "http://127.0.0.1:<port>",
+        "manifestPath": "/module-manifest",
+        "callPath": "/v2/module/call",
+        "timeoutMs": 2000,
+        "methods": [
+          "list",
+          "read",
+          "write",
+          "create",
+          "delete",
+          "import",
+          "validate",
+          "scan"
+        ]
+      },
+      "input": {
+        "projectKey": "/p"
+      },
+      "http": [
+        {
+          "status": 200,
+          "body": "{\"protocolVersion\":\"2.0\",\"implementationId\":\"test.skills\",\"contract\":\"pilotdeck.skills/v1\",\"transport\":\"module-http-v2\",\"methods\":[\"list\",\"read\",\"write\",\"create\",\"delete\",\"import\",\"validate\",\"scan\"]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"kind\":\"error\",\"messageId\":\"provider-response\",\"code\":\"E\",\"message\":\"m\",\"retryability\":\"maybe\"}"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/module-manifest",
+          "contentType": null,
+          "authorization": null,
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/v2/module/call",
+          "contentType": "application/json",
+          "authorization": null,
+          "body": "{\"kind\":\"request\",\"method\":\"module_call\",\"messageId\":\"module-http-1\",\"runId\":\"skills-management\",\"operationId\":\"skills-management\",\"requestId\":\"skills-management-list-1\",\"module\":\"skills\",\"payload\":{\"operation\":\"list\",\"input\":{\"projectKey\":\"/p\"}}}"
+        }
+      ],
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "MODULE_PROTOCOL_INCOMPATIBLE",
+          "message": "Error retryability is invalid."
+        }
+      }
+    },
+    {
+      "name": "message-unknown-kind",
+      "method": "list",
+      "binding": {
+        "enabled": true,
+        "implementationId": "test.skills",
+        "contract": "pilotdeck.skills/v1",
+        "transport": "module-http-v2",
+        "endpoint": "http://127.0.0.1:<port>",
+        "manifestPath": "/module-manifest",
+        "callPath": "/v2/module/call",
+        "timeoutMs": 2000,
+        "methods": [
+          "list",
+          "read",
+          "write",
+          "create",
+          "delete",
+          "import",
+          "validate",
+          "scan"
+        ]
+      },
+      "input": {
+        "projectKey": "/p"
+      },
+      "http": [
+        {
+          "status": 200,
+          "body": "{\"protocolVersion\":\"2.0\",\"implementationId\":\"test.skills\",\"contract\":\"pilotdeck.skills/v1\",\"transport\":\"module-http-v2\",\"methods\":[\"list\",\"read\",\"write\",\"create\",\"delete\",\"import\",\"validate\",\"scan\"]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"kind\":\"bogus\"}"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/module-manifest",
+          "contentType": null,
+          "authorization": null,
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/v2/module/call",
+          "contentType": "application/json",
+          "authorization": null,
+          "body": "{\"kind\":\"request\",\"method\":\"module_call\",\"messageId\":\"module-http-1\",\"runId\":\"skills-management\",\"operationId\":\"skills-management\",\"requestId\":\"skills-management-list-1\",\"module\":\"skills\",\"payload\":{\"operation\":\"list\",\"input\":{\"projectKey\":\"/p\"}}}"
+        }
+      ],
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "MODULE_PROTOCOL_INCOMPATIBLE",
+          "message": "Module message kind is invalid."
+        }
+      }
     }
   ]
 }

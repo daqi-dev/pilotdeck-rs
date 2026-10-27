@@ -5,7 +5,7 @@ use crate::{
     skills::{collator, fs_failure},
     stderr_line, stdout_line,
 };
-use pilotdeck_gateway::skills::{SkillManager, SkillManagerOptions};
+use pilotdeck_gateway::skills::{SkillError, SkillManager, SkillManagerOptions};
 use pilotdeck_protocol::{JsObject, JsValue, stringify_json};
 use std::os::unix::fs::{FileTypeExt, MetadataExt, symlink};
 use std::{
@@ -28,6 +28,9 @@ fn field<'a>(v: &'a JsValue, key: &str) -> &'a JsValue {
     v.as_object()
         .and_then(|o| o.get(key))
         .expect("internal report field")
+}
+fn error_message(error: &SkillError) -> String {
+    String::from_utf16_lossy(error.message.units())
 }
 fn string(v: &JsValue) -> String {
     match v {
@@ -325,7 +328,7 @@ fn import_skill(
     }
     let validation = manager
         .validate(&object([("sourcePath", path_string(&source))]))
-        .map_err(|e| Failure::Error(e.message))?;
+        .map_err(|e| Failure::Error(error_message(&e)))?;
     if field(&validation, "ok") != &JsValue::Bool(true) {
         return Err(Failure::Error(validation_reason(&validation)));
     }
@@ -511,7 +514,7 @@ fn report(argv: &[String], env: &Env, cwd: &Path) -> Result<JsValue, Failure> {
     let mut options = SkillManagerOptions::new(pilot_home.to_string_lossy());
     options.home_dir = Some(home.to_string_lossy().into_owned());
     options.env = Some(env.strings());
-    let manager = SkillManager::new(options).map_err(|e| Failure::Error(e.message))?;
+    let manager = SkillManager::new(options).map_err(|e| Failure::Error(error_message(&e)))?;
     let mut items = Vec::new();
     for source in &sources {
         let Some(dirs) = discover(&source.path, env)? else {
@@ -608,7 +611,7 @@ fn report(argv: &[String], env: &Env, cwd: &Path) -> Result<JsValue, Failure> {
                         Some(&destination),
                         &slug,
                         "error",
-                        &e.message,
+                        &error_message(&e),
                     )),
                 }
             }

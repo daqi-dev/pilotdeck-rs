@@ -44,7 +44,7 @@ const INPUTS: Record<string, unknown> = {
   scan: { parentPath: '/src' },
 };
 
-type Reply = { status: number; body: string };
+type Reply = { status: number; body: string; destroy?: boolean };
 type Recorded = {
   method: string;
   path: string;
@@ -55,6 +55,7 @@ type Recorded = {
 type Current = {
   binding: any;
   manifest: any;
+  manifestText?: string;
   reply: (request: any) => Reply;
 };
 let current: Current;
@@ -73,8 +74,8 @@ const server = createServer(async (req, res) => {
     body: body === '' ? null : body,
   });
   if (req.url === current.binding.manifestPath) {
-    const reply = { status: 200, body: JSON.stringify(current.manifest) };
-    http.push(reply);
+    const reply = { status: 200, body: current.manifestText ?? JSON.stringify(current.manifest) };
+    http.push({ status: reply.status, body: reply.body });
     res.statusCode = reply.status;
     res.setHeader('content-type', 'application/json');
     res.end(reply.body);
@@ -83,9 +84,19 @@ const server = createServer(async (req, res) => {
   assert.equal(req.url, current.binding.callPath, 'unexpected module path');
   const parsed = JSON.parse(body);
   const reply = current.reply(parsed);
-  http.push(reply);
+  // `destroy` records a response whose declared body never completes; it is a
+  // transport instruction, not part of the replayable HTTP reply.
+  http.push({ status: reply.status, body: reply.body });
   res.statusCode = reply.status;
   res.setHeader('content-type', 'application/json');
+  if (reply.destroy) {
+    // Let the head + partial body reach the client before breaking the
+    // connection; destroying in the same tick can reject fetch() itself.
+    res.write(reply.body);
+    await new Promise((ready) => setTimeout(ready, 50));
+    res.destroy();
+    return;
+  }
   res.end(reply.body);
 });
 await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready));
@@ -164,6 +175,7 @@ async function runCase(
   options: {
     binding?: any;
     manifest?: any;
+    manifestText?: string;
     reply?: (request: any) => Reply;
   } = {},
 ): Promise<any> {
@@ -171,6 +183,7 @@ async function runCase(
   current = {
     binding,
     manifest: options.manifest ?? baseManifest(),
+    manifestText: options.manifestText,
     reply: options.reply ?? successReply,
   };
   requests.length = 0;
@@ -268,6 +281,86 @@ cases.push(
         payload: { result: { marker: 'success' } },
       }),
     }),
+  }),
+);
+
+// P1-2: WHATWG UTF-8 decode strips one BOM before JSON.parse, for both the
+// manifest GET and the call response.
+const withBom = (text: string) => `\uFEFF${text}`;
+cases.push(
+  await runCase('manifest-bom', 'list', {
+    manifestText: withBom(JSON.stringify(baseManifest())),
+  }),
+);
+cases.push(
+  await runCase('response-bom', 'list', {
+    reply: (request) => ({ status: 200, body: withBom(successReply(request).body) }),
+  }),
+);
+
+// P1-3: a 2xx body that ends before its declared length makes
+// `response.json()` reject; TS swallows that into `undefined` and reports the
+// protocol error, not a transport error.
+cases.push(
+  await runCase('response-truncated', 'list', {
+    reply: () => ({ status: 200, body: '{"kind":', destroy: true }),
+  }),
+);
+
+// P1-4: provider error fields are JS strings and keep unpaired surrogates.
+const providerErrorBody = (request: any, code: string, message: string): Reply => ({
+  status: 200,
+  body: JSON.stringify({
+    kind: 'response',
+    messageId: 'provider-response',
+    inReplyTo: request.messageId,
+    requestId: request.requestId,
+    ok: false,
+    code,
+    error: { code, message, retryability: 'safe' },
+  }),
+});
+cases.push(
+  await runCase('lone-surrogate-code', 'list', {
+    reply: (request) => providerErrorBody(request, 'PROVIDER\ud800', 'provider exploded'),
+  }),
+);
+cases.push(
+  await runCase('lone-surrogate-message', 'list', {
+    reply: (request) => providerErrorBody(request, 'SKILL_PROVIDER_FAILED', 'bad\ud800'),
+  }),
+);
+
+// P1-5: every kind runs `validateModuleMessage` before the response-envelope
+// check, so a non-response message reports its own protocol error.
+const messageReply = (body: string): ((request: any) => Reply) => () => ({ status: 200, body });
+cases.push(
+  await runCase('message-error-missing-id', 'list', {
+    reply: messageReply(JSON.stringify({ kind: 'error' })),
+  }),
+);
+cases.push(
+  await runCase('message-request-missing-field', 'list', {
+    reply: messageReply(JSON.stringify({
+      kind: 'request', messageId: 'provider-response', method: 'module_call', payload: {},
+    })),
+  }),
+);
+cases.push(
+  await runCase('message-event-missing-field', 'list', {
+    reply: messageReply(JSON.stringify({ kind: 'event' })),
+  }),
+);
+cases.push(
+  await runCase('message-error-invalid-retryability', 'list', {
+    reply: messageReply(JSON.stringify({
+      kind: 'error', messageId: 'provider-response', code: 'E', message: 'm', retryability: 'maybe',
+    })),
+  }),
+);
+cases.push(
+  await runCase('message-unknown-kind', 'list', {
+    reply: messageReply(JSON.stringify({ kind: 'bogus' })),
   }),
 );
 

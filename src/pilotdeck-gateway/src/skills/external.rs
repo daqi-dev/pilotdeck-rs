@@ -15,7 +15,11 @@
 //! model HTTP stack (rustls, proxy env, redirects and body decoding).
 use super::{Result, SkillError, SkillMethod};
 use crate::js_value::number_string;
-use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
+use pilotdeck_protocol::{
+    JsObject, JsString, JsValue, MODULE_PROTOCOL_VERSION, parse_json, stringify_json,
+};
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::{
     collections::HashSet,
     future::Future,
@@ -26,10 +30,8 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::Mutex;
+use tokio::sync::Notify;
 
-/// `protocol.ts:3 MODULE_PROTOCOL_VERSION`.
-pub const MODULE_PROTOCOL_VERSION: &str = "2.0";
 /// `composition/types.ts:3 MODULE_HTTP_TRANSPORT`.
 pub const MODULE_HTTP_TRANSPORT: &str = "module-http-v2";
 /// `HttpModuleClient.ts:121 timeoutMs ?? 10_000`.
@@ -180,7 +182,6 @@ impl ModuleHttpTransport for HyperModuleTransport {
         Box::pin(async move {
             use crate::runtime::model::http::ModelHttpTransport as _;
             use bytes::Bytes;
-            use http_body_util::BodyExt;
             use hyper::{HeaderMap, Method, header};
             use url::Url;
 
@@ -202,8 +203,11 @@ impl ModuleHttpTransport for HyperModuleTransport {
                 );
             }
             let inner = &self.inner;
-            // `follow` owns undici's redirect (and blocked-port) policy; the
-            // `FollowRedirects` extension it installs also turns on decoding.
+            // `setTimeout(..., timeoutMs)` starts before the fetch and covers
+            // redirects, the response head and the body read (`HttpModuleClient.ts:105-134`).
+            // A body that stalls after the head therefore still fires the same
+            // timer and produces MODULE_TIMEOUT, not an unbounded wait.
+            let deadline = tokio::time::Instant::now() + request.timeout;
             let exchange = crate::fetch_redirect::follow(
                 url,
                 method,
@@ -212,22 +216,88 @@ impl ModuleHttpTransport for HyperModuleTransport {
                 || crate::runtime::model::http::TransportFailure::fetch_failed(None),
                 |request| inner.send(request),
             );
-            let response = tokio::time::timeout(request.timeout, exchange)
-                .await
-                .map_err(|_| ModuleTransportError::Timeout)?
-                .map_err(|_| ModuleTransportError::Unavailable)?;
+            let response = match tokio::time::timeout_at(deadline, exchange).await {
+                Ok(response) => response.map_err(|_| ModuleTransportError::Unavailable)?,
+                Err(_) => return Err(ModuleTransportError::Timeout),
+            };
             let status = response.status().as_u16();
-            let body = response
-                .into_body()
-                .collect()
-                .await
-                .map_err(|_| ModuleTransportError::Unavailable)?
-                .to_bytes();
-            Ok(ModuleHttpResponse {
-                status,
-                body: body.to_vec(),
-            })
+            // After the head TS does `response.json().catch(() => undefined)`:
+            // a truncated/oversized body is not a transport error, so hand the
+            // caller empty bytes and let the status/JSON decision below
+            // classify it. Only the shared deadline is a timer event.
+            let body = match tokio::time::timeout_at(
+                deadline,
+                crate::fetch_redirect::read_body(
+                    response.into_body(),
+                    crate::fetch_redirect::MAX_STRING_LENGTH,
+                    None,
+                ),
+            )
+            .await
+            {
+                Ok(Ok(body)) => body,
+                Ok(Err(_)) => Vec::new(),
+                Err(_) => return Err(ModuleTransportError::Timeout),
+            };
+            Ok(ModuleHttpResponse { status, body })
         })
+    }
+}
+
+/// One in-flight `loadManifest()` promise. TS shares this promise with every
+/// caller that arrives while it is pending and broadcasts its rejection; only
+/// a call after it settles starts a new round.
+struct ManifestFlight {
+    done: Notify,
+    result: std::sync::Mutex<Option<Result<()>>>,
+}
+impl Default for ManifestFlight {
+    fn default() -> Self {
+        Self {
+            done: Notify::new(),
+            result: std::sync::Mutex::new(None),
+        }
+    }
+}
+
+struct ManifestState {
+    loaded: bool,
+    flight: Option<Arc<ManifestFlight>>,
+}
+
+enum ManifestStep {
+    Loaded,
+    Wait(Arc<ManifestFlight>),
+    Own(Arc<ManifestFlight>),
+}
+
+/// Clears the flight if its owner future is dropped mid-flight (caller
+/// cancellation, timeout at a higher layer). Waiters are woken without a
+/// result and re-enter the cache, so the next caller becomes the new owner
+/// instead of parking forever on a dead flight.
+struct FlightOwner<'a> {
+    state: &'a std::sync::Mutex<ManifestState>,
+    flight: &'a Arc<ManifestFlight>,
+    settled: bool,
+}
+impl Drop for FlightOwner<'_> {
+    fn drop(&mut self) {
+        if self.settled {
+            return;
+        }
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state
+            .flight
+            .as_ref()
+            .is_some_and(|flight| Arc::ptr_eq(flight, self.flight))
+        {
+            state.flight = None;
+        }
+        drop(state);
+        self.flight.done.notify_waiters();
     }
 }
 
@@ -240,7 +310,11 @@ pub struct ExternalSkillsPort<T> {
     env: Arc<dyn ModuleEnvironment>,
     request_sequence: AtomicU64,
     message_sequence: AtomicU64,
-    manifest_loaded: Mutex<bool>,
+    manifest: std::sync::Mutex<ManifestState>,
+    /// Deterministic test hook: number of callers parked on the in-flight
+    /// manifest flight. Never read by production code.
+    #[cfg(test)]
+    manifest_waiters: AtomicUsize,
 }
 
 impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
@@ -259,7 +333,12 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
             env,
             request_sequence: AtomicU64::new(0),
             message_sequence: AtomicU64::new(0),
-            manifest_loaded: Mutex::new(false),
+            manifest: std::sync::Mutex::new(ManifestState {
+                loaded: false,
+                flight: None,
+            }),
+            #[cfg(test)]
+            manifest_waiters: AtomicUsize::new(0),
         }
     }
 
@@ -351,18 +430,119 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
         }
     }
 
-    async fn load_manifest_cached(&self) -> Result<()> {
-        // TS shares one in-flight manifest promise and clears it on failure.
-        // Holding this async mutex for the load gives concurrent callers the
-        // same single GET; failures leave the flag false, so the next call
-        // retries.
-        let mut loaded = self.manifest_loaded.lock().await;
-        if *loaded {
-            return Ok(());
+    fn manifest_state(&self) -> std::sync::MutexGuard<'_, ManifestState> {
+        self.manifest
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn manifest_step(&self) -> ManifestStep {
+        let mut state = self.manifest_state();
+        if state.loaded {
+            return ManifestStep::Loaded;
         }
-        self.load_manifest().await?;
-        *loaded = true;
-        Ok(())
+        if let Some(flight) = &state.flight {
+            return ManifestStep::Wait(flight.clone());
+        }
+        let flight = Arc::new(ManifestFlight::default());
+        state.flight = Some(flight.clone());
+        ManifestStep::Own(flight)
+    }
+
+    async fn load_manifest_cached(&self) -> Result<()> {
+        // `manifestPromise ??= loadManifest().catch(clear + rethrow)`: calls
+        // that arrive while the GET is pending share one flight and therefore
+        // one outcome (success *or* failure). A failure clears the flight, so
+        // the next call starts a new round.
+        #[cfg(test)]
+        let mut counted = false;
+        loop {
+            match self.manifest_step() {
+                ManifestStep::Loaded => {
+                    #[cfg(test)]
+                    if counted {
+                        self.manifest_waiters.fetch_sub(1, Ordering::SeqCst);
+                    }
+                    return Ok(());
+                }
+                ManifestStep::Wait(flight) => {
+                    #[cfg(test)]
+                    if !counted {
+                        self.manifest_waiters.fetch_add(1, Ordering::SeqCst);
+                        counted = true;
+                    }
+                    let notified = flight.done.notified();
+                    tokio::pin!(notified);
+                    // Register before observing the result so a settle between
+                    // the check and the await cannot be lost.
+                    notified.as_mut().enable();
+                    if let Some(result) = flight
+                        .result
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .clone()
+                    {
+                        #[cfg(test)]
+                        if counted {
+                            self.manifest_waiters.fetch_sub(1, Ordering::SeqCst);
+                        }
+                        return result;
+                    }
+                    notified.await;
+                    if let Some(result) = flight
+                        .result
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .clone()
+                    {
+                        #[cfg(test)]
+                        if counted {
+                            self.manifest_waiters.fetch_sub(1, Ordering::SeqCst);
+                        }
+                        return result;
+                    }
+                    // The owner was cancelled without a result; retry (or join
+                    // the flight a competing waiter just installed).
+                }
+                ManifestStep::Own(flight) => {
+                    let mut owner = FlightOwner {
+                        state: &self.manifest,
+                        flight: &flight,
+                        settled: false,
+                    };
+                    let result = self.load_manifest().await;
+                    owner.settled = true;
+                    *flight
+                        .result
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(result.clone());
+                    {
+                        let mut state = self.manifest_state();
+                        if state
+                            .flight
+                            .as_ref()
+                            .is_some_and(|current| Arc::ptr_eq(current, &flight))
+                        {
+                            state.flight = None;
+                        }
+                        if result.is_ok() {
+                            state.loaded = true;
+                        }
+                    }
+                    flight.done.notify_waiters();
+                    #[cfg(test)]
+                    if counted {
+                        self.manifest_waiters.fetch_sub(1, Ordering::SeqCst);
+                    }
+                    return result;
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn manifest_waiters(&self) -> usize {
+        self.manifest_waiters.load(Ordering::SeqCst)
     }
 
     async fn load_manifest(&self) -> Result<()> {
@@ -438,8 +618,10 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
             content_type: (method == "POST").then_some("application/json"),
             authorization,
             body: body.unwrap_or_default(),
-            timeout: Duration::try_from_secs_f64(self.binding.timeout_ms / 1000.0)
-                .unwrap_or(Duration::MAX),
+            // `setTimeout` clamps the effective timer: values outside
+            // [1, 2^31-1] arm 1 ms (the TS binding still carries the original
+            // number for the MODULE_TIMEOUT message).
+            timeout: crate::runtime::network::node_timer_duration(self.binding.timeout_ms),
         };
         let response = self
             .transport
@@ -455,10 +637,15 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
                 ),
                 ModuleTransportError::Unavailable => SkillError::transport_failure(
                     "MODULE_TRANSPORT_UNAVAILABLE",
-                    "Module HTTP request could not be completed.".into(),
+                    "Module HTTP request could not be completed.",
                 ),
             })?;
-        let parsed = parse_json(&String::from_utf8_lossy(&response.body)).ok();
+        let text = String::from_utf8_lossy(&response.body);
+        // `Response.json()` runs the WHATWG UTF-8 decode first: one leading
+        // BOM is stripped before JSON.parse (Node v22.22.0, `manifest-bom` /
+        // `response-bom` oracle cases).
+        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+        let parsed = parse_json(text).ok();
         let accepted_failure = accept_structured_error
             && parsed.as_ref().is_some_and(|value| {
                 value
@@ -470,7 +657,7 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
         if !(200..=299).contains(&response.status) && !accepted_failure {
             return Err(SkillError::transport_failure(
                 "MODULE_TRANSPORT_UNAVAILABLE",
-                "Module HTTP request could not be completed.".into(),
+                "Module HTTP request could not be completed.",
             ));
         }
         parsed
@@ -497,48 +684,27 @@ fn request_body(
     ])))
 }
 
-/// `protocol.ts:343-357` for the response branch plus
-/// `HttpModuleClient.ts:75-92` semantics/correlation.
+/// `protocol.ts:264-358` (`validateModuleMessage`) first, exactly like
+/// `HttpModuleClient.ts:75-92`: a non-response envelope must pass its own
+/// kind's protocol validation before the response check is reached. Then the
+/// TS `validateResponseSemantics` + correlation checks run.
 fn validate_response(value: &JsValue, message_id: &str, request_id: &str) -> Result<()> {
+    pilotdeck_protocol::module::validate_module_message(value)
+        .map_err(|error| SkillError::protocol_failure(error.message))?;
     let object = value
         .as_object()
         .ok_or_else(|| SkillError::protocol_failure("Module message must be an object."))?;
-    let kind = object.get("kind").and_then(JsValue::as_string);
-    if !kind.is_some_and(|kind| {
-        ["request", "response", "event", "error"]
-            .iter()
-            .any(|candidate| kind.equals_str(candidate))
-    }) {
-        return Err(SkillError::protocol_failure(
-            "Module message kind is invalid.",
-        ));
-    }
-    if !kind.is_some_and(|kind| kind.equals_str("response")) {
+    if object
+        .get("kind")
+        .and_then(JsValue::as_string)
+        .is_none_or(|kind| !kind.equals_str("response"))
+    {
         return Err(SkillError::protocol_failure(
             "Module call did not return a response envelope.",
         ));
     }
-    nonempty(object.get("messageId"))
-        .ok_or_else(|| SkillError::protocol_failure("Message messageId is required."))?;
     let in_reply_to = nonempty(object.get("inReplyTo"))
         .ok_or_else(|| SkillError::protocol_failure("Response requires inReplyTo and ok."))?;
-    if object.get("ok").and_then(JsValue::as_bool).is_none() {
-        return Err(SkillError::protocol_failure(
-            "Response requires inReplyTo and ok.",
-        ));
-    }
-    if object.get("final") == Some(&JsValue::Bool(true)) && !outcome(object.get("outcome")) {
-        return Err(SkillError::protocol_failure(
-            "Final response requires outcome.",
-        ));
-    }
-    if object
-        .get("outcome")
-        .is_some_and(|value| !value.is_undefined())
-        && !outcome(object.get("outcome"))
-    {
-        return Err(SkillError::protocol_failure("Response outcome is invalid."));
-    }
     let ok = object.get("ok").and_then(JsValue::as_bool).unwrap_or(false);
     if ok {
         if object
@@ -571,7 +737,7 @@ fn validate_response(value: &JsValue, message_id: &str, request_id: &str) -> Res
         let consistent = error
             .get("code")
             .and_then(JsValue::as_string)
-            .is_some_and(|value| value.equals_str(&code))
+            .is_some_and(|value| value == &code)
             && nonempty(error.get("message")).is_some()
             && error
                 .get("retryability")
@@ -587,7 +753,7 @@ fn validate_response(value: &JsValue, message_id: &str, request_id: &str) -> Res
             ));
         }
     }
-    let correlated = in_reply_to == message_id
+    let correlated = in_reply_to.equals_str(message_id)
         && match object.get("requestId") {
             None => true,
             Some(value) if value.is_undefined() => true,
@@ -605,6 +771,8 @@ fn validate_response(value: &JsValue, message_id: &str, request_id: &str) -> Res
 
 fn module_failure(response: &JsObject) -> SkillError {
     // `validate_response` already proved ok:false has code + consistent error.
+    // Keep the UTF-16 units: JS `Error.code`/`message` preserve unpaired
+    // surrogates, and a lossy `String` would turn them into U+FFFD.
     let code = nonempty(response.get("code")).unwrap_or_default();
     let error = response
         .get("error")
@@ -622,19 +790,11 @@ fn module_failure(response: &JsObject) -> SkillError {
     SkillError::provider_failure(code, message, retryability, details)
 }
 
-fn nonempty(value: Option<&JsValue>) -> Option<String> {
+fn nonempty(value: Option<&JsValue>) -> Option<JsString> {
     value
         .and_then(JsValue::as_string)
-        .filter(|value| !value.units().is_empty())
-        .map(|value| String::from_utf16_lossy(value.units()))
-}
-
-fn outcome(value: Option<&JsValue>) -> bool {
-    value.and_then(JsValue::as_string).is_some_and(|value| {
-        ["completed", "failed", "cancelled", "result_unknown"]
-            .iter()
-            .any(|candidate| value.equals_str(candidate))
-    })
+        .filter(|value| !value.is_empty())
+        .cloned()
 }
 
 fn object<const N: usize>(entries: [(&str, JsValue); N]) -> JsObject {

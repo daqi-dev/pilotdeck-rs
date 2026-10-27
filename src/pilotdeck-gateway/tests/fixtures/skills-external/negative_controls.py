@@ -11,7 +11,7 @@ sandbox the patch is uncommitted, so the coordinator runs this after committing:
 
   CARGO_TARGET_DIR=/path/to/target python3 \
     src/pilotdeck-gateway/tests/fixtures/skills-external/negative_controls.py \
-    --out _tmp/<date>-issue-929/negative-controls
+    _tmp/<date>-issue-929/negative-controls
 
 Table rows follow anchor_selfcheck's ``(name, path, before, after, ...)``
 layout so the static preflight can resolve every anchor.
@@ -57,7 +57,7 @@ MUTATIONS = {
         "    SkillError::provider_failure(code, message, retryability, details)",
         """    let _ = code;
     SkillError::provider_failure(
-        "MODULE_CALL_FAILED".into(),
+        "MODULE_CALL_FAILED",
         message,
         retryability,
         details,
@@ -67,7 +67,7 @@ MUTATIONS = {
     ),
     "correlation-check-removed": (
         external,
-        """    let correlated = in_reply_to == message_id
+        """    let correlated = in_reply_to.equals_str(message_id)
         && match object.get("requestId") {
             None => true,
             Some(value) if value.is_undefined() => true,
@@ -93,6 +93,103 @@ MUTATIONS = {
         "        if matches!(result, JsValue::Null) {",
         "skills::external_tests::external_skills_oracle_replays_requests_and_outcomes",
         ["#929 case result-not-object outcome must match real TS"],
+    ),
+    "body-deadline-not-shared": (
+        external,
+        """            let body = match tokio::time::timeout_at(
+                deadline,
+                crate::fetch_redirect::read_body(""",
+        """            let body = match tokio::time::timeout_at(
+                tokio::time::Instant::now() + Duration::from_secs(30),
+                crate::fetch_redirect::read_body(""",
+        "skills::external_tests::stalled_body_is_bounded_by_the_request_timeout",
+        ["#929 stalled body must return within timeoutMs instead of waiting forever"],
+    ),
+    "manifest-failure-not-shared": (
+        external,
+        """                    *flight
+                        .result
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(result.clone());""",
+        """                    *flight
+                        .result
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Ok(()));""",
+        "skills::external_tests::concurrent_manifest_failure_is_shared_by_every_waiter",
+        ["#929 concurrent waiter must receive the same manifest failure"],
+    ),
+    "bom-not-stripped": (
+        external,
+        "        let text = text.strip_prefix('\\u{feff}').unwrap_or(&text);",
+        "        let text: &str = &text;",
+        "skills::external_tests::bom_is_stripped_from_manifest_and_response",
+        ["#929 BOM-prefixed manifest and response must parse"],
+    ),
+    "body-error-mapped-to-transport": (
+        external,
+        "                Ok(Err(_)) => Vec::new(),",
+        "                Ok(Err(_)) => return Err(ModuleTransportError::Unavailable),",
+        "skills::external_tests::truncated_success_body_is_a_protocol_error",
+        ["#929 truncated 2xx body keeps the protocol code"],
+    ),
+    "provider-message-lossy": (
+        external,
+        "    let message = nonempty(error.get(\"message\")).unwrap_or_else(|| code.clone());",
+        """    let message = nonempty(error.get("message")).unwrap_or_else(|| code.clone());
+    let message = JsString::from(String::from_utf16_lossy(message.units()));""",
+        "skills::external_tests::provider_error_keeps_unpaired_surrogates",
+        ["#929 provider message keeps the unpaired surrogate"],
+    ),
+    "non-response-validation-skipped": (
+        external,
+        """    pilotdeck_protocol::module::validate_module_message(value)
+        .map_err(|error| SkillError::protocol_failure(error.message))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| SkillError::protocol_failure("Module message must be an object."))?;
+    if object
+        .get("kind")
+        .and_then(JsValue::as_string)
+        .is_none_or(|kind| !kind.equals_str("response"))
+    {
+        return Err(SkillError::protocol_failure(
+            "Module call did not return a response envelope.",
+        ));
+    }""",
+        """    let object = value
+        .as_object()
+        .ok_or_else(|| SkillError::protocol_failure("Module message must be an object."))?;
+    if object
+        .get("kind")
+        .and_then(JsValue::as_string)
+        .is_none_or(|kind| !kind.equals_str("response"))
+    {
+        return Err(SkillError::protocol_failure(
+            "Module call did not return a response envelope.",
+        ));
+    }
+    pilotdeck_protocol::module::validate_module_message(value)
+        .map_err(|error| SkillError::protocol_failure(error.message))?;""",
+        "skills::external_tests::non_response_messages_get_the_full_protocol_validation",
+        ['#929 protocol validation message for {"kind":"error"}'],
+    ),
+    "owner-cancel-leaves-flight": (
+        external,
+        """        if self.settled {
+            return;
+        }""",
+        """        if true {
+            return;
+        }""",
+        "skills::external_tests::cancelled_manifest_owner_releases_its_waiters",
+        ["#929 waiter must recover when the in-flight manifest owner is cancelled (bounded)"],
+    ),
+    "timer-clamp-removed": (
+        external,
+        "            timeout: crate::runtime::network::node_timer_duration(self.binding.timeout_ms),",
+        "            timeout: Duration::try_from_secs_f64(self.binding.timeout_ms / 1000.0)\n                .unwrap_or(Duration::MAX),",
+        "skills::external_tests::oversized_timeout_uses_the_node_timer_clamp",
+        ["#929 timeoutMs 2147483648 must schedule the Node timer delay 1ms"],
     ),
 }
 

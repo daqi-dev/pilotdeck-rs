@@ -585,7 +585,7 @@ mod tests {
         let result = tree_files_capped(dir.to_str().unwrap(), 132);
         assert!(result.is_err(), "134 entries at cap 132 should fail");
         let err = result.unwrap_err();
-        assert_eq!(err.code, "tree_files_limit_exceeded");
+        assert!(err.code.equals_str("tree_files_limit_exceeded"));
     }
 
     #[test]
@@ -602,9 +602,11 @@ mod tests {
         }
         reset_listed();
         let result = tree_files_capped(dir.to_str().unwrap(), 100);
-        assert_eq!(
-            result.expect_err("5001 entries exceed cap 100").code,
-            "tree_files_limit_exceeded"
+        assert!(
+            result
+                .expect_err("5001 entries exceed cap 100")
+                .code
+                .equals_str("tree_files_limit_exceeded")
         );
         // The check runs after each push, so ReadDir yields exactly cap+1 items.
         assert_eq!(listed_count(), 101, "listing must stop at cap+1 entries");
@@ -627,9 +629,11 @@ mod tests {
         }
         reset_listed();
         let result = tree_files_capped(dir.to_str().unwrap(), 100);
-        assert_eq!(
-            result.expect_err("156 total entries exceed cap 100").code,
-            "tree_files_limit_exceeded"
+        assert!(
+            result
+                .expect_err("156 total entries exceed cap 100")
+                .code
+                .equals_str("tree_files_limit_exceeded")
         );
         assert_eq!(
             listed_count(),
@@ -660,13 +664,13 @@ mod tests {
         let error = manager
             .scan_capped(&input, 100)
             .expect_err("child limit must reject scan");
-        assert_eq!(error.code, "tree_files_limit_exceeded");
+        assert!(error.code.equals_str("tree_files_limit_exceeded"));
         // Also exercise the root scan_folder propagation, before children.
         fs::write(scratch.0.join("SKILL.md"), SKILL_MD).unwrap();
         let error = manager
             .scan_capped(&input, 100)
             .expect_err("root limit must reject scan");
-        assert_eq!(error.code, "tree_files_limit_exceeded");
+        assert!(error.code.equals_str("tree_files_limit_exceeded"));
     }
 
     #[test]

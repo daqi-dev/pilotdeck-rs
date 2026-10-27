@@ -173,6 +173,6 @@ where
 pub fn disabled() -> SkillError {
     SkillError::host_failure(
         "SKILL_MODULE_DISABLED",
-        "Skill module is disabled for this profile.".into(),
+        "Skill module is disabled for this profile.",
     )
 }

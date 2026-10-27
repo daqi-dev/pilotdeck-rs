@@ -50,5 +50,5 @@ KILLED/SURVIVED/INVALID；锚点过期在 `--check-anchors` 预检直接退出 2
 ```sh
 CARGO_TARGET_DIR=/path/to/target python3 \
   src/pilotdeck-gateway/tests/fixtures/skills-external/negative_controls.py \
-  --out _tmp/<date>-issue-929/negative-controls
+  _tmp/<date>-issue-929/negative-controls
 ```

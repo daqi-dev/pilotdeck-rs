@@ -1,6 +1,6 @@
 //! SkillManager.ts:485–506 error classes plus the raw errors TS lets escape.
 use crate::js_value::StackOverflow;
-use pilotdeck_protocol::JsValue;
+use pilotdeck_protocol::{JsString, JsValue};
 use std::{fmt, io};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -17,8 +17,10 @@ pub struct SkillError {
     /// `RangeError` (a JS runtime fault on input).
     pub name: &'static str,
     /// SkillManagerError code, Node errno code, `ERR_*`, or empty.
-    pub code: String,
-    pub message: String,
+    /// JS strings are UTF-16; unpaired surrogates from a module provider must
+    /// survive the error projection, so both fields keep `JsString` units.
+    pub code: JsString,
+    pub message: JsString,
     /// SkillValidationError.validation (thrown by import).
     pub validation: Option<Box<JsValue>>,
     /// The fs errno is outside the method's measured set (node_io::lookup_for):
@@ -33,7 +35,7 @@ pub struct SkillError {
 
 impl SkillError {
     /// SkillManager.ts:489 `new SkillManagerError(code, message)`.
-    pub fn manager(code: &str, message: impl Into<String>) -> Self {
+    pub fn manager(code: &str, message: impl Into<JsString>) -> Self {
         Self::raw("SkillManagerError", code.into(), message.into())
     }
 
@@ -73,7 +75,7 @@ impl SkillError {
 
     fn errno(error: &io::Error, diagnostic: Option<(&'static str, String)>) -> Self {
         let mut e = match diagnostic {
-            Some((code, message)) => Self::raw("Error", code.into(), message),
+            Some((code, message)) => Self::raw("Error", code.into(), message.into()),
             None => Self::host(),
         };
         e.errno = error.raw_os_error();
@@ -87,23 +89,23 @@ impl SkillError {
         Self::raw(
             "SystemError",
             code.into(),
-            format!("{prefix}: cp returned {errno} ({detail}) {path}"),
+            format!("{prefix}: cp returned {errno} ({detail}) {path}").into(),
         )
     }
 
     /// JS TypeError on malformed input. Wording follows V8 but is not claimed;
     /// only `name` and `code` are compared with TS.
-    pub(crate) fn type_error(code: &str, message: impl Into<String>) -> Self {
+    pub(crate) fn type_error(code: &str, message: impl Into<JsString>) -> Self {
         Self::raw("TypeError", code.into(), message.into())
     }
 
     /// Host-side failure with no TS counterpart (e.g. missing collation data).
-    pub(crate) fn host_failure(code: &str, message: String) -> Self {
-        Self::raw("Error", code.into(), message)
+    pub(crate) fn host_failure(code: &str, message: impl Into<JsString>) -> Self {
+        Self::raw("Error", code.into(), message.into())
     }
 
     /// `protocolFailure(message)` (domainPorts.ts:193–195).
-    pub(crate) fn protocol_failure(message: impl Into<String>) -> Self {
+    pub(crate) fn protocol_failure(message: impl Into<JsString>) -> Self {
         Self::raw(
             "Error",
             "MODULE_PROTOCOL_INCOMPATIBLE".into(),
@@ -113,8 +115,8 @@ impl SkillError {
 
     /// `moduleFailure(response, fallback)` (domainPorts.ts:184–191).
     pub(crate) fn provider_failure(
-        code: String,
-        message: String,
+        code: impl Into<JsString>,
+        message: impl Into<JsString>,
         retryability: Option<String>,
         details: Option<JsValue>,
     ) -> Self {
@@ -124,19 +126,19 @@ impl SkillError {
                 details,
                 outcome: None,
             })),
-            ..Self::raw("Error", code, message)
+            ..Self::raw("Error", code.into(), message.into())
         }
     }
 
     /// `transportError(code, message)` (HttpModuleClient.ts:138–140).
-    pub(crate) fn transport_failure(code: &str, message: String) -> Self {
+    pub(crate) fn transport_failure(code: &str, message: impl Into<JsString>) -> Self {
         Self {
             failure: Some(Box::new(ModuleFailure {
                 retryability: None,
                 details: None,
                 outcome: Some("result_unknown"),
             })),
-            ..Self::raw("Error", code.into(), message)
+            ..Self::raw("Error", code.into(), message.into())
         }
     }
 
@@ -159,7 +161,7 @@ impl SkillError {
     fn host() -> Self {
         Self {
             requires_host: true,
-            ..Self::raw("Error", "NODE_IO_REQUIRED".into(), String::new())
+            ..Self::raw("Error", "NODE_IO_REQUIRED".into(), JsString::default())
         }
     }
 
@@ -178,7 +180,7 @@ impl SkillError {
         }
     }
 
-    fn raw(name: &'static str, code: String, message: String) -> Self {
+    fn raw(name: &'static str, code: JsString, message: JsString) -> Self {
         Self {
             name,
             code,
@@ -194,13 +196,18 @@ impl SkillError {
 impl From<StackOverflow> for SkillError {
     /// V8 RangeError from a too-deep array join; it has no `code`.
     fn from(_: StackOverflow) -> Self {
-        Self::raw("RangeError", String::new(), StackOverflow::MESSAGE.into())
+        Self::raw(
+            "RangeError",
+            JsString::default(),
+            StackOverflow::MESSAGE.into(),
+        )
     }
 }
 
 impl fmt::Display for SkillError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
+        // Display is diagnostic only; the lossless units live on the fields.
+        f.write_str(&String::from_utf16_lossy(self.message.units()))
     }
 }
 impl std::error::Error for SkillError {}

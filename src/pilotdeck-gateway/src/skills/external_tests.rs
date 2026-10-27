@@ -46,9 +46,9 @@ fn object(entries: &[(&str, JsValue)]) -> JsValue {
 fn error_shape(error: &SkillError) -> JsValue {
     let mut entries: Vec<(&str, JsValue)> = vec![("name", error.name.into())];
     if !error.code.is_empty() {
-        entries.push(("code", error.code.as_str().into()));
+        entries.push(("code", JsValue::String(error.code.clone())));
     }
-    entries.push(("message", error.message.as_str().into()));
+    entries.push(("message", JsValue::String(error.message.clone())));
     if let Some(retryability) = error.retryability() {
         entries.push(("retryability", retryability.into()));
     }
@@ -673,11 +673,13 @@ async fn timeout_maps_to_module_timeout() {
         .await
         .expect_err("#929 timeout must fail");
     assert_eq!(
-        error.code, "MODULE_TIMEOUT",
+        String::from_utf16_lossy(error.code.units()),
+        "MODULE_TIMEOUT",
         "#929 timeout keeps MODULE_TIMEOUT"
     );
     assert_eq!(
-        error.message, "Module HTTP request exceeded 250ms.",
+        String::from_utf16_lossy(error.message.units()),
+        "Module HTTP request exceeded 250ms.",
         "#929 timeout message uses the configured timeout"
     );
     assert_eq!(
@@ -740,4 +742,560 @@ async fn facade_replays_the_ts_list_success_case() {
         "#929 facade must consume every TS reply"
     );
     let _ = std::fs::remove_dir_all(&scratch);
+}
+
+/// Local module host for the two real-transport body cases: a valid manifest
+/// GET, then a 2xx call response whose body either stalls forever or ends
+/// before its declared `Content-Length`.
+#[derive(Clone, Copy)]
+enum BodyHostMode {
+    Stall,
+    Truncate,
+}
+
+async fn spawn_body_host(mode: BodyHostMode) -> (String, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("#929 body host bind");
+    let endpoint = format!(
+        "http://{}",
+        listener.local_addr().expect("#929 body host addr")
+    );
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut buffer = [0u8; 4096];
+                let read = stream.read(&mut buffer).await.unwrap_or(0);
+                let head = String::from_utf8_lossy(&buffer[..read]);
+                if head.starts_with("GET ") {
+                    let body = r#"{"protocolVersion":"2.0","implementationId":"test.skills","contract":"pilotdeck.skills/v1","transport":"module-http-v2","methods":["list"]}"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                } else {
+                    // Head is complete, body is not: 100 declared bytes, a
+                    // 9-byte prefix, then either a stall or an early EOF.
+                    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"kind\":";
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    match mode {
+                        BodyHostMode::Stall => tokio::time::sleep(Duration::from_secs(30)).await,
+                        BodyHostMode::Truncate => {
+                            let _ = stream.shutdown().await;
+                        }
+                    }
+                }
+            });
+        }
+    });
+    (endpoint, server)
+}
+
+fn runtime_binding(endpoint: &str, timeout_ms: f64) -> ExternalSkillBinding {
+    ExternalSkillBinding::from_value(&object(&[
+        ("implementationId", "test.skills".into()),
+        ("contract", "pilotdeck.skills/v1".into()),
+        ("transport", "module-http-v2".into()),
+        ("endpoint", endpoint.into()),
+        ("manifestPath", "/module-manifest".into()),
+        ("callPath", "/v2/module/call".into()),
+        ("methods", JsValue::Array(vec!["list".into()])),
+        ("timeoutMs", JsValue::Number(timeout_ms)),
+    ]))
+    .expect("#929 runtime binding")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stalled_body_is_bounded_by_the_request_timeout() {
+    let (endpoint, server) = spawn_body_host(BodyHostMode::Stall).await;
+    let port = ExternalSkillsPort::new(
+        runtime_binding(&endpoint, 250.0),
+        Arc::new(HyperModuleTransport::new()),
+    );
+    let started = std::time::Instant::now();
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(3),
+        port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#)),
+    )
+    .await;
+    assert!(
+        outcome.is_ok(),
+        "#929 stalled body must return within timeoutMs instead of waiting forever"
+    );
+    let error = outcome
+        .expect("#929 stalled body outcome")
+        .expect_err("#929 stalled body must fail with MODULE_TIMEOUT");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "#929 stalled body must fail at the configured deadline"
+    );
+    assert!(
+        error.code.equals_str("MODULE_TIMEOUT"),
+        "#929 stalled body keeps MODULE_TIMEOUT, got {:?}",
+        error.code
+    );
+    assert_eq!(
+        String::from_utf16_lossy(error.message.units()),
+        "Module HTTP request exceeded 250ms.",
+        "#929 stalled body timeout message"
+    );
+    assert_eq!(
+        error.outcome(),
+        Some("result_unknown"),
+        "#929 stalled body timeout outcome"
+    );
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn truncated_success_body_is_a_protocol_error() {
+    let (endpoint, server) = spawn_body_host(BodyHostMode::Truncate).await;
+    let port = ExternalSkillsPort::new(
+        runtime_binding(&endpoint, 2000.0),
+        Arc::new(HyperModuleTransport::new()),
+    );
+    let error = port
+        .call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+        .await
+        .expect_err("#929 truncated 2xx body must fail");
+    assert!(
+        error.code.equals_str("MODULE_PROTOCOL_INCOMPATIBLE"),
+        "#929 truncated 2xx body keeps the protocol code, got {:?}",
+        error.code
+    );
+    assert_eq!(
+        String::from_utf16_lossy(error.message.units()),
+        "Module HTTP response must contain JSON.",
+        "#929 truncated 2xx body message"
+    );
+    assert_eq!(
+        error.outcome(),
+        None,
+        "#929 a 2xx body decode failure is not a transport outcome"
+    );
+    server.abort();
+}
+
+struct RecordingTransport {
+    seen: Mutex<Vec<ModuleHttpRequest>>,
+}
+impl ModuleHttpTransport for RecordingTransport {
+    fn send<'a>(&'a self, request: ModuleHttpRequest) -> ModuleHttpFuture<'a> {
+        Box::pin(async move {
+            self.seen.lock().unwrap().push(request);
+            Err(ModuleTransportError::Unavailable)
+        })
+    }
+}
+
+#[tokio::test]
+async fn oversized_timeout_uses_the_node_timer_clamp() {
+    for (input, scheduled) in [
+        (2_147_483_647.0, 2_147_483_647u64),
+        (2_147_483_648.0, 1),
+        (1_000_000_000_000.0, 1),
+    ] {
+        let transport = Arc::new(RecordingTransport {
+            seen: Mutex::new(Vec::new()),
+        });
+        let port = ExternalSkillsPort::new(
+            runtime_binding("http://127.0.0.1:9", input),
+            transport.clone(),
+        );
+        let error = port
+            .call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+            .await
+            .expect_err("#929 manifest must fail for the timeout probe");
+        assert!(
+            error.code.equals_str("MODULE_TRANSPORT_UNAVAILABLE"),
+            "#929 timeout probe keeps the transport code"
+        );
+        let seen = transport.seen.lock().unwrap();
+        let request = seen
+            .first()
+            .expect("#929 timeout probe must record the manifest request");
+        assert_eq!(
+            request.timeout,
+            Duration::from_millis(scheduled),
+            "#929 timeoutMs {input} must schedule the Node timer delay {scheduled}ms"
+        );
+    }
+}
+
+#[tokio::test]
+async fn bom_is_stripped_from_manifest_and_response() {
+    let manifest = object(&[
+        ("protocolVersion", "2.0".into()),
+        ("implementationId", "test.skills".into()),
+        ("contract", "pilotdeck.skills/v1".into()),
+        ("transport", "module-http-v2".into()),
+        ("methods", JsValue::Array(vec!["list".into()])),
+    ]);
+    let transport = Arc::new(DynamicTransport {
+        manifest: format!("\u{feff}{}", compact(&manifest)).into_bytes(),
+        call: Box::new(|body| {
+            let response = object(&[
+                ("kind", "response".into()),
+                ("messageId", "m".into()),
+                ("inReplyTo", text(body, "messageId").as_str().into()),
+                ("requestId", text(body, "requestId").as_str().into()),
+                ("ok", JsValue::Bool(true)),
+                (
+                    "payload",
+                    object(&[("result", object(&[("operation", "list".into())]))]),
+                ),
+            ]);
+            format!("\u{feff}{}", compact(&response)).into_bytes()
+        }),
+        seen: Mutex::new(Vec::new()),
+    });
+    let port = ExternalSkillsPort::new(
+        ExternalSkillBinding::from_value(&external_binding("test.skills", "", &["list"]))
+            .expect("#929 BOM binding"),
+        transport,
+    );
+    let result = port
+        .call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+        .await
+        .expect("#929 BOM-prefixed manifest and response must parse");
+    assert_eq!(
+        text(&result, "operation"),
+        "list",
+        "#929 BOM response payload"
+    );
+}
+
+#[tokio::test]
+async fn non_response_messages_get_the_full_protocol_validation() {
+    let manifest = object(&[
+        ("protocolVersion", "2.0".into()),
+        ("implementationId", "test.skills".into()),
+        ("contract", "pilotdeck.skills/v1".into()),
+        ("transport", "module-http-v2".into()),
+        ("methods", JsValue::Array(vec!["list".into()])),
+    ]);
+    for (body, expected) in [
+        (r#"{"kind":"error"}"#, "Message messageId is required."),
+        (
+            r#"{"kind":"request","messageId":"m","method":"module_call","payload":{}}"#,
+            "Module call field runId is required.",
+        ),
+        (r#"{"kind":"event"}"#, "Event field eventType is required."),
+        (
+            r#"{"kind":"error","messageId":"m","code":"E","message":"m","retryability":"maybe"}"#,
+            "Error retryability is invalid.",
+        ),
+        (r#"{"kind":"bogus"}"#, "Module message kind is invalid."),
+    ] {
+        let payload = body.as_bytes().to_vec();
+        let transport = Arc::new(DynamicTransport {
+            manifest: compact(&manifest).into_bytes(),
+            call: Box::new(move |_| payload.clone()),
+            seen: Mutex::new(Vec::new()),
+        });
+        let port = ExternalSkillsPort::new(
+            ExternalSkillBinding::from_value(&external_binding("test.skills", "", &["list"]))
+                .expect("#929 protocol binding"),
+            transport,
+        );
+        let error = port
+            .call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+            .await
+            .expect_err("#929 non-response message must fail protocol validation");
+        assert!(
+            error.code.equals_str("MODULE_PROTOCOL_INCOMPATIBLE"),
+            "#929 protocol validation keeps the protocol code for {body}"
+        );
+        assert_eq!(
+            String::from_utf16_lossy(error.message.units()),
+            expected,
+            "#929 protocol validation message for {body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn provider_error_keeps_unpaired_surrogates() {
+    let manifest = object(&[
+        ("protocolVersion", "2.0".into()),
+        ("implementationId", "test.skills".into()),
+        ("contract", "pilotdeck.skills/v1".into()),
+        ("transport", "module-http-v2".into()),
+        ("methods", JsValue::Array(vec!["list".into()])),
+    ]);
+    let transport = Arc::new(DynamicTransport {
+        manifest: compact(&manifest).into_bytes(),
+        call: Box::new(|body| {
+            format!(
+                r#"{{"kind":"response","messageId":"provider-response","inReplyTo":"{}","requestId":"{}","ok":false,"code":"PROVIDER\ud800","error":{{"code":"PROVIDER\ud800","message":"bad\ud800","retryability":"safe"}}}}"#,
+                text(body, "messageId"),
+                text(body, "requestId")
+            )
+            .into_bytes()
+        }),
+        seen: Mutex::new(Vec::new()),
+    });
+    let port = ExternalSkillsPort::new(
+        ExternalSkillBinding::from_value(&external_binding("test.skills", "", &["list"]))
+            .expect("#929 surrogate binding"),
+        transport,
+    );
+    let error = port
+        .call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+        .await
+        .expect_err("#929 provider error must surface");
+    assert_eq!(
+        error.code.units(),
+        &[80, 82, 79, 86, 73, 68, 69, 82, 0xd800],
+        "#929 provider code keeps the unpaired surrogate"
+    );
+    assert_eq!(
+        error.message.units(),
+        &[b'b' as u16, b'a' as u16, b'd' as u16, 0xd800],
+        "#929 provider message keeps the unpaired surrogate"
+    );
+    assert_eq!(
+        error.retryability(),
+        Some("safe"),
+        "#929 provider retryability projection"
+    );
+}
+
+struct FlightTransport {
+    manifest_calls: std::sync::atomic::AtomicUsize,
+    post_calls: std::sync::atomic::AtomicUsize,
+    started: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+    seen: Mutex<Vec<ModuleHttpRequest>>,
+}
+impl ModuleHttpTransport for FlightTransport {
+    fn send<'a>(&'a self, request: ModuleHttpRequest) -> ModuleHttpFuture<'a> {
+        Box::pin(async move {
+            self.seen.lock().unwrap().push(request.clone());
+            if request.method == "GET" {
+                let call = self
+                    .manifest_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if call == 0 {
+                    self.started.notify_one();
+                    self.release.notified().await;
+                    return Err(ModuleTransportError::Unavailable);
+                }
+                let body = r#"{"protocolVersion":"2.0","implementationId":"test.skills","contract":"pilotdeck.skills/v1","transport":"module-http-v2","methods":["list"]}"#;
+                return Ok(ModuleHttpResponse {
+                    status: 200,
+                    body: body.as_bytes().to_vec(),
+                });
+            }
+            self.post_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let body =
+                parse_json(&String::from_utf8_lossy(&request.body)).expect("#929 flight body");
+            let response = object(&[
+                ("kind", "response".into()),
+                ("messageId", "m".into()),
+                ("inReplyTo", text(&body, "messageId").as_str().into()),
+                ("requestId", text(&body, "requestId").as_str().into()),
+                ("ok", JsValue::Bool(true)),
+                (
+                    "payload",
+                    object(&[("result", object(&[("operation", "list".into())]))]),
+                ),
+            ]);
+            Ok(ModuleHttpResponse {
+                status: 200,
+                body: compact(&response).into_bytes(),
+            })
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_manifest_failure_is_shared_by_every_waiter() {
+    let transport = Arc::new(FlightTransport {
+        manifest_calls: std::sync::atomic::AtomicUsize::new(0),
+        post_calls: std::sync::atomic::AtomicUsize::new(0),
+        started: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+        seen: Mutex::new(Vec::new()),
+    });
+    let port = Arc::new(ExternalSkillsPort::new(
+        ExternalSkillBinding::from_value(&external_binding("test.skills", "", &["list"]))
+            .expect("#929 flight binding"),
+        transport.clone(),
+    ));
+    let first = {
+        let port = port.clone();
+        tokio::spawn(async move {
+            port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+                .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(2), transport.started.notified())
+        .await
+        .expect("#929 first manifest GET must start");
+    let second = {
+        let port = port.clone();
+        tokio::spawn(async move {
+            port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+                .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while port.manifest_waiters() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("#929 second call must park on the in-flight manifest");
+    transport.release.notify_one();
+    let first = first.await.expect("#929 first join");
+    let second = second.await.expect("#929 second join");
+    let first = first.expect_err("#929 first manifest failure must surface");
+    let second = second.expect_err("#929 concurrent waiter must receive the same manifest failure");
+    assert!(
+        first.code.equals_str("MODULE_TRANSPORT_UNAVAILABLE")
+            && second.code.equals_str("MODULE_TRANSPORT_UNAVAILABLE"),
+        "#929 both waiters keep the shared failure code"
+    );
+    assert_eq!(
+        transport
+            .manifest_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "#929 concurrent calls share exactly one manifest GET"
+    );
+    assert_eq!(
+        transport
+            .post_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "#929 a failed manifest must not reach the call POST"
+    );
+    port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+        .await
+        .expect("#929 a call after the failed round must start a new flight");
+    assert_eq!(
+        transport
+            .manifest_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "#929 failure clears the flight so the next call retries"
+    );
+}
+
+struct CancelTransport {
+    manifest_calls: std::sync::atomic::AtomicUsize,
+    post_calls: std::sync::atomic::AtomicUsize,
+    started: tokio::sync::Notify,
+    seen: Mutex<Vec<ModuleHttpRequest>>,
+}
+impl ModuleHttpTransport for CancelTransport {
+    fn send<'a>(&'a self, request: ModuleHttpRequest) -> ModuleHttpFuture<'a> {
+        Box::pin(async move {
+            self.seen.lock().unwrap().push(request.clone());
+            if request.method == "GET" {
+                let call = self
+                    .manifest_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if call == 0 {
+                    self.started.notify_one();
+                    // The first owner never completes; aborting the call must
+                    // release its flight.
+                    std::future::pending::<()>().await;
+                }
+                let body = r#"{"protocolVersion":"2.0","implementationId":"test.skills","contract":"pilotdeck.skills/v1","transport":"module-http-v2","methods":["list"]}"#;
+                return Ok(ModuleHttpResponse {
+                    status: 200,
+                    body: body.as_bytes().to_vec(),
+                });
+            }
+            self.post_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let body =
+                parse_json(&String::from_utf8_lossy(&request.body)).expect("#929 cancel body");
+            let response = object(&[
+                ("kind", "response".into()),
+                ("messageId", "m".into()),
+                ("inReplyTo", text(&body, "messageId").as_str().into()),
+                ("requestId", text(&body, "requestId").as_str().into()),
+                ("ok", JsValue::Bool(true)),
+                (
+                    "payload",
+                    object(&[("result", object(&[("operation", "list".into())]))]),
+                ),
+            ]);
+            Ok(ModuleHttpResponse {
+                status: 200,
+                body: compact(&response).into_bytes(),
+            })
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_manifest_owner_releases_its_waiters() {
+    let transport = Arc::new(CancelTransport {
+        manifest_calls: std::sync::atomic::AtomicUsize::new(0),
+        post_calls: std::sync::atomic::AtomicUsize::new(0),
+        started: tokio::sync::Notify::new(),
+        seen: Mutex::new(Vec::new()),
+    });
+    let port = Arc::new(ExternalSkillsPort::new(
+        ExternalSkillBinding::from_value(&external_binding("test.skills", "", &["list"]))
+            .expect("#929 cancel binding"),
+        transport.clone(),
+    ));
+    let first = {
+        let port = port.clone();
+        tokio::spawn(async move {
+            port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+                .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(2), transport.started.notified())
+        .await
+        .expect("#929 first manifest GET must start");
+    let second = {
+        let port = port.clone();
+        tokio::spawn(async move {
+            port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+                .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while port.manifest_waiters() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("#929 second call must park on the in-flight manifest");
+    first.abort();
+    let _ = first.await;
+    tokio::time::timeout(Duration::from_secs(2), second)
+        .await
+        .expect("#929 waiter must recover when the in-flight manifest owner is cancelled (bounded)")
+        .expect("#929 waiter join")
+        .expect("#929 waiter must load the manifest after the owner is cancelled");
+    assert_eq!(
+        transport
+            .manifest_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "#929 the surviving waiter owns the replacement manifest GET"
+    );
+    assert_eq!(
+        transport
+            .post_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "#929 the surviving waiter reaches its POST"
+    );
 }
