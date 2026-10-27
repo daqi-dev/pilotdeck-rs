@@ -617,7 +617,8 @@ impl ProxyConfig {
         .collect::<Vec<_>>()
         .join(",");
         let mut entries = Vec::new();
-        for entry in no_proxy.split(|character: char| character == ',' || character.is_whitespace())
+        for entry in no_proxy
+            .split(|character: char| character == ',' || crate::metadata::js_space(character))
         {
             if entry.is_empty() {
                 continue;
@@ -1085,6 +1086,17 @@ fn cause_code(error: &(dyn std::error::Error + 'static)) -> Option<&'static str>
                     rustls::CertificateError::Expired
                     | rustls::CertificateError::ExpiredContext { .. },
                 ) => "CERT_HAS_EXPIRED",
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::NotValidYet
+                    | rustls::CertificateError::NotValidYetContext { .. },
+                ) => "CERT_NOT_YET_VALID",
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::InvalidPurpose
+                    | rustls::CertificateError::InvalidPurposeContext { .. },
+                ) => "INVALID_PURPOSE",
+                rustls::Error::InvalidCertificate(rustls::CertificateError::BadSignature) => {
+                    "CERT_SIGNATURE_FAILURE"
+                }
                 rustls::Error::InvalidCertificate(_) => "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
                 _ => "ERR_SSL_PROTOCOL_ERROR",
             });
@@ -2510,11 +2522,15 @@ async fn read_frame(
     options: &StreamOptions,
     continuation: &mut bool,
 ) -> Result<Option<Bytes>, ModelStreamError> {
-    // undici's bodyTimeout races the idle watchdog; the shorter one wins.
-    // Equal durations favor the watchdog: undici timers above 1 s run on its
-    // coarse fast-timer tick and fire late, while `withIdleTimeout` uses a
-    // native setTimeout (real TS over TCP: 5000/5000 tie -> idle 5/5; default
-    // 600000 tie -> "Stream idle timeout", _tmp/20261021-issue-396/arb/).
+    // Equal durations favor the native idle watchdog. Undici's HTTP parser
+    // uses a coarse fast timer for bodyTimeout (499 ms ticks, including short
+    // nonzero durations). Its phase and event-loop lag are not recoverable
+    // from these two durations: do not add a fixed 499/1000 ms correction.
+    // #411 TCP probes: body=5000, idle=5100/5300 can still produce idle while
+    // this duration comparison produces body. Parity scenarios use equality
+    // or >=1000 ms separation; this is a fixture constraint, not a guarantee
+    // under arbitrary scheduler stalls. Unaccepted window and raw evidence:
+    // specs/gateway-parity/diffs/A6.4-PROVIDER-IDLE-001.md.
     let idle_deadline = tokio::time::Instant::now() + duration(idle_ms);
     loop {
         let remaining = idle_deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -4510,3 +4526,7 @@ mod proxy_tests {
 #[cfg(test)]
 #[path = "http/encoding_tests.rs"]
 mod encoding_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/fixtures/provider-http-boundaries/proxy.rs"]
+mod boundary_proxy_tests;
