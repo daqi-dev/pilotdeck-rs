@@ -220,6 +220,18 @@ cases = [
     }
 }''',
      'js_fallback_sort_matches_ts'),
+    # P1-3: sort the reachable producer domain (exact 0/2,
+    # score = exact*10 + matched tokens) descending. The TS gold sample is the
+    # fixture-driven check, so a wrong direction must fail it at the first
+    # fixture case whose maximum is not the first element.
+    ('sort-reachable-order', recall,
+     '''    if right.score != left.score {
+        return right.score - left.score;
+    }''',
+     '''    if right.score != left.score {
+        return left.score - right.score;
+    }''',
+     'js_fallback_sort_matches_ts_reachable_domain'),
 ]
 
 EXPECTED = {
@@ -245,6 +257,7 @@ EXPECTED = {
     'warning-in-debug': '#765 warning must not enter debug 0',
     'sort-total-cmp': '#765 minus zero and plus zero are equal',
     'sort-nan-order': '#765 NaN exact preserves input order',
+    'sort-reachable-order': '#765 reachable-domain sort first mismatch',
 }
 
 names = [case[0] for case in cases]
@@ -310,7 +323,10 @@ def write_summary(baseline):
 
 with mutating_sources(root, paths) as originals:
     stale = []
-    for name, path, before, _after, _test in all_cases:
+    # Only the selected cases own snapshot bytes; scanning `all_cases` here
+    # would look up files that a name-filtered run never snapshotted
+    # (`negative.py OUT_DIR source-priority` -> KeyError on transport.rs).
+    for name, path, before, _after, _test in cases:
         count = originals[path].decode().count(before)
         if count != 1:
             stale.append((name, path.relative_to(root).as_posix(), count))

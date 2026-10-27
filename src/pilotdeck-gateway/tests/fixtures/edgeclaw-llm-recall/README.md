@@ -54,14 +54,18 @@ PDRS_BASELINE="$PDRS_BASELINE" cargo test --manifest-path src/Cargo.toml \
 ```
 
 `#[ignore] fn regenerates_identically()` 重跑 `generate.mts` 并逐字节比较
-`oracle.json`。
+`oracle.json`。回退排序的可达域另有 `edgeclaw-llm-recall-js-sort/`：
+`js_fallback_sort_matches_ts_reachable_domain` 逐组对拍 212 组真实 TS 金样，
+`#[ignore] fn regenerates_js_sort_identically()` 是它的重生成守卫。
 
 ## 负控
 
-`negative.py` 有 22 个变异体，使用 `(name, path, before, after, test)` 表供
+`negative.py` 有 23 个变异体，使用 `(name, path, before, after, test)` 表供
 `anchor_selfcheck.py` 静态检查；每个变异都要求编译成功，并命中绑定测试里的
 专属消息（`#765 ...`），否则记 INVALID。执行器逐项跑完再汇总
 `KILLED / SURVIVED / INVALID`，任一非 KILLED 退出 1；stale anchor 退出 2。
+按名称单跑（如 `negative.py OUT_DIR source-priority`）只对选中的 `cases` 做
+stale-anchor 扫描，不会访问未建立快照的其他文件。
 变异在 `negative_process.mutating_sources` 内进行，cargo 走 `run_owned` +
 `wait_for_slot`，`CARGO_TARGET_DIR` 必须由调用方传入。`recall.rs` 与
 `transport.rs` 都在变异路径内。
