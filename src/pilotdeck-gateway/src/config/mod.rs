@@ -144,16 +144,18 @@ pub fn load_snapshot(
 /// absolute; `path.resolve` anchors a relative argument the same way,
 /// normalizing dot segments.
 pub(crate) fn absolute_cwd(cwd: &std::path::Path) -> Result<std::path::PathBuf, Error> {
-    crate::metadata::resolve_process_path(std::path::Path::new(""), cwd).map_err(|error| {
-        let (code, message) = crate::metadata::process_cwd_diagnostic(&error);
-        Error {
-            code: code.into(),
-            message: message.into(),
-            diagnostics: vec![],
-            name: "Error",
-            requires_host: false,
-        }
-    })
+    crate::metadata::resolve_process_path(std::path::Path::new(""), cwd).map_err(cwd_error)
+}
+
+fn cwd_error(error: std::io::Error) -> Error {
+    let (code, message) = crate::metadata::process_cwd_diagnostic(&error);
+    Error {
+        code: code.into(),
+        message: message.into(),
+        diagnostics: vec![],
+        name: "Error",
+        requires_host: false,
+    }
 }
 
 /// `resolvePilotConfigPath` for an explicit PilotHome: a trimmed
@@ -174,10 +176,15 @@ pub(crate) fn global_config_path(pilot_home: &std::path::Path, env: &Env) -> Str
 pub(crate) fn project_config_path(
     cwd: &std::path::Path,
     project: Option<&str>,
-) -> Option<std::path::PathBuf> {
+) -> Result<Option<std::path::PathBuf>, Error> {
     project
         .filter(|p| !p.is_empty())
-        .map(|project| crate::metadata::resolve(cwd, project).join(".pilotdeck/pilotdeck.yaml"))
+        .map(|project| {
+            crate::metadata::resolve_process_path(cwd, std::path::Path::new(project))
+                .map(|path| path.join(".pilotdeck/pilotdeck.yaml"))
+                .map_err(cwd_error)
+        })
+        .transpose()
 }
 
 /// Load and validate the global and optional project configuration using explicit
@@ -232,7 +239,7 @@ fn load_project_with_files_inner<F: Files>(
         &mut sources,
         full_values,
     )?;
-    if let Some(path) = project_config_path(&metadata.cwd, project) {
+    if let Some(path) = project_config_path(&metadata.cwd, project)? {
         read_source(
             metadata,
             &path.to_string_lossy(),

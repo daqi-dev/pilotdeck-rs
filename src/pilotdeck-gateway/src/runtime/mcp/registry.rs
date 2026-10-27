@@ -349,16 +349,21 @@ pub fn patch_project_scoped_mcp_spec(
         return Ok(spec);
     };
     let replacements: Vec<(&str, String)> = match spec.id.as_str() {
-        "browser-use" => vec![
-            (
-                PILOTDECK_NODE_EXECUTABLE_MARKER,
-                paths.node_executable.clone(),
-            ),
-            (
-                PILOTDECK_PLAYWRIGHT_MCP_ENTRYPOINT_MARKER,
-                paths.playwright_mcp_entrypoint.clone(),
-            ),
-        ],
+        "browser-use" => {
+            // TS probes Playwright's cwd candidate before resolving projectRoot,
+            // even with an absolute root or no marker in the command.
+            let _ = resolve_path("")?;
+            vec![
+                (
+                    PILOTDECK_NODE_EXECUTABLE_MARKER,
+                    paths.node_executable.clone(),
+                ),
+                (
+                    PILOTDECK_PLAYWRIGHT_MCP_ENTRYPOINT_MARKER,
+                    paths.playwright_mcp_entrypoint.clone(),
+                ),
+            ]
+        }
         "funasr" => vec![
             (PILOTDECK_PROJECT_ROOT_MARKER, resolve_path(project_root)?),
             (

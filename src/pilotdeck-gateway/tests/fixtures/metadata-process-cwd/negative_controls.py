@@ -21,7 +21,6 @@ REG = ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/registry.rs'
 BRIDGE = ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/bridge.rs'
 FIXTURE = ROOT / 'src/pilotdeck-gateway/tests/fixtures/metadata-process-cwd'
 PREFIX = 'metadata::process_cwd_tests::'
-ANCHOR_COUNTS = {'config-paths-swallow': 2, 'loader-wrong-error-variant': 2}
 MUTATIONS = [
     ('root-fallback', META,
      'let process_cwd = std::env::current_dir()\n        .map_err(|error| io::Error::new(error.kind(), ProcessCwdError(error)))?;',
@@ -51,18 +50,26 @@ MUTATIONS = [
      '.map_or(error, |inner| &inner.0);',
      '.map_or(error, |_inner| error);',
      'relative_deleted', '#879 cwd Display matches from_env shape'),
-    ('config-paths-swallow', CONFIG,
-     'cwd: absolute_cwd(cwd)?,',
-     'cwd: absolute_cwd(cwd).unwrap_or_else(|_| std::path::PathBuf::from("/")),',
-     'relative_deleted', '#879 config must propagate cwd failure'),
+    ('config-load-snapshot-swallow', CONFIG,
+     'cwd: absolute_cwd(cwd)?,\n        files: crate::metadata::NativeFiles,\n    };\n    Ok(load_project_with_files_inner(',
+     'cwd: absolute_cwd(cwd).unwrap_or_else(|_| std::path::PathBuf::from("/")),\n        files: crate::metadata::NativeFiles,\n    };\n    Ok(load_project_with_files_inner(',
+     'relative_deleted', '#879 config must propagate cwd failure: load-snapshot/relative-deleted'),
+    ('config-load-project-swallow', CONFIG,
+     'cwd: absolute_cwd(cwd)?,\n        files: crate::metadata::NativeFiles,\n    };\n    load_project_with_files(',
+     'cwd: absolute_cwd(cwd).unwrap_or_else(|_| std::path::PathBuf::from("/")),\n        files: crate::metadata::NativeFiles,\n    };\n    load_project_with_files(',
+     'relative_deleted', '#879 config must propagate cwd failure: load-project/relative-deleted'),
+    ('pilot-project-path-swallow', CONFIG,
+     'crate::metadata::resolve_process_path(cwd, std::path::Path::new(project))',
+     'Ok::<_, std::io::Error>(crate::metadata::resolve_process_path(cwd, std::path::Path::new(project)).unwrap_or_else(|_| std::path::PathBuf::from("/")))',
+     'relative_deleted', '#879 pilot-project outcome: relative-deleted'),
     ('config-error-shape', CONFIG,
-     'name: "Error",\n            requires_host: false,',
-     'name: "PilotConfigError",\n            requires_host: false,',
-     'relative_deleted', '#879 config error shape:'),
+     'name: "Error",\n        requires_host: false,',
+     'name: "PilotConfigError",\n        requires_host: false,',
+     'relative_deleted', '#879 pilot-project outcome: relative-deleted'),
     ('watch-path-swallow', STORE,
      'let cwd = super::absolute_cwd(&options.cwd)?;',
      'let cwd = super::absolute_cwd(&options.cwd).unwrap_or_else(|_| PathBuf::from("/"));',
-     'relative_deleted', '#879 config must propagate cwd failure'),
+     'relative_deleted', '#879 config must propagate cwd failure: watch-paths/relative-deleted'),
     ('global-path-swallow', PROTO,
      'Ok(absolute(pilot_home)?.join(MCP_CONFIG_FILE_NAME))',
      'Ok(absolute(pilot_home).unwrap_or_else(|_| PathBuf::from("/")).join(MCP_CONFIG_FILE_NAME))',
@@ -86,11 +93,19 @@ MUTATIONS = [
     ('loader-project-swallow', PROTO,
      '&project_mcp_config_file_path(project_root).map_err(McpConfigLoadError::Cwd)?,',
      '&project_mcp_config_file_path(project_root).unwrap_or_else(|_| PathBuf::from("/missing")),',
-     'relative_deleted', '#879 loader must propagate cwd failure'),
-    ('loader-wrong-error-variant', PROTO,
-     '.map_err(McpConfigLoadError::Cwd)?',
-     '.map_err(|_| McpConfigLoadError::CallStackExceeded(CallStackExceeded))?',
-     'relative_deleted', '#879 loader cwd variant'),
+     'relative_deleted', '#879 loader must propagate cwd failure: load-project/relative-deleted'),
+    ('loader-global-wrong-error-variant', PROTO,
+     'global_mcp_config_file_path(pilot_home).map_err(McpConfigLoadError::Cwd)?',
+     'global_mcp_config_file_path(pilot_home).map_err(|_| McpConfigLoadError::CallStackExceeded(CallStackExceeded))?',
+     'relative_deleted', '#879 loader cwd variant: load/relative-deleted'),
+    ('loader-project-wrong-error-variant', PROTO,
+     'project_mcp_config_file_path(project_root).map_err(McpConfigLoadError::Cwd)?',
+     'project_mcp_config_file_path(project_root).map_err(|_| McpConfigLoadError::CallStackExceeded(CallStackExceeded))?',
+     'relative_deleted', '#879 loader cwd variant: load-project/relative-deleted'),
+    ('browser-skips-cwd', REG,
+     'let _ = resolve_path("")?;',
+     'let _ = ();',
+     'absolute_base_deleted', '#879 patch outcome: browser-use/absolute-base-deleted'),
     ('provider-error-shape', REG,
      'name: "Error".into(),\n        code: Some(code.into()),',
      'name: "RuntimeError".into(),\n        code: Some(code.into()),',
@@ -121,11 +136,13 @@ def write_new(path, value):
         stream.write(value)
 
 
-def run(out, label, test, env):
+def run(out, label, test, env, *, compile_only=False):
     slots = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=600, interval=15)
     write_new(out / f'{label}.slots.log', slots.stdout + slots.stderr)
-    command = ['cargo', 'test', '-q', '-p', 'pilotdeck-gateway', '--lib', PREFIX + test,
+    command = ['cargo', 'test', '--offline', '-q', '-p', 'pilotdeck-gateway', '--lib', PREFIX + test,
                '--', '--exact', '--nocapture', '--format=pretty', '--test-threads=1']
+    if compile_only:
+        command = ['cargo', 'check', '--offline', '-q', '-p', 'pilotdeck-gateway', '--tests']
     write_new(out / f'{label}.command.json', json.dumps({
         'command': command, 'cwd': str(ROOT / 'src'),
         'CARGO_TARGET_DIR': env['CARGO_TARGET_DIR']}, indent=2) + '\n')
@@ -143,14 +160,24 @@ def positive(result, log, test):
 
 
 def main():
+    if sys.argv[1:] == ['--check']:
+        failures = []
+        for name, source, before, _after, _test, _marker in MUTATIONS:
+            count = source.read_text().count(before)
+            if count != 1:
+                failures.append(f'{name}: expected 1 anchor, actual {count}')
+        print('\n'.join(failures) if failures else f'#879 anchors: {len(MUTATIONS)} unique sites OK')
+        return int(bool(failures))
+    compile_only = '--compile-only' in sys.argv[1:]
+    args = [arg for arg in sys.argv[1:] if arg != '--compile-only']
     env = os.environ.copy()
     if not env.get('CARGO_TARGET_DIR'):
         raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
-    if len(sys.argv) < 2:
-        raise SystemExit('usage: negative_controls.py NEW_OUTPUT_DIRECTORY [mutation ...]')
-    out = Path(sys.argv[1]).resolve()
+    if not args:
+        raise SystemExit('usage: negative_controls.py --check | [--compile-only] NEW_OUTPUT_DIRECTORY [mutation ...]')
+    out = Path(args[0]).resolve()
     out.mkdir(parents=True, exist_ok=False)
-    names = sys.argv[2:]
+    names = args[1:]
     selected = [row for row in MUTATIONS if not names or row[0] in names]
     if not selected or (names and len(selected) != len(names)):
         raise SystemExit('unknown or duplicate mutation name')
@@ -162,31 +189,40 @@ def main():
         try:
             with mutating_sources(ROOT, guarded) as originals:
                 original = originals[source].decode()
-                expected = ANCHOR_COUNTS.get(name, 1)
+                expected = 1
                 actual = original.count(before)
                 if actual != expected:
                     raise RuntimeError(f'stale anchor: expected {expected}, actual {actual}')
-                result, log = run(out, f'{name}-positive', test, env)
-                positive(result, log, test)
+                if not compile_only:
+                    result, log = run(out, f'{name}-positive', test, env)
+                    positive(result, log, test)
                 changed = original.replace(before, after)
                 write_new(out / f'{name}.patch', ''.join(difflib.unified_diff(
                     original.splitlines(True), changed.splitlines(True),
                     fromfile=str(source.relative_to(ROOT)), tofile=str(source.relative_to(ROOT)))))
                 source.write_text(changed)
-                result, log = run(out, f'{name}-negative', test, env)
-                if (result.returncode == 101 and 'panicked at' in log and marker in log
-                        and PREFIX + test in log
-                        and 'test result: FAILED. 0 passed; 1 failed; 0 ignored;' in log):
-                    item.update(status='KILLED', reason=f'named runtime assertion: {marker}')
-                elif result.returncode == 0:
-                    positive(result, log, test)
-                    item.update(status='SURVIVED', reason='mutated named test passed')
+                result, log = run(out, f'{name}-compile', test, env, compile_only=True)
+                if result.returncode != 0:
+                    raise RuntimeError('mutant did not compile; not a runtime kill')
+                item['compiled'] = True
+                if compile_only:
+                    item.update(status='COMPILED', reason='mutant cargo check --tests passed')
                 else:
-                    item['reason'] = 'compile/setup/timeout/wrong-assertion failures are not kills'
-            with mutating_sources(ROOT, guarded):
-                result, log = run(out, f'{name}-restored', test, env)
-                positive(result, log, test)
-                item['restoredPass'] = True
+                    result, log = run(out, f'{name}-negative', test, env)
+                    if (result.returncode == 101 and 'panicked at' in log and marker in log
+                            and PREFIX + test in log
+                            and 'test result: FAILED. 0 passed; 1 failed; 0 ignored;' in log):
+                        item.update(status='KILLED', reason=f'named runtime assertion: {marker}')
+                    elif result.returncode == 0:
+                        positive(result, log, test)
+                        item.update(status='SURVIVED', reason='mutated named test passed')
+                    else:
+                        item['reason'] = 'compile/setup/timeout/wrong-assertion failures are not kills'
+            if not compile_only:
+                with mutating_sources(ROOT, guarded):
+                    result, log = run(out, f'{name}-restored', test, env)
+                    positive(result, log, test)
+                    item['restoredPass'] = True
         except Exception as error:
             item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
         results.append(item)
@@ -194,9 +230,11 @@ def main():
         print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
     write_new(out / 'summary.json', json.dumps(results, indent=2) + '\n')
     counts = {status: sum(row['status'] == status for row in results)
-              for status in ['KILLED', 'SURVIVED', 'INVALID']}
+              for status in ['KILLED', 'SURVIVED', 'INVALID', 'COMPILED']}
     print(json.dumps(counts), flush=True)
-    return 0 if all(row['status'] == 'KILLED' and row['restoredPass'] for row in results) else 1
+    success = 'COMPILED' if compile_only else 'KILLED'
+    return 0 if all(row['status'] == success and (compile_only or row['restoredPass'])
+                    for row in results) else 1
 
 
 if __name__ == '__main__':

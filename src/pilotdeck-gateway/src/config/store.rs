@@ -293,7 +293,7 @@ impl ConfigStore {
             &cwd,
             &super::global_config_path(&options.pilot_home, &options.env),
         )];
-        if let Some(project) = super::project_config_path(&cwd, options.project.as_deref())
+        if let Some(project) = super::project_config_path(&cwd, options.project.as_deref())?
             && !paths.contains(&project)
         {
             paths.push(project);
