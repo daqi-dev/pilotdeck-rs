@@ -377,6 +377,15 @@ impl EdgeClawStorage {
 
     /// `sqlite.ts:934-968`.
     pub fn insert_l0_session(&self, record: &L0SessionRecord) -> Result<(), StorageError> {
+        let conn = self.conn()?;
+        Self::insert_l0_session_on(&conn, record, &self.clock)
+    }
+
+    fn insert_l0_session_on(
+        conn: &Connection,
+        record: &L0SessionRecord,
+        clock: &FileMemoryClock,
+    ) -> Result<(), StorageError> {
         let messages = stringify_json(&record.messages)
             .map_err(|error| StorageError::Json(error.to_string()))?
             .ok_or(StorageError::Unstringifiable("l0_sessions.messages_json"))?;
@@ -388,11 +397,11 @@ impl EdgeClawStorage {
         let created_at = if record.created_at.is_empty() {
             // `record.createdAt || nowIso()` (`sqlite.ts:941`): the clock is
             // only read when the record lacks the date.
-            (self.clock)()
+            (clock)()
         } else {
             record.created_at.clone()
         };
-        self.conn()?.execute(
+        conn.execute(
             "INSERT INTO l0_sessions (
                l0_index_id,
                session_key,
@@ -420,6 +429,30 @@ impl EdgeClawStorage {
             ],
         )?;
         Ok(())
+    }
+
+    /// Atomic `captureL0Session` storage step: reads the newest L0 row,
+    /// evaluates the caller's duplicate predicate and inserts, all under one
+    /// connection guard. TS is safe without a transaction because
+    /// `captureL0Session` is synchronous and has no `await`; the Rust indexer
+    /// is shared across threads, so splitting this into `list_recent_l0` +
+    /// `insert_l0_session` lets two callers both observe the same previous row
+    /// and both insert. Returns `false` when the predicate suppressed the
+    /// insert.
+    pub fn insert_l0_session_if_new(
+        &self,
+        record: &L0SessionRecord,
+        is_duplicate: impl FnOnce(&L0SessionRecord) -> bool,
+    ) -> Result<bool, StorageError> {
+        let conn = self.conn()?;
+        let recent = Self::list_recent_l0_on(&conn, 1, 0)?;
+        if let Some(recent) = recent.first()
+            && is_duplicate(recent)
+        {
+            return Ok(false);
+        }
+        Self::insert_l0_session_on(&conn, record, &self.clock)?;
+        Ok(true)
     }
 
     /// `sqlite.ts:970-1001`: `DISTINCT session_key, MIN(timestamp)` over
@@ -597,6 +630,14 @@ impl EdgeClawStorage {
         offset: i64,
     ) -> Result<Vec<L0SessionRecord>, StorageError> {
         let conn = self.conn()?;
+        Self::list_recent_l0_on(&conn, limit, offset)
+    }
+
+    fn list_recent_l0_on(
+        conn: &Connection,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<L0SessionRecord>, StorageError> {
         let mut statement = conn.prepare(
             "SELECT * FROM l0_sessions
              ORDER BY timestamp DESC, created_at DESC

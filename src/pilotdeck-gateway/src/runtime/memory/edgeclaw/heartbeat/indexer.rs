@@ -28,8 +28,8 @@
 use super::helpers::{
     build_candidate_memory_preview, build_candidate_routing_query, build_general_project_shortlist,
     create_batch_trace, create_step, derive_focus_turns, expose_stored_relative_path,
-    flatten_batch_messages, has_new_content, infer_storage_kind, json_detail, kv_detail,
-    messages_from_value, normalize_trigger, note_detail, preview_text, text_detail,
+    flatten_batch_messages, has_new_content, infer_storage_kind, json_detail, json_detail_key,
+    kv_detail, messages_from_value, normalize_trigger, note_detail, preview_text, text_detail,
 };
 use crate::runtime::memory::edgeclaw::{
     file_memory::{EdgeClawFileStores, FileMemoryClock, FileMemoryError, MemoryFileRecord},
@@ -227,17 +227,6 @@ impl HeartbeatIndexer {
         input: CaptureL0SessionInput,
     ) -> Result<Option<L0SessionRecord>, HeartbeatError> {
         let timestamp = input.timestamp.unwrap_or_else(|| (self.clock)());
-        let recent = self.repository.storage.list_recent_l0(1, 0)?;
-        if let Some(recent) = recent.first()
-            && recent.session_key == input.session_key
-            && !has_new_content(&messages_from_value(&recent.messages), &input.messages)
-        {
-            self.info(JsString::from(format!(
-                "[clawxmemory] skip duplicate l0 capture for session={}",
-                input.session_key
-            )));
-            return Ok(None);
-        }
         let payload = stringify_json(&JsValue::Array(
             input.messages.iter().map(MemoryMessage::to_value).collect(),
         ))
@@ -259,7 +248,23 @@ impl HeartbeatIndexer {
             indexed: false,
             created_at: (self.clock)(),
         };
-        self.repository.storage.insert_l0_session(&record)?;
+        // The read-check-insert pair must share one connection guard: TS is
+        // safe because `captureL0Session` has no `await`, but this indexer is
+        // shared across threads (review P1-1).
+        let inserted = self
+            .repository
+            .storage
+            .insert_l0_session_if_new(&record, |recent| {
+                recent.session_key == record.session_key
+                    && !has_new_content(&messages_from_value(&recent.messages), &input.messages)
+            })?;
+        if !inserted {
+            self.info(JsString::from(format!(
+                "[clawxmemory] skip duplicate l0 capture for session={}",
+                record.session_key
+            )));
+            return Ok(None);
+        }
         Ok(Some(record))
     }
 
@@ -1051,16 +1056,29 @@ impl HeartbeatIndexer {
                 if let Some(debug) = create_prompt_debug {
                     options.insert("promptDebug".into(), debug);
                 }
-                let candidate_label = match &candidate {
-                    Some(candidate) => {
-                        let name = candidate
-                            .get("name")
-                            .and_then(JsValue::as_string)
-                            .cloned()
-                            .unwrap_or_default();
-                        Some(name)
-                    }
-                    None => None,
+                let candidate_label = candidate.as_ref().map(|candidate| {
+                    candidate
+                        .get("name")
+                        .and_then(JsValue::as_string)
+                        .cloned()
+                        .unwrap_or_default()
+                });
+                let reason = if label.reason.is_empty() {
+                    JsString::from("no explicit reason")
+                } else {
+                    label.reason.clone()
+                };
+                let input_summary = text::join_text_refs(
+                    [
+                        &JsString::from(kind.as_str()),
+                        &JsString::from(" | "),
+                        &reason,
+                    ],
+                    "",
+                );
+                let output_summary = match &candidate_label {
+                    Some(name) => text::join_text_refs([&JsString::from("created="), name], ""),
+                    None => JsString::from(format!("skipped={}", kind.as_str())),
                 };
                 create_step(
                     trace,
@@ -1075,26 +1093,8 @@ impl HeartbeatIndexer {
                     } else {
                         "skipped"
                     },
-                    &JsString::from(format!(
-                        "{} | {}",
-                        kind.as_str(),
-                        if label.reason.is_empty() {
-                            "no explicit reason".to_string()
-                        } else {
-                            label
-                                .reason
-                                .to_utf8()
-                                .unwrap_or_else(|_| String::from_utf16_lossy(label.reason.units()))
-                        }
-                    )),
-                    &JsString::from(match &candidate_label {
-                        Some(name) => format!(
-                            "created={}",
-                            name.to_utf8()
-                                .unwrap_or_else(|_| String::from_utf16_lossy(name.units()))
-                        ),
-                        None => format!("skipped={}", kind.as_str()),
-                    }),
+                    &input_summary,
+                    &output_summary,
                     &options,
                 );
                 created_candidates.push((label.clone(), candidate));
@@ -1251,28 +1251,33 @@ impl HeartbeatIndexer {
                         &"Project Routed".into(),
                         "success",
                         &preview_text(&focus_turn.content, 180),
-                        &JsString::from(format!(
-                            "Created new General project {}.",
-                            meta.get("projectName")
-                                .and_then(JsValue::as_string)
-                                .and_then(|name| name.to_utf8().ok())
-                                .unwrap_or_default()
-                        )),
+                        &text::join_text_refs(
+                            [
+                                &JsString::from("Created new General project "),
+                                meta.get("projectName")
+                                    .and_then(JsValue::as_string)
+                                    .unwrap_or(&JsString::default()),
+                                &JsString::from("."),
+                            ],
+                            "",
+                        ),
                         &options,
                     );
                 } else if let Some(project) = &routed.selected_project {
+                    let route_key = text::join_text_refs(
+                        [
+                            &JsString::from(format!("project-route-{}-", session.l0_index_id)),
+                            candidate
+                                .get("name")
+                                .and_then(JsValue::as_string)
+                                .unwrap_or(&JsString::default()),
+                        ],
+                        "",
+                    );
                     let mut options = object(vec![(
                         "details",
-                        JsValue::Array(vec![json_detail(
-                            &format!(
-                                "project-route-{}-{}",
-                                session.l0_index_id,
-                                candidate
-                                    .get("name")
-                                    .and_then(JsValue::as_string)
-                                    .and_then(|name| name.to_utf8().ok())
-                                    .unwrap_or_default()
-                            ),
+                        JsValue::Array(vec![json_detail_key(
+                            &route_key,
                             "Project Route",
                             &value(vec![
                                 (
@@ -1350,14 +1355,17 @@ impl HeartbeatIndexer {
                         &"Project Routed".into(),
                         "success",
                         &preview_text(&focus_turn.content, 180),
-                        &JsString::from(format!(
-                            "Assigned to {}.",
-                            project
-                                .get("projectName")
-                                .and_then(JsValue::as_string)
-                                .and_then(|name| name.to_utf8().ok())
-                                .unwrap_or_default()
-                        )),
+                        &text::join_text_refs(
+                            [
+                                &JsString::from("Assigned to "),
+                                project
+                                    .get("projectName")
+                                    .and_then(JsValue::as_string)
+                                    .unwrap_or(&JsString::default()),
+                                &JsString::from("."),
+                            ],
+                            "",
+                        ),
                         &options,
                     );
                 }
@@ -1375,7 +1383,8 @@ impl HeartbeatIndexer {
                     (
                         "candidateType",
                         JsValue::String(
-                            record
+                            routed
+                                .candidate
                                 .get("type")
                                 .and_then(JsValue::as_string)
                                 .cloned()
@@ -1385,7 +1394,8 @@ impl HeartbeatIndexer {
                     (
                         "candidateName",
                         JsValue::String(
-                            record
+                            routed
+                                .candidate
                                 .get("name")
                                 .and_then(JsValue::as_string)
                                 .cloned()
@@ -1395,7 +1405,8 @@ impl HeartbeatIndexer {
                     (
                         "scope",
                         JsValue::String(
-                            record
+                            routed
+                                .candidate
                                 .get("scope")
                                 .and_then(JsValue::as_string)
                                 .cloned()

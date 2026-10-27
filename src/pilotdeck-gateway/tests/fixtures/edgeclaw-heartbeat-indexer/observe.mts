@@ -30,6 +30,12 @@ const select = (decision: 'attach_existing' | 'create_new', projectId = '', reas
 
 const PROJECT_LABEL = () => label('project', 'durable project fact');
 const PROJECT_NOTE = () => create('Alpha', 'Alpha description', '## Summary\nAlpha body');
+// 79 UTF-16 units plus one non-BMP code point: `truncateForPrompt(name, 80)`
+// keeps the high surrogate and drops the low one, so every trace string that
+// carries this name must keep the lone surrogate instead of replacing or
+// dropping it.
+const LONG_EMOJI_NAME = 'a'.repeat(79) + '😀';
+const NON_BMP_NAME = '项目😀标题';
 
 function capture(sessionKey: string, timestamp: string, messages: any[], source?: string) {
   return {sessionKey, timestamp, messages, ...(source === undefined ? {} : {source})};
@@ -82,6 +88,41 @@ export const cases = () => [
     llm: (ctx: any) => [
       classify(PROJECT_LABEL()), PROJECT_NOTE(),
       select('attach_existing', ctx.seeds[0].projectId, 'attach existing'),
+    ],
+  },
+  {
+    name: 'single-long-emoji-name',
+    mode: 'single',
+    captures: [
+      capture('s1', '2026-10-22T00:00:01.000Z', [u('long emoji project name'), a('ok')]),
+    ],
+    llm: [
+      classify(PROJECT_LABEL()),
+      create(LONG_EMOJI_NAME, 'long emoji description', '## Summary\nlong emoji body'),
+    ],
+  },
+  {
+    name: 'general-attach-long-emoji-name',
+    mode: 'general',
+    seedProjects: [{projectName: 'Existing Project', description: 'existing description', status: 'in_progress'}],
+    captures: [
+      capture('s1', '2026-10-22T00:00:01.000Z', [u('attach long emoji fact'), a('ok')]),
+    ],
+    llm: (ctx: any) => [
+      classify(PROJECT_LABEL()),
+      create(LONG_EMOJI_NAME, 'long emoji description', '## Summary\nlong emoji body'),
+      select('attach_existing', ctx.seeds[0].projectId, 'attach existing'),
+    ],
+  },
+  {
+    name: 'single-non-bmp-name',
+    mode: 'single',
+    captures: [
+      capture('s1', '2026-10-22T00:00:01.000Z', [u('non bmp project name'), a('ok')]),
+    ],
+    llm: [
+      classify(PROJECT_LABEL()),
+      create(NON_BMP_NAME, 'non bmp description', '## Summary\nnon bmp body'),
     ],
   },
   {
@@ -350,7 +391,7 @@ export async function collect(baseline: string) {
         const keys = ['lastIndexedAt', ...sessionKeys.map((key: string) => `lastIndexedCursor:${key}`), 'workspaceDir'];
         db = {
           l0: service.repository.listAllL0(),
-          traces: service.repository.listRecentIndexTraces(20).map(traceView),
+          traces: service.repository.listRecentIndexTraces(20),
           pipeline: Object.fromEntries(keys.map((key) => [key, service.repository.getPipelineState(key)])),
         };
       } catch (error: any) {
@@ -360,7 +401,16 @@ export async function collect(baseline: string) {
         memory: tree(service.memoryDir),
         global: tree((service.repository as any).globalRootDir),
       };
-      const requests = server.requests.map((request) => ({method: request.method, url: request.url}));
+      // Request bodies and headers are part of the observation: a mutation
+      // that drops batch messages or truncates recent user messages still
+      // hits the same URL and consumes the same scripted responses, so the
+      // sequence alone cannot catch it.
+      const requests = server.requests.map((request) => ({
+        method: request.method,
+        url: request.url,
+        headers: request.headers,
+        body: request.body,
+      }));
       await server.close();
       try { service.close(); } catch {}
       observed.push(clean({
@@ -390,22 +440,6 @@ export async function collect(baseline: string) {
     rmSync(scratch, {recursive: true, force: true});
   }
   return {cases: observed};
-}
-
-function traceView(trace: any) {
-  return {
-    ...trace,
-    steps: (trace.steps ?? []).map((step: any) => {
-      const {promptDebug, ...rest} = step;
-      return {
-        ...rest,
-        ...(promptDebug ? {
-          promptDebugPresent: true,
-          promptDebugLabel: promptDebug.requestLabel,
-        } : {}),
-      };
-    }),
-  };
 }
 
 function tree(root: string, dir = ''): any[] {

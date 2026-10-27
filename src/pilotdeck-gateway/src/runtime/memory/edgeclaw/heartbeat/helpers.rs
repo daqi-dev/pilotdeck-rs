@@ -774,6 +774,24 @@ pub fn json_detail(
     )
 }
 
+/// [`json_detail`] with a [`JsString`] key, so a key that embeds a string
+/// which is not valid UTF-8 (e.g. a truncated lone surrogate) keeps its exact
+/// UTF-16 units instead of being dropped or replaced.
+pub fn json_detail_key(
+    key: &JsString,
+    label: &str,
+    json: &JsValue,
+    label_i18n: Option<&JsValue>,
+) -> JsValue {
+    detail_with_key(
+        "json",
+        key.clone(),
+        label,
+        label_i18n,
+        vec![("json", text::decode_escaped_unicode_value(json, true))],
+    )
+}
+
 fn detail(
     kind: &str,
     key: &str,
@@ -781,8 +799,18 @@ fn detail(
     label_i18n: Option<&JsValue>,
     payload: Vec<(&str, JsValue)>,
 ) -> JsValue {
+    detail_with_key(kind, key.into(), label, label_i18n, payload)
+}
+
+fn detail_with_key(
+    kind: &str,
+    key: JsString,
+    label: &str,
+    label_i18n: Option<&JsValue>,
+    payload: Vec<(&str, JsValue)>,
+) -> JsValue {
     let mut detail = JsObject::new();
-    detail.insert("key".into(), JsValue::String(key.into()));
+    detail.insert("key".into(), JsValue::String(key));
     detail.insert("label".into(), JsValue::String(label.into()));
     if let Some(label_i18n) = label_i18n
         && js_truthy(label_i18n)
