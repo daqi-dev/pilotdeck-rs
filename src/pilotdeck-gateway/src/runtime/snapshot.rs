@@ -208,6 +208,12 @@ fn project_error(error: WorkspaceSnapshotError, method: &str) -> SnapshotProject
         WorkspaceSnapshotError::Escape => {
             SnapshotProjectionError::plain("Error", "Snapshot path escapes target workspace.")
         }
+        // #293 registered divergence A6.6-SNAPSHOT-OBJECTKEY-001: TS restores
+        // objectKeys outside the snapshot root; Rust refuses the restore.
+        WorkspaceSnapshotError::ObjectKeyEscape => SnapshotProjectionError::plain(
+            "Error",
+            "Snapshot object key escapes the snapshot root.",
+        ),
         WorkspaceSnapshotError::TypeError(message) => SnapshotProjectionError {
             code: Some("ERR_INVALID_ARG_VALUE".into()),
             name: "TypeError",

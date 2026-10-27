@@ -31,11 +31,14 @@ use std::{
     collections::{HashMap, HashSet},
     ffi::OsString,
     fs, io,
-    os::unix::{ffi::OsStringExt, fs::symlink},
+    os::unix::{
+        ffi::OsStringExt,
+        fs::{PermissionsExt, symlink},
+    },
     path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const FIXTURES: &str = concat!(
@@ -116,15 +119,18 @@ fn s(value: &JsValue) -> String {
         .to_utf8()
         .expect("#322 fixture string is UTF-8")
 }
-fn arr(value: &JsValue) -> &[JsValue] {
+/// #293: a missing or non-array oracle field is a broken corpus, not an
+/// empty one — the old silent fold let a truncated oracle replay zero
+/// scenarios and still pass.
+fn arr<'a>(value: &'a JsValue, context: &str) -> &'a [JsValue] {
     if let JsValue::Array(items) = value {
         items
     } else {
-        &[]
+        panic!("#293 oracle field {context} is not an array: {value:?}")
     }
 }
-fn strs(value: &JsValue) -> Vec<String> {
-    arr(value).iter().map(s).collect()
+fn strs(value: &JsValue, context: &str) -> Vec<String> {
+    arr(value, context).iter().map(s).collect()
 }
 fn object(pairs: &[(&str, JsValue)]) -> JsValue {
     let mut out = JsObject::new();
@@ -564,7 +570,7 @@ fn scenarios_match_ts_outcomes_and_trees() {
         sentinel
     })
     .collect();
-    let scenarios = arr(field(&oracle, "scenarios"));
+    let scenarios = arr(field(&oracle, "scenarios"), "scenarios");
     assert_eq!(
         scenarios.len(),
         EXPECTED.len(),
@@ -588,12 +594,12 @@ fn scenarios_match_ts_outcomes_and_trees() {
             "#322 scenario name order is pinned"
         );
         assert_eq!(
-            arr(field(scenario, "steps")).len(),
+            arr(field(scenario, "steps"), "scenarios[].steps").len(),
             *steps,
             "#322 {name}: step count is pinned"
         );
         assert_eq!(
-            arr(field(scenario, "tree")).len(),
+            arr(field(scenario, "tree"), "scenarios[].tree").len(),
             *tree,
             "#322 {name}: tree row count is pinned"
         );
@@ -659,6 +665,313 @@ fn out_of_bounds_removal_is_refused_and_sentinel_survives() {
     );
 }
 
+/// #293 (registered divergence A6.6-SNAPSHOT-OBJECTKEY-001): TS resolves
+/// restore objectKeys without validation and copies snapshot-root-external
+/// content into the target workspace (Node v22.22.0 probe
+/// `_tmp/20261026-issue-293/probe-a-objectkey.out`); Rust refuses the read
+/// instead. A key that folds back inside the root still restores, matching
+/// the TS-resolvable spelling.
+#[test]
+fn restore_refuses_object_keys_outside_the_snapshot_root() {
+    let run = Scratch::new();
+    let root = run.0.join("snapshots");
+    let manifest_dir = root.join("workspaces/w/sessions/s/snapshots");
+    fs::create_dir_all(manifest_dir.join("esc-rel")).unwrap();
+    fs::create_dir_all(manifest_dir.join("esc-abs")).unwrap();
+    fs::create_dir_all(manifest_dir.join("fold-in")).unwrap();
+    fs::create_dir_all(root.join("objects/sub")).unwrap();
+    fs::write(root.join("objects/ok.txt"), b"inside-root\n").unwrap();
+    let outside = run.0.join("outside.txt");
+    fs::write(&outside, b"SECRET-outside\n").unwrap();
+    let absolute = run.0.join("absolute.txt");
+    fs::write(&absolute, b"SECRET-absolute\n").unwrap();
+
+    let manifest = |snapshot_id: &str, entries: &str| {
+        format!(
+            "{{\"snapshotId\":\"{snapshot_id}\",\"workspaceId\":\"w\",\"sessionId\":\"s\",\
+             \"turnId\":\"t\",\"runId\":\"r\",\"phase\":\"pre_user\",\
+             \"createdAt\":\"2026-01-01T00:00:00.000Z\",\"entries\":[{entries}]}}"
+        )
+    };
+    fs::write(
+        manifest_dir.join("esc-rel/manifest.json"),
+        manifest(
+            "esc-rel",
+            concat!(
+            "{\"path\":\"ok.txt\",\"entryType\":\"file\",\"size\":12,\"objectKey\":\"objects/ok.txt\"},",
+            "{\"path\":\"escaped.txt\",\"entryType\":\"file\",\"size\":15,\"objectKey\":\"../outside.txt\"},",
+            "{\"path\":\"after.txt\",\"entryType\":\"file\",\"size\":17,\"objectKey\":\"after.txt\"}",
+        )),
+    )
+    .unwrap();
+    fs::write(
+        manifest_dir.join("esc-abs/manifest.json"),
+        manifest(
+            "esc-abs",
+            &format!(
+                "{{\"path\":\"absolute.txt\",\"entryType\":\"file\",\"size\":17,\
+             \"objectKey\":\"{}\"}}",
+                absolute.to_string_lossy()
+            ),
+        ),
+    )
+    .unwrap();
+    fs::write(
+        manifest_dir.join("fold-in/manifest.json"),
+        manifest(
+            "fold-in",
+            "{\"path\":\"folded.txt\",\"entryType\":\"file\",\"size\":12,\
+             \"objectKey\":\"objects/sub/../ok.txt\"}",
+        ),
+    )
+    .unwrap();
+
+    let root_text = root.to_string_lossy().into_owned();
+    let provider = create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
+        root: root_text.clone(),
+        snapshot_root: root_text,
+    });
+
+    // Positive control first: an in-root objectKey restores.
+    let target = run.0.join("target-fold");
+    let restored = provider
+        .restore("fold-in", &target.to_string_lossy())
+        .expect("#293 an in-root folding objectKey must restore");
+    assert!(restored.restored, "#293 fold-in restore reports restored");
+    assert_eq!(
+        fs::read(target.join("folded.txt")).unwrap(),
+        b"inside-root\n",
+        "#293 fold-in restored the root object"
+    );
+
+    // `../outside.txt`: refused after the earlier in-root entry restored.
+    let target = run.0.join("target-rel");
+    let error = provider
+        .restore("esc-rel", &target.to_string_lossy())
+        .expect_err("#293 a root-escaping objectKey must be refused");
+    assert!(
+        matches!(error, WorkspaceSnapshotError::ObjectKeyEscape),
+        "#293 expected ObjectKeyEscape, got {error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "Snapshot object key escapes the snapshot root.",
+        "#293 refusal message"
+    );
+    assert_eq!(
+        fs::read(target.join("ok.txt")).unwrap(),
+        b"inside-root\n",
+        "#293 the in-root entry before the refusal still restored"
+    );
+    for refused in ["escaped.txt", "after.txt"] {
+        assert!(
+            !target.join(refused).exists(),
+            "#293 nothing after the escaping key may be written: {refused}"
+        );
+    }
+
+    // Absolute objectKey: refused before the read.
+    let target = run.0.join("target-abs");
+    let error = provider
+        .restore("esc-abs", &target.to_string_lossy())
+        .expect_err("#293 an absolute objectKey must be refused");
+    assert!(
+        matches!(error, WorkspaceSnapshotError::ObjectKeyEscape),
+        "#293 expected ObjectKeyEscape, got {error:?}"
+    );
+    assert!(
+        !target.join("absolute.txt").exists(),
+        "#293 the root-external absolute object was not copied into the target"
+    );
+}
+
+/// #293 (registered divergence A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001): two
+/// recorder instances sharing one snapshot root and one capture key; the
+/// failing round's cleanup must not delete the other round's committed
+/// manifest/`_COMMITTED` (TS unlinks both unconditionally, Node v22.22.0
+/// probe `_tmp/20261026-issue-293/probe-b-concurrent.out`). Deterministic
+/// interleave, no sleeps: R2's workspace holds a big file (wide scan window)
+/// and a last-sorted unreadable directory (the failure point); the main
+/// thread anchors on R2's `.tmp-*` directory (it passed the marker checks and
+/// is inside the try block) before running R1 to completion.
+#[test]
+fn concurrent_failure_cleanup_keeps_other_rounds_commit() {
+    if rustix::process::geteuid().as_raw() == 0 {
+        // Root reads through mode-000 directories; the failure point would
+        // not trigger (same skip as the TS probe).
+        return;
+    }
+    let run = Scratch::new();
+    let snapshot_root = run.0.join("snapshots");
+    fs::create_dir_all(&snapshot_root).unwrap();
+
+    // R2 (will fail): a-bigfile is copied during the scan, zzz-blocked sorts
+    // last and fails the scandir with EACCES.
+    let slow_ws = run.0.join("ws-slow");
+    fs::create_dir_all(slow_ws.join("zzz-blocked")).unwrap();
+    fs::write(slow_ws.join("zzz-blocked/inner.txt"), b"x").unwrap();
+    fs::write(slow_ws.join("a-bigfile"), vec![b'a'; 64 * 1024 * 1024]).unwrap();
+    let mut blocked = fs::metadata(slow_ws.join("zzz-blocked"))
+        .expect("#293 stat the blocking directory")
+        .permissions();
+    blocked.set_mode(0o000);
+    fs::set_permissions(slow_ws.join("zzz-blocked"), blocked)
+        .expect("#293 make the blocking directory unreadable");
+
+    // R1 (will succeed): a single small file.
+    let fast_ws = run.0.join("ws-fast");
+    fs::create_dir_all(&fast_ws).unwrap();
+    fs::write(fast_ws.join("only.txt"), b"fast\n").unwrap();
+
+    let input = |workspace_dir: &Path, run_id: &str| WorkspaceSnapshotInput {
+        workspace_id: "w".into(),
+        session_id: "s".into(),
+        turn_id: "t".into(),
+        run_id: run_id.into(),
+        workspace_dir: workspace_dir.to_string_lossy().into_owned(),
+        workspace_stable: None,
+        failure_kind: None,
+        failure_reason: None,
+    };
+    let config = WorkspaceSnapshotConfig {
+        root: run.0.to_string_lossy().into_owned(),
+        snapshot_root: snapshot_root.to_string_lossy().into_owned(),
+    };
+    let r2 = ContentAddressedWorkspaceSnapshotRecorder::new(config.clone());
+    let r1 = ContentAddressedWorkspaceSnapshotRecorder::new(config.clone());
+    let slow_input = input(&slow_ws, "run-r2");
+    let fast_input = input(&fast_ws, "run-r1");
+    let r2handle = thread::spawn(move || r2.capture_pre_user(&slow_input));
+
+    // Anchor: R2's .tmp-* proves it passed the committed/failed marker checks
+    // and is inside the try block scanning the big file. 15s termination; a
+    // finished R2 before the anchor is a broken probe, not a pass.
+    let partition = snapshot_root
+        .join("workspaces/w/sessions/s/snapshots")
+        .join(sha256_hex(b"s\0t\0pre_user"));
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Ok(entries) = fs::read_dir(&partition)
+            && entries
+                .flatten()
+                .any(|entry| entry.file_name().to_string_lossy().starts_with(".tmp-"))
+        {
+            break;
+        }
+        assert!(
+            !r2handle.is_finished(),
+            "#293 R2 settled before the .tmp-* anchor; the interleave probe is broken"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "#293 the .tmp-* anchor never appeared within 15s"
+        );
+        thread::yield_now();
+    }
+
+    let r1result = r1
+        .capture_pre_user(&fast_input)
+        .expect("#293 R1 must commit its capture");
+    let r2result = r2handle
+        .join()
+        .expect("#293 R2 must not panic")
+        .expect("#293 R2 must return a failed result, not a hard error");
+    let manifest_path = partition.join("manifest.json");
+    let committed_path = partition.join("_COMMITTED");
+    let failed_path = partition.join("_FAILED.json");
+
+    assert_eq!(
+        r1result.state,
+        SnapshotState::Committed,
+        "#293 R1 committed before R2 failed"
+    );
+    assert_eq!(
+        r2result.state,
+        SnapshotState::Failed,
+        "#293 R2 must fail at the unreadable directory"
+    );
+    let manifest = fs::read_to_string(&manifest_path)
+        .expect("#293 R1's committed manifest survives R2's failure cleanup");
+    assert!(
+        manifest.contains("\"runId\": \"run-r1\""),
+        "#293 the surviving manifest is R1's, not R2's: {manifest}"
+    );
+    assert!(
+        committed_path.exists(),
+        "#293 R1's _COMMITTED survives R2's failure cleanup"
+    );
+    let failed = fs::read_to_string(&failed_path)
+        .expect("#293 R2 wrote its failure marker alongside R1's commit");
+    assert!(
+        failed.contains("EACCES"),
+        "#293 R2's marker records the scandir failure: {failed}"
+    );
+    // Interleave proof: R1's manifest predates R2's failure marker. If this
+    // ever reports the opposite, the window closed early and the run must be
+    // repeated rather than counted as a pass.
+    let manifest_mtime = fs::metadata(&manifest_path)
+        .expect("#293 R1 manifest metadata")
+        .modified()
+        .expect("#293 R1 manifest mtime");
+    let failed_mtime = fs::metadata(&failed_path)
+        .expect("#293 failure marker metadata")
+        .modified()
+        .expect("#293 failure marker mtime");
+    assert!(
+        manifest_mtime < failed_mtime,
+        "#293 interleave did not hold (R1 wrote after R2 failed); rerun the test"
+    );
+    // Both rounds removed their own temporary directories.
+    if let Ok(entries) = fs::read_dir(&partition) {
+        let leftovers: Vec<_> = entries
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".tmp-"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "#293 both rounds cleaned their own temporary directories: {leftovers:?}"
+        );
+    }
+    // A third round early-exits on R1's _COMMITTED instead of rescanning.
+    let r3 = ContentAddressedWorkspaceSnapshotRecorder::new(config);
+    let r3result = r3
+        .capture_pre_user(&input(&slow_ws, "run-r3"))
+        .expect("#293 the committed marker short-circuits the third round");
+    assert_eq!(r3result.state, SnapshotState::Committed);
+    assert_eq!(
+        r3result.manifest_path.as_deref(),
+        Some(manifest_path.to_string_lossy().as_ref())
+    );
+}
+
+/// #293: a missing or non-array oracle field must fail loudly with the
+/// dedicated message, not silently replay as an empty corpus. The old `arr`
+/// folded both to `&[]`, so a truncated oracle (valid JSON, `scenarios`
+/// dropped or a non-array value) replayed zero scenarios and passed.
+#[test]
+fn arr_panics_on_missing_or_non_array_oracle_fields() {
+    for (value, context) in [
+        (JsValue::Null, "scenarios"),
+        (JsValue::Undefined, "configCases"),
+        (object(&[("scenarios", JsValue::Number(27.0))]), "scenarios"),
+    ] {
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = arr(field(&value, context), context);
+        }))
+        .expect_err("#293 a non-array oracle field must panic, not fold to empty");
+        let message = panicked
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| panicked.downcast_ref::<&str>().map(|text| text.to_string()))
+            .unwrap_or_default();
+        assert!(
+            message.contains(&format!("#293 oracle field {context} is not an array")),
+            "#293 the panic names the broken field: {message}"
+        );
+    }
+}
+
 /// R19 host boundary for R9's first P1: Node keeps distinct weights for
 /// unpaired surrogates (the recorded TS list is the review's B,A case), while
 /// ICU4X folds them to U+FFFD. The port must refuse the comparison instead of
@@ -672,15 +985,21 @@ fn unpaired_surrogate_collation_requires_host() {
     );
     let scratch = Scratch::new();
     let root = scratch.0.join("surrogate-sort-root");
-    for manifest in arr(field(case, "manifests")) {
+    for manifest in arr(
+        field(case, "manifests"),
+        "hostBoundaryCases.unpairedSurrogateCollation.manifests",
+    ) {
         let path = root.join(s(field(manifest, "path")));
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, s(field(manifest, "text"))).unwrap();
     }
-    let ts_order: Vec<String> = arr(field(case, "tsList"))
-        .iter()
-        .map(|descriptor| s(field(descriptor, "snapshotId")))
-        .collect();
+    let ts_order: Vec<String> = arr(
+        field(case, "tsList"),
+        "hostBoundaryCases.unpairedSurrogateCollation.tsList",
+    )
+    .iter()
+    .map(|descriptor| s(field(descriptor, "snapshotId")))
+    .collect();
     assert_eq!(
         ts_order,
         ["b-replacement", "c-pua", "a-lone-high", "d-supplementary"],
@@ -702,7 +1021,10 @@ fn unpaired_surrogate_collation_requires_host() {
     // Positive control: a single descriptor never calls the comparator, so its
     // lone-surrogate createdAt still lists (the boundary is exact, not a ban).
     let single = scratch.0.join("single-surrogate");
-    let first = &arr(field(case, "manifests"))[0];
+    let first = &arr(
+        field(case, "manifests"),
+        "hostBoundaryCases.unpairedSurrogateCollation.manifests",
+    )[0];
     let path = single.join(s(field(first, "path")));
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, s(field(first, "text"))).unwrap();
@@ -729,20 +1051,29 @@ fn replay_scenario(scenario: &JsValue) {
     fs::create_dir_all(&workspace_dir).unwrap();
 
     let spec = field(scenario, "workspace");
-    for file in arr(field(spec, "files")) {
+    for file in arr(field(spec, "files"), &format!("{name}: workspace.files")) {
         let path = workspace_dir.join(s(field(file, "path")));
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, decode(&s(field(file, "b64")))).unwrap();
     }
-    for empty in strs(field(spec, "emptyDirs")) {
+    for empty in strs(
+        field(spec, "emptyDirs"),
+        &format!("{name}: workspace.emptyDirs"),
+    ) {
         fs::create_dir_all(workspace_dir.join(empty)).unwrap();
     }
-    for link in arr(field(spec, "symlinks")) {
+    for link in arr(
+        field(spec, "symlinks"),
+        &format!("{name}: workspace.symlinks"),
+    ) {
         let path = workspace_dir.join(s(field(link, "path")));
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         symlink(s(field(link, "target")), &path).unwrap();
     }
-    let raw_files = arr(field(spec, "rawFiles"));
+    let raw_files = arr(
+        field(spec, "rawFiles"),
+        &format!("{name}: workspace.rawFiles"),
+    );
     if !raw_files.is_empty() && !non_utf8_names_writable(&dir) {
         // generate.mts probes the same way. The committed oracle was generated
         // on macOS, where APFS/HFS+ reject the bytes and the scenario is
@@ -785,9 +1116,14 @@ fn replay_scenario(scenario: &JsValue) {
     )];
     let mut ids: HashMap<String, String> = HashMap::new();
     let mut marker_dirs: HashMap<String, String> = HashMap::new();
-    let dynamic: HashSet<String> = strs(field(scenario, "dynamicIds")).into_iter().collect();
+    let dynamic: HashSet<String> = strs(
+        field(scenario, "dynamicIds"),
+        &format!("{name}: dynamicIds"),
+    )
+    .into_iter()
+    .collect();
 
-    let steps = arr(field(scenario, "steps"));
+    let steps = arr(field(scenario, "steps"), &format!("{name}: steps"));
     for (index, step) in steps.iter().enumerate() {
         let op = s(field(step, "op"));
         let context = format!("{name} step {index} ({op})");
@@ -981,7 +1317,7 @@ fn config_env_table_matches_ts() {
         .unwrap()
         .to_string_lossy()
         .into_owned();
-    let cases = arr(field(&oracle, "configCases"));
+    let cases = arr(field(&oracle, "configCases"), "configCases");
     assert_eq!(
         cases.len(),
         7,
@@ -1039,21 +1375,21 @@ fn rust_reads_ts_written_snapshots() {
     let oracle = oracle();
     let cross = field(&oracle, "cross");
     assert_eq!(
-        strs(field(cross, "dirs")).len(),
+        strs(field(cross, "dirs"), "cross.dirs").len(),
         41,
         "#322 cross dir set is pinned"
     );
     assert_eq!(
-        arr(field(cross, "files")).len(),
+        arr(field(cross, "files"), "cross.files").len(),
         20,
         "#322 cross file set is pinned"
     );
     let scratch = Scratch::new();
     let root = scratch.0.join("ts-written");
-    for dir in strs(field(cross, "dirs")) {
+    for dir in strs(field(cross, "dirs"), "cross.dirs") {
         fs::create_dir_all(root.join(dir)).unwrap();
     }
-    for file in arr(field(cross, "files")) {
+    for file in arr(field(cross, "files"), "cross.files") {
         let path = root.join(s(field(file, "path")));
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, decode(&s(field(file, "b64")))).unwrap();
@@ -1082,7 +1418,7 @@ fn rust_reads_ts_written_snapshots() {
         "cross get",
         &HashSet::new(),
     );
-    for entry in arr(field(&value, "entries")) {
+    for entry in arr(field(&value, "entries"), "cross.restoreTargetTree entries") {
         if s(field(entry, "entryType")) == "file" {
             let bytes = fs::read(root.join(s(field(entry, "objectKey")))).unwrap();
             assert_eq!(
@@ -1121,7 +1457,7 @@ fn rust_reads_ts_written_snapshots() {
     assert_eq!(result.state, SnapshotState::Committed);
     assert!(result.failure_marker_path.is_none());
     assert!(result.error.is_none());
-    let expected = arr(field(cross, "listValue"))
+    let expected = arr(field(cross, "listValue"), "cross.listValue")
         .iter()
         .find(|descriptor| s(field(descriptor, "snapshotId")) == pre)
         .expect("pre descriptor");

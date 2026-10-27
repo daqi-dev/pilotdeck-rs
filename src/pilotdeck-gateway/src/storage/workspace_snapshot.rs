@@ -16,9 +16,11 @@
 //! A6.6-SNAPSHOT-COLLATION-001. Synchronous execution and UTF-16 preservation
 //! below describe the contract, not independently measured output differences.
 //! - IO error text inside `_FAILED.json` uses the Node libuv wording from the
-//!   measured table (`node_io`); errnos outside it fall back to the Rust
-//!   `io::Error` Display. Manifest JSON syntax errors use the V8 messages
-//!   recorded by the CLI json-syntax fixture (`pilotdeck_protocol::json_syntax`).
+//!   measured table (`node_io`); errnos outside it are the explicit host
+//!   boundary (`code: None`, empty message) per the node_io doctrine, never a
+//!   Rust `io::Error` Display on the wire. Manifest JSON syntax errors use the
+//!   V8 messages recorded by the CLI json-syntax fixture
+//!   (`pilotdeck_protocol::json_syntax`).
 //! - The recorder is synchronous, but in-flight key sharing matches TS: a
 //!   hard failure of the round is delivered to every caller already waiting
 //!   on that key, and is not cached for callers that arrive after the round
@@ -47,7 +49,10 @@ use std::{
     fmt,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::unix::{ffi::OsStrExt, fs::symlink},
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{MetadataExt, symlink},
+    },
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex, PoisonError},
 };
@@ -174,8 +179,9 @@ pub enum WorkspaceSnapshotError {
     Syntax(String),
     /// Node-formatted filesystem diagnostic. `code` is the measured libuv
     /// errno code when [`crate::node_io::lookup`] recognized it; the fallback
-    /// for an errno outside that table is `None` with the Rust `io::Error`
-    /// Display in `message`. Gateway methods must admit `code` through
+    /// for an errno outside that table is `None` with an empty `message` (the
+    /// host boundary, never a Rust Display string on the wire). Gateway
+    /// methods must admit `code` through
     /// `node_io::lookup_for` before putting it on the wire; keeping the code
     /// here avoids re-parsing the message prefix.
     Io {
@@ -190,6 +196,13 @@ pub enum WorkspaceSnapshotError {
     UnsafePath,
     /// workspaceSnapshot.ts:123.
     Escape,
+    /// #293 security hardening (registered divergence
+    /// A6.6-SNAPSHOT-OBJECTKEY-001): restore refuses an `objectKey` that
+    /// resolves outside the snapshot root instead of reading it. TS resolves
+    /// `objectKey` without any validation and copies root-external content
+    /// into the target workspace (Node v22.22.0, probe
+    /// `_tmp/20261026-issue-293/probe-a-objectkey.out`).
+    ObjectKeyEscape,
     /// Node `ERR_INVALID_ARG_VALUE` from `fs.validatePath` (a NUL byte in a
     /// path argument). Only raised outside the capture try block, where TS
     /// rejects instead of writing a failed marker. The message keeps the raw
@@ -222,6 +235,7 @@ impl fmt::Display for WorkspaceSnapshotError {
             }
             Self::UnsafePath => f.write_str("Snapshot contains an unsafe relative path."),
             Self::Escape => f.write_str("Snapshot path escapes target workspace."),
+            Self::ObjectKeyEscape => f.write_str("Snapshot object key escapes the snapshot root."),
         }
     }
 }
@@ -455,6 +469,24 @@ impl WorkspaceSnapshotProvider {
             {
                 let source_units = resolve_path_units(&snapshot_root, object_key);
                 validate_nul_path(&source_units, "path")?;
+                // #293 security hardening (registered divergence
+                // A6.6-SNAPSHOT-OBJECTKEY-001): TS resolves `objectKey`
+                // without validation and reads outside the snapshot root
+                // (`resolve(config.snapshotRoot, entry.objectKey)` then
+                // readFile, Node v22.22.0 probe
+                // `_tmp/20261026-issue-293/probe-a-objectkey.out`); Rust
+                // refuses the restore instead of copying root-external
+                // content into the target workspace. The resolved units are
+                // checked, like the destination side above, so an in-root
+                // `sub/../x` still resolves and restores.
+                let root_units: Vec<u16> = snapshot_root.encode_utf16().collect();
+                let mut root_prefix = root_units.clone();
+                root_prefix.push(SLASH);
+                if source_units.units() != root_units.as_slice()
+                    && !source_units.units().starts_with(&root_prefix)
+                {
+                    return Err(WorkspaceSnapshotError::ObjectKeyEscape);
+                }
                 let source_text = String::from_utf16_lossy(source_units.units());
                 let source = PathBuf::from(&source_text);
                 let contents = fs::read(&source).map_err(|error| {
@@ -777,7 +809,15 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
                 message: e.to_string(),
             })?
         ));
-        let committed = commit(input, phase, &snapshot_id, &paths, &temporary_dir);
+        let mut markers = RoundMarkers::default();
+        let committed = commit(
+            input,
+            phase,
+            &snapshot_id,
+            &paths,
+            &temporary_dir,
+            &mut markers,
+        );
         match committed {
             Ok(()) => Ok(WorkspaceSnapshotResult {
                 snapshot_id,
@@ -788,10 +828,13 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
                 error: None,
             }),
             Err(message) => {
-                // workspaceSnapshot.ts:260-280.
-                let _ = fs::remove_file(&paths.manifest_path);
-                let _ = fs::remove_file(&paths.committed_path);
-                let _ = fs::remove_dir_all(&temporary_dir);
+                // workspaceSnapshot.ts:260-280, #293 registered divergence
+                // A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001: the cleanup removes
+                // only the files this round itself wrote (inode ownership),
+                // never a concurrent round's committed snapshot, which TS
+                // unconditionally unlinks (Node v22.22.0 probe
+                // `_tmp/20261026-issue-293/probe-b-concurrent.out`).
+                failure_cleanup(&markers, &temporary_dir);
                 // This mkdir sits outside the TS catch: a NUL partition path
                 // rejects the capture promise instead of writing a marker.
                 validate_nul_path(&JsString::from(path_string(&paths.partition)), "path")?;
@@ -826,14 +869,66 @@ struct CapturePaths {
     failure_marker_path: PathBuf,
 }
 
+/// #293: the partition files one capture round itself wrote, by inode
+/// identity. The failure cleanup removes only these; a concurrent round of
+/// the same key (its own recorder instance, so no in-flight sharing) may
+/// have committed between this round's marker checks and its failure, and
+/// its manifest/`_COMMITTED` must survive (registered divergence
+/// A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001).
+#[derive(Default)]
+struct RoundMarkers {
+    manifest: Option<OwnedFile>,
+    committed: Option<OwnedFile>,
+}
+struct OwnedFile {
+    path: PathBuf,
+    dev: u64,
+    ino: u64,
+}
+
+/// Inode identity of a file this round just placed (rename preserves it).
+fn owned_file(path: &Path) -> Option<OwnedFile> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    Some(OwnedFile {
+        path: path.to_owned(),
+        dev: metadata.dev(),
+        ino: metadata.ino(),
+    })
+}
+
+/// Unlink only while the path still holds the recorded inode: a file another
+/// round renamed over the same path since is not ours to delete.
+fn remove_if_owned(owned: &Option<OwnedFile>) {
+    let Some(file) = owned else {
+        return;
+    };
+    if let Some(current) = owned_file(&file.path)
+        && current.dev == file.dev
+        && current.ino == file.ino
+    {
+        let _ = fs::remove_file(&file.path);
+    }
+}
+
+/// The TS catch-block deletions (workspaceSnapshot.ts:260-280), restricted to
+/// this round's own writes. The temporary directory is uuid-private, so it
+/// needs no ownership check.
+fn failure_cleanup(markers: &RoundMarkers, temporary_dir: &Path) {
+    remove_if_owned(&markers.manifest);
+    remove_if_owned(&markers.committed);
+    let _ = fs::remove_dir_all(temporary_dir);
+}
+
 /// workspaceSnapshot.ts:234-259, the try block. Every failure becomes the
-/// marker `error` message, Node-formatted.
+/// marker `error` message, Node-formatted. `markers` records the partition
+/// files this round wrote, for the ownership-checked failure cleanup.
 fn commit(
     input: &WorkspaceSnapshotInput,
     phase: SnapshotPhase,
     snapshot_id: &str,
     paths: &CapturePaths,
     temporary_dir: &Path,
+    markers: &mut RoundMarkers,
 ) -> std::result::Result<(), String> {
     if input.workspace_stable == Some(false) {
         return Err("Workspace did not become quiescent before snapshot capture.".into());
@@ -856,7 +951,9 @@ fn commit(
     fs::rename(&temporary_manifest, &paths.manifest_path).map_err(|e| {
         two_path_message(&e, "rename", &temporary_manifest, &paths.manifest_path).to_string()
     })?;
+    markers.manifest = owned_file(&paths.manifest_path);
     atomic_marker(&paths.committed_path, "").map_err(|error| error.to_string())?;
+    markers.committed = owned_file(&paths.committed_path);
     // workspaceSnapshot.ts:258: rm(force) ignores a missing directory.
     match fs::remove_dir_all(temporary_dir) {
         Ok(()) => {}
@@ -1260,10 +1357,12 @@ fn utf16_cmp(left: &str, right: &str) -> std::cmp::Ordering {
     left.encode_utf16().cmp(right.encode_utf16())
 }
 
-/// Node-formatted IO diagnostic from the measured libuv table, with the Rust
-/// Display as the documented fallback for unmeasured errnos. The measured code
-/// travels alongside the message so gateway method admission never has to parse
-/// the text prefix again.
+/// Node-formatted IO diagnostic from the measured libuv table. An errno
+/// outside that table is the explicit host boundary (`code: None`, empty
+/// message — `project_error` answers `NODE_IO_REQUIRED`), never a Rust
+/// Display string on the wire (node_io.rs doctrine); the measured code
+/// travels alongside the message so gateway method admission never has to
+/// parse the text prefix again.
 fn io_error(error: &io::Error, syscall: &str, path: Option<&Path>) -> WorkspaceSnapshotError {
     let text = path.map(|path| path.to_string_lossy().into_owned());
     match crate::node_io::diagnostic(error, syscall, text.as_deref()) {
@@ -1273,7 +1372,7 @@ fn io_error(error: &io::Error, syscall: &str, path: Option<&Path>) -> WorkspaceS
         },
         None => WorkspaceSnapshotError::Io {
             code: None,
-            message: error.to_string(),
+            message: String::new(),
         },
     }
 }
@@ -1293,29 +1392,24 @@ fn io_message(error: &io::Error, syscall: &str, path: Option<&Path>) -> String {
     io_error(error, syscall, path).to_string()
 }
 
-/// Node two-path syscall message (`rename 'a' -> 'b'`, `symlink 'a' -> 'b'`).
+/// Node two-path syscall message (`rename 'a' -> 'b'`, `symlink 'a' -> 'b'`),
+/// built on the shared `node_io::diagnostic` like `skills::error`'s `io_pair`
+/// (no second formatter); an errno outside the measured table is the host
+/// boundary (`code: None`, empty message), never a Rust Display string.
 fn two_path_message(
     error: &io::Error,
     syscall: &str,
     from: &Path,
     to: &Path,
 ) -> WorkspaceSnapshotError {
-    match crate::node_io::lookup(error) {
-        Some((code, description)) => WorkspaceSnapshotError::Io {
+    match crate::node_io::diagnostic(error, syscall, Some(&from.to_string_lossy())) {
+        Some((code, message)) => WorkspaceSnapshotError::Io {
             code: Some(code),
-            message: format!(
-                "{code}: {description}, {syscall} '{}' -> '{}'",
-                from.display(),
-                to.display()
-            ),
+            message: format!("{message} -> '{}'", to.display()),
         },
         None => WorkspaceSnapshotError::Io {
             code: None,
-            message: format!(
-                "{error}: {syscall} '{}' -> '{}'",
-                from.display(),
-                to.display()
-            ),
+            message: String::new(),
         },
     }
 }
@@ -1529,6 +1623,194 @@ mod tests {
             );
         });
         assert!(matches!(recorder.begin(key), CaptureEntry::Leader(_)));
+    }
+
+    /// #293: `two_path_message` builds on the shared `node_io::diagnostic`
+    /// (like `skills::error`'s `io_pair`, no second formatter); an errno
+    /// outside the measured table is the host boundary (code None, empty
+    /// message), never a Rust Display string on the wire.
+    #[test]
+    fn two_path_message_uses_the_shared_diagnostic() {
+        let error = two_path_message(
+            &io::Error::from_raw_os_error(libc::ENOENT),
+            "rename",
+            Path::new("/tmp/pdrs-from"),
+            Path::new("/tmp/pdrs-to"),
+        );
+        assert!(
+            matches!(
+                &error,
+                WorkspaceSnapshotError::Io {
+                    code: Some("ENOENT"),
+                    ..
+                }
+            ),
+            "#293 in-table errno keeps its code: {error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "ENOENT: no such file or directory, rename '/tmp/pdrs-from' -> '/tmp/pdrs-to'",
+            "#293 two-path rename message"
+        );
+        let error = two_path_message(
+            &io::Error::from_raw_os_error(libc::EEXIST),
+            "symlink",
+            Path::new("target"),
+            Path::new("/tmp/pdrs-link"),
+        );
+        assert_eq!(
+            error.to_string(),
+            "EEXIST: file already exists, symlink 'target' -> '/tmp/pdrs-link'",
+            "#293 the destination suffix is part of the message"
+        );
+        // EDQUOT is outside the measured table (node_io's own test): host
+        // boundary, empty message, never the Rust Display.
+        let error = two_path_message(
+            &io::Error::from_raw_os_error(libc::EDQUOT),
+            "rename",
+            Path::new("/tmp/pdrs-from"),
+            Path::new("/tmp/pdrs-to"),
+        );
+        assert!(
+            matches!(&error, WorkspaceSnapshotError::Io { code: None, message } if message.is_empty()),
+            "#293 out-of-table errno is the empty-message host boundary: {error:?}"
+        );
+        assert_eq!(error.to_string(), "", "#293 no Rust Display leaks");
+        // The single-path helper shares the same fallback (sibling of the
+        // same pattern, changed with it).
+        let error = io_error(
+            &io::Error::from_raw_os_error(libc::EDQUOT),
+            "mkdir",
+            Some(Path::new("/tmp/pdrs-dir")),
+        );
+        assert!(
+            matches!(&error, WorkspaceSnapshotError::Io { code: None, message } if message.is_empty()),
+            "#293 io_error's out-of-table errno is the same host boundary: {error:?}"
+        );
+        assert_eq!(error.to_string(), "", "#293 no Rust Display leaks");
+    }
+
+    /// #293: the failure cleanup deletes a partition file only while its
+    /// inode still matches this round's own write.
+    #[test]
+    fn remove_if_owned_checks_inode_ownership() {
+        let scratch = crate::test_scratch::Scratch::new("snapshot-ownership");
+        let path = scratch.path().join("manifest.json");
+        fs::write(&path, b"ours\n").expect("#293 write the round's own manifest");
+        let owned = owned_file(&path).expect("#293 stat the round's own manifest");
+        // Another round renames over the same path: a different inode.
+        let foreign = scratch.path().join("foreign.json");
+        fs::write(&foreign, b"theirs\n").expect("#293 write a foreign manifest");
+        fs::rename(&foreign, &path).expect("#293 the foreign round renames over the path");
+        remove_if_owned(&Some(owned));
+        assert_eq!(
+            fs::read(&path).expect("#293 the foreign manifest is still readable"),
+            b"theirs\n",
+            "#293 a foreign inode is not deleted"
+        );
+        // Still ours: the recorded inode matches, so it is removed.
+        let owned = owned_file(&path).expect("#293 stat the foreign manifest");
+        remove_if_owned(&Some(owned));
+        assert!(!path.exists(), "#293 an owned file is removed");
+        // Nothing recorded: no deletion attempt at all.
+        remove_if_owned(&None);
+    }
+
+    /// #293: a round that fails after its own manifest rename deletes that
+    /// manifest, and a foreign round that renames over it in the meantime
+    /// survives. The committed-marker target is a directory, so
+    /// `atomic_marker`'s rename fails after the manifest rename — the
+    /// deterministic post-rename failure point.
+    #[test]
+    fn failing_round_deletes_only_its_own_partition_writes() {
+        let scratch = crate::test_scratch::Scratch::new("snapshot-failure-cleanup");
+        let snapshot_root = scratch.path().join("snapshots");
+        let partition = snapshot_root.join("workspaces/w/sessions/s/snapshots/id");
+        fs::create_dir_all(&partition).expect("#293 create the partition");
+        let paths = CapturePaths {
+            snapshot_root: snapshot_root.to_string_lossy().into_owned(),
+            partition: partition.clone(),
+            manifest_path: partition.join("manifest.json"),
+            committed_path: partition.join("_COMMITTED"),
+            failure_marker_path: partition.join("_FAILED.json"),
+        };
+        let workspace = scratch.path().join("ws");
+        fs::create_dir_all(&workspace).expect("#293 create the workspace");
+        fs::write(workspace.join("only.txt"), b"x\n").expect("#293 seed the workspace");
+        let input = WorkspaceSnapshotInput {
+            workspace_id: "w".into(),
+            session_id: "s".into(),
+            turn_id: "t".into(),
+            run_id: "r".into(),
+            workspace_dir: workspace.to_string_lossy().into_owned(),
+            workspace_stable: None,
+            failure_kind: None,
+            failure_reason: None,
+        };
+        let mut markers = RoundMarkers::default();
+        let temporary_dir = partition.join(".tmp-unit");
+
+        // Own write: the manifest rename lands, the committed-marker rename
+        // fails on the directory, and the cleanup removes this round's own
+        // manifest while leaving the directory it did not write.
+        fs::create_dir_all(&paths.committed_path).expect("#293 block the committed marker");
+        let error = commit(
+            &input,
+            SnapshotPhase::PreUser,
+            "id",
+            &paths,
+            &temporary_dir,
+            &mut markers,
+        )
+        .expect_err("#293 the committed-marker rename must fail on the directory");
+        assert!(
+            error.contains(" -> '"),
+            "#293 the failure is the two-path rename message: {error}"
+        );
+        assert!(
+            paths.manifest_path.is_file(),
+            "#293 the round's own manifest landed before the failure"
+        );
+        failure_cleanup(&markers, &temporary_dir);
+        assert!(
+            !paths.manifest_path.exists(),
+            "#293 the round's own manifest is removed"
+        );
+        assert!(
+            paths.committed_path.is_dir(),
+            "#293 a write the round did not make is untouched"
+        );
+        assert!(
+            !temporary_dir.exists(),
+            "#293 the round's temporary directory is removed"
+        );
+
+        // Foreign write: another round renames over the path after this
+        // round's manifest rename, and the cleanup keeps it.
+        let foreign = scratch.path().join("foreign.json");
+        fs::write(&foreign, b"theirs\n").expect("#293 write the foreign manifest");
+        let mut markers = RoundMarkers::default();
+        let error = commit(
+            &input,
+            SnapshotPhase::PreUser,
+            "id",
+            &paths,
+            &temporary_dir,
+            &mut markers,
+        )
+        .expect_err("#293 the committed-marker rename must fail again");
+        assert!(
+            error.contains(" -> '"),
+            "#293 the failure is the two-path rename message: {error}"
+        );
+        fs::rename(&foreign, &paths.manifest_path)
+            .expect("#293 the foreign round renames over the manifest path");
+        failure_cleanup(&markers, &temporary_dir);
+        assert_eq!(
+            fs::read(&paths.manifest_path).expect("#293 the foreign manifest is readable"),
+            b"theirs\n",
+            "#293 a manifest replaced by another round survives the cleanup"
+        );
     }
 }
 
