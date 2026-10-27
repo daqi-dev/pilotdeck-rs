@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Reversible product mutations for #765 retrieval-side LLM calls.
 
-Every case must compile and fail the bound ``#765 result/requests <case>``
-assertion in ``replay_matrix``. Anchors are checked against the baseline bytes
-before anything runs: a stale anchor is a harness defect, so it prints
-``STALE ANCHOR`` and exits 2 (never SURVIVED). A surviving case does not stop
-the run; every selected case executes, then the script prints a
-KILLED / SURVIVED / INVALID summary and exits 1 when anything is not KILLED.
+Every case must compile and fail the bound ``#765 ...`` assertion in the named
+test. Anchors are checked against the baseline bytes before anything runs: a
+stale anchor is a harness defect, so it prints ``STALE ANCHOR`` and exits 2
+(never SURVIVED). A surviving case does not stop the run; every selected case
+executes, then the script prints a KILLED / SURVIVED / INVALID summary and
+exits 1 when anything is not KILLED.
 
 ``mutating_sources`` refuses to run unless the mutated sources match HEAD, so
-use ``--check-anchors`` before committing changes to ``recall.rs`` and run the
-mutants once those changes are committed:
+use ``--check-anchors`` before committing changes and run the mutants once
+those changes are committed:
 
     CARGO_TARGET_DIR=/abs/target python3 negative.py OUT_DIR
     CARGO_TARGET_DIR=/abs/target python3 negative.py OUT_DIR source-priority
@@ -30,13 +30,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
-source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/recall.rs'
+recall = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/recall.rs'
+transport = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/transport.rs'
 
 cases = [
     # Lower `general_local` below `workspace_external`, so the older local
     # project loses the fallback tie-break.
     # oracle: select-fallback-priority expects LocalOlder.
-    ('source-priority', source,
+    ('source-priority', recall,
      '''        Some(value)
             if value.equals_str("general_local")
                 || value.equals_str("workspace_external_mirror") =>
@@ -54,37 +55,45 @@ cases = [
      'replay_matrix'),
     # Replace `localeCompare` with raw UTF-16 order: "a" then outranks "B".
     # oracle: select-fallback-updated-locale expects UpperB.
-    ('fallback-updated', source,
-     '                node_compare_utf16(recall_collator(), &right.updated_at, &left.updated_at)',
-     '                right.updated_at.units().cmp(left.updated_at.units())',
+    ('fallback-updated', recall,
+     '''    match node_compare_utf16(recall_collator(), &right.updated_at, &left.updated_at) {
+        Ordering::Less => -1.0,
+        Ordering::Equal => 0.0,
+        Ordering::Greater => 1.0,
+    }''',
+     '''    match right.updated_at.units().cmp(left.updated_at.units()) {
+        Ordering::Less => -1.0,
+        Ordering::Equal => 0.0,
+        Ordering::Greater => 1.0,
+    }''',
      'replay_matrix'),
     # Do not trim the model id before matching; a padded id no longer matches.
     # oracle: select-match-whitespace-id expects project p1 without a fallback reason.
-    ('selected-id-trim', source,
+    ('selected-id-trim', recall,
      '        .map(|value| JsString::from_utf16(js_trim_units(value.units()).to_vec()))',
      '        .map(|value| value.clone())',
      'replay_matrix'),
     # Swap the two allowEmpty default reasons.
     # oracle: select-outside-allow-empty expects the outside-shortlist text.
-    ('allow-empty-reason', source,
+    ('allow-empty-reason', recall,
      '                            JsString::from("Model returned a project id outside the shortlist.")',
      '                            JsString::from("Model returned no matching project.")',
      'replay_matrix'),
     # Send only 199 manifest entries; the 200th recorded prompt entry is lost.
     # oracle: manifest-200 records exactly 200.
-    ('manifest-slice', source,
+    ('manifest-slice', recall,
      '                    .take(200)',
      '                    .take(199)',
      'replay_matrix'),
     # Drop the upper Math.min(5, ...) clamp for the manifest limit.
     # oracle: manifest-limit-over asks for limit 5 while the input is 9.
-    ('manifest-limit', source,
+    ('manifest-limit', recall,
      '    js_max(1.0, js_min(5.0, limit.unwrap_or(5.0)))',
      '    js_max(1.0, limit.unwrap_or(5.0))',
      'replay_matrix'),
     # Use the last three, not four, recent messages of the decide prompt.
     # oracle: decide-recent-slice drops the fourth retained message.
-    ('decide-recent-slice', source,
+    ('decide-recent-slice', recall,
      '''fn recent_message_pairs(messages: &[MemoryMessage]) -> Vec<JsValue> {
     let start = messages.len().saturating_sub(4);''',
      '''fn recent_message_pairs(messages: &[MemoryMessage]) -> Vec<JsValue> {
@@ -92,7 +101,7 @@ cases = [
      'replay_matrix'),
     # Same off-by-one for the user-message strings used by the other prompts.
     # oracle: select-recent-user-slice drops "message 2".
-    ('user-recent-slice', source,
+    ('user-recent-slice', recall,
      '''fn recent_user_texts(messages: &[MemoryMessage]) -> Vec<JsValue> {
     let start = messages.len().saturating_sub(4);''',
      '''fn recent_user_texts(messages: &[MemoryMessage]) -> Vec<JsValue> {
@@ -100,7 +109,7 @@ cases = [
      'replay_matrix'),
     # Render a missing sourceType as "none" instead of "unknown".
     # oracle: select-source-unknown prompt source_type.
-    ('project-source-unknown', source,
+    ('project-source-unknown', recall,
      '            None => JsValue::String("unknown".into()),',
      '            None => JsValue::String("none".into()),',
      'replay_matrix'),
@@ -109,7 +118,7 @@ cases = [
     # changes the bound value, so the mutant compiles; the named replay case
     # still fails on the fallback reason text it pins.
     # oracle: select-outside-fallback expects "Fallback selected Alpha".
-    ('fallback-reason-name', source,
+    ('fallback-reason-name', recall,
      '''        let (fallback_id, fallback_name) =
             (fallback.project_id.clone(), fallback.project_name.clone());''',
      '''        let (fallback_id, fallback_name) =
@@ -117,28 +126,100 @@ cases = [
      'replay_matrix'),
     # Off-by-one on the manifest description bound (200 -> 201).
     # oracle: manifest-description-truncate prompt description.
-    ('manifest-description-bound', source,
+    ('manifest-description-bound', recall,
      '        JsValue::String(truncate_for_prompt(&entry.description, 200.0)),',
      '        JsValue::String(truncate_for_prompt(&entry.description, 201.0)),',
      'replay_matrix'),
     # Off-by-one on the shortlist description bound (180 -> 181).
     # oracle: select-description-truncate prompt description.
-    ('shortlist-description-bound', source,
+    ('shortlist-description-bound', recall,
      '        JsValue::String(truncate_for_prompt(&project.description, 180.0)),',
      '        JsValue::String(truncate_for_prompt(&project.description, 181.0)),',
      'replay_matrix'),
     # Off-by-one on the project-selection reason bound (220 -> 221).
     # oracle: select-reason-truncate result length.
-    ('reason-bound', source,
+    ('reason-bound', recall,
      '    Some(truncate_for_prompt(reason, 220.0))',
      '    Some(truncate_for_prompt(reason, 221.0))',
      'replay_matrix'),
     # JSON.stringify(..., null, 2): double the indentation width.
     # oracle: every recorded request body.
-    ('pretty-indent', source,
+    ('pretty-indent', recall,
      "    out.extend(std::iter::repeat_n(' ', depth * 2));",
      "    out.extend(std::iter::repeat_n(' ', depth * 4));",
      'replay_matrix'),
+    # P1-1: warning text is the TS prefix plus `String(error)`. Each of the
+    # three catch blocks is bound to its own dedicated message.
+    ('warning-gate', recall,
+     '"[clawxmemory] file memory gate fallback: "',
+     '"[clawxmemory] file memory gate fallback!: "',
+     'fallback_warnings_match_ts'),
+    ('warning-project', recall,
+     '"[clawxmemory] file memory project selection fallback: "',
+     '"[clawxmemory] file memory project selection fallback!: "',
+     'fallback_warnings_match_ts'),
+    ('warning-selection', recall,
+     '"[clawxmemory] file memory selection fallback: "',
+     '"[clawxmemory] file memory selection fallback!: "',
+     'fallback_warnings_match_ts'),
+    # `String(error)` is `name: message`, not `message` alone.
+    ('warning-error-string', recall,
+     '    units.extend_from_slice(error.js_string().units());',
+     '    units.extend_from_slice(error.message.units());',
+     'fallback_warnings_match_ts'),
+    # P1-1 order: TS emits the errored debug record before the fallback warning.
+    ('warning-order', transport,
+     '''        debug(JsValue::Object(record));
+        result''',
+     '''        if result.is_ok() {
+            debug(JsValue::Object(record));
+        }
+        result''',
+     'fallback_warnings_match_ts'),
+    # P1-1 separation: the warning must not be folded into the debug record.
+    ('warning-in-debug', transport,
+     '''        debug(JsValue::Object(record));
+        result''',
+     '''        if result.is_err() {
+            record.insert(
+                "errorMessage".into(),
+                JsValue::String(JsString::from("[clawxmemory] file memory")),
+            );
+        }
+        debug(JsValue::Object(record));
+        result''',
+     'fallback_warnings_match_ts'),
+    # P1-2: restore `total_cmp`, which distinguishes +0 from -0.
+    ('sort-total-cmp', recall,
+     '''    if right.exact != left.exact {
+        return right.exact - left.exact;
+    }''',
+     '''    match right.exact.total_cmp(&left.exact) {
+        Ordering::Equal => {}
+        Ordering::Greater => return 1.0,
+        Ordering::Less => return -1.0,
+    }''',
+     'js_fallback_sort_matches_ts'),
+    # P1-2: `Array#sort` folds a NaN comparator result to +0. Dropping the
+    # NaN/zero fold treats NaN as Less and reorders the stable pair.
+    ('sort-nan-order', recall,
+     '''fn js_sort_order(delta: f64) -> Ordering {
+    if delta.is_nan() || delta == 0.0 {
+        Ordering::Equal
+    } else if delta < 0.0 {
+        Ordering::Less
+    } else {
+        Ordering::Greater
+    }
+}''',
+     '''fn js_sort_order(delta: f64) -> Ordering {
+    if delta > 0.0 {
+        Ordering::Greater
+    } else {
+        Ordering::Less
+    }
+}''',
+     'js_fallback_sort_matches_ts'),
 ]
 
 EXPECTED = {
@@ -156,6 +237,14 @@ EXPECTED = {
     'shortlist-description-bound': '#765 requests select-description-truncate',
     'reason-bound': '#765 result select-reason-truncate',
     'pretty-indent': '#765 requests decide-project',
+    'warning-gate': '#765 gate warning',
+    'warning-project': '#765 project selection warning',
+    'warning-selection': '#765 selection warning',
+    'warning-error-string': '#765 gate warning',
+    'warning-order': '#765 warning order',
+    'warning-in-debug': '#765 warning must not enter debug 0',
+    'sort-total-cmp': '#765 minus zero and plus zero are equal',
+    'sort-nan-order': '#765 NaN exact preserves input order',
 }
 
 names = [case[0] for case in cases]
@@ -165,16 +254,16 @@ if sys.argv[1:] == ['--list']:
     print('\n'.join(names))
     raise SystemExit(0)
 if sys.argv[1:] == ['--check-anchors']:
-    original = source.read_text()
+    originals = {path: path.read_text() for path in {case[1] for case in cases}}
     stale = []
-    for name, _path, before, _after, _test in all_cases:
-        count = original.count(before)
+    for name, path, before, _after, _test in all_cases:
+        count = originals[path].count(before)
         if count != 1:
-            stale.append((name, count))
+            stale.append((name, count, path.relative_to(root).as_posix()))
     if stale:
-        for name, count in stale:
-            print(f'STALE ANCHOR {name}: {count} matches in {source.relative_to(root).as_posix()}')
-        print('STALE ANCHORS: negative.py is out of sync with recall.rs; refusing to run')
+        for name, count, relative in stale:
+            print(f'STALE ANCHOR {name}: {count} matches in {relative}')
+        print('STALE ANCHORS: negative.py is out of sync with its sources; refusing to run')
         raise SystemExit(2)
     print(f'{len(all_cases)} anchors: ok')
     raise SystemExit(0)
@@ -191,6 +280,7 @@ out = Path(sys.argv[1]).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
 assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
 out.mkdir(parents=True, exist_ok=True)
+paths = sorted({case[1] for case in cases})
 
 env = dict(os.environ)
 env['CARGO_TARGET_DIR'] = target
@@ -218,20 +308,19 @@ def write_summary(baseline):
         {'baseline': baseline, 'cases': results}, indent=2) + '\n')
 
 
-with mutating_sources(root, [source]) as originals:
-    original = originals[source].decode()
+with mutating_sources(root, paths) as originals:
     stale = []
-    for name, _path, before, _after, _test in all_cases:
-        count = original.count(before)
+    for name, path, before, _after, _test in all_cases:
+        count = originals[path].decode().count(before)
         if count != 1:
-            stale.append((name, source.relative_to(root).as_posix(), count))
+            stale.append((name, path.relative_to(root).as_posix(), count))
     if stale:
         report = '\n'.join(
             f'STALE ANCHOR {name}: {count} matches in {relative}'
             for name, relative, count in stale) + '\n'
         (out / 'stale-anchors.log').write_text(report)
         print(report, end='', flush=True)
-        print('STALE ANCHORS: negative.py is out of sync with recall.rs; refusing to run',
+        print('STALE ANCHORS: negative.py is out of sync with its sources; refusing to run',
               flush=True)
         raise SystemExit(2)
     baseline_ok = False
@@ -267,6 +356,7 @@ with mutating_sources(root, [source]) as originals:
                 slots_text = slots.stdout + slots.stderr
                 # Snapshot bytes come only from mutating_sources; the mutation
                 # itself is a single exact anchor replacement.
+                original = originals[path].decode()
                 path.write_bytes(original.replace(before, after).encode())
                 try:
                     run = run_owned(

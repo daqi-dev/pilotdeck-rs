@@ -310,6 +310,81 @@ function specs(): any[] {
     },
     steps: [chat('{"selected_project_id":"missing"}')],
   });
+  // JS number semantics: `!==` keeps +0 and -0 equal, NaN unequal, and the
+  // subtraction returns NaN which Array#sort treats as +0.
+  add({
+    name: 'select-fallback-zero',
+    method: 'selectRecallProject',
+    input: {
+      query: 'pick',
+      shortlist: [
+        candidate({projectId: 'a', projectName: 'MinusZero', exact: -0, score: 2}),
+        candidate({projectId: 'b', projectName: 'PlusZero', exact: 0, score: 1}),
+      ],
+    },
+    steps: [chat('{"selected_project_id":"missing"}')],
+  });
+  add({
+    name: 'select-fallback-nan-first',
+    method: 'selectRecallProject',
+    input: {
+      query: 'pick',
+      shortlist: [
+        candidate({projectId: 'a', projectName: 'NanFirst', exact: NaN, score: 1}),
+        candidate({projectId: 'b', projectName: 'ZeroSecond', exact: 0, score: 9}),
+      ],
+    },
+    steps: [chat('{"selected_project_id":"missing"}')],
+  });
+  add({
+    name: 'select-fallback-nan-second',
+    method: 'selectRecallProject',
+    input: {
+      query: 'pick',
+      shortlist: [
+        candidate({projectId: 'b', projectName: 'ZeroFirst', exact: 0, score: 9}),
+        candidate({projectId: 'a', projectName: 'NanSecond', exact: NaN, score: 1}),
+      ],
+    },
+    steps: [chat('{"selected_project_id":"missing"}')],
+  });
+  add({
+    name: 'select-fallback-nan-both',
+    method: 'selectRecallProject',
+    input: {
+      query: 'pick',
+      shortlist: [
+        candidate({projectId: 'a', projectName: 'NanLowScore', exact: NaN, score: 1}),
+        candidate({projectId: 'b', projectName: 'NanHighScore', exact: NaN, score: 9}),
+      ],
+    },
+    steps: [chat('{"selected_project_id":"missing"}')],
+  });
+  add({
+    name: 'select-fallback-nan-three',
+    method: 'selectRecallProject',
+    input: {
+      query: 'pick',
+      shortlist: [
+        candidate({projectId: 'a', projectName: 'NanOne', exact: NaN, score: 1}),
+        candidate({projectId: 'b', projectName: 'ZeroNine', exact: 0, score: 9}),
+        candidate({projectId: 'c', projectName: 'NanFive', exact: NaN, score: 5}),
+      ],
+    },
+    steps: [chat('{"selected_project_id":"missing"}')],
+  });
+  add({
+    name: 'select-fallback-infinity',
+    method: 'selectRecallProject',
+    input: {
+      query: 'pick',
+      shortlist: [
+        candidate({projectId: 'a', projectName: 'PositiveInfinity', exact: Infinity, score: 1}),
+        candidate({projectId: 'b', projectName: 'ZeroNine', exact: 0, score: 9}),
+      ],
+    },
+    steps: [chat('{"selected_project_id":"missing"}')],
+  });
   add({
     name: 'select-source-unknown',
     method: 'selectRecallProject',
@@ -466,6 +541,35 @@ function specs(): any[] {
     },
     steps: [chat('{"selected_ids":["one.md"]}')],
   });
+  // Empty model config fails before any request; the catch branch must warn.
+  add({
+    name: 'decide-gate-fallback-warning',
+    method: 'decideFileMemoryRoute',
+    config: 'empty',
+    input: {query: 'Say hello'},
+    steps: [],
+  });
+  add({
+    name: 'select-fallback-warning',
+    method: 'selectRecallProject',
+    config: 'empty',
+    input: {query: 'Alpha', shortlist: [candidate()]},
+    steps: [],
+  });
+  add({
+    name: 'select-fallback-warning-allow-empty',
+    method: 'selectRecallProject',
+    config: 'empty',
+    input: {query: 'Alpha', shortlist: [candidate()], allowEmpty: true},
+    steps: [],
+  });
+  add({
+    name: 'manifest-fallback-warning',
+    method: 'selectFileManifestEntries',
+    config: 'empty',
+    input: {query: 'Alpha', route: 'project', manifest: [entry()]},
+    steps: [],
+  });
   return out;
 }
 
@@ -492,7 +596,7 @@ export async function collect(baseline: string) {
   try {
     for (const spec of specs()) {
       const server = await stub(spec.steps, () => 0);
-      const config = {
+      const config = spec.config === 'empty' ? {} : {
         agents: {defaults: {model: {primary: 'p/m'}}},
         models: {
           providers: {
@@ -506,9 +610,18 @@ export async function collect(baseline: string) {
         },
       };
       const runtime = {telemetry: {}};
-      const extractor: any = new LlmMemoryExtractor(config, runtime);
+      const warnings: string[] = [];
+      const events: string[] = [];
+      const logger = {warn: (message: any) => {
+        warnings.push(String(message));
+        events.push('warn');
+      }};
+      const extractor: any = new LlmMemoryExtractor(config, runtime, logger);
       const debug: any[] = [];
-      const input = {...spec.input, debugTrace: (value: any) => debug.push(value)};
+      const input = {...spec.input, debugTrace: (value: any) => {
+        debug.push(value);
+        events.push('debug');
+      }};
       let result: any;
       try {
         result = enc(await extractor[spec.method](input));
@@ -516,10 +629,16 @@ export async function collect(baseline: string) {
         result = {threw: error.message};
       }
       cases.push({
-        // JSON round-trip makes verify.mts compare the same values that were
-        // written to oracle.json (it drops undefined and turns NaN into null).
-        spec: JSON.parse(JSON.stringify({name: spec.name, method: spec.method, input: spec.input, steps: spec.steps})),
-        expected: normalized({result, requests: server.requests, debug}, server.origin),
+        // Numeric sentinels keep -0 / NaN / Infinity and explicit undefined
+        // through JSON; the Rust replay decodes them before calling the port.
+        spec: enc({
+          name: spec.name,
+          method: spec.method,
+          input: spec.input,
+          steps: spec.steps,
+          ...(spec.config === undefined ? {} : {config: spec.config}),
+        }),
+        expected: normalized({result, requests: server.requests, debug, warnings, events}, server.origin),
       });
       await server.close();
     }
