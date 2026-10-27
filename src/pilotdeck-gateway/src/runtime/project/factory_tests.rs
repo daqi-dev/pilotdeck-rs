@@ -25,13 +25,13 @@ impl Scratch {
             "pdrs-project-runtime-factory-{}",
             uuid::Uuid::new_v4()
         ));
-        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&root).expect("#741 notice factory scratch directory");
         Self(root)
     }
 }
 impl Drop for Scratch {
     fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.0).unwrap();
+        std::fs::remove_dir_all(&self.0).expect("#741 notice factory scratch cleanup");
     }
 }
 
@@ -88,10 +88,14 @@ fn silent_families() -> Families {
 /// Write the global and project config the real loader reads, exactly like the
 /// existing registry tests.
 fn write_project_config(scratch: &Scratch, yaml: &str) -> Env {
-    std::fs::create_dir_all(scratch.0.join("project/.pilotdeck")).unwrap();
-    std::fs::write(scratch.0.join("project/.pilotdeck/pilotdeck.yaml"), yaml).unwrap();
-    std::fs::create_dir_all(scratch.0.join("config-home")).unwrap();
-    std::fs::write(scratch.0.join("config-home/pilotdeck.yaml"), yaml).unwrap();
+    std::fs::create_dir_all(scratch.0.join("project/.pilotdeck"))
+        .expect("#741 notice project config directory");
+    std::fs::write(scratch.0.join("project/.pilotdeck/pilotdeck.yaml"), yaml)
+        .expect("#741 notice project config write");
+    std::fs::create_dir_all(scratch.0.join("config-home"))
+        .expect("#741 notice home config directory");
+    std::fs::write(scratch.0.join("config-home/pilotdeck.yaml"), yaml)
+        .expect("#741 notice home config write");
     let mut env = Env::new();
     env.insert(
         "PILOT_HOME".into(),

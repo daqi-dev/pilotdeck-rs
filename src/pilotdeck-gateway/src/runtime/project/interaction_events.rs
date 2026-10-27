@@ -112,6 +112,13 @@ pub struct TurnEvents {
     turn: Arc<Mutex<TurnState>>,
 }
 impl TurnEvents {
+    /// The host already owns turn_started. Return only its predecessor notices;
+    /// emitting another start through the sidecar buffer would duplicate it.
+    pub fn host_started(&self) -> Result<Vec<JsObject>, HostError> {
+        let generation = lock(&self.generation);
+        let mut turn = lock(&self.turn);
+        check(&generation, &turn).map(|()| take_notices(&mut turn))
+    }
     /// Checked counterpart of the transport's legacy infallible drain hook.
     pub fn drain(&self) -> Result<Vec<JsObject>, HostError> {
         let generation = lock(&self.generation);
@@ -176,13 +183,8 @@ impl event::EventSink for TurnEvents {
             .is_some_and(|value| value.equals_str("turn_started"));
         turn.events.push(event);
         if started {
-            let active_session = turn.identity.session_id.clone();
-            let active_turn = turn.identity.turn_id.clone();
-            let notices = std::mem::take(&mut turn.notices);
-            for notice in notices {
-                turn.events
-                    .push(notice.to_warning(&active_session, &active_turn));
-            }
+            let notices = take_notices(&mut turn);
+            turn.events.extend(notices);
         }
         Ok(())
     }
@@ -194,6 +196,12 @@ impl event::EventSink for TurnEvents {
         // must use TurnEvents::drain to observe closed/stale state explicitly.
         self.drain().unwrap_or_default()
     }
+}
+fn take_notices(turn: &mut TurnState) -> Vec<JsObject> {
+    std::mem::take(&mut turn.notices)
+        .into_iter()
+        .map(|notice| notice.to_warning(&turn.identity.session_id, &turn.identity.turn_id))
+        .collect()
 }
 fn check(generation: &State, turn: &TurnState) -> Result<(), HostError> {
     if generation.closed {

@@ -168,7 +168,7 @@ fn adapter_with_recorder(
     recorder: Arc<crate::storage::recorder::Recorder>,
 ) -> LiveSessionAdapter {
     LiveSessionAdapter::with_interaction(recorder, Vec::new, move |identity, _| {
-        let lease = registry.acquire(None).unwrap();
+        let lease = registry.acquire(None).expect("#741 notice factory lease");
         Box::pin(async move {
             Ok(InteractionHost {
                 client: Box::pin(client(mode)),
@@ -1045,8 +1045,17 @@ fn interaction_cleanup_completion_survives_stopped_executor() {
 
 #[tokio::test]
 async fn host_next_turn_surfaces_the_pending_hook_discard_notice() {
-    use crate::host::modules::event::EventSink as _;
-
+    live_notice("success").await;
+}
+#[tokio::test]
+async fn host_notice_cancel_after_start() {
+    live_notice("cancel").await;
+}
+#[tokio::test]
+async fn host_notice_drop_after_start() {
+    live_notice("drop").await;
+}
+async fn live_notice(mode: &str) {
     let scratch = Scratch::new();
     let registry = Arc::new(interaction_registry(&scratch));
     let identity = identity();
@@ -1056,99 +1065,162 @@ async fn host_next_turn_surfaces_the_pending_hook_discard_notice() {
         std::env::temp_dir().to_string_lossy().to_string().into();
     first_options.base_env = Some(
         parse_json(r#"{"PATH":"/usr/bin:/bin"}"#)
-            .unwrap()
+            .expect("#741 notice predecessor setup")
             .as_object()
-            .unwrap()
+            .expect("#741 notice predecessor setup")
             .clone(),
     );
     let first = InteractionTurn::bind(
-        registry.acquire(None).unwrap(),
+        registry
+            .acquire(None)
+            .expect("#741 notice predecessor setup"),
         &identity,
         router(&identity),
         first_options,
     )
     .await
-    .unwrap();
+    .expect("#741 notice predecessor setup");
     first
         .module_call(parse_json(
             r#"{"module":"lifecycle","payload":{"operation":"dispatch","event":"PreToolUse","payload":{}}}"#,
-        ).unwrap())
+        ).expect("#741 notice predecessor setup"))
         .await
-        .unwrap();
+        .expect("#741 notice predecessor setup");
     assert_eq!(
         first
             .ports()
             .hooks
-            .unwrap()
+            .expect("#741 notice predecessor setup")
             .pending_receipts()
-            .unwrap()
+            .expect("#741 notice predecessor setup")
             .len(),
-        1
+        1,
+        "#741 notice predecessor pending hook"
     );
-    bounded(first.dispose()).await.unwrap();
+    bounded(first.dispose())
+        .await
+        .expect("#741 notice predecessor setup");
 
-    let second = InteractionTurn::bind(
-        registry.acquire(None).unwrap(),
-        &identity,
-        router(&identity),
-        options(),
-    )
-    .await
-    .unwrap();
-    let events = second.ports().events.unwrap();
-    let mut started = JsObject::new();
-    started.insert("type".into(), "turn_started".into());
-    started.insert("sessionId".into(), "session".into());
-    started.insert("turnId".into(), "turn".into());
-    events.emit(started).unwrap();
-    let drained = second.drain_events().unwrap();
-    let started_at = drained
-        .iter()
-        .position(|event| {
-            event
-                .get("type")
-                .and_then(JsValue::as_string)
-                .is_some_and(|value| value.equals_str("turn_started"))
-        })
-        .unwrap();
-    let warning_at = drained
-        .iter()
-        .position(|event| {
-            event
-                .get("type")
-                .and_then(JsValue::as_string)
-                .is_some_and(|value| value.equals_str("warning"))
-        })
-        .expect("predecessor hook notice must be visible to the next turn");
-    assert!(started_at < warning_at);
-    let warning = &drained[warning_at];
+    let session = adapter(registry.clone(), "live-normal");
+    let mut stream = session
+        .submit(
+            crate::metadata::object([("type", "text".into()), ("text", "probe".into())]),
+            wire_options(),
+        )
+        .expect("#741 notice live submit");
+    let started = tokio::time::timeout(Duration::from_secs(15), stream.next())
+        .await
+        .expect("#741 notice first timeout")
+        .expect("#741 notice first next")
+        .expect("#741 notice first event");
     assert_eq!(
-        warning
-            .get("code")
-            .and_then(JsValue::as_string)
-            .map(|v| v.to_utf8().unwrap()),
-        Some("interaction_pending_discarded".into())
+        started.get("type"),
+        Some(&"turn_started".into()),
+        "#741 notice first start"
     );
-    let metadata = warning
-        .get("metadata")
-        .and_then(JsValue::as_object)
-        .unwrap();
+    if mode == "drop" {
+        drop(stream);
+        let mut successor = session
+            .submit(
+                crate::metadata::object([("type", "text".into()), ("text", "probe".into())]),
+                wire_options_for("successor"),
+            )
+            .expect("#741 notice dropped slot released");
+        for kind in ["turn_started", "input_accepted"] {
+            let event = tokio::time::timeout(Duration::from_secs(15), successor.next())
+                .await
+                .expect("#741 notice successor timeout")
+                .expect("#741 notice successor next")
+                .expect("#741 notice successor event");
+            assert_eq!(
+                event.get("type"),
+                Some(&kind.into()),
+                "#741 notice dropped warning not replayed"
+            );
+        }
+        drop(successor);
+        bounded(session.dispose())
+            .await
+            .expect("#741 notice drop dispose");
+        bounded(registry.dispose())
+            .await
+            .expect("#741 notice drop registry dispose");
+        return;
+    }
+    if mode == "cancel" {
+        session.abort(&"probe".into()).expect("#741 notice cancel");
+    }
+    let mut delivered = vec![started];
+    for _ in 0..20 {
+        let event = tokio::time::timeout(Duration::from_secs(15), stream.next())
+            .await
+            .expect("#741 notice live next timeout")
+            .expect("#741 notice live next");
+        let Some(event) = event else { break };
+        delivered.push(event);
+    }
+    let kinds: Vec<_> = delivered.iter().map(|e| e.get("type").cloned()).collect();
+    assert!(kinds.len() >= 3, "#741 notice live start order");
     assert_eq!(
-        metadata
-            .get("source")
-            .and_then(JsValue::as_string)
-            .map(|v| v.to_utf8().unwrap()),
-        Some("hooks".into())
+        &kinds[..3],
+        &[
+            Some("turn_started".into()),
+            Some("warning".into()),
+            Some("input_accepted".into())
+        ],
+        "#741 notice live start order"
     );
     assert_eq!(
-        metadata
-            .get("runId")
-            .and_then(JsValue::as_string)
-            .map(|v| v.to_utf8().unwrap()),
-        Some("run".into())
+        kinds
+            .iter()
+            .filter(|k| **k == Some("warning".into()))
+            .count(),
+        1,
+        "#741 notice live warning once"
     );
-    bounded(second.dispose()).await.unwrap();
-    bounded(registry.dispose()).await.unwrap();
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|k| **k == Some("turn_started".into()))
+            .count(),
+        1,
+        "#741 notice live start once"
+    );
+    assert_eq!(
+        delivered.get(1),
+        Some(&JsValue::Object(
+            crate::runtime::project::interaction_notice::DiscardNotice::new(
+                crate::runtime::project::interaction_notice::DiscardSource::Hooks,
+                1,
+                "session".into(),
+                "run".into()
+            )
+            .to_warning(&"session".into(), &"turn".into())
+        )),
+        "#741 notice live warning payload"
+    );
+    assert_eq!(
+        delivered
+            .last()
+            .and_then(|e| e.get("result"))
+            .and_then(|r| r.get("type")),
+        Some(
+            &if mode == "cancel" {
+                "aborted"
+            } else {
+                "success"
+            }
+            .into()
+        ),
+        "#741 notice live success"
+    );
+    drop(stream);
+    bounded(session.dispose())
+        .await
+        .expect("#741 notice live dispose");
+    bounded(registry.dispose())
+        .await
+        .expect("#741 notice registry dispose");
 }
 
 #[tokio::test]

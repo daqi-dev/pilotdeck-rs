@@ -42,6 +42,7 @@ type PreparedHost = (
     Arc<dyn HostHandler>,
     Arc<RuntimeLease>,
     Option<JsObject>,
+    Option<crate::runtime::project::interaction_events::TurnEvents>,
 );
 type TurnHostFactory =
     dyn Fn(ExecutionIdentity, Arc<Recorder>) -> HostFuture<PreparedHost> + Send + Sync;
@@ -102,7 +103,7 @@ impl LiveSessionAdapter {
                 let host = host_factory(recorder);
                 Box::pin(async move {
                     let (client, handler, lease) = host.await?;
-                    Ok((client, handler, lease, None))
+                    Ok((client, handler, lease, None, None))
                 })
             }),
             state: Arc::default(),
@@ -143,11 +144,13 @@ impl LiveSessionAdapter {
                     )
                     .await?;
                     let manifest = handler.manifest().clone();
+                    let events = handler.ports().events;
                     Ok((
                         host.client,
                         Arc::new(handler) as Arc<dyn HostHandler>,
                         lease,
                         Some(manifest),
+                        events,
                     ))
                 })
             }),
@@ -196,7 +199,7 @@ impl LiveSession for LiveSessionAdapter {
         Ok(Box::new(LiveTurnStream {
             callback_cancel: Some(cancellation.clone()),
             execution: Some(Box::pin(async move {
-                let (client, inner, lease, manifest) = tokio::select! {
+                let (client, inner, lease, manifest, interaction_events) = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => {
                         return Ok(ExecuteResult::Aborted { terminal: None });
@@ -211,7 +214,8 @@ impl LiveSession for LiveSessionAdapter {
                     lease,
                     request.identity.session_id.clone(),
                     request.identity.turn_id.clone(),
-                );
+                )
+                .with_interaction_events(interaction_events);
                 // Transfer the actual driver before any host event can arrive.
                 let _ = recording_sender.send(Recording::new(runner, owner));
                 if let Some(manifest) = manifest {

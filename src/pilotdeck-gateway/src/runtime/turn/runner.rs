@@ -51,6 +51,7 @@ pub struct TurnRunner {
     messages: Vec<JsValue>,
     failure_status: bool,
     callback_error: Option<String>,
+    interaction_events: Option<crate::runtime::project::interaction_events::TurnEvents>,
 }
 pub type Transition = RecorderResult<(TurnRunner, Vec<JsValue>)>;
 
@@ -72,7 +73,15 @@ impl TurnRunner {
             messages: vec![],
             failure_status: false,
             callback_error: None,
+            interaction_events: None,
         }
+    }
+    pub(crate) fn with_interaction_events(
+        mut self,
+        events: Option<crate::runtime::project::interaction_events::TurnEvents>,
+    ) -> Self {
+        self.interaction_events = events;
+        self
     }
     pub fn messages(&self) -> &[JsValue] {
         &self.messages
@@ -130,7 +139,16 @@ impl TurnRunner {
         self.io(|r, s, t| r.start_turn(s, t)).await?;
         self.phase = Phase::Started;
         let event = self.event("turn_started", []);
-        Ok((self, vec![event]))
+        let mut events = vec![event];
+        if let Some(port) = &self.interaction_events {
+            events.extend(
+                port.host_started()
+                    .map_err(|e| RecorderError::State(e.to_string()))?
+                    .into_iter()
+                    .map(JsValue::Object),
+            );
+        }
+        Ok((self, events))
     }
     pub async fn accept(mut self, input: TurnInput) -> Transition {
         self.require(Phase::Started)?;

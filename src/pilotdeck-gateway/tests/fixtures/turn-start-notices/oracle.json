@@ -1,0 +1,67 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/turn/TurnRunner.ts": "8bf4dab4c8e40bba78781e6ad7352dda79e3fc52adf99b9504f1213e0157a5ac",
+    "src/agent/turn/TurnInputProcessor.ts": "450760d073b39b57d1f32349ca02f035ff0d1b5a74308f7b5606a011833a3526",
+    "src/agent/session/AgentSessionEventRecorder.ts": "4d8311f564a5d45bdbacaf7953f8a9d6fbae366c086ecf96162bdad027667ada",
+    "src/session/transcript/InMemoryTranscriptWriter.ts": "cc41f662051c2fed672c0333c9304f72d16e9212774df4168e5d2905d5a85fe9"
+  },
+  "rows": [
+    {
+      "name": "start_success",
+      "beforeRelease": {
+        "settled": true,
+        "returned": false,
+        "accepts": 0,
+        "loopCalls": 0
+      },
+      "event": "turn_started",
+      "error": null,
+      "starts": 1,
+      "accepts": 0,
+      "loopCalls": 0
+    },
+    {
+      "name": "start_failure",
+      "beforeRelease": {
+        "settled": true,
+        "returned": false,
+        "accepts": 0,
+        "loopCalls": 0
+      },
+      "event": null,
+      "error": "injected start",
+      "starts": 1,
+      "accepts": 0,
+      "loopCalls": 0
+    },
+    {
+      "name": "start_pending",
+      "beforeRelease": {
+        "settled": false,
+        "returned": false,
+        "accepts": 0,
+        "loopCalls": 0
+      },
+      "event": "turn_started",
+      "error": null,
+      "starts": 1,
+      "accepts": 0,
+      "loopCalls": 0
+    },
+    {
+      "name": "start_drop",
+      "beforeRelease": {
+        "settled": false,
+        "returned": false,
+        "accepts": 0,
+        "loopCalls": 0
+      },
+      "event": "turn_started",
+      "error": null,
+      "starts": 1,
+      "accepts": 0,
+      "loopCalls": 0
+    }
+  ]
+}
