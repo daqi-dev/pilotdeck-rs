@@ -259,7 +259,9 @@ async fn debounce_fires_once_at_the_boundary() {
     root.write(BASE);
     let (store, loads) = store(&root);
     let events = recorder(&store);
-    let watch = store.start_watching(WatchOptions::default());
+    let watch = store
+        .start_watching(WatchOptions::default())
+        .expect("#879 healthy watcher paths");
     settle().await;
     watch.notify_change();
     settle().await;
@@ -278,7 +280,9 @@ async fn each_change_rearms_the_debounce() {
     let root = Root::new();
     root.write(BASE);
     let (store, loads) = store(&root);
-    let watch = store.start_watching(WatchOptions::default());
+    let watch = store
+        .start_watching(WatchOptions::default())
+        .expect("#879 healthy watcher paths");
     settle().await;
     watch.notify_change();
     settle().await;
@@ -306,7 +310,9 @@ async fn polling_detects_file_changes_and_swallows_failures() {
     root.write(BASE);
     let (store, loads) = store(&root);
     let events = recorder(&store);
-    let watch = store.start_watching(WatchOptions::default());
+    let watch = store
+        .start_watching(WatchOptions::default())
+        .expect("#879 healthy watcher paths");
     settle().await;
     root.write(&other_model());
     tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -327,7 +333,9 @@ async fn stop_cancels_pending_reload_and_leaves_no_task() {
     let root = Root::new();
     root.write(BASE);
     let (store, loads) = store(&root);
-    let watch = store.start_watching(WatchOptions::default());
+    let watch = store
+        .start_watching(WatchOptions::default())
+        .expect("#879 healthy watcher paths");
     settle().await;
     watch.notify_change();
     settle().await;
@@ -348,7 +356,9 @@ async fn dropping_the_handle_or_the_store_ends_the_task() {
     let root = Root::new();
     root.write(BASE);
     let (store, loads) = store(&root);
-    let watch = store.start_watching(WatchOptions::default());
+    let watch = store
+        .start_watching(WatchOptions::default())
+        .expect("#879 healthy watcher paths");
     settle().await;
     watch.notify_change();
     drop(watch);
@@ -357,7 +367,9 @@ async fn dropping_the_handle_or_the_store_ends_the_task() {
     assert_eq!(loads.load(Ordering::SeqCst), 1);
     assert_eq!(Arc::weak_count(&store.inner), 0);
 
-    let mut watch = store.start_watching(WatchOptions::default());
+    let mut watch = store
+        .start_watching(WatchOptions::default())
+        .expect("#879 healthy watcher paths");
     settle().await;
     drop(store);
     tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -385,6 +397,7 @@ fn watched_paths_follow_exists_then_dirname() {
     let watched = |store: &ConfigStore| {
         store
             .watched_paths()
+            .expect("#879 healthy watched paths")
             .into_iter()
             .filter_map(WatchedPath::new)
             .map(|w| (w.path, w.directory))
@@ -435,7 +448,9 @@ async fn change_spacing_around_the_debounce_window() {
         root.write(BASE);
         let (store, loads) = store(&root);
         let events = path_recorder(&store);
-        let watch = store.start_watching(WatchOptions::default());
+        let watch = store
+            .start_watching(WatchOptions::default())
+            .expect("#879 healthy watcher paths");
         settle().await;
         advance(5).await;
         root.write(&other_model());
@@ -455,7 +470,9 @@ async fn change_spacing_around_the_debounce_window() {
         root.write(BASE);
         let (store, loads) = store(&root);
         let events = path_recorder(&store);
-        let watch = store.start_watching(WatchOptions::default());
+        let watch = store
+            .start_watching(WatchOptions::default())
+            .expect("#879 healthy watcher paths");
         settle().await;
         advance(5).await;
         root.write(&other_model());
@@ -479,7 +496,9 @@ async fn restored_mtime_rewrite_between_samples_is_seen() {
     root.write(BASE);
     let path = root.0.join("pilotdeck.yaml");
     let (store, loads) = store(&root);
-    let watch = store.start_watching(WatchOptions::default());
+    let watch = store
+        .start_watching(WatchOptions::default())
+        .expect("#879 healthy watcher paths");
     settle().await;
     advance(5).await;
     let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
@@ -577,6 +596,7 @@ fn relative_global_config_path_is_anchored_at_cwd() {
     let watched = |store: &ConfigStore| {
         store
             .watched_paths()
+            .expect("#879 healthy watched paths")
             .into_iter()
             .filter_map(WatchedPath::new)
             .map(|w| (w.path, w.directory))

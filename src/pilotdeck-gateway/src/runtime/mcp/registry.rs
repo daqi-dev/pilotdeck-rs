@@ -301,10 +301,19 @@ pub struct BuiltinMcpPaths {
 }
 
 /// `path.resolve(p)` (POSIX, lexical).
-pub(crate) fn resolve_path(path: &str) -> String {
+pub(crate) fn resolve_path(path: &str) -> std::io::Result<String> {
     crate::metadata::resolve_process_path(Path::new(""), Path::new(path))
-        .to_string_lossy()
-        .into_owned()
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+fn cwd_runtime_error(error: std::io::Error) -> RuntimeError {
+    let (code, message) = crate::metadata::process_cwd_diagnostic(&error);
+    RuntimeError::new(&message).with_js_error(crate::runtime::project::RuntimeJsError {
+        name: "Error".into(),
+        code: Some(code.into()),
+        message: message.into(),
+        requires_host: false,
+    })
 }
 
 /// `value.replaceAll(marker, replacement)` with GetSubstitution.
@@ -331,7 +340,7 @@ pub fn patch_project_scoped_mcp_spec(
     project_root: &str,
     pilot_home: &str,
     paths: &BuiltinMcpPaths,
-) -> McpServerSpec {
+) -> std::io::Result<McpServerSpec> {
     let McpTransportSpec::Stdio {
         command,
         args,
@@ -340,7 +349,7 @@ pub fn patch_project_scoped_mcp_spec(
         ..
     } = &spec.transport
     else {
-        return spec;
+        return Ok(spec);
     };
     let replacements: Vec<(&str, String)> = match spec.id.as_str() {
         "browser-use" => vec![
@@ -354,7 +363,7 @@ pub fn patch_project_scoped_mcp_spec(
             ),
         ],
         "funasr" => vec![
-            (PILOTDECK_PROJECT_ROOT_MARKER, resolve_path(project_root)),
+            (PILOTDECK_PROJECT_ROOT_MARKER, resolve_path(project_root)?),
             (
                 PILOTDECK_NODE_EXECUTABLE_MARKER,
                 paths.node_executable.clone(),
@@ -365,14 +374,14 @@ pub fn patch_project_scoped_mcp_spec(
             ),
             (
                 PILOTDECK_FUNASR_RUNTIME_ROOT_MARKER,
-                format!("{}/funasr", resolve_path(pilot_home).trim_end_matches('/')),
+                format!("{}/funasr", resolve_path(pilot_home)?.trim_end_matches('/')),
             ),
             (
                 PILOTDECK_FUNASR_INSTALL_COMMAND_MARKER,
                 paths.install_command.clone(),
             ),
         ],
-        _ => return spec,
+        _ => return Ok(spec),
     };
     let patch = |value: &str| {
         replacements
@@ -381,18 +390,18 @@ pub fn patch_project_scoped_mcp_spec(
                 replace_all(&out, marker, replacement)
             })
     };
-    McpServerSpec {
+    Ok(McpServerSpec {
         transport: McpTransportSpec::Stdio {
             command: patch(command),
             args: args
                 .as_ref()
                 .map(|args| args.iter().map(|a| patch(a)).collect()),
             env: env.clone(),
-            cwd: Some(resolve_path(project_root)),
+            cwd: Some(resolve_path(project_root)?),
             per_session: *per_session,
         },
         ..spec
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -757,9 +766,9 @@ impl ProjectMcpRuntimeProvider {
     }
 
     /// `getConfiguredServers()`: loaded once.
-    fn configured_servers(&self) -> JsObject {
+    fn configured_servers(&self) -> Result<JsObject, RuntimeError> {
         if let Some(configured) = &lock(&self.state).configured {
-            return configured.clone();
+            return Ok(configured.clone());
         }
         let loaded = load_mcp_server_config(
             Path::new(&self.options.project_root),
@@ -779,23 +788,26 @@ impl ProjectMcpRuntimeProvider {
                 }
                 result.servers
             }
+            Err(super::protocol::McpConfigLoadError::Cwd(error)) => {
+                return Err(cwd_runtime_error(error));
+            }
             Err(error) => {
                 self.diagnostic(format!("Ignoring invalid MCP config: {error}"), None);
                 JsObject::new()
             }
         };
         lock(&self.state).configured = Some(servers.clone());
-        servers
+        Ok(servers)
     }
 
     /// `materializeServers(pluginServers)`: `{ ...plugin, ...configured }`,
     /// parsed and patched.
-    fn materialize(&self, plugin_servers: &JsObject) -> Vec<McpServerSpec> {
+    fn materialize(&self, plugin_servers: &JsObject) -> Result<Vec<McpServerSpec>, RuntimeError> {
         let mut raw = JsObject::new();
         for (key, value) in plugin_servers.own_entries() {
             raw.insert(key.clone(), value.clone());
         }
-        for (key, value) in self.configured_servers().own_entries() {
+        for (key, value) in self.configured_servers()?.own_entries() {
             raw.insert(key.clone(), value.clone());
         }
         let parsed = parse_plugin_mcp_servers(Some(&raw), self.options.environment.as_ref());
@@ -818,6 +830,7 @@ impl ProjectMcpRuntimeProvider {
                     &self.options.pilot_home,
                     &self.options.builtin_paths,
                 )
+                .map_err(cwd_runtime_error)
             })
             .collect()
     }
@@ -827,9 +840,9 @@ impl ProjectMcpRuntimeProvider {
         &self,
         plugin_servers: &JsObject,
         force_per_session: bool,
-    ) -> Option<Vec<McpServerSpec>> {
+    ) -> Result<Option<Vec<McpServerSpec>>, RuntimeError> {
         let servers: Vec<McpServerSpec> = self
-            .materialize(plugin_servers)
+            .materialize(plugin_servers)?
             .into_iter()
             .filter(|spec| force_per_session || !is_shared(spec))
             .map(|mut spec| {
@@ -841,7 +854,7 @@ impl ProjectMcpRuntimeProvider {
                 spec
             })
             .collect();
-        (!servers.is_empty()).then_some(servers)
+        Ok((!servers.is_empty()).then_some(servers))
     }
 
     fn assert_active(&self, action: &str) -> Result<(), RuntimeError> {
@@ -862,7 +875,7 @@ impl ProjectMcpRuntimeProvider {
     ) -> Result<ProjectMcpRuntimeLease, RuntimeError> {
         self.assert_active("acquire a shared MCP runtime")?;
         let servers: Vec<McpServerSpec> = self
-            .materialize(plugin_servers)
+            .materialize(plugin_servers)?
             .into_iter()
             .filter(is_shared)
             .collect();
@@ -1351,10 +1364,19 @@ mod tests {
 
     #[test]
     fn registry_paths_use_shared_lexical_resolution() {
-        assert_eq!(resolve_path("/a/../../图/./"), "/图");
+        assert_eq!(
+            resolve_path("/a/../../图/./").expect("#879 healthy registry path"),
+            "/图"
+        );
         let cwd = std::env::current_dir().unwrap();
-        assert_eq!(resolve_path("a/../b"), cwd.join("b").to_string_lossy());
-        assert_eq!(resolve_path(""), cwd.to_string_lossy());
+        assert_eq!(
+            resolve_path("a/../b").expect("#879 healthy registry path"),
+            cwd.join("b").to_string_lossy()
+        );
+        assert_eq!(
+            resolve_path("").expect("#879 healthy registry path"),
+            cwd.to_string_lossy()
+        );
     }
 
     #[test]
@@ -1366,7 +1388,10 @@ mod tests {
 
     #[test]
     fn resolve_is_lexical() {
-        assert_eq!(resolve_path("/a/./b/../c/"), "/a/c");
-        assert_eq!(resolve_path("/"), "/");
+        assert_eq!(
+            resolve_path("/a/./b/../c/").expect("#879 healthy registry path"),
+            "/a/c"
+        );
+        assert_eq!(resolve_path("/").expect("#879 healthy registry path"), "/");
     }
 }

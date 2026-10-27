@@ -128,7 +128,7 @@ pub fn load_snapshot(
 ) -> Result<JsValue, Error> {
     let metadata = Metadata {
         home: pilot_home.to_path_buf(),
-        cwd: absolute_cwd(cwd),
+        cwd: absolute_cwd(cwd)?,
         files: crate::metadata::NativeFiles,
     };
     Ok(load_project_with_files_inner(
@@ -143,8 +143,17 @@ pub fn load_snapshot(
 /// `cwd` stands in for the baseline's `process.cwd()`, which is always
 /// absolute; `path.resolve` anchors a relative argument the same way,
 /// normalizing dot segments.
-pub(crate) fn absolute_cwd(cwd: &std::path::Path) -> std::path::PathBuf {
-    crate::metadata::resolve_process_path(std::path::Path::new(""), cwd)
+pub(crate) fn absolute_cwd(cwd: &std::path::Path) -> Result<std::path::PathBuf, Error> {
+    crate::metadata::resolve_process_path(std::path::Path::new(""), cwd).map_err(|error| {
+        let (code, message) = crate::metadata::process_cwd_diagnostic(&error);
+        Error {
+            code: code.into(),
+            message: message.into(),
+            diagnostics: vec![],
+            name: "Error",
+            requires_host: false,
+        }
+    })
 }
 
 /// `resolvePilotConfigPath` for an explicit PilotHome: a trimmed
@@ -183,7 +192,7 @@ pub fn load_project(
 ) -> Result<Config, Error> {
     let metadata = Metadata {
         home: pilot_home.to_path_buf(),
-        cwd: absolute_cwd(cwd),
+        cwd: absolute_cwd(cwd)?,
         files: crate::metadata::NativeFiles,
     };
     load_project_with_files(&metadata, env, project)

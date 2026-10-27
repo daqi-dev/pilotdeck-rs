@@ -1,0 +1,757 @@
+{
+  "node": "v22.22.0",
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/mcp/config/loadMcpServerConfig.ts": "aa0331ec66240089e0306558633647506aba416ff6a128f8937e823c387a582e",
+    "src/mcp/runtime/projectMcpSpec.ts": "5352db0f7ff07922dc7e893b2aa032b2404baedd7e281d38748a81bec1e1211c",
+    "src/mcp/runtime/PluginToToolBridge.ts": "9b3fe86dad3a433a5c1a911626f00e62f482f6ad8274e63ce0f2382afd221c8c",
+    "src/pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a"
+  },
+  "cases": [
+    {
+      "name": "relative-normal",
+      "resolve": {
+        "cwdReads": 1,
+        "outcome": {
+          "path": "<root>/project"
+        }
+      },
+      "global": {
+        "cwdReads": 1,
+        "outcome": {
+          "path": "<root>/project/mcp.json"
+        }
+      },
+      "project": {
+        "cwdReads": 1,
+        "outcome": {
+          "path": "<root>/project/.pilotdeck/mcp.json"
+        }
+      },
+      "pilot-project": {
+        "cwdReads": 1,
+        "outcome": {
+          "path": "<root>/project/.pilotdeck/pilotdeck.yaml"
+        }
+      },
+      "funasr": {
+        "cwdReads": 3,
+        "outcome": {
+          "cwd": "<root>/project",
+          "command": "<root>/project",
+          "args": [
+            "<root>/project/funasr"
+          ]
+        }
+      },
+      "funasr-home": {
+        "cwdReads": 1,
+        "outcome": {
+          "cwd": "<root>/project",
+          "command": "<root>/project",
+          "args": [
+            "<root>/project/funasr"
+          ]
+        }
+      },
+      "browser": {
+        "cwdReads": 3,
+        "outcome": {
+          "cwd": "<root>/project",
+          "command": "__PILOTDECK_PROJECT_ROOT__",
+          "args": [
+            "__PILOTDECK_FUNASR_RUNTIME_ROOT__"
+          ]
+        }
+      },
+      "bridge": {
+        "cwdReads": 1,
+        "outcome": {
+          "content": [
+            {
+              "type": "text",
+              "text": "[shot](./image.png)"
+            },
+            {
+              "type": "image",
+              "mimeType": "image/png",
+              "data": "Zml4dHVyZS1pbWFnZQ=="
+            }
+          ]
+        }
+      },
+      "load": {
+        "cwdReads": 2,
+        "outcome": {
+          "servers": {},
+          "diagnostics": []
+        }
+      },
+      "load-project": {
+        "cwdReads": 1,
+        "outcome": {
+          "servers": {},
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "name": "relative-deleted",
+      "resolve": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "global": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "project": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "pilot-project": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "funasr": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "funasr-home": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "browser": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "bridge": {
+        "cwdReads": 1,
+        "outcome": {
+          "content": [
+            {
+              "type": "text",
+              "text": "[shot](./image.png)"
+            }
+          ]
+        }
+      },
+      "load": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "load-project": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      }
+    },
+    {
+      "name": "empty-normal",
+      "resolve": {
+        "cwdReads": 1,
+        "outcome": {
+          "path": "<root>/cwd"
+        }
+      },
+      "global": {
+        "cwdReads": 1,
+        "outcome": {
+          "path": "<root>/cwd/mcp.json"
+        }
+      },
+      "project": {
+        "cwdReads": 1,
+        "outcome": {
+          "path": "<root>/cwd/.pilotdeck/mcp.json"
+        }
+      },
+      "pilot-project": {
+        "cwdReads": 1,
+        "outcome": {
+          "path": "<root>/cwd/.pilotdeck/pilotdeck.yaml"
+        }
+      },
+      "funasr": {
+        "cwdReads": 3,
+        "outcome": {
+          "cwd": "<root>/cwd",
+          "command": "<root>/cwd",
+          "args": [
+            "<root>/cwd/funasr"
+          ]
+        }
+      },
+      "funasr-home": {
+        "cwdReads": 1,
+        "outcome": {
+          "cwd": "<root>/project",
+          "command": "<root>/project",
+          "args": [
+            "<root>/cwd/funasr"
+          ]
+        }
+      },
+      "browser": {
+        "cwdReads": 3,
+        "outcome": {
+          "cwd": "<root>/cwd",
+          "command": "__PILOTDECK_PROJECT_ROOT__",
+          "args": [
+            "__PILOTDECK_FUNASR_RUNTIME_ROOT__"
+          ]
+        }
+      },
+      "bridge": {
+        "cwdReads": 0,
+        "outcome": {
+          "content": [
+            {
+              "type": "text",
+              "text": "[shot](./image.png)"
+            }
+          ]
+        }
+      },
+      "load": {
+        "cwdReads": 2,
+        "outcome": {
+          "servers": {},
+          "diagnostics": []
+        }
+      },
+      "load-project": {
+        "cwdReads": 1,
+        "outcome": {
+          "servers": {},
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "name": "empty-deleted",
+      "resolve": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "global": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "project": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "pilot-project": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "funasr": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "funasr-home": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "browser": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "bridge": {
+        "cwdReads": 0,
+        "outcome": {
+          "content": [
+            {
+              "type": "text",
+              "text": "[shot](./image.png)"
+            }
+          ]
+        }
+      },
+      "load": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "load-project": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      }
+    },
+    {
+      "name": "absolute-base-normal",
+      "resolve": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project"
+        }
+      },
+      "global": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project/mcp.json"
+        }
+      },
+      "project": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project/.pilotdeck/mcp.json"
+        }
+      },
+      "pilot-project": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project/.pilotdeck/pilotdeck.yaml"
+        }
+      },
+      "funasr": {
+        "cwdReads": 0,
+        "outcome": {
+          "cwd": "<root>/project",
+          "command": "<root>/project",
+          "args": [
+            "<root>/project/funasr"
+          ]
+        }
+      },
+      "funasr-home": {
+        "cwdReads": 0,
+        "outcome": {
+          "cwd": "<root>/project",
+          "command": "<root>/project",
+          "args": [
+            "<root>/project/funasr"
+          ]
+        }
+      },
+      "browser": {
+        "cwdReads": 2,
+        "outcome": {
+          "cwd": "<root>/project",
+          "command": "__PILOTDECK_PROJECT_ROOT__",
+          "args": [
+            "__PILOTDECK_FUNASR_RUNTIME_ROOT__"
+          ]
+        }
+      },
+      "bridge": {
+        "cwdReads": 0,
+        "outcome": {
+          "content": [
+            {
+              "type": "text",
+              "text": "[shot](./image.png)"
+            },
+            {
+              "type": "image",
+              "mimeType": "image/png",
+              "data": "Zml4dHVyZS1pbWFnZQ=="
+            }
+          ]
+        }
+      },
+      "load": {
+        "cwdReads": 0,
+        "outcome": {
+          "servers": {},
+          "diagnostics": []
+        }
+      },
+      "load-project": {
+        "cwdReads": 0,
+        "outcome": {
+          "servers": {},
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "name": "absolute-base-deleted",
+      "resolve": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project"
+        }
+      },
+      "global": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project/mcp.json"
+        }
+      },
+      "project": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project/.pilotdeck/mcp.json"
+        }
+      },
+      "pilot-project": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project/.pilotdeck/pilotdeck.yaml"
+        }
+      },
+      "funasr": {
+        "cwdReads": 0,
+        "outcome": {
+          "cwd": "<root>/project",
+          "command": "<root>/project",
+          "args": [
+            "<root>/project/funasr"
+          ]
+        }
+      },
+      "funasr-home": {
+        "cwdReads": 0,
+        "outcome": {
+          "cwd": "<root>/project",
+          "command": "<root>/project",
+          "args": [
+            "<root>/project/funasr"
+          ]
+        }
+      },
+      "browser": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "bridge": {
+        "cwdReads": 0,
+        "outcome": {
+          "content": [
+            {
+              "type": "text",
+              "text": "[shot](./image.png)"
+            },
+            {
+              "type": "image",
+              "mimeType": "image/png",
+              "data": "Zml4dHVyZS1pbWFnZQ=="
+            }
+          ]
+        }
+      },
+      "load": {
+        "cwdReads": 0,
+        "outcome": {
+          "servers": {},
+          "diagnostics": []
+        }
+      },
+      "load-project": {
+        "cwdReads": 0,
+        "outcome": {
+          "servers": {},
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "name": "absolute-path-normal",
+      "resolve": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project"
+        }
+      },
+      "global": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project/mcp.json"
+        }
+      },
+      "project": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project/.pilotdeck/mcp.json"
+        }
+      },
+      "pilot-project": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project/.pilotdeck/pilotdeck.yaml"
+        }
+      },
+      "funasr": {
+        "cwdReads": 0,
+        "outcome": {
+          "cwd": "<root>/project",
+          "command": "<root>/project",
+          "args": [
+            "<root>/project/funasr"
+          ]
+        }
+      },
+      "funasr-home": {
+        "cwdReads": 0,
+        "outcome": {
+          "cwd": "<root>/project",
+          "command": "<root>/project",
+          "args": [
+            "<root>/project/funasr"
+          ]
+        }
+      },
+      "browser": {
+        "cwdReads": 2,
+        "outcome": {
+          "cwd": "<root>/project",
+          "command": "__PILOTDECK_PROJECT_ROOT__",
+          "args": [
+            "__PILOTDECK_FUNASR_RUNTIME_ROOT__"
+          ]
+        }
+      },
+      "bridge": {
+        "cwdReads": 0,
+        "outcome": {
+          "content": [
+            {
+              "type": "text",
+              "text": "[shot](./image.png)"
+            },
+            {
+              "type": "image",
+              "mimeType": "image/png",
+              "data": "Zml4dHVyZS1pbWFnZQ=="
+            }
+          ]
+        }
+      },
+      "load": {
+        "cwdReads": 0,
+        "outcome": {
+          "servers": {},
+          "diagnostics": []
+        }
+      },
+      "load-project": {
+        "cwdReads": 0,
+        "outcome": {
+          "servers": {},
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "name": "absolute-path-deleted",
+      "resolve": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project"
+        }
+      },
+      "global": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project/mcp.json"
+        }
+      },
+      "project": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project/.pilotdeck/mcp.json"
+        }
+      },
+      "pilot-project": {
+        "cwdReads": 0,
+        "outcome": {
+          "path": "<root>/project/.pilotdeck/pilotdeck.yaml"
+        }
+      },
+      "funasr": {
+        "cwdReads": 0,
+        "outcome": {
+          "cwd": "<root>/project",
+          "command": "<root>/project",
+          "args": [
+            "<root>/project/funasr"
+          ]
+        }
+      },
+      "funasr-home": {
+        "cwdReads": 0,
+        "outcome": {
+          "cwd": "<root>/project",
+          "command": "<root>/project",
+          "args": [
+            "<root>/project/funasr"
+          ]
+        }
+      },
+      "browser": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "bridge": {
+        "cwdReads": 0,
+        "outcome": {
+          "content": [
+            {
+              "type": "text",
+              "text": "[shot](./image.png)"
+            },
+            {
+              "type": "image",
+              "mimeType": "image/png",
+              "data": "Zml4dHVyZS1pbWFnZQ=="
+            }
+          ]
+        }
+      },
+      "load": {
+        "cwdReads": 0,
+        "outcome": {
+          "servers": {},
+          "diagnostics": []
+        }
+      },
+      "load-project": {
+        "cwdReads": 0,
+        "outcome": {
+          "servers": {},
+          "diagnostics": []
+        }
+      }
+    }
+  ]
+}

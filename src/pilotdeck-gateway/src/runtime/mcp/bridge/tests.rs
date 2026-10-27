@@ -70,14 +70,23 @@ fn assert_no_open(policy: &ImageReadPolicy, path: &Path) {
 
 #[test]
 fn image_paths_use_shared_lexical_resolution() {
-    assert_eq!(resolve_path("/a/./b", "../图.png"), Path::new("/a/图.png"));
-    assert_eq!(resolve_path("/a", "/x/../img.png"), Path::new("/img.png"));
     assert_eq!(
-        resolve_path("/a", "../../../img.png"),
+        resolve_path("/a/./b", "../图.png").expect("#879 healthy image path"),
+        Path::new("/a/图.png")
+    );
+    assert_eq!(
+        resolve_path("/a", "/x/../img.png").expect("#879 healthy image path"),
+        Path::new("/img.png")
+    );
+    assert_eq!(
+        resolve_path("/a", "../../../img.png").expect("#879 healthy image path"),
         Path::new("/img.png")
     );
     let cwd = std::env::current_dir().unwrap();
-    assert_eq!(resolve_path("a/../b", "./../img.png"), cwd.join("img.png"));
+    assert_eq!(
+        resolve_path("a/../b", "./../img.png").expect("#879 healthy image path"),
+        cwd.join("img.png")
+    );
 }
 
 #[test]
@@ -124,7 +133,10 @@ fn realpath_rejects_parent_absolute_and_symlink_escapes_without_open() {
         "./chain.png",
         "./parent/outside.png",
     ] {
-        assert_no_open(&policy, &resolve_path(cwd.to_str().unwrap(), link));
+        assert_no_open(
+            &policy,
+            &resolve_path(cwd.to_str().unwrap(), link).expect("#879 healthy image path"),
+        );
         assert_skipped(&cwd, link, &[]);
     }
     let absolute = dir.path("outside.png");

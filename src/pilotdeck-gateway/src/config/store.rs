@@ -262,9 +262,9 @@ impl ConfigStore {
 
     /// `startWatching`. Must be called inside a Tokio runtime. The returned
     /// handle stops watching when dropped or via [`WatchHandle::stop`].
-    pub fn start_watching(&self, options: WatchOptions) -> WatchHandle {
+    pub fn start_watching(&self, options: WatchOptions) -> Result<WatchHandle, Error> {
         let paths = self
-            .watched_paths()
+            .watched_paths()?
             .into_iter()
             .filter_map(WatchedPath::new)
             .collect();
@@ -275,17 +275,17 @@ impl ConfigStore {
             options,
             receiver,
         ));
-        WatchHandle {
+        Ok(WatchHandle {
             task: Some(task),
             changes: sender,
-        }
+        })
     }
 
     /// `getWatchedPaths`: the global config path and, with a project, the
     /// project config path, deduplicated in that order.
-    fn watched_paths(&self) -> Vec<PathBuf> {
+    fn watched_paths(&self) -> Result<Vec<PathBuf>, Error> {
         let options = &self.inner.options;
-        let cwd = super::absolute_cwd(&options.cwd);
+        let cwd = super::absolute_cwd(&options.cwd)?;
         // The loader reads the global path through `metadata::resolve(cwd, ..)`;
         // watch the same file (a relative `PILOTDECK_CONFIG_PATH` is relative
         // to `cwd`, and an empty one is `cwd` itself).
@@ -298,7 +298,7 @@ impl ConfigStore {
         {
             paths.push(project);
         }
-        paths
+        Ok(paths)
     }
 }
 
