@@ -1563,6 +1563,15 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
     def test_rebased_negative_suite_tests_registration(self):
         self.check_rebased_helper_registration('test_negative_suite.py', {'table:cases'})
 
+    def test_rebased_failure_guard_verdict_registration(self):
+        self.check_rebased_helper_registration('failure-guard/verdict.py', set())
+
+    def test_rebased_failure_guard_verdict_tests_registration(self):
+        self.check_rebased_helper_registration('failure-guard/test_verdict.py', set())
+
+    def test_rebased_panic_evidence_tests_registration(self):
+        self.check_rebased_helper_registration('test_negative_panic.py', {'table:cases'})
+
     def test_rebased_telemetry_runner_tests_registration(self):
         self.check_rebased_helper_registration('edgeclaw-llm-telemetry/test_controls.py', set())
 
