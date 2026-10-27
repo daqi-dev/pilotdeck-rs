@@ -8,10 +8,9 @@ before anything runs: a stale anchor is a harness defect, so it prints
 the run; every selected case executes, then the script prints a
 KILLED / SURVIVED / INVALID summary and exits 1 when anything is not KILLED.
 
-``recall.rs`` is a new file, so before the coordinator commits it
-``mutating_sources`` intentionally refuses to run (it requires source bytes to
-match HEAD). Use ``--check-anchors`` pre-commit; run the mutants only after the
-commit, on the host:
+``mutating_sources`` refuses to run unless the mutated sources match HEAD, so
+use ``--check-anchors`` before committing changes to ``recall.rs`` and run the
+mutants once those changes are committed:
 
     CARGO_TARGET_DIR=/abs/target python3 negative.py OUT_DIR
     CARGO_TARGET_DIR=/abs/target python3 negative.py OUT_DIR source-priority
@@ -105,23 +104,16 @@ cases = [
      '            None => JsValue::String("unknown".into()),',
      '            None => JsValue::String("none".into()),',
      'replay_matrix'),
-    # Use the id in the fallback reason instead of the project name.
+    # Feed the fallback reason the project id instead of the project name.
+    # This keeps the production expression shape (`fallback_name`) and only
+    # changes the bound value, so the mutant compiles; the named replay case
+    # still fails on the fallback reason text it pins.
     # oracle: select-outside-fallback expects "Fallback selected Alpha".
     ('fallback-reason-name', source,
-     '''                    JsValue::String(reason.unwrap_or_else(|| {
-                        concat_reason(
-                            "Fallback selected ",
-                            &fallback_name,
-                            "; model returned no valid project id.",
-                        )
-                    })),''',
-     '''                    JsValue::String(reason.unwrap_or_else(|| {
-                        concat_reason(
-                            "Fallback selected ",
-                            &fallback_id,
-                            "; model returned no valid project id.",
-                        )
-                    })),''',
+     '''        let (fallback_id, fallback_name) =
+            (fallback.project_id.clone(), fallback.project_name.clone());''',
+     '''        let (fallback_id, fallback_name) =
+            (fallback.project_id.clone(), fallback.project_id.clone());''',
      'replay_matrix'),
     # Off-by-one on the manifest description bound (200 -> 201).
     # oracle: manifest-description-truncate prompt description.
