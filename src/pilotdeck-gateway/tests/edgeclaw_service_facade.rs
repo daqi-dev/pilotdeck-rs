@@ -96,6 +96,49 @@ fn text_at<'a>(value: &'a Value, key: &str) -> &'a str {
         .unwrap_or_else(|| panic!("#775 field {key} is not a string"))
 }
 
+// The driver reads operation args/seeds from `pilotdeck_protocol::parse_json`
+// rather than serde_json: `JsObject` keeps oracle key order, so a verbatim
+// `retrieval` object reaches the service with the same order TS observed.
+fn js_text(value: &JsValue) -> String {
+    value
+        .as_string()
+        .unwrap_or_else(|| panic!("#775 expected a string, got {value:?}"))
+        .to_utf8()
+        .expect("#775 oracle strings are valid UTF-8")
+}
+
+fn js_text_at(value: &JsValue, key: &str) -> String {
+    js_text(
+        value
+            .get(key)
+            .unwrap_or_else(|| panic!("#775 missing field {key}")),
+    )
+}
+
+fn js_array(value: &JsValue) -> &[JsValue] {
+    match value {
+        JsValue::Array(items) => items,
+        other => panic!("#775 expected an array, got {other:?}"),
+    }
+}
+
+fn js_u64(value: &JsValue) -> Option<u64> {
+    match value {
+        JsValue::Number(number)
+            if *number >= 0.0 && number.fract() == 0.0 && *number <= u64::MAX as f64 =>
+        {
+            Some(*number as u64)
+        }
+        _ => None,
+    }
+}
+
+fn js_limit(args: &JsValue) -> Option<usize> {
+    args.get("limit")
+        .and_then(js_u64)
+        .map(|value| value as usize)
+}
+
 // -- JS value <-> JSON encoding -------------------------------------------
 
 /// The same checked encoding as `observe.mts::encode`.
@@ -143,15 +186,22 @@ fn encode_js(value: &JsValue) -> Value {
     }
 }
 
-fn decode_js(value: &Value) -> JsValue {
+fn decode_js(value: &JsValue) -> JsValue {
     match value {
-        Value::Array(items) => JsValue::Array(items.iter().map(decode_js).collect()),
-        Value::Object(entries) => {
-            if let Some(kind) = entries.get("$type").and_then(Value::as_str) {
-                match kind {
+        JsValue::Array(items) => JsValue::Array(items.iter().map(decode_js).collect()),
+        JsValue::Object(entries) => {
+            if let Some(kind) = entries.get("$type").and_then(JsValue::as_string) {
+                let kind = kind.to_utf8().expect("#775 encoded $type is UTF-8");
+                match kind.as_str() {
                     "undefined" => return JsValue::Undefined,
                     "number" => {
-                        let number = match text_at(value, "value") {
+                        let encoded = entries
+                            .get("value")
+                            .and_then(JsValue::as_string)
+                            .unwrap_or_else(|| panic!("#775 encoded number without a value"))
+                            .to_utf8()
+                            .expect("#775 encoded number is UTF-8");
+                        let number = match encoded.as_str() {
                             "NaN" => f64::NAN,
                             "Infinity" => f64::INFINITY,
                             "-Infinity" => f64::NEG_INFINITY,
@@ -164,18 +214,14 @@ fn decode_js(value: &Value) -> JsValue {
                 }
             }
             let mut object = JsObject::new();
-            for (key, value) in entries {
-                object.insert(key.as_str().into(), decode_js(value));
+            // `JsObject::entries` is insertion order from `parse_json`; never
+            // rebuild through a sorted map here (that was the fix-r4 P1).
+            for (key, value) in entries.entries() {
+                object.insert(key.clone(), decode_js(value));
             }
             JsValue::Object(object)
         }
-        other => other
-            .as_str()
-            .map(|value| JsValue::String(value.into()))
-            .or_else(|| other.as_bool().map(JsValue::Bool))
-            .or_else(|| other.as_i64().map(|value| JsValue::Number(value as f64)))
-            .or_else(|| other.as_f64().map(JsValue::Number))
-            .unwrap_or(JsValue::Null),
+        other => other.clone(),
     }
 }
 
@@ -267,7 +313,7 @@ struct Run<'a> {
 fn step(
     run: &Run<'_>,
     op: &str,
-    args: &Value,
+    args: &JsValue,
     result: std::result::Result<JsValue, ServiceError>,
 ) -> Value {
     let mut row = Map::new();
@@ -302,46 +348,46 @@ struct Scenario<'a> {
     run: Run<'a>,
 }
 
-fn run_ops(scenario: &Scenario<'_>, ops: &[Value]) -> Vec<Value> {
+fn run_ops(scenario: &Scenario<'_>, ops: &[JsValue]) -> Vec<Value> {
     let service = &scenario.service;
     let run = &scenario.run;
     let mut steps = Vec::new();
     for op in ops {
-        let name = text_at(op, "op");
-        let args = op
-            .get("args")
-            .cloned()
-            .unwrap_or_else(|| json!({"$type": "undefined"}));
-        let value = match name {
-            "getSettings" => step(run, name, &args, service.get_settings().map(|s| s.to_js())),
+        let name = js_text_at(op, "op");
+        let args = op.get("args").cloned().unwrap_or(JsValue::Undefined);
+        let value = match name.as_str() {
+            "getSettings" => step(run, &name, &args, service.get_settings().map(|s| s.to_js())),
             "saveSettings" => step(
                 run,
-                name,
+                &name,
                 &args,
                 service
-                    .save_settings(&decode_js(&args["partial"]))
+                    .save_settings(&decode_js(
+                        args.get("partial").expect("#775 saveSettings partial"),
+                    ))
                     .map(|s| s.to_js()),
             ),
-            "overview" => step(run, name, &args, service.overview()),
+            "overview" => step(run, &name, &args, service.overview()),
             "snapshot" => {
                 let limit = args.get("limit").map(decode_js);
-                step(run, name, &args, service.snapshot(limit.as_ref()))
+                step(run, &name, &args, service.snapshot(limit.as_ref()))
             }
             "captureTurn" => {
-                let messages = array(&args["messages"])
+                let messages = js_array(args.get("messages").expect("#775 capture messages"))
                     .iter()
                     .map(decode_js)
                     .collect::<Vec<_>>();
-                let decoded_input = decode_js(&args["input"]);
+                let decoded_input = decode_js(args.get("input").expect("#775 capture input"));
                 let input = decoded_input
                     .as_object()
                     .expect("#775 capture input object");
-                let session_key = text_at(&args["input"], "sessionKey").to_owned();
+                let session_key =
+                    js_text_at(args.get("input").expect("#775 capture input"), "sessionKey");
                 let timestamp = optional_string(input.get("timestamp"));
                 let source = optional_string(input.get("source"));
                 step(
                     run,
-                    name,
+                    &name,
                     &args,
                     service
                         .capture_turn(
@@ -357,134 +403,133 @@ fn run_ops(scenario: &Scenario<'_>, ops: &[Value]) -> Vec<Value> {
             }
             "list" => {
                 let options = options_object(args.get("options"));
-                step(run, name, &args, service.list(&options))
+                step(run, &name, &args, service.list(&options))
             }
             "get" => {
-                let ids = decode_js(&args["ids"]);
-                let max_lines = args.get("maxLines").and_then(Value::as_f64);
-                step(run, name, &args, service.get(&ids, max_lines))
+                let ids = decode_js(args.get("ids").expect("#775 get ids"));
+                let max_lines = args.get("maxLines").and_then(JsValue::as_number);
+                step(run, &name, &args, service.get(&ids, max_lines))
             }
-            "getUserSummary" => step(run, name, &args, service.get_user_summary()),
-            "getProjectMeta" => step(run, name, &args, service.get_project_meta()),
+            "getUserSummary" => step(run, &name, &args, service.get_user_summary()),
+            "getProjectMeta" => step(run, &name, &args, service.get_project_meta()),
             "getWorkspaceMode" => step(
                 run,
-                name,
+                &name,
                 &args,
                 Ok(JsValue::String(service.get_workspace_mode().into())),
             ),
             "listReadableProjectCatalog" => {
-                step(run, name, &args, service.list_readable_project_catalog())
+                step(run, &name, &args, service.list_readable_project_catalog())
             }
-            "getReadableProject" => step(
-                run,
-                name,
-                &args,
-                service.get_readable_project(text_at(&args, "id")),
-            ),
+            "getReadableProject" => {
+                let id = js_text_at(&args, "id");
+                step(run, &name, &args, service.get_readable_project(&id))
+            }
             "listReadableProjectEntries" => {
                 let options = options_object(args.get("options"));
+                let id = js_text_at(&args, "id");
                 step(
                     run,
-                    name,
+                    &name,
                     &args,
-                    service.list_readable_project_entries(text_at(&args, "id"), &options),
+                    service.list_readable_project_entries(&id, &options),
                 )
             }
             "updateProjectMeta" => {
-                let decoded = decode_js(&args["input"]);
+                let decoded = decode_js(args.get("input").expect("#775 update input"));
                 let input = decoded
                     .as_object()
                     .expect("#775 update input object")
                     .clone();
-                step(run, name, &args, service.update_project_meta(&input))
+                step(run, &name, &args, service.update_project_meta(&input))
             }
             "getSnapshotVersion" => step(
                 run,
-                name,
+                &name,
                 &args,
                 service
                     .get_snapshot_version()
                     .map(|value| JsValue::String(value.into())),
             ),
             "saveCaseTrace" => {
-                let decoded = decode_js(&args["record"]);
+                let decoded = decode_js(args.get("record").expect("#775 case trace record"));
                 let record = decoded
                     .as_object()
                     .expect("#775 case trace record object")
                     .clone();
                 step(
                     run,
-                    name,
+                    &name,
                     &args,
                     service.save_case_trace(&record).map(|_| JsValue::Undefined),
                 )
             }
             "listCaseTraces" => {
-                let limit = args
-                    .get("limit")
-                    .and_then(Value::as_u64)
-                    .map(|v| v as usize);
+                let limit = js_limit(&args);
                 step(
                     run,
-                    name,
+                    &name,
                     &args,
                     service.list_case_traces(limit).map(JsValue::Array),
                 )
             }
-            "getCaseTrace" => step(
-                run,
-                name,
-                &args,
-                service
-                    .get_case_trace(text_at(&args, "caseId"))
-                    .map(|value| value.unwrap_or(JsValue::Undefined)),
-            ),
-            "listIndexTraces" => {
-                let limit = args
-                    .get("limit")
-                    .and_then(Value::as_u64)
-                    .map(|v| v as usize);
+            "getCaseTrace" => {
+                let case_id = js_text_at(&args, "caseId");
                 step(
                     run,
-                    name,
+                    &name,
+                    &args,
+                    service
+                        .get_case_trace(&case_id)
+                        .map(|value| value.unwrap_or(JsValue::Undefined)),
+                )
+            }
+            "listIndexTraces" => {
+                let limit = js_limit(&args);
+                step(
+                    run,
+                    &name,
                     &args,
                     service.list_index_traces(limit).map(JsValue::Array),
                 )
             }
-            "getIndexTrace" => step(
-                run,
-                name,
-                &args,
-                service
-                    .get_index_trace(text_at(&args, "id"))
-                    .map(|value| value.unwrap_or(JsValue::Undefined)),
-            ),
-            "listDreamTraces" => {
-                let limit = args
-                    .get("limit")
-                    .and_then(Value::as_u64)
-                    .map(|v| v as usize);
+            "getIndexTrace" => {
+                let id = js_text_at(&args, "id");
                 step(
                     run,
-                    name,
+                    &name,
+                    &args,
+                    service
+                        .get_index_trace(&id)
+                        .map(|value| value.unwrap_or(JsValue::Undefined)),
+                )
+            }
+            "listDreamTraces" => {
+                let limit = js_limit(&args);
+                step(
+                    run,
+                    &name,
                     &args,
                     service.list_dream_traces(limit).map(JsValue::Array),
                 )
             }
-            "getDreamTrace" => step(
-                run,
-                name,
-                &args,
-                service
-                    .get_dream_trace(text_at(&args, "id"))
-                    .map(|value| value.unwrap_or(JsValue::Undefined)),
-            ),
+            "getDreamTrace" => {
+                let id = js_text_at(&args, "id");
+                step(
+                    run,
+                    &name,
+                    &args,
+                    service
+                        .get_dream_trace(&id)
+                        .map(|value| value.unwrap_or(JsValue::Undefined)),
+                )
+            }
             "export" => {
                 let result = service.export_bundle();
                 if let Ok(value) = &result {
                     *run.last_export.borrow_mut() = Some(value.clone());
                 }
-                step(run, name, &args, result)
+                step(run, &name, &args, result)
             }
             "importLastExport" => {
                 let bundle = run
@@ -492,29 +537,27 @@ fn run_ops(scenario: &Scenario<'_>, ops: &[Value]) -> Vec<Value> {
                     .borrow()
                     .clone()
                     .expect("#775 importLastExport needs a prior export");
-                step(run, name, &args, service.import_bundle(&bundle))
+                step(run, &name, &args, service.import_bundle(&bundle))
             }
             "clear" => {
-                let scope = match args.get("scope").and_then(Value::as_str) {
-                    Some("all_memory") => ClearMemoryScope::AllMemory,
+                let scope = match args.get("scope").and_then(JsValue::as_string) {
+                    Some(scope) if scope.equals_str("all_memory") => ClearMemoryScope::AllMemory,
                     _ => ClearMemoryScope::CurrentProject,
                 };
-                step(run, name, &args, service.clear(scope))
+                step(run, &name, &args, service.clear(scope))
             }
-            "clearSession" => step(
-                run,
-                name,
-                &args,
-                service.clear_session(text_at(&args, "sessionKey")),
-            ),
+            "clearSession" => {
+                let session_key = js_text_at(&args, "sessionKey");
+                step(run, &name, &args, service.clear_session(&session_key))
+            }
             "act" => {
-                let decoded = decode_js(&args["input"]);
+                let decoded = decode_js(args.get("input").expect("#775 act input"));
                 let input = decoded.as_object().expect("#775 act input object").clone();
-                step(run, name, &args, service.act(&input))
+                step(run, &name, &args, service.act(&input))
             }
             "close" => step(
                 run,
-                name,
+                &name,
                 &args,
                 service.close().map(|_| JsValue::Undefined),
             ),
@@ -536,25 +579,23 @@ fn optional_string(value: Option<&JsValue>) -> Option<String> {
     }
 }
 
-fn options_object(value: Option<&Value>) -> JsObject {
+fn options_object(value: Option<&JsValue>) -> JsObject {
     match value {
-        None => JsObject::new(),
-        Some(Value::Null) => JsObject::new(),
-        Some(Value::Object(entries)) if entries.get("$type").is_none() => {
-            let decoded = decode_js(value.expect("#775 options"));
-            decoded.as_object().cloned().unwrap_or_default()
+        None | Some(JsValue::Null) | Some(JsValue::Undefined) => JsObject::new(),
+        Some(value @ JsValue::Object(entries)) if entries.get("$type").is_none() => {
+            decode_js(value).as_object().cloned().unwrap_or_default()
         }
         Some(_) => JsObject::new(),
     }
 }
 
-fn seed(service: &EdgeClawMemoryService, item: &Value) {
-    let method = text_at(item, "method");
+fn seed(service: &EdgeClawMemoryService, item: &JsValue) {
+    let method = js_text_at(item, "method");
     let input = decode_js(
         item.get("input")
             .unwrap_or_else(|| panic!("#775 seed {method} needs an input")),
     );
-    match method {
+    match method.as_str() {
         "indexTrace" => service
             .repository
             .storage
@@ -567,13 +608,17 @@ fn seed(service: &EdgeClawMemoryService, item: &Value) {
             .expect("#775 seed dream trace"),
         _ => {
             let input = input.as_object().expect("#775 seed input object");
-            let store = if item.get("store").and_then(Value::as_str) == Some("global") {
+            let store = if item
+                .get("store")
+                .and_then(JsValue::as_string)
+                .is_some_and(|store| store.equals_str("global"))
+            {
                 service.repository.get_global_user_store()
             } else {
                 service.repository.get_file_memory_store()
             };
             store
-                .execute(method, input)
+                .execute(&method, input)
                 .unwrap_or_else(|error| panic!("#775 seed {method}: {error}"));
         }
     }
@@ -581,6 +626,7 @@ fn seed(service: &EdgeClawMemoryService, item: &Value) {
 
 fn run_scenario(
     spec: &Value,
+    spec_js: &JsValue,
     scratch_root: &Path,
     tokens: &[String],
     token_index: &Arc<AtomicUsize>,
@@ -589,35 +635,48 @@ fn run_scenario(
     let root = scratch_root.join(name);
     fs::create_dir_all(&root).expect("#775 scenario root");
     fs::create_dir_all(root.join("home")).expect("#775 scenario home");
-    let input_paths = spec.get("inputPaths").expect("#775 scenario input paths");
-    let workspace = scenario_path(text_at(input_paths, "workspace"), &root, scratch_root);
+    let input_paths = spec_js
+        .get("inputPaths")
+        .expect("#775 scenario input paths");
+    let workspace = scenario_path(&js_text_at(input_paths, "workspace"), &root, scratch_root);
     let mut options = ServiceOptions::new(&workspace);
-    if let Some(root_dir) = input_paths.get("rootDir").and_then(Value::as_str) {
-        options.root_dir = Some(scenario_path(root_dir, &root, scratch_root));
+    if let Some(root_dir) = input_paths.get("rootDir") {
+        options.root_dir = Some(scenario_path(&js_text(root_dir), &root, scratch_root));
     }
-    if let Some(db_path) = input_paths.get("dbPath").and_then(Value::as_str) {
-        options.db_path = Some(scenario_path(db_path, &root, scratch_root));
+    if let Some(db_path) = input_paths.get("dbPath") {
+        options.db_path = Some(scenario_path(&js_text(db_path), &root, scratch_root));
     }
-    if let Some(memory_dir) = input_paths.get("memoryDir").and_then(Value::as_str) {
-        options.memory_dir = Some(scenario_path(memory_dir, &root, scratch_root));
+    if let Some(memory_dir) = input_paths.get("memoryDir") {
+        options.memory_dir = Some(scenario_path(&js_text(memory_dir), &root, scratch_root));
     }
-    if let Some(settings) = spec.get("options") {
-        match settings.get("captureStrategy").and_then(Value::as_str) {
-            Some("full_session") => options.capture_strategy = CaptureStrategy::FullSession,
-            Some("last_turn") | None => options.capture_strategy = CaptureStrategy::LastTurn,
-            Some(other) => panic!("#775 unknown captureStrategy {other}"),
+    if let Some(settings) = spec_js
+        .get("options")
+        .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+    {
+        match settings.get("captureStrategy").and_then(JsValue::as_string) {
+            Some(value) if value.equals_str("full_session") => {
+                options.capture_strategy = CaptureStrategy::FullSession;
+            }
+            Some(value) if value.equals_str("last_turn") => {
+                options.capture_strategy = CaptureStrategy::LastTurn;
+            }
+            None => options.capture_strategy = CaptureStrategy::LastTurn,
+            Some(other) => panic!(
+                "#775 unknown captureStrategy {}",
+                other.to_utf8().unwrap_or_default()
+            ),
         }
-        options.include_assistant = settings.get("includeAssistant").and_then(Value::as_bool);
-        options.max_message_chars = settings.get("maxMessageChars").and_then(Value::as_f64);
+        options.include_assistant = settings.get("includeAssistant").and_then(JsValue::as_bool);
+        options.max_message_chars = settings.get("maxMessageChars").and_then(JsValue::as_number);
         options.heartbeat_batch_size = settings
             .get("heartbeatBatchSize")
-            .and_then(Value::as_u64)
+            .and_then(js_u64)
             .map(|value| value as usize);
         options.default_indexing_settings = settings.get("defaultIndexingSettings").map(decode_js);
         options.source = settings
             .get("source")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+            .and_then(JsValue::as_string)
+            .map(|value| value.to_utf8().expect("#775 source is UTF-8"));
     }
 
     let tokens_arc = tokens.to_vec();
@@ -650,7 +709,7 @@ fn run_scenario(
     let service = EdgeClawMemoryService::with_dependencies(options, dependencies)
         .unwrap_or_else(|error| panic!("#775 construct {name}: {error}"));
 
-    for item in array(spec.get("seeds").expect("#775 seeds")) {
+    for item in js_array(spec_js.get("seeds").expect("#775 seeds")) {
         seed(&service, item);
     }
     let workspace_hash = pilotdeck_gateway::runtime::memory::edgeclaw::text::hash_text(
@@ -662,7 +721,7 @@ fn run_scenario(
         last_export: std::cell::RefCell::new(None),
     };
     let scenario = Scenario { service, run };
-    let steps = run_ops(&scenario, array(spec.get("ops").expect("#775 ops")));
+    let steps = run_ops(&scenario, js_array(spec_js.get("ops").expect("#775 ops")));
     // Every TS scenario closes in its ops; close again defensively (and ignore
     // the expected "database is not open" if it already closed).
     let _ = scenario.service.close();
@@ -791,7 +850,7 @@ fn file_tree(root: &Path) -> Value {
     Value::Array(files)
 }
 
-fn observations(oracle: &Value) -> Value {
+fn observations(oracle: &Value, driver: &JsValue) -> Value {
     let scratch = Scratch::new("edgeclaw-service-facade-rust");
     let root = scratch.path();
     fs::create_dir_all(root.join("home")).expect("#775 rust home");
@@ -801,14 +860,21 @@ fn observations(oracle: &Value) -> Value {
         .collect::<Vec<_>>();
     let token_index = Arc::new(AtomicUsize::new(0));
     let mut scenarios = Vec::new();
-    for spec in array(oracle.get("scenarios").expect("#775 scenarios")) {
-        scenarios.push(run_scenario(spec, root, &tokens, &token_index));
+    let specs = array(oracle.get("scenarios").expect("#775 scenarios"));
+    let driver_specs = js_array(driver.get("scenarios").expect("#775 driver scenarios"));
+    assert_eq!(
+        specs.len(),
+        driver_specs.len(),
+        "#775 oracle and order-preserving driver scenario counts differ"
+    );
+    for (spec, spec_js) in specs.iter().zip(driver_specs) {
+        scenarios.push(run_scenario(spec, spec_js, root, &tokens, &token_index));
     }
     json!({"scenarios": scenarios})
 }
 
-fn compare(oracle: &Value) {
-    let actual = observations(oracle);
+fn compare(oracle: &Value, driver: &JsValue) {
+    let actual = observations(oracle, driver);
     let expected = array(oracle.get("scenarios").expect("#775 scenarios"));
     let actual = array(actual.get("scenarios").expect("#775 rust scenarios"));
     assert_eq!(
@@ -1192,6 +1258,46 @@ fn nonfinite_settings_keep_js_number_semantics() {
     service.close().expect("#775 close nonfinite service");
 }
 
+/// `mergeIndexingSettings` is TS `Math.max(0, Math.floor(value))`: every zero
+/// projection is `+0`, including numeric `-0` and values that floor to `-1`
+/// then clamp to `0`. Rust `f64::max` may return either signed zero.
+#[test]
+fn default_indexing_settings_project_negative_zero_like_ts() {
+    let scratch = Scratch::new("edgeclaw-interval-negative-zero");
+    let home = scratch.path().join("home");
+    fs::create_dir_all(&home).expect("#775 interval-negative-zero home");
+    for (index, (label, value)) in [("numeric -0", -0.0), ("numeric -0.4", -0.4)]
+        .into_iter()
+        .enumerate()
+    {
+        let workspace = scratch.path().join(format!("workspace-{index}"));
+        let root = scratch.path().join(format!("root-{index}"));
+        let mut defaults = JsObject::new();
+        defaults.insert("autoIndexIntervalMinutes".into(), JsValue::Number(value));
+        defaults.insert("autoDreamIntervalMinutes".into(), JsValue::Number(value));
+        let mut options = ServiceOptions::new(workspace);
+        options.root_dir = Some(root);
+        options.default_indexing_settings = Some(JsValue::Object(defaults));
+        let service = service_for(options, &home, None);
+        let settings = service
+            .get_settings()
+            .unwrap_or_else(|error| panic!("#775 defaultIndexingSettings {label}: {error}"));
+        assert_eq!(
+            settings.auto_index_interval_minutes.to_bits(),
+            0,
+            "#775 defaultIndexingSettings {label} autoIndexIntervalMinutes must be +0 like TS Math.max"
+        );
+        assert_eq!(
+            settings.auto_dream_interval_minutes.to_bits(),
+            0,
+            "#775 defaultIndexingSettings {label} autoDreamIntervalMinutes must be +0 like TS Math.max"
+        );
+        service
+            .close()
+            .expect("#775 close interval-negative-zero service");
+    }
+}
+
 /// `saveSettings` exposes each interval through the returned `IndexingSettings`,
 /// the indexer copy and the SQLite readback. TS `clampInt` ends with
 /// `Math.max(min, …)`, so numeric `-0` and the strings `"-0"`/`"-0.0"` all
@@ -1296,7 +1402,7 @@ fn ts_service_facade_scenarios_match() {
         "#775 oracle provenance"
     );
     let oracle: Value = serde_json::from_str(ORACLE).expect("#775 oracle is valid JSON");
-    compare(&oracle);
+    compare(&oracle, &oracle_js);
 }
 
 /// Port of `tests/context/edgeclaw-memory-session-clear.spec.ts`: wiping one
@@ -1385,8 +1491,9 @@ fn session_clear_keeps_other_pending_capture() {
 fn real_ts_reads_rust_service_observations() {
     let _guard = cwd_guard();
     let oracle: Value = serde_json::from_str(ORACLE).expect("#775 oracle is valid JSON");
+    let driver = baseline::oracle(ORACLE);
     let scratch = Scratch::new("edgeclaw-service-facade-verify");
-    let observed = observations(&oracle);
+    let observed = observations(&oracle, &driver);
     let path = scratch.path().join("rust-observations.json");
     fs::write(
         &path,

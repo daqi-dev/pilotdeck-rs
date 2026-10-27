@@ -113,8 +113,8 @@ cases = [
     # `Math.floor` on the interval, not ceiling.
     # oracle: mergeIndexingSettings #305 autoDream 2.9 -> 3.
     ('merge-floor', config,
-     'Some(JsValue::Number(value)) => value.floor().max(0.0)',
-     'Some(JsValue::Number(value)) => value.ceil().max(0.0)',
+     '            let clamped = value.floor().max(0.0);',
+     '            let clamped = value.ceil().max(0.0);',
      'llm_config_matches_ts'),
     # Header values are stored untrimmed.
     # oracle: sanitizeHeaders #37 `"  keep  "` -> `"keep"`; resolveSelection
