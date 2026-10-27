@@ -9,20 +9,27 @@ catch it, then the restored tree must pass the same test. Run with no other
 writers/builds in this worktree.
 
 Release mode, because the mutants must stay observable without debug-only
-checks. The red runs set ``PDRS_TIMING_SAMPLES=1``: every mutant sample costs
-minutes even in release. That proves the criterion can catch the mutant, which
-is not the same shape as the CI's default three-sample run; for every mutant
-here more samples only redden it further (the ratio keeps the fastest run and
-every mutant sample is equally slow, and the per-sample cap is never divided
-by the sample count). The green runs keep the default three samples.
+checks. The red runs set ``PDRS_TIMING_SAMPLES=1``: a mutant full sample costs
+tens of seconds even in release. That proves the criterion can catch the
+mutant, which is not the same shape as the CI's multi-sample run; for every
+mutant here more samples only redden it further (a quadratic mutant is equally
+slow in every round, the median of the paired ratios stays high, and the
+per-sample cap is never divided by the sample count). The green runs use the
+caller's default (three rounds, five for the reparented test).
 ``CARGO_TARGET_DIR`` must come from the caller; a private build directory would
 hide slot contention from cargo-slots.sh.
+
+Every mutation is executed and recorded as KILLED, SURVIVED or INVALID (with a
+reason); the script exits non-zero unless all of them are KILLED. A non-zero
+exit from an unrelated unwrap, a compile error or a timeout is INVALID: the
+mutant must fail at the dedicated message named in its ``expects`` tuple.
 """
 import difflib
 import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -52,10 +59,12 @@ mutations = [
      '    fn contains(&self, context: Context) -> bool {\n'
      '        self.frames.iter().any(|frame| frame.context == context)\n'
      '    }',
-     ['--lib', LIB_DEEP_FRAME]),
+     ['--lib', LIB_DEEP_FRAME],
+     ('8 MiB rewrite', 'did not scale from')),
     # The pre-4fbb5f78b rewalk of every moved subtree. Linear with the subtree
-    # size, so only the retained absolute cap catches it; the sink keeps the
-    # walk observable in release.
+    # size; the retained absolute cap catches it, and its cache-unfriendly
+    # constant can also cross the 8x ratio band on a loaded host. The sink
+    # keeps the walk observable in release.
     ('moved-subtree-rewalk', 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/html_dom.rs',
      '    fn attach_height(&mut self, parent: Id, child: Id) {\n'
      '        self.change_child_height(parent, 0, self.nodes[child].height);\n'
@@ -81,7 +90,8 @@ mutations = [
      '        self.change_child_height(parent, 0, self.nodes[child].height);\n'
      '        self.update_height(parent);\n'
      '    }',
-     ['--test', 'html_markdown', 'reparented_wide_subtrees_stay_fast']),
+     ['--test', 'html_markdown', 'reparented_wide_subtrees_stay_fast'],
+     ('#873',)),
     # The pre-rope join materialized both sides, so joining N siblings moved
     # the whole accumulated text every time. Byte-identical output; only the
     # scaling ratio and the cap turn red.
@@ -95,7 +105,25 @@ mutations = [
      '        self.text_owned(joined)\n'
      '    }\n'
      '    pub fn indent',
-     ['--test', 'html_markdown', 'large_shallow_pages_match_real_ts_bytes_and_stay_fast']),
+     ['--test', 'html_markdown', 'large_shallow_pages_match_real_ts_bytes_and_stay_fast'],
+     ('did not scale from',)),
+    # The same quadratic join on the reparented wide page. The 2 MiB probe
+    # (256 KiB/2 MiB, 8x) reds the 22.6x band (linear ~8x) in ~12 s. The
+    # 8 MiB full sample is SIGKILLed by host memory pressure (inferred) before
+    # its own assertion, which is why the test carries the scaled probe.
+    ('materializing-join-reparent',
+     'src/pilotdeck-gateway/src/runtime/tools/builtin/web/html_markdown_buffer.rs',
+     '        right.leading = 0;\n'
+     '        self.concat(left, right)\n'
+     '    }\n'
+     '    pub fn indent',
+     '        right.leading = 0;\n'
+     '        let joined = self.flatten(left)? + &self.flatten(right)?;\n'
+     '        self.text_owned(joined)\n'
+     '    }\n'
+     '    pub fn indent',
+     ['--test', 'html_markdown', 'reparented_wide_subtrees_stay_fast'],
+     ('#873',)),
     # A broken "half": quartering the dominant repeat leaves the halved input
     # at ~0.25x the full bytes, so the doubling premise of the scaling ratio
     # no longer holds. The premise assertion must catch this before any
@@ -104,7 +132,8 @@ mutations = [
     ('halving-unsound', 'src/pilotdeck-gateway/tests/html_markdown.rs',
      '            rule["repeat"] = (target / 2).into();',
      '            rule["repeat"] = (target / 4).into();',
-     ['--test', 'html_markdown', 'large_shallow_pages_match_real_ts_bytes_and_stay_fast']),
+     ['--test', 'html_markdown', 'large_shallow_pages_match_real_ts_bytes_and_stay_fast'],
+     ('halved recipe',)),
 ]
 selected = sys.argv[2:]
 if selected:
@@ -122,19 +151,33 @@ def run_timing_test(target, extra_env, timeout):
                      cwd=root, env=env, timeout=timeout)
 
 
-def outcome(result, test):
+TIMING_MARKERS = ('did not scale from', 'per-sample budget', 'halved recipe')
+
+
+def outcome(result, test, expects=()):
+    """A KILLED mutant must fail the named test at its dedicated message.
+
+    A non-zero exit from an unrelated unwrap, a compile error or a timeout is
+    INVALID, never KILLED: the mutant must bind to the assertion under test.
+    """
     log = result.stdout + result.stderr
     failed_line = f'{test} ... FAILED'
-    markers = ('did not scale from', 'budget', 'halved recipe')
-    timing = any(marker in log for marker in markers)
     failure = next((line.strip() for line in log.splitlines()
-                    if any(marker in line for marker in markers)), '')
-    return log, failed_line in log and timing, failure
+                    if any(marker in line for marker in TIMING_MARKERS)), '')
+    killed = (failed_line in log and bool(failure)
+              and all(token in failure for token in expects))
+    return log, killed, failure
+
+
+def record(entry):
+    summary.append(entry)
+    (out / 'summary.json').write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
 
 
 summary = []
-with mutating_sources(root, sorted({root / filename for _, filename, _, _, _ in mutations})) as snapshots:
-    for name, filename, old, new, target in mutations:
+with mutating_sources(root, sorted({root / filename for _, filename, _, _, _, _ in mutations})) as snapshots:
+    for name, filename, old, new, target, expects in mutations:
         path = root / filename
         original = snapshots[path]
         before = hashlib.sha256(original).hexdigest()
@@ -145,34 +188,70 @@ with mutating_sources(root, sorted({root / filename for _, filename, _, _, _ in 
             content.splitlines(True), changed.splitlines(True),
             fromfile=filename, tofile=filename)))
         test = target[-1]
-        entry = dict(name=name, sourceSha256=before)
-
-        # Pristine tree, default three samples: the same assertion must pass.
-        result = run_timing_test(target, {}, timeout=1200)
-        log, _, _ = outcome(result, test)
-        (out / f'{name}.green.log').write_text(log)
-        assert result.returncode == 0, f'{name}: pristine tree did not pass'
-        entry['greenPassed'] = True
+        entry = dict(name=name, sourceSha256=before, outcome='INVALID', reason='')
+        mutated = False
 
         try:
+            # Pristine tree first: the same assertion must pass before the
+            # mutant is applied.
+            result = run_timing_test(target, {}, timeout=1200)
+            log, _, failure = outcome(result, test)
+            (out / f'{name}.green.log').write_text(log)
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f'pristine tree did not pass: {failure or result.returncode}')
+            entry['greenPassed'] = True
+
             path.write_text(changed)
+            mutated = True
             result = run_timing_test(target, {'PDRS_TIMING_SAMPLES': '1'}, timeout=1800)
-            log, killed, failure = outcome(result, test)
+            log, killed, failure = outcome(result, test, expects)
             (out / f'{name}.red.log').write_text(log)
-            entry.update(killed=killed, returncode=result.returncode, failure=failure)
-            print(f'{name}: {"KILLED" if killed else "NOT KILLED"} '
-                  f'rc={result.returncode} {failure}', flush=True)
+            entry.update(returncode=result.returncode, failure=failure)
+            if result.returncode == 0:
+                entry.update(outcome='SURVIVED', reason='mutant test passed')
+            elif not killed:
+                entry.update(outcome='INVALID',
+                             reason='failed without the expected dedicated message')
+            else:
+                entry['outcome'] = 'KILLED'
+        except subprocess.TimeoutExpired as error:
+            entry.update(outcome='INVALID',
+                         reason=f'timed out after {error.timeout}s')
+        except Exception as error:
+            entry.update(outcome='INVALID',
+                         reason=f'{type(error).__name__}: {error}')
         finally:
-            path.write_bytes(original)
-            assert hashlib.sha256(path.read_bytes()).hexdigest() == before
-        # Restored tree, default three samples again: the test must come back
-        # green before the next mutation is applied.
-        result = run_timing_test(target, {}, timeout=1200)
-        log, _, _ = outcome(result, test)
-        (out / f'{name}.restored.log').write_text(log)
-        assert result.returncode == 0, f'{name}: restored tree did not pass'
-        entry['restoredPassed'] = True
-        summary.append(entry)
-        (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
-        assert killed, f'{name}: compile/signal failure or surviving mutant is not evidence'
-    print(f'{len(summary)}/{len(mutations)} killed; every source restored byte-for-byte', flush=True)
+            if mutated:
+                path.write_bytes(original)
+                if hashlib.sha256(path.read_bytes()).hexdigest() != before:
+                    entry.update(outcome='INVALID', reason='restore failed')
+
+        # Restored tree: the test must come back green before the next mutant,
+        # so a broken restoration cannot masquerade as a killed mutant.
+        if entry['outcome'] == 'KILLED':
+            try:
+                result = run_timing_test(target, {}, timeout=1200)
+                log, _, failure = outcome(result, test)
+                (out / f'{name}.restored.log').write_text(log)
+                if result.returncode == 0:
+                    entry['restoredPassed'] = True
+                else:
+                    entry.update(
+                        outcome='INVALID',
+                        reason=f'restored tree did not pass: '
+                               f'{failure or result.returncode}')
+            except Exception as error:
+                entry.update(outcome='INVALID',
+                             reason=f'restored run: {type(error).__name__}: {error}')
+
+        record(entry)
+        reason = f" ({entry['reason']})" if entry['reason'] else ''
+        print(f"{name}: {entry['outcome']}{reason}", flush=True)
+
+killed = [entry for entry in summary if entry['outcome'] == 'KILLED']
+for entry in summary:
+    reason = f" ({entry['reason']})" if entry['reason'] else ''
+    print(f"{entry['name']}: {entry['outcome']}{reason}")
+print(f'{len(killed)}/{len(summary)} killed; every source restored byte-for-byte')
+sys.exit(0 if len(killed) == len(summary) else 1)

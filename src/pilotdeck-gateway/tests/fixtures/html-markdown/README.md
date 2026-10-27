@@ -144,19 +144,25 @@ SHA256。编码器会展开输出并与真实 TS 原始字节比较；Rust 回�
 另把最后一例已经过 TS 逐字节验证的周期扩展到 1,048,576 个 inline 元素（恰好 10 MiB），
 `reparented_wide_subtrees_stay_fast` 覆盖宽子树重挂 8 MiB；这条是 Rust 宽度压力回归，
 **不声称完整平铺 10 MiB 已跑过 TS**。三个计时测试共用 `tests/common/timing.rs`
-（与 `html_compat` 的 deep-frame 单测同一份）：把每例的主重复减半构造半幅输入，
-半幅展开后先断言字节数在全幅的 40%–60% 之间（否则「输入翻倍」前提不成立，
-比例判据退化为宽松的常数检查），再交错采样取各自最快值，断言
-full ≤ 3 × half + 150 ms（二次复杂度需要约 4x）。绝对上限是**每个全幅样本**的
-预算（`assert_within_per_sample_cap`：采样次数增加不分割预算，判据取最快样本，
+（与 `html_compat` 的 deep-frame 单测同一份）。`large_shallow` 与 `ten_mib` 仍把
+主重复减半：半幅展开后先断言字节数在全幅的 40%–60% 之间（否则「输入翻倍」前提
+不成立），再交错采样取各自最快值，断言 full ≤ 3 × half + 150 ms（二次约 4x）。
+`reparented_wide_subtrees_stay_fast`（#873）改用两对 8× 输入：256 KiB/2 MiB 的
+小探针与 1 MiB/8 MiB 的主回归；线性增长约 8x、二次约 64x，判据取几何中点
+8^1.5 ≈ 22.6x（两侧各留 2.83x），并用 5 轮交错采样的成对 `large/small` 比值中位数
+（两次被抢占仍保留有效估计）。小探针先跑，使二次 join 的负控在十几秒内转红，
+而不必在 8 MiB 上先被 OOM 杀掉。绝对上限是**每个全幅样本**的预算
+（`assert_within_per_sample_cap`：采样次数增加不分割预算，判据取最快样本，
 单次被抢占既不影响比例也不影响兜底）：release 5 秒原值；debug 120 秒——
 CI 慢跑机实测单样本全幅 31.5–34 秒（46033287、193e8a1e，比开发机慢约 4×），
 120 秒对其留约 3.75× 余量；4fbb5f78b 之前的整子树重扫线性但慢约 36 倍，只有
 该上限能抓住（release 负控实测 50.4 s > 5 s），debug 下慢机 36× 退化同样远超
-120 秒。采样次数由 `PDRS_TIMING_SAMPLES` 控制（默认 3，有效 1..=9）；
+120 秒。采样次数由 `PDRS_TIMING_SAMPLES` 控制（`large_shallow`/`ten_mib`/
+`html_compat` 默认 3，`reparented` 默认 5，有效 1..=9）；
 `tests/fixtures/html-timing/negative_controls.py` 的负控将其降为 1——红跑证明的是
 「判据能抓到变异体」（变异体每个样本都同样慢，采样更多只会更红；每样本兜底
-不被采样稀释），不是复刻 CI 的 3 样本形状。
+不被采样稀释），不是复刻 CI 的 3 样本形状。负控逐项记 KILLED / SURVIVED /
+INVALID 并在最后汇总，任一非 KILLED 即非零退出。
 输入与期望构造不计入转换计时。错误累计后统一失败，恢复旧节点上限时四例都必须报错，
 不能只靠第一例失败冒充全部负控。
 为避免并行压力影响有界耗时判据，性能自证用 `--test-threads=1`。
