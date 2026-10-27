@@ -3,8 +3,11 @@
 //! `Map` insertion order. One instance is shared by the session-config slice
 //! (`setSdkSessionConfig`) and the SDK MCP slice (`setMcpServersForSdk`,
 //! `clearSdkSessionState`) so the two cannot drift apart (#347③); the
-//! composition root injects the same [`std::sync::Arc`] into both.
+//! composition root injects the same [`std::sync::Arc`] into both. The MCP
+//! slice holds it as [`SdkSessionProjectsTable`] so the shared-table writes
+//! sit behind the commit's critical section (#347 fix-r1).
 
+use crate::runtime::cleanup_task::lock;
 use pilotdeck_protocol::{JsString, JsValue};
 use std::sync::{Arc, Mutex};
 
@@ -21,6 +24,17 @@ pub(crate) fn same_key(left: &JsValue, right: &JsValue) -> bool {
     }
 }
 
+/// The table face the two registry slices use: `set`/`delete` are the writes
+/// that must share the SDK MCP commit's critical section (#347 fix-r1), so
+/// the MCP config holds it as a trait object and tests interpose a gated
+/// implementation over the real table.
+pub trait SdkSessionProjectsTable: Send + Sync {
+    fn project(&self, session_key: &JsValue) -> Option<JsString>;
+    fn set(&self, session_key: &JsValue, project_root: JsString);
+    fn delete(&self, session_key: &JsValue);
+    fn entries(&self) -> Vec<(JsValue, JsString)>;
+}
+
 /// `sdkSessionProjects`: session key → project root (`string` in TS).
 #[derive(Default)]
 pub struct SdkSessionProjects {
@@ -32,9 +46,11 @@ impl SdkSessionProjects {
     pub fn shared() -> Arc<Self> {
         Arc::new(Self::default())
     }
+}
 
+impl SdkSessionProjectsTable for SdkSessionProjects {
     /// `map.get(key)`; the first match in insertion order.
-    pub fn project(&self, session_key: &JsValue) -> Option<JsString> {
+    fn project(&self, session_key: &JsValue) -> Option<JsString> {
         lock(&self.entries)
             .iter()
             .find(|(key, _)| same_key(key, session_key))
@@ -43,7 +59,7 @@ impl SdkSessionProjects {
 
     /// `map.set(key, root)`: replaces an existing key in place, keeping its
     /// insertion position, or appends.
-    pub fn set(&self, session_key: &JsValue, project_root: JsString) {
+    fn set(&self, session_key: &JsValue, project_root: JsString) {
         let mut entries = lock(&self.entries);
         match entries
             .iter_mut()
@@ -55,18 +71,14 @@ impl SdkSessionProjects {
     }
 
     /// `map.delete(key)`.
-    pub fn delete(&self, session_key: &JsValue) {
+    fn delete(&self, session_key: &JsValue) {
         lock(&self.entries).retain(|(key, _)| !same_key(key, session_key));
     }
 
     /// Insertion-ordered snapshot (fixture replay and the state projection).
-    pub fn entries(&self) -> Vec<(JsValue, JsString)> {
+    fn entries(&self) -> Vec<(JsValue, JsString)> {
         lock(&self.entries).clone()
     }
-}
-
-fn lock<T>(entries: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    entries.lock().unwrap_or_else(|error| error.into_inner())
 }
 
 #[cfg(test)]

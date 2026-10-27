@@ -1,5 +1,5 @@
 use super::*;
-use crate::metadata::{NativeFiles, Stat, project_id};
+use crate::metadata::{NativeFiles, Stat, project_id, string};
 use std::{
     collections::HashMap,
     io,
@@ -236,6 +236,91 @@ fn missing_params_and_unknown_project_match_ts_error_and_success_bytes() {
         let request = text_field(case, "request").unwrap();
         let expected = text_field(case, "response").unwrap();
         assert_eq!(response(&request, &metadata), expected.as_bytes());
+    }
+}
+
+/// #347 fix-r1 (review P1-3): the `constructor.name` shapes Node converts
+/// with `String(name)` (`{}`, `[]`, `null`, `""`, `0` …) produce the local
+/// `ERR_INVALID_ARG_TYPE` text instead of forwarding to TS; the shapes whose
+/// text Node never produces (a primitive constructor) still forward. Node
+/// v22.22.0 matrix: `_tmp/20261026-issue-347/fix-r1/probe/constructor-name
+/// {,-edge}.out`.
+#[test]
+fn describe_project_constructor_name_shapes_match_node() {
+    let metadata = Metadata {
+        home: PathBuf::from("/empty"),
+        cwd: PathBuf::from("/empty"),
+        files: FixtureFiles::default(),
+    };
+    for (label, key_json, received) in [
+        (
+            "name-object",
+            r#"{"constructor":{"name":{}}}"#,
+            "an instance of [object Object]",
+        ),
+        (
+            "name-array",
+            r#"{"constructor":{"name":[]}}"#,
+            "an instance of ",
+        ),
+        (
+            "name-two-element-array",
+            r#"{"constructor":{"name":[1,2]}}"#,
+            "an instance of 1,2",
+        ),
+        (
+            "name-null",
+            r#"{"constructor":{"name":null}}"#,
+            "an instance of null",
+        ),
+        (
+            "name-empty-string",
+            r#"{"constructor":{"name":""}}"#,
+            "an instance of ",
+        ),
+        (
+            "name-zero",
+            r#"{"constructor":{"name":0}}"#,
+            "an instance of 0",
+        ),
+        (
+            "name-infinity",
+            r#"{"constructor":{"name":1e400}}"#,
+            "an instance of Infinity",
+        ),
+    ] {
+        let raw = format!(
+            r#"{{"type":"request","id":"x","method":"describe_project","params":{{"projectKey":{key_json}}}}}"#
+        );
+        let parsed = parse_json(std::str::from_utf8(&response(&raw, &metadata)).unwrap()).unwrap();
+        let error = parsed.get("error").unwrap();
+        assert_eq!(
+            text_field(error, "code").as_deref(),
+            Some("ERR_INVALID_ARG_TYPE"),
+            "#347 fix-r1 {label} keeps Node's error code"
+        );
+        assert_eq!(
+            text_field(error, "message").as_deref(),
+            Some(
+                format!("The \"paths[0]\" argument must be of type string. Received {received}")
+                    .as_str()
+            ),
+            "#347 fix-r1 {label} message matches Node's String(name) conversion"
+        );
+    }
+    // A primitive constructor makes Node throw `Cannot use 'in' operator …`
+    // before any Received text exists; that error shape stays TS-owned here.
+    for key_json in [r#"{"constructor":5}"#, r#"{"constructor":"x"}"#] {
+        let raw = format!(
+            r#"{{"type":"request","id":"x","method":"describe_project","params":{{"projectKey":{key_json}}}}}"#
+        );
+        assert!(
+            matches!(
+                route_with_metadata(&parse(raw.as_bytes()).unwrap(), Some(&metadata)),
+                Route::Forward
+            ),
+            "#347 fix-r1 {key_json} still forwards"
+        );
     }
 }
 

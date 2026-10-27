@@ -28,7 +28,7 @@ use crate::config::permission::{GatewaySessionPermissionRuleSetRegistry, Permiss
 use crate::config::session_value::SessionValue;
 use crate::js_value;
 use crate::runtime::cleanup_task::lock;
-use crate::runtime::sdk_session::{SdkSessionProjects, same_key};
+use crate::runtime::sdk_session::{SdkSessionProjectsTable, same_key};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     fmt,
@@ -77,6 +77,16 @@ impl SdkMcpError {
     }
     pub fn type_error(message: impl Into<JsString>) -> Self {
         Self::plain("TypeError", message)
+    }
+    /// A `TypeError` that keeps Node's error `code` (`node:path.resolve` on a
+    /// non-string throws with `code: "ERR_INVALID_ARG_TYPE"`; Node v22.22.0
+    /// probe `_tmp/20261026-issue-347/fix-r1/probe/constructor-name.out`).
+    pub fn type_error_with_code(code: &'static str, message: impl Into<JsString>) -> Self {
+        Self {
+            code: Some(code),
+            name: "TypeError",
+            message: message.into(),
+        }
     }
     pub fn code(&self) -> Option<&'static str> {
         self.code
@@ -208,7 +218,9 @@ fn plugin_error(error: PluginRuntimeError) -> SdkMcpError {
     SdkMcpError::plain(name, JsString::from(error.message))
 }
 
-/// `this.resolve(input.projectKey)`.
+/// `this.resolve(input.projectKey)`: `project_key` has already rejected
+/// non-string, non-nullish keys with the `node:path.resolve` `TypeError`, so
+/// the resolver only ever sees `None` (the injected fallback) or a string.
 pub trait SdkMcpProjectResolver: Send + Sync {
     fn resolve<'a>(
         &'a self,
@@ -239,8 +251,10 @@ pub struct SdkMcpConfigOptions {
     pub permission_rule_sets: Arc<GatewaySessionPermissionRuleSetRegistry>,
     pub environment: Arc<dyn SdkMcpEnvironment>,
     /// `this.sdkSessionProjects`, shared with the A6.3-pr8 session registry
-    /// so both slices write the same session→project mapping.
-    pub projects: Arc<SdkSessionProjects>,
+    /// so both slices write the same session→project mapping. Held as the
+    /// table trait so the writes sit behind the commit's critical section
+    /// (#347 fix-r1) and tests can interpose a gated implementation.
+    pub projects: Arc<dyn SdkSessionProjectsTable>,
 }
 
 #[derive(Clone, Debug)]
@@ -299,7 +313,10 @@ impl SdkMcpConfig {
         // The whole read-modify-write runs under one guard: TS has no await
         // between reading `current` and writing `next`, so a concurrent
         // toggle/set must not interleave with this snapshot on the Rust side.
-        // The block ends the guard before `closeSession` is awaited.
+        // `clear_sdk_session_state` takes the same guard for its whole clear,
+        // so a clear and this commit cannot produce a half-cleared session
+        // (#347 fix-r1). The block ends the guard before `closeSession` is
+        // awaited.
         let added: Vec<JsString>;
         let removed: Vec<JsString>;
         {
@@ -641,13 +658,23 @@ impl SdkMcpConfig {
     /// permission rules and the shared session→project entry are dropped.
     /// Like the baseline, already-generated rules stay in the live ask arrays;
     /// only a later `setMcpPermissionModeOverrideForSdk` re-sync removes them.
+    ///
+    /// All four drops run under one hold of the servers lock — the same
+    /// critical section `set_mcp_servers` commits under (TS is synchronous
+    /// across the whole clear, so a set commit can only run entirely before
+    /// or entirely after it). Dropping the lock between the stores let a
+    /// concurrent set commit land in the gap and leave the session's servers
+    /// repopulated with its shared project entry deleted (#347 fix-r1). The
+    /// function has no callbacks, so no lock is ever held across one.
     pub fn clear_sdk_session_state(&self, session_key: &JsValue) {
-        lock(&self.servers).retain(|(key, _)| !same_key(key, session_key));
+        let mut servers = lock(&self.servers);
+        servers.retain(|(key, _)| !same_key(key, session_key));
         if let JsValue::String(key) = session_key {
             lock(&self.overrides).retain(|(existing, _)| existing != key);
             lock(&self.rules).retain(|(existing, _)| existing != key);
         }
         self.options.projects.delete(session_key);
+        drop(servers);
     }
 
     fn set_override(&self, session_key: &JsString, server_name: &JsString, mode: JsString) {
@@ -751,17 +778,26 @@ fn require_input<'a>(input: &'a JsValue, field: &str) -> Result<&'a JsValue, Sdk
 }
 
 /// `this.resolve(input.projectKey)`: `node:path.resolve` throws `TypeError`
-/// for a non-string, non-nullish project key (Node v22.22.0 text; probe
-/// `_tmp/20261026-issue-347/probe-347/project-key-type.out`), while
-/// `undefined`/`null` keep the injected fallback (#347①).
+/// with `code: "ERR_INVALID_ARG_TYPE"` for a non-string, non-nullish project
+/// key (Node v22.22.0 text; probes
+/// `_tmp/20261026-issue-347/probe-347/project-key-type.out` and
+/// `_tmp/20261026-issue-347/fix-r1/probe/constructor-name.out`), while
+/// `undefined`/`null` keep the injected fallback (#347①, fix-r1 keeps the
+/// code). `argument_received` yields no text only for shapes Node never turns
+/// into a Received suffix (a primitive constructor, an unconvertible
+/// `constructor.name`), where the `[Object]` fallback stays a registered
+/// approximation.
 fn project_key(input: &JsValue) -> Result<Option<JsString>, SdkMcpError> {
     match input.get("projectKey") {
         None | Some(JsValue::Undefined) | Some(JsValue::Null) => Ok(None),
         Some(JsValue::String(key)) => Ok(Some(key.clone())),
-        Some(value) => Err(SdkMcpError::type_error(format!(
-            "The \"paths[0]\" argument must be of type string. Received {}",
-            crate::metadata::argument_received(value).unwrap_or_else(|| "[Object]".into())
-        ))),
+        Some(value) => Err(SdkMcpError::type_error_with_code(
+            "ERR_INVALID_ARG_TYPE",
+            format!(
+                "The \"paths[0]\" argument must be of type string. Received {}",
+                crate::metadata::argument_received(value).unwrap_or_else(|| "[Object]".into())
+            ),
+        )),
     }
 }
 

@@ -1,5 +1,5 @@
 //! Only verified native metadata methods may terminate a request here.
-use crate::metadata::{Files, Metadata, object, string, text_field};
+use crate::metadata::{Files, Metadata, object, text_field};
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 
 const LOCAL_METHODS: &[&str] = &[
@@ -134,42 +134,13 @@ pub(crate) fn route_with_metadata<F: Files>(
                 match root.as_string() {
                     Some(root) => Ok(metadata.describe_project(root)),
                     None => {
-                        let received = match root {
-                            JsValue::Undefined => "undefined".into(),
-                            JsValue::Null => "null".into(),
-                            JsValue::Number(number) => {
-                                format!("type number ({})", error_number(*number))
-                            }
-                            JsValue::Bool(value) => format!("type boolean ({value})"),
-                            JsValue::Array(_) => "an instance of Array".into(),
-                            JsValue::Object(object) => match object.get("constructor") {
-                                None => "an instance of Object".into(),
-                                Some(constructor) => match constructor.get("name") {
-                                    Some(name)
-                                        if name
-                                            .as_string()
-                                            .is_some_and(|name| !name.is_empty()) =>
-                                    {
-                                        match string(name) {
-                                            Some(name) => format!("an instance of {name}"),
-                                            None => return Route::Forward,
-                                        }
-                                    }
-                                    Some(JsValue::Object(_) | JsValue::Array(_)) => {
-                                        return Route::Forward;
-                                    }
-                                    Some(JsValue::Number(number))
-                                        if *number != 0.0 && !number.is_nan() =>
-                                    {
-                                        format!("an instance of {}", error_number(*number))
-                                    }
-                                    Some(JsValue::Bool(true)) => "an instance of true".into(),
-                                    _ => "[Object]".into(),
-                                },
-                            },
-                            // Node util.inspect has a separate contract. Unsupported
-                            // invalid argument shapes remain TS-owned.
-                            _ => return Route::Forward,
+                        // Shared with the SDK MCP slice's `project_key`
+                        // (#347 fix-r1): Node's Received text, with
+                        // `Route::Forward` for the shapes whose text Node
+                        // never produces (a primitive constructor, an
+                        // unconvertible `constructor.name`).
+                        let Some(received) = crate::metadata::argument_received(root) else {
+                            return Route::Forward;
                         };
                         Err((
                             "ERR_INVALID_ARG_TYPE",
