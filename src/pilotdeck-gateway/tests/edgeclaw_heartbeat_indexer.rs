@@ -26,7 +26,7 @@ use pilotdeck_gateway::runtime::{
             },
         },
         llm::transport::LlmMemoryExtractor,
-        messages::MemoryMessage,
+        messages::{MemoryMessage, MemoryRole},
         storage::{IndexingSettings, L0SessionRecord},
     },
     model::http::HyperModelTransport,
@@ -36,7 +36,8 @@ use serde_json::Value;
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, atomic::AtomicU64},
+    sync::{Arc, Barrier, Mutex, atomic::AtomicU64},
+    thread,
 };
 
 const ORACLE: &str = include_str!("fixtures/edgeclaw-heartbeat-indexer/oracle.json");
@@ -138,16 +139,36 @@ impl Drop for TempDir {
 
 // -- observation helpers ---------------------------------------------------
 
+/// Replace `from` with `to` over UTF-16 units. The observation may contain
+/// lone surrogates (a candidate name cut at 80 units), so path scrubbing must
+/// never round-trip the string through UTF-8.
+fn replace_units(value: &JsString, from: &[u16], to: &str) -> JsString {
+    if from.is_empty() {
+        return value.clone();
+    }
+    let units = value.units();
+    let mut out = Vec::with_capacity(units.len());
+    let mut index = 0;
+    while index < units.len() {
+        if units[index..].starts_with(from) {
+            out.extend(to.encode_utf16());
+            index += from.len();
+        } else {
+            out.push(units[index]);
+            index += 1;
+        }
+    }
+    JsString::from_utf16(out)
+}
+
 fn clean_paths(value: &JsValue, root: &Path, home: &Path) -> JsValue {
-    let root = root.to_string_lossy().to_string();
-    let home = home.to_string_lossy().to_string();
-    fn walk(value: &JsValue, root: &str, home: &str) -> JsValue {
+    let root: Vec<u16> = root.to_string_lossy().encode_utf16().collect();
+    let home: Vec<u16> = home.to_string_lossy().encode_utf16().collect();
+    fn walk(value: &JsValue, root: &[u16], home: &[u16]) -> JsValue {
         match value {
             JsValue::String(text) => {
-                let mut next = text.to_utf8().unwrap_or_default();
-                next = next.replace(home, "$HOME");
-                next = next.replace(root, "$ROOT");
-                JsValue::String(next.into())
+                let next = replace_units(text, home, "$HOME");
+                JsValue::String(replace_units(&next, root, "$ROOT"))
             }
             JsValue::Array(items) => {
                 JsValue::Array(items.iter().map(|item| walk(item, root, home)).collect())
@@ -163,47 +184,6 @@ fn clean_paths(value: &JsValue, root: &Path, home: &Path) -> JsValue {
         }
     }
     walk(value, &root, &home)
-}
-
-fn trace_view(trace: &JsValue) -> JsValue {
-    let Some(object) = trace.as_object() else {
-        return trace.clone();
-    };
-    let mut next = JsObject::new();
-    for (key, value) in object.entries() {
-        if key.equals_str("steps") {
-            let steps = match value {
-                JsValue::Array(items) => items.iter().map(step_view).collect(),
-                other => vec![other.clone()],
-            };
-            next.insert(key.clone(), JsValue::Array(steps));
-        } else {
-            next.insert(key.clone(), value.clone());
-        }
-    }
-    JsValue::Object(next)
-}
-
-fn step_view(step: &JsValue) -> JsValue {
-    let Some(object) = step.as_object() else {
-        return step.clone();
-    };
-    let mut next = JsObject::new();
-    let mut debug = None;
-    for (key, value) in object.entries() {
-        if key.equals_str("promptDebug") {
-            debug = Some(value.clone());
-        } else {
-            next.insert(key.clone(), value.clone());
-        }
-    }
-    if let Some(debug) = debug {
-        next.insert("promptDebugPresent".into(), JsValue::Bool(true));
-        if let Some(label) = debug.get("requestLabel").and_then(JsValue::as_string) {
-            next.insert("promptDebugLabel".into(), JsValue::String(label.clone()));
-        }
-    }
-    JsValue::Object(next)
 }
 
 fn tree(root: &Path) -> JsValue {
@@ -584,10 +564,7 @@ async fn run_case(case: &JsValue) -> JsValue {
             let traces = stores
                 .storage
                 .list_recent_index_traces(20)
-                .expect("#770 list traces")
-                .iter()
-                .map(trace_view)
-                .collect();
+                .expect("#770 list traces");
             let mut keys = vec!["lastIndexedAt".to_string()];
             for capture in array(field(case, "captures")) {
                 keys.push(format!(
@@ -639,6 +616,13 @@ async fn run_case(case: &JsValue) -> JsValue {
             .expect("#770 stub requests")
             .iter()
             .map(|request| {
+                let headers = parse_json(
+                    &request
+                        .get("headers")
+                        .expect("#770 stub request headers")
+                        .to_string(),
+                )
+                .expect("#770 stub request headers parse");
                 object(&[
                     (
                         "method",
@@ -647,6 +631,16 @@ async fn run_case(case: &JsValue) -> JsValue {
                     (
                         "url",
                         JsValue::String(request["url"].as_str().unwrap_or_default().into()),
+                    ),
+                    ("headers", headers),
+                    (
+                        "body",
+                        JsValue::String(
+                            request["body"]
+                                .as_str()
+                                .expect("#770 stub request body")
+                                .into(),
+                        ),
                     ),
                 ])
             })
@@ -705,6 +699,46 @@ async fn run_case(case: &JsValue) -> JsValue {
     clean_paths(&observed, root_path, &home)
 }
 
+fn prompt_debug_values(observation: &JsValue) -> JsValue {
+    let mut debug = Vec::new();
+    if let Some(JsValue::Array(traces)) = observation.get("db").and_then(|db| db.get("traces")) {
+        for trace in traces {
+            if let Some(JsValue::Array(steps)) = trace.get("steps") {
+                for step in steps {
+                    if let Some(value) = step.get("promptDebug") {
+                        debug.push(value.clone());
+                    }
+                }
+            }
+        }
+    }
+    JsValue::Array(debug)
+}
+
+fn stored_candidate_fields(observation: &JsValue) -> JsValue {
+    let mut fields = Vec::new();
+    if let Some(JsValue::Array(traces)) = observation.get("db").and_then(|db| db.get("traces")) {
+        for trace in traces {
+            if let Some(JsValue::Array(results)) = trace.get("storedResults") {
+                for result in results {
+                    fields.push(JsValue::Array(vec![
+                        result
+                            .get("candidateType")
+                            .cloned()
+                            .unwrap_or(JsValue::Null),
+                        result
+                            .get("candidateName")
+                            .cloned()
+                            .unwrap_or(JsValue::Null),
+                        result.get("scope").cloned().unwrap_or(JsValue::Null),
+                    ]));
+                }
+            }
+        }
+    }
+    JsValue::Array(fields)
+}
+
 async fn assert_case(name: &str) {
     let oracle = baseline::oracle(ORACLE);
     let parsed = parse_json(ORACLE).expect("#770 oracle json");
@@ -713,6 +747,24 @@ async fn assert_case(name: &str) {
         .find(|case| text(field(case, "name")) == name)
         .unwrap_or_else(|| panic!("#770 oracle case {name}"));
     let observed = run_case(case).await;
+    // Targeted anchors first: a mutation that changes a request body or the
+    // candidate source must fail with a stable, test-specific message instead
+    // of the generic full-observation diff.
+    assert_eq!(
+        canonical(field(&observed, "requests")),
+        canonical(field(case, "requests")),
+        "#770 case {name} request method/url/headers/body differs"
+    );
+    assert_eq!(
+        canonical(&prompt_debug_values(&observed)),
+        canonical(&prompt_debug_values(case)),
+        "#770 case {name} promptDebug differs"
+    );
+    assert_eq!(
+        canonical(&stored_candidate_fields(&observed)),
+        canonical(&stored_candidate_fields(case)),
+        "#770 case {name} storedResults candidate source differs"
+    );
     if canonical(&observed) != canonical(case) {
         panic!(
             "#770 case {name} differs\n  actual:   {}\n  expected: {}",
@@ -749,6 +801,12 @@ case_test!(single_project_cycle_matches_ts, "single-project");
 case_test!(single_all_kinds_matches_ts, "single-all-kinds");
 case_test!(general_create_matches_ts, "general-create");
 case_test!(general_attach_matches_ts, "general-attach");
+case_test!(single_long_emoji_name_matches_ts, "single-long-emoji-name");
+case_test!(
+    general_attach_long_emoji_name_matches_ts,
+    "general-attach-long-emoji-name"
+);
+case_test!(single_non_bmp_name_matches_ts, "single-non-bmp-name");
 case_test!(
     capture_duplicate_suppression_matches_ts,
     "capture-duplicate-suppression"
@@ -797,6 +855,143 @@ case_test!(
     matrix_general_select_close_matches_ts,
     "matrix-general-select-close"
 );
+
+// P1-1: `captureL0Session` reads the newest L0 row and then inserts in a
+// second storage call. TS is safe because the function is synchronous and has
+// no await; the Rust indexer is `Clone + Send + Sync`, so two threads can both
+// read the same `recent` row before either insert. This test starts eight
+// threads on one barrier and requires exactly one inserted row and exactly one
+// `Some` return, which is the same outcome the real TS produces for any
+// number of concurrent callers.
+#[test]
+fn capture_l0_session_two_threads_is_atomic() {
+    let root = TempDir::new("capture-race");
+    let home = root.path().join("home");
+    fs::create_dir_all(&home).expect("#770-P1-1 create home");
+    let workspace = root.path().join("workspace");
+    fs::create_dir_all(&workspace).expect("#770-P1-1 create workspace");
+    let clock = Arc::new(|| NOW.to_string());
+    let stores = Arc::new(
+        EdgeClawFileStores::with_workspace_clock(
+            root.path().join("control.sqlite"),
+            root.path().join("memory"),
+            root.path().join("root").join("global"),
+            &workspace,
+            home.join(".pilotdeck"),
+            clock.clone(),
+        )
+        .expect("#770-P1-1 open repository"),
+    );
+    let extractor = Arc::new(LlmMemoryExtractor::new(
+        config("http://127.0.0.1:1"),
+        Arc::new(HyperModelTransport::new()),
+        Arc::new(()),
+    ));
+    let indexer = HeartbeatIndexer::new(
+        stores.clone(),
+        extractor,
+        HeartbeatOptions {
+            batch_size: None,
+            source: Some("edgeclaw".into()),
+            settings: IndexingSettings {
+                reasoning_mode: "answer_first".into(),
+                auto_index_interval_minutes: 30,
+                auto_dream_interval_minutes: 60,
+            },
+            logger: None,
+            clock: Some(clock),
+        },
+    );
+
+    const THREADS: usize = 8;
+    let barrier = Arc::new(Barrier::new(THREADS));
+    let mut handles = Vec::new();
+    for index in 0..THREADS {
+        let indexer = indexer.clone();
+        let barrier = barrier.clone();
+        handles.push(thread::spawn(move || {
+            barrier.wait();
+            indexer
+                .capture_l0_session(CaptureL0SessionInput {
+                    session_key: "s1".into(),
+                    timestamp: Some(format!("2026-10-22T00:00:0{index}.000Z")),
+                    messages: vec![MemoryMessage {
+                        msg_id: None,
+                        role: MemoryRole::User,
+                        content: "same user".into(),
+                    }],
+                    source: None,
+                })
+                .expect("#770-P1-1 capture_l0_session must not fail")
+                .is_some()
+        }));
+    }
+    let captured = handles
+        .into_iter()
+        .map(|handle| {
+            handle
+                .join()
+                .expect("#770-P1-1 worker thread must not panic")
+        })
+        .filter(|captured| *captured)
+        .count();
+    assert_eq!(
+        captured, 1,
+        "#770-P1-1 exactly one concurrent capture may insert, the rest must be suppressed as duplicates"
+    );
+    let rows = stores
+        .storage
+        .list_all_l0()
+        .expect("#770-P1-1 list l0 rows");
+    assert_eq!(
+        rows.len(),
+        1,
+        "#770-P1-1 concurrent capture of the same session/messages must leave exactly one L0 row"
+    );
+    // The same lock must still insert when the predicate is false: another
+    // session, and a same-session transcript with new content.
+    let other_session = indexer
+        .capture_l0_session(CaptureL0SessionInput {
+            session_key: "s2".into(),
+            timestamp: Some("2026-10-22T00:00:09.000Z".into()),
+            messages: vec![MemoryMessage {
+                msg_id: None,
+                role: MemoryRole::User,
+                content: "same user".into(),
+            }],
+            source: None,
+        })
+        .expect("#770-P1-1 other-session capture must not fail");
+    assert!(
+        other_session.is_some(),
+        "#770-P1-1 a different session must still insert"
+    );
+    let new_content = indexer
+        .capture_l0_session(CaptureL0SessionInput {
+            session_key: "s2".into(),
+            timestamp: Some("2026-10-22T00:00:10.000Z".into()),
+            messages: vec![MemoryMessage {
+                msg_id: None,
+                role: MemoryRole::User,
+                content: "new user".into(),
+            }],
+            source: None,
+        })
+        .expect("#770-P1-1 new-content capture must not fail");
+    assert!(
+        new_content.is_some(),
+        "#770-P1-1 a same-session transcript with new content must still insert"
+    );
+    assert_eq!(
+        stores
+            .storage
+            .list_all_l0()
+            .expect("#770-P1-1 list l0 rows after predicate-false captures")
+            .len(),
+        3,
+        "#770-P1-1 predicate-false captures must add rows"
+    );
+}
 
 #[ignore]
 #[test]

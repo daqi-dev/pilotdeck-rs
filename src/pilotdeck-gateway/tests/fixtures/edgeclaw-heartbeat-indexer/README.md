@@ -16,8 +16,9 @@ Real-TS goldens for the stateful `HeartbeatIndexer` (#770, baseline
   and `close` events.
 
 `oracle.json` records every L0 row, stats/rejection, pipeline state, index
-trace (prompt bodies elided, presence retained), memory/global file bytes and
-request sequence. `tests/edgeclaw_heartbeat_indexer.rs` replays the same
+trace (including every `promptDebug` system/user prompt and raw response),
+memory/global file bytes, and every request method, URL, header and raw JSON
+body. `tests/edgeclaw_heartbeat_indexer.rs` replays the same
 cases through `HeartbeatIndexer`; its `#[ignore]` regeneration guard reruns
 `generate.mts` and requires byte-identical output.
 
@@ -47,8 +48,12 @@ PDRS_BASELINE=/abs/PilotDeck cargo test -p pilotdeck-gateway \
   --test edgeclaw_heartbeat_indexer -- --include-ignored
 ```
 
-The negative controls are **new files**, so `mutating_sources` refuses to run
-them before the coordinator commits the branch. After commit:
+Two cases carry a candidate name cut at 80 UTF-16 units
+(`'a'.repeat(79) + '😀'`), so the trace keeps the lone high surrogate exactly
+as Node does; a third carries an untruncated non-BMP name.
+
+The negative controls mutate committed bytes, so `mutating_sources` refuses to
+run on an uncommitted working tree. After commit:
 
 ```sh
 CARGO_TARGET_DIR=/abs/cargo-target python3 tests/fixtures/edgeclaw-heartbeat-indexer/negative.py /abs/negative-out
