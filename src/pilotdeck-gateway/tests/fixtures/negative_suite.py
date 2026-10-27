@@ -68,15 +68,88 @@ def panic_blocks(stderr, prefix, test, worker):
     return re.findall(pattern, stderr, re.S)
 
 
-def target_hits(result, prefix, targets, worker):
+# Lines that end a panic payload rather than belong to it: the backtrace
+# note and libtest's own result/report output. Shared shape with the #813
+# ``negative_panic`` rule that only the message body is evidence.
+_PANIC_TAIL = re.compile(
+    r'^(?:'
+    r'stack backtrace:'
+    r'|note: Some details are omitted'
+    r'|note: run with `RUST_BACKTRACE'
+    r'|test result:'
+    r'|failures:'
+    r'|test \S+ \.\.\. (?:ok|FAILED|ignored|measured)'
+    r'|error: test failed'
+    r'|running \d+ tests?$'
+    r')'
+)
+
+# std's assert_eq/assert_ne print the custom message on the payload's first
+# line, after the fixed diagnostic; every other dedicated message (assert!,
+# expect) starts a payload line of its own.
+_ASSERTION_PREFIXES = ('assertion `left == right` failed: ',
+                       'assertion `left != right` failed: ')
+
+
+def worker_payloads(block, prefix, worker):
+    """The embedded worker's own panic payloads inside a parent block.
+
+    A parent's message embeds the worker's whole captured output, so a
+    marker in worker stdout or a plain diagnostic is not evidence (#889
+    fix-r2): only the body of the worker's own panic is. The ``panicked at
+    <loc>:`` header line and everything after the backtrace note are
+    dropped, mirroring the shared #813 ``negative_panic`` rule.
+    """
+    payloads = []
+    for segment in block.split("\nthread '")[1:]:
+        if segment.split("'", 1)[0] != prefix + worker:
+            continue
+        at = segment.find(' panicked at ')
+        if at < 0:
+            continue
+        body = segment[at + len(' panicked at '):]
+        newline = body.find('\n')
+        if newline < 0:
+            continue
+        lines = []
+        for line in body[newline + 1:].splitlines():
+            if _PANIC_TAIL.match(line):
+                break
+            lines.append(line)
+        payloads.append('\n'.join(lines))
+    return payloads
+
+
+def _scoped_to_assertion(payload, message):
+    """Whether the payload carries ``message`` as an assertion's own text.
+
+    The message must start a payload line - bare for ``assert!``/``expect()``,
+    or after std's ``assertion `left == right` failed: `` diagnostic - so an
+    echo inside the indented ``left:``/``right:`` value lines never counts.
+    """
+    return any(line.startswith(message)
+               or any(line.startswith(f'{prefix}{message}')
+                      for prefix in _ASSERTION_PREFIXES)
+               for line in payload.splitlines())
+
+
+def target_hits(result, prefix, targets, worker, *, every_block=True):
     """Split declared ``(test, dedicated message)`` targets into hits/unrelated.
 
-    A target counts as hit only when the outer ``failures:`` list names it and
-    every one of its own panic blocks carries its dedicated message; a
-    declared failure without that message in its own block is unrelated,
-    never a kill. A real run has exactly one block per test, so the
-    every-block requirement stays fail-closed when a foreign panic echoes
-    this test's panic-start line (#889).
+    A target counts as hit only when the outer ``failures:`` list names it
+    and every one of its own panic blocks carries its dedicated message in
+    the embedded worker's own panic payload; a declared failure whose
+    worker died elsewhere - a plain diagnostic echoing the marker, a setup
+    ``unwrap()``, or the marker echoed in assertion values - is unrelated,
+    never a kill (#889 fix-r2). A matrix run has exactly one block per
+    test, so the every-block requirement stays fail-closed when a foreign
+    panic echoes this test's panic-start line (#889).
+
+    ``every_block=False`` is for single-test ``--exact`` runners: their
+    parent legitimately re-panics after ``catch_unwind`` without the
+    worker's captured output (metadata-process-cwd's ``#879 child matrix
+    failed`` wrapper), and with no other test in the process no foreign
+    echo exists - so one own block with the worker's payload decides.
     """
     if not targets:
         raise ValueError('at least one declared target is required')
@@ -86,12 +159,15 @@ def target_hits(result, prefix, targets, worker):
         if f'{prefix}{test}' not in failed:
             continue
         blocks = panic_blocks(result.stderr, prefix, test, worker)
-        (hit if blocks and all(message in block for block in blocks)
+        carries = [any(_scoped_to_assertion(payload, message)
+                       for payload in worker_payloads(block, prefix, worker))
+                   for block in blocks]
+        (hit if blocks and (all(carries) if every_block else any(carries))
          else unrelated).append(test)
     return hit, unrelated
 
 
-def cell_hits(result, prefix, tests, marker, worker, case_name=case_name):
+def cell_hits(result, prefix, tests, marker, worker):
     """Matrix cells compose their dedicated message from marker and case id."""
     return target_hits(result, prefix,
                        [(test, f'{marker} {case_name(test)}') for test in tests],
@@ -101,9 +177,10 @@ def cell_hits(result, prefix, tests, marker, worker, case_name=case_name):
 def judge(result, prefix, tests, marker, worker, *, any_cell=False):
     """Classify a matrix negative run: ``(killed, reason, hits)``.
 
-    ``any_cell`` keeps the #879b ``absolute-guard`` semantics: one declared
-    cell red with its dedicated message is a kill even when a sibling cell is
-    structurally unreachable for that mutation.
+    ``any_cell`` accepts a partial kill: one declared cell red with its
+    dedicated message is a kill even while a sibling declared cell is
+    structurally unreachable for that mutation (the #879b stats
+    ``absolute-guard`` run relies on this).
     """
     log = result.stdout + result.stderr
     if result.returncode == 0:

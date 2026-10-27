@@ -39,9 +39,8 @@ def libtest_log(failed, interleave=False, receipts=1, extra_stdout=''):
             # Any stdout line landing between the test name and its verdict
             # (here: a receipt printed before the verdict) breaks the adjacent
             # `... FAILED` spelling that the old judgment required.
-            for receipt in range(receipts):
-                lines.append(
-                    f'test {PREFIX}{test} ... PDRS_VERIFIED_CHILD {case_name(test)}')
+            lines.extend(
+                [f'test {PREFIX}{test} ... PDRS_VERIFIED_CHILD {case_name(test)}'] * receipts)
             lines.append(verdict)
         else:
             lines.append(f'test {PREFIX}{test} ... {verdict}')
@@ -105,7 +104,6 @@ class KillJudgment(unittest.TestCase):
         red = [test for test in declared if test != 'tilde_deleted_cwd']
         stdout = libtest_log(red)
         stderr = ''.join(parent_failure(test, MARKER) for test in red)
-        log = stdout + stderr
         self.assertNotIn(f'    {PREFIX}tilde_deleted_cwd', stdout,
                          'the structurally unreachable cell must stay out of the '
                          'outer failures list in this sample')

@@ -38,7 +38,8 @@ message/kind、绝对 home 误读 cwd、相对 home 基准、router 目录、dis
 `negative_suite.judge`（#889 fix-r1）：失败格取自外层 libtest 的 `failures:` 清单（仅 stdout
 最后一段；嵌套 worker 自己的清单与 panic 回显都在 stderr，不参与——`--nocapture` 下
 `... FAILED` 也可能被 receipt 挤到下一行），且该格自身 panic 块（内嵌 worker 输出）携带
-专属消息，别处 panic 或回显里的消息不判杀。判杀单测（合成交错日志、不跑 cargo）：
+专属消息（fix-r2 起只认内嵌 worker 自己的 panic payload 里的断言位，worker stdout
+普通诊断、父块自身文案或断言值里的回显不判杀），别处 panic 或回显里的消息不判杀。判杀单测（合成交错日志、不跑 cargo）：
 `python3 src/pilotdeck-gateway/tests/fixtures/stats-cwd/test_negative_controls.py`。
 `absolute-guard` 只要求声明的四格中至少一格转红：裸 `~` 在 `stats.rs:1215` 提前返回，
 不经过被变异的 `expanded.is_absolute()`，`tilde_deleted_cwd` 结构上不会红；其余三格必须

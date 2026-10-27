@@ -56,30 +56,192 @@ def panic_text(test, message, thread_id=True):
             'note: run with `RUST_BACKTRACE=1` for a backtrace\n')
 
 
-def worker_panic(case, marker=MARKER):
+def worker_panic(case, marker=MARKER, payload=None):
     """The bounded worker's own panic, embedded in its parent's message."""
     return (f"thread '{PREFIX}{WORKER}' (35085019) panicked at fixture.rs:83:5:\n"
-            f'assertion `left == right` failed: {marker} {case}\n'
+            f'{payload if payload is not None else f"assertion `left == right` failed: {marker} {case}"}\n'
             'note: run with `RUST_BACKTRACE=1` for a backtrace\n')
 
 
-def parent_failure(test, marker=MARKER):
+def parent_failure(test, marker=MARKER, worker_output='', worker_payload=None):
     """A real kill shape: the parent's message embeds the worker's whole output.
 
     Mirrors the host log (test_process.rs:32 panic embedding the worker's
     libtest run, its nested ``failures:`` list and its own panic).
+    ``worker_output`` is inserted before the worker's libtest run and
+    ``worker_payload`` replaces the worker's panic body, e.g. a plain
+    stdout diagnostic or a setup unwrap the judgment must refuse.
     """
     case = suite.case_name(test)
     message = (f'{PREFIX}{WORKER}/{case}: expected one passed test and receipt '
-               f'{case}: exit status: 101\n\nrunning 1 test\n'
+               f'{case}: exit status: 101\n\nrunning 1 test\n{worker_output}'
                f'test {PREFIX}{WORKER} ... FAILED\n\nfailures:\n\nfailures:\n'
                f'    {PREFIX}{WORKER}\n\ntest result: FAILED. 0 passed; 1 failed; '
-               f'0 ignored;\n\n{worker_panic(case, marker)}')
+               f'0 ignored;\n\n{worker_panic(case, marker, worker_payload)}')
     return panic_text(test, message)
 
 
 def run_result(stdout, stderr, code=101):
     return subprocess.CompletedProcess([], code, stdout, stderr)
+
+
+# A real host negative log, committed verbatim: the metadata-from-env
+# ``cwd-message`` mutation as run by the coordinator on the #889 r1 tree
+# (2026-10-26, evidence kept under the issue's _tmp directory). The outer
+# libtest pretty run (receipts interleaving names and verdicts, the doubled
+# ``failures:`` header) went to stdout; the parent panics - each embedding
+# its bounded worker's whole captured output, including the worker's own
+# nested libtest run and its assert_eq panic - went to stderr.
+HOST_LOG = '''
+running 15 tests
+test metadata::from_env_tests::absolute_deleted_cwd ... FAILED
+test metadata::from_env_tests::absolute_normal_cwd ... PDRS_VERIFIED_CHILD absolute-normal
+ok
+test metadata::from_env_tests::empty_deleted_cwd ... FAILED
+test metadata::from_env_tests::empty_normal_cwd ... PDRS_VERIFIED_CHILD empty-normal
+ok
+test metadata::from_env_tests::environment_worker ... ignored, worker only; parent supplies isolated env and checks one receipt
+test metadata::from_env_tests::metadata_from_env_regenerates_identically ... ignored, requires Node v22.22.0 and PDRS_BASELINE
+test metadata::from_env_tests::missing_home_normal_cwd ... PDRS_VERIFIED_CHILD missing-home-normal
+ok
+test metadata::from_env_tests::relative_deleted_cwd ... FAILED
+test metadata::from_env_tests::relative_normal_cwd ... PDRS_VERIFIED_CHILD relative-normal
+ok
+test metadata::from_env_tests::tilde_child_deleted_cwd ... FAILED
+test metadata::from_env_tests::tilde_child_normal_cwd ... PDRS_VERIFIED_CHILD tilde-child-normal
+ok
+test metadata::from_env_tests::tilde_deleted_cwd ... FAILED
+test metadata::from_env_tests::tilde_normal_cwd ... PDRS_VERIFIED_CHILD tilde-normal
+ok
+test metadata::from_env_tests::unset_deleted_cwd ... PDRS_VERIFIED_CHILD unset-deleted
+ok
+test metadata::from_env_tests::unset_normal_cwd ... PDRS_VERIFIED_CHILD unset-normal
+ok
+
+failures:
+
+failures:
+    metadata::from_env_tests::absolute_deleted_cwd
+    metadata::from_env_tests::empty_deleted_cwd
+    metadata::from_env_tests::relative_deleted_cwd
+    metadata::from_env_tests::tilde_child_deleted_cwd
+    metadata::from_env_tests::tilde_deleted_cwd
+
+test result: FAILED. 8 passed; 5 failed; 2 ignored; 0 measured; 2546 filtered out; finished in 0.21s
+
+
+thread 'metadata::from_env_tests::absolute_deleted_cwd' (13474835) panicked at pilotdeck-gateway/src/test_process.rs:32:37:
+metadata::from_env_tests::environment_worker/absolute-deleted: expected one passed test and receipt absolute-deleted: exit status: 101
+
+running 1 test
+test metadata::from_env_tests::environment_worker ... FAILED
+
+failures:
+
+failures:
+    metadata::from_env_tests::environment_worker
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2560 filtered out; finished in 0.00s
+
+
+
+thread 'metadata::from_env_tests::environment_worker' (13474837) panicked at pilotdeck-gateway/src/../tests/fixtures/metadata-from-env/regression.rs:83:5:
+assertion `left == right` failed: metadata from_env matrix: absolute-deleted
+  left: Object {"error": String("ENOENT: no such file or directory, read")}
+ right: Object {"error": String("ENOENT: no such file or directory, uv_cwd")}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'metadata::from_env_tests::empty_deleted_cwd' (13474842) panicked at pilotdeck-gateway/src/test_process.rs:32:37:
+metadata::from_env_tests::environment_worker/empty-deleted: expected one passed test and receipt empty-deleted: exit status: 101
+
+running 1 test
+test metadata::from_env_tests::environment_worker ... FAILED
+
+failures:
+
+failures:
+    metadata::from_env_tests::environment_worker
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2560 filtered out; finished in 0.00s
+
+
+
+thread 'metadata::from_env_tests::environment_worker' (13474844) panicked at pilotdeck-gateway/src/../tests/fixtures/metadata-from-env/regression.rs:83:5:
+assertion `left == right` failed: metadata from_env matrix: empty-deleted
+  left: Object {"error": String("ENOENT: no such file or directory, read")}
+ right: Object {"error": String("ENOENT: no such file or directory, uv_cwd")}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+thread 'metadata::from_env_tests::relative_deleted_cwd' (13474851) panicked at pilotdeck-gateway/src/test_process.rs:32:37:
+metadata::from_env_tests::environment_worker/relative-deleted: expected one passed test and receipt relative-deleted: exit status: 101
+
+running 1 test
+test metadata::from_env_tests::environment_worker ... FAILED
+
+failures:
+
+failures:
+    metadata::from_env_tests::environment_worker
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2560 filtered out; finished in 0.00s
+
+
+
+thread 'metadata::from_env_tests::environment_worker' (13474853) panicked at pilotdeck-gateway/src/../tests/fixtures/metadata-from-env/regression.rs:83:5:
+assertion `left == right` failed: metadata from_env matrix: relative-deleted
+  left: Object {"error": String("ENOENT: no such file or directory, read")}
+ right: Object {"error": String("ENOENT: no such file or directory, uv_cwd")}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+thread 'metadata::from_env_tests::tilde_child_deleted_cwd' (13474857) panicked at pilotdeck-gateway/src/test_process.rs:32:37:
+metadata::from_env_tests::environment_worker/tilde-child-deleted: expected one passed test and receipt tilde-child-deleted: exit status: 101
+
+running 1 test
+test metadata::from_env_tests::environment_worker ... FAILED
+
+failures:
+
+failures:
+    metadata::from_env_tests::environment_worker
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2560 filtered out; finished in 0.00s
+
+
+
+thread 'metadata::from_env_tests::environment_worker' (13474859) panicked at pilotdeck-gateway/src/../tests/fixtures/metadata-from-env/regression.rs:83:5:
+assertion `left == right` failed: metadata from_env matrix: tilde-child-deleted
+  left: Object {"error": String("ENOENT: no such file or directory, read")}
+ right: Object {"error": String("ENOENT: no such file or directory, uv_cwd")}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+thread 'metadata::from_env_tests::tilde_deleted_cwd' (13474863) panicked at pilotdeck-gateway/src/test_process.rs:32:37:
+metadata::from_env_tests::environment_worker/tilde-deleted: expected one passed test and receipt tilde-deleted: exit status: 101
+
+running 1 test
+test metadata::from_env_tests::environment_worker ... FAILED
+
+failures:
+
+failures:
+    metadata::from_env_tests::environment_worker
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2560 filtered out; finished in 0.00s
+
+
+
+thread 'metadata::from_env_tests::environment_worker' (13474865) panicked at pilotdeck-gateway/src/../tests/fixtures/metadata-from-env/regression.rs:83:5:
+assertion `left == right` failed: metadata from_env matrix: tilde-deleted
+  left: Object {"error": String("ENOENT: no such file or directory, read")}
+ right: Object {"error": String("ENOENT: no such file or directory, uv_cwd")}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+error: test failed, to rerun pass `-p pilotdeck-gateway --lib`
+'''
 
 
 class FailureListTests(unittest.TestCase):
@@ -113,9 +275,13 @@ class FailureListTests(unittest.TestCase):
     def test_cell_hits_split_marker_and_foreign_failures(self):
         cell = CELLS[0]
         # A declared failure whose own panic block carries the dedicated
-        # message is the only hit.
-        result = run_result(libtest_stdout([cell]), panic_text(cell, f'{MARKER} relative-deleted'))
+        # message in the embedded worker's own panic payload is the only hit.
+        result = run_result(libtest_stdout([cell]), parent_failure(cell))
         self.assertEqual(suite.cell_hits(result, PREFIX, [cell], MARKER, WORKER), ([cell], []))
+        # The same text as the parent's own panic message - no embedded
+        # worker panic - is plain text, never an assertion (#889 fix-r2).
+        result = run_result(libtest_stdout([cell]), panic_text(cell, f'{MARKER} relative-deleted'))
+        self.assertEqual(suite.cell_hits(result, PREFIX, [cell], MARKER, WORKER), ([], [cell]))
         # A declared failure without that message is unrelated, never a kill.
         result = run_result(libtest_stdout([cell]), panic_text(cell, 'unrelated panic'))
         self.assertEqual(suite.cell_hits(result, PREFIX, [cell], MARKER, WORKER), ([], [cell]))
@@ -129,6 +295,73 @@ class FailureListTests(unittest.TestCase):
         self.assertIn(f'{PREFIX}{cell} ... FAILED', log)
         self.assertIn(f'{MARKER} {suite.case_name(cell)}', log)
         self.assertEqual(suite.cell_hits(result, PREFIX, [cell], MARKER, WORKER), ([], []))
+
+    def test_plain_worker_diagnostic_echo_is_not_a_kill(self):
+        # #889 fix-r2 P0: the worker echoes the dedicated message in a plain
+        # stdout diagnostic and then dies on an unrelated setup unwrap. The
+        # parent's block genuinely carries the message in both variants; only
+        # the embedded worker's own panic payload is evidence, so neither
+        # may count as a hit.
+        cell = CELLS[0]
+        case = suite.case_name(cell)
+        message = f'{MARKER} {case}'
+        for diagnostic in ('', f'checking {message} before the assertion\n'):
+            stderr = parent_failure(
+                cell, worker_output=diagnostic,
+                worker_payload='called Result::unwrap() on an Err value: PermissionDenied')
+            result = run_result(libtest_stdout([cell]), stderr)
+            self.assertIn('called Result::unwrap()', result.stderr)
+            self.assertEqual(message in result.stderr, bool(diagnostic),
+                            'the variants must differ only in the plain echo')
+            self.assertEqual(suite.cell_hits(result, PREFIX, [cell], MARKER, WORKER), ([], [cell]))
+            killed, reason, _ = suite.judge(result, PREFIX, [cell], MARKER, WORKER)
+            self.assertFalse(killed, 'a plain diagnostic echo must not fake a kill')
+            self.assertIn('without the dedicated marker', reason)
+
+    def test_worker_assertion_value_echo_is_not_a_kill(self):
+        # The worker's own assert_eq failed, but only its indented
+        # ``left:``/``right:`` value lines echo the dedicated message; the
+        # assertion's own message is a setup guard. An echo inside the
+        # compared values is not the declared assertion (#889 fix-r2).
+        cell = CELLS[0]
+        case = suite.case_name(cell)
+        echo = (f'assertion `left == right` failed: setup guard\n'
+                f'  left: "{MARKER} {case}"\n'
+                f' right: "unrelated"')
+        stderr = parent_failure(cell, worker_payload=echo)
+        result = run_result(libtest_stdout([cell]), stderr)
+        self.assertIn(f'  left: "{MARKER} {case}"', result.stderr,
+                      'sample must genuinely echo the message in a value line')
+        self.assertEqual(suite.cell_hits(result, PREFIX, [cell], MARKER, WORKER), ([], [cell]))
+        killed, reason, _ = suite.judge(result, PREFIX, [cell], MARKER, WORKER)
+        self.assertFalse(killed, 'an assertion-value echo must not fake a kill')
+        self.assertIn('without the dedicated marker', reason)
+
+    def test_expect_message_at_line_start_kills(self):
+        # file-history binds expect() messages on purpose: the payload line
+        # starts with the dedicated message and the error follows it.
+        cell = CELLS[0]
+        stderr = parent_failure(cell, worker_payload='#879 state named backup: Os { code: 2 }')
+        result = run_result(libtest_stdout([cell]), stderr)
+        hit, unrelated = suite.target_hits(
+            result, PREFIX, [(cell, '#879 state named backup')], WORKER)
+        self.assertEqual((hit, unrelated), ([cell], []))
+        killed, _, _ = suite.judge(result, PREFIX, [cell], MARKER, WORKER)
+        self.assertFalse(killed, 'a different dedicated message is not this marker')
+
+    def test_worker_payloads_drop_headers_and_libtest_lines(self):
+        blocks = suite.panic_blocks(parent_failure(CELLS[0]), PREFIX, CELLS[0], WORKER)
+        self.assertEqual(len(blocks), 1)
+        payloads = suite.worker_payloads(blocks[0], PREFIX, WORKER)
+        self.assertEqual(len(payloads), 1)
+        self.assertTrue(payloads[0].startswith('assertion `left == right` failed:'),
+                        'the panicked-at header line is not payload')
+        self.assertNotIn('panicked at', payloads[0])
+        self.assertNotIn('note: run with', payloads[0])
+        self.assertNotIn('test result:', payloads[0])
+        # A parent block without any embedded worker panic has no payload.
+        self.assertEqual(suite.worker_payloads(
+            panic_text(CELLS[0], 'setup failed'), PREFIX, WORKER), [])
 
     def test_interleaved_receipt_and_embedded_worker_panic_kills(self):
         # The real kill shape: receipts split the verdict spelling, and the
@@ -234,6 +467,50 @@ class FailureListTests(unittest.TestCase):
         killed, reason, _ = suite.judge(result, PREFIX, declared, MARKER, WORKER)
         self.assertFalse(killed)
         self.assertIn('stayed green', reason)
+
+    def test_real_host_negative_log_replay(self):
+        # Replaying the committed host log keeps the judgment honest about
+        # the real stream shape; the split below is the only liberty taken
+        # (stdout up to the first panic line, everything from it stderr).
+        lines = HOST_LOG.splitlines(keepends=True)
+        start = next(i for i, line in enumerate(lines) if line.startswith("thread '"))
+        result = run_result(''.join(lines[:start]), ''.join(lines[start:]))
+        declared = ['absolute_deleted_cwd', 'empty_deleted_cwd', 'relative_deleted_cwd',
+                    'tilde_child_deleted_cwd', 'tilde_deleted_cwd']
+        killed, reason, hits = suite.judge(result, 'metadata::from_env_tests::',
+                                           declared, 'metadata from_env matrix:',
+                                           'environment_worker')
+        self.assertTrue(killed, reason)
+        self.assertEqual(hits, declared)
+
+    def test_catch_unwind_repanic_shape_needs_every_block_false(self):
+        # metadata-process-cwd's matrix() wrapper re-panics through
+        # catch_unwind + expect without the worker's captured output, so
+        # the named test owns two panic blocks and only the first carries
+        # the worker's payload. The matrix default (every_block) stays
+        # fail-closed; a single-test --exact runner clears it.
+        cell = CELLS[0]
+        stderr = parent_failure(cell) + panic_text(
+            cell, '#879 child matrix failed: Any { .. }')
+        result = run_result(libtest_stdout([cell]), stderr)
+        self.assertEqual(len(suite.panic_blocks(result.stderr, PREFIX, cell, WORKER)), 2)
+        self.assertEqual(suite.cell_hits(result, PREFIX, [cell], MARKER, WORKER),
+                         ([], [cell]))
+        hit, unrelated = suite.target_hits(
+            result, PREFIX, [(cell, f'{MARKER} {suite.case_name(cell)}')], WORKER,
+            every_block=False)
+        self.assertEqual((hit, unrelated), ([cell], []))
+        # The single-test relaxation still refuses the plain-diagnostic echo:
+        # no worker payload ever carries the message.
+        echo = parent_failure(
+            cell, worker_output=f'checking {MARKER} {suite.case_name(cell)}\n',
+            worker_payload='called Result::unwrap() on an Err value: PermissionDenied')
+        echo += panic_text(cell, '#879 child matrix failed: Any { .. }')
+        result = run_result(libtest_stdout([cell]), echo)
+        hit, unrelated = suite.target_hits(
+            result, PREFIX, [(cell, f'{MARKER} {suite.case_name(cell)}')], WORKER,
+            every_block=False)
+        self.assertEqual((hit, unrelated), ([], [cell]))
 
     def test_panic_blocks_keep_the_embedded_worker_panic_inside(self):
         blocks = suite.panic_blocks(parent_failure(CELLS[0]) + parent_failure(CELLS[1]),

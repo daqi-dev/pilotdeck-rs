@@ -11,6 +11,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import target_hits
 
 ROOT = Path(__file__).resolve().parents[5]
 META = ROOT / 'src/pilotdeck-gateway/src/metadata.rs'
@@ -21,6 +22,7 @@ REG = ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/registry.rs'
 BRIDGE = ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/bridge.rs'
 FIXTURE = ROOT / 'src/pilotdeck-gateway/tests/fixtures/metadata-process-cwd'
 PREFIX = 'metadata::process_cwd_tests::'
+WORKER = 'cwd_worker'  # regression.rs's bounded case worker thread
 MUTATIONS = [
     ('root-fallback', META,
      'let process_cwd = std::env::current_dir()\n        .map_err(|error| io::Error::new(error.kind(), ProcessCwdError(error)))?;',
@@ -181,13 +183,17 @@ def main():
     selected = [row for row in MUTATIONS if not names or row[0] in names]
     if not selected or (names and len(selected) != len(names)):
         raise SystemExit('unknown or duplicate mutation name')
+    # The default is HEAD; NEGATIVE_BASELINE only lets a pre-submit sample
+    # point at a temporary `git stash create`/`commit-tree` object without
+    # moving HEAD.
+    baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
     guarded = [META, CONFIG, STORE, PROTO, REG, BRIDGE, FIXTURE / 'regression.rs',
                FIXTURE / 'oracle.json', FIXTURE / 'generate.mts', Path(__file__).resolve()]
     results = []
     for name, source, before, after, test, marker in selected:
         item = {'name': name, 'test': PREFIX + test, 'status': 'INVALID', 'restoredPass': False}
         try:
-            with mutating_sources(ROOT, guarded) as originals:
+            with mutating_sources(ROOT, guarded, baseline=baseline) as originals:
                 original = originals[source].decode()
                 expected = 1
                 actual = original.count(before)
@@ -209,17 +215,32 @@ def main():
                     item.update(status='COMPILED', reason='mutant cargo check --tests passed')
                 else:
                     result, log = run(out, f'{name}-negative', test, env)
-                    if (result.returncode == 101 and 'panicked at' in log and marker in log
-                            and PREFIX + test in log
-                            and 'test result: FAILED. 0 passed; 1 failed; 0 ignored;' in log):
-                        item.update(status='KILLED', reason=f'named runtime assertion: {marker}')
-                    elif result.returncode == 0:
+                    if result.returncode == 0:
                         positive(result, log, test)
                         item.update(status='SURVIVED', reason='mutated named test passed')
                     else:
-                        item['reason'] = 'compile/setup/timeout/wrong-assertion failures are not kills'
+                        # The shared judgment binds the target to its own
+                        # evidence: the outer failures list names it and its own
+                        # panic block carries the marker in the embedded
+                        # cwd_worker's own panic payload. Neither a plain echo
+                        # in worker stdout nor the parent's message ever
+                        # counts (#889). The matrix() wrapper re-panics after
+                        # catch_unwind without the worker's output, and this
+                        # --exact single-test run has no foreign test to echo,
+                        # so one own block decides (every_block=False).
+                        hit, unrelated = target_hits(
+                            result, PREFIX, [(test, marker)], WORKER,
+                            every_block=False)
+                        if (result.returncode == 101
+                                and 'test result: FAILED. 0 passed; 1 failed; 0 ignored;' in log
+                                and 'error: could not compile' not in log
+                                and not unrelated and hit):
+                            item.update(status='KILLED',
+                                        reason=f'named runtime assertion: {marker}')
+                        else:
+                            item['reason'] = 'compile/setup/timeout/wrong-assertion failures are not kills'
             if not compile_only:
-                with mutating_sources(ROOT, guarded):
+                with mutating_sources(ROOT, guarded, baseline=baseline):
                     result, log = run(out, f'{name}-restored', test, env)
                     positive(result, log, test)
                     item['restoredPass'] = True
