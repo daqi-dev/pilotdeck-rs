@@ -1,6 +1,8 @@
 //! Real registry/lease + turn binding + stdio LiveSession path; no sockets.
 #[path = "interaction_fresh_router_tests.rs"]
 mod fresh_router;
+#[path = "interaction_prompt_tests.rs"]
+mod prompt_hooks;
 use super::*;
 use crate::{
     host::{
@@ -250,6 +252,10 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
         bounded(running.next()).await.unwrap().unwrap(); // host accepted
         assert_eq!(
             bounded(running.next()).await.unwrap().unwrap().get("type"),
+            Some(&"user_prompt_submitted".into())
+        );
+        assert_eq!(
+            bounded(running.next()).await.unwrap().unwrap().get("type"),
             Some(&"model_request_started".into())
         );
         let observed = bounded(running.next()).await.unwrap().unwrap();
@@ -478,10 +484,11 @@ async fn host_live_stdio_dispatches_all_four_ports_and_delivers_buffered_events(
         while let Some(event) = bounded(stream.next()).await.unwrap() {
             events.push(event);
         }
-        assert_eq!(events.len(), 5, "{events:?}");
-        assert_eq!(events[2].get("event"), Some(&"host-probe".into()));
-        assert_eq!(events[3].get("event"), Some(&"ports-tested".into()));
-        assert_eq!(events[4].get("type"), Some(&"turn_completed".into()));
+        assert_eq!(events[2].get("type"), Some(&"user_prompt_submitted".into()));
+        assert_eq!(events.len(), 6, "{events:?}");
+        assert_eq!(events[3].get("event"), Some(&"host-probe".into()));
+        assert_eq!(events[4].get("event"), Some(&"ports-tested".into()));
+        assert_eq!(events[5].get("type"), Some(&"turn_completed".into()));
         assert_accepted_once(&recorder, turn_id, index + 1);
     }
     bounded(registry.dispose()).await.unwrap();
@@ -571,6 +578,10 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
     bounded(first.next()).await.unwrap().unwrap(); // host accepted
     assert_eq!(
         bounded(first.next()).await.unwrap().unwrap().get("type"),
+        Some(&"user_prompt_submitted".into())
+    );
+    assert_eq!(
+        bounded(first.next()).await.unwrap().unwrap().get("type"),
         Some(&"model_request_started".into())
     );
     {
@@ -613,6 +624,7 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
         vec![
             "turn_started".into(),
             "input_accepted".into(),
+            "user_prompt_submitted".into(),
             "model_request_started".into(),
             "turn_completed".into()
         ]

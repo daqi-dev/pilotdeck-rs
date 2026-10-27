@@ -17,6 +17,8 @@ use std::{
 use crate::test_baseline as baseline;
 #[path = "runner_notice_tests.rs"]
 mod notices;
+#[path = "runner_prompt_tests.rs"]
+mod prompts;
 struct Store {
     disk: JsonlTranscriptStore,
     fault: String,
@@ -163,7 +165,7 @@ async fn replay(name: &str) {
     let mut expected: Vec<_> = array(row.get("events").unwrap())
         .into_iter()
         .filter(|e| {
-            !["user_prompt_submitted", "model_event"]
+            !["model_event"]
                 .iter()
                 .any(|k| e.get("type") == Some(&(*k).into()))
         })
@@ -185,14 +187,17 @@ async fn replay(name: &str) {
                 .find(|entry| entry.get("type") == Some(&"accepted_input".into())).unwrap();
             assert_eq!(prepared.metadata.clone().map(JsValue::Object), accepted.get("metadata").cloned(), "{name}: projected metadata before writer normalization");
         }
-        events.extend(advance(&mut recording, RecordingAction::Accept(prepared)).await?);
+        events.extend(advance(&mut recording, RecordingAction::Accept(prepared.clone())).await?);
         let runner = recording.runner().unwrap();
         if let Some(messages) = row.get("loopMessages") {
             assert_eq!(runner.messages(), array(messages));
         }
-        if runner.is_complete() || name == "consumer-drop" {
+        if runner.is_complete() {
             return Ok(());
         }
+        events.extend(advance(&mut recording, RecordingAction::SubmitPrompt(prepared.input, crate::host::Cancellation::default())).await?);
+        if name == "consumer-drop" { return Ok(()); }
+        let runner = recording.runner().unwrap();
         if row.get("openStep") == Some(&JsValue::Bool(true)) {
             runner.recorder.record_model_request(&"s".into(), &"t".into(), object([("messages", JsValue::Array(vec![]))]))?;
         }

@@ -43,6 +43,7 @@ type PreparedHost = (
     Arc<RuntimeLease>,
     Option<JsObject>,
     Option<crate::runtime::project::interaction_events::TurnEvents>,
+    Option<super::runner::PromptHooks>,
 );
 type TurnHostFactory =
     dyn Fn(ExecutionIdentity, Arc<Recorder>) -> HostFuture<PreparedHost> + Send + Sync;
@@ -103,7 +104,7 @@ impl LiveSessionAdapter {
                 let host = host_factory(recorder);
                 Box::pin(async move {
                     let (client, handler, lease) = host.await?;
-                    Ok((client, handler, lease, None, None))
+                    Ok((client, handler, lease, None, None, None))
                 })
             }),
             state: Arc::default(),
@@ -132,9 +133,16 @@ impl LiveSessionAdapter {
             recorder,
             history: Arc::new(history),
             host_factory: Arc::new(move |identity, recorder| {
-                let host = factory(identity.clone(), recorder);
+                let host = factory(identity.clone(), recorder.clone());
                 Box::pin(async move {
                     let host = host.await?;
+                    let cwd = host.input.permission.context.cwd.clone();
+                    let transcript_path = recorder
+                        .writer()
+                        .path()
+                        .to_string_lossy()
+                        .into_owned()
+                        .into();
                     let lease = Arc::new(host.lease);
                     let handler = super::interaction::InteractionTurn::bind(
                         lease.clone(),
@@ -145,12 +153,22 @@ impl LiveSessionAdapter {
                     .await?;
                     let manifest = handler.manifest().clone();
                     let events = handler.ports().events;
+                    let prompt_hooks =
+                        handler
+                            .ports()
+                            .hooks
+                            .map(|port| super::runner::PromptHooks {
+                                port: Arc::new(port),
+                                cwd,
+                                transcript_path,
+                            });
                     Ok((
                         host.client,
                         Arc::new(handler) as Arc<dyn HostHandler>,
                         lease,
                         Some(manifest),
                         events,
+                        prompt_hooks,
                     ))
                 })
             }),
@@ -199,7 +217,7 @@ impl LiveSession for LiveSessionAdapter {
         Ok(Box::new(LiveTurnStream {
             callback_cancel: Some(cancellation.clone()),
             execution: Some(Box::pin(async move {
-                let (client, inner, lease, manifest, interaction_events) = tokio::select! {
+                let (client, inner, lease, manifest, interaction_events, prompt_hooks) = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => {
                         return Ok(ExecuteResult::Aborted { terminal: None });
@@ -215,7 +233,8 @@ impl LiveSession for LiveSessionAdapter {
                     request.identity.session_id.clone(),
                     request.identity.turn_id.clone(),
                 )
-                .with_interaction_events(interaction_events);
+                .with_interaction_events(interaction_events)
+                .with_prompt_hooks(prompt_hooks);
                 // Transfer the actual driver before any host event can arrive.
                 let _ = recording_sender.send(Recording::new(runner, owner));
                 if let Some(manifest) = manifest {
@@ -231,9 +250,12 @@ impl LiveSession for LiveSessionAdapter {
                     callback_cancel: Some(cancellation.clone()),
                 });
                 // No connection or execute can start until both durable gates commit.
-                if execute_wait.await.is_err() {
+                let Ok(messages) = execute_wait.await else {
                     return Ok(ExecuteResult::Aborted { terminal: None });
-                }
+                };
+                request
+                    .payload
+                    .insert("messages".into(), JsValue::Array(messages));
                 let client = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),
@@ -313,7 +335,7 @@ struct LiveTurnStream {
     callback_cancel: Option<Cancellation>,
     accepted: bool,
     preflight: u8,
-    execute_ready: Option<oneshot::Sender<()>>,
+    execute_ready: Option<oneshot::Sender<Vec<JsValue>>>,
     recorded: std::collections::VecDeque<JsValue>,
 }
 
@@ -353,20 +375,45 @@ impl LiveTurn for LiveTurnStream {
                     return self.deliver_recorded(event);
                 }
                 if self.execute_ready.is_some() && self.recording.is_some() {
-                    if self.preflight < 2 {
+                    if self.preflight < 3 {
                         let (kind, action) = if self.preflight == 0 {
                             ("turn_started", RecordingAction::Start)
-                        } else {
+                        } else if self.preflight == 1 {
                             (
                                 "input_accepted",
                                 RecordingAction::Accept(self.input.clone()),
+                            )
+                        } else {
+                            (
+                                "user_prompt_submitted",
+                                RecordingAction::SubmitPrompt(
+                                    self.input.input.clone(),
+                                    self.callback_cancel.clone().expect("host cancellation"),
+                                ),
                             )
                         };
                         self.preflight += 1;
                         let event = crate::metadata::object([("type", kind.into())]);
                         return self.begin_recording(action, event, false, None).await;
                     }
-                    let _ = self.execute_ready.take().unwrap().send(());
+                    let runner = self
+                        .recording
+                        .as_ref()
+                        .unwrap()
+                        .runner()
+                        .expect("settled preflight");
+                    if let Some(error) = runner.prompt_block_error() {
+                        return self
+                            .begin_recording(
+                                RecordingAction::Fail(error),
+                                JsValue::Null,
+                                true,
+                                None,
+                            )
+                            .await;
+                    }
+                    let messages = runner.messages().to_vec();
+                    let _ = self.execute_ready.take().unwrap().send(messages);
                 }
                 let mut delivered = None;
                 if let Some(execution) = self.execution.as_mut() {
@@ -653,7 +700,13 @@ impl LiveTurnStream {
         terminal.insert("result".into(), JsValue::Object(result));
         terminal.insert(
             "messages".into(),
-            JsValue::Array(self.input.loop_messages()),
+            JsValue::Array(
+                self.recording
+                    .as_ref()
+                    .and_then(Recording::runner)
+                    .map(|runner| runner.messages().to_vec())
+                    .unwrap_or_else(|| self.input.loop_messages()),
+            ),
         );
         JsValue::Object(terminal)
     }
