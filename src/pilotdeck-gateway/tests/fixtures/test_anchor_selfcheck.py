@@ -51,7 +51,7 @@ class ScannerControls(unittest.TestCase):
         with redirect_stdout(output):
             code = CHECK.check(self.root, anchors_only=anchors_only, environ=env or {})
         report = output.getvalue()
-        self.assertEqual(code, expected, f'{label}\n{report}')
+        self.assertEqual(code, expected, f'#827 scanner exit: {label}\n{report}')
         if label:
             print(f'CONTROL {label} exit={code}\n{report}', end='')
         return report
@@ -442,7 +442,8 @@ mutants = [('sample', source, text, part + 'after')]
         self.write(prefix + update + table)
         self.assertIn('actual=0', self.run_check(1, label='transformed-snapshot-before'))
         self.write(prefix + update + "originals = {'example.rs': source.read_text()}\n" + table)
-        self.run_check(label='rebound-snapshot-restored')
+        self.assertIn('unsupported snapshot binding', self.run_check(1, label='#827 second declaration'),
+                      '#827 second declaration must be rejected')
         self.write(prefix.replace('{p for p in paths}', '{p for p in paths if condition}') + table)
         self.assertIn('unconditional single-loop', self.run_check(1, label='unknown-set-selection'))
         self.write(prefix + table)
@@ -460,20 +461,260 @@ mutants = [('sample', source, text, part + 'after')]
         self.write(prefix + table)
         self.run_check(label='snapshot-json-read-restored')
 
-    def test_snapshot_rebinding_discards_stale_path_assignments(self):
+    def check_snapshot_binding(self, statement, label):
+        for name in ('originals', 'snapshots'):
+            for constructor in ('assign', 'with'):
+                with self.subTest(name=name, constructor=constructor):
+                    declaration = (f"{name} = {{'alias.rs': source.read_text()}}\n" if constructor == 'assign'
+                                   else f"from negative_process import mutating_sources\nwith mutating_sources(root, [source]) as {name}:\n    pass\n")
+                    table = "mutants = [('sample', source, 'before', 'after')]\n"
+                    self.write(declaration + table)
+                    self.run_check(label=f'#827 {label} {name} {constructor} original')
+                    self.write(declaration + statement.replace('SNAPSHOT', name) + '\n' + table)
+                    self.assertIn('unsupported snapshot binding', self.run_check(
+                        1, label=f'#827 {label} {name} {constructor} rejected'),
+                        f'#827 {label} must reject snapshot binding')
+                    self.write(declaration + table)
+                    self.run_check(label=f'#827 {label} {name} {constructor} restored')
+
+    def test_snapshot_rejects_for_binding(self):
+        self.check_snapshot_binding('for SNAPSHOT in [{}]:\n    pass', 'for-binding')
+
+    def test_snapshot_rejects_walrus_binding(self):
+        self.check_snapshot_binding('(SNAPSHOT := {})', 'walrus-binding')
+
+    def test_snapshot_rejects_except_binding(self):
+        self.check_snapshot_binding('try:\n    pass\nexcept Exception as SNAPSHOT:\n    pass', 'except-binding')
+
+    def test_snapshot_rejects_import_binding(self):
+        for statement in ('import os as SNAPSHOT', 'from os import path as SNAPSHOT', 'import SNAPSHOT'):
+            self.check_snapshot_binding(statement, 'import-binding')
+
+    def test_snapshot_rejects_definition_binding(self):
+        for statement in ('def SNAPSHOT():\n    pass', 'async def SNAPSHOT():\n    pass',
+                          'class SNAPSHOT:\n    pass', 'def helper(SNAPSHOT):\n    pass',
+                          'lambda SNAPSHOT: None'):
+            self.check_snapshot_binding(statement, 'definition-binding')
+
+    def test_snapshot_rejects_comprehension_binding(self):
+        for statement in ('[0 for SNAPSHOT in [{}]]', '{0 for SNAPSHOT in [{}]}',
+                          '{0: 0 for SNAPSHOT in [{}]}', '(0 for SNAPSHOT in [{}])'):
+            self.check_snapshot_binding(statement, 'comprehension-binding')
+
+    def test_snapshot_rejects_match_binding(self):
+        for pattern in ('SNAPSHOT', '[*SNAPSHOT]', "{'key': _, **SNAPSHOT}"):
+            self.check_snapshot_binding(f'match {{}}:\n    case {pattern}:\n        pass', 'match-binding')
+
+    @unittest.skipUnless(hasattr(ast, 'TypeVar'), 'Python 3.12+ type parameter syntax')
+    def test_snapshot_rejects_type_parameter_binding(self):
+        for parameter in ('SNAPSHOT', '*SNAPSHOT', '**SNAPSHOT'):
+            self.check_snapshot_binding(f'type Alias[{parameter}] = int', 'type-parameter-binding')
+
+    def test_snapshot_rejects_namespace_declaration(self):
+        for statement in ('global SNAPSHOT', 'def helper():\n    global SNAPSHOT',
+                          'def helper():\n    nonlocal SNAPSHOT'):
+            self.check_snapshot_binding(statement, 'namespace-binding')
+
+    def test_snapshot_rejects_second_assignment_or_with(self):
+        for statement in ('SNAPSHOT = {}', 'with mutating_sources(root, [source]) as SNAPSHOT:\n    pass',
+                          'with other() as SNAPSHOT:\n    pass', 'SNAPSHOT, other = {}, {}'):
+            self.check_snapshot_binding(statement, 'second-binding')
+
+    def test_snapshot_rejects_dynamic_writes_and_aliases(self):
+        declaration = "originals = {'alias.rs': source.read_text()}\n"
+        table = "mutants = [('sample', 'alias.rs', 'before', 'after')]\n"
+        for statement in (
+            "globals()['originals'] = {}", "locals()['originals'] = {}",
+            "vars()['originals'] = {}", "setattr(module, 'originals', {})",
+            "delattr(module, 'originals')", "exec('originals = {}')", "eval('globals()')",
+            "module.__dict__['originals'] = {}", "alias = exec", "alias = getattr", "alias = builtins.setattr",
+            'from builtins import globals as alias', 'from builtins import exec as alias',
+            "getattr(builtins, 'exec')('originals = {}')",
+            "getattr(builtins, 'globals')()['originals'] = {}",
+        ):
+            with self.subTest(statement=statement):
+                self.write(declaration + table)
+                self.run_check(label='#827 dynamic-write original')
+                self.write(declaration + statement + '\n' + table)
+                self.assertIn('unsupported snapshot dynamic write',
+                              self.run_check(1, label='#827 dynamic-write rejected'),
+                              '#827 dynamic-write capability must be rejected')
+                self.write(declaration + table)
+                self.run_check(label='#827 dynamic-write restored')
+
+    def test_snapshot_allows_only_display_name_reflection(self):
+        declaration = "originals = {'alias.rs': source.read_text()}\n"
+        table = "mutants = [('sample', 'alias.rs', 'before', 'after')]\n"
+        for expression in ("getattr(signature, '__name__')", "getattr(signature, '__name__', 'signature')"):
+            self.write(declaration + 'label = ' + expression + '\n' + table)
+            self.run_check(label='#827 display-name original')
+            for bad in (expression.replace("'__name__'", "'exec'"),
+                        expression.replace("'__name__'", 'attribute')):
+                self.write(declaration + 'label = ' + bad + '\n' + table)
+                self.assertIn('snapshot dynamic write', self.run_check(1, label='#827 display-name rejected'),
+                              '#827 display-name must reject capability or unknown reflection')
+            self.write(declaration + 'label = ' + expression + '\n' + table)
+            self.run_check(label='#827 display-name restored')
+
+    def test_snapshot_unique_with_preserves_existing_contexts(self):
+        for constructor in ('mutating_sources', 'negative_process.mutating_sources'):
+            for wrapper in ('{}', 'def main():\n{}', 'for iteration in [0]:\n{}'):
+                body = f"with {constructor}(root, [source]) as snapshots:\n    pass\n"
+                body = wrapper.format(body if wrapper == '{}' else ''.join('    ' + s for s in body.splitlines(True)))
+                table = "mutants = [('sample', source, 'before', 'after')]\n"
+                self.write('from negative_process import mutating_sources\nimport negative_process\n' + body + table)
+                self.run_check(label='#827 unique-with original')
+                self.write(body.replace(constructor + '(root, [source])', 'unknown()') + table)
+                self.assertIn('unsupported snapshot binding', self.run_check(1, label='#827 unique-with unknown'),
+                              '#827 unique-with unknown constructor must be rejected')
+                self.write('from negative_process import mutating_sources\nimport negative_process\n' + body + table)
+                self.run_check(label='#827 unique-with restored')
+
+    def test_snapshot_capture_reads_only_declared_official_sources(self):
+        declaration = ("from negative_process import mutating_sources\n"
+                       "with mutating_sources(root, [source]) as snapshots:\n    pass\n")
+        table = "mutants = [('sample', source, snapshots[source], b'after')]\n"
+        self.write(declaration + table)
+        self.run_check(label='#827 capture-read original')
+        for broken, diagnostic in (
+            (table, 'unresolved name snapshots'),
+            (table + declaration, 'read before capture'),
+            (declaration.replace('[source]', '[]') + table, 'example.rs'),
+            (declaration.replace('from negative_process import mutating_sources',
+                                 'from other import mutating_sources') + table, 'snapshot constructor'),
+            (declaration.replace('from negative_process import mutating_sources',
+                                 'def mutating_sources(*args):\n    yield {}') + table, 'snapshot constructor'),
+            (declaration + 'mutating_sources = unknown\n' + table, 'snapshot constructor'),
+            (declaration + 'negative_process.mutating_sources = unknown\n' + table, 'snapshot constructor'),
+            (declaration.replace('root, [source]', 'root, [source], unknown=True') + table, 'snapshot constructor'),
+            (declaration.replace('root, [source]', 'root') + table, 'snapshot constructor'),
+            (declaration.replace('with mutating_sources', 'def helper():\n    with mutating_sources')
+             .replace('    pass', '        pass') + table, 'across function scopes'),
+        ):
+            with self.subTest(diagnostic=diagnostic):
+                self.write(broken)
+                self.assertIn(diagnostic, self.run_check(1, label='#827 capture-read rejected'),
+                              '#827 capture-read must stay bound to declared official source')
+                self.write(declaration + table)
+                self.run_check(label='#827 capture-read restored')
+
+    def test_snapshot_assign_requires_module_scope_or_registered_function(self):
+        declaration = "originals = {'alias.rs': source.read_text()}\n"
+        table = "mutants = [('sample', source, 'before', 'after')]\n"
+        for wrapper in ('if True:\n{}', 'for i in [0]:\n{}', 'def main():\n{}', 'class Scope:\n{}',
+                        'with unknown():\n{}'):
+            self.write(declaration + table)
+            self.run_check(label='#827 declaration-scope original')
+            self.write(wrapper.format('    ' + declaration) + table)
+            self.assertIn('requires a module-level Assign', self.run_check(1, label='#827 declaration-scope rejected'),
+                          '#827 declaration-scope must reject unregistered contexts')
+            self.write(declaration + table)
+            self.run_check(label='#827 declaration-scope restored')
+        for (filename, mapping), function in CHECK.SNAPSHOT_FUNCTIONS.items():
+            with self.subTest(filename=filename):
+                self.move_script(filename)
+                body = f'def {function}():\n    {declaration}' + table
+                # These files have unrelated file-specific row contracts; test
+                # the declaration guard directly, without inventing rows for them.
+                self.write(body)
+                CHECK.Static(self.script, self.root, ast.parse(self.script.read_text()))
+                for broken in (body.replace(f'def {function}():', 'def renamed():'),
+                               body + declaration,
+                               body.replace('    originals', '    if True:\n        originals')):
+                    self.write(broken)
+                    with self.assertRaisesRegex(CHECK.Unsupported, 'unsupported snapshot binding',
+                                                msg='#827 registered-function must stay exact and unique'):
+                        CHECK.Static(self.script, self.root, ast.parse(self.script.read_text()))
+                self.write(body)
+                CHECK.Static(self.script, self.root, ast.parse(self.script.read_text()))
+                print(f'#827 registered-function {filename}: original=PASS broken=REJECTED restored=PASS')
+
+    def test_snapshot_comprehension_tracks_real_paths(self):
+        other = self.root / 'src/other/example.rs'
+        other.parent.mkdir()
+        other.write_text('before\n')
+        for mapping in ('originals', 'snapshots'):
+            for key, filename in (("p.name", 'example.rs'), ("p.stem + '.txt'", 'example.txt'),
+                                  ("'src/example.rs'", 'src/example.rs')):
+                for read in ('p.read_text()', "p.read_text().strip().replace('unused', 'ignored')",
+                             'p.read_bytes().decode()'):
+                    with self.subTest(mapping=mapping, key=key, read=read):
+                        prefix = ("source = root / 'src'\nother = root / 'src/other/example.rs'\n"
+                                  f"{mapping} = {{{key}: {read} for p in [other]}}\n")
+                        table = f"mutants = [('sample', {filename!r}, 'before', 'after')]\n"
+                        self.write(prefix + table)
+                        self.run_check(label='#827 comprehension-path original')
+                        anchors, _, _ = CHECK.extract(self.script, self.root)
+                        self.assertEqual(len(anchors), 1, '#827 comprehension-path must produce one anchor')
+                        self.assertEqual(anchors[0].path, other, '#827 comprehension-path must follow actual read')
+                        other.write_text('missing\n')
+                        self.assertIn('src/other/example.rs expected=1 actual=0',
+                                      self.run_check(1, label='#827 comprehension-path wrong-origin'),
+                                      '#827 comprehension-path must detect actual source drift')
+                        other.write_text('before\n')
+                        self.run_check(label='#827 comprehension-path restored')
+
+    def test_snapshot_comprehension_rejects_ambiguous_or_missing_origins(self):
+        prefix = "source = root / 'src'\npath = source / 'example.rs'\n"
+        table = "mutants = [('sample', 'example.rs', 'before', 'after')]\n"
+        good = "originals = {p.name: p.read_text() for p in [path]}\n"
+        for bad, diagnostic in (
+            ("originals = {p.name: p.read_text() for p in [path, path]}\n", 'duplicate comprehension keys'),
+            ("originals = {p.name: p.read_text() for p in []}\n", 'missing snapshot key'),
+            ("originals = {p.name: p.read_text() for p in [path] if True}\n", 'unconditional single-loop'),
+            ("originals = {p.name: p.read_text() for p in [path] for q in [path]}\n", 'unconditional single-loop'),
+            ("originals = {p.name: p.read_text() async for p in [path]}\n", 'unconditional single-loop'),
+            ("originals = {p.name: 'before' for p in [path]}\n", 'unsupported snapshot origin'),
+            ("originals = {**{'example.rs': path.read_text()}}\n", 'dictionary unpacking'),
+        ):
+            with self.subTest(diagnostic=diagnostic):
+                self.write(prefix + good + table)
+                self.run_check(label='#827 comprehension-origin original')
+                self.write(prefix + bad + table)
+                self.assertIn(diagnostic, self.run_check(1, label='#827 comprehension-origin rejected'),
+                              '#827 comprehension-origin must reject unprovable origin')
+                self.write(prefix + good + table)
+                self.run_check(label='#827 comprehension-origin restored')
+
+    def test_snapshot_multiple_mappings_do_not_guess_filename_owner(self):
+        first = "originals = {'alias.rs': source.read_text()}\n"
+        second = "snapshots = {'alias.rs': source.read_bytes()}\n"
+        table = "mutants = [('sample', 'alias.rs', 'before', 'after')]\n"
+        self.write(first + table)
+        self.run_check(label='#827 mapping-owner original')
+        self.write(first + second + table)
+        self.assertIn('ambiguous snapshot mappings', self.run_check(1, label='#827 mapping-owner rejected'),
+                      '#827 mapping-owner must not guess between mappings')
+        self.write(second + table)
+        self.run_check(label='#827 mapping-owner restored')
+        self.write(second + "mutants = [('sample', source, snapshots['alias.rs'], b'after')]\n")
+        self.run_check(label='#827 declared-byte-read original')
+        self.write(second.replace('source.read_bytes()', "b'missing'")
+                   + "mutants = [('sample', source, snapshots['alias.rs'], b'after')]\n")
+        self.assertIn('actual=0', self.run_check(1, label='#827 declared-byte-read rejected'),
+                      '#827 declared-byte-read must use the declared mapping value')
+        self.write(second + table)
+        self.run_check(label='#827 declared-byte-read restored')
+        self.write("snapshots = {p.name: p.read_bytes() for p in [source]}\n"
+                   + "mutants = [('sample', source, snapshots['example.rs'], b'after')]\n")
+        self.run_check(label='#827 comprehension-byte-read original')
+        self.write("snapshots = {p.name: p.read_bytes() for p in [source, source]}\n"
+                   + "mutants = [('sample', source, snapshots['example.rs'], b'after')]\n")
+        self.assertIn('duplicate comprehension keys', self.run_check(1, label='#827 comprehension-byte-read rejected'),
+                      '#827 comprehension-byte-read must reject duplicate origins')
+        self.write(second + table)
+        self.run_check(label='#827 comprehension-byte-read restored')
+
+    def test_snapshot_dictionary_uses_last_literal_key(self):
         other = self.root / 'src/other.rs'
-        other.write_text('before')
-        self.write("""other = root / 'src/other.rs'
-originals = {'alias.rs': source.read_text()}
-originals['alias.rs'] = source.read_text()
-originals = {'alias.rs': other.read_text()}
-mutants = [('sample', 'alias.rs', 'before', 'after')]
-""")
-        self.run_check(label='rebound-path-original')
         other.write_text('missing')
-        self.assertIn('src/other.rs expected=1 actual=0', self.run_check(1, label='rebound-path-anchor-missing'))
+        prefix = "other = root / 'src/other.rs'\noriginals = {'alias.rs': source.read_text(), 'alias.rs': other.read_text()}\n"
+        table = "mutants = [('sample', 'alias.rs', 'before', 'after')]\n"
+        self.write(prefix + table)
+        self.assertIn('src/other.rs expected=1 actual=0', self.run_check(1, label='#827 literal-last-key rejected'),
+                      '#827 literal-last-key must use final value')
         other.write_text('before')
-        self.run_check(label='rebound-path-restored')
+        self.run_check(label='#827 literal-last-key restored')
 
     def test_snapshot_unmodeled_writes_cannot_fall_back_to_basename(self):
         other = self.root / 'src/other.rs'
@@ -505,7 +746,7 @@ mutants = [('sample', 'alias.rs', 'before', 'after')]
             self.write(prefix + f"alias = {mapping}\nalias.update({{'alias.rs': other.read_text()}})\n" + table)
             self.assertIn('mapping escape', self.run_check(1, label='snapshot-alias-write'))
             self.write(prefix + f"shared = {{'alias.rs': source.read_text()}}\n{mapping} = shared\n" + table)
-            self.assertIn('mapping initializer', self.run_check(1, label='snapshot-shared-initializer'))
+            self.assertIn('unsupported snapshot', self.run_check(1, label='snapshot-shared-initializer'))
         self.write(prefix + table)
         self.run_check(label='snapshot-write-restored')
 
@@ -933,7 +1174,8 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
     head = text[:text.index(before)]
     return f'{anchor_source.relative_to(rust)}:{head.count(chr(10)) + 1}:{len(head) - head.rfind(chr(10))}'
 '''
-        setup = ("rust = root / 'src'\nmutant_source = {}\noriginals = {source: snapshots[source]}\n"
+        setup = ("from negative_process import mutating_sources\nwith mutating_sources(root, [source]) as snapshots:\n    pass\n"
+                 "rust = root / 'src'\nmutant_source = {}\noriginals = {source: snapshots[source]}\n"
                  "mutant_anchor = {'sample': ('location', None)}\n"
                  f"mutants = [('sample', {before!r}, 'unwrap()', None, None, None)]\n")
         consumer = '''selected = mutants
@@ -984,6 +1226,8 @@ for name, before, after, case, marker, capability in selected:
                 f"{mapping}.setdefault('sample', None)",
                 f"alias = {mapping}\nalias['sample'] = ('message', 'stale')",
                 f"get_override = {mapping}.get",
+                f'global {mapping}', f'def helper():\n    nonlocal {mapping}',
+                f"match {{}}:\n    case {{**{mapping}}}:\n        pass",
             ):
                 self.write(body + suffix + '\n')
                 self.assertIn(mapping, self.run_check(1, label='override-map-rebound-after-consumer'))
@@ -1025,6 +1269,9 @@ for name, before, after, case, marker, capability in selected:
             (body + "    anchor_kind = 'message'\n", 'location binding'),
             (body.replace('selected = mutants', 'from elsewhere import unwrap_site\nselected = mutants'), 'location binding'),
             (body + "def anchor():\n    return 'bogus.rs:0:0'\n", 'location binding'),
+            (body + 'global anchor\n', 'location binding'),
+            (body + 'def helper():\n    nonlocal anchor_kind\n', 'location binding'),
+            (body + 'match {}:\n    case {**anchor}:\n        pass\n', 'location binding'),
             (body.replace("'unwrap()'", "'prefix.unwrap()'"), 'unwrap must start'),
             (setup + consumer, 'location helper'),
             (setup + helper, 'location consumer'),
