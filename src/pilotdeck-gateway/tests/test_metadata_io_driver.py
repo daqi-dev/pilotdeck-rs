@@ -245,6 +245,76 @@ class EnvironmentControls(unittest.TestCase):
     def ci_workflow_fixture(self):
         return (Path(__file__).resolve().parents[3]/'.github/workflows/ci.yml').read_text()
 
+    def test_rust_job_uses_line_tables_only_debug(self):
+        rust = self.ci_jobs()['rust']
+        expected = ('      CARGO_PROFILE_DEV_DEBUG: line-tables-only\n'
+                    '      CARGO_PROFILE_TEST_DEBUG: line-tables-only\n')
+        self.assertEqual(re.findall(r'^    env:\n((?:      [^\n]*\n)+)', rust, re.M),
+                         [expected], '#918 Rust debug profiles are job-level line-tables-only')
+        self.assertEqual(re.findall(r'\bCARGO_PROFILE_(DEV|TEST)_DEBUG\b', rust),
+                         ['DEV', 'TEST'], '#918 Rust debug profiles have no step overrides')
+        # Aliases/expressions could import overrides without spelling either key here.
+        for step in self.ci_steps('rust', rust):
+            lines = step.splitlines()
+            for i, line in enumerate(lines):
+                env = re.fullmatch(r'''(?:        |)(?:env|'env'|"env"):(.*)''', line)
+                if env is None:
+                    continue
+                entries = []
+                for entry in lines[i + 1:]:
+                    if not entry.strip() or entry.lstrip().startswith('#'):
+                        continue
+                    if len(entry) - len(entry.lstrip(' ')) <= 8:
+                        break
+                    entries.append(entry)
+                self.assertTrue(not env[1].strip() and entries and all(
+                    re.fullmatch(r'          [A-Za-z_][A-Za-z0-9_]*: .+', entry) for entry in entries),
+                    '#918 Rust step env must be an explicit block mapping')
+
+    def test_ci_rejects_missing_wrong_or_step_level_debug_profiles(self):
+        workflow = self.ci_workflow_fixture()
+        target = 'test_rust_job_uses_line_tables_only_debug'
+        block = ('    env:\n'
+                 '      CARGO_PROFILE_DEV_DEBUG: line-tables-only\n'
+                 '      CARGO_PROFILE_TEST_DEBUG: line-tables-only\n')
+        self.assertEqual(workflow.count(block), 1, '#918 debug control has one env block')
+        cases = [('missing-env', workflow.replace(block, '', 1),
+                  '#918 Rust debug profiles are job-level line-tables-only')]
+        for profile in ('DEV', 'TEST'):
+            line = f'      CARGO_PROFILE_{profile}_DEBUG: line-tables-only\n'
+            for value in ('', f'      CARGO_PROFILE_{profile}_DEBUG: full\n'):
+                cases.append((f'{profile}-{value!r}', workflow.replace(line, value, 1),
+                              '#918 Rust debug profiles are job-level line-tables-only'))
+        anchor = '      - run: rustup show active-toolchain\n'
+        self.assertEqual(workflow.count(anchor), 1, '#918 debug control has one Rust step')
+        step_env = ''.join('    ' + line for line in block.splitlines(keepends=True))
+        cases.append(('step-only', workflow.replace(block, '', 1).replace(anchor, anchor + step_env, 1),
+                      '#918 Rust debug profiles are job-level line-tables-only'))
+        cases.append(('step-override', workflow.replace(anchor, anchor + step_env, 1),
+                      '#918 Rust debug profiles have no step overrides'))
+        for env in ('        env: {CARGO_PROFILE_DEV_DEBUG: full}\n',
+                    "        env:\n          'CARGO_PROFILE_DEV_DEBUG': full\n",
+                    '        env:\n          "CARGO_PROFILE_TEST_DEBUG": full\n'):
+            cases.append((env.strip(), workflow.replace(anchor, anchor + env, 1),
+                          '#918 Rust debug profiles have no step overrides'))
+        for value in ('*profiles', '${{ fromJSON(env.PROFILE_JSON) }}'):
+            env = f'        env: {value}\n'
+            changed = workflow.replace(anchor, anchor + env, 1)
+            if value == '*profiles':
+                changed = 'env: &profiles\n  CARGO_PROFILE_DEV_DEBUG: full\n\n' + changed
+            else:
+                changed = '''env:\n  PROFILE_JSON: '{"CARGO_PROFILE_DEV_DEBUG":"full"}'\n\n''' + changed
+            cases.append((value, changed,
+                          '#918 Rust step env must be an explicit block mapping'))
+        for entry in ('*profiles', '<<: *profiles'):
+            env = f'        env:\n          {entry}\n'
+            changed = ('env: &profiles\n  CARGO_PROFILE_DEV_DEBUG: full\n\n'
+                       + workflow.replace(anchor, anchor + env, 1))
+            cases.append((entry, changed, '#918 Rust step env must be an explicit block mapping'))
+        for name, changed, message in cases:
+            with self.subTest(mutation=name):
+                self.assert_ci_rejects(changed, target, message)
+
     def assert_ci_rejects(self, workflow, test_name, message):
         # Invoke the real CI check on an in-memory workflow mutation, never edit ci.yml.
         # subTest callers continue through every case even if one mutation survives.
