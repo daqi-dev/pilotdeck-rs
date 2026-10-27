@@ -1,0 +1,818 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/context/memory/edgeclaw-memory-core/src/core/skills/llm-extraction.ts": "6cde29bc33b1d2fccfcfa5ee507941b2280c6960254da28794ac18845224372e",
+    "src/context/memory/edgeclaw-memory-core/src/core/types.ts": "abc773ea38e2ba98d83aa7bad1d4672fac3d2f01fb5ad992e8d0382912ee7f99",
+    "src/model/errors/normalizeModelError.ts": "3ded965a305c5aef92f33f83e72b8a8cbe14cfe230677f3127ccc75d90f15f0e",
+    "src/model/errors/tokenLimitParsing.ts": "78493ea0639cfb145bf9511e0c0ecd8373e748cb8127fa4844a63ad47c473959",
+    "src/model/normalizeProviderBaseUrl.ts": "4c27bda64fedb25d251f667a87680f72fb23ca56e5337fd383cfe38dda7a46af",
+    "src/model/policy/RetryPolicy.ts": "66ceaf07267d2e813d4928a5c677c509a2f6186fb49a567113a8299b6d743110",
+    "src/model/policy/index.ts": "bc84e59059667b7dda7aeb420bff8b0ca6238880dcd008fdba62f787a14c70fc",
+    "src/model/protocol/canonical.ts": "fc2729987fb766a86d2330704a2078c3058ecbef2d68808741f0c5f51d3d0e4e",
+    "src/model/protocol/capabilities.ts": "604ef15f1f556474f6e5a2fd48f8f4ca08fb3bec6175e12b1929cb32ec0ea9c1",
+    "src/model/protocol/clone.ts": "fdf1defd56a453157a251b329e4f78aa0a471f8458ff78732e46b1d2ce7ced17",
+    "src/model/protocol/errors.ts": "109e8cd3191d2ae51bec90578148fc06a3f8dc22a2d28c71a96c77fe2e9984bf",
+    "src/model/protocol/multimodal.ts": "92e9e0391a14230cf4c12c0f0dc38b73c8729ed3e083273c3043c1b5f283cc74",
+    "src/model/protocol/timeline.ts": "c61354611b69bf2f856eaa5baaf907fd70bbbb1564500c99310aa99d244965d6",
+    "src/model/protocol/toolResultContent.ts": "1ea84ca676f80e935b6d7b5699adb97a185964fe0d77bc38b1f429e8a9e22f23",
+    "src/model/providerEndpoint.ts": "cd3d939c85bffdfa0fc8dc68c21cc421b16bb50736986d0ddfb0871fd247780c",
+    "src/model/providers/anthropic/request.ts": "8c0b30a2e016eede29e52282a1caf846895c320615d4298eaf61e2d180cb2907",
+    "src/model/providers/anthropic/response.ts": "834768ac8a1f3143f395cd8a238e8d445539c57dbc13b8ed66717436b4fa1b24",
+    "src/model/providers/anthropic/stream.ts": "3f53fc85c7a044800f7f2079ba6ab4eebe6e93eef2c2bfe72803d64ff68f82e0",
+    "src/model/providers/google/client.ts": "327d14c1490f818e1ce95b303ec1d05d1157afb3f3f913639a7d9d69d04ece35",
+    "src/model/providers/google/modelId.ts": "fd4c83c9ca441e9d338c2c70e3eb900e9522e7e6c8ec2ac82c19051a8808d2b4",
+    "src/model/providers/google/request.ts": "129a7d684b6e8f653c74b62bed0cec315f97f8f78a4985e1e18f72c431f5f8ef",
+    "src/model/providers/google/response.ts": "a4502d18ddba239e05f1f44d592d1151d1b3fb5ff93d2cd920414af36a962973",
+    "src/model/providers/google/schema.ts": "18128ea10abc57de9ff8c46723fa912d1e5f2b52f5681ac708a535de96e623e7",
+    "src/model/providers/google/stream.ts": "7d4a8209ba268d6920dea983e8fd162a17feba9b618b8d8c7399d57a694c11ba",
+    "src/model/providers/openai-responses/request.ts": "fc38d980ec728dc4651338760a964e4804f6b15c405af8a102f3930e9285aaad",
+    "src/model/providers/openai-responses/response.ts": "143623aad10247603c7d631ccd3abdc095b67a7df85f3cc56b26d769a5d87f37",
+    "src/model/providers/openai-responses/stream.ts": "dfeaf49e020b53785220d082d29fe7082a8b7067d62fd86620c02a0f381b9c85",
+    "src/model/providers/openai/request.ts": "e38de6a30cfc9e53e853d98218d342f80649cea5b3f5f8b608b6499a3f95352d",
+    "src/model/providers/openai/response.ts": "cc87c3284caed18f5a2b2c43c661e75d7578d41b197200918c29ea78038ee802",
+    "src/model/providers/openai/schema.ts": "cbcda4de9900b85e28e9e8f83f8a679b27cd64f3962cc695468d1e72698750b4",
+    "src/model/providers/openai/stream.ts": "8110c06e89b80ea9af8def4cb04b7a454f17a0c08101b175be7febb1ac9e9898",
+    "src/model/providers/toolResultReferenceText.ts": "7a279eda547943dee2878eca1fda3a350b514a40b78a0e229b5384a681253a7d",
+    "src/model/request/buildModelRequest.ts": "bf7e8e2a0684f64c30e456bc3dd66742231171faee106a230223709f98a63999",
+    "src/model/request/sanitizeProviderBody.ts": "910124e74b61039a1d609f092ea2ab61c6e39d49e7fbf272267ed2fcf1806eaa",
+    "src/model/request/speedMapping.ts": "ab5cad0b0529d882cf0e8e04d3859c6ce406dcc49930204f2b04fb4f71fa839f",
+    "src/model/request/validateModelRequest.ts": "4971c82e3acb56df411f5a03ad5ee42eedce295b949225789b8423e607dae4d1",
+    "src/model/response/normalizeFinishReason.ts": "a9e83a4ee1c549b4475097f028b7c130f72f83dd89268af1d942c04570ff85b1",
+    "src/model/response/normalizeUsage.ts": "14a6a513706a98c702265dfbb3fc3e26b58585d870ac02c200132491817d8cc6",
+    "src/model/response/parseModelResponse.ts": "22c792123e3822c694ebd15fbe14f2af7c7c57dc7479231d7e2a0a189a58ed8e",
+    "src/model/streaming/StreamingCheckpoint.ts": "471041a85be6b5102b7dbd92b84fd7670a75f26a2859da7f3be0ab52d8636068",
+    "src/model/streaming/continuationRequest.ts": "ec6a1612a82f82fadd26d00943c8b16709f36c52053312ed2ee425be1f068662",
+    "src/model/streaming/normalizeStreamEvent.ts": "e12249c29b111f7e8341fa540e2d145ddb5fbbe1b2d0ba445d07b2db24e37dd7",
+    "src/model/streaming/requestFingerprint.ts": "3b90e1a600f57158cb7e43b171cff11b680809e234a9bb491c9c210d0656cb77",
+    "src/model/streaming/streamModel.ts": "6e2f9450194326b89b16ffbc99254f03687d9e908fe17c740fe9daa02e98bd26",
+    "src/model/thinking/registry.ts": "ad0df7187839dfbf5e39acdc93141020acde65e9dbff664638a4aada0227ad7f",
+    "src/model/thinking/settings.ts": "219fc26bcd728ee864dfc0f06b4ddf74df8d6c62554d226fbf5f6021da766d05",
+    "src/network/fetch.ts": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f",
+    "src/storage/invocationStorage.ts": "9d24114a71fd71177b36c05363559f3fd174d2b3b59f8dd58e31c933be6f3875"
+  },
+  "node": "v22.22.0",
+  "payload": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"ok gzip deflate br identity é\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2}}",
+  "cases": [
+    {
+      "name": "gzip",
+      "encoding": "gzip",
+      "wire": "1f8b08000000000000133d8d410ec2301003bf12f99c0b1cfb1584aad06edb55936c945d0e50e541bc838f110e70b265cb9e03d3263c9162b81c48a41a56c270a04aec8aa0ca6a211b3c26c946dd0d90ddad4f2e6ea625062377ab8ee75eb13ddcfb85e6b17066ddc64a4125f7859a14b4abc7fd07285552b1d164a7dce9a7ef7f2a918c25ffd3736b1f9a734ddca2000000",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74222c22636f6e74656e74223a226f6b20677a6970206465666c617465206272206964656e7469747920c3a9227d2c2266696e6973685f726561736f6e223a2273746f70227d5d2c227573616765223a7b2270726f6d70745f746f6b656e73223a312c22636f6d706c6574696f6e5f746f6b656e73223a327d7d",
+        "encoding": "gzip",
+        "length": "146"
+      }
+    },
+    {
+      "name": "deflate",
+      "encoding": "deflate",
+      "wire": "789c3d8d410ec2301003bf12f99c0b1cfb1584aad06edb55936c945d0e50e541bc838f110e70b265cb9e03d3263c9162b81c48a41a56c270a04aec8aa0ca6a211b3c26c946dd0d90ddad4f2e6ea625062377ab8ee75eb13ddcfb85e6b17066ddc64a4125f7859a14b4abc7fd07285552b1d164a7dce9a7ef7f2a918c25ffd3736b1f65ce3a6a",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74222c22636f6e74656e74223a226f6b20677a6970206465666c617465206272206964656e7469747920c3a9227d2c2266696e6973685f726561736f6e223a2273746f70227d5d2c227573616765223a7b2270726f6d70745f746f6b656e73223a312c22636f6d706c6574696f6e5f746f6b656e73223a327d7d",
+        "encoding": "deflate",
+        "length": "134"
+      }
+    },
+    {
+      "name": "br",
+      "encoding": "br",
+      "wire": "1ba100209c05765b5aca0fdb098269672746d0dc521d179ab66a585210917fb659fc486d31b2b361adc3d2d55727078e976b415b6bcba3624828c86dec3c11d12c92b272c55190a4b80c04e8427a104febbfb3795eb75219efcbd8d33bf6906ecc15e9cba7d173c49bab8f72996ce92100db7f",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74222c22636f6e74656e74223a226f6b20677a6970206465666c617465206272206964656e7469747920c3a9227d2c2266696e6973685f726561736f6e223a2273746f70227d5d2c227573616765223a7b2270726f6d70745f746f6b656e73223a312c22636f6d706c6574696f6e5f746f6b656e73223a327d7d",
+        "encoding": "br",
+        "length": "115"
+      }
+    },
+    {
+      "name": "identity",
+      "encoding": "identity",
+      "wire": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74222c22636f6e74656e74223a226f6b20677a6970206465666c617465206272206964656e7469747920c3a9227d2c2266696e6973685f726561736f6e223a2273746f70227d5d2c227573616765223a7b2270726f6d70745f746f6b656e73223a312c22636f6d706c6574696f6e5f746f6b656e73223a327d7d",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74222c22636f6e74656e74223a226f6b20677a6970206465666c617465206272206964656e7469747920c3a9227d2c2266696e6973685f726561736f6e223a2273746f70227d5d2c227573616765223a7b2270726f6d70745f746f6b656e73223a312c22636f6d706c6574696f6e5f746f6b656e73223a327d7d",
+        "encoding": "identity",
+        "length": "162"
+      }
+    },
+    {
+      "name": "raw-deflate",
+      "encoding": "deflate",
+      "wire": "3d8d410ec2301003bf12f99c0b1cfb1584aad06edb55936c945d0e50e541bc838f110e70b265cb9e03d3263c9162b81c48a41a56c270a04aec8aa0ca6a211b3c26c946dd0d90ddad4f2e6ea625062377ab8ee75eb13ddcfb85e6b17066ddc64a4125f7859a14b4abc7fd07285552b1d164a7dce9a7ef7f2a918c25ffd3736b1f",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74222c22636f6e74656e74223a226f6b20677a6970206465666c617465206272206964656e7469747920c3a9227d2c2266696e6973685f726561736f6e223a2273746f70227d5d2c227573616765223a7b2270726f6d70745f746f6b656e73223a312c22636f6d706c6574696f6e5f746f6b656e73223a327d7d",
+        "encoding": "deflate",
+        "length": "128"
+      }
+    },
+    {
+      "name": "x-gzip",
+      "encoding": "x-gzip",
+      "wire": "1f8b08000000000000133d8d410ec2301003bf12f99c0b1cfb1584aad06edb55936c945d0e50e541bc838f110e70b265cb9e03d3263c9162b81c48a41a56c270a04aec8aa0ca6a211b3c26c946dd0d90ddad4f2e6ea625062377ab8ee75eb13ddcfb85e6b17066ddc64a4125f7859a14b4abc7fd07285552b1d164a7dce9a7ef7f2a918c25ffd3736b1f9a734ddca2000000",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74222c22636f6e74656e74223a226f6b20677a6970206465666c617465206272206964656e7469747920c3a9227d2c2266696e6973685f726561736f6e223a2273746f70227d5d2c227573616765223a7b2270726f6d70745f746f6b656e73223a312c22636f6d706c6574696f6e5f746f6b656e73223a327d7d",
+        "encoding": "x-gzip",
+        "length": "146"
+      }
+    },
+    {
+      "name": "x-deflate",
+      "encoding": "x-deflate",
+      "wire": "789c3d8d410ec2301003bf12f99c0b1cfb1584aad06edb55936c945d0e50e541bc838f110e70b265cb9e03d3263c9162b81c48a41a56c270a04aec8aa0ca6a211b3c26c946dd0d90ddad4f2e6ea625062377ab8ee75eb13ddcfb85e6b17066ddc64a4125f7859a14b4abc7fd07285552b1d164a7dce9a7ef7f2a918c25ffd3736b1f65ce3a6a",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "789c3d8d410ec2301003bf12f99c0b1cfb1584aad06edb55936c945d0e50e541bc838f110e70b265cb9e03d3263c9162b81c48a41a56c270a04aec8aa0ca6a211b3c26c946dd0d90ddad4f2e6ea625062377ab8ee75eb13ddcfb85e6b17066ddc64a4125f7859a14b4abc7fd07285552b1d164a7dce9a7ef7f2a918c25ffd3736b1f65ce3a6a",
+        "encoding": "x-deflate",
+        "length": "134"
+      }
+    },
+    {
+      "name": "stack",
+      "encoding": "gzip, br",
+      "wire": "8b48801f8b08000000000000133d8d410ec2301003bf12f99c0b1cfb1584aad06edb55936c945d0e50e541bc838f110e70b265cb9e03d3263c9162b81c48a41a56c270a04aec8aa0ca6a211b3c26c946dd0d90ddad4f2e6ea625062377ab8ee75eb13ddcfb85e6b17066ddc64a4125f7859a14b4abc7fd07285552b1d164a7dce9a7ef7f2a918c25ffd3736b1f9a734ddca200000003",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74222c22636f6e74656e74223a226f6b20677a6970206465666c617465206272206964656e7469747920c3a9227d2c2266696e6973685f726561736f6e223a2273746f70227d5d2c227573616765223a7b2270726f6d70745f746f6b656e73223a312c22636f6d706c6574696f6e5f746f6b656e73223a327d7d",
+        "encoding": "gzip, br",
+        "length": "150"
+      }
+    },
+    {
+      "name": "upper",
+      "encoding": "GZip",
+      "wire": "1f8b08000000000000133d8d410ec2301003bf12f99c0b1cfb1584aad06edb55936c945d0e50e541bc838f110e70b265cb9e03d3263c9162b81c48a41a56c270a04aec8aa0ca6a211b3c26c946dd0d90ddad4f2e6ea625062377ab8ee75eb13ddcfb85e6b17066ddc64a4125f7859a14b4abc7fd07285552b1d164a7dce9a7ef7f2a918c25ffd3736b1f9a734ddca2000000",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74222c22636f6e74656e74223a226f6b20677a6970206465666c617465206272206964656e7469747920c3a9227d2c2266696e6973685f726561736f6e223a2273746f70227d5d2c227573616765223a7b2270726f6d70745f746f6b656e73223a312c22636f6d706c6574696f6e5f746f6b656e73223a327d7d",
+        "encoding": "GZip",
+        "length": "146"
+      }
+    },
+    {
+      "name": "unknown",
+      "encoding": "custom",
+      "wire": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74222c22636f6e74656e74223a226f6b20677a6970206465666c617465206272206964656e7469747920c3a9227d2c2266696e6973685f726561736f6e223a2273746f70227d5d2c227573616765223a7b2270726f6d70745f746f6b656e73223a312c22636f6d706c6574696f6e5f746f6b656e73223a327d7d",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74222c22636f6e74656e74223a226f6b20677a6970206465666c617465206272206964656e7469747920c3a9227d2c2266696e6973685f726561736f6e223a2273746f70227d5d2c227573616765223a7b2270726f6d70745f746f6b656e73223a312c22636f6d706c6574696f6e5f746f6b656e73223a327d7d",
+        "encoding": "custom",
+        "length": "162"
+      }
+    },
+    {
+      "name": "mixed-unknown",
+      "encoding": "gzip, custom",
+      "wire": "1f8b08000000000000133d8d410ec2301003bf12f99c0b1cfb1584aad06edb55936c945d0e50e541bc838f110e70b265cb9e03d3263c9162b81c48a41a56c270a04aec8aa0ca6a211b3c26c946dd0d90ddad4f2e6ea625062377ab8ee75eb13ddcfb85e6b17066ddc64a4125f7859a14b4abc7fd07285552b1d164a7dce9a7ef7f2a918c25ffd3736b1f9a734ddca2000000",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "1f8b08000000000000133d8d410ec2301003bf12f99c0b1cfb1584aad06edb55936c945d0e50e541bc838f110e70b265cb9e03d3263c9162b81c48a41a56c270a04aec8aa0ca6a211b3c26c946dd0d90ddad4f2e6ea625062377ab8ee75eb13ddcfb85e6b17066ddc64a4125f7859a14b4abc7fd07285552b1d164a7dce9a7ef7f2a918c25ffd3736b1f9a734ddca2000000",
+        "encoding": "gzip, custom",
+        "length": "146"
+      }
+    },
+    {
+      "name": "multi-gzip",
+      "encoding": "gzip",
+      "wire": "1f8b0800000000000013ab564acec8cf4c4e2d56b28aae56ca4d2d2e4e4c0700e0c33596140000001f8b08000000000000133d8d310ec2301004bf626ded064aff0545865cc229ce9de53b0a407e10efe063380ddd6a473b4b486f342d84846cc6e6591c113715a79112740beb8b6b986929d9295c5be07920f667f87ed0231616b6fbd4289bca58986b45bf443c2caf741cd4a67bf5c9752331a4d3e1df6b2167957f7beefd078a2907618e000000",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74222c22636f6e74656e74223a226f6b20677a6970206465666c617465206272206964656e7469747920c3a9227d2c2266696e6973685f726561736f6e223a2273746f70227d5d2c227573616765223a7b2270726f6d70745f746f6b656e73223a312c22636f6d706c6574696f6e5f746f6b656e73223a327d7d",
+        "encoding": "gzip",
+        "length": "175"
+      }
+    },
+    {
+      "name": "truncated-gzip",
+      "encoding": "gzip",
+      "wire": "1f8b08000000000000133d8d410ec2301003bf12f99c0b1cfb1584aad06edb55936c945d0e50e541bc838f110e70b265cb9e03d3263c9162b81c48a41a56c270a04aec8aa0ca6a211b3c26c946dd0d90ddad4f2e6ea625062377ab8ee75eb13ddcfb85e6b17066ddc64a4125f7859a14b4abc7fd07285552b1d164a7dce9a7ef7f2a918c25ffd3736b1f9a73",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74222c22636f6e74656e74223a226f6b20677a6970206465666c617465206272206964656e7469747920c3a9227d2c2266696e6973685f726561736f6e223a2273746f70227d5d2c227573616765223a7b2270726f6d70745f746f6b656e73223a312c22636f6d706c6574696f6e5f746f6b656e73223a327d7d",
+        "encoding": "gzip",
+        "length": "140"
+      }
+    },
+    {
+      "name": "truncated-deflate",
+      "encoding": "deflate",
+      "wire": "789c3d8d410ec2301003bf12f99c0b1cfb1584aad06edb55936c945d0e50e541bc838f110e70b265cb9e03d3263c9162b81c48a41a56c270a04aec8aa0ca6a211b3c26c946dd0d90ddad4f2e6ea625062377ab8ee75eb13ddcfb85e6b17066ddc64a4125f7859a14b4abc7fd07285552b1d164a7dce9a7ef7f2a918c25ffd3736b1f65ce",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74222c22636f6e74656e74223a226f6b20677a6970206465666c617465206272206964656e7469747920c3a9227d2c2266696e6973685f726561736f6e223a2273746f70227d5d2c227573616765223a7b2270726f6d70745f746f6b656e73223a312c22636f6d706c6574696f6e5f746f6b656e73223a327d7d",
+        "encoding": "deflate",
+        "length": "132"
+      }
+    },
+    {
+      "name": "bad-gzip",
+      "encoding": "gzip",
+      "wire": "6e6f7420677a6970",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "error": "terminated",
+        "name": "TypeError"
+      }
+    },
+    {
+      "name": "bad-br",
+      "encoding": "br",
+      "wire": "6e6f742062726f746c69",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "error": "terminated",
+        "name": "TypeError"
+      }
+    },
+    {
+      "name": "empty-gzip",
+      "encoding": "gzip",
+      "wire": "",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "",
+        "encoding": "gzip",
+        "length": "0"
+      }
+    },
+    {
+      "name": "empty-deflate",
+      "encoding": "deflate",
+      "wire": "",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "",
+        "encoding": "deflate",
+        "length": "0"
+      }
+    },
+    {
+      "name": "empty-br",
+      "encoding": "br",
+      "wire": "",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "",
+        "encoding": "br",
+        "length": "0"
+      }
+    },
+    {
+      "name": "reset-content",
+      "encoding": "gzip",
+      "wire": "6e6f7420677a6970",
+      "method": "GET",
+      "status": 205,
+      "result": {
+        "hex": "",
+        "encoding": "gzip",
+        "length": "8"
+      }
+    },
+    {
+      "name": "head",
+      "encoding": "gzip",
+      "wire": "6e6f7420677a6970",
+      "method": "HEAD",
+      "status": 200,
+      "result": {
+        "hex": "",
+        "encoding": "gzip",
+        "length": "8"
+      }
+    },
+    {
+      "name": "no-content",
+      "encoding": "gzip",
+      "wire": "",
+      "method": "GET",
+      "status": 204,
+      "result": {
+        "hex": "",
+        "encoding": "gzip",
+        "length": "0"
+      }
+    },
+    {
+      "name": "gzip-cut-1",
+      "encoding": "gzip",
+      "wire": "1f",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "",
+        "encoding": "gzip",
+        "length": "1"
+      }
+    },
+    {
+      "name": "gzip-cut-73",
+      "encoding": "gzip",
+      "wire": "1f8b08000000000000133d8d410ec2301003bf12f99c0b1cfb1584aad06edb55936c945d0e50e541bc838f110e70b265cb9e03d3263c9162b81c48a41a56c270a04aec8aa0ca6a211b",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74",
+        "encoding": "gzip",
+        "length": "73"
+      }
+    },
+    {
+      "name": "deflate-cut-1",
+      "encoding": "deflate",
+      "wire": "78",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "",
+        "encoding": "deflate",
+        "length": "1"
+      }
+    },
+    {
+      "name": "deflate-cut-67",
+      "encoding": "deflate",
+      "wire": "789c3d8d410ec2301003bf12f99c0b1cfb1584aad06edb55936c945d0e50e541bc838f110e70b265cb9e03d3263c9162b81c48a41a56c270a04aec8aa0ca6a211b3c26",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "7b2263686f69636573223a5b7b226d657373616765223a7b22726f6c65223a22617373697374616e74222c2263",
+        "encoding": "deflate",
+        "length": "67"
+      }
+    },
+    {
+      "name": "br-cut-1",
+      "encoding": "br",
+      "wire": "1b",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "",
+        "encoding": "br",
+        "length": "1"
+      }
+    },
+    {
+      "name": "br-cut-57",
+      "encoding": "br",
+      "wire": "1ba100209c05765b5aca0fdb098269672746d0dc521d179ab66a585210917fb659fc486d31b2b361adc3d2d55727078e976b415b6bcba36248",
+      "method": "GET",
+      "status": 200,
+      "result": {
+        "hex": "",
+        "encoding": "br",
+        "length": "57"
+      }
+    }
+  ],
+  "headers": [
+    {
+      "name": "latin1",
+      "keyUnits": [
+        120,
+        45,
+        116,
+        101,
+        115,
+        116
+      ],
+      "units": [
+        233,
+        255
+      ],
+      "result": {
+        "hex": "e9ff"
+      }
+    },
+    {
+      "name": "wide",
+      "keyUnits": [
+        120,
+        45,
+        116,
+        101,
+        115,
+        116
+      ],
+      "units": [
+        20013
+      ],
+      "result": {
+        "error": "Cannot convert argument to a ByteString because the character at index 0 has a value of 20013 which is greater than 255.",
+        "name": "TypeError"
+      }
+    },
+    {
+      "name": "surrogate",
+      "keyUnits": [
+        120,
+        45,
+        116,
+        101,
+        115,
+        116
+      ],
+      "units": [
+        55296
+      ],
+      "result": {
+        "error": "Cannot convert argument to a ByteString because the character at index 0 has a value of 55296 which is greater than 255.",
+        "name": "TypeError"
+      }
+    },
+    {
+      "name": "trim",
+      "keyUnits": [
+        120,
+        45,
+        116,
+        101,
+        115,
+        116
+      ],
+      "units": [
+        32,
+        9,
+        233,
+        9,
+        32
+      ],
+      "result": {
+        "hex": "e9"
+      }
+    },
+    {
+      "name": "duplicate",
+      "keyUnits": [
+        120,
+        45,
+        116,
+        101,
+        115,
+        116
+      ],
+      "units": [
+        233
+      ],
+      "result": {
+        "hex": "e92c20ff"
+      }
+    },
+    {
+      "name": "control",
+      "keyUnits": [
+        120,
+        45,
+        116,
+        101,
+        115,
+        116
+      ],
+      "units": [
+        97,
+        1,
+        98
+      ],
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError"
+      }
+    },
+    {
+      "name": "newline",
+      "keyUnits": [
+        120,
+        45,
+        116,
+        101,
+        115,
+        116
+      ],
+      "units": [
+        97,
+        10,
+        98
+      ],
+      "result": {
+        "error": "Headers.append: \"a\nb\" is an invalid header value.",
+        "name": "TypeError"
+      }
+    },
+    {
+      "name": "invalid-name",
+      "keyUnits": [
+        98,
+        97,
+        100,
+        32,
+        110,
+        97,
+        109,
+        101
+      ],
+      "units": [
+        111,
+        107
+      ],
+      "result": {
+        "error": "Headers.append: \"bad name\" is an invalid header name.",
+        "name": "TypeError"
+      }
+    },
+    {
+      "name": "wide-name",
+      "keyUnits": [
+        120,
+        45,
+        20013
+      ],
+      "units": [
+        111,
+        107
+      ],
+      "result": {
+        "error": "Cannot convert argument to a ByteString because the character at index 2 has a value of 20013 which is greater than 255.",
+        "name": "TypeError"
+      }
+    },
+    {
+      "name": "surrogate-name",
+      "keyUnits": [
+        120,
+        45,
+        55296
+      ],
+      "units": [
+        111,
+        107
+      ],
+      "result": {
+        "error": "Cannot convert argument to a ByteString because the character at index 2 has a value of 55296 which is greater than 255.",
+        "name": "TypeError"
+      }
+    },
+    {
+      "name": "conversion-order",
+      "keyUnits": [
+        120,
+        45,
+        116,
+        101,
+        115,
+        116
+      ],
+      "units": [
+        20013
+      ],
+      "result": {
+        "error": "Cannot convert argument to a ByteString because the character at index 0 has a value of 20013 which is greater than 255.",
+        "name": "TypeError"
+      }
+    }
+  ],
+  "lifecycle": [
+    {
+      "encoding": "gzip",
+      "cancel": false,
+      "prefix": "1f8b08000000000000134acb2c2a2e01000000ffff",
+      "tail": "cb492c2e0100ced9589709000000",
+      "result": {
+        "first": "first",
+        "beforeEnd": true,
+        "rest": "last"
+      }
+    },
+    {
+      "encoding": "gzip",
+      "cancel": true,
+      "prefix": "1f8b08000000000000134acb2c2a2e01000000ffff",
+      "tail": "cb492c2e0100ced9589709000000",
+      "result": {
+        "first": "first",
+        "beforeEnd": true,
+        "error": "This operation was aborted",
+        "name": "AbortError"
+      }
+    },
+    {
+      "encoding": "deflate",
+      "cancel": false,
+      "prefix": "789c4acb2c2a2e01000000ffff",
+      "tail": "cb492c2e0100132803dd",
+      "result": {
+        "first": "first",
+        "beforeEnd": true,
+        "rest": "last"
+      }
+    },
+    {
+      "encoding": "deflate",
+      "cancel": true,
+      "prefix": "789c4acb2c2a2e01000000ffff",
+      "tail": "cb492c2e0100132803dd",
+      "result": {
+        "first": "first",
+        "beforeEnd": true,
+        "error": "This operation was aborted",
+        "name": "AbortError"
+      }
+    },
+    {
+      "encoding": "br",
+      "cancel": false,
+      "prefix": "0b0200f82500629080c000",
+      "tail": "1800086c61737403",
+      "result": {
+        "first": "first",
+        "beforeEnd": true,
+        "rest": "last"
+      }
+    },
+    {
+      "encoding": "br",
+      "cancel": true,
+      "prefix": "0b0200f82500629080c000",
+      "tail": "1800086c61737403",
+      "result": {
+        "first": "first",
+        "beforeEnd": true,
+        "error": "This operation was aborted",
+        "name": "AbortError"
+      }
+    }
+  ],
+  "endings": [
+    {
+      "encoding": "gzip",
+      "finish": "release",
+      "prefix": "1f8b08000000000000134bcb2c2a2e010057ee719205000000",
+      "tail": "",
+      "result": {
+        "first": "first",
+        "pendingBefore": true,
+        "done": true
+      }
+    },
+    {
+      "encoding": "gzip",
+      "finish": "cancel",
+      "prefix": "1f8b08000000000000134bcb2c2a2e010057ee719205000000",
+      "tail": "",
+      "result": {
+        "first": "first",
+        "pendingBefore": true,
+        "error": "This operation was aborted",
+        "name": "AbortError"
+      }
+    },
+    {
+      "encoding": "gzip",
+      "finish": "disconnect",
+      "prefix": "1f8b08000000000000134bcb2c2a2e010057ee719205000000",
+      "tail": "",
+      "result": {
+        "first": "first",
+        "pendingBefore": true,
+        "error": "terminated",
+        "name": "TypeError"
+      }
+    },
+    {
+      "encoding": "deflate",
+      "finish": "release",
+      "prefix": "789c4bcb2c2a2e010006570229",
+      "tail": "",
+      "result": {
+        "first": "first",
+        "pendingBefore": true,
+        "done": true
+      }
+    },
+    {
+      "encoding": "deflate",
+      "finish": "cancel",
+      "prefix": "789c4bcb2c2a2e010006570229",
+      "tail": "",
+      "result": {
+        "first": "first",
+        "pendingBefore": true,
+        "error": "This operation was aborted",
+        "name": "AbortError"
+      }
+    },
+    {
+      "encoding": "deflate",
+      "finish": "disconnect",
+      "prefix": "789c4bcb2c2a2e010006570229",
+      "tail": "",
+      "result": {
+        "first": "first",
+        "pendingBefore": true,
+        "error": "terminated",
+        "name": "TypeError"
+      }
+    },
+    {
+      "encoding": "br",
+      "finish": "release",
+      "prefix": "0b0280666972737403",
+      "tail": "",
+      "result": {
+        "first": "first",
+        "pendingBefore": true,
+        "done": true
+      }
+    },
+    {
+      "encoding": "br",
+      "finish": "cancel",
+      "prefix": "0b0280666972737403",
+      "tail": "",
+      "result": {
+        "first": "first",
+        "pendingBefore": true,
+        "error": "This operation was aborted",
+        "name": "AbortError"
+      }
+    },
+    {
+      "encoding": "br",
+      "finish": "disconnect",
+      "prefix": "0b0280666972737403",
+      "tail": "",
+      "result": {
+        "first": "first",
+        "pendingBefore": true,
+        "error": "terminated",
+        "name": "TypeError"
+      }
+    }
+  ],
+  "interrupted": [
+    {
+      "encoding": "identity",
+      "prefix": "66697273",
+      "result": {
+        "error": "terminated",
+        "name": "TypeError"
+      }
+    },
+    {
+      "encoding": "gzip",
+      "prefix": "1f8b08000000000000134bcb2c2a",
+      "result": {
+        "error": "terminated",
+        "name": "TypeError"
+      }
+    },
+    {
+      "encoding": "deflate",
+      "prefix": "789c4bcb2c2a2ec9",
+      "result": {
+        "error": "terminated",
+        "name": "TypeError"
+      }
+    },
+    {
+      "encoding": "br",
+      "prefix": "1b0800f82500",
+      "result": {
+        "error": "terminated",
+        "name": "TypeError"
+      }
+    }
+  ],
+  "progress": [
+    {
+      "watchdogMs": null,
+      "result": "first"
+    },
+    {
+      "watchdogMs": 900,
+      "result": "application idle"
+    }
+  ]
+}

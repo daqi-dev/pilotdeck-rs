@@ -38,11 +38,14 @@ use std::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::watch;
 
-use super::count_body::{field, is, object, put, text as header_text};
+#[cfg(test)]
+use super::count_body::text as header_text;
+use super::count_body::{field, is, object, put};
 use super::providers::{self, StreamState};
 use super::router::AbortFlag;
 use crate::host::ModuleError;
 
+mod encoding;
 mod errors;
 mod sse;
 mod tls;
@@ -1046,12 +1049,16 @@ impl Default for HyperModelTransport {
 impl ModelHttpTransport for HyperModelTransport {
     fn send(&self, request: Request<Full<Bytes>>) -> TransportFuture {
         let client = self.client.clone();
+        let method = request.method().clone();
         TransportFuture::io(async move {
             let response = client
                 .request(request)
                 .await
                 .map_err(|error| TransportFailure::fetch_failed(cause_code(&error)))?;
-            Ok(response.map(|body| body.map_err(|_| BodyFailure::Terminated).boxed()))
+            Ok(encoding::decode_response(
+                &method,
+                response.map(|body| body.map_err(|_| BodyFailure::Terminated).boxed()),
+            ))
         })
     }
 }
@@ -1598,32 +1605,64 @@ fn build_http_request(
             None,
         ));
     }
-    // `new Headers(record)`: names are case-insensitive, later values append.
+    // WebIDL converts the entire record before validating/appending headers.
+    let entries = headers
+        .iter()
+        .map(|(name, value)| {
+            let units = crate::js_value::to_string_units(value).map_err(|_| failed())?;
+            Ok((
+                header_byte_string(name.units())?,
+                header_byte_string(&units)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, NetworkFetchError>>()?;
     let mut map = hyper::HeaderMap::new();
-    for (name, value) in headers {
-        let name = hyper::header::HeaderName::from_bytes(
-            String::from_utf16_lossy(name.units()).as_bytes(),
-        )
-        .map_err(|_| NetworkFetchError::classify("Invalid header name", None))?;
-        let text = header_text(value);
-        let value =
-            hyper::header::HeaderValue::from_str(text.trim_matches([' ', '\t', '\r', '\n']))
-                .map_err(|_| NetworkFetchError::classify("Invalid header value", None))?;
+    for (name, value) in entries {
+        let name = hyper::header::HeaderName::from_bytes(&name).map_err(|_| {
+            NetworkFetchError::classify(
+                &format!(
+                    "Headers.append: \"{}\" is an invalid header name.",
+                    name.iter().map(|b| char::from(*b)).collect::<String>()
+                ),
+                None,
+            )
+        })?;
+        let trim = |b: &u8| matches!(b, b' ' | b'\t' | b'\r' | b'\n');
+        let start = value.iter().position(|b| !trim(b)).unwrap_or(value.len());
+        let end = value
+            .iter()
+            .rposition(|b| !trim(b))
+            .map_or(start, |i| i + 1);
+        let bytes = &value[start..end];
+        if bytes.iter().any(|b| matches!(b, 0 | b'\r' | b'\n')) {
+            return Err(NetworkFetchError::classify(
+                &format!(
+                    "Headers.append: \"{}\" is an invalid header value.",
+                    bytes.iter().map(|b| char::from(*b)).collect::<String>()
+                ),
+                None,
+            ));
+        }
+        let value = hyper::header::HeaderValue::from_bytes(bytes).map_err(|_| failed())?;
         if let Some(existing) = map.get(&name) {
-            let joined = format!(
-                "{}, {}",
-                existing.to_str().unwrap_or_default(),
-                value.to_str().unwrap_or_default()
-            );
+            let mut joined = existing.as_bytes().to_vec();
+            joined.extend_from_slice(b", ");
+            joined.extend_from_slice(value.as_bytes());
             map.insert(
                 name,
-                hyper::header::HeaderValue::from_str(&joined).map_err(|_| failed())?,
+                hyper::header::HeaderValue::from_bytes(&joined).map_err(|_| failed())?,
             );
         } else {
             map.insert(name, value);
         }
     }
     Ok((parsed, map))
+}
+
+fn header_byte_string(units: &[u16]) -> Result<Vec<u8>, NetworkFetchError> {
+    units.iter().enumerate().map(|(index, &unit)| {
+        u8::try_from(unit).map_err(|_| NetworkFetchError::classify(&format!("Cannot convert argument to a ByteString because the character at index {index} has a value of {unit} which is greater than 255."), None))
+    }).collect()
 }
 
 /// Preserve each redirect hop's completion source for both provider transports.
@@ -2457,17 +2496,16 @@ async fn read_frame(
     // coarse fast-timer tick and fire late, while `withIdleTimeout` uses a
     // native setTimeout (real TS over TCP: 5000/5000 tie -> idle 5/5; default
     // 600000 tie -> "Stream idle timeout", _tmp/20261021-issue-396/arb/).
-    let body_first = duration(options.body_timeout_ms) < duration(idle_ms);
-    let wait = if body_first {
-        options.body_timeout_ms
-    } else {
-        idle_ms
-    };
+    let idle_deadline = tokio::time::Instant::now() + duration(idle_ms);
     loop {
+        let remaining = idle_deadline.saturating_duration_since(tokio::time::Instant::now());
+        let body_idle = duration(options.body_timeout_ms);
+        let body_first = body_idle < remaining;
+        let wait = body_idle.min(remaining);
         use crate::runtime::network::{Exchange, body_frame_with_prearmed_parent};
         match body_frame_with_prearmed_parent(
             body,
-            Some(duration(wait)),
+            Some(wait),
             options.abort.as_ref(),
             continuation,
         )
@@ -2491,7 +2529,9 @@ async fn read_frame(
                 return Err(ModelStreamError::thrown("TypeError", "terminated"));
             }
             Exchange::Response(Some(Ok(frame)), _) => {
-                if let Ok(data) = frame.into_data() {
+                if let Ok(data) = frame.into_data()
+                    && !data.is_empty()
+                {
                     return Ok(Some(data));
                 }
             }
@@ -4447,3 +4487,7 @@ mod proxy_tests {
         assert_eq!(target("http://[::1]/"), ("[::1]:80".into(), "[::1]".into()));
     }
 }
+
+#[cfg(test)]
+#[path = "http/encoding_tests.rs"]
+mod encoding_tests;
