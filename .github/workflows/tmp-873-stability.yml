@@ -1,0 +1,23 @@
+# 临时工作流（#873 CI 连跑验收证据，不合入）：在 CI 共享机上把 reparented_wide_subtrees_stay_fast 连跑 10 次。
+name: tmp-873-stability
+on:
+  pull_request:
+jobs:
+  stability:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain
+      - run: cargo test -p pilotdeck-gateway --test html_markdown --no-run
+      - name: 连跑 10 次
+        run: |
+          pass=0
+          for i in $(seq 1 10); do
+            if cargo test -p pilotdeck-gateway --test html_markdown reparented_wide_subtrees_stay_fast -- --exact 2>&1 | tee run-$i.log | grep -q 'test result: ok. 1 passed'; then pass=$((pass+1)); fi
+            grep -hE 'test result|did not scale|ratio' run-$i.log | sed "s/^/[run $i] /"
+          done
+          echo "STABILITY: $pass/10 passed"
+          [ "$pass" = 10 ]
