@@ -409,10 +409,14 @@ impl TurnHostFactory {
                             "Leased context storage resource is not native.",
                         )
                     })?;
+                // A session-composition failure is not a host execution
+                // failure: TS's factory rethrows the constructor error from
+                // session creation unchanged (`ProjectSessionFactory.ts:160-163`),
+                // so this boundary keeps the original message and kind.
                 Some(Arc::new(
                     storage
                         .create_session(tool_results_dir)
-                        .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?
+                        .map_err(|error| HostError::new(HostErrorKind::Session, error.message))?
                         .context_runtime,
                 ) as Arc<dyn context::ContextRuntime>)
             }

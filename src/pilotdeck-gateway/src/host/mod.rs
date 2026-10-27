@@ -198,6 +198,12 @@ pub enum HostErrorKind {
     Limit,
     Callback,
     ResultUnknown,
+    /// The per-turn session composition failed before any host connection or
+    /// execution existed. TS surfaces the same failure as the session-creation
+    /// throw (`ProjectSessionFactory.ts:160-163` rethrows unchanged), so the
+    /// boundary must keep the original message instead of reporting it as a
+    /// host execution failure.
+    Session,
 }
 #[derive(Debug, Clone)]
 pub struct HostError {

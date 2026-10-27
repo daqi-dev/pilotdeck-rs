@@ -161,7 +161,9 @@ impl ContextStorageResources {
             .unwrap_or_else(|| self.project_root.clone());
         // #885: the constructor's `resolve` may reject a relative spill dir
         // against a deleted cwd; TS's throw surfaces as a session-creation
-        // failure here too.
+        // failure. This composition boundary keeps the message verbatim, so the
+        // host chain reports it unchanged instead of as a host execution
+        // failure (see `TurnHostFactory::assemble`).
         let tool_result_budget = Arc::new(
             ToolResultBudget::new(ToolResultBudgetOptions::new(tool_results_dir))
                 .map_err(|error| RuntimeError::new(error.to_string()))?,
