@@ -20,7 +20,11 @@ use super::{
     },
 };
 use crate::runtime::memory::{
-    edgeclaw::{file_memory::FileMemoryStore, storage::js_truthy, text::hash_text},
+    edgeclaw::{
+        file_memory::{FileMemoryError, FileMemoryStore},
+        storage::js_truthy,
+        text::hash_text,
+    },
     js_trim_units,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
@@ -565,87 +569,37 @@ impl<'a> DreamRewriteRunner<'a> {
                             })
                             .unwrap_or_default();
                         if previous_profile_body != body {
-                            global_store.upsert_user_profile(&rewritten)?;
-                            user_profile_updated = true;
-
-                            let seed_path = user_profile_relative_path
-                                .clone()
-                                .unwrap_or_else(|| "undefined".into());
-                            let now = num(self.environment.now_ms());
-                            let seed = concat(&[
-                                &"rewrite_user_profile:".into(),
-                                &seed_path,
-                                &":".into(),
-                                &now,
-                            ]);
-                            let mut rewrite_mutation = JsObject::new();
-                            rewrite_mutation.insert(
-                                "mutationId".into(),
-                                JsValue::String(JsString::from(format!(
-                                    "mutation_{}",
-                                    hash_text(&seed)
-                                ))),
+                            // `dream-review.ts:1296-1335` keeps the profile
+                            // write and note deletion inside the same `try` as
+                            // the extractor call: either failure becomes the
+                            // rewrite warning and the run continues into
+                            // manifest repair. State assigned before a delete
+                            // failure (profileUpdated, mutation, absorbed IDs)
+                            // stays assigned, exactly like TS.
+                            let persisted = persist_user_profile_rewrite(
+                                self,
+                                &mut trace,
+                                global_store,
+                                user_profile_relative_path.as_ref(),
+                                &rewritten,
+                                &selected_records,
+                                &mut user_profile_updated,
+                                &mut absorbed_user_note_ids,
+                                &mut protected_user_paths_skipped,
                             );
-                            rewrite_mutation.insert(
-                                "action".into(),
-                                JsValue::String("rewrite_user_profile".into()),
-                            );
-                            rewrite_mutation.insert(
-                                "relativePath".into(),
-                                JsValue::String(
-                                    user_profile_relative_path
-                                        .clone()
-                                        .unwrap_or_else(|| FALLBACK_PROFILE_PATH.into()),
-                                ),
-                            );
-                            let mut mutations = match trace.get("mutations") {
-                                Some(JsValue::Array(items)) => items.clone(),
-                                _ => Vec::new(),
-                            };
-                            mutations.push(JsValue::Object(rewrite_mutation));
-                            trace.insert("mutations".into(), JsValue::Array(mutations));
-
-                            let requested: Vec<JsString> = selected_records
-                                .iter()
-                                .filter_map(|record| string_field(record, "relativePath"))
-                                .collect();
-                            absorbed_user_note_ids = requested
-                                .iter()
-                                .filter(|path| {
-                                    is_dream_user_note_path(path)
-                                        && !is_dream_user_profile_path(path)
-                                })
-                                .cloned()
-                                .collect();
-                            protected_user_paths_skipped = requested
-                                .iter()
-                                .filter(|path| {
-                                    !absorbed_user_note_ids
-                                        .iter()
-                                        .any(|absorbed| absorbed == *path)
-                                })
-                                .cloned()
-                                .collect();
-                            if !absorbed_user_note_ids.is_empty() {
-                                self.repository.delete_memory_entries(&JsValue::Array(
-                                    absorbed_user_note_ids
-                                        .iter()
-                                        .cloned()
-                                        .map(JsValue::String)
-                                        .collect(),
-                                ))?;
-                                for path in &absorbed_user_note_ids {
-                                    push_mutation(
-                                        &mut trace,
-                                        mutation(
-                                            &"delete".into(),
-                                            path,
-                                            0.0,
-                                            0.0,
-                                            &JsObject::new(),
-                                        ),
-                                        Some(self.environment),
-                                    );
+                            if let Err(error) = persisted {
+                                let error = DreamRunnerError::Memory(error);
+                                user_rewrite_failure_message = Some(concat(&[
+                                    &"Dream skipped user profile rewrite because the rewrite request failed: "
+                                        .into(),
+                                    &error.js_message(),
+                                ]));
+                                if let Some(logger) = self.logger {
+                                    logger.warn(&concat(&[
+                                        &"[clawxmemory] staged dream user-profile rewrite failed: "
+                                            .into(),
+                                        &error.js_string(),
+                                    ]));
                                 }
                             }
                         } else {
@@ -1080,6 +1034,97 @@ impl<'a> DreamRewriteRunner<'a> {
             trace,
         })
     }
+}
+
+// -- user profile persistence ----------------------------------------------
+
+/// The TS `try` body after a successful extractor call (`dream-review.ts:1296-1335`).
+/// Returns the first store failure; callers turn it into the same
+/// `user-rewrite-warning` the extractor failure path records.
+#[allow(clippy::too_many_arguments)]
+fn persist_user_profile_rewrite(
+    runner: &DreamRewriteRunner<'_>,
+    trace: &mut JsObject,
+    global_store: &FileMemoryStore,
+    user_profile_relative_path: Option<&JsString>,
+    rewritten: &JsObject,
+    selected_records: &[JsObject],
+    user_profile_updated: &mut bool,
+    absorbed_user_note_ids: &mut Vec<JsString>,
+    protected_user_paths_skipped: &mut Vec<JsString>,
+) -> std::result::Result<(), FileMemoryError> {
+    global_store.upsert_user_profile(rewritten)?;
+    *user_profile_updated = true;
+
+    let seed_path = user_profile_relative_path
+        .cloned()
+        .unwrap_or_else(|| "undefined".into());
+    let now = num(runner.environment.now_ms());
+    let seed = concat(&[
+        &"rewrite_user_profile:".into(),
+        &seed_path,
+        &":".into(),
+        &now,
+    ]);
+    let mut rewrite_mutation = JsObject::new();
+    rewrite_mutation.insert(
+        "mutationId".into(),
+        JsValue::String(JsString::from(format!("mutation_{}", hash_text(&seed)))),
+    );
+    rewrite_mutation.insert(
+        "action".into(),
+        JsValue::String("rewrite_user_profile".into()),
+    );
+    rewrite_mutation.insert(
+        "relativePath".into(),
+        JsValue::String(
+            user_profile_relative_path
+                .cloned()
+                .unwrap_or_else(|| FALLBACK_PROFILE_PATH.into()),
+        ),
+    );
+    let mut mutations = match trace.get("mutations") {
+        Some(JsValue::Array(items)) => items.clone(),
+        _ => Vec::new(),
+    };
+    mutations.push(JsValue::Object(rewrite_mutation));
+    trace.insert("mutations".into(), JsValue::Array(mutations));
+
+    let requested: Vec<JsString> = selected_records
+        .iter()
+        .filter_map(|record| string_field(record, "relativePath"))
+        .collect();
+    *absorbed_user_note_ids = requested
+        .iter()
+        .filter(|path| is_dream_user_note_path(path) && !is_dream_user_profile_path(path))
+        .cloned()
+        .collect();
+    *protected_user_paths_skipped = requested
+        .iter()
+        .filter(|path| {
+            !absorbed_user_note_ids
+                .iter()
+                .any(|absorbed| absorbed == *path)
+        })
+        .cloned()
+        .collect();
+    if !absorbed_user_note_ids.is_empty() {
+        runner.repository.delete_memory_entries(&JsValue::Array(
+            absorbed_user_note_ids
+                .iter()
+                .cloned()
+                .map(JsValue::String)
+                .collect(),
+        ))?;
+        for path in absorbed_user_note_ids.iter() {
+            push_mutation(
+                trace,
+                mutation(&"delete".into(), path, 0.0, 0.0, &JsObject::new()),
+                Some(runner.environment),
+            );
+        }
+    }
+    Ok(())
 }
 
 // -- local shape helpers ----------------------------------------------------

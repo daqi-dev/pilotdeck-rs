@@ -396,10 +396,64 @@ fn find_case<'a>(oracle: &'a JsValue, name: &str) -> &'a JsValue {
         .unwrap_or_else(|| panic!("#774 case {name} missing"))
 }
 
+/// Owns one replay scratch tree and restores any temporary permission modes
+/// before removing it, including when an assertion unwinds.
+struct ScratchGuard {
+    root: std::path::PathBuf,
+    modes: Vec<(std::path::PathBuf, u32)>,
+}
+
+impl ScratchGuard {
+    fn new(root: std::path::PathBuf) -> Self {
+        Self {
+            root,
+            modes: Vec::new(),
+        }
+    }
+
+    fn set_permissions(&mut self, path: &Path, mode: u32) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap_or_else(|error| {
+                panic!("#774 scratch chmod {} {mode:o}: {error}", path.display())
+            });
+            self.modes.push((path.to_path_buf(), mode));
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (path, mode);
+        }
+    }
+}
+
+impl std::ops::Deref for ScratchGuard {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.root
+    }
+}
+
+impl Drop for ScratchGuard {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for (path, mode) in self.modes.drain(..).rev() {
+                let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
+            }
+        }
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
 fn replay(name: &str) {
     let oracle = oracle();
     let case = find_case(&oracle, name);
-    let scratch = std::env::temp_dir().join(format!("pdrs-774-{name}-{}", uuid::Uuid::new_v4()));
+    let mut scratch = ScratchGuard::new(
+        std::env::temp_dir().join(format!("pdrs-774-{name}-{}", uuid::Uuid::new_v4())),
+    );
     let home = scratch.join("home");
     let base = scratch.join("cases").join(name);
     let mode = string_field(case, "mode");
@@ -466,6 +520,18 @@ fn replay(name: &str) {
             store
                 .execute("ensureProjectMeta", &JsObject::new())
                 .unwrap_or_else(|error| panic!("#774 seed ensure meta {name}: {error}"));
+        }
+    }
+
+    // P1 store-failure goldens: the same permission faults observe.mts applies
+    // after seeding, so both replays fail inside the TS `try` (not earlier).
+    if let Some(faults) = case.get("faults").and_then(JsValue::as_object) {
+        let global_root = global_store.get_root_dir();
+        if matches!(faults.get("profileReadOnly"), Some(JsValue::Bool(true))) {
+            scratch.set_permissions(&global_root.join("UserIdentity/user-profile.md"), 0o444);
+        }
+        if matches!(faults.get("notesReadOnly"), Some(JsValue::Bool(true))) {
+            scratch.set_permissions(&global_root.join("UserIdentityNotes"), 0o555);
         }
     }
 
@@ -624,7 +690,7 @@ fn replay(name: &str) {
     );
     let logs = JsValue::Array(logger.warnings().into_iter().map(JsValue::String).collect());
     equal(
-        &logs,
+        &clean_paths(&logs, &scratch.to_string_lossy()),
         expected.get("logs").expect("#774 expected logs"),
         &format!("#774 logs {name}"),
     );
@@ -640,7 +706,6 @@ fn replay(name: &str) {
         expected.get("tree").expect("#774 expected tree"),
         &format!("#774 tree {name}"),
     );
-    let _ = fs::remove_dir_all(&scratch);
 }
 
 /// Minimal block_on for the async runner without pulling a new dev-dependency.
@@ -690,6 +755,30 @@ fn run_single_kept_profile() {
 #[test]
 fn run_single_rewrite_error() {
     replay("run-single-rewrite-error");
+}
+#[test]
+fn run_single_whitespace_profile() {
+    replay("run-single-whitespace-profile");
+}
+#[test]
+fn run_single_upsert_failure() {
+    replay("run-single-upsert-failure");
+}
+#[test]
+fn run_single_delete_failure() {
+    replay("run-single-delete-failure");
+}
+#[test]
+fn run_single_meta_only() {
+    replay("run-single-meta-only");
+}
+#[test]
+fn run_single_window_truncation() {
+    replay("run-single-window-truncation");
+}
+#[test]
+fn run_general_two_projects() {
+    replay("run-general-two-projects");
 }
 #[test]
 fn run_general_merge() {
