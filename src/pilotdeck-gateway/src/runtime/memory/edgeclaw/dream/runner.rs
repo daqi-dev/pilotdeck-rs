@@ -64,7 +64,7 @@ impl DreamRunnerError {
     /// `error.message` as the `planSummary` template appends it
     /// (`dream-review.ts:836-838`). Raw UTF-16 is kept: a lone surrogate is a
     /// valid JS string unit and must not become U+FFFD.
-    fn js_message(&self) -> JsString {
+    pub(super) fn js_message(&self) -> JsString {
         match self {
             Self::Llm(error) => error.message.clone(),
             Self::Memory(error) => error.js_message(),
@@ -74,7 +74,7 @@ impl DreamRunnerError {
     /// `String(error)` = `Error.prototype.toString()`: the empty side is
     /// omitted, otherwise `<name>: <message>`. Both sides keep raw UTF-16 so
     /// the logger sees the same units Node hands it.
-    fn js_string(&self) -> JsString {
+    pub(super) fn js_string(&self) -> JsString {
         let name: JsString = match self {
             Self::Llm(error) => error.name.into(),
             Self::Memory(error) => error.js_name().into(),
@@ -123,6 +123,14 @@ pub trait DreamExtractor: Send + Sync {
         input: &'a JsObject,
         debug: &'a mut (dyn FnMut(JsValue) + Send),
     ) -> BoxFuture<'a, std::result::Result<JsObject, LlmError>>;
+    /// `rewriteUserProfile` (`dream-review.ts:1287-1324`). `Ok(None)` is the
+    /// TS `null` return (the real extractor swallows its own LLM failures);
+    /// `Err` is a thrown request that `run()` catches into a trace warning.
+    fn rewrite_user_profile<'a>(
+        &'a self,
+        input: &'a JsObject,
+        debug: &'a mut (dyn FnMut(JsValue) + Send),
+    ) -> BoxFuture<'a, std::result::Result<Option<JsObject>, LlmError>>;
 }
 
 impl DreamExtractor for LlmMemoryExtractor {
@@ -154,6 +162,17 @@ impl DreamExtractor for LlmMemoryExtractor {
     ) -> BoxFuture<'a, std::result::Result<JsObject, LlmError>> {
         Box::pin(self.review_dream_project_meta_with_debug(input, debug))
     }
+    fn rewrite_user_profile<'a>(
+        &'a self,
+        input: &'a JsObject,
+        debug: &'a mut (dyn FnMut(JsValue) + Send),
+    ) -> BoxFuture<'a, std::result::Result<Option<JsObject>, LlmError>> {
+        Box::pin(async move {
+            // The real extractor's TS contract is "every failure becomes
+            // null"; only a scripted extractor can surface a thrown request.
+            Ok(self.rewrite_user_profile_with_debug(input, debug).await)
+        })
+    }
 }
 
 /// `Date.now()`, `Math.random()` and `nowIso()` are host inputs in TS. The
@@ -162,6 +181,23 @@ pub trait DreamEnvironment: Send + Sync {
     fn now_ms(&self) -> f64;
     fn random(&self) -> f64;
     fn now_iso(&self) -> JsString;
+    /// `Math.random().toString(36).slice(2, 10)` for `createDreamTrace`.
+    /// V8's shortest round-trip radix-36 formatting stays at the JS boundary:
+    /// fixtures inject the exact token, production only needs eight distinct
+    /// characters. The default consumes one `random()` call, like TS.
+    fn random_suffix(&self) -> JsString {
+        const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+        let value = self.random();
+        let mut state = value.to_bits() | 1;
+        let mut out = String::with_capacity(8);
+        for _ in 0..8 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            out.push(DIGITS[((state >> 33) % 36) as usize] as char);
+        }
+        JsString::from(out)
+    }
 }
 
 /// TS `LoggerLike` (`dream-review.ts:28-34`). The runner only calls `warn`;
@@ -200,10 +236,10 @@ pub struct MetaReviewResult {
 }
 
 pub struct DreamRewriteRunner<'a> {
-    repository: &'a EdgeClawFileStores,
-    extractor: &'a dyn DreamExtractor,
-    environment: &'a dyn DreamEnvironment,
-    logger: Option<&'a dyn DreamLogger>,
+    pub(super) repository: &'a EdgeClawFileStores,
+    pub(super) extractor: &'a dyn DreamExtractor,
+    pub(super) environment: &'a dyn DreamEnvironment,
+    pub(super) logger: Option<&'a dyn DreamLogger>,
 }
 
 impl<'a> DreamRewriteRunner<'a> {
@@ -539,66 +575,185 @@ impl<'a> DreamRewriteRunner<'a> {
 
         let mut refined_clusters = 0.0;
         let mut deleted_files = 0.0;
-        for (index, cluster) in clusters.iter().enumerate() {
-            let members = cluster_members(cluster);
-            let cluster_records: Vec<JsObject> = members
-                .iter()
-                .filter_map(|path| record_by_path.get(path).cloned())
-                .collect();
-            if cluster_records.len() < 2 {
-                dropped_warnings.push(JsValue::String(concat(&[
-                    &"Skipped ".into(),
-                    &kind_label,
-                    &" cluster ".into(),
-                    &num((index + 1) as f64),
-                    &" because fewer than 2 files could be loaded.".into(),
-                ])));
-                continue;
-            }
-
-            let mut refine_input = JsObject::new();
-            refine_input.insert("kind".into(), JsValue::String(kind.clone()));
-            refine_input.insert(
-                "records".into(),
-                JsValue::Array(
-                    cluster_records
-                        .iter()
-                        .map(|record| JsValue::Object(to_dream_record_input(record)))
-                        .collect(),
-                ),
-            );
-            let mut refine_debug = Vec::new();
-            let refined = self
-                .extractor
-                .refine_dream_cluster(&refine_input, &mut |event| refine_debug.push(event))
-                .await?;
-            let refine_debug = refine_debug.pop();
-            let refined_file = refined.get("file").and_then(JsValue::as_object).cloned();
-
-            let members_value =
-                JsValue::Array(members.iter().cloned().map(JsValue::String).collect());
-            let cluster_json = {
-                let mut object = JsObject::new();
-                if let Some(meta) = project_meta {
-                    put_field(&mut object, "projectId", meta.get("projectId"));
-                    put_field(&mut object, "projectName", meta.get("projectName"));
+        // TS keeps the live `droppedWarnings` array inside the plan-output
+        // detail, so a warning appended here is already visible if a later
+        // cluster throws and `run()` unwinds (#915). Rust cloned the array at
+        // push time, so sync it on the error path too, not only on success.
+        let loop_result: Result<()> = async {
+            for (index, cluster) in clusters.iter().enumerate() {
+                let members = cluster_members(cluster);
+                let cluster_records: Vec<JsObject> = members
+                    .iter()
+                    .filter_map(|path| record_by_path.get(path).cloned())
+                    .collect();
+                if cluster_records.len() < 2 {
+                    dropped_warnings.push(JsValue::String(concat(&[
+                        &"Skipped ".into(),
+                        &kind_label,
+                        &" cluster ".into(),
+                        &num((index + 1) as f64),
+                        &" because fewer than 2 files could be loaded.".into(),
+                    ])));
+                    continue;
                 }
-                object.insert("members".into(), members_value.clone());
-                put_field(
-                    &mut object,
-                    "reason",
-                    cluster.get("reason").cloned().as_ref(),
-                );
-                object
-            };
 
-            if refined_file.is_none() {
+                let mut refine_input = JsObject::new();
+                refine_input.insert("kind".into(), JsValue::String(kind.clone()));
+                refine_input.insert(
+                    "records".into(),
+                    JsValue::Array(
+                        cluster_records
+                            .iter()
+                            .map(|record| JsValue::Object(to_dream_record_input(record)))
+                            .collect(),
+                    ),
+                );
+                let mut refine_debug = Vec::new();
+                let refined = self
+                    .extractor
+                    .refine_dream_cluster(&refine_input, &mut |event| refine_debug.push(event))
+                    .await?;
+                let refine_debug = refine_debug.pop();
+                let refined_file = refined.get("file").and_then(JsValue::as_object).cloned();
+
+                let members_value =
+                    JsValue::Array(members.iter().cloned().map(JsValue::String).collect());
+                let cluster_json = {
+                    let mut object = JsObject::new();
+                    if let Some(meta) = project_meta {
+                        put_field(&mut object, "projectId", meta.get("projectId"));
+                        put_field(&mut object, "projectName", meta.get("projectName"));
+                    }
+                    object.insert("members".into(), members_value.clone());
+                    put_field(
+                        &mut object,
+                        "reason",
+                        cluster.get("reason").cloned().as_ref(),
+                    );
+                    object
+                };
+
+                if refined_file.is_none() {
+                    let mut options = JsObject::new();
+                    let mut details = vec![JsValue::Object(json_detail(
+                        &concat(&[&kind_label, &"-cluster-".into(), &num((index + 1) as f64)]),
+                        &concat(&[&category_label, &" Cluster".into()]),
+                        JsValue::Object(cluster_json),
+                    ))];
+                    options.insert(
+                        "titleI18n".into(),
+                        step_title(
+                            &concat(&[&"trace.step.".into(), &refine_kind.into()]),
+                            &concat(&[&category_label, &" Cluster Refine".into()]),
+                        )?,
+                    );
+                    if let Some(debug) = refine_debug.clone().filter(js_truthy) {
+                        options.insert("promptDebug".into(), debug);
+                    }
+                    options.insert(
+                        "details".into(),
+                        JsValue::Array(std::mem::take(&mut details)),
+                    );
+                    push_step(
+                        trace,
+                        &refine_kind.into(),
+                        &concat(&[
+                            &scoped_label,
+                            &" Cluster Refine #".into(),
+                            &num((index + 1) as f64),
+                        ]),
+                        &"warning".into(),
+                        &concat(&[
+                            &num(cluster_records.len() as f64),
+                            &" ".into(),
+                            &kind_label,
+                            &" files".into(),
+                        ]),
+                        &concat(&[
+                            &"Dream could not synthesize a refined ".into(),
+                            &kind_label,
+                            &" file for this cluster.".into(),
+                        ]),
+                        &options,
+                    );
+                    continue;
+                }
+                let file = refined_file.expect("checked above");
+                let source_record = latest_record(&cluster_records).expect("cluster records");
+                let mut candidate_input = JsObject::new();
+                candidate_input.insert("kind".into(), JsValue::String(kind.clone()));
+                put_field(&mut candidate_input, "name", file.get("name"));
+                put_field(&mut candidate_input, "description", file.get("description"));
+                put_field(&mut candidate_input, "markdown", file.get("markdown"));
+                candidate_input.insert(
+                    "sourceRecord".into(),
+                    JsValue::Object(source_record.clone()),
+                );
+                let mut candidate = to_refined_candidate(&candidate_input);
+                if let Some(meta) = project_meta {
+                    put_field(&mut candidate, "projectId", meta.get("projectId"));
+                }
+
+                let member_ids =
+                    JsValue::Array(members.iter().cloned().map(JsValue::String).collect());
+                self.repository.delete_memory_entries(&member_ids)?;
+                for path in &members {
+                    push_mutation(
+                        trace,
+                        mutation(&JsString::from("delete"), path, 0.0, 0.0, &JsObject::new()),
+                        Some(self.environment),
+                    );
+                }
+                let written = self
+                    .repository
+                    .get_file_memory_store()
+                    .upsert_candidate(&candidate)?;
+                let written = written.as_object().cloned().unwrap_or_default();
+                let written_path = string_field(&written, "relativePath").unwrap_or_default();
+                let content = string_field(&written, "content").unwrap_or_default();
+                let mut write_options = JsObject::new();
+                put_field(
+                    &mut write_options,
+                    "candidateType",
+                    Some(&JsValue::String(kind.clone())),
+                );
+                put_field(&mut write_options, "name", written.get("name"));
+                put_field(
+                    &mut write_options,
+                    "description",
+                    written.get("description"),
+                );
+                write_options.insert(
+                    "preview".into(),
+                    JsValue::String(preview_markdown(&content, 220.0)),
+                );
+                push_mutation(
+                    trace,
+                    mutation(
+                        &JsString::from("write"),
+                        &written_path,
+                        0.0,
+                        0.0,
+                        &write_options,
+                    ),
+                    Some(self.environment),
+                );
+
+                refined_clusters += 1.0;
+                deleted_files += members.len() as f64;
+
+                let mut new_json = cluster_json.clone();
+                new_json.insert("newFile".into(), JsValue::String(written_path.clone()));
+                new_json.insert("deletedFiles".into(), members_value.clone());
                 let mut options = JsObject::new();
-                let mut details = vec![JsValue::Object(json_detail(
-                    &concat(&[&kind_label, &"-cluster-".into(), &num((index + 1) as f64)]),
-                    &concat(&[&category_label, &" Cluster".into()]),
-                    JsValue::Object(cluster_json),
-                ))];
+                options.insert(
+                    "details".into(),
+                    JsValue::Array(vec![JsValue::Object(json_detail(
+                        &concat(&[&kind_label, &"-cluster-".into(), &num((index + 1) as f64)]),
+                        &concat(&[&category_label, &" Cluster".into()]),
+                        JsValue::Object(new_json),
+                    ))]),
+                );
                 options.insert(
                     "titleI18n".into(),
                     step_title(
@@ -606,13 +761,9 @@ impl<'a> DreamRewriteRunner<'a> {
                         &concat(&[&category_label, &" Cluster Refine".into()]),
                     )?,
                 );
-                if let Some(debug) = refine_debug.clone().filter(js_truthy) {
+                if let Some(debug) = refine_debug.filter(js_truthy) {
                     options.insert("promptDebug".into(), debug);
                 }
-                options.insert(
-                    "details".into(),
-                    JsValue::Array(std::mem::take(&mut details)),
-                );
                 push_step(
                     trace,
                     &refine_kind.into(),
@@ -621,126 +772,20 @@ impl<'a> DreamRewriteRunner<'a> {
                         &" Cluster Refine #".into(),
                         &num((index + 1) as f64),
                     ]),
-                    &"warning".into(),
+                    &"success".into(),
                     &concat(&[
                         &num(cluster_records.len() as f64),
                         &" ".into(),
                         &kind_label,
                         &" files".into(),
                     ]),
-                    &concat(&[
-                        &"Dream could not synthesize a refined ".into(),
-                        &kind_label,
-                        &" file for this cluster.".into(),
-                    ]),
+                    &string_field(&refined, "summary").unwrap_or_default(),
                     &options,
                 );
-                continue;
             }
-            let file = refined_file.expect("checked above");
-            let source_record = latest_record(&cluster_records).expect("cluster records");
-            let mut candidate_input = JsObject::new();
-            candidate_input.insert("kind".into(), JsValue::String(kind.clone()));
-            put_field(&mut candidate_input, "name", file.get("name"));
-            put_field(&mut candidate_input, "description", file.get("description"));
-            put_field(&mut candidate_input, "markdown", file.get("markdown"));
-            candidate_input.insert(
-                "sourceRecord".into(),
-                JsValue::Object(source_record.clone()),
-            );
-            let mut candidate = to_refined_candidate(&candidate_input);
-            if let Some(meta) = project_meta {
-                put_field(&mut candidate, "projectId", meta.get("projectId"));
-            }
-
-            let member_ids = JsValue::Array(members.iter().cloned().map(JsValue::String).collect());
-            self.repository.delete_memory_entries(&member_ids)?;
-            for path in &members {
-                push_mutation(
-                    trace,
-                    mutation(&JsString::from("delete"), path, 0.0, 0.0, &JsObject::new()),
-                    Some(self.environment),
-                );
-            }
-            let written = self
-                .repository
-                .get_file_memory_store()
-                .upsert_candidate(&candidate)?;
-            let written = written.as_object().cloned().unwrap_or_default();
-            let written_path = string_field(&written, "relativePath").unwrap_or_default();
-            let content = string_field(&written, "content").unwrap_or_default();
-            let mut write_options = JsObject::new();
-            put_field(
-                &mut write_options,
-                "candidateType",
-                Some(&JsValue::String(kind.clone())),
-            );
-            put_field(&mut write_options, "name", written.get("name"));
-            put_field(
-                &mut write_options,
-                "description",
-                written.get("description"),
-            );
-            write_options.insert(
-                "preview".into(),
-                JsValue::String(preview_markdown(&content, 220.0)),
-            );
-            push_mutation(
-                trace,
-                mutation(
-                    &JsString::from("write"),
-                    &written_path,
-                    0.0,
-                    0.0,
-                    &write_options,
-                ),
-                Some(self.environment),
-            );
-
-            refined_clusters += 1.0;
-            deleted_files += members.len() as f64;
-
-            let mut new_json = cluster_json.clone();
-            new_json.insert("newFile".into(), JsValue::String(written_path.clone()));
-            new_json.insert("deletedFiles".into(), members_value.clone());
-            let mut options = JsObject::new();
-            options.insert(
-                "details".into(),
-                JsValue::Array(vec![JsValue::Object(json_detail(
-                    &concat(&[&kind_label, &"-cluster-".into(), &num((index + 1) as f64)]),
-                    &concat(&[&category_label, &" Cluster".into()]),
-                    JsValue::Object(new_json),
-                ))]),
-            );
-            options.insert(
-                "titleI18n".into(),
-                step_title(
-                    &concat(&[&"trace.step.".into(), &refine_kind.into()]),
-                    &concat(&[&category_label, &" Cluster Refine".into()]),
-                )?,
-            );
-            if let Some(debug) = refine_debug.filter(js_truthy) {
-                options.insert("promptDebug".into(), debug);
-            }
-            push_step(
-                trace,
-                &refine_kind.into(),
-                &concat(&[
-                    &scoped_label,
-                    &" Cluster Refine #".into(),
-                    &num((index + 1) as f64),
-                ]),
-                &"success".into(),
-                &concat(&[
-                    &num(cluster_records.len() as f64),
-                    &" ".into(),
-                    &kind_label,
-                    &" files".into(),
-                ]),
-                &string_field(&refined, "summary").unwrap_or_default(),
-                &options,
-            );
+            Ok(())
         }
+        .await;
 
         sync_plan_output_warnings(
             trace,
@@ -748,6 +793,7 @@ impl<'a> DreamRewriteRunner<'a> {
             &concat(&[&kind_label, &"-cluster-plan-output".into()]),
             &dropped_warnings,
         );
+        loop_result?;
 
         Ok(CategoryDreamResult {
             planned_clusters: clusters.len() as f64,
@@ -1357,7 +1403,7 @@ impl<'a> DreamRewriteRunner<'a> {
 
 // -- local projections -------------------------------------------------------
 
-fn step_title(key: &JsString, fallback: &JsString) -> Result<JsValue> {
+pub(super) fn step_title(key: &JsString, fallback: &JsString) -> Result<JsValue> {
     trace_i18n(key, fallback, &[])
         .map(JsValue::Object)
         .map_err(|_| {
@@ -1367,11 +1413,11 @@ fn step_title(key: &JsString, fallback: &JsString) -> Result<JsValue> {
         })
 }
 
-fn num(value: f64) -> JsString {
+pub(super) fn num(value: f64) -> JsString {
     number_string(value).into()
 }
 
-fn value_array(value: &JsValue) -> Option<&Vec<JsValue>> {
+pub(super) fn value_array(value: &JsValue) -> Option<&Vec<JsValue>> {
     if let JsValue::Array(items) = value {
         Some(items)
     } else {
@@ -1379,7 +1425,7 @@ fn value_array(value: &JsValue) -> Option<&Vec<JsValue>> {
     }
 }
 
-fn concat(parts: &[&JsString]) -> JsString {
+pub(super) fn concat(parts: &[&JsString]) -> JsString {
     let mut units = Vec::new();
     for part in parts {
         units.extend(part.units());
@@ -1387,11 +1433,11 @@ fn concat(parts: &[&JsString]) -> JsString {
     JsString::from_utf16(units)
 }
 
-fn string_field(object: &JsObject, key: &str) -> Option<JsString> {
+pub(super) fn string_field(object: &JsObject, key: &str) -> Option<JsString> {
     object.get(key).and_then(JsValue::as_string).cloned()
 }
 
-fn put_field(object: &mut JsObject, key: &str, value: Option<&JsValue>) {
+pub(super) fn put_field(object: &mut JsObject, key: &str, value: Option<&JsValue>) {
     if let Some(value) = value
         && !value.is_undefined()
     {
@@ -1407,7 +1453,7 @@ fn array_field(object: &JsObject, key: &str) -> Vec<JsValue> {
         .unwrap_or_default()
 }
 
-fn type_is(entry: &JsValue, wanted: &str) -> bool {
+pub(super) fn type_is(entry: &JsValue, wanted: &str) -> bool {
     entry
         .get("type")
         .and_then(JsValue::as_string)
@@ -1456,7 +1502,11 @@ fn header_summary_entries(
     entries
 }
 
-fn kv_detail(key: &JsString, label: &JsString, entries: &[(JsString, JsValue)]) -> JsObject {
+pub(super) fn kv_detail(
+    key: &JsString,
+    label: &JsString,
+    entries: &[(JsString, JsValue)],
+) -> JsObject {
     let mut out = JsObject::new();
     out.insert("key".into(), JsValue::String(key.clone()));
     out.insert("label".into(), JsValue::String(label.clone()));
@@ -1487,7 +1537,7 @@ fn kv_value(value: &JsValue) -> JsString {
     }
 }
 
-fn list_detail(key: &JsString, label: &JsString, items: Vec<JsValue>) -> JsObject {
+pub(super) fn list_detail(key: &JsString, label: &JsString, items: Vec<JsValue>) -> JsObject {
     let mut out = JsObject::new();
     out.insert("key".into(), JsValue::String(key.clone()));
     out.insert("label".into(), JsValue::String(label.clone()));
@@ -1496,7 +1546,7 @@ fn list_detail(key: &JsString, label: &JsString, items: Vec<JsValue>) -> JsObjec
     out
 }
 
-fn json_detail(key: &JsString, label: &JsString, json: JsValue) -> JsObject {
+pub(super) fn json_detail(key: &JsString, label: &JsString, json: JsValue) -> JsObject {
     let mut out = JsObject::new();
     out.insert("key".into(), JsValue::String(key.clone()));
     out.insert("label".into(), JsValue::String(label.clone()));
@@ -1554,7 +1604,7 @@ fn sync_plan_output_warnings(
     trace.insert("steps".into(), JsValue::Array(steps));
 }
 
-fn push_mutation(
+pub(super) fn push_mutation(
     trace: &mut JsObject,
     mut object: JsObject,
     environment: Option<&dyn DreamEnvironment>,

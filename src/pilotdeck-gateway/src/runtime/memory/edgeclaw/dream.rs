@@ -2,7 +2,8 @@
 //!
 //! [`helpers`] ports trace/step/mutation construction, the two `localeCompare`
 //! sorts, the LLM input projections, exclusive-cluster and General merge-group
-//! validation, and the 120k-character user-note window. The runner itself
-//! lives in the later `dream/runner.rs` / `dream/run.rs` work packages.
+//! validation, and the 120k-character user-note window. [`runner`] owns the
+//! three sub-flows and [`run`] the complete staged orchestration.
 pub mod helpers;
+pub mod run;
 pub mod runner;

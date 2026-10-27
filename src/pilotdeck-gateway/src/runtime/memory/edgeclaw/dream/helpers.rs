@@ -24,6 +24,43 @@ use std::sync::OnceLock;
 
 const DREAM_USER_NOTE_MAX_FILES: usize = 200;
 const DREAM_USER_NOTE_CHAR_BUDGET: f64 = 120_000.0;
+const INTERNAL_USER_PROFILE_RELATIVE_PATH: &str = "UserIdentity/user-profile.md";
+const EXPOSED_USER_PROFILE_RELATIVE_PATH: &str = "global/UserIdentity/user-profile.md";
+const INTERNAL_USER_NOTE_PREFIX: &str = "UserIdentityNotes/";
+const EXPOSED_USER_NOTE_PREFIX: &str = "global/UserIdentityNotes/";
+
+/// `normalizeDreamRelativePath`: `relativePath.replace(/\\/g, "/")`.
+fn normalize_dream_relative_path(relative_path: &JsString) -> JsString {
+    JsString::from_utf16(
+        relative_path
+            .units()
+            .iter()
+            .map(|unit| {
+                if *unit == u16::from(b'\\') {
+                    u16::from(b'/')
+                } else {
+                    *unit
+                }
+            })
+            .collect(),
+    )
+}
+
+/// `isDreamUserProfilePath` (`dream-review.ts:110-114`).
+pub fn is_dream_user_profile_path(relative_path: &JsString) -> bool {
+    let normalized = normalize_dream_relative_path(relative_path);
+    normalized.equals_str(INTERNAL_USER_PROFILE_RELATIVE_PATH)
+        || normalized.equals_str(EXPOSED_USER_PROFILE_RELATIVE_PATH)
+}
+
+/// `isDreamUserNotePath` (`dream-review.ts:116-120`).
+pub fn is_dream_user_note_path(relative_path: &JsString) -> bool {
+    let normalized = normalize_dream_relative_path(relative_path);
+    let internal: Vec<u16> = INTERNAL_USER_NOTE_PREFIX.encode_utf16().collect();
+    let exposed: Vec<u16> = EXPOSED_USER_NOTE_PREFIX.encode_utf16().collect();
+    normalized.units().starts_with(&internal) || normalized.units().starts_with(&exposed)
+}
+
 const GENERAL_MERGE_REASON: &str = "Model identified these project metas as duplicates.";
 
 fn put(object: &mut JsObject, key: &str, value: Option<&JsValue>) {
