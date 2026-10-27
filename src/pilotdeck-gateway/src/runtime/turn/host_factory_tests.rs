@@ -866,7 +866,11 @@ async fn reload_mid_turn_holds_old_lease_until_turn_drops() {
     );
     bounded(turn.next()).await.unwrap().unwrap(); // host accepted
     assert_eq!(
-        turn.next().await.unwrap().unwrap().get("type"),
+        bounded(turn.next())
+            .await
+            .expect("#741k user_prompt_submitted event")
+            .expect("#741k user_prompt_submitted payload")
+            .get("type"),
         Some(&"user_prompt_submitted".into())
     );
     drive_to_peer(turn.as_mut(), &pid_file, true).await;
@@ -906,7 +910,11 @@ async fn retire_does_not_dispose_while_lease_outstanding() {
     );
     bounded(turn.next()).await.unwrap().unwrap(); // host accepted
     assert_eq!(
-        turn.next().await.unwrap().unwrap().get("type"),
+        bounded(turn.next())
+            .await
+            .expect("#741k user_prompt_submitted event")
+            .expect("#741k user_prompt_submitted payload")
+            .get("type"),
         Some(&"user_prompt_submitted".into())
     );
     drive_to_peer(turn.as_mut(), &pid_file, true).await;
@@ -1051,7 +1059,11 @@ async fn dispose_cancels_pending_host_creation_and_releases_lease() {
     bounded(turn.next()).await.unwrap().unwrap(); // host started
     bounded(turn.next()).await.unwrap().unwrap(); // host accepted
     assert_eq!(
-        turn.next().await.unwrap().unwrap().get("type"),
+        bounded(turn.next())
+            .await
+            .expect("#741k user_prompt_submitted event")
+            .expect("#741k user_prompt_submitted payload")
+            .get("type"),
         Some(&"user_prompt_submitted".into())
     );
     drive_to_peer(turn.as_mut(), &pid_file, false).await;
@@ -1137,7 +1149,11 @@ impl PausedHostCleanup {
         );
         bounded(turn.next()).await.unwrap().unwrap(); // host accepted
         assert_eq!(
-            turn.next().await.unwrap().unwrap().get("type"),
+            bounded(turn.next())
+                .await
+                .expect("#741k user_prompt_submitted event")
+                .expect("#741k user_prompt_submitted payload")
+                .get("type"),
             Some(&"user_prompt_submitted".into())
         );
         drive_to_peer(turn.as_mut(), &pid_file, true).await;
