@@ -110,7 +110,7 @@ MUTATIONS = [
     ('bridge-surfaces-resolution-error', BRIDGE,
      'let Ok(path) = resolve_path(cwd, relative) else {\n            continue;\n        };',
      'let path = match resolve_path(cwd, relative) { Ok(path) => path, Err(error) => {\n'
-     '            images.push(content_block(vec![("type", "text".into()), ("text", error.to_string().into())]));\n'
+     '            images.push(content_block(vec![("type", "text".into()), ("text", JsValue::String(error.to_string().into()))]));\n'
      '            continue;\n        }};',
      'relative_deleted', '#879 bridge outcome: relative-deleted'),
 ]
