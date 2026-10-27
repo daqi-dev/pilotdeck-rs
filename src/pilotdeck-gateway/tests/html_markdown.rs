@@ -794,8 +794,25 @@ fn reparented_wide_html(bytes: usize) -> (String, usize) {
     let count = (bytes - prefix.len() - suffix.len()) / "<span>x</span>".len();
     let padding = bytes - prefix.len() - suffix.len() - count * "<span>x</span>".len();
     let html = prefix + &"<span>x</span>".repeat(count) + &"x".repeat(padding) + &suffix;
-    assert_eq!(html.len(), bytes);
+    assert_eq!(
+        html.len(),
+        bytes,
+        "#873 reparent-wide fixture must tile exactly"
+    );
     (html, count + padding)
+}
+
+/// Time one conversion and compare its bytes after the timer stops. Every
+/// failure point on this path carries the #873 ticket so a negative control
+/// that lands here is INVALID rather than a message-less kill.
+fn timed_reparented_conversion(input: &str, want: &str, label: &str) -> std::time::Duration {
+    let started = std::time::Instant::now();
+    let actual = Turndown
+        .convert(input)
+        .unwrap_or_else(|why| panic!("#873 reparent-wide {label} conversion failed: {why}"));
+    let elapsed = started.elapsed();
+    assert_eq!(actual, want, "#873 reparent-wide {label} output changed");
+    elapsed
 }
 
 #[test]
@@ -804,49 +821,106 @@ fn reparented_wide_four_mib_succeeds() {
     assert!(
         Turndown
             .convert(&reparented_wide_html(4 * 1024 * 1024).0)
-            .is_ok()
+            .is_ok(),
+        "#873 4 MiB reparented wide conversion failed"
     );
 }
 
 #[test]
 fn reparented_wide_subtrees_stay_fast() {
-    let (html, output_x_count) = reparented_wide_html(8 * 1024 * 1024);
-    let (half_html, half_x_count) = reparented_wide_html(4 * 1024 * 1024);
+    // #873: keep the 8 MiB full page, but compare it with an eight-times-
+    // smaller one instead of a half. Growing the input by 8x multiplies
+    // linear work by about 8 and quadratic work by about 64; the geometric
+    // midpoint 8^1.5 ~= 22.6 leaves a 2.83x margin on both sides. The old
+    // 2x pair (2x vs 4x, 3x band) left only 1.5x over linear, and a 3.4x
+    // fastest-of-three outlier on the shared CI runner crossed it.
+    const FULL_BYTES: usize = 8 * 1024 * 1024;
+    const SMALL_BYTES: usize = FULL_BYTES / 8;
+    // A quadratic join of the wide page costs ~64x on the 1 MiB/8 MiB pair,
+    // but the materializing mutant at 8 MiB was SIGKILLed by the host (likely
+    // memory pressure) before the assertion (#873 negative control). The same 8x
+    // ratio scaled down stays observable in seconds, so the quadratic control
+    // reds here first while the big pair keeps the CI-sized regression.
+    const PROBE_SMALL_BYTES: usize = 256 * 1024;
+    const PROBE_FULL_BYTES: usize = PROBE_SMALL_BYTES * 8;
+    const FACTOR: f64 = 8.0;
     let formatting = 240;
+    let bold = "**".repeat(formatting);
+    let expected = |count: usize| format!("{bold}{}{bold}", "x".repeat(count));
+
+    let (probe_small_html, probe_small_count) = reparented_wide_html(PROBE_SMALL_BYTES);
+    let (probe_full_html, probe_full_count) = reparented_wide_html(PROBE_FULL_BYTES);
+    let probe_expected_small = expected(probe_small_count);
+    let probe_expected_full = expected(probe_full_count);
+
+    let (html, output_x_count) = reparented_wide_html(FULL_BYTES);
+    let (small_html, small_x_count) = reparented_wide_html(SMALL_BYTES);
     // Real domino/turndown byte-compared at 1/2 MiB; the 4/8 MiB baseline
     // throws Invalid array length. Rust's unchanged successful output follows
     // the same lossless period, verified against the pre-fix implementation.
-    let bold = "**".repeat(formatting);
-    let expected_full = format!("{bold}{}{bold}", "x".repeat(output_x_count));
-    let expected_half = format!("{bold}{}{bold}", "x".repeat(half_x_count));
-    let samples = timing::timing_samples();
-    let (half_elapsed, full_elapsed) =
-        timing::fastest_scaling("reparent-wide-8mib", samples, |full| {
-            let (input, want) = if full {
-                (&html, expected_full.as_str())
-            } else {
-                (&half_html, expected_half.as_str())
-            };
-            let started = std::time::Instant::now();
-            let actual = Turndown.convert(input).unwrap();
-            let elapsed = started.elapsed();
-            assert_eq!(actual, want);
-            elapsed
-        });
-    eprintln!(
-        "reparent-wide-8mib: {} HTML bytes, fastest of {samples}: \
-         full {full_elapsed:?}, half {half_elapsed:?}",
-        html.len()
-    );
-    timing::assert_within_linear_band(
-        "reparent wide subtree: 8 MiB",
-        half_elapsed,
-        full_elapsed,
+    let expected_full = expected(output_x_count);
+    let expected_small = expected(small_x_count);
+    // Five rounds with the median of the paired ratios: two preempted rounds
+    // still leave a good estimate. PDRS_TIMING_SAMPLES=1 wins for the
+    // quadratic negative control, whose mutant sample costs seconds.
+    let samples = timing::timing_samples_or(5);
+
+    let probe = timing::fastest_scaling_ratio(
+        "#873 reparent-wide-probe",
+        "256 KiB",
+        "2 MiB",
         samples,
+        |full| {
+            if full {
+                timed_reparented_conversion(&probe_full_html, &probe_expected_full, "probe 2 MiB")
+            } else {
+                timed_reparented_conversion(
+                    &probe_small_html,
+                    &probe_expected_small,
+                    "probe 256 KiB",
+                )
+            }
+        },
     );
+    eprintln!(
+        "#873 reparent-wide-probe: {} HTML bytes, median of {samples} paired ratios: {:.2}x; \
+         fastest 256 KiB {:?}, 2 MiB {:?}",
+        probe_full_html.len(),
+        probe.median_ratio,
+        probe.small,
+        probe.large
+    );
+    timing::assert_within_scaling_band("#873 reparent wide subtree probe: 2 MiB", &probe, FACTOR);
+
+    let sampled = timing::fastest_scaling_ratio(
+        "#873 reparent-wide-8mib",
+        "1 MiB",
+        "8 MiB",
+        samples,
+        |full| {
+            if full {
+                timed_reparented_conversion(&html, &expected_full, "8 MiB")
+            } else {
+                timed_reparented_conversion(&small_html, &expected_small, "1 MiB")
+            }
+        },
+    );
+    eprintln!(
+        "#873 reparent-wide-8mib: {} HTML bytes, median of {samples} paired ratios: {:.2}x; \
+         fastest 1 MiB {:?}, 8 MiB {:?}",
+        html.len(),
+        sampled.median_ratio,
+        sampled.small,
+        sampled.large
+    );
+    timing::assert_within_scaling_band("#873 reparent wide subtree: 8 MiB", &sampled, FACTOR);
     // The pre-4fbb5f78b moved-subtree rewalk scaled linearly too, just about
     // 36x slower per byte, so keep the per-sample absolute cap as the backstop.
-    timing::assert_within_per_sample_cap("reparent wide subtree: 8 MiB", full_elapsed, samples);
+    timing::assert_within_per_sample_cap(
+        "#873 reparent wide subtree: 8 MiB",
+        sampled.large,
+        samples,
+    );
 }
 
 /// The class-level bail-out in `html_compat` stops rewriting at an unmodelled

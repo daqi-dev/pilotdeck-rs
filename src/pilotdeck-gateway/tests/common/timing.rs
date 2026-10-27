@@ -3,48 +3,140 @@
 //!
 //! A single sample plus an absolute wall clock turns red whenever the host
 //! preempts the conversion once. These helpers instead interleave two sizes of
-//! the same shape, keep the fastest run of each, and check the scaling ratio;
-//! the callers keep a loose absolute cap as the constant-factor backstop.
+//! the same shape and check the scaling ratio (the fastest run for the
+//! two-size callers, the median of the paired ratios for the 8x reparented
+//! pair); the callers keep a loose absolute cap as the constant-factor
+//! backstop.
 
 use std::time::Duration;
 
-/// Timing samples per size. Three is the default; the quadratic negative
-/// controls in `tests/fixtures/html-timing/negative_controls.py` lower it to
-/// one because every mutant sample costs minutes.
+/// Timing samples per size. Three is the default for the shared budgets; the
+/// reparented wide-subtree regression asks for five (`timing_samples_or`)
+/// because it compares an eight-times-smaller input and judges the median.
 pub fn timing_samples() -> usize {
+    timing_samples_or(3)
+}
+
+/// `timing_samples` with a caller-specific default. `PDRS_TIMING_SAMPLES`
+/// still wins, so the quadratic negative controls in
+/// `tests/fixtures/html-timing/negative_controls.py` can force one sample.
+pub fn timing_samples_or(default: usize) -> usize {
     std::env::var("PDRS_TIMING_SAMPLES")
         .ok()
         .and_then(|value| value.parse().ok())
         .filter(|samples| (1..=9).contains(samples))
-        .unwrap_or(3)
+        .unwrap_or(default)
+}
+
+/// One interleaved round per sample, alternating which size runs first. The
+/// sampler receives `true` for the larger size and `false` for the smaller.
+fn sample_pairs<S>(
+    label: &str,
+    small_label: &str,
+    large_label: &str,
+    samples: usize,
+    mut sample: S,
+) -> Vec<(Duration, Duration)>
+where
+    S: FnMut(bool) -> Duration,
+{
+    let samples = samples.max(1);
+    let mut pairs = Vec::with_capacity(samples);
+    for round in 0..samples {
+        let (small_elapsed, large_elapsed) = if round % 2 == 0 {
+            (sample(false), sample(true))
+        } else {
+            let large_elapsed = sample(true);
+            (sample(false), large_elapsed)
+        };
+        let round = round + 1;
+        eprintln!(
+            "{label} sample {round}: {small_label} in {small_elapsed:?}, \
+             {large_label} in {large_elapsed:?}"
+        );
+        pairs.push((small_elapsed, large_elapsed));
+    }
+    pairs
 }
 
 /// Interleave the two sizes and keep the fastest run of each. A single
 /// preempted sample must not decide the ratio on a loaded host; alternating
 /// the order also keeps the first allocation from always falling on the
-/// same size. The sampler receives `true` for the full size and `false` for
-/// the half size.
-pub fn fastest_scaling<S>(label: &str, samples: usize, mut sample: S) -> (Duration, Duration)
+/// same size.
+pub fn fastest_scaling<S>(label: &str, samples: usize, sample: S) -> (Duration, Duration)
 where
     S: FnMut(bool) -> Duration,
 {
-    let mut half_fastest = Duration::MAX;
-    let mut full_fastest = Duration::MAX;
-    for round in 0..samples {
-        let (half_elapsed, full_elapsed) = if round % 2 == 0 {
-            (sample(false), sample(true))
-        } else {
-            let full_elapsed = sample(true);
-            (sample(false), full_elapsed)
-        };
-        eprintln!(
-            "{label} sample {}: half in {half_elapsed:?}, full in {full_elapsed:?}",
-            round + 1
-        );
-        half_fastest = half_fastest.min(half_elapsed);
-        full_fastest = full_fastest.min(full_elapsed);
-    }
+    let pairs = sample_pairs(label, "half", "full", samples, sample);
+    let half_fastest = pairs
+        .iter()
+        .map(|(half, _)| *half)
+        .min()
+        .unwrap_or(Duration::MAX);
+    let full_fastest = pairs
+        .iter()
+        .map(|(_, full)| *full)
+        .min()
+        .unwrap_or(Duration::MAX);
     (half_fastest, full_fastest)
+}
+
+/// Timing evidence for inputs `factor` times apart, judged by the median of
+/// the per-round ratios. The fastest durations are kept for the absolute cap.
+#[allow(dead_code)]
+pub struct ScalingSamples {
+    /// Fastest small-input run, used to convert the constant slack below.
+    pub small: Duration,
+    /// Fastest large-input run, used by the per-sample absolute cap.
+    pub large: Duration,
+    /// Median of the per-round `large / small` ratios.
+    pub median_ratio: f64,
+    /// Number of interleaved rounds behind `median_ratio`.
+    pub samples: usize,
+}
+
+/// Like [`fastest_scaling`], but also returns the median of the per-round
+/// ratios. The median discards a minority of preempted rounds instead of
+/// letting the fastest independent runs come from different load regimes.
+#[allow(dead_code)]
+pub fn fastest_scaling_ratio<S>(
+    label: &str,
+    small_label: &str,
+    large_label: &str,
+    samples: usize,
+    sample: S,
+) -> ScalingSamples
+where
+    S: FnMut(bool) -> Duration,
+{
+    let pairs = sample_pairs(label, small_label, large_label, samples, sample);
+    let small = pairs
+        .iter()
+        .map(|(small, _)| *small)
+        .min()
+        .unwrap_or(Duration::MAX);
+    let large = pairs
+        .iter()
+        .map(|(_, large)| *large)
+        .min()
+        .unwrap_or(Duration::MAX);
+    let mut ratios: Vec<f64> = pairs
+        .iter()
+        .map(|(small, large)| large.as_secs_f64() / small.as_secs_f64().max(f64::EPSILON))
+        .collect();
+    ratios.sort_by(f64::total_cmp);
+    let median_ratio = if ratios.len() % 2 == 1 {
+        ratios[ratios.len() / 2]
+    } else {
+        let middle = ratios.len() / 2;
+        (ratios[middle - 1] + ratios[middle]) / 2.0
+    };
+    ScalingSamples {
+        small,
+        large,
+        median_ratio,
+        samples: pairs.len(),
+    }
 }
 
 /// Doubling the input doubles linear work but quadruples a quadratic rescan.
@@ -60,6 +152,35 @@ pub fn assert_within_linear_band(label: &str, half: Duration, full: Duration, sa
         "{label} {full:?} did not scale from half {half:?} (fastest of {samples}): \
          allowed {limit:.3}s = {GROWTH}x + {NOISE}s; \
          a quadratic implementation needs about 4x"
+    );
+}
+
+/// Band for a pair of inputs `factor` times apart. Linear work grows by
+/// `factor`; quadratic work by `factor^2`. The geometric midpoint
+/// `factor^1.5` leaves the same multiplicative margin (`sqrt(factor)`) on
+/// both sides: at factor 8 the band is 22.6x, 2.83x above the linear 8x and
+/// 2.83x below the quadratic 64x. The median of the paired ratios tolerates
+/// a minority of preempted rounds; the 150 ms slack is converted to ratio
+/// space through the fastest small run, so short inputs keep the same
+/// absolute allowance.
+#[allow(dead_code)]
+pub fn assert_within_scaling_band(label: &str, sampled: &ScalingSamples, factor: f64) {
+    const NOISE: f64 = 0.15;
+    let allowed = factor.powf(1.5);
+    let small = sampled.small.as_secs_f64().max(f64::EPSILON);
+    let limit = allowed + NOISE / small;
+    let quadratic = factor * factor;
+    let small_duration = sampled.small;
+    let large_duration = sampled.large;
+    let samples = sampled.samples;
+    let ratio = sampled.median_ratio;
+    assert!(
+        ratio <= limit,
+        "{label} did not scale from {factor:.0}x-smaller {small_duration:?} \
+         to {large_duration:?} (median of {samples} paired ratios: {ratio:.2}x): \
+         allowed {limit:.2}x = {allowed:.2}x + {NOISE}s/{small:.3}s; \
+         a linear implementation needs about {factor:.0}x, \
+         a quadratic one about {quadratic:.0}x"
     );
 }
 
@@ -81,4 +202,30 @@ pub fn assert_within_per_sample_cap(label: &str, full: Duration, samples: usize)
         full.as_secs_f64() < budget,
         "{label}: took {full:?} (fastest of {samples}), per-sample budget {budget}s"
     );
+}
+
+/// The 8x pair judges the median of five paired ratios. Two preempted large
+/// rounds out of five must not redden a linear implementation; the real
+/// quadratic mutant is covered by `materializing-join-reparent` in
+/// `tests/fixtures/html-timing/negative_controls.py`.
+#[test]
+fn scaling_median_ignores_two_preempted_rounds() {
+    let mut large_calls = 0;
+    let sampled = fastest_scaling_ratio("unit", "small", "large", 5, |large| {
+        if large {
+            large_calls += 1;
+            if large_calls == 3 || large_calls == 4 {
+                Duration::from_secs_f64(64.0)
+            } else {
+                Duration::from_secs_f64(8.0)
+            }
+        } else {
+            Duration::from_secs_f64(1.0)
+        }
+    });
+    assert_eq!(
+        sampled.median_ratio, 8.0,
+        "#873 the median must ignore two preempted rounds"
+    );
+    assert_within_scaling_band("#873 unit linear pair", &sampled, 8.0);
 }
