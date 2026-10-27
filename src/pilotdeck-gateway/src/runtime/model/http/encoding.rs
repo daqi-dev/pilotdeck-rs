@@ -1,6 +1,6 @@
 //! Node fetch content decoding at the shared socket boundary (#867).
 //! The response retains its wire headers; only data frames are decoded.
-use super::{BodyFailure, ModelBody};
+use super::{BodyFailure, ModelBody, TransportFailure, TransportResult};
 use async_compression::tokio::bufread::{BrotliDecoder, DeflateDecoder, GzipDecoder, ZlibDecoder};
 use bytes::{Buf, Bytes};
 use http_body_util::{BodyExt, Full};
@@ -18,17 +18,17 @@ use std::{
 use tokio::io::{AsyncBufRead, AsyncRead, BufReader, ReadBuf};
 
 type Reader = Pin<Box<dyn AsyncBufRead + Send + Sync>>;
+// Node v22.22.0 / undici 6.23.0 rejects the sixth coding before parsing
+// individual tokens (even unknown ones) or allocating any decoder.
+const MAX_CONTENT_ENCODINGS: usize = 5;
 
-pub(super) fn decode_response(
-    method: &Method,
-    response: Response<ModelBody>,
-) -> Response<ModelBody> {
+pub(super) fn decode_response(method: &Method, response: Response<ModelBody>) -> TransportResult {
     if method == Method::HEAD || matches!(response.status().as_u16(), 101 | 204 | 205 | 304) {
-        return response.map(|_| {
+        return Ok(response.map(|_| {
             Full::new(Bytes::new())
                 .map_err(|never| match never {})
                 .boxed()
-        });
+        }));
     }
     let encoding = response
         .headers()
@@ -41,15 +41,18 @@ pub(super) fn decode_response(
         .split(',')
         .map(|s| s.trim().to_ascii_lowercase())
         .collect();
+    if encodings.len() > MAX_CONTENT_ENCODINGS {
+        return Err(TransportFailure::fetch_failed(None));
+    }
     // undici abandons the entire decoder chain on any unknown coding (identity
     // included), rather than partially decoding a representation it cannot read.
     if !encodings
         .iter()
         .all(|s| matches!(s.as_str(), "gzip" | "x-gzip" | "deflate" | "br"))
     {
-        return response;
+        return Ok(response);
     }
-    response.map(|body| {
+    Ok(response.map(|body| {
         let progress = Arc::new(AtomicBool::new(false));
         let mut reader: Reader = Box::pin(BodyReader {
             progress: progress.clone(),
@@ -74,7 +77,7 @@ pub(super) fn decode_response(
             done: false,
         }
         .boxed()
-    })
+    }))
 }
 
 // No spawned tasks or queues: dropping this chain drops the Incoming body.

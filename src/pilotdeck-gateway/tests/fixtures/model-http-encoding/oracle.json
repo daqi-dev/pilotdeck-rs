@@ -814,5 +814,239 @@
       "watchdogMs": 900,
       "result": "application idle"
     }
+  ],
+  "layers": [
+    {
+      "encoding": "gzip, gzip, gzip, gzip, gzip",
+      "depth": 5,
+      "method": "GET",
+      "wire": "1f8b080000000000001393efe6600003e1c9ef9f2530303f3cf97ebeaa8181bdcdcfba7dab1a1bffca49ffbd7b7ada1d9ba227b5bfc2b71ffd73fcfab413b97aa6266b7eca652c3d2a7fe8d484eaa2ef45b50bcc18c237bf6175001a040007c6cef552000000",
+      "result": {
+        "text": "layer probe"
+      }
+    },
+    {
+      "encoding": "gzip, gzip, gzip, gzip, gzip",
+      "depth": 5,
+      "method": "HEAD",
+      "wire": "1f8b080000000000001393efe6600003e1c9ef9f2530303f3cf97ebeaa8181bdcdcfba7dab1a1bffca49ffbd7b7ada1d9ba227b5bfc2b71ffd73fcfab413b97aa6266b7eca652c3d2a7fe8d484eaa2ef45b50bcc18c237bf6175001a040007c6cef552000000",
+      "result": {
+        "text": ""
+      }
+    },
+    {
+      "encoding": "gzip, gzip, gzip, gzip, gzip, gzip",
+      "depth": 6,
+      "method": "GET",
+      "wire": "1f8b080000000000001393efe6600003e1c9ef9f2530303f3cf97ebeaa8181bdcdcfba7dab1a1bf79e3dbfab76b594f4ff539efff75657dd929dbd487debfe43dbe5ff16fff9b5457867d532b5ecba53a93ab65af52faeb4bc5af4de752bf7198943e6fb134b19a45818d88f9dfb1a04341c008ee8bc5c66000000",
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "encoding": "gzip, gzip, gzip, gzip, gzip, gzip",
+      "depth": 6,
+      "method": "HEAD",
+      "wire": "1f8b080000000000001393efe6600003e1c9ef9f2530303f3cf97ebeaa8181bdcdcfba7dab1a1bf79e3dbfab76b594f4ff539efff75657dd929dbd487debfe43dbe5ff16fff9b5457867d532b5ecba53a93ab65af52faeb4bc5af4de752bf7198943e6fb134b19a45818d88f9dfb1a04341c008ee8bc5c66000000",
+      "result": {
+        "text": ""
+      }
+    },
+    {
+      "encoding": "br, br, br, br, br",
+      "depth": 5,
+      "method": "GET",
+      "wire": "0b0d800b0b800b09800b07800b05806c617965722070726f62650303030303",
+      "result": {
+        "text": "layer probe"
+      }
+    },
+    {
+      "encoding": "br, br, br, br, br",
+      "depth": 5,
+      "method": "HEAD",
+      "wire": "0b0d800b0b800b09800b07800b05806c617965722070726f62650303030303",
+      "result": {
+        "text": ""
+      }
+    },
+    {
+      "encoding": "br, br, br, br, br, br",
+      "depth": 6,
+      "method": "GET",
+      "wire": "1b1e00f8056473414464184a119e7f1ed24a96850a816ec608d252924678ffee09",
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "encoding": "br, br, br, br, br, br",
+      "depth": 6,
+      "method": "HEAD",
+      "wire": "1b1e00f8056473414464184a119e7f1ed24a96850a816ec608d252924678ffee09",
+      "result": {
+        "text": ""
+      }
+    },
+    {
+      "encoding": "identity, identity, identity, identity, identity",
+      "depth": 5,
+      "method": "GET",
+      "wire": "6c617965722070726f6265",
+      "result": {
+        "text": "layer probe"
+      }
+    },
+    {
+      "encoding": "identity, identity, identity, identity, identity",
+      "depth": 5,
+      "method": "HEAD",
+      "wire": "6c617965722070726f6265",
+      "result": {
+        "text": ""
+      }
+    },
+    {
+      "encoding": "identity, identity, identity, identity, identity, identity",
+      "depth": 6,
+      "method": "GET",
+      "wire": "6c617965722070726f6265",
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "encoding": "identity, identity, identity, identity, identity, identity",
+      "depth": 6,
+      "method": "HEAD",
+      "wire": "6c617965722070726f6265",
+      "result": {
+        "text": ""
+      }
+    },
+    {
+      "encoding": "custom, custom, custom, custom, custom",
+      "depth": 5,
+      "method": "GET",
+      "wire": "6c617965722070726f6265",
+      "result": {
+        "text": "layer probe"
+      }
+    },
+    {
+      "encoding": "custom, custom, custom, custom, custom",
+      "depth": 5,
+      "method": "HEAD",
+      "wire": "6c617965722070726f6265",
+      "result": {
+        "text": ""
+      }
+    },
+    {
+      "encoding": "custom, custom, custom, custom, custom, custom",
+      "depth": 6,
+      "method": "GET",
+      "wire": "6c617965722070726f6265",
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "encoding": "custom, custom, custom, custom, custom, custom",
+      "depth": 6,
+      "method": "HEAD",
+      "wire": "6c617965722070726f6265",
+      "result": {
+        "text": ""
+      }
+    }
+  ],
+  "sizes": [
+    {
+      "encoding": "gzip",
+      "limit": 16384,
+      "size": 16384,
+      "wire": "1f8b0800000000000013edc13101000000c2a0aceb5fc2183e40010000000000000000000000000000006f03fb44eeeb00400000",
+      "result": {
+        "length": 16384,
+        "byte": 97
+      }
+    },
+    {
+      "encoding": "gzip",
+      "limit": 16384,
+      "size": 16385,
+      "wire": "1f8b0800000000000013edc13101000000c2a0aceb5fc2183e40010000000000000000000000000000007703937b33c201400000",
+      "result": {
+        "length": 16385,
+        "byte": 97
+      }
+    },
+    {
+      "encoding": "br",
+      "limit": 16384,
+      "size": 16384,
+      "wire": "1bff3ff825c2e2b14020f70600",
+      "result": {
+        "length": 16384,
+        "byte": 97
+      }
+    },
+    {
+      "encoding": "br",
+      "limit": 16384,
+      "size": 16385,
+      "wire": "1b0040f825c2e2b14040f70600",
+      "result": {
+        "length": 16385,
+        "byte": 97
+      }
+    }
+  ],
+  "sizeProbe": [
+    {
+      "node": "v22.22.0",
+      "limit": 536870888
+    },
+    {
+      "encoding": "gzip",
+      "decodedSize": 536870888,
+      "wireSize": 2342756,
+      "length": 536870888,
+      "first": 97,
+      "last": 97
+    },
+    {
+      "encoding": "gzip",
+      "decodedSize": 536870889,
+      "wireSize": 2342756,
+      "name": "Error",
+      "error": "Cannot create a string longer than 0x1fffffe8 characters",
+      "code": "ERR_STRING_TOO_LONG"
+    },
+    {
+      "encoding": "br",
+      "decodedSize": 536870888,
+      "wireSize": 172033,
+      "length": 536870888,
+      "first": 97,
+      "last": 97
+    },
+    {
+      "encoding": "br",
+      "decodedSize": 536870889,
+      "wireSize": 172033,
+      "name": "Error",
+      "error": "Cannot create a string longer than 0x1fffffe8 characters",
+      "code": "ERR_STRING_TOO_LONG"
+    }
   ]
 }

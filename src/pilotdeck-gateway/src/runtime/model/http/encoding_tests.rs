@@ -152,14 +152,186 @@ async fn server(case: &Value, streaming: bool) -> Server {
     Server { url, release, task }
 }
 async fn response(url: &str, method: &str) -> Response<ModelBody> {
+    response_result(url, method)
+        .await
+        .expect("#867 HTTP response")
+}
+async fn response_result(url: &str, method: &str) -> TransportResult {
     let request = Request::builder()
         .method(method)
         .uri(url)
         .body(Full::new(Bytes::new()))
         .expect("#867 wire request");
-    bounded(transport().send(request))
-        .await
-        .expect("#867 HTTP response")
+    bounded(transport().send(request)).await
+}
+
+#[tokio::test]
+async fn encoding_layer_limit_matches_node() {
+    for case in corpus()["layers"].as_array().expect("#867 layer cases") {
+        let peer = server(case, false).await;
+        let result = response_result(&peer.url, text(&case["method"])).await;
+        if case["result"].get("error").is_some() {
+            let error = result.expect_err("#867 encoding layer cap rejects before body decoding");
+            assert_eq!(
+                error.message,
+                text(&case["result"]["error"]),
+                "#867 encoding layer cap fetch error"
+            );
+            assert_eq!(
+                error.cause_code, None,
+                "#867 encoding layer cap has no cause code"
+            );
+            assert_eq!(
+                case["result"]["name"], "TypeError",
+                "#867 encoding layer cap Node error name"
+            );
+        } else {
+            let response = result.expect("#867 encoding layer cap accepts five and HEAD");
+            let body = bounded(response.into_body().collect())
+                .await
+                .expect("#867 encoding layer cap accepted body")
+                .to_bytes();
+            assert_eq!(
+                &body[..],
+                text(&case["result"]["text"]).as_bytes(),
+                "#867 encoding layer cap accepted bytes"
+            );
+        }
+        bounded(peer.task).await.expect("#867 layer server task");
+    }
+}
+
+fn size_body(case: &Value) -> ModelBody {
+    // Split compressed input too: the decoder must refill across wire chunks.
+    let wire = unhex(&case["wire"]);
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    for bytes in wire.chunks(7) {
+        sender
+            .send(hyper::body::Frame::data(Bytes::copy_from_slice(bytes)))
+            .expect("#867 size wire frame send");
+    }
+    drop(sender);
+    let response = Response::builder()
+        .header("content-encoding", text(&case["encoding"]))
+        .body(ControlledBody(receiver).boxed())
+        .expect("#867 size response");
+    encoding::decode_response(&hyper::Method::GET, response)
+        .expect("#867 size encoding accepted")
+        .into_body()
+}
+
+#[tokio::test]
+async fn decoded_size_boundary_rejects_before_text_allocation() {
+    let oracle = corpus();
+    for case in oracle["sizes"].as_array().expect("#867 size cases") {
+        let limit = case["limit"].as_u64().expect("#867 size limit") as usize;
+        let size = case["size"].as_u64().expect("#867 decoded size") as usize;
+        let _limit = LimitGuard::set(limit);
+        let mut capped = CappedText::new();
+        let mut body = size_body(case);
+        let mut decoded = 0;
+        while let Some(frame) = bounded(body.frame()).await {
+            let frame = frame.expect("#867 size decoded frame");
+            if let Some(bytes) = frame.data_ref() {
+                assert!(
+                    bytes.iter().all(|b| *b == 97),
+                    "#867 size decoded bytes match Node"
+                );
+                decoded += bytes.len();
+                let before = capped.converted_bytes;
+                let accepted = capped.push(bytes);
+                assert_eq!(
+                    accepted,
+                    decoded <= limit,
+                    "#867 decoded size cap rejects excess bytes"
+                );
+                if decoded > limit {
+                    assert_eq!(
+                        capped.converted_bytes, before,
+                        "#867 decoded size cap runs before text allocation"
+                    );
+                    assert_eq!(
+                        capped.text.capacity(),
+                        0,
+                        "#867 decoded size cap releases text buffer"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            decoded, size,
+            "#867 size fixture traverses all decoded bytes"
+        );
+        assert_eq!(
+            capped.converted_bytes, limit,
+            "#867 decoded size cap converts only bounded bytes"
+        );
+        let mut body = size_body(case);
+        let result = bounded(response_text(&mut body, &StreamOptions::default(), false)).await;
+        if size == limit {
+            let expected = "a".repeat(limit);
+            assert_eq!(
+                capped.finish().expect("#867 exact decoded size accepted"),
+                expected,
+                "#867 exact decoded size bytes"
+            );
+            assert_eq!(
+                result.expect("#867 exact decoded response accepted"),
+                expected,
+                "#867 exact decoded response bytes"
+            );
+        } else {
+            assert!(
+                capped.finish().is_err(),
+                "#867 decoded size cap rejects excess text"
+            );
+            let error = result.expect_err("#867 decoded size cap rejects excess response");
+            let node = oracle["sizeProbe"]
+                .as_array()
+                .expect("#867 real Node size probe")
+                .iter()
+                .find(|probe| probe["encoding"] == case["encoding"] && probe.get("error").is_some())
+                .expect("#867 real Node oversize error");
+            assert!(
+                error.name().equals_str(text(&node["name"])),
+                "#867 decoded size cap Node error name"
+            );
+            assert!(
+                error.message().equals_str(text(&node["error"])),
+                "#867 decoded size cap Node error message"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn decoded_size_boundary_shared_text_reader() {
+    for case in corpus()["sizes"]
+        .as_array()
+        .expect("#867 shared size cases")
+    {
+        let limit = case["limit"].as_u64().expect("#867 shared size limit") as usize;
+        let size = case["size"].as_u64().expect("#867 shared decoded size") as usize;
+        let result = bounded(crate::fetch_redirect::read_text_body(
+            size_body(case),
+            limit,
+            None,
+        ))
+        .await;
+        if size == limit {
+            assert_eq!(
+                result.expect("#867 shared exact decoded size accepted"),
+                vec![97; limit],
+                "#867 shared exact decoded bytes"
+            );
+        } else {
+            assert_eq!(
+                result,
+                Err(crate::fetch_redirect::BodyError::TooLong),
+                "#867 shared decoded size cap rejects excess bytes"
+            );
+        }
+    }
 }
 
 #[tokio::test]
@@ -438,7 +610,9 @@ async fn compressed_wire_progress_preserves_both_idle_clocks() {
             .header("content-encoding", "gzip")
             .body(ControlledBody(receiver).boxed())
             .expect("#867 controlled response");
-        let mut body = encoding::decode_response(&hyper::Method::GET, source).into_body();
+        let mut body = encoding::decode_response(&hyper::Method::GET, source)
+            .expect("#867 controlled encoding accepted")
+            .into_body();
         let wire = unhex(&corpus()["endings"][0]["prefix"]);
         let options = StreamOptions {
             body_timeout_ms: 1000.0,
