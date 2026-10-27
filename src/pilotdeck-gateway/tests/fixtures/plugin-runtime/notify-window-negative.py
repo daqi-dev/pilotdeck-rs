@@ -15,6 +15,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import baseline_passed
 
 ROOT = Path(__file__).resolve().parents[5]
 OUT = Path(sys.argv[1]).resolve()
@@ -41,14 +42,31 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
     started = time.monotonic()
     slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=120)
     (OUT / 'slots.log').write_text(slot.stdout + slot.stderr)
+    command = [
+        'cargo', 'test', '--offline', '--manifest-path', str(ROOT / 'src/Cargo.toml'),
+        '-p', 'pilotdeck-gateway', '--lib',
+        TEST,
+        '--', '--exact', '--nocapture', '--test-threads=1',
+    ]
+    # #813 r14: the unmutated bound test must be green first; otherwise a
+    # pre-existing failure (load-sensitive deadline, merge fallout) would be
+    # misread as this mutation's kill.
+    # Without --nocapture: captured output keeps libtest's `test <name> ... ok` line intact.
+    baseline = run_owned([arg for arg in command if arg != '--nocapture'],
+                         cwd=ROOT, env=env, timeout=240)
+    baseline_output = baseline.stdout + baseline.stderr
+    (OUT / 'baseline.log').write_text(baseline_output)
+    if not (baseline.returncode == 0 and baseline_passed(baseline_output, TEST)):
+        (OUT / 'summary.json').write_text(json.dumps(dict(
+            sourceSha256=hashlib.sha256(before).hexdigest(), exit=baseline.returncode,
+            killed=False, status='INVALID', reason='unmutated bound test is not green',
+        ), indent=2) + '\n')
+        raise SystemExit('#813 baseline failed: unmutated bound test is not green')
+    started = time.monotonic()
     try:
         SOURCE.write_bytes(mutated)
-        result = run_owned([
-            'cargo', 'test', '--offline', '--manifest-path', str(ROOT / 'src/Cargo.toml'),
-            '-p', 'pilotdeck-gateway', '--lib',
-            TEST,
-            '--', '--exact', '--nocapture', '--test-threads=1',
-        ], cwd=ROOT, env=env, timeout=max(1, min(180, 240 - (time.monotonic() - started))))
+        result = run_owned(command, cwd=ROOT, env=env,
+                           timeout=max(1, min(180, 240 - (time.monotonic() - started))))
         output = result.stdout + result.stderr
         (OUT / 'recreate-callback.log').write_text(output)
         # #813: the named test's FAILED line plus the marker inside its own
