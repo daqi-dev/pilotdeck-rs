@@ -22,7 +22,11 @@
 //! Every prompt is `JSON.stringify(value, null, 2)`, reproduced by the local
 //! [`stringify_pretty`] with the same rules as the snapshot codec's private
 //! pretty printer (two-space indent, `": "`, `undefined` keys dropped,
-//! non-finite numbers as `null`, insertion key order).
+//! non-finite numbers as `null`, insertion key order). The walk is iterative
+//! and bounded: past [`MAX_ARRAY_DEPTH`] nesting it returns V8's `RangeError`
+//! instead of exhausting the Rust stack, so the same deep `current_project_meta`
+//! that TS catches (or lets escape from the create wrappers) never aborts the
+//! whole gateway process.
 
 use super::{
     envelope::{
@@ -31,6 +35,7 @@ use super::{
     },
     transport::{LlmError, LlmMemoryExtractor, StructuredInput},
 };
+use crate::js_value::{MAX_ARRAY_DEPTH, StackOverflow};
 use crate::runtime::memory::{
     edgeclaw::{
         messages::{MemoryMessage, MemoryRole},
@@ -39,9 +44,7 @@ use crate::runtime::memory::{
     },
     js_trim_units,
 };
-use pilotdeck_protocol::{
-    JsObject, JsString, JsValue, json_syntax, parse_json, quote_json_string, stringify_json,
-};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, json_syntax, parse_json, quote_json_string};
 
 const DEFAULT_FILE_MEMORY_EXTRACTION_TIMEOUT_MS: f64 = 75_000.0;
 const DEFAULT_FILE_MEMORY_PROJECT_SELECTION_TIMEOUT_MS: f64 = 45_000.0;
@@ -263,13 +266,15 @@ impl IndexProjectDecision {
 }
 
 /// One of the throw shapes that can leave an index-side call: an LLM
-/// transport error, an envelope extractor `Error`, or a V8 `TypeError`
-/// (for example `truncateForPrompt(undefined)` reading `replace`).
+/// transport error, an envelope extractor `Error`, a V8 `TypeError`
+/// (for example `truncateForPrompt(undefined)` reading `replace`), or the
+/// V8 `RangeError` from a too-deep prompt stringify.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IndexError {
     Llm(LlmError),
     Envelope(EnvelopeError),
     Type(JsString),
+    Range,
 }
 
 impl IndexError {
@@ -278,7 +283,26 @@ impl IndexError {
             Self::Llm(error) => error.message.clone(),
             Self::Envelope(error) => JsString::from(error.message()),
             Self::Type(message) => message.clone(),
+            Self::Range => JsString::from(StackOverflow::MESSAGE),
         }
+    }
+
+    /// `String(error)` for the catch-block warnings: `name: message` in the
+    /// `Error.prototype.toString` shape (V8 keeps lone surrogates, so the
+    /// units are concatenated, never lossy UTF-8).
+    fn js_string(&self) -> JsString {
+        let (name, message) = match self {
+            Self::Llm(error) => return error.js_string(),
+            Self::Envelope(error) => ("Error", JsString::from(error.message())),
+            Self::Type(message) => ("TypeError", message.clone()),
+            Self::Range => ("RangeError", JsString::from(StackOverflow::MESSAGE)),
+        };
+        let mut units: Vec<u16> = name.encode_utf16().collect();
+        if !message.is_empty() {
+            units.extend([u16::from(b':'), u16::from(b' ')]);
+            units.extend_from_slice(message.units());
+        }
+        JsString::from_utf16(units)
     }
 
     /// `isTimeoutError(error) || (error instanceof Error && /timed out/i.test(error.message))`.
@@ -289,6 +313,14 @@ impl IndexError {
             _ => message.contains("timeout") || message.contains("timed out"),
         }
     }
+}
+
+/// `[clawxmemory] <label> fallback: ${String(error)}` from the TS catch
+/// blocks; only emitted when a logger is installed.
+fn fallback_warning(prefix: &str, error: &IndexError) -> JsString {
+    let mut units: Vec<u16> = prefix.encode_utf16().collect();
+    units.extend_from_slice(error.js_string().units());
+    JsString::from_utf16(units)
 }
 
 fn type_error(message: impl Into<JsString>) -> IndexError {
@@ -602,7 +634,10 @@ pub fn build_candidate_from_create_payload(
 // -- V8 property-access errors ----------------------------------------------
 
 /// The string a TS `.replace` read needs; any other shape reproduces the
-/// V8 `TypeError` the pipeline would see. Messages measured on Node v22.22.0.
+/// V8 `TypeError` the pipeline would see. Messages measured on Node v22.22.0
+/// through the real `normalizeWhitespace` helper: its parameter is the
+/// receiver expression, so every non-string value reports the same
+/// `value.replace is not a function` regardless of the call site.
 fn replace_target(value: Option<&JsValue>) -> Result<&JsString, IndexError> {
     match value {
         Some(JsValue::String(text)) => Ok(text),
@@ -612,58 +647,10 @@ fn replace_target(value: Option<&JsValue>) -> Result<&JsString, IndexError> {
         Some(JsValue::Null) => Err(type_error(
             "Cannot read properties of null (reading 'replace')",
         )),
-        Some(JsValue::Number(number)) => Err(type_error(join_units(
-            &primitive_text(*number),
-            ".replace is not a function",
-        ))),
-        Some(JsValue::Bool(bit)) => Err(type_error(join_units(
-            &primitive_text(f64::from(u8::from(*bit))),
-            ".replace is not a function",
-        ))),
-        Some(JsValue::Array(_)) => Err(type_error(join_units(
-            &receiver_text(value),
-            ".replace is not a function",
-        ))),
-        Some(JsValue::Object(record)) => Err(type_error(join_units(
-            if record.entries().is_empty() {
-                "{}"
-            } else {
-                "{(intermediate value)}"
-            },
-            ".replace is not a function",
-        ))),
-    }
-}
-
-/// The V8 receiver text of an array in a property-access `TypeError`
-/// (`[1,2]`, `[]`); JSON text matches for the probed shapes.
-fn receiver_text(value: Option<&JsValue>) -> String {
-    stringify_json(value.unwrap_or(&JsValue::Null))
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| "null".into())
-}
-
-/// `String(number)` including the non-finite corner cases JSON cannot print.
-fn primitive_text(number: f64) -> String {
-    if number.is_nan() {
-        "NaN".into()
-    } else if number.is_infinite() {
-        if number > 0.0 {
-            "Infinity"
-        } else {
-            "-Infinity"
+        Some(JsValue::Number(_) | JsValue::Bool(_) | JsValue::Array(_) | JsValue::Object(_)) => {
+            Err(type_error("value.replace is not a function"))
         }
-        .into()
-    } else {
-        crate::js_value::number_string(number)
     }
-}
-
-fn join_units(left: &str, right: &str) -> JsString {
-    let mut units: Vec<u16> = left.encode_utf16().collect();
-    units.extend(right.encode_utf16());
-    JsString::from_utf16(units)
 }
 
 // -- JSON helpers ------------------------------------------------------------
@@ -688,67 +675,125 @@ fn insert_raw(target: &mut JsObject, key: &str, value: Option<&JsValue>) {
 /// value, no trailing newline, `[]`/`{}` stay closed, object `undefined`
 /// values drop out and array `undefined` becomes `null`, non-finite numbers
 /// become `null`; number text and string quoting follow the compact codec,
-/// keys keep insertion order.
-fn stringify_pretty(value: &JsValue) -> String {
+/// keys keep insertion order. A container deeper than [`MAX_ARRAY_DEPTH`]
+/// reports V8's `RangeError` instead of producing a string: the real
+/// `JSON.stringify` throws past its caller-dependent limit (Node 22 probe in
+/// `js_value.rs`: 6500 nesting converts, 7000 throws), and the shared
+/// conservative bound stands in for it exactly as it does for
+/// [`crate::js_value::json_stringify`]. Ledger:
+/// specs/gateway-parity/accepted-diffs.md A6-JSVALUE-DEPTH-001 (unapproved).
+fn stringify_pretty(value: &JsValue) -> Result<String, IndexError> {
     let mut out = String::new();
-    write_pretty(value, 0, &mut out);
-    out
+    write_pretty(value, &mut out)?;
+    Ok(out)
 }
 
-fn write_pretty(value: &JsValue, depth: usize, out: &mut String) {
-    match value {
-        JsValue::Undefined | JsValue::Null => out.push_str("null"),
-        JsValue::Bool(bit) => out.push_str(if *bit { "true" } else { "false" }),
-        JsValue::Number(number) => out.push_str(&number_text(*number)),
-        JsValue::String(text) => out.push_str(&quote_json_string(text)),
-        JsValue::Array(items) => {
-            if items.is_empty() {
-                out.push_str("[]");
-                return;
-            }
-            out.push_str("[\n");
-            for (index, item) in items.iter().enumerate() {
-                if index > 0 {
-                    out.push_str(",\n");
+/// One open container of the pretty printer: the children still to write and
+/// whether a `",\n"` separator is due before the next one. The whole walk is
+/// iterative (the `no-unbounded-recursion` constraint); the Rust stack stays
+/// flat no matter how deep the wire value nests.
+fn write_pretty(root: &JsValue, out: &mut String) -> Result<(), IndexError> {
+    enum Frame<'a> {
+        Array(std::slice::Iter<'a, JsValue>, bool),
+        Object(std::vec::IntoIter<(&'a JsString, &'a JsValue)>, bool),
+    }
+    let mut frames: Vec<Frame<'_>> = Vec::new();
+    let mut next = Some(root);
+    loop {
+        // Write one value: scalars directly, non-empty containers push a frame.
+        if let Some(value) = next.take() {
+            let frame = match value {
+                JsValue::Undefined | JsValue::Null => {
+                    out.push_str("null");
+                    continue;
                 }
-                indent(depth + 1, out);
-                write_pretty(item, depth + 1, out);
+                JsValue::Bool(bit) => {
+                    out.push_str(if *bit { "true" } else { "false" });
+                    continue;
+                }
+                JsValue::Number(number) => {
+                    out.push_str(&number_text(*number));
+                    continue;
+                }
+                JsValue::String(text) => {
+                    out.push_str(&quote_json_string(text));
+                    continue;
+                }
+                JsValue::Array(items) => {
+                    if items.is_empty() {
+                        out.push_str("[]");
+                        continue;
+                    }
+                    out.push_str("[\n");
+                    Frame::Array(items.iter(), false)
+                }
+                JsValue::Object(record) => {
+                    let entries: Vec<(&JsString, &JsValue)> = record
+                        .entries()
+                        .iter()
+                        .filter(|(_, value)| !value.is_undefined())
+                        .map(|entry| (&entry.0, &entry.1))
+                        .collect();
+                    if entries.is_empty() {
+                        out.push_str("{}");
+                        continue;
+                    }
+                    out.push_str("{\n");
+                    Frame::Object(entries.into_iter(), false)
+                }
+            };
+            if frames.len() >= MAX_ARRAY_DEPTH {
+                return Err(IndexError::Range);
             }
-            out.push('\n');
-            indent(depth, out);
-            out.push(']');
+            frames.push(frame);
         }
-        JsValue::Object(record) => {
-            let entries: Vec<&(JsString, JsValue)> = record
-                .entries()
-                .iter()
-                .filter(|(_, value)| !value.is_undefined())
-                .collect();
-            if entries.is_empty() {
-                out.push_str("{}");
-                return;
-            }
-            out.push_str("{\n");
-            for (index, (key, item)) in entries.iter().enumerate() {
-                if index > 0 {
-                    out.push_str(",\n");
+        // Continue the innermost frame: emit its next child, or close it.
+        let depth = frames.len();
+        let mut closed = false;
+        match frames.last_mut() {
+            None => return Ok(()),
+            Some(Frame::Array(items, written)) => match items.next() {
+                Some(item) => {
+                    if *written {
+                        out.push_str(",\n");
+                    }
+                    *written = true;
+                    indent(depth, out);
+                    next = Some(item);
                 }
-                indent(depth + 1, out);
-                out.push_str(&quote_json_string(key));
-                out.push_str(": ");
-                write_pretty(item, depth + 1, out);
-            }
+                None => closed = true,
+            },
+            Some(Frame::Object(entries, written)) => match entries.next() {
+                Some((key, item)) => {
+                    if *written {
+                        out.push_str(",\n");
+                    }
+                    *written = true;
+                    indent(depth, out);
+                    out.push_str(&quote_json_string(key));
+                    out.push_str(": ");
+                    next = Some(item);
+                }
+                None => closed = true,
+            },
+        }
+        if closed {
+            let close = match frames.pop() {
+                Some(Frame::Array(..)) => ']',
+                _ => '}',
+            };
             out.push('\n');
-            indent(depth, out);
-            out.push('}');
+            indent(frames.len(), out);
+            out.push(close);
         }
     }
 }
 
 fn indent(depth: usize, out: &mut String) {
-    for _ in 0..depth {
-        out.push_str("  ");
-    }
+    // One bulk write, never `depth` two-byte pushes: deep values emit
+    // O(depth²) indent characters, and per-push calls at opt-level 0
+    // (the test profile) cost more than the bytes themselves.
+    out.push_str(&" ".repeat(depth * 2));
 }
 
 fn number_text(number: f64) -> String {
@@ -760,11 +805,14 @@ fn number_text(number: f64) -> String {
 }
 
 /// `parse: (raw) => JSON.parse(extractFirstJsonObject(raw))`, shared by
-/// `classifyMemoryTurn` and `selectIndexProject`.
+/// `classifyMemoryTurn` and `selectIndexProject`. V8's JSON.parse keeps
+/// unpaired surrogates inside string literals, so the envelope goes through
+/// [`text::json_text`] (escape-only conversion) instead of lossy UTF-8; the
+/// codec decodes the escapes back into the original code units.
 fn strict_parse(raw: &JsString) -> Result<JsValue, LlmError> {
     let envelope =
         extract_first_json_object(raw).map_err(|error| LlmError::new(error.message()))?;
-    let decoded = String::from_utf16_lossy(envelope.units());
+    let decoded = text::json_text(envelope.units());
     parse_json(&decoded).map_err(|error| LlmError {
         name: "SyntaxError",
         status: None,
@@ -802,7 +850,9 @@ fn loose_payload_value(payload: &LooseMemoryCreatePayload) -> JsValue {
 
 impl LlmMemoryExtractor {
     /// `classifyMemoryTurn` (`:2519-2550`). Errors of every kind collapse
-    /// into the no-store fallback, as in the TS `catch`.
+    /// into the no-store fallback, as in the TS `catch`, which also emits the
+    /// `[clawxmemory] memory turn classification fallback` warning when a
+    /// logger is installed.
     pub async fn classify_memory_turn(
         &self,
         input: &ClassifyTurnInput<'_>,
@@ -810,10 +860,16 @@ impl LlmMemoryExtractor {
     ) -> FileMemoryClassificationResult {
         match self.classify_memory_turn_call(input, &mut debug).await {
             Ok(result) => result,
-            Err(_) => FileMemoryClassificationResult {
-                should_store: false,
-                labels: Vec::new(),
-            },
+            Err(error) => {
+                self.warn(fallback_warning(
+                    "[clawxmemory] memory turn classification fallback: ",
+                    &error,
+                ));
+                FileMemoryClassificationResult {
+                    should_store: false,
+                    labels: Vec::new(),
+                }
+            }
         }
     }
 
@@ -829,9 +885,10 @@ impl LlmMemoryExtractor {
             input.focus_user_turn,
             input.current_project_meta,
         )?;
+        let user_prompt = stringify_pretty(&window)?;
         let structured = StructuredInput {
             system_prompt: MEMORY_CLASSIFICATION_SYSTEM_PROMPT.into(),
-            user_prompt: stringify_pretty(&window).into(),
+            user_prompt: user_prompt.into(),
             request_label: "Memory turn classification".into(),
             agent_id: truthy_agent_id(&input.agent_id),
             timeout_ms: Some(
@@ -884,7 +941,9 @@ impl LlmMemoryExtractor {
 
     /// `createMemoryNote` (`:2552-2641`). The user prompt is built before the
     /// TS `try`, so a window-building error escapes (the `Err` here); every
-    /// error inside the call becomes `Ok(None)` after its debug event.
+    /// error inside the call becomes `Ok(None)` after its debug event and the
+    /// `[clawxmemory] <kind> memory create fallback` warning (debug first, as
+    /// in the TS catch).
     async fn create_memory_note(
         &self,
         kind: MemoryCreateKind,
@@ -912,7 +971,7 @@ impl LlmMemoryExtractor {
         let user_prompt = stringify_pretty(&JsValue::Object(object([
             ("classification", input.classification.to_value()),
             ("context", window),
-        ])));
+        ])))?;
         let structured = StructuredInput {
             system_prompt: system_prompt.into(),
             user_prompt: user_prompt.into(),
@@ -952,6 +1011,15 @@ impl LlmMemoryExtractor {
                     ("timedOut", JsValue::Bool(error.timed_out())),
                     ("errorMessage", JsValue::String(error.message())),
                 ])));
+                let warning_kind = match kind {
+                    MemoryCreateKind::User => "user memory create",
+                    MemoryCreateKind::Project => "project memory create",
+                    MemoryCreateKind::Feedback => "feedback memory create",
+                };
+                self.warn(fallback_warning(
+                    &format!("[clawxmemory] {warning_kind} fallback: "),
+                    &error,
+                ));
                 Ok(None)
             }
         }
@@ -1025,7 +1093,9 @@ impl LlmMemoryExtractor {
     }
 
     /// `selectIndexProject` (`:3018-3125`). An empty shortlist short-circuits
-    /// before any request; every other error takes the create-new fallback.
+    /// before any request; every other error takes the create-new fallback
+    /// plus the `[clawxmemory] file memory project assignment fallback`
+    /// warning when a logger is installed.
     pub async fn select_index_project(
         &self,
         input: &SelectIndexProjectInput<'_>,
@@ -1042,14 +1112,20 @@ impl LlmMemoryExtractor {
         }
         match self.select_index_project_call(input, &mut debug).await {
             Ok(decision) => decision,
-            Err(_) => IndexProjectDecision {
-                attach_existing: false,
-                project_id: None,
-                reason: Some(
-                    "Project assignment failed; creating a new General project is safer than forcing an existing project."
-                        .into(),
-                ),
-            },
+            Err(error) => {
+                self.warn(fallback_warning(
+                    "[clawxmemory] file memory project assignment fallback: ",
+                    &error,
+                ));
+                IndexProjectDecision {
+                    attach_existing: false,
+                    project_id: None,
+                    reason: Some(
+                        "Project assignment failed; creating a new General project is safer than forcing an existing project."
+                            .into(),
+                    ),
+                }
+            }
         }
     }
 
@@ -1060,7 +1136,7 @@ impl LlmMemoryExtractor {
     ) -> Result<IndexProjectDecision, IndexError> {
         // The user prompt is evaluated inside the TS `try`: a candidate
         // field error takes the create-new fallback without a debug event.
-        let user_prompt = stringify_pretty(&JsValue::Object(select_prompt_object(input)?));
+        let user_prompt = stringify_pretty(&JsValue::Object(select_prompt_object(input)?))?;
         let structured = StructuredInput {
             system_prompt: SELECT_INDEX_PROJECT_SYSTEM_PROMPT_LINES.join("\n").into(),
             user_prompt: user_prompt.into(),
@@ -1161,7 +1237,7 @@ fn select_prompt_object(input: &SelectIndexProjectInput<'_>) -> Result<JsObject,
     ] {
         candidate_record.insert(
             key.into(),
-            JsValue::Array(truncated_list(candidate.get(field))?),
+            JsValue::Array(truncated_list(candidate.get(field), field)?),
         );
     }
 
@@ -1240,36 +1316,24 @@ fn optional_truncated(
     Ok(())
 }
 
-/// `(field ?? []).slice(0, 10).map(item => truncateForPrompt(item, 160))`.
-/// A non-null non-array field throws in TS: primitives at `.slice`, strings
-/// at `.map` (after slicing). Only the primitive messages are exact; the
-/// object message is inferred (a pipeline-built candidate always uses
-/// arrays).
-fn truncated_list(value: Option<&JsValue>) -> Result<Vec<JsValue>, IndexError> {
+/// `(input.candidate.<field> ?? []).slice(0, 10).map(item => truncateForPrompt(item, 160))`.
+/// A non-null non-array field throws in TS: everything but strings at
+/// `.slice`, strings at `.map` (after slicing). V8 names the receiver's
+/// source expression, so the field's access path — never its value — is the
+/// message (Node v22.22.0, real entry; `fix-r2/probe-truncated-list.out`).
+fn truncated_list(value: Option<&JsValue>, field: &str) -> Result<Vec<JsValue>, IndexError> {
     let items = match value {
         None | Some(JsValue::Undefined) | Some(JsValue::Null) => return Ok(Vec::new()),
         Some(JsValue::Array(items)) => items,
-        Some(JsValue::Number(number)) => {
-            return Err(type_error(join_units(
-                &primitive_text(*number),
-                ".slice is not a function",
+        Some(JsValue::String(_)) => {
+            return Err(type_error(format!(
+                "(input.candidate.{field} ?? []).slice(...).map is not a function"
             )));
         }
-        Some(JsValue::Bool(bit)) => {
-            return Err(type_error(join_units(
-                &primitive_text(f64::from(u8::from(*bit))),
-                ".slice is not a function",
+        Some(_) => {
+            return Err(type_error(format!(
+                "(input.candidate.{field} ?? []).slice is not a function"
             )));
-        }
-        Some(JsValue::String(text)) => {
-            let end = text.len_utf16().min(10);
-            return Err(type_error(join_units(
-                &String::from_utf16_lossy(&text.units()[..end]),
-                ".map is not a function",
-            )));
-        }
-        Some(JsValue::Object(_)) => {
-            return Err(type_error("{(intermediate value)}.slice is not a function"));
         }
     };
     items
@@ -1282,4 +1346,74 @@ fn truncated_list(value: Option<&JsValue>) -> Result<Vec<JsValue>, IndexError> {
             )))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn nested_objects(depth: usize) -> JsValue {
+        let mut value = JsValue::Object(JsObject::new());
+        for _ in 0..depth {
+            let mut wrap = JsObject::new();
+            wrap.insert("x".into(), value);
+            value = JsValue::Object(wrap);
+        }
+        value
+    }
+
+    /// The iterative rewrite must keep the exact `JSON.stringify(v, null, 2)`
+    /// shape the recursive printer produced (Node v22.22.0 ground truth).
+    #[test]
+    fn stringify_pretty_matches_json_stringify() {
+        let mut inner = JsObject::new();
+        inner.insert(
+            "b".into(),
+            JsValue::Array(vec![
+                JsValue::Number(1.0),
+                JsValue::Undefined,
+                JsValue::String("s\"\n".into()),
+            ]),
+        );
+        inner.insert("a".into(), JsValue::Null);
+        let mut outer = JsObject::new();
+        outer.insert("drop".into(), JsValue::Undefined);
+        outer.insert("inner".into(), JsValue::Object(inner));
+        outer.insert("inf".into(), JsValue::Number(f64::NAN));
+        outer.insert("empty".into(), JsValue::Array(Vec::new()));
+        assert_eq!(
+            stringify_pretty(&JsValue::Object(outer)).unwrap(),
+            "{\n  \"inner\": {\n    \"b\": [\n      1,\n      null,\n      \"s\\\"\\n\"\n    ],\n    \"a\": null\n  },\n  \"inf\": null,\n  \"empty\": []\n}"
+        );
+    }
+
+    /// One container past the shared bound reports V8's `RangeError` message
+    /// instead of converting; inside it the text still converts.
+    #[test]
+    fn stringify_pretty_reports_the_range_error_past_the_bound() {
+        assert!(stringify_pretty(&nested_objects(MAX_ARRAY_DEPTH)).is_ok());
+        assert_eq!(
+            stringify_pretty(&nested_objects(MAX_ARRAY_DEPTH + 1)),
+            Err(IndexError::Range)
+        );
+        assert_eq!(
+            String::from_utf16_lossy(IndexError::Range.message().units()),
+            StackOverflow::MESSAGE
+        );
+    }
+
+    /// The depth the review named: 100k levels stays a bounded, fast `Err`
+    /// (in its own thread, so a reintroduced recursion stays loud instead of
+    /// wedging the shared test runtime).
+    #[test]
+    fn stringify_pretty_survives_hundred_thousand_levels() {
+        std::thread::spawn(|| {
+            assert_eq!(
+                stringify_pretty(&nested_objects(100_000)),
+                Err(IndexError::Range)
+            );
+        })
+        .join()
+        .expect("bounded stringify thread");
+    }
 }

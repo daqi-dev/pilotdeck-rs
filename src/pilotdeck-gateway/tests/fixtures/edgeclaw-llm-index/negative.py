@@ -4,13 +4,19 @@
 Every anchor must occur exactly once, otherwise exit 2 (never SURVIVED).
 CARGO_TARGET_DIR must be provided; no alternate source tree or target is made.
 No compiler error counts as KILLED. Each mutant has a restored positive run.
-Use --check-anchors without mutation, or OUT_DIR [NAME ...] after commit.
+
+A per-mutant timeout or subprocess failure is recorded as TIMEOUT/INVALID
+(with the captured output in <name>.log) and the run continues to the next
+mutant; only a source-restore failure aborts immediately, because a wrong
+source tree would poison every later verdict. The final summary exits
+non-zero when any mutant is not KILLED.
 
 index.rs is a new file, so mutating_sources refuses it until the coordinator
 commits; only --check-anchors runs pre-commit.
 """
 import os
 import re
+import subprocess
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -36,6 +42,24 @@ cases = [
     ('recent-last-4', source, 'let recent_start = recent.len().saturating_sub(4);', 'let recent_start = recent.len().saturating_sub(3);', 'requests select-attach'),
     ('list-slice-10', source, '.take(10)', '.take(9)', 'requests select-attach'),
     ('error-key-name', source, '("errorMessage", JsValue::String(error.message())),', '("error", JsValue::String(error.message())),', 'debug create-no-fallback'),
+    # -- fix-r2: write_pretty depth bound, surrogate-preserving parse, and the
+    # fallback warnings. Bindings are the first assertion each mutation moves,
+    # in oracle order (classify before create before select; within a case
+    # result before requests before debug before warnings).
+    ('pretty-depth-gate', source, 'if frames.len() >= MAX_ARRAY_DEPTH {', 'if frames.len() >= usize::MAX {', 'result classify-deep-meta'),
+    ('pretty-range-message', source, 'Self::Range => ("RangeError", JsString::from(StackOverflow::MESSAGE)),', 'Self::Range => ("Rangeerror", JsString::from(StackOverflow::MESSAGE)),', 'warnings classify-deep-meta'),
+    ('pretty-separator', source, 'Some(item) => {\n                    if *written {\n                        out.push_str(",\\n");', 'Some(item) => {\n                    if *written {\n                        out.push_str(",");', 'requests classify-basic'),
+    ('strict-parse-lossy', source, 'let decoded = text::json_text(envelope.units());', 'let decoded = String::from_utf16_lossy(envelope.units());', 'result classify-lone-surrogate-reason'),
+    ('replace-error-text', source, '"value.replace is not a function"', '"value.replace is not a method"', 'warnings classify-meta-description-number'),
+    ('classify-warning-prefix', source, '"[clawxmemory] memory turn classification fallback: "', '"[clawxmemory] memory turn classification fallback! "', 'warnings classify-meta-missing-description'),
+    ('create-warning-kind', source, 'MemoryCreateKind::User => "user memory create",', 'MemoryCreateKind::User => "user memory creation",', 'warnings create-no-fallback'),
+    ('create-warning-kind-project', source, 'MemoryCreateKind::Project => "project memory create",', 'MemoryCreateKind::Project => "project memory creation",', 'warnings create-project-no-model'),
+    ('create-warning-kind-feedback', source, 'MemoryCreateKind::Feedback => "feedback memory create",', 'MemoryCreateKind::Feedback => "feedback memory creation",', 'warnings create-feedback-no-model'),
+    ('select-warning-prefix', source, '"[clawxmemory] file memory project assignment fallback: "', '"[clawxmemory] file memory project assignment fallback! "', 'warnings select-shortlist-missing-description'),
+    # truncated_list's V8 source-expression messages (the audit catch of
+    # fix-r2: the receiver expression, never the value, is the message).
+    ('truncated-list-slice-message', source, '(input.candidate.{field} ?? []).slice is not a function', '(input.candidate.{field} ?? []).slice is not a method', 'warnings select-candidate-decisions-number'),
+    ('truncated-list-map-message', source, '(input.candidate.{field} ?? []).slice(...).map is not a function', '(input.candidate.{field} ?? []).slice(...).map is not a method', 'warnings select-candidate-constraints-string'),
 ]
 
 # A mutant is killed only by its named assertion in its exact test's panic block.
@@ -54,6 +78,18 @@ messages = {
     'recent-last-4': 'requests select-attach',
     'list-slice-10': 'requests select-attach',
     'error-key-name': 'debug create-no-fallback',
+    'pretty-depth-gate': 'result classify-deep-meta',
+    'pretty-range-message': 'warnings classify-deep-meta',
+    'pretty-separator': 'requests classify-basic',
+    'strict-parse-lossy': 'result classify-lone-surrogate-reason',
+    'replace-error-text': 'warnings classify-meta-description-number',
+    'classify-warning-prefix': 'warnings classify-meta-missing-description',
+    'create-warning-kind': 'warnings create-no-fallback',
+    'create-warning-kind-project': 'warnings create-project-no-model',
+    'create-warning-kind-feedback': 'warnings create-feedback-no-model',
+    'select-warning-prefix': 'warnings select-shortlist-missing-description',
+    'truncated-list-slice-message': 'warnings select-candidate-decisions-number',
+    'truncated-list-map-message': 'warnings select-candidate-constraints-string',
 }
 
 def classify(completed, test, message):
@@ -101,12 +137,30 @@ assert selected <= {c[0] for c in cases}, 'unknown case'
 command = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'), '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_llm_index']
 
 def run(name, test, message):
-    slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-    completed = run_owned(command + [test, '--', '--exact'], env=dict(os.environ), cwd=root, timeout=600)
-    log = slots.stdout + slots.stderr + completed.stdout + completed.stderr
+    """One named test run. A subprocess timeout or spawn failure is a
+    recorded status plus a saved log, never an abort of the whole sweep."""
+    prefix = ''
+    try:
+        slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
+        prefix = slots.stdout + slots.stderr
+        completed = run_owned(command + [test, '--', '--exact'], env=dict(os.environ), cwd=root, timeout=600)
+    except subprocess.TimeoutExpired as expired:
+        # run_owned already killed the process group; keep whatever output
+        # the timeout captured so the log still says why it hung.
+        detail = f'TIMEOUT after {expired.timeout}s'
+        for stream in (expired.stdout, expired.stderr):
+            if stream:
+                detail += '\n' + (stream.decode(errors='replace') if isinstance(stream, bytes) else str(stream))
+        with (out / f'{name}.log').open('x') as f: f.write(prefix + detail)
+        return 'TIMEOUT'
+    except (subprocess.SubprocessError, OSError) as error:
+        with (out / f'{name}.log').open('x') as f: f.write(prefix + f'INVALID: {error!r}')
+        return 'INVALID'
+    log = prefix + completed.stdout + completed.stderr
     with (out / f'{name}.log').open('x') as f: f.write(log)
     return classify(completed, test, message)
 
+verdicts = {}
 failed = []
 # This guard intentionally rejects a new uncommitted source file. Do not bypass it.
 with mutating_sources(root, [source]) as originals:
@@ -115,13 +169,29 @@ with mutating_sources(root, [source]) as originals:
     for name, path, before, after, message in cases:
         if selected and name not in selected: continue
         assert message == messages[name], 'case message must match its named assertion'
-        assert run(name + '-before', 'oracle_matrix', message) == 'PASS', 'positive baseline failed'
+        baseline = run(name + '-before', 'oracle_matrix', message)
+        if baseline != 'PASS':
+            # The unmutated source already fails, so this mutant proves
+            # nothing; record it and keep sweeping the remaining mutants.
+            verdicts[name] = f'INVALID: baseline {baseline}'
+            failed.append(name)
+            print(f'{name}: {verdicts[name]}', flush=True)
+            continue
         try:
             path.write_text(original.replace(before, after))
             outcome = run(name, 'oracle_matrix', message)
         finally:
+            # A restore failure aborts immediately: every later verdict would
+            # be measured against a poisoned source.
             path.write_bytes(originals[path])
         restored = run(name + '-restored', 'oracle_matrix', message)
-        print(f'{name}: {"SURVIVED" if outcome == "PASS" else outcome}; restored={restored}', flush=True)
+        verdicts[name] = f'{"SURVIVED" if outcome == "PASS" else outcome}; restored={restored}'
+        print(f'{name}: {verdicts[name]}', flush=True)
         if outcome != 'KILLED' or restored != 'PASS': failed.append(name)
+killed = sum(1 for verdict in verdicts.values() if verdict.startswith('KILLED'))
+print(f'--- {len(verdicts)} mutants: KILLED={killed} '
+      f'non-KILLED={len(verdicts) - killed}')
+for name, verdict in verdicts.items():
+    if not verdict.startswith('KILLED'):
+        print(f'non-KILLED {name}: {verdict}', file=sys.stderr)
 raise SystemExit(1 if failed else 0)
