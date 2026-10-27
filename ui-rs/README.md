@@ -2,7 +2,7 @@
 
 这里只放可抛弃的实验页：登录、项目/会话请求、流式帧计数、composer IME 事件、xterm 岛。没有迁移设置/聊天/业务页面。`probe-leptos`、`probe-dioxus` 都是独立 Cargo workspace，锁文件各自保留，不加入 `src/` 的 CI workspace。
 
-探针壳和业务状态在各自 Rust `src/main.rs`；协议与 typed wasm-bindgen 岛接口在 `shared/core.rs`。`shared/island.js` 只负责第三方 xterm DOM/WS 适配与保留实例；`shared/boundary.js` 是双壳导航实验注入件，没有接入生产旧壳。
+探针壳和业务状态在各自 Rust `src/main.rs`；协议与 typed wasm-bindgen 岛接口在 `shared/core.rs`。`shared/island.js` 只负责第三方 xterm DOM/WS 适配与保留实例；`shared/boundary.js` 是双壳导航实验注入件，生产旧壳源码不 import 它——但 #927 起共存部署验证（`scripts/fe-parity/`）会把它注入部署副本的旧壳 HTML（`/settings` 前缀）。
 
 完整版本、命令、判据、实测数据、验证缺口见 [exp007](../docs/experiments/exp007-frontend-probe/readme.md)。
 

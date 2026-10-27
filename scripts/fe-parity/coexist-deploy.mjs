@@ -23,6 +23,10 @@ export const PHASES = Object.freeze(['valid', 'invalid', 'rollback']);
 // The migrated prefix. Strict segment boundary everywhere it is matched.
 export const NEW_SHELL_PREFIX = '/settings';
 export const NEW_SHELL_MOUNT = '/probe/leptos';
+// The new bundle's own entrypoint script, referenced only by the new shell's
+// index.html (boundary-boot.js is injected into BOTH shells, so it cannot
+// discriminate). S1 asserts on this marker; buildNewShellDirectory enforces it.
+export const NEW_SHELL_ENTRY_MARKER = `${NEW_SHELL_MOUNT}/probe.js`;
 
 export function coexistExecutionEnv(parent, { output, runDir, phase, frontend = 'old' }) {
   if (!PHASES.includes(phase)) throw new Error('Invalid coexist phase');
@@ -107,9 +111,19 @@ export function applyOptionAPatch(source) {
     .replace(mountAnchor, `${optionAPatch.staticMount}\n\n${mountAnchor}`)
     .replace(branchAnchor, `${optionAPatch.prefixBranch}\n\n${branchAnchor}`);
 }
-// The strict segment-boundary predicate the patched catchall implements.
-export function isNewShellRequest(pathname, newShell) {
-  return newShell && (pathname === NEW_SHELL_PREFIX || pathname.startsWith(NEW_SHELL_PREFIX + '/'));
+// Behavioural execution of the actual patch branch: evaluate the deployed
+// template string against a fake req/res/process, the way the patched
+// ui/server would. Offline oracles assert on what this returns, not on a
+// hand-copied mirror of the predicate (a mirror can drift from the template).
+export function executeOptionAPatchBranch(pathname, env) {
+  let served = null;
+  new Function('req', 'res', 'process', 'path', '__dirname', optionAPatch.prefixBranch)(
+    { path: pathname },
+    { setHeader() {}, sendFile(file) { served = file; } },
+    { env },
+    { join: (...parts) => parts.join('/') },
+    '/copy/ui/server');
+  return served;
 }
 
 async function buildNewShellDirectory() {
@@ -123,7 +137,7 @@ async function buildNewShellDirectory() {
     .replaceAll('/vendor/xterm.css', `${NEW_SHELL_MOUNT}/xterm.css`)
     .replaceAll('/shared/probe.css', `${NEW_SHELL_MOUNT}/probe.css`)
     .replaceAll('/vendor/xterm.js', `${NEW_SHELL_MOUNT}/xterm.js`);
-  if (rewritten === original || !rewritten.includes(`${NEW_SHELL_MOUNT}/probe.js`)) throw new Error('new-shell index.html rewrite anchors missing');
+  if (rewritten === original || !rewritten.includes(NEW_SHELL_ENTRY_MARKER)) throw new Error('new-shell index.html rewrite anchors missing');
   const html = rewritten.replace('<head>',
     `<head><script type="module" src="${NEW_SHELL_MOUNT}/boundary-boot.js"></script>`);
   if (html === rewritten) throw new Error('new-shell boundary injection anchor missing');

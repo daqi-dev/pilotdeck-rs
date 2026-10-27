@@ -1,20 +1,31 @@
 #!/usr/bin/env python3
 """#927 F3 coexistence negative controls: run every mutant, then summarize.
 
-Each mutant is applied to the router/history boundary (ui-rs/shared/boundary.js)
-or the Option A patch assembly (scripts/fe-parity/coexist-deploy.mjs),
-parse-checked with ``node --check``, run against the offline ``node --test``
-oracle that must turn red, and restored byte-for-byte. The runner never stops at
-the first failure: it records KILLED / SURVIVED / INVALID with a reason for
-every row and exits non-zero if any row is not KILLED. The named marker is the
-dedicated assertion message that proves the intended check fired, not an
-unrelated parse error.
+Each mutant is applied to the router/history boundary (ui-rs/shared/boundary.js),
+the Option A patch assembly (scripts/fe-parity/coexist-deploy.mjs), the coexist
+accounting (scripts/fe-parity/coexist-runner.mjs), the shared-key snapshot
+(scripts/fe-parity/coexist-shared-keys.mjs) or the browser spec itself
+(scripts/fe-parity/coexist-tests/coexist.spec.mjs), parse-checked with
+``node --check``, run against the offline ``node --test`` oracle that must turn
+red, and restored byte-for-byte. The runner never stops at the first failure:
+it records KILLED / SURVIVED / INVALID with a reason for every row and exits
+non-zero if any row is not KILLED. The named marker is the dedicated assertion
+message that proves the intended check fired, not an unrelated parse error.
 
-No cargo, no listen, no browser: the oracle is the offline node --test pair
-that #927 ships (coexist-boundary.test.mjs / coexist-patch.test.mjs).
+fix-r1 note: the old ``predicate-loose`` / ``switch-ignored`` rows mutated the
+``isNewShellRequest`` mirror, which was NOT on the real deployment path (the
+patched server runs the ``optionAPatch.prefixBranch`` template). The mirror and
+its test were deleted; the behavioural oracle now executes the real template
+(``executeOptionAPatchBranch``), and the switch/boundary mutants target the
+template itself (``template-switch-ignored`` / ``template-new-dead`` /
+``patch-prefix-loose``).
+
+No cargo, no listen, no browser: the oracles are the offline node --test set
+#927 ships (coexist-boundary / coexist-patch / coexist-accounting /
+coexist-self-check .test.mjs).
 
 Requires an already-committed tree (``mutating_sources`` refuses a dirty
-baseline by design; both target files are #927 additions/edits, so this runner
+baseline by design; the target files are #927 additions/edits, so this runner
 is handed to the coordinator to execute on the host after commit, see
 RESULT.md). Run from the worktree root:
 
@@ -31,8 +42,13 @@ from negative_process import mutating_sources, run_owned  # noqa: E402
 ROOT = Path(__file__).resolve().parents[5]
 BOUNDARY = ROOT / "ui-rs/shared/boundary.js"
 DEPLOY = ROOT / "scripts/fe-parity/coexist-deploy.mjs"
+RUNNER = ROOT / "scripts/fe-parity/coexist-runner.mjs"
+SHARED_KEYS = ROOT / "scripts/fe-parity/coexist-shared-keys.mjs"
+SPEC = ROOT / "scripts/fe-parity/coexist-tests/coexist.spec.mjs"
 BOUNDARY_ORACLE = ROOT / "scripts/fe-parity/coexist-boundary.test.mjs"
 PATCH_ORACLE = ROOT / "scripts/fe-parity/coexist-patch.test.mjs"
+ACCOUNTING_ORACLE = ROOT / "scripts/fe-parity/coexist-accounting.test.mjs"
+SELFCHECK_ORACLE = ROOT / "scripts/fe-parity/coexist-self-check.test.mjs"
 NODE = "node"
 
 # (name, path, before, after, oracle, marker)
@@ -88,6 +104,38 @@ mutations = [
         "disposed boundary must not intercept",
     ),
     (
+        "replace-flag-flipped",
+        BOUNDARY,
+        "    if (target) return hardNavigate(target.href, true);",
+        "    if (target) return hardNavigate(target.href, false);",
+        BOUNDARY_ORACLE,
+        "cross replaceState 必须 hardNavigate(replace=true)（不产生重复历史项）",
+    ),
+    (
+        "replace-passthrough",
+        BOUNDARY,
+        "    if (target) return hardNavigate(target.href, true);",
+        "    if (target) return originalReplace.call(this, state, title, url);",
+        BOUNDARY_ORACLE,
+        "cross replaceState 必须 hardNavigate(replace=true)（不产生重复历史项）",
+    ),
+    (
+        "default-prefix-dropped",
+        BOUNDARY,
+        "prefixes = ['/probe'])",
+        "prefixes = [])",
+        BOUNDARY_ORACLE,
+        "默认 prefixes 必须保留 /probe 边界（exp007 语义）",
+    ),
+    (
+        "exact-prefix-dropped",
+        BOUNDARY,
+        "pathname === prefix || pathname.startsWith(prefix + '/')",
+        "pathname.startsWith(prefix + '/')",
+        BOUNDARY_ORACLE,
+        "exact prefix must cross",
+    ),
+    (
         "patch-prefix-loose",
         DEPLOY,
         "req.path.startsWith('${NEW_SHELL_PREFIX}/')",
@@ -96,20 +144,69 @@ mutations = [
         "prefix branch must guard exactly the migrated prefix",
     ),
     (
-        "predicate-loose",
+        "template-switch-ignored",
         DEPLOY,
-        "  return newShell && (pathname === NEW_SHELL_PREFIX || pathname.startsWith(NEW_SHELL_PREFIX + '/'));",
-        "  return newShell && (pathname === NEW_SHELL_PREFIX || pathname.startsWith(NEW_SHELL_PREFIX));",
+        "if (process.env.PILOTDECK_NEW_SHELL === '1' && (req.path === '${NEW_SHELL_PREFIX}' "
+        "|| req.path.startsWith('${NEW_SHELL_PREFIX}/'))) {",
+        "if ((req.path === '${NEW_SHELL_PREFIX}' || req.path.startsWith('${NEW_SHELL_PREFIX}/'))) {",
         PATCH_ORACLE,
-        "/settingsX stays old",
+        "开关 unset：/settings 必须回落旧 bundle（回退开关，字节等价旧行为）",
     ),
     (
-        "switch-ignored",
+        "template-new-dead",
         DEPLOY,
-        "  return newShell && (pathname === NEW_SHELL_PREFIX || pathname.startsWith(NEW_SHELL_PREFIX + '/'));",
-        "  return pathname === NEW_SHELL_PREFIX || pathname.startsWith(NEW_SHELL_PREFIX + '/');",
+        "        return res.sendFile(path.join(__dirname, '../new-shell/index.html'));",
+        "        return;",
         PATCH_ORACLE,
-        "switch off: byte-equivalent old behaviour",
+        "开关开：/settings 必须实际服务新壳入口",
+    ),
+    (
+        "p0-error-folding-dropped",
+        RUNNER,
+        "report?.errors || []",
+        "[]",
+        ACCOUNTING_ORACLE,
+        "P0：报告含执行错误时总状态不得 PASS（14 例全绿也不行）",
+    ),
+    (
+        "p0-status-ignores-errors",
+        RUNNER,
+        "  const status = errors.length ? 'ERROR' : rows.length && rows.every(row => row.status === 'PASS') ? 'PASS' : 'FAIL';",
+        "  const status = rows.length && rows.every(row => row.status === 'PASS') ? 'PASS' : 'FAIL';",
+        ACCOUNTING_ORACLE,
+        "P0：报告含执行错误时总状态不得 PASS（14 例全绿也不行）",
+    ),
+    (
+        "catalog-drift-masked",
+        RUNNER,
+        "    'C3 共享键跨跳转不变',",
+        "    'C3 共享键跨跳转不变（漂移注入）',",
+        SELFCHECK_ORACLE,
+        "coexist valid 注册与 COEXIST_CASES 必须逐条一致（离线抓漂移，不等到运行时 registration drift）",
+    ),
+    (
+        "storage-local-only",
+        SHARED_KEYS,
+        "  for (const storage of [localStorage, sessionStorage]) {",
+        "  for (const storage of [localStorage]) {",
+        SELFCHECK_ORACLE,
+        "C3 快照必须覆盖 sessionStorage：活动项目键在 sessionStorage（AppShellV2.tsx:163），只读 localStorage 会漏",
+    ),
+    (
+        "active-project-unchecked",
+        SPEC,
+        "sessionStorage.getItem('pilotdeck-active-project')",
+        "sessionStorage.getItem('auth-token')",
+        SELFCHECK_ORACLE,
+        "C3 必须先断言活动项目键在 sessionStorage 实际存在（评审 P1-2：漏验共享契约）",
+    ),
+    (
+        "s1-marker-reverted",
+        SPEC,
+        "expect(migratedBody, '/settings 必须回新 shell 入口（新壳专属 probe 入口模块）').toContain(NEW_SHELL_ENTRY_MARKER);",
+        "expect(migratedBody, '/settings 必须回新 shell 入口（新壳专属 probe 入口模块）').toContain('/probe/leptos/boundary-boot.js');",
+        SELFCHECK_ORACLE,
+        "S1 必须用新壳专属入口判据（/probe/leptos/probe.js；boundary-boot 双壳共用不能作判据）",
     ),
 ]
 
