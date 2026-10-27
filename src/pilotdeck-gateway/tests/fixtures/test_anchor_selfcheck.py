@@ -596,10 +596,11 @@ mutants = [('sample', source, text, part + 'after')]
             self.write(declaration + 'label = ' + expression + '\n' + table)
             self.run_check(label='#827 display-name restored')
 
-    def check_snapshot_occurrences(self, statements, diagnostic, label):
+    def check_snapshot_occurrences(self, statements, diagnostic, label, *,
+                                   snapshot_values="'alias.rs': source.read_text()"):
         """Paired controls use the real scanner, never execute mutation scripts."""
         for name in ('originals', 'snapshots'):
-            declaration = f"{name} = {{'alias.rs': source.read_text()}}\n"
+            declaration = f"{name} = {{{snapshot_values}}}\n"
             table = f"mutants = [('sample', source, {name}['alias.rs'], 'after')]\n"
             for statement in statements:
                 with self.subTest(name=name, statement=statement):
@@ -750,6 +751,99 @@ mutants = [('sample', source, text, part + 'after')]
                                   '#827 readonly-chain must not end validation at the first Call')
                     self.write(good)
                     self.run_check(label='#827 readonly-chain restored')
+
+    def test_snapshot_dict_copy_checks_outer_read_chain(self):
+        self.check_snapshot_occurrences((
+            "dict(SNAPSHOT)['nested'].update({'x': 1})",
+            "dict(SNAPSHOT)['nested'].clear()",
+            "dict(SNAPSHOT)['nested'].unknown_method()",
+            "mutator = dict(SNAPSHOT)['nested'].update; mutator({'x': 1})",
+            "dict(SNAPSHOT)['nested']['list'].append('missing')",
+            "dict(SNAPSHOT)['alias.rs'].strip().unknown_method()",
+        ), 'unsupported snapshot read method', 'dict-outer-chain',
+            snapshot_values="'alias.rs': source.read_text(), 'nested': {'list': []}")
+
+    def test_snapshot_read_chain_checks_uncalled_terminal_attribute(self):
+        self.check_snapshot_occurrences((
+            "mutator = SNAPSHOT['nested'].update; mutator({'x': 1})",
+            "mutator = SNAPSHOT.get('nested').update; mutator({'x': 1})",
+            "mutator = SNAPSHOT['nested']['list'].append; mutator('missing')",
+            "mutator = SNAPSHOT['nested'].field",
+            "consume(SNAPSHOT['nested'].clear)",
+            "mutator = SNAPSHOT['alias.rs'].strip().unknown_method",
+            "mutator = SNAPSHOT.items().clear",
+            "mutator = SNAPSHOT.keys().clear",
+            "mutator = SNAPSHOT.values().clear",
+        ), 'unsupported snapshot read method', 'terminal-attribute',
+            snapshot_values="'alias.rs': source.read_text(), 'nested': {'list': []}")
+
+    def test_snapshot_read_chain_preserves_terminal_readonly_forms(self):
+        for name in ('originals', 'snapshots'):
+            declaration = f"{name} = {{'alias.rs': source.read_text()}}\n"
+            table = f"mutants = [('sample', source, {name}['alias.rs'], 'after')]\n"
+            for expression in (
+                "SNAPSHOT['alias.rs']", "dict(SNAPSHOT)['alias.rs']",
+                "SNAPSHOT['alias.rs'].strip", "SNAPSHOT.get('alias.rs').strip",
+                "dict(SNAPSHOT)['alias.rs'].strip", "dict(SNAPSHOT)['alias.rs'].strip()",
+            ):
+                with self.subTest(name=name, expression=expression):
+                    expression = expression.replace('SNAPSHOT', name)
+                    good = declaration + f'reader = {expression}\n' + table
+                    self.write(good)
+                    self.run_check(label='#827 terminal-readonly original')
+                    self.write(declaration + f'reader = {expression}.clear\n' + table)
+                    self.assertIn('unsupported snapshot read method',
+                                  self.run_check(1, label='#827 terminal-readonly rejected'),
+                                  '#827 terminal-readonly must check the final attribute')
+                    self.write(good)
+                    self.run_check(label='#827 terminal-readonly restored')
+
+    def check_snapshot_dict_bindings(self, statements, label):
+        for name in ('originals', 'snapshots'):
+            declaration = f"{name} = {{'alias.rs': source.read_text()}}\n"
+            table = "mutants = [('sample', source, 'before', 'after')]\n"
+            for statement in statements:
+                for copy in ('', f'copy = dict({name})\n'):
+                    with self.subTest(name=name, statement=statement, copy=copy):
+                        self.write(declaration + copy + table)
+                        self.run_check(label=f'#827 {label} original')
+                        for body in (statement + '\n' + declaration, declaration + statement + '\n'):
+                            self.write(body + copy + table)
+                            self.assertIn('unsupported snapshot dict binding',
+                                          self.run_check(1, label=f'#827 {label} rejected'),
+                                          f'#827 {label} must reject every explicit dict binding')
+                        self.write(declaration + copy + table)
+                        self.run_check(label=f'#827 {label} restored')
+                        # The guard is snapshot-specific, independent of whether
+                        # an exact dict(snapshot) call is actually present.
+                        self.write(statement + '\n' + table)
+                        self.run_check(label=f'#827 {label} no-snapshot')
+
+    def test_snapshot_dict_binding_stores_fail_closed(self):
+        self.check_snapshot_dict_bindings((
+            'dict = f', 'dict: object = f', 'dict += other',
+            'dict, other = pair', '(dict := f)',
+            'for dict in values:\n    pass', 'with manager as dict:\n    pass',
+            'items = [dict for dict in values]',
+            'def dict():\n    pass', 'async def dict():\n    pass',
+            'class dict:\n    pass', 'def helper(dict):\n    pass',
+            'helper = lambda dict: None',
+            'try:\n    pass\nexcept Exception as dict:\n    pass',
+            'match value:\n    case dict:\n        pass',
+            'match value:\n    case [*dict]:\n        pass',
+            'match value:\n    case {**dict}:\n        pass',
+            'global dict',
+        ), 'dict-store-binding')
+
+    def test_snapshot_dict_binding_deletions_fail_closed(self):
+        self.check_snapshot_dict_bindings(('del dict',), 'dict-del-binding')
+
+    def test_snapshot_dict_binding_imports_fail_closed(self):
+        self.check_snapshot_dict_bindings((
+            'import x as dict', 'import dict', 'import dict.submodule',
+            'from x import value as dict', 'from x import dict',
+            'from builtins import dict',
+        ), 'dict-import-binding')
 
     def test_snapshot_transformed_reads_cannot_be_write_targets(self):
         self.check_snapshot_occurrences((
