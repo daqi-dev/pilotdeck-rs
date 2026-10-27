@@ -419,9 +419,10 @@ JUDGES = {
     'gateway-aggregation-bypassed': (
         'aggregation-audit',
         lambda rows: match(rows, 'aggregation-audit', {
-            'firstFailure': '#164-fix-r7 aggregation-audit: '
-                            'src/pilotdeck-gateway/tests/fixtures/gateway-batch/negative_controls.py:main '
-                            'must call common.aggregate_status',
+            # #166: removing main's only aggregate call also removes its last
+            # aggregation marker; the registered-point guard rejects it first.
+            'firstFailure': '#164-fix-r7 aggregation-audit: registered point missing '
+                            'src/pilotdeck-gateway/tests/fixtures/gateway-batch/negative_controls.py:main',
             'points.gateway-negative-main.shared': False,
         }), False, ()),
     'restored-skip-accepted': (
