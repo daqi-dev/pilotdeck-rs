@@ -17,8 +17,11 @@ Node cwd 缓存掩盖 `uv_cwd`。
 `config.filePath` 分支；生产配置看不到它。`HOME` 缺失的 `os.homedir()` passwd 回退未实测，
 见 `specs/gateway-parity/diffs/A6.4-STATS-CWD-001.md`。
 
-Rust 22 格在 bounded test worker 中运行，测试父进程校验退出状态与唯一 receipt；collector 与
-`RouterRuntime::with_deps` 两个直接入口都逐格比对。测试名：
+Rust 22 格各跑两个 bounded test worker：collector 与 `RouterRuntime::with_deps` 分别在独立
+子进程、独立临时 root / cwd / home 中运行，父进程对每个子进程分别校验退出状态与唯一
+receipt（每格 2 个 receipt）。runtime 入口经 test-only 访问器读取 runtime 自己持有的
+collector 实际选中的 `jsonl_path`，不从 collector 副作用或测试预计算的期望路径取值。
+测试名：
 `runtime::model::stats::cwd_tests::{relative,empty,absolute,tilde,tilde_child,unset,empty_home_tilde,empty_home_unset,empty_home_child,file_path,disabled}_{normal,deleted}_cwd`。
 
 生成：设置 `PDRS_BASELINE` 后运行
@@ -27,18 +30,23 @@ Rust 22 格在 bounded test worker 中运行，测试父进程校验退出状态
 `runtime::model::stats::cwd_tests::stats_cwd_regenerates_identically`。
 
 负控：`python3 src/pilotdeck-gateway/tests/fixtures/stats-cwd/negative_controls.py --check` 只检查
-锚点；提交后用 `<新证据目录> [变异名...]` 运行一项或小批。12 项覆盖迟到的 `/` 回退、错误
+锚点；提交后用 `<新证据目录> [变异名...]` 运行一项或小批。13 项覆盖迟到的 `/` 回退、错误
 message/kind、绝对 home 误读 cwd、相对 home 基准、router 目录、disabled/filePath 短路，
-`~` 逐字返回、以及 router 两个直接适配点。每项绑定被点名测试的专属消息，逐项记
-KILLED / SURVIVED / INVALID 后汇总，任一非 KILLED 即非零退出；锚点过期直接失败退出，
-不记为 SURVIVED。编译 / 设置 / 超时错误记 INVALID，不冒充测试失败。
+`~` 逐字返回、router 三个直接适配点，以及 runtime 入口选错 home。每项绑定被点名测试的专属
+消息，逐项记 KILLED / SURVIVED / INVALID 后汇总，任一非 KILLED 即非零退出；锚点过期直接
+失败退出，不记为 SURVIVED。编译 / 设置 / 超时错误记 INVALID，不冒充测试失败。失败格从
+libtest 的 `failures:` 清单读取（`--nocapture` 下 `... FAILED` 可能被 receipt 挤到下一行），
+再要求该格专属消息。
 `absolute-guard` 只要求声明的四格中至少一格转红：裸 `~` 在 `stats.rs:1215` 提前返回，
 不经过被变异的 `expanded.is_absolute()`，`tilde_deleted_cwd` 结构上不会红；其余三格必须
 命中各自的 `#879 stats cwd collector matrix:` 消息，失败在无消息 panic 上不算杀。其余
-11 项仍要求声明的每一格都命中专属消息。
+12 项仍要求声明的每一格都命中专属消息。`runtime-home` 的 18 格是除 `disabled-*`
+（读 home 前返回）与 `file-path-*`（使用 `config.filePath`）外的全部格；把 router 传给
+collector 的 home 改成 `/wrong` 后，这 18 格都须以
+`#879 stats cwd runtime matrix:` 消息转红。
 
 必须使用调用方设置的本树 `CARGO_TARGET_DIR`；未设报错。脚本使用 `mutating_sources` 默认
 HEAD、`run_owned`、`wait_for_slot`；源码未提交就拒跑，不建影子仓库或备用构建目录。提交前
 样本可用 `NEGATIVE_BASELINE=<临时 git commit-tree 对象>` 指向同字节的临时基线（不移动
-HEAD），默认值仍是 HEAD。全量约 36 次 cargo 测试，可能超过 20 分钟，由协调者提交后在宿主
+HEAD），默认值仍是 HEAD。全量约 39 次 cargo 测试，可能超过 20 分钟，由协调者提交后在宿主
 分批运行。
