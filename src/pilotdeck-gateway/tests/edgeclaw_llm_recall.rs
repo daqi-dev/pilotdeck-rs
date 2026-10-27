@@ -547,11 +547,23 @@ async fn fallback_warnings_match_ts() {
     }
 }
 
+/// Hand-checked edge cases on the reachable producer domain: `exact` 0/2,
+/// `score = exact * 10 + matched token count`, finite values, ±0 and ties. The
+/// full TS TimSort oracle is `js_fallback_sort_matches_ts_reachable_domain`.
+///
+/// NaN is deliberately not pinned here. `buildProjectShortlist` cannot produce
+/// it, and a NaN comparator is not a total order, so V8 TimSort and Rust's
+/// stable sort are not required to pick the same first element. The old NaN
+/// cells were removed by #765 fix-r4; the reachable domain is locked by
+/// `js_fallback_sort_matches_ts_reachable_domain` and the NaN boundary is
+/// documented on `choose_best_recall_project_fallback`.
 #[test]
 fn js_fallback_sort_matches_ts() {
     let project = |id: &str, exact: f64, score: f64| ProjectShortlistCandidate {
         project_id: id.into(),
         project_name: id.into(),
+        source_type: Some("general_local".into()),
+        updated_at: "2026-01-01T00:00:00.000Z".into(),
         exact,
         score,
         ..ProjectShortlistCandidate::default()
@@ -566,39 +578,30 @@ fn js_fallback_sort_matches_ts() {
         .expect("#765 sort project id must be UTF-8")
     };
 
+    // TS `!==` on numbers treats -0 and +0 as equal, so the comparison falls
+    // through to the finite score.
     assert_eq!(
         picked(&[project("a", -0.0, 2.0), project("b", 0.0, 1.0)]),
         "a",
         "#765 minus zero and plus zero are equal"
     );
+    // Reachable finite values: descending exact, then descending score.
     assert_eq!(
-        picked(&[project("a", f64::NAN, 1.0), project("b", 0.0, 9.0)]),
+        picked(&[project("a", 2.0, 20.0), project("b", 0.0, 9.0)]),
         "a",
-        "#765 NaN exact preserves input order"
+        "#765 reachable exact order"
     );
     assert_eq!(
-        picked(&[project("b", 0.0, 9.0), project("a", f64::NAN, 1.0)]),
+        picked(&[project("a", 0.0, 3.0), project("b", 0.0, 9.0)]),
         "b",
-        "#765 NaN exact keeps the earlier element"
+        "#765 reachable score order"
     );
+    // A full tie (same exact, score, source type and updatedAt): `Array#sort`
+    // is stable, so the earlier element wins.
     assert_eq!(
-        picked(&[project("a", f64::NAN, 1.0), project("b", f64::NAN, 9.0)]),
+        picked(&[project("a", 0.0, 3.0), project("b", 0.0, 3.0)]),
         "a",
-        "#765 NaN pair preserves input order"
-    );
-    assert_eq!(
-        picked(&[
-            project("a", f64::NAN, 1.0),
-            project("b", 0.0, 9.0),
-            project("c", f64::NAN, 5.0)
-        ]),
-        "a",
-        "#765 mixed NaN preserves stable order"
-    );
-    assert_eq!(
-        picked(&[project("a", f64::INFINITY, 1.0), project("b", 0.0, 9.0)]),
-        "a",
-        "#765 positive infinity exact wins"
+        "#765 full tie preserves input order"
     );
 }
 

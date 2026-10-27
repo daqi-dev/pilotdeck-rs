@@ -189,7 +189,8 @@ cases = [
         debug(JsValue::Object(record));
         result''',
      'fallback_warnings_match_ts'),
-    # P1-2: restore `total_cmp`, which distinguishes +0 from -0.
+    # Reachable ±0: TS `!==` treats +0 and -0 as equal. `total_cmp` does not,
+    # so it bypasses the score tie-break and the plus-zero entry wins.
     ('sort-total-cmp', recall,
      '''    if right.exact != left.exact {
         return right.exact - left.exact;
@@ -200,8 +201,22 @@ cases = [
         Ordering::Less => return -1.0,
     }''',
      'js_fallback_sort_matches_ts'),
-    # P1-2: `Array#sort` folds a NaN comparator result to +0. Dropping the
-    # NaN/zero fold treats NaN as Less and reorders the stable pair.
+    # Reachable exact direction: descending exact is the first tier. Flipping
+    # it lets the lower-exact entry win and must fail the hand test's exact
+    # assertion (the ±0 case has equal exact values, so it still passes).
+    ('sort-exact-order', recall,
+     '''    if right.exact != left.exact {
+        return right.exact - left.exact;
+    }''',
+     '''    if right.exact != left.exact {
+        return left.exact - right.exact;
+    }''',
+     'js_fallback_sort_matches_ts'),
+    # Reachable ties: `Array#sort` treats a 0 comparator result as equal and
+    # keeps the stable input order. Dropping the +0/-0 fold returns Less for a
+    # full tie, so the stable pair flips. (The old NaN-domain flavour of this
+    # mutant no longer has a NaN assertion to kill: #765 fix-r4 removed NaN
+    # from `js_fallback_sort_matches_ts` because the producer cannot emit it.)
     ('sort-nan-order', recall,
      '''fn js_sort_order(delta: f64) -> Ordering {
     if delta.is_nan() || delta == 0.0 {
@@ -256,7 +271,8 @@ EXPECTED = {
     'warning-order': '#765 warning order',
     'warning-in-debug': '#765 warning must not enter debug 0',
     'sort-total-cmp': '#765 minus zero and plus zero are equal',
-    'sort-nan-order': '#765 NaN exact preserves input order',
+    'sort-exact-order': '#765 reachable exact order',
+    'sort-nan-order': '#765 full tie preserves input order',
     'sort-reachable-order': '#765 reachable-domain sort first mismatch',
 }
 
