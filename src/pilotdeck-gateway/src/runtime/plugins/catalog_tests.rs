@@ -2,6 +2,7 @@ use super::*;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 const MESSAGE: &str = "#887 commands catalog oracle";
+const LOCALE_MESSAGE: &str = "#887 commands catalog oracle requires en-US; set LANG=en_US.UTF-8 and unset LC_ALL/LC_MESSAGES";
 pub(super) fn fixture() -> Value {
     let raw = include_str!("../../../tests/fixtures/commands-catalog/oracle.json");
     std::panic::catch_unwind(|| crate::test_baseline::oracle(raw)).expect(MESSAGE);
@@ -47,6 +48,11 @@ fn normalize(value: &mut Value, root: &str) {
     }
 }
 async fn replay(id: &str) {
+    assert_eq!(
+        node_locale(|key| std::env::var(key).ok()).to_string(),
+        "en-US",
+        "{LOCALE_MESSAGE}"
+    );
     let oracle = fixture();
     let case = oracle["cases"]
         .as_array()
@@ -224,6 +230,50 @@ case!(catalog_query, "query");
 case!(catalog_pagination, "pagination");
 case!(catalog_validation, "validation");
 case!(catalog_read_errors, "read-errors");
+#[tokio::test]
+async fn catalog_locale_contract() {
+    const MSG: &str = "#887 catalog locale contract";
+    // Empty pages have no locale-sensitive ordering: bypassing the entry guard
+    // must be caught even when the page happens to match the en-US oracle.
+    const CHILD: &str = "runtime::plugins::catalog::tests::catalog_empty";
+    for (locale, success) in [("en_US.UTF-8", true), ("zh_CN.UTF-8", false)] {
+        let mut child = tokio::process::Command::new(std::env::current_exe().expect(MSG));
+        child
+            .args([CHILD, "--exact", "--nocapture", "--format", "pretty"])
+            .env("LANG", locale)
+            .env_remove("LC_ALL")
+            .env_remove("LC_MESSAGES")
+            .kill_on_drop(true);
+        // Completion is child exit; a stuck child is killed after 30 seconds.
+        let output = tokio::time::timeout(std::time::Duration::from_secs(30), child.output())
+            .await
+            .expect(MSG)
+            .expect(MSG);
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(log.contains("running 1 test"), "{MSG}: {locale}: {log}");
+        if success {
+            assert!(output.status.success(), "{MSG}: {locale}: {log}");
+            assert!(log.contains("1 passed; 0 failed"), "{MSG}: {locale}: {log}");
+        } else {
+            if output.status.success() {
+                assert!(
+                    log.contains("1 passed; 0 failed") && log.contains(&format!("{CHILD} ... ok")),
+                    "{MSG}: malformed child success: {log}"
+                );
+                panic!("#887 catalog locale guard bypassed: zh_CN.UTF-8");
+            }
+            assert_eq!(output.status.code(), Some(101), "{MSG}: {locale}: {log}");
+            assert!(
+                log.contains(LOCALE_MESSAGE) && log.contains(&format!("{CHILD} ... FAILED")),
+                "{MSG}: {locale}: {log}"
+            );
+        }
+    }
+}
 #[test]
 #[ignore = "requires Node v22.22.0 and PDRS_BASELINE"]
 fn catalog_regenerates_identically() {
