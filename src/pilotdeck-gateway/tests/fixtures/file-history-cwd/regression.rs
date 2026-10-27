@@ -38,7 +38,7 @@ fn view(store: &FileHistoryStore, records: &Mutex<Vec<String>>, root: &str) -> V
     let file = format!("{root}/files/tracked.txt");
     let snapshots: Vec<_> = state.snapshots.iter().map(|snapshot| {
         let backups: Vec<_> = snapshot.tracked_file_backups.iter().map(|(path, backup)| {
-            let name = backup.backup_file_name.as_name().expect("#879 state named backup");
+            let name = crate::test_negative_receipt::expect_some(backup.backup_file_name.as_name(), "#879 state named backup");
             json!({
                 "path": path, "nameMatches": name == get_backup_file_name(&file, 1),
                 "version": backup.version, "backupTime": backup.backup_time_ms,
@@ -144,13 +144,13 @@ fn environment_worker() {
     } else {
         row["outcome"].clone()
     };
-    assert_eq!(actual, expected, "#879 outcome matrix: {name}");
+    crate::negative_assert_eq!(actual, expected, "#879 outcome matrix: {name}");
     let expected_state = if warmed {
         &row["before"]
     } else {
         &row["after"]
     };
-    assert_eq!(
+    crate::negative_assert_eq!(
         view(&store, &records, &root),
         *expected_state,
         "#879 state matrix: {name}"

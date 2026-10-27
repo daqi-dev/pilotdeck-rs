@@ -168,8 +168,9 @@ fn environment_worker() {
                 json!({"result": {"journal": actual, "exists": exists}})
             },
         );
-        assert_eq!(
-            actual_collector, row["collector"]["outcome"],
+        crate::negative_assert_eq!(
+            actual_collector,
+            row["collector"]["outcome"],
             "#879 stats cwd collector matrix: {name}"
         );
     } else if entry == "runtime" {
@@ -203,8 +204,9 @@ fn environment_worker() {
                 "syscall": "uv_cwd",
             }}),
         };
-        assert_eq!(
-            actual_runtime, row["runtime"]["outcome"],
+        crate::negative_assert_eq!(
+            actual_runtime,
+            row["runtime"]["outcome"],
             "#879 stats cwd runtime matrix: {name}"
         );
     } else {

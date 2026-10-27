@@ -73,6 +73,8 @@ fn run_case(
     deadline: Duration,
     limit: usize,
 ) -> Result<(), String> {
+    let mut env = env;
+    crate::test_negative_receipt::forward_to_worker(&mut env);
     let mut child = Worker(
         Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
             .args([

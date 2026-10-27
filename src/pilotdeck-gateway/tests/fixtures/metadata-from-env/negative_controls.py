@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Committed-tree controls: PASS -> runtime assertion RED -> restored PASS.
+"""#946 HEAD-only nonce receipt controls; account for every selected mutant.
 
-Run by name in small batches. Uncommitted source is intentionally refused.
+--check validates anchors. --compile-only compiles every selected mutant.
+Provide a new output directory and optional mutation names; CARGO_TARGET_DIR
+must be supplied. Commit first: the source guard is never bypassed.
 """
-import difflib
-import json
-import os
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+# negative_suite owns mutating_sources, run_owned and wait_for_slot.
+from negative_suite import matrix_main
 
 ROOT = Path(__file__).resolve().parents[5]
+FIXTURE = Path(__file__).resolve().parent
 META = ROOT / 'src/pilotdeck-gateway/src/metadata.rs'
 PAIR = ROOT / 'src/pilotdeck-gateway/src/pairing.rs'
 TEST = ROOT / 'src/pilotdeck-gateway/tests/fixtures/metadata-from-env/regression.rs'
@@ -55,69 +56,13 @@ MUTATIONS = [
 ]
 
 
-def write_new(path, text):
-    with path.open('x') as stream:
-        stream.write(text)
-
-
-def run(out, label, env):
-    slots = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=600, interval=15)
-    write_new(out / f'{label}.slots.log', slots.stdout + slots.stderr)
-    command = ['cargo', 'test', '-q', '-p', 'pilotdeck-gateway', '--lib', PREFIX,
-               '--', '--nocapture', '--format=pretty', '--test-threads=1']
-    write_new(out / f'{label}.command.json', json.dumps({
-        'command': command, 'cwd': str(ROOT / 'src'),
-        'CARGO_TARGET_DIR': env['CARGO_TARGET_DIR']}, indent=2) + '\n')
-    result = run_owned(command, cwd=ROOT / 'src', env=env, timeout=600)
-    log = result.stdout + result.stderr
-    write_new(out / f'{label}.log', log)
-    return result, log
-
-
-def passed(result, log):
-    assert result.returncode == 0 and '13 passed; 0 failed; 2 ignored;' in log, log
-    assert log.count('PDRS_VERIFIED_CHILD ') == 13, 'all matrix receipts required'
-
 
 def main():
-    env = os.environ.copy()
-    if not env.get('CARGO_TARGET_DIR'):
-        raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
-    out = Path(sys.argv[1]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
-    selected = sys.argv[2:]
-    mutations = [m for m in MUTATIONS if not selected or m[0] in selected]
-    assert mutations and (not selected or len(mutations) == len(selected)), 'unknown/duplicate mutation'
-    results = []
-    for name, source, old, new, tests, marker in mutations:
-        # Guard the test and both product files as well as the whole gateway
-        # product tree. Only the default HEAD baseline is permitted here.
-        with mutating_sources(ROOT, [META, PAIR, TEST]) as originals:
-            original = originals[source].decode()
-            assert original.count(old) == 1, (name, original.count(old))
-            positive, log = run(out, f'{name}-positive', env)
-            passed(positive, log)
-            changed = original.replace(old, new, 1)
-            write_new(out / f'{name}.patch', ''.join(difflib.unified_diff(
-                original.splitlines(True), changed.splitlines(True),
-                fromfile=str(source.relative_to(ROOT)), tofile=str(source.relative_to(ROOT)))))
-            source.write_text(changed)
-            negative, log = run(out, f'{name}-negative', env)
-            killed = (negative.returncode == 101 and 'panicked at' in log
-                      and all(f'{PREFIX}{test} ... FAILED' in log
-                              and f'{marker} {test.removesuffix("_cwd").replace("_", "-")}' in log
-                              for test in tests))
-            assert killed, f'{name}: compile/setup/timeout failures do not count as a kill'
-        # The shared context restored and verified HEAD bytes. Reacquire the
-        # same guard before the restored positive run, without writing bytes.
-        with mutating_sources(ROOT, [META, PAIR, TEST]):
-            restored, log = run(out, f'{name}-restored', env)
-            passed(restored, log)
-        results.append(dict(name=name, killed=True, restoredPass=True, tests=tests))
-        write_new(out / f'{name}.result.json', json.dumps(results[-1], indent=2) + '\n')
-        print(f'{name}: runtime RED, restored PASS', flush=True)
-    write_new(out / 'summary.json', json.dumps(results, indent=2) + '\n')
+    return matrix_main(ROOT, __file__, PREFIX, MUTATIONS,
+                       passed_count=13, child_count=13,
+                       paths=[META, PAIR, TEST, FIXTURE / "oracle.json", FIXTURE / "generate.mts"],
+                       any_cell=(), exact=False)
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
