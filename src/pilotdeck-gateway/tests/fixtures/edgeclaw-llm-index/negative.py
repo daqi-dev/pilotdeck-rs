@@ -21,12 +21,15 @@ source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/index.rs'
 cases = [
     ('dedupe-seen', source, 'if seen.contains(&kind)', 'if false', 'result classify-dedupe'),
     ('should-store-truthy', source, 'parsed.get("should_store").is_some_and(js_truthy)', 'parsed.get("should_store").is_some()', 'result classify-should-store-null'),
-    ('window-prev-2', source, 'let start = index.saturating_sub(2);', 'let start = index.saturating_sub(1);', 'requests classify-basic'),
+    ('window-prev-2', source, 'let start = index.saturating_sub(2);', 'let start = index.saturating_sub(1);', 'requests classify-window-last'),
     ('window-next-2', source, 'let end = (index + 3).min(turns.len());', 'let end = (index + 2).min(turns.len());', 'requests classify-basic'),
     ('turn-index-one-based', source, '("turn_index", JsValue::Number((index + 1) as f64)),', '("turn_index", JsValue::Number(index as f64)),', 'requests classify-basic'),
-    ('agent-empty-gate', source, 'agent_id.clone().filter(|agent_id| !agent_id.is_empty())', 'agent_id.clone()', 'requests classify-agent-empty'),
+    # The old agent-empty-gate mutant (dropping truthy_agent_id's empty filter)
+    # is equivalent: resolve_agent_primary_model re-filters empty ids, as TS
+    # gates twice too. This gate of the same TS truthiness spread is observable.
+    ('session-key-gate', source, 'if let Some(session_key) = session_key.filter(|session_key| !session_key.is_empty())', 'if let Some(session_key) = session_key.filter(|_| false)', 'result create-user-basic'),
     ('create-raw-response', source, 'let mut raw_response = JsString::default();', 'let mut raw_response = "mutant".into();', 'debug create-http-400'),
-    ('skip-strict-bool', source, 'matches!(parsed.get("skip"), Some(JsValue::Bool(true)))', 'parsed.get("skip").is_some()', 'result create-skip-string'),
+    ('skip-strict-bool', source, 'matches!(parsed.get("skip"), Some(JsValue::Bool(true)))', 'parsed.get("skip").is_some()', 'result create-user-basic'),
     ('generic-project-name', source, 'if kind == MemoryCreateKind::Project && is_generic_project_candidate_name(&name) {', 'if false {', 'result create-generic-project-name'),
     ('selected-id-trim', source, 'JsString::from_utf16(js_trim_units(selected.units()).to_vec())', 'selected.clone()', 'result select-attach-id-trim'),
     ('invalid-id-default-reason', source, '"Model selected an invalid project id."', '"Model selected an invalid project."', 'result select-attach-invalid-id-no-reason'),
@@ -39,12 +42,12 @@ cases = [
 messages = {
     'dedupe-seen': 'result classify-dedupe',
     'should-store-truthy': 'result classify-should-store-null',
-    'window-prev-2': 'requests classify-basic',
+    'window-prev-2': 'requests classify-window-last',
     'window-next-2': 'requests classify-basic',
     'turn-index-one-based': 'requests classify-basic',
-    'agent-empty-gate': 'requests classify-agent-empty',
+    'session-key-gate': 'result create-user-basic',
     'create-raw-response': 'debug create-http-400',
-    'skip-strict-bool': 'result create-skip-string',
+    'skip-strict-bool': 'result create-user-basic',
     'generic-project-name': 'result create-generic-project-name',
     'selected-id-trim': 'result select-attach-id-trim',
     'invalid-id-default-reason': 'result select-attach-invalid-id-no-reason',

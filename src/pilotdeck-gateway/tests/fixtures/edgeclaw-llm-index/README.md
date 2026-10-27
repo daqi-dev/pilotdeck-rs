@@ -54,7 +54,9 @@ exactly as they do in oracle.json.
 
 `negative.py` holds 14 single-anchor mutants of
 `src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/index.rs`, each bound to
-one named assertion of `tests/edgeclaw_llm_index.rs` (`oracle_matrix`).
+the named assertion of `tests/edgeclaw_llm_index.rs` (`oracle_matrix`) that the
+mutation trips first; the wire `requests` assertion compares before the derived
+`debug` trace so prompt mutations die where they are bound.
 `index.rs` is a new file, so `mutating_sources` refuses to run before the
 coordinator commits it; `--check-anchors` runs pre-commit and the full executor
 runs post-commit.
