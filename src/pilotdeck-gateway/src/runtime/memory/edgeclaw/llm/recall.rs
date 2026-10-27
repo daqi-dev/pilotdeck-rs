@@ -528,8 +528,13 @@ pub fn recall_project_source_priority(project: &ProjectShortlistCandidate) -> f6
 
 /// `chooseBestRecallProjectFallback`: the TS comparator (`:1629-1636`) uses
 /// `!==` on numbers, so +0 and -0 are equal and NaN is unequal, then returns
-/// the subtraction. `Array#sort` folds a NaN (or -0) comparator result to +0,
-/// which keeps the stable input order instead of falling through to `score`.
+/// the subtraction. `Array#sort` folds one NaN (or -0) comparison result to
+/// +0, but V8 sorts with TimSort, so a list containing NaN is not a total
+/// order and is not required to keep the input order. A NaN shortlist is not
+/// reachable from `buildProjectShortlist`, which only produces `exact` 0/2 and
+/// `score = exact * 10 + matched token count`; the reachable domain is pinned
+/// against the real TS sort by `js_fallback_sort_matches_ts_reachable_domain`
+/// rather than by porting TimSort.
 pub fn choose_best_recall_project_fallback(
     shortlist: &[ProjectShortlistCandidate],
 ) -> Option<&ProjectShortlistCandidate> {
@@ -562,6 +567,11 @@ fn recall_fallback_delta(
 }
 
 /// `Array#sort` treats NaN, +0 and -0 comparator results as equality.
+///
+/// This per-comparison fold is not a TimSort emulation: with NaN in the list
+/// the comparator has no total order, so V8 can pick a different first element
+/// than Rust's stable sort. NaN is unreachable from the shortlist producer
+/// (see `choose_best_recall_project_fallback`).
 fn js_sort_order(delta: f64) -> Ordering {
     if delta.is_nan() || delta == 0.0 {
         Ordering::Equal

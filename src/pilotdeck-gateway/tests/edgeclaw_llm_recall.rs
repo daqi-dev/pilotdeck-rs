@@ -602,8 +602,129 @@ fn js_fallback_sort_matches_ts() {
     );
 }
 
+const JS_SORT_ORACLE: &str = include_str!("fixtures/edgeclaw-llm-recall-js-sort/oracle.json");
+
+/// Locks the fallback ordering against the real TS TimSort on the input domain
+/// the product can actually produce (`exact` 0/2, `score = exact * 10 + matched
+/// token count`). Mixed NaN lists are reachable only by bypassing
+/// `buildProjectShortlist`; on those the TS comparator is not a total order and
+/// V8 and Rust may pick different first elements, so that domain is not pinned
+/// here (see `js_sort_order`).
+#[test]
+fn js_fallback_sort_matches_ts_reachable_domain() {
+    let oracle = baseline::oracle(JS_SORT_ORACLE);
+    let domain = oracle.get("domain").expect("#765 js-sort needs domain");
+    let strings = |key: &str| -> Vec<JsString> {
+        items(
+            domain
+                .get(key)
+                .unwrap_or_else(|| panic!("#765 js-sort needs domain.{key}")),
+            key,
+        )
+        .iter()
+        .map(|value| {
+            value
+                .as_string()
+                .unwrap_or_else(|| panic!("#765 js-sort domain.{key} must hold strings"))
+                .clone()
+        })
+        .collect()
+    };
+    let source_types = strings("sourceType");
+    let updated_at = strings("updatedAt");
+    let cases = items(
+        oracle.get("cases").expect("#765 js-sort needs cases"),
+        "cases",
+    );
+    let mut checked = 0;
+    for case in cases {
+        let name = string_field(case, "name")
+            .to_utf8()
+            .expect("#765 js-sort case name must be UTF-8");
+        let expected = string_field(case, "picked")
+            .to_utf8()
+            .expect("#765 js-sort picked must be UTF-8");
+        let rows = items(
+            case.get("candidates")
+                .unwrap_or_else(|| panic!("#765 js-sort {name} needs candidates")),
+            "candidates",
+        );
+        let mut shortlist = Vec::with_capacity(rows.len());
+        for (index, row) in rows.iter().enumerate() {
+            let values = items(row, "candidate");
+            assert_eq!(
+                values.len(),
+                4,
+                "#765 js-sort {name} row {index} must have 4 columns"
+            );
+            let number = |column: usize| {
+                values[column].as_number().unwrap_or_else(|| {
+                    panic!("#765 js-sort {name} row {index} column {column} must be a number")
+                })
+            };
+            let score = number(0);
+            let exact = number(1);
+            let source = number(2);
+            let updated = number(3);
+            assert!(
+                score.is_finite(),
+                "#765 js-sort {name} row {index} score must be finite"
+            );
+            assert!(
+                exact == 0.0 || exact == 2.0,
+                "#765 js-sort {name} row {index} exact must be 0 or 2"
+            );
+            let tokens = score - exact * 10.0;
+            assert!(
+                (0.0..=12.0).contains(&tokens) && tokens.fract() == 0.0,
+                "#765 js-sort {name} row {index} score must be exact*10 + 0..=12 matched tokens"
+            );
+            assert!(
+                source >= 0.0 && source < source_types.len() as f64,
+                "#765 js-sort {name} row {index} source index out of range"
+            );
+            assert!(
+                updated >= 0.0 && updated < updated_at.len() as f64,
+                "#765 js-sort {name} row {index} updatedAt index out of range"
+            );
+            shortlist.push(ProjectShortlistCandidate {
+                project_id: format!("p{index}").into(),
+                project_name: format!("P{index}").into(),
+                updated_at: updated_at[updated as usize].clone(),
+                source_type: Some(source_types[source as usize].clone()),
+                score,
+                exact,
+                source: "query".into(),
+                ..ProjectShortlistCandidate::default()
+            });
+        }
+        let picked = pilotdeck_gateway::runtime::memory::edgeclaw::llm::recall::choose_best_recall_project_fallback(
+            &shortlist,
+        )
+        .unwrap_or_else(|| panic!("#765 js-sort {name} needs a candidate"))
+        .project_id
+        .to_utf8()
+        .expect("#765 js-sort picked project id must be UTF-8");
+        assert_eq!(
+            picked, expected,
+            "#765 reachable-domain sort first mismatch at {name}: picked {picked}, TS picked {expected}"
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 200,
+        "#765 js-sort needs at least 200 cases, got {checked}"
+    );
+}
+
 #[test]
 #[ignore]
 fn regenerates_identically() {
     baseline::regenerates_identically("edgeclaw-llm-recall");
+}
+
+#[test]
+#[ignore]
+fn regenerates_js_sort_identically() {
+    baseline::regenerates_identically("edgeclaw-llm-recall-js-sort");
 }
