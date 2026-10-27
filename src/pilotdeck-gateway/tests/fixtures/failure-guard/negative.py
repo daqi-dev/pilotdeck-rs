@@ -42,35 +42,79 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
     pure = 'runtime::turn::failure_guard::tests::real_ts_failure_guard_and_classify'
     replay = 'runtime::turn::submit::tests::real_ts_submit_scenarios'
 
+    def submit_marker(case, index, step):
+        return f'#813 {case}: step {index} "{step}": submit scenario must match'
+
+    def guard_trip_marker(case, action):
+        return (f'#813 failure guard trip: {case} action {action}: '
+                'trip result bytes must match')
+
+    def guard_message_marker(case, action):
+        return (f'#813 failure guard message: {case} action {action}: '
+                'trip message bytes must match')
+
+    # #813 fix-r8: every mutant names the complete message of the one assertion
+    # that must fail. There is no `case: step` / `failure guard` fallback: those
+    # prefixes also matched another assertion in the same test (sibling P1).
     def mutation(name, path, before, after, case=None, marker=None):
         assert original[path].decode().count(before) == 1, (name, 'anchor not unique')
+        assert marker is not None, (name, 'needs an explicit target assertion message')
+        assert marker.startswith('#813 '), (name, 'marker must be a #813 assertion message', marker)
+        assert marker not in ('#813 failure guard', '#813 assertion'), (name, marker)
         return dict(name=name, path=path, before=before, after=after, test=replay if case else pure,
-            case=case, marker=marker or (f'{case}: step' if case else 'failure guard'))
+            case=case, marker=marker, target=marker)
 
-    mutants = []
-    for offset, label in [('+ 1.0', 'plus-one'), ('- 1.0', 'minus-one')]:
-        mutants.append(mutation('tool-threshold-' + label, guard, '*failures < limit', f'*failures < limit {offset}'))
-        mutants.append(mutation('model-threshold-' + label, guard, 'self.model_failures < limit', f'self.model_failures < limit {offset}'))
-    mutants += [
-        mutation('counted-classification-wrong', guard, '"tool_unavailable",', '"permission_denied",'),
-        mutation('prefix-shortest-not-longest', guard, '.max_by_key(|(unit, _)| unit.units().len())', '.min_by_key(|(unit, _)| unit.units().len())'),
-        mutation('exact-unit-skipped', guard, 'if let Some(limit) = limits.get_key(name)', 'if let Some(limit) = limits.get_key(name).filter(|_| false)'),
-        mutation('success-clears-window', guard, 'if !is(result, "type", "error") {', 'if !is(result, "type", "error") { self.tool_failures.clear();'),
-        mutation('trip-latch-ignored', guard, 'if self.tripped || ok ||', 'if (self.tripped && false) || ok ||'),
-        mutation('trip-message-changed', guard, '次，已自动停止，请稍后重试', '次，已自动停止，请重试'),
-        mutation('disabled-policy-observed', submit, '.filter(|config| truthy(field(config, "enabled")))', '.filter(|config| { let _ = config; true })', 'guard-disabled'),
-        mutation('model-not-observed', submit, '&& let Some(trip) = guard.observe(&event)', '&& !is(&event, "type", "turn_continued") && let Some(trip) = guard.observe(&event)', 'guard-model-trip'),
-        mutation('tool-not-observed', submit, '&& let Some(trip) = guard.observe(&event)', '&& !is(&event, "type", "tool_result") && let Some(trip) = guard.observe(&event)', 'guard-tool-trip'),
-        mutation('subagent-not-observed', submit, '&& let Some(trip) = guard.observe(&event)', '&& !is(&event, "type", "subagent_tool_result") && let Some(trip) = guard.observe(&event)', 'guard-subagent-trip'),
-        mutation('trip-still-admitted', submit, 'let _ = handle.abort(&format!("run_policy:{code}").into());', 'let _ = (&handle, &code);', 'guard-model-trip'),
-        mutation('trip-status-not-recorded', submit, 'let _ = self.host.record_failure(run, &record).await;\n        publisher.gateway_event(object([', 'let _ = record;\n        publisher.gateway_event(object([', 'guard-tool-trip'),
-        mutation('record-error-propagated', submit, 'let _ = self.host.record_failure(run, &record).await;\n        publisher.gateway_event(object([', 'self.host.record_failure(run, &record).await?;\n        publisher.gateway_event(object([', 'guard-trip-status-record-failed'),
-        mutation('model-metadata-dropped', submit, 'build_guard_trip_message(trip, model.as_ref())', 'build_guard_trip_message(trip, model.as_ref().filter(|_| false))', 'guard-model-trip'),
-        mutation('trip-abort-reason-wrong', submit, 'format!("run_policy:{code}")', 'format!("policy:{code}")', 'guard-tool-trip'),
+    accumulate = 'accumulate-success-does-not-reset-and-trip-latches'
+    model_window = 'model-window-and-reset'
+    exact = 'exact-wins-and-utf16-label'
+    longest = 'longest-prefix-shared-across-subagent'
+    mutants = [
+        mutation('tool-threshold-plus-one', guard, '*failures < limit', '*failures < limit + 1.0',
+            marker=guard_trip_marker(accumulate, 4)),
+        mutation('tool-threshold-minus-one', guard, '*failures < limit', '*failures < limit - 1.0',
+            marker=guard_trip_marker(accumulate, 4)),
+        mutation('model-threshold-plus-one', guard, 'self.model_failures < limit',
+            'self.model_failures < limit + 1.0', marker=guard_trip_marker(model_window, 3)),
+        mutation('model-threshold-minus-one', guard, 'self.model_failures < limit',
+            'self.model_failures < limit - 1.0', marker=guard_trip_marker(model_window, 3)),
     ]
     mutants += [
-        mutation('guard-wire-order-changed', submit, '("runId", JsValue::String(run.run_id.clone())),\n            ("event", "run_policy_stopped".into()),', '("event", "run_policy_stopped".into()),\n            ("runId", JsValue::String(run.run_id.clone())),', 'guard-model-trip'),
-        mutation('next-window-keeps-model-count', submit, '.map(FailureGuard::new);', '.map(|config| { let mut guard = FailureGuard::new(config); if run.run_id.equals_str("r2") { let _ = guard.on_model_failure(); } guard });', 'guard-reset-next-turn'),
+        mutation('counted-classification-wrong', guard, '"tool_unavailable",', '"permission_denied",',
+            marker=guard_trip_marker(accumulate, 4)),
+        mutation('prefix-shortest-not-longest', guard, '.max_by_key(|(unit, _)| unit.units().len())', '.min_by_key(|(unit, _)| unit.units().len())',
+            marker=guard_trip_marker(longest, 2)),
+        mutation('exact-unit-skipped', guard, 'if let Some(limit) = limits.get_key(name)', 'if let Some(limit) = limits.get_key(name).filter(|_| false)',
+            marker=guard_trip_marker(accumulate, 4)),
+        mutation('success-clears-window', guard, 'if !is(result, "type", "error") {', 'if !is(result, "type", "error") { self.tool_failures.clear();',
+            marker=guard_trip_marker(accumulate, 4)),
+        mutation('trip-latch-ignored', guard, 'if self.tripped || ok ||', 'if (self.tripped && false) || ok ||',
+            marker=guard_trip_marker(exact, 0)),
+        mutation('trip-message-changed', guard, '次，已自动停止，请稍后重试', '次，已自动停止，请重试',
+            marker=guard_message_marker(accumulate, 4)),
+        mutation('disabled-policy-observed', submit, '.filter(|config| truthy(field(config, "enabled")))', '.filter(|config| { let _ = config; true })', 'guard-disabled',
+            submit_marker('guard-disabled', 2, 'terminal')),
+        mutation('model-not-observed', submit, '&& let Some(trip) = guard.observe(&event)', '&& !is(&event, "type", "turn_continued") && let Some(trip) = guard.observe(&event)', 'guard-model-trip',
+            submit_marker('guard-model-trip', 2, 'terminal')),
+        mutation('tool-not-observed', submit, '&& let Some(trip) = guard.observe(&event)', '&& !is(&event, "type", "tool_result") && let Some(trip) = guard.observe(&event)', 'guard-tool-trip',
+            submit_marker('guard-tool-trip', 2, 'terminal')),
+        mutation('subagent-not-observed', submit, '&& let Some(trip) = guard.observe(&event)', '&& !is(&event, "type", "subagent_tool_result") && let Some(trip) = guard.observe(&event)', 'guard-subagent-trip',
+            submit_marker('guard-subagent-trip', 2, 'terminal')),
+        mutation('trip-still-admitted', submit, 'let _ = handle.abort(&format!("run_policy:{code}").into());', 'let _ = (&handle, &code);', 'guard-model-trip',
+            submit_marker('guard-model-trip', 2, 'terminal')),
+        mutation('trip-status-not-recorded', submit, 'let _ = self.host.record_failure(run, &record).await;\n        publisher.gateway_event(object([', 'let _ = record;\n        publisher.gateway_event(object([', 'guard-tool-trip',
+            submit_marker('guard-tool-trip', 2, 'terminal')),
+        mutation('record-error-propagated', submit, 'let _ = self.host.record_failure(run, &record).await;\n        publisher.gateway_event(object([', 'self.host.record_failure(run, &record).await?;\n        publisher.gateway_event(object([', 'guard-trip-status-record-failed',
+            submit_marker('guard-trip-status-record-failed', 2, 'terminal')),
+        mutation('model-metadata-dropped', submit, 'build_guard_trip_message(trip, model.as_ref())', 'build_guard_trip_message(trip, model.as_ref().filter(|_| false))', 'guard-model-trip',
+            submit_marker('guard-model-trip', 2, 'terminal')),
+        mutation('trip-abort-reason-wrong', submit, 'format!("run_policy:{code}")', 'format!("policy:{code}")', 'guard-tool-trip',
+            submit_marker('guard-tool-trip', 2, 'terminal')),
+    ]
+    mutants += [
+        mutation('guard-wire-order-changed', submit, '("runId", JsValue::String(run.run_id.clone())),\n            ("event", "run_policy_stopped".into()),', '("event", "run_policy_stopped".into()),\n            ("runId", JsValue::String(run.run_id.clone())),', 'guard-model-trip',
+            submit_marker('guard-model-trip', 2, 'terminal')),
+        mutation('next-window-keeps-model-count', submit, '.map(FailureGuard::new);', '.map(|config| { let mut guard = FailureGuard::new(config); if run.run_id.equals_str("r2") { let _ = guard.on_model_failure(); } guard });', 'guard-reset-next-turn',
+            submit_marker('guard-reset-next-turn', 4, 'second')),
     ]
     # Take the real configuration snapshot before refresh rather than after it.
     submit_text = original[submit].decode()
@@ -79,7 +123,8 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
     block = submit_text[start:end]
     config_start = block.index('        let mut failure_guard = self')
     before_refresh = block[config_start:] + block[:config_start]
-    mutants.append(mutation('config-snapshotted-before-refresh', submit, block, before_refresh, 'guard-refresh-enables'))
+    mutants.append(mutation('config-snapshotted-before-refresh', submit, block, before_refresh, 'guard-refresh-enables',
+        submit_marker('guard-refresh-enables', 2, 'terminal')))
 
     # #813 fix-r4: both baseline rows survive a subset; a failing baseline
     # breaks before any mutant verdict.
@@ -128,7 +173,7 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
             valid = not timed_out and ((returncode == 0 and 'test result: ok. 1 passed; 0 failed;' in raw
                 and f'test {control["test"]} ... ok' in raw) if marker is None else (
                 returncode == 101 and 'test result: FAILED' in raw
-                and named_test_killed(raw, control['test'], marker)
+                and named_test_killed(raw, control['test'], marker, control.get('target'))
                 and 'could not compile' not in raw))
             (out / f'{control["name"]}.log').write_text('COMMAND ' + ' '.join(cmd) + '\n' + slots.stdout + slots.stderr + raw + f'\nexit={returncode} timed_out={timed_out}\n')
             # run_owned reaps the group itself, so the leader pid is not exported.

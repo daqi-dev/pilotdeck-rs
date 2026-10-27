@@ -16,26 +16,33 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2090 filtered ou
      Running unittests src/lib.rs (_build/cargo-target/debug/deps/pilotdeck_gateway-5ce1c4618989be9c)
 
 thread '<unnamed>' (294332673) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:954:17:
-A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink (concurrent-4)
+#813 emit: returned before its own event reached the sink
+#813 emit event: concurrent-4
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
 thread '<unnamed>' (294332676) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:954:17:
-A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink (concurrent-7)
+#813 emit: returned before its own event reached the sink
+#813 emit event: concurrent-7
 
 thread '<unnamed>' (294332672) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:954:17:
-A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink (concurrent-3)
+#813 emit: returned before its own event reached the sink
+#813 emit event: concurrent-3
 
 thread '<unnamed>' (294332671) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:954:17:
-A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink (concurrent-2)
+#813 emit: returned before its own event reached the sink
+#813 emit event: concurrent-2
 
 thread '<unnamed>' (294332670) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:954:17:
-A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink (concurrent-1)
+#813 emit: returned before its own event reached the sink
+#813 emit event: concurrent-1
 
 thread '<unnamed>' (294332675) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:954:17:
-A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink (concurrent-6)
+#813 emit: returned before its own event reached the sink
+#813 emit event: concurrent-6
 
 thread '<unnamed>' (294332669) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:954:17:
-A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink (concurrent-0)
+#813 emit: returned before its own event reached the sink
+#813 emit event: concurrent-0
 
 thread 'runtime::turn::gateway::tests::concurrent_external_emits_are_serialized_on_the_serial_host' (294332667) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:964:37:
 caller thread: Any { .. }

@@ -50,47 +50,57 @@ with mutating_sources(repo, [gateway, submit, tests, submit_tests, session]) as 
     ws_test = 'real_ts_gateway_frames_registry_replay_and_concurrency'
     cap_test = 'unavailable_capabilities_are_explicitly_refused'
 
+    def fence_marker(case):
+        return f'#813 abort fence: {case}: results must match'
+
     def mutation(name, path, before, after, marker, test=fence_test):
         assert original[path].decode().count(before) == 1, (name, 'anchor not unique')
-        return dict(name=name, path=path, modified=original[path].decode().replace(before, after, 1).encode(), marker=marker, test=test)
+        # #813 fix-r8: a bare scenario name matches any failure in that case,
+        # including a different assertion. Each mutant names the complete
+        # message of the assertion it must trip.
+        assert marker.startswith('#813 '), (name, 'marker must be a #813 assertion message', marker)
+        assert marker != '#813 assertion' and not marker.startswith('#813 assertion `left ='), \
+            (name, 'generic assertion diagnostic is not evidence')
+        return dict(name=name, path=path, modified=original[path].decode().replace(before, after, 1).encode(),
+                    marker=marker, target=marker, test=test)
 
     mutants = [
         mutation('max-not-current-slot', gateway,
             'drains\n                    .current\n                    .get(key)\n                    .and_then(|id| drains.active.get(id))',
             'drains.active.iter().filter(|(_, (run, _))| run.as_ref().is_some_and(|run| &run.session_key == key)).max_by_key(|(id, _)| *id).map(|(_, entry)| entry)',
-            'completed-slot-does-not-refill'),
+            fence_marker('completed-slot-does-not-refill')),
         mutation('begin-keeps-old-slot', gateway, 'self.current.insert(run.session_key.clone(), id);',
-            'self.current.entry(run.session_key.clone()).or_insert(id);', 'latest-session-fence-only'),
+            'self.current.entry(run.session_key.clone()).or_insert(id);', fence_marker('latest-session-fence-only')),
         mutation('obsolete-drop-clears-current-slot', gateway,
             '&& drains.current.get(&run.session_key) == Some(&self.id)', '',
-            'obsolete-drop-preserves-current-slot'),
+            fence_marker('obsolete-drop-preserves-current-slot')),
         mutation('other-session-selected', gateway, 'drains\n                    .current\n                    .get(key)',
-            'drains.current.values().max()', 'other-session-does-not-replace'),
+            'drains.current.values().max()', fence_marker('other-session-does-not-replace')),
         mutation('snapshot-before-router-await', gateway, yield_step + lookup,
-            lookup + yield_step, 'replacement-during-abort'),
+            lookup + yield_step, fence_marker('replacement-during-abort')),
         mutation('snapshot-after-owner-drain', gateway, yield_step,
             '            self.0.submitter.owner.abort_turn(key, run, reason).await.map_err(|error| RequestError::new(error.to_string()))?;\n' ,
-            'ungated-cleanup-replacement', 'abort_snapshots_before_ungated_cleanup_replacement'),
+            fence_marker('ungated-cleanup-replacement'), 'abort_snapshots_before_ungated_cleanup_replacement'),
         mutation('admission-only-matching', session,
             'run_id.is_none() || cancelled || active.as_ref() == run_id',
             'run_id.is_none() || (cancelled && false) || active.as_ref() == run_id',
-            'admission-cleared-before-consumer'),
+            fence_marker('admission-cleared-before-consumer')),
         mutation('stale-run-check-skipped', session,
             'run_id.is_none() || cancelled || active.as_ref() == run_id',
             '(run_id.is_none() || cancelled || active.as_ref() == run_id) || true',
-            'stale-run-does-not-wait'),
+            fence_marker('stale-run-does-not-wait')),
         mutation('pre-admission-overwrites-slot', submit,
-            '        admitted(&run);', '', 'rejected-run-does-not-replace-fence'),
+            '        admitted(&run);', '', fence_marker('rejected-run-does-not-replace-fence')),
         mutation('requested-run-filter', gateway,
             '.and_then(|id| drains.active.get(id))',
             '.and_then(|id| drains.active.get(id)).filter(|(identity, _)| run.is_none_or(|run| identity.as_ref().is_some_and(|submitted| &submitted.run_id == run)))',
-            'replacement-during-abort'),
+            fence_marker('replacement-during-abort')),
         mutation('consumer-wait-skipped', gateway, 'let _ = done.wait_for(|done| *done).await;',
-            'let _ = &mut done;', 'admission-cleared-before-consumer'),
+            'let _ = &mut done;', fence_marker('admission-cleared-before-consumer')),
         mutation('observation-does-not-wait', tests,
             'if self.0.lock().unwrap().len() >= frames && (!ended || consumer.load(Ordering::SeqCst))',
             'if true || (self.0.lock().unwrap().len() >= frames && (!ended || consumer.load(Ordering::SeqCst)))',
-            'observation must wait for delivery before the receive completes', 'transport_observation_waits_for_delivery_and_receive_completion'),
+            '#813 transport observation: must wait for delivery before the receive completes', 'transport_observation_waits_for_delivery_and_receive_completion'),
     ]
     # Move the observer to identity resolution, before acceptance/admission, so a
     # busy/preflight submission can overwrite a valid current consumer slot.
@@ -102,15 +112,15 @@ with mutating_sources(repo, [gateway, submit, tests, submit_tests, session]) as 
     # That mutation is exercised through the real WS busy case as well: manual
     # fence replay deliberately calls only the completion-begin observer.
     m['test'] = ws_test
-    m['marker'] = 'abort-after-busy'
+    m['marker'] = m['target'] = '#813 abort-after-busy: step \"abort\": gateway frames, active and ended must match'
 
     # The two filter controls must fail through the named test's own
     # `assert!(selected > 0, "<message>")`. The marker is that assertion
     # message, not a code fragment; verify the literal is still in the test
     # source before trusting any verdict derived from it (#813 fix-r3).
     filter_assertions = {
-        'PDRS_GATEWAY_CASE': ('gateway case filter must match at least one scenario', tests),
-        'PDRS_SUBMIT_CAPABILITY': ('submit capability filter must match at least one scenario', submit_tests),
+        'PDRS_GATEWAY_CASE': ('#813 gateway case filter: must match at least one scenario', tests),
+        'PDRS_SUBMIT_CAPABILITY': ('#813 submit capability filter: must match at least one scenario', submit_tests),
     }
     for key, (message, path) in filter_assertions.items():
         # Relax whitespace only outside the string literal: rustfmt may split
@@ -174,7 +184,7 @@ with mutating_sources(repo, [gateway, submit, tests, submit_tests, session]) as 
             valid = not timed_out and (baseline_ok if marker is None else (
                 returncode == 101 and 'test result: FAILED' in raw
                 and 'could not compile' not in raw
-                and named_test_killed(raw, test_name, marker)))
+                and named_test_killed(raw, test_name, marker, control.get('target'))))
             (out / f'{control["name"]}.log').write_text('COMMAND ' + ' '.join(cmd) + '\n' + slots.stdout + slots.stderr
                 + raw + f'\nexit={returncode} timed_out={timed_out}\n')
             summary.append(dict(name=control['name'], exit=returncode, timed_out=timed_out, valid=valid, marker=marker))

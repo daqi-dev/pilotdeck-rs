@@ -16,7 +16,7 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2090 filtered ou
      Running unittests src/lib.rs (_build/cargo-target/debug/deps/pilotdeck_gateway-5ce1c4618989be9c)
 
 thread 'runtime::turn::gateway::tests::serial_timer_cancels_queued_callbacks_and_replacements' (296141492) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:847:5:
-assertion `left == right` failed: replacement timer fires once
+assertion `left == right` failed: #813 serial timer: replacement timer fires once
   left: 0
  right: 1
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
