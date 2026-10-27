@@ -238,7 +238,8 @@ def main():
     env = os.environ.copy()
     selected = set(sys.argv[2:])
     rows = [row for row in mutations if not selected or row[0] in selected]
-    unknown = selected - {row[0] for row in mutations}
+    data_names = {"workspace-snapshot-oracle-truncated", "generator-guard-bypassed"}
+    unknown = selected - ({row[0] for row in mutations} | data_names)
     if unknown:
         print(f"unknown mutation names: {sorted(unknown)}", file=sys.stderr)
         return 2
@@ -280,102 +281,140 @@ def main():
                     record(name, "KILLED", "named assertion failed")
                 else:
                     record(name, "INVALID", "test failed outside the named assertion")
+            except Exception as error:
+                # One mutant's bookkeeping/IO error must not hide every later
+                # row; restore still runs in `finally`. SystemExit from a
+                # restore mismatch deliberately escapes this handler.
+                record(
+                    name,
+                    "INVALID",
+                    f"runner error: {type(error).__name__}: {error}",
+                )
             finally:
                 path.write_bytes(original)
                 if hashlib.sha256(path.read_bytes()).hexdigest() != before_bytes:
                     record(name, "INVALID", "restore mismatch")
                     raise SystemExit(2)
 
-        # #322-3: truncating the committed oracle must trip the exact pin, not
-        # silently replay one scenario. This is a data mutation; no compile.
-        name = "workspace-snapshot-oracle-truncated"
-        original = snapshots[ORACLE]
-        before_bytes = hashlib.sha256(original).hexdigest()
-        try:
-            data = json.loads(original)
-            expected_scenarios = len(data.get("scenarios", []))
-            data["scenarios"] = data.get("scenarios", [])[:1]
-            ORACLE.write_text(
-                json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-            )
-            result = run_test(
-                "workspace_snapshot", "scenarios_match_ts_outcomes_and_trees", env
-            )
-            log = result.stdout + result.stderr
-            (out / f"{name}.log").write_text(log)
-            marker = "#322 workspace-snapshot corpus is pinned"
-            if result.returncode == 0:
-                record(name, "SURVIVED", f"oracle shrank from {expected_scenarios} to 1")
-            elif marker in log:
-                record(name, "KILLED", "exact corpus pin failed")
-            else:
-                record(name, "INVALID", "failed outside the corpus pin")
-        finally:
-            ORACLE.write_bytes(original)
-            if hashlib.sha256(ORACLE.read_bytes()).hexdigest() != before_bytes:
-                record(name, "INVALID", "restore mismatch")
-                raise SystemExit(2)
-
-        # #322-4: bypass the shared ownership guard in the generator's own
-        # negative control; the existing `assert.rejects` must fail the run.
-        name = "generator-guard-bypassed"
-        before = (
-            "      () => removeOwned(guardRoot, '/tmp/pdrs-a66-pr4-legacy', "
-            "{ recursive: true }, recordingRemove),"
-        )
-        after = (
-            "      () => recordingRemove(resolve(guardRoot, "
-            "'/tmp/pdrs-a66-pr4-legacy'), { recursive: true, force: true }),"
-        )
-        original = snapshots[GENERATOR]
-        before_bytes = hashlib.sha256(original).hexdigest()
-        try:
-            content = original.decode("utf-8")
-            count = content.count(before)
-            if count != 1:
-                record(
-                    name,
-                    "INVALID",
-                    f"stale anchor: expected 1 occurrence, found {count}",
+        def oracle_truncation():
+            # #322-3: truncating the committed oracle must trip the exact pin,
+            # not silently replay one scenario. This is a data mutation; no
+            # compile.
+            name = "workspace-snapshot-oracle-truncated"
+            original = snapshots[ORACLE]
+            before_bytes = hashlib.sha256(original).hexdigest()
+            try:
+                data = json.loads(original)
+                expected_scenarios = len(data.get("scenarios", []))
+                data["scenarios"] = data.get("scenarios", [])[:1]
+                # The corpus deliberately carries lone UTF-16 surrogates (the
+                # surrogate-readback scenario and the cross-check cases). A raw
+                # surrogate cannot be encoded as UTF-8, so escape it: json.loads
+                # reads \ud800 back as the same lone surrogate, which is exactly
+                # what this mutant must preserve.
+                ORACLE.write_text(
+                    json.dumps(data, ensure_ascii=True, indent=2) + "\n",
+                    encoding="utf-8",
                 )
-            elif not os.environ.get("PDRS_BASELINE"):
-                record(name, "INVALID", "PDRS_BASELINE is unset")
-            else:
-                GENERATOR.write_text(content.replace(before, after, 1), encoding="utf-8")
-                node_out = out / "generator-guard-bypassed.out"
-                node_out.mkdir(parents=True, exist_ok=True)
-                result = run_owned(
-                    [
-                        "node",
-                        "--disable-warning=ExperimentalWarning",
-                        "--import",
-                        str(
-                            Path(os.environ["PDRS_BASELINE"])
-                            / "node_modules/tsx/dist/loader.mjs"
-                        ),
-                        str(GENERATOR),
-                        str(node_out),
-                    ],
-                    cwd=ROOT,
-                    env=env,
-                    timeout=600,
+                result = run_test(
+                    "workspace_snapshot", "scenarios_match_ts_outcomes_and_trees", env
                 )
                 log = result.stdout + result.stderr
                 (out / f"{name}.log").write_text(log)
+                marker = "#322 workspace-snapshot corpus is pinned"
                 if result.returncode == 0:
-                    record(name, "SURVIVED", "generator accepted the bypass")
-                elif "Missing expected rejection" in log or "outside the run directory" in log:
-                    record(name, "KILLED", "generator ownership self-check failed")
+                    record(
+                        name,
+                        "SURVIVED",
+                        f"oracle shrank from {expected_scenarios} to 1",
+                    )
+                elif marker in log:
+                    record(name, "KILLED", "exact corpus pin failed")
                 else:
-                    record(name, "INVALID", "generator failed outside the guard")
-        finally:
-            GENERATOR.write_bytes(original)
-            if hashlib.sha256(GENERATOR.read_bytes()).hexdigest() != before_bytes:
-                record(name, "INVALID", "restore mismatch")
-                raise SystemExit(2)
+                    record(name, "INVALID", "failed outside the corpus pin")
+            except Exception as error:
+                record(name, "INVALID", f"runner error: {type(error).__name__}: {error}")
+            finally:
+                ORACLE.write_bytes(original)
+                if hashlib.sha256(ORACLE.read_bytes()).hexdigest() != before_bytes:
+                    record(name, "INVALID", "restore mismatch")
+                    raise SystemExit(2)
+
+        def generator_bypass():
+            # #322-4: bypass the shared ownership guard in the generator's own
+            # negative control; the existing `assert.rejects` must fail the run.
+            name = "generator-guard-bypassed"
+            before = (
+                "      () => removeOwned(guardRoot, '/tmp/pdrs-a66-pr4-legacy', "
+                "{ recursive: true }, recordingRemove),"
+            )
+            after = (
+                "      () => recordingRemove(resolve(guardRoot, "
+                "'/tmp/pdrs-a66-pr4-legacy'), { recursive: true, force: true }),"
+            )
+            original = snapshots[GENERATOR]
+            before_bytes = hashlib.sha256(original).hexdigest()
+            try:
+                content = original.decode("utf-8")
+                count = content.count(before)
+                if count != 1:
+                    record(
+                        name,
+                        "INVALID",
+                        f"stale anchor: expected 1 occurrence, found {count}",
+                    )
+                elif not os.environ.get("PDRS_BASELINE"):
+                    record(name, "INVALID", "PDRS_BASELINE is unset")
+                else:
+                    GENERATOR.write_text(
+                        content.replace(before, after, 1), encoding="utf-8"
+                    )
+                    node_out = out / "generator-guard-bypassed.out"
+                    node_out.mkdir(parents=True, exist_ok=True)
+                    result = run_owned(
+                        [
+                            "node",
+                            "--disable-warning=ExperimentalWarning",
+                            "--import",
+                            str(
+                                Path(os.environ["PDRS_BASELINE"])
+                                / "node_modules/tsx/dist/loader.mjs"
+                            ),
+                            str(GENERATOR),
+                            str(node_out),
+                        ],
+                        cwd=ROOT,
+                        env=env,
+                        timeout=600,
+                    )
+                    log = result.stdout + result.stderr
+                    (out / f"{name}.log").write_text(log)
+                    if result.returncode == 0:
+                        record(name, "SURVIVED", "generator accepted the bypass")
+                    elif (
+                        "Missing expected rejection" in log
+                        or "outside the run directory" in log
+                    ):
+                        record(name, "KILLED", "generator ownership self-check failed")
+                    else:
+                        record(name, "INVALID", "generator failed outside the guard")
+            except Exception as error:
+                record(name, "INVALID", f"runner error: {type(error).__name__}: {error}")
+            finally:
+                GENERATOR.write_bytes(original)
+                if hashlib.sha256(GENERATOR.read_bytes()).hexdigest() != before_bytes:
+                    record(name, "INVALID", "restore mismatch")
+                    raise SystemExit(2)
+
+        # The two data mutations are rows too: select them by name like the
+        # source mutations instead of always running both.
+        if not selected or "workspace-snapshot-oracle-truncated" in selected:
+            oracle_truncation()
+        if not selected or "generator-guard-bypassed" in selected:
+            generator_bypass()
 
     (out / "summary.json").write_text(
-        json.dumps(results, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps(results, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
     )
     killed = sum(row["status"] == "KILLED" for row in results)
     print(f"{killed}/{len(results)} KILLED; see {out / 'summary.json'}", flush=True)
