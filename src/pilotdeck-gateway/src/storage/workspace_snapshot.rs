@@ -7,16 +7,23 @@
 //! object files deduplicated by content, and
 //! `workspaces/<id>/sessions/<id>/snapshots/<sha256 of session\0turn\0phase>/`
 //! partitions holding `manifest.json`, an empty `_COMMITTED`, or a pretty
-//! `_FAILED.json`. Markers and manifests are written to a sibling temporary
-//! and renamed into place; manifests are `JSON.stringify(value, null, 2)`
-//! with no trailing newline.
+//! `_FAILED.json`. A capture round writes its `_COMMITTED` (first) and
+//! `manifest.json` (last) into a private `<snapshot_root>/.staging/<uuid>/`
+//! directory and publishes with a single rename — over an occupied partition
+//! (a concurrent round or planted content) by TS's own per-file rename
+//! primitive, which overwrites (Node v22.22.0 probe
+//! `_tmp/20261026-issue-293/fix-r2/probe-c.out`). Failure cleanup removes
+//! only the round's own staging directory, never a published path, and the
+//! walk skips `.staging/`. Manifests are
+//! `JSON.stringify(value, null, 2)` with no trailing newline.
 //!
 //! Known divergences and storage-contract notes (ledger entries are unapproved):
 //! specs/gateway-parity/accepted-diffs.md A6.6-SNAPSHOT-IO-001 (its R1
 //! correction in diffs/ supersedes the fallback shape described there) and
 //! A6.6-SNAPSHOT-COLLATION-001; the #293 hardening entries live in
-//! diffs/A6.6-SNAPSHOT-OBJECTKEY-001(-R1) and
-//! diffs/A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001(-R1). Synchronous execution and
+//! diffs/A6.6-SNAPSHOT-OBJECTKEY-001(-R1),
+//! diffs/A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001(-R1, -R2), and
+//! diffs/A6.6-SNAPSHOT-IO-001-R2. Synchronous execution and
 //! UTF-16 preservation below describe the contract, not independently
 //! measured output differences.
 //! - IO error text inside `_FAILED.json` uses the Node libuv wording from the
@@ -53,10 +60,7 @@ use std::{
     fmt,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::unix::{
-        ffi::OsStrExt,
-        fs::{MetadataExt, symlink},
-    },
+    os::unix::{ffi::OsStrExt, fs::symlink},
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex, PoisonError},
 };
@@ -312,7 +316,7 @@ impl WorkspaceSnapshotProvider {
     pub fn list(&self) -> Result<Vec<WorkspaceSnapshotDescriptor>> {
         let root = self.root()?;
         let mut manifests = Vec::new();
-        walk_manifests(Path::new(&root), &mut manifests)?;
+        walk_manifests(Path::new(&root), &mut manifests, true)?;
         let mut descriptors = Vec::new();
         for (manifest_path, manifest) in &manifests {
             if let Some(descriptor) = describe(manifest, manifest_path) {
@@ -514,7 +518,7 @@ impl WorkspaceSnapshotProvider {
     fn find_units(&self, snapshot_id: &[u16]) -> Result<Option<(String, JsValue)>> {
         let root = self.root()?;
         let mut manifests = Vec::new();
-        walk_manifests(Path::new(&root), &mut manifests)?;
+        walk_manifests(Path::new(&root), &mut manifests, true)?;
         Ok(manifests.into_iter().rfind(|(_, manifest)| {
             field(manifest, "snapshotId")
                 .as_string()
@@ -528,8 +532,15 @@ impl WorkspaceSnapshotProvider {
 /// the entry, the closest synchronous mapping. Names come back in libuv
 /// `uv_fs_scandir` order (`strcmp` on the raw bytes), not native directory
 /// order; directories recurse in that same order and symlinks are never
-/// followed (`lstat`).
-fn walk_manifests(root: &Path, manifests: &mut Vec<(String, JsValue)>) -> Result<()> {
+/// followed (`lstat`). The root-level `.staging` directory is skipped (#293
+/// fix-r2, registered divergence A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R2): it
+/// holds in-flight rounds, and TS has no equivalent private staging area —
+/// its walk sees a round's `partition/.tmp-*/manifest.json` mid-flight.
+fn walk_manifests(
+    root: &Path,
+    manifests: &mut Vec<(String, JsValue)>,
+    root_level: bool,
+) -> Result<()> {
     let Ok(entries) = fs::read_dir(root) else {
         return Ok(());
     };
@@ -540,12 +551,15 @@ fn walk_manifests(root: &Path, manifests: &mut Vec<(String, JsValue)>) -> Result
         // syscalls re-encode that lossy string, so a non-UTF-8 directory
         // name fails its own lstat (ENOENT) exactly as in TS.
         let name = raw_name.to_string_lossy().into_owned();
+        if root_level && name == ".staging" {
+            continue;
+        }
         let path = root.join(&name);
         let Ok(info) = fs::symlink_metadata(&path) else {
             continue;
         };
         if info.is_dir() {
-            walk_manifests(&path, manifests)?;
+            walk_manifests(&path, manifests, false)?;
         } else if name == "manifest.json" {
             let path_text = path.to_string_lossy().into_owned();
             let bytes = fs::read(&path).map_err(|error| {
@@ -600,29 +614,25 @@ pub struct ContentAddressedWorkspaceSnapshotRecorder {
     /// in-flight entry carries the condition variable that stands in for
     /// awaiting the shared promise.
     state: Mutex<RecorderState>,
-    /// Deterministic interleave seam (#293 fix-r1); `new` leaves it unset.
+    /// Deterministic interleave seam (#293); `new` leaves it unset.
     hook: Option<SnapshotRoundHook>,
 }
 
-/// Deterministic seams used by the #293 cleanup-ownership interleave tests
+/// Deterministic seams used by the #293 staging-publish interleave tests
 /// (the same shape as the heartbeat pipeline's `HeartbeatStage`/`HeartbeatHook`).
 /// Production callers construct with `new` and never install a hook; the
 /// callback runs synchronously at the named point and may mutate the
-/// partition the way a concurrent round would while this round sits between
-/// two filesystem steps.
+/// snapshot root the way a concurrent round would while this round sits
+/// between two filesystem steps.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SnapshotRoundStage {
-    /// After this round's manifest rename, before the committed marker.
-    AfterManifestRename,
-    /// After the committed-marker rename, before the temporary directory is
-    /// removed (the last commit step).
-    AfterCommittedMarker,
-    /// At the failure cleanup, before any owned file is considered.
+    /// After this round's staging directory is fully written (`manifest.json`
+    /// last), before the publishing rename.
+    BeforeStagingPublish,
+    /// At the failure cleanup, before this round's private staging directory
+    /// is removed.
     BeforeFailureCleanup,
-    /// After the owned identity was confirmed, immediately before deleting
-    /// this round's own file (the old check-then-unlink window).
-    BeforeOwnedUnlink,
 }
 
 /// See [`SnapshotRoundStage`].
@@ -689,7 +699,6 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
     #[doc(hidden)]
     pub fn new_with_hook(config: WorkspaceSnapshotConfig, hook: SnapshotRoundHook) -> Self {
         Self {
-            state: Mutex::new(RecorderState::default()),
             hook: Some(hook),
             ..Self::new(config)
         }
@@ -839,21 +848,23 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
             });
         }
 
-        // workspaceSnapshot.ts:233: the temporary directory is derived only
-        // after the marker early-exits above, so a UUID failure cannot
-        // preempt them.
-        let temporary_dir = paths.partition.join(format!(
-            ".tmp-{}",
-            random_uuid().map_err(|_| host_boundary_io())?
-        ));
-        let mut markers = RoundMarkers::default();
+        // workspaceSnapshot.ts:233: the staging path is derived only after
+        // the marker early-exits above, so a UUID failure cannot preempt
+        // them. #293 fix-r2 (A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R2): every
+        // byte this round writes lands under
+        // `<snapshot_root>/.staging/<uuid>/` first, the publishing rename
+        // is the only writer of the shared partition paths, and the failure
+        // cleanup removes only this round's own staging directory — no
+        // ownership is ever judged on a shared publish path.
+        let staging = Path::new(&paths.snapshot_root)
+            .join(".staging")
+            .join(random_uuid().map_err(|_| host_boundary_io())?);
         let committed = commit(
             input,
             phase,
             &snapshot_id,
             &paths,
-            &temporary_dir,
-            &mut markers,
+            &staging,
             self.hook.as_ref(),
         );
         match committed {
@@ -866,20 +877,18 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
                 error: None,
             }),
             Err(message) => {
-                // workspaceSnapshot.ts:260-280, #293 registered divergence
-                // A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001: the cleanup removes
-                // only the files this round itself wrote (inode ownership),
-                // never a concurrent round's committed snapshot, which TS
-                // unconditionally unlinks (Node v22.22.0 probe
-                // `_tmp/20261026-issue-293/probe-b-concurrent.out`).
-                // #293 fix-r1 (A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R1): the
-                // ownership is captured when the round itself creates the
-                // file, and the delete goes through a private graveyard name,
-                // so no check-then-unlink window on the shared publish path
-                // remains. The seam below lets a test hold the round here
-                // while a concurrent round commits.
+                // workspaceSnapshot.ts:260-280. #293 registered divergence
+                // A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001(-R1, -R2): TS
+                // unconditionally unlinks the shared manifest/_COMMITTED,
+                // which deletes a concurrent round's committed snapshot
+                // (Node v22.22.0 probe
+                // `_tmp/20261026-issue-293/probe-b-concurrent.out`). The
+                // cleanup removes only this round's private staging
+                // directory and never touches a published path. The seam
+                // below lets a test hold the round here while a concurrent
+                // round commits.
                 run_round_hook(self.hook.as_ref(), SnapshotRoundStage::BeforeFailureCleanup);
-                failure_cleanup(&markers, &temporary_dir, self.hook.as_ref());
+                failure_cleanup(&staging);
                 // This mkdir sits outside the TS catch: a NUL partition path
                 // rejects the capture promise instead of writing a marker.
                 validate_nul_path(&JsString::from(path_string(&paths.partition)), "path")?;
@@ -887,7 +896,7 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
                     .map_err(|e| io_error(&e, "mkdir", Some(&paths.partition)))?;
                 let marker = marker_json(input, phase, &snapshot_id, &message);
                 let text = stringify_pretty(&marker);
-                atomic_marker(&paths.failure_marker_path, &text, None)?;
+                atomic_marker(&paths.failure_marker_path, &text)?;
                 Ok(WorkspaceSnapshotResult {
                     snapshot_id,
                     phase,
@@ -903,9 +912,9 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
 
 /// The paths one capture derives up front (workspaceSnapshot.ts:211-223):
 /// the resolved snapshot root, and inside it the partition the sanitized
-/// identity selects, with the manifest and marker paths. The temporary
-/// directory stays separate: workspaceSnapshot.ts:233 derives it only after
-/// the marker early-exits in `capture_once`.
+/// identity selects, with the manifest and marker paths. The staging
+/// directory stays separate: it is derived only after the marker early-exits
+/// in `capture_once`.
 struct CapturePaths {
     snapshot_root: String,
     partition: PathBuf,
@@ -914,154 +923,106 @@ struct CapturePaths {
     failure_marker_path: PathBuf,
 }
 
-/// #293: the partition files one capture round itself wrote, by inode
-/// identity. The failure cleanup removes only these; a concurrent round of
-/// the same key (its own recorder instance, so no in-flight sharing) may
-/// have committed between this round's marker checks and its failure, and
-/// its manifest/`_COMMITTED` must survive (registered divergence
-/// A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001, its R1 correction for the capture
-/// and delete protocol below).
-#[derive(Default)]
-struct RoundMarkers {
-    manifest: Option<OwnedFile>,
-    committed: Option<OwnedFile>,
-}
-struct OwnedFile {
-    path: PathBuf,
-    dev: u64,
-    ino: u64,
-}
-
-impl OwnedFile {
-    /// The same identity under the shared publish path it was renamed to
-    /// (rename preserves dev/ino, so the pre-rename capture stays valid).
-    fn renamed_to(&self, path: &Path) -> OwnedFile {
-        OwnedFile {
-            path: path.to_owned(),
-            dev: self.dev,
-            ino: self.ino,
-        }
-    }
-    fn is(&self, other: &OwnedFile) -> bool {
-        self.dev == other.dev && self.ino == other.ino
-    }
-}
-
-/// Inode identity of a path as it stands now.
-fn owned_file(path: &Path) -> Option<OwnedFile> {
-    let metadata = fs::symlink_metadata(path).ok()?;
-    Some(OwnedFile {
-        path: path.to_owned(),
-        dev: metadata.dev(),
-        ino: metadata.ino(),
-    })
-}
-
-/// Graveyard names are unique per attempt: pid across processes, a process
-/// counter across recorder instances and repeated cleanups.
-fn graveyard_name(path: &Path) -> PathBuf {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    path.with_file_name(format!(".tmp-grave-{}-{sequence}", std::process::id()))
-}
-
-/// Unlink only the file whose identity this round captured when it created
-/// it — without a check-then-unlink window on the shared publish path
-/// (#293 fix-r1): the path is first renamed into this round's private
-/// graveyard name (same directory, so the same filesystem), the identity is
-/// re-checked there, and only then deleted. A file another round renamed
-/// over the path since is renamed back; if the path was re-occupied in the
-/// meantime, the newest file wins like any rename-over publish (registered
-/// residual, A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R1).
-fn remove_if_owned(owned: Option<&OwnedFile>, hook: Option<&SnapshotRoundHook>) {
-    let Some(file) = owned else {
-        return;
-    };
-    let graveyard = graveyard_name(&file.path);
-    // Move off the shared publish path first: whatever sits there goes to a
-    // name only this round can reach, so the delete below can never hit a
-    // concurrent round's file however it interleaves.
-    if fs::rename(&file.path, &graveyard).is_err() {
-        return; // already gone, or not movable: nothing provably ours to delete
-    }
-    if !owned_file(&graveyard).is_some_and(|current| current.is(file)) {
-        // Someone else's publish sat at the path; put it back unless a newer
-        // file has taken the path in the meantime.
-        if fs::symlink_metadata(&file.path).is_err() {
-            let _ = fs::rename(&graveyard, &file.path);
-        }
-        return;
-    }
-    run_round_hook(hook, SnapshotRoundStage::BeforeOwnedUnlink);
-    let _ = fs::remove_file(&graveyard);
-}
-
 /// The TS catch-block deletions (workspaceSnapshot.ts:260-280), restricted to
-/// this round's own writes. The temporary directory is uuid-private, so it
-/// needs no ownership check.
-fn failure_cleanup(markers: &RoundMarkers, temporary_dir: &Path, hook: Option<&SnapshotRoundHook>) {
-    remove_if_owned(markers.manifest.as_ref(), hook);
-    remove_if_owned(markers.committed.as_ref(), hook);
-    let _ = fs::remove_dir_all(temporary_dir);
+/// this round's private staging directory under `<root>/.staging/`: published
+/// paths are never touched (#293 fix-r2,
+/// A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R2 — the shared-path unlink, and with
+/// it every ownership heuristic around it, is gone). Removing the parent
+/// `.staging` directory is best-effort: it only succeeds when no other round
+/// is staging, and a leftover empty directory is a leak, not an
+/// inconsistency.
+fn failure_cleanup(staging: &Path) {
+    let _ = fs::remove_dir_all(staging);
+    if let Some(parent) = staging.parent() {
+        let _ = fs::remove_dir(parent);
+    }
 }
 
 /// workspaceSnapshot.ts:234-259, the try block. Every failure becomes the
-/// marker `error` message, Node-formatted. `markers` records the partition
-/// files this round wrote, for the ownership-checked failure cleanup: each
-/// identity is captured from the temporary file while this round still holds
-/// the write handle (#293 fix-r1 — a stat of the shared path after the
-/// rename could record a concurrent round's inode), and the rename that
-/// publishes preserves the inode.
+/// marker `error` message, Node-formatted. #293 fix-r2
+/// (A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R2): the round writes `_COMMITTED`
+/// (first) and `manifest.json` (last) into its private staging directory,
+/// then publishes. An occupied partition — a concurrent round's commit or
+/// planted content — is published over with TS's own per-file rename
+/// primitive, which overwrites (Node v22.22.0 probe
+/// `_tmp/20261026-issue-293/fix-r2/probe-c.out`: a planted `keep.txt`
+/// survives beside the published files, `rename(file, file)` overwrites); a
+/// free or empty-directory target takes the whole directory in one atomic
+/// rename (`rename(dir, non-empty dir)` is ENOTEMPTY, `rename(dir,
+/// empty dir)` replaces it).
 fn commit(
     input: &WorkspaceSnapshotInput,
     phase: SnapshotPhase,
     snapshot_id: &str,
     paths: &CapturePaths,
-    temporary_dir: &Path,
-    markers: &mut RoundMarkers,
+    staging: &Path,
     hook: Option<&SnapshotRoundHook>,
 ) -> std::result::Result<(), String> {
     if input.workspace_stable == Some(false) {
         return Err("Workspace did not become quiescent before snapshot capture.".into());
     }
-    if let Some(message) = nul_path_message(
-        &JsString::from(temporary_dir.to_string_lossy().as_ref()),
-        "path",
-    ) {
+    if let Some(message) =
+        nul_path_message(&JsString::from(staging.to_string_lossy().as_ref()), "path")
+    {
         return Err(String::from_utf16_lossy(message.units()));
     }
-    fs::create_dir_all(temporary_dir).map_err(|e| io_message(&e, "mkdir", Some(temporary_dir)))?;
+    fs::create_dir_all(staging).map_err(|e| io_message(&e, "mkdir", Some(staging)))?;
     let workspace_dir = resolve(&input.workspace_dir).map_err(|e| e.to_string())?;
     let entries = scan_workspace(&workspace_dir, &paths.snapshot_root)?;
     let manifest = manifest_json(input, phase, snapshot_id, entries)?;
     let text = stringify_pretty(&manifest);
-    let temporary_manifest = temporary_dir.join("manifest.json");
-    let owned_manifest =
-        write_file_identified(&temporary_manifest, text.as_bytes()).map_err(|e| e.to_string())?;
+    write_file(&staging.join("_COMMITTED"), b"").map_err(|e| e.to_string())?;
+    write_file(&staging.join("manifest.json"), text.as_bytes()).map_err(|e| e.to_string())?;
+    // workspaceSnapshot.ts:255: mkdir(partition, recursive) right before the
+    // publishing rename; an existing non-directory there fails here exactly
+    // as in TS.
     fs::create_dir_all(&paths.partition)
         .map_err(|e| io_message(&e, "mkdir", Some(&paths.partition)))?;
-    fs::rename(&temporary_manifest, &paths.manifest_path).map_err(|e| {
-        two_path_message(&e, "rename", &temporary_manifest, &paths.manifest_path).to_string()
-    })?;
-    // The seams sit between the publishing rename and the identity
-    // bookkeeping so a test can land a concurrent round's rename exactly in
-    // the window the identity capture has to be immune to (#293 fix-r1).
-    run_round_hook(hook, SnapshotRoundStage::AfterManifestRename);
-    markers.manifest = Some(owned_manifest.renamed_to(&paths.manifest_path));
-    let committed_marker = atomic_marker(
-        &paths.committed_path,
-        "",
-        hook.map(|hook| (hook, SnapshotRoundStage::AfterCommittedMarker)),
-    )
-    .map_err(|error| error.to_string())?;
-    markers.committed = Some(committed_marker);
-    // workspaceSnapshot.ts:258: rm(force) ignores a missing directory.
-    match fs::remove_dir_all(temporary_dir) {
-        Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-        Err(e) => return Err(io_message(&e, "rm", Some(temporary_dir))),
+    run_round_hook(hook, SnapshotRoundStage::BeforeStagingPublish);
+    publish_staging(staging, paths)?;
+    // workspaceSnapshot.ts:258: rm(force) of the temporary directory. The
+    // staging equivalent is best-effort — a leftover empty directory is a
+    // leak, not an inconsistency.
+    let _ = fs::remove_dir(staging);
+    if let Some(parent) = staging.parent() {
+        let _ = fs::remove_dir(parent);
     }
     Ok(())
+}
+
+/// The publishing step of [`commit`]: one rename of the staging directory
+/// when the partition is free or an empty directory, TS's per-file renames
+/// over an occupied one. The fallback writes the committed marker first and
+/// the manifest last, so a publish interrupted between the two never leaves
+/// a manifest a reader could mistake for a complete snapshot — the residue
+/// is the marker, whose early-exit then reports Committed (a registered
+/// divergence: TS, which writes the manifest first, unlinks it in the catch
+/// instead; A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R2).
+fn publish_staging(staging: &Path, paths: &CapturePaths) -> std::result::Result<(), String> {
+    let staged_marker = staging.join("_COMMITTED");
+    let staged_manifest = staging.join("manifest.json");
+    match fs::rename(staging, &paths.partition) {
+        Ok(()) => Ok(()),
+        // An occupied target (a concurrent round's commit, or planted
+        // content): ENOTEMPTY/EEXIST, the measured dir-onto-dir errnos.
+        Err(error)
+            if matches!(
+                error.raw_os_error(),
+                Some(libc::ENOTEMPTY) | Some(libc::EEXIST)
+            ) =>
+        {
+            fs::rename(&staged_marker, &paths.committed_path).map_err(|e| {
+                two_path_message(&e, "rename", &staged_marker, &paths.committed_path).to_string()
+            })?;
+            fs::rename(&staged_manifest, &paths.manifest_path).map_err(|e| {
+                two_path_message(&e, "rename", &staged_manifest, &paths.manifest_path).to_string()
+            })?;
+            Ok(())
+        }
+        Err(error) => {
+            Err(two_path_message(&error, "rename", staging, &paths.partition).to_string())
+        }
+    }
 }
 
 /// workspaceSnapshot.ts:283-314.
@@ -1298,14 +1259,9 @@ fn marker_json(
 }
 
 /// workspaceSnapshot.ts:360-364. The message names the failing stage; uuid
-/// randomness never fails in TS. Returns the marker's inode identity as
-/// captured from the temporary file before the publishing rename (#293
-/// fix-r1), so a failing round can prove what it itself wrote.
-fn atomic_marker(
-    path: &Path,
-    content: &str,
-    seam: Option<(&SnapshotRoundHook, SnapshotRoundStage)>,
-) -> Result<OwnedFile> {
+/// randomness never fails in TS, so its Rust-only failure is the
+/// host-boundary error, never the Rust Display.
+fn atomic_marker(path: &Path, content: &str) -> Result<()> {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -1314,12 +1270,8 @@ fn atomic_marker(
         "{name}.tmp-{}",
         random_uuid().map_err(|_| host_boundary_io())?
     ));
-    let owned = write_file_identified(&temporary, content.as_bytes())?;
-    fs::rename(&temporary, path).map_err(|e| two_path_message(&e, "rename", &temporary, path))?;
-    if let Some((hook, stage)) = seam {
-        run_round_hook(Some(hook), stage);
-    }
-    Ok(owned.renamed_to(path))
+    write_file(&temporary, content.as_bytes())?;
+    fs::rename(&temporary, path).map_err(|e| two_path_message(&e, "rename", &temporary, path))
 }
 
 /// workspaceSnapshot.ts:366-373: any read or parse failure yields no error,
@@ -1619,24 +1571,6 @@ fn write_file(path: &Path, contents: &[u8]) -> Result<()> {
         .map_err(|e| io_error(&e, "write", None))
 }
 
-/// [`write_file`] plus the inode identity of the file just written, taken
-/// from the handle this round still holds (fstat: no path race). rename
-/// preserves the identity, so the caller may record it as the identity of
-/// the shared path it publishes to (#293 fix-r1).
-fn write_file_identified(path: &Path, contents: &[u8]) -> Result<OwnedFile> {
-    let mut file = fs::File::create(path).map_err(|e| io_error(&e, "open", Some(path)))?;
-    file.write_all(contents)
-        .map_err(|e| io_error(&e, "write", None))?;
-    let metadata = file
-        .metadata()
-        .map_err(|e| io_error(&e, "fstat", Some(path)))?;
-    Ok(OwnedFile {
-        path: path.to_owned(),
-        dev: metadata.dev(),
-        ino: metadata.ino(),
-    })
-}
-
 /// Capture-path helper: the failure marker stores only the message, so the
 /// structured code is not needed there.
 fn io_message(error: &io::Error, syscall: &str, path: Option<&Path>) -> String {
@@ -1663,7 +1597,12 @@ fn two_path_message(
 }
 
 fn created_at() -> std::result::Result<JsString, String> {
-    timestamp().map(JsString::from).map_err(|e| e.to_string())
+    // The clock never fails in TS (`new Date()`), so its Rust-only failure is
+    // the empty host-boundary marker message, never the Rust Display (#293
+    // fix-r2, A6.6-SNAPSHOT-IO-001-R2).
+    timestamp()
+        .map(JsString::from)
+        .map_err(|_| host_boundary_io().to_string())
 }
 
 fn random_uuid() -> std::result::Result<String, io::Error> {
@@ -1938,43 +1877,14 @@ mod tests {
         assert_eq!(error.to_string(), "", "#293 no Rust Display leaks");
     }
 
-    /// #293: the failure cleanup deletes a partition file only while its
-    /// inode still matches this round's own write.
+    /// #293 fix-r2: a successful round publishes by a single rename of its
+    /// private staging directory, leaving the partition with exactly the
+    /// manifest and the committed marker and no staging leftovers.
     #[test]
-    fn remove_if_owned_checks_inode_ownership() {
-        let scratch = crate::test_scratch::Scratch::new("snapshot-ownership");
-        let path = scratch.path().join("manifest.json");
-        fs::write(&path, b"ours\n").expect("#293 write the round's own manifest");
-        let owned = owned_file(&path).expect("#293 stat the round's own manifest");
-        // Another round renames over the same path: a different inode.
-        let foreign = scratch.path().join("foreign.json");
-        fs::write(&foreign, b"theirs\n").expect("#293 write a foreign manifest");
-        fs::rename(&foreign, &path).expect("#293 the foreign round renames over the path");
-        remove_if_owned(Some(&owned), None);
-        assert_eq!(
-            fs::read(&path).expect("#293 the foreign manifest is still readable"),
-            b"theirs\n",
-            "#293 a foreign inode is not deleted"
-        );
-        // Still ours: the recorded inode matches, so it is removed.
-        let owned = owned_file(&path).expect("#293 stat the foreign manifest");
-        remove_if_owned(Some(&owned), None);
-        assert!(!path.exists(), "#293 an owned file is removed");
-        // Nothing recorded: no deletion attempt at all.
-        remove_if_owned(None, None);
-    }
-
-    /// #293: a round that fails after its own manifest rename deletes that
-    /// manifest, and a foreign round that renames over it in the meantime
-    /// survives. The committed-marker target is a directory, so
-    /// `atomic_marker`'s rename fails after the manifest rename — the
-    /// deterministic post-rename failure point.
-    #[test]
-    fn failing_round_deletes_only_its_own_partition_writes() {
-        let scratch = crate::test_scratch::Scratch::new("snapshot-failure-cleanup");
+    fn commit_publishes_the_staging_directory_atomically() {
+        let scratch = crate::test_scratch::Scratch::new("snapshot-staging-publish");
         let snapshot_root = scratch.path().join("snapshots");
         let partition = snapshot_root.join("workspaces/w/sessions/s/snapshots/id");
-        fs::create_dir_all(&partition).expect("#293 create the partition");
         let paths = CapturePaths {
             snapshot_root: snapshot_root.to_string_lossy().into_owned(),
             partition: partition.clone(),
@@ -1995,71 +1905,94 @@ mod tests {
             failure_kind: None,
             failure_reason: None,
         };
-        let mut markers = RoundMarkers::default();
-        let temporary_dir = partition.join(".tmp-unit");
-
-        // Own write: the manifest rename lands, the committed-marker rename
-        // fails on the directory, and the cleanup removes this round's own
-        // manifest while leaving the directory it did not write.
-        fs::create_dir_all(&paths.committed_path).expect("#293 block the committed marker");
-        let error = commit(
-            &input,
-            SnapshotPhase::PreUser,
-            "id",
-            &paths,
-            &temporary_dir,
-            &mut markers,
-            None,
-        )
-        .expect_err("#293 the committed-marker rename must fail on the directory");
-        assert!(
-            error.contains(" -> '"),
-            "#293 the failure is the two-path rename message: {error}"
-        );
-        assert!(
-            paths.manifest_path.is_file(),
-            "#293 the round's own manifest landed before the failure"
-        );
-        failure_cleanup(&markers, &temporary_dir, None);
-        assert!(
-            !paths.manifest_path.exists(),
-            "#293 the round's own manifest is removed"
-        );
-        assert!(
-            paths.committed_path.is_dir(),
-            "#293 a write the round did not make is untouched"
-        );
-        assert!(
-            !temporary_dir.exists(),
-            "#293 the round's temporary directory is removed"
-        );
-
-        // Foreign write: another round renames over the path after this
-        // round's manifest rename, and the cleanup keeps it.
-        let foreign = scratch.path().join("foreign.json");
-        fs::write(&foreign, b"theirs\n").expect("#293 write the foreign manifest");
-        let mut markers = RoundMarkers::default();
-        let error = commit(
-            &input,
-            SnapshotPhase::PreUser,
-            "id",
-            &paths,
-            &temporary_dir,
-            &mut markers,
-            None,
-        )
-        .expect_err("#293 the committed-marker rename must fail again");
-        assert!(
-            error.contains(" -> '"),
-            "#293 the failure is the two-path rename message: {error}"
-        );
-        fs::rename(&foreign, &paths.manifest_path)
-            .expect("#293 the foreign round renames over the manifest path");
-        failure_cleanup(&markers, &temporary_dir, None);
+        let staging = snapshot_root.join(".staging").join("round-unit");
+        commit(&input, SnapshotPhase::PreUser, "id", &paths, &staging, None)
+            .expect("#293 the round commits");
+        let mut names: Vec<String> = fs::read_dir(&partition)
+            .expect("#293 the partition directory exists after the publish")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
         assert_eq!(
-            fs::read(&paths.manifest_path).expect("#293 the foreign manifest is readable"),
+            names,
+            ["_COMMITTED", "manifest.json"],
+            "#293 the published partition holds exactly the marker and the manifest"
+        );
+        assert!(
+            paths.manifest_path.is_file() && paths.committed_path.is_file(),
+            "#293 the published files are files"
+        );
+        let manifest = fs::read_to_string(&paths.manifest_path)
+            .expect("#293 the published manifest is readable");
+        assert!(
+            manifest.contains("\"runId\": \"r\""),
+            "#293 the published manifest is this round's: {manifest}"
+        );
+        assert!(
+            !staging.exists(),
+            "#293 the staging directory is consumed by the publish"
+        );
+        assert!(
+            !snapshot_root.join(".staging").exists(),
+            "#293 the staging parent is removed once empty"
+        );
+    }
+
+    /// #293 fix-r2: the failure cleanup removes only this round's own
+    /// staging directory. A concurrent round's staging sibling and any
+    /// published partition survive untouched; the `.staging` parent goes only
+    /// when the last round's directory is gone.
+    #[test]
+    fn failing_round_cleanup_removes_only_its_own_staging() {
+        let scratch = crate::test_scratch::Scratch::new("snapshot-staging-cleanup");
+        let snapshot_root = scratch.path().join("snapshots");
+        let staging_parent = snapshot_root.join(".staging");
+        let ours = staging_parent.join("ours");
+        let theirs = staging_parent.join("theirs");
+        fs::create_dir_all(&ours).expect("#293 create this round's staging directory");
+        fs::create_dir_all(&theirs).expect("#293 create a concurrent round's staging directory");
+        fs::write(ours.join("manifest.json"), b"ours\n")
+            .expect("#293 seed this round's staging manifest");
+        fs::write(theirs.join("manifest.json"), b"theirs\n")
+            .expect("#293 seed the concurrent round's staging manifest");
+        let partition = snapshot_root.join("workspaces/w/sessions/s/snapshots/id");
+        fs::create_dir_all(&partition).expect("#293 create the partition");
+        fs::write(partition.join("manifest.json"), b"committed\n")
+            .expect("#293 seed the published manifest");
+        fs::write(partition.join("_COMMITTED"), b"")
+            .expect("#293 seed the published committed marker");
+
+        failure_cleanup(&ours);
+        assert!(
+            !ours.exists(),
+            "#293 this round's staging directory is removed"
+        );
+        assert_eq!(
+            fs::read(theirs.join("manifest.json"))
+                .expect("#293 the concurrent round's staging manifest is readable"),
             b"theirs\n",
-            "#293 a manifest replaced by another round survives the cleanup"
+            "#293 a concurrent round's staging directory is not touched"
+        );
+        assert_eq!(
+            fs::read(partition.join("manifest.json"))
+                .expect("#293 the published manifest is readable"),
+            b"committed\n",
+            "#293 a published manifest is not touched by the cleanup"
+        );
+        assert!(
+            staging_parent.exists(),
+            "#293 the staging parent stays while another round is staging"
+        );
+
+        failure_cleanup(&theirs);
+        assert!(
+            !staging_parent.exists(),
+            "#293 the staging parent goes with the last round's directory"
+        );
+        assert!(
+            partition.join("_COMMITTED").is_file(),
+            "#293 the published partition is untouched throughout"
         );
     }
 }
