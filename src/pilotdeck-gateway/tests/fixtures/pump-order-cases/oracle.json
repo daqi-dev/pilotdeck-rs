@@ -40,7 +40,8 @@
       },
       "projection": [
         "turn_started",
-        "input_accepted"
+        "input_accepted",
+        "user_prompt_submitted"
       ],
       "terminal": null,
       "error": null
@@ -60,6 +61,7 @@
       "projection": [
         "turn_started",
         "input_accepted",
+        "user_prompt_submitted",
         "model_request_started",
         "turn_completed"
       ],

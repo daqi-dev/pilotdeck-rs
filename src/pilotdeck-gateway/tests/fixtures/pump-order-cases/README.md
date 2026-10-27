@@ -1,12 +1,13 @@
-# #855 / #741i pump 顺序用例与真实 TS 前缀
+# #855 / #741i / #741k pump 顺序用例与真实 TS 前缀
 
 `generate.mts` 用 Node v22.22.0 执行 cc7c4e6 的真实 session、TurnRunner 和
 stdio sidecar，只给 start write 注入 gate。`oracle.json` 覆盖拒绝、持有后取消、
 持有后开放三格；每次生成还输出完整事件和 wire 原始记录。Rust 精简 peer 的
-成功投影为 `turn_started → input_accepted → model_request_started → turn_completed`，
+成功投影为 `turn_started → input_accepted → user_prompt_submitted → model_request_started → turn_completed`，
 逐事件读取和断言，不跳过未知事件；重生成守卫为 `pump_order_regenerates_identically`。
 
-TS 在 gate 持有时不连接 sidecar，取消后也要等前驱释放；释放后无终态。
+TS 在 gate 持有时不连接 sidecar，取消后也要等前驱释放；释放后仍交付
+`turn_started → input_accepted → user_prompt_submitted`，但无终态。
 Rust 的取消终态仍按 **未批准** 差异 `specs/gateway-parity/diffs/A7.2-TURN-ABORT-001.md`
 单独断言。金样投影只比较双方共有事件，不宣称取消终态对齐。Delivery 发送链和
 泵计数仍是 Rust 结构保证；TS 金样不证明 Rust 内部排程细节。
@@ -32,9 +33,13 @@ Rust 的取消终态仍按 **未批准** 差异 `specs/gateway-parity/diffs/A7.2
   `model_event`；开放场景必须在 `#741i [open]: model_request_started must precede turn_completed`
   断言失败，证明修复没有吞掉或跳过模型前缀。
 
+- `submitted-prefix-lost`：在宿主记录交付路径把 `user_prompt_submitted` 改成合法
+  `model_event`；取消和开放场景分别在 `#741k [cancel/open]: user_prompt_submitted must follow input_accepted`
+  断言失败，证明新宿主前缀既不丢失，也不能被其他事件替代。
+
 运行复用 `negative_suite.py`：每个绑定用完整测试名和 `--exact` 独立执行
 positive → mutant → restored；`gate-order` 的三个场景分别判杀。只有点名测试
 确实失败且含指定语义断言才是 KILLED，未变红为 SURVIVED，编译错误、错误 panic、
 超时及恢复失败为 INVALID。初始化和清理消息不在有效判杀列表中。所有选定项
-跑完写 `summary.json`；任何非 KILLED 都令进程非零退出。四种源码锚点各唯一，
+跑完写 `summary.json`；任何非 KILLED 都令进程非零退出。五种源码锚点各唯一，
 任何源码恢复失败或非干净基线均拒绝继续变异。
