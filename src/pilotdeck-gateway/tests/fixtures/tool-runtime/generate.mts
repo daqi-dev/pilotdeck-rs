@@ -1,3 +1,4 @@
+import { baselineSourceHashes } from '../_shared/baseline.mts';
 // Deterministic fake tools around the actual fixed TS runtime and schedulers.
 import { mkdtemp, mkdir, writeFile, readFile, rm, lstat } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
@@ -7,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE);
 assert.ok(process.argv[2], 'provide an output parent directory; each run writes into its own mkdtemp child');
@@ -15,7 +16,7 @@ const baseline = resolve(process.env.PDRS_BASELINE!);
 const outputParent = resolve(process.argv[2]);
 const git = realpathSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim());
 const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
-bindSourceTree(baseline, commit, git);
+bindBaseline({ baseline, commit, gitExecutable: git });
 const load = (name: string) => import(pathToFileURL(join(baseline, 'src', name)).href);
 const { ToolRegistry } = await load('tool/registry/ToolRegistry.ts');
 const { ToolRuntime } = await load('tool/execution/ToolRuntime.ts');
@@ -281,9 +282,8 @@ try {
     }
   }
   for (const entry of ['tool/registry/ToolRegistry.ts', 'tool/execution/ToolRuntime.ts', 'tool/scheduler/ConcurrentToolScheduler.ts', 'tool/scheduler/SequentialToolScheduler.ts', 'agent/modules/capability/toolSchedulerAdapter.ts']) await visit('src/' + entry);
-  const sourceSha256: Record<string, string> = {};
-  for (const source of [...sources].sort()) sourceSha256[source] = createHash('sha256').update(await readFile(join(baseline, source))).digest('hex');
-  bindSourceTree(baseline, commit, git);
+  const sourceSha256 = await baselineSourceHashes(baseline, [...sources].sort());
+  bindBaseline({ baseline, commit, gitExecutable: git }).provenance;
   await mkdir(outputParent, { recursive: true });
   const output = await mkdtemp(join(outputParent, 'tool-runtime-'));
   await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit: commit, sourceSha256, definitions, scenarios: recorded }, null, 2) + '\n', { flag: 'wx' });

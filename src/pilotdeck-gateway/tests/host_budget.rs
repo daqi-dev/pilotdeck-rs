@@ -261,7 +261,7 @@ async fn budget_dispatch_matches_real_ts_calls_responses_and_capabilities() {
 fn budget_oracle_is_pinned_to_clean_baseline_blobs() {
     let oracle = baseline::oracle(ORACLE);
     let sources = field(&oracle, "sourceSha256").as_object().unwrap();
-    assert_eq!(sources.len(), 12);
+    assert_eq!(sources.len(), 650, "#303 exact import closure source count");
     assert!(
         sources
             .get("src/agent/loop/nativeAgentTurnCapabilitiesAdapter.ts")

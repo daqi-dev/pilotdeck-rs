@@ -1,7 +1,6 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Real TS constructors only. No Rust output is used to manufacture expectations.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -17,15 +16,8 @@ const sources = [
   'src/agent/modules/transport/sidecarToolContext.ts',
   'src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts',
 ];
-function clean() {
-  assert.equal(execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), commit);
-  assert.equal(execFileSync('git', ['-C', baseline, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' }), '', 'baseline must be clean');
-  assert.equal(execFileSync('git', ['-C', baseline, 'status', '--porcelain', '--untracked-files=all', '--', 'src'], { encoding: 'utf8' }), '', 'baseline source must have no untracked overrides');
-}
-async function hashes() {
-  return Object.fromEntries(await Promise.all(sources.map(async source => [source,
-    createHash('sha256').update(await readFile(join(baseline, source))).digest('hex')])));
-}
+function clean() { assertBaseline(baseline); }
+async function hashes() { return baselineSourceHashes(baseline, sources); }
 clean();
 const sourceSha256 = await hashes();
 const load = (source: string) => import(pathToFileURL(join(baseline, source)).href);

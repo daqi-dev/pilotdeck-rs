@@ -1,3 +1,4 @@
+import { baselineSourceHashes } from '../_shared/baseline.mts';
 // Execute entire original modules, exposing private readers only in memory.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -6,23 +7,19 @@ import {createRequire} from 'node:module';
 import {readFileSync, existsSync, mkdirSync, writeFileSync} from 'node:fs';
 import {dirname, join, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {bindSourceTree} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 assert.equal(process.version, 'v22.22.0');
 assert.ok(process.env.PDRS_BASELINE);
 const baseline = resolve(process.env.PDRS_BASELINE!);
 const sourceCommit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
-bindSourceTree(baseline, sourceCommit, '/usr/bin/git');
+bindBaseline({ baseline, commit: sourceCommit, gitExecutable: '/usr/bin/git' });
 const git = (...args: string[]) => execFileSync('/usr/bin/git', ['--no-replace-objects', '-C', baseline, ...args]);
 assert.equal(git('rev-parse', 'HEAD').toString().trim(), sourceCommit);
 assert.equal(git('status', '--porcelain', '--untracked-files=no').toString(), '');
 const files = ['src/agent/modules/transport/agentLoopSidecarClient.ts',
   'src/agent/modules/protocol.ts', 'src/agent/modules/events/hostAgentEventBridge.ts',
   'src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts', 'src/agent/protocol/events.ts'];
-const sourceSha256 = Object.fromEntries(files.map(file => {
-  const bytes = readFileSync(join(baseline, file));
-  assert.ok(bytes.equals(git('show', `${sourceCommit}:${file}`)));
-  return [file, createHash('sha256').update(bytes).digest('hex')];
-}));
+const sourceSha256 = await baselineSourceHashes(baseline, files);
 const require = createRequire(join(baseline, 'package.json'));
 const {transformSync} = createRequire(require.resolve('tsx'))('esbuild');
 const clientPath = join(baseline, files[0]);

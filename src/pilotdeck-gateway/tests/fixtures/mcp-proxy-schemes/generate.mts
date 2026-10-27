@@ -5,7 +5,8 @@ import { spawn, execFileSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { start } from './net.mjs';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import {sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 const baseline = resolve(process.env.PDRS_BASELINE!);
 const script = fileURLToPath(import.meta.url);
 const keys = ['PILOTDECK_PROXY', 'https_proxy', 'HTTPS_PROXY', 'http_proxy', 'HTTP_PROXY', 'no_proxy', 'NO_PROXY'];
@@ -33,7 +34,7 @@ if (process.argv[2] === '--worker') {
 }
 const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const git = fs.realpathSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim());
-bindSourceTree(baseline, commit, git);
+bindBaseline({ baseline, commit, gitExecutable: git });
 const sourceSha256 = sourceClosureSha256(baseline, commit, git, ['src/cli/proxy.ts', 'src/mcp/client/McpClient.ts', 'src/network/fetch.ts']);
 assert.equal(JSON.parse(fs.readFileSync(join(baseline, 'node_modules/undici/package.json'), 'utf8')).version, '8.3.0');
 const output = resolve(process.argv[2]); fs.mkdirSync(output, { recursive: true });
@@ -90,4 +91,4 @@ for (const spec of cases) {
     console.log(JSON.stringify(spec));
   } finally { server.stop(); }
 }
-fs.writeFileSync(join(output, 'oracle.json'), JSON.stringify({ sourceCommit: commit, sourceSha256, node: process.version, cases }, null, 2) + '\n');
+fs.writeFileSync(join(output, 'oracle.json'), JSON.stringify({ sourceCommit: commit, sourceSha256, node: process.version, cases }) + '\n');

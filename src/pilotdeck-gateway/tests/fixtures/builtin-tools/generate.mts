@@ -1,3 +1,4 @@
+import { baselineSourceHashes } from '../_shared/baseline.mts';
 // Real TS recordings for the builtin read-only file tools.
 // Run with the fixed baseline checkout and Node 22:
 //   PDRS_BASELINE=/abs/fixed/PilotDeck node --import /abs/.../tsx/dist/loader.mjs \
@@ -10,7 +11,7 @@ import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide an output parent directory; each run writes into its own mkdtemp child');
@@ -18,7 +19,7 @@ const baseline = resolve(process.env.PDRS_BASELINE!);
 const outputParent = resolve(process.argv[2]);
 const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const git = realpathSync(process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim());
-const bound = bindSourceTree(baseline, commit, git);
+const bound = bindBaseline({ baseline, commit, gitExecutable: git }).provenance;
 const locale = new Intl.Collator().resolvedOptions().locale;
 assert.equal(locale, 'en-US', 'generate with LANG=en_US.UTF-8 (see README.md)');
 
@@ -62,12 +63,7 @@ const closure = (await Promise.all([
   'src/tool/builtin/glob.ts',
   'src/tool/builtin/getCurrentTime.ts',
 ].map(sourceClosure))).flat();
-const sourceSha256: Record<string, string> = {};
-for (const path of [...new Set(closure)].sort()) {
-  assert.ok(path.startsWith('src/'), `import closure escaped src/: ${path}`);
-  const working = await readFile(join(baseline, path));
-  sourceSha256[path] = createHash('sha256').update(working).digest('hex');
-}
+const sourceSha256 = await baselineSourceHashes(baseline, [...new Set(closure)].sort());
 
 const scratch = await mkdtemp(join(realpathSync(tmpdir()), 'pdrs-builtin-tools-'));
 const owner = await lstat(scratch);

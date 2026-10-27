@@ -1,3 +1,4 @@
+import { baselineSourceHashes } from '../_shared/baseline.mts';
 // A6.6-pr2 compaction persistence fixture. Every transcript byte, return value
 // and error below is produced by the fixed baseline's real
 // AgentSessionEventRecorder / JsonlTranscriptWriter / durableContextRuntime /
@@ -11,7 +12,7 @@ import { lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs
 import { realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide the fixture directory or a cross-test scratch directory');
@@ -27,7 +28,7 @@ const git = (...args: string[]) =>
     env: gitEnv,
     maxBuffer: 32 * 1024 * 1024,
   });
-const tree = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable);
+const tree = bindBaseline({ baseline, commit: BASELINE_COMMIT, gitExecutable }).provenance;
 const trackedChanges = git('status', '--porcelain', '--untracked-files=no').toString();
 assert.equal(trackedChanges, '', `baseline has uncommitted changes to tracked files:\n${trackedChanges}`);
 
@@ -86,14 +87,7 @@ const SOURCE_ENTRIES = [
   'src/session/persistence/JsonlSessionPersistence.ts',
 ];
 const closure = [...new Set((await Promise.all(SOURCE_ENTRIES.map(sourceClosure))).flat())].sort();
-const sourceSha256: Record<string, string> = {};
-for (const path of closure) {
-  assert.ok(path.startsWith('src/'), `import closure escaped src/: ${path}`);
-  const working = await readFile(join(baseline, path));
-  const committed = git('show', `${BASELINE_COMMIT}:${path}`);
-  assert.deepEqual(working, committed, `${path} differs from ${BASELINE_COMMIT}; the baseline checkout is not clean`);
-  sourceSha256[path] = createHash('sha256').update(committed).digest('hex');
-}
+const sourceSha256 = await baselineSourceHashes(baseline, closure);
 
 const load = (path: string) => import(pathToFileURL(join(baseline, path)).href);
 const { AgentSessionEventRecorder } = await load('src/agent/session/AgentSessionEventRecorder.ts');

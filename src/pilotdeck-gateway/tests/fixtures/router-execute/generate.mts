@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import { realpathSync, mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import {sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 import { record } from './record.mts';
 assert.equal(new Intl.Collator().resolvedOptions().locale,'en-US');
 assert.ok(process.env.PDRS_BASELINE);assert.ok(process.env.PDRS_GIT);assert.ok(process.argv[2]);
 const baseline=resolve(process.env.PDRS_BASELINE);
 const commit='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const git=realpathSync(process.env.PDRS_GIT);
-const sourceCommit=bindSourceTree(baseline,commit,git).ref;
+const sourceCommit=bindBaseline({ baseline, commit, gitExecutable: git }).provenance.ref;
 const sourceSha256=sourceClosureSha256(baseline,commit,git,['src/router/RouterRuntime.ts']);
 const cases=await record(baseline,process.argv.includes('--http'));
 const output=resolve(process.argv[2]);mkdirSync(output,{recursive:true});

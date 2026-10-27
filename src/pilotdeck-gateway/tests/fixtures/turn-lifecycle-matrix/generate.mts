@@ -1,3 +1,4 @@
+import { baselineSourceHashes } from '../_shared/baseline.mts';
 // #708 turn lifecycle matrix probe: TS expectations for the steer port and the
 // interaction event port, one scenario per matrix cell. Direct imports of the
 // unmodified cc7c4e6 baseline; deterministic Promise gates only, no sleeps.
@@ -7,11 +8,11 @@ import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {bindSourceTree} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 assert.ok(process.env.PDRS_BASELINE);
 const root = resolve(process.env.PDRS_BASELINE);
 const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
-bindSourceTree(root, commit, '/usr/bin/git');
+bindBaseline({ baseline: root, commit, gitExecutable: '/usr/bin/git' });
 const sources = [
   'src/agent/session/AgentSession.ts',
   'src/agent/session/SteerMailbox.ts',
@@ -272,10 +273,10 @@ const b5Run = async (fail: boolean) => {
 const b5Success = await b5Run(false);
 const b5Error = await b5Run(true);
 
-bindSourceTree(root, commit, '/usr/bin/git');
+bindBaseline({ baseline: root, commit, gitExecutable: '/usr/bin/git' });
 console.log(JSON.stringify({
   commit,
-  sourceSha256: Object.fromEntries(sources.map((p) => [p, createHash('sha256').update(readFileSync(join(root, p))).digest('hex')])),
+  sourceSha256: await baselineSourceHashes(root, sources),
   A1_running_mailbox: {trace: a1Trace, mutations: a1Mutations},
   A2_abort_gate: {trace: a2Trace, mutations: a2Mutations},
   A2_apply_after_abort: {trace: a2ApplyTrace, events: a2ApplyEvents, mutations: a2ApplyMutations, modelCalls: a2ModelCalls},

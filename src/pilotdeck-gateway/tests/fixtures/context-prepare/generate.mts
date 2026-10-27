@@ -1,3 +1,4 @@
+import { baselineSourceHashes } from '../_shared/baseline.mts';
 // Real TS DefaultContextRuntime prepareForModel corpus.
 //
 // Runs the pinned baseline's real DefaultContextRuntime, PromptAssembler,
@@ -18,7 +19,7 @@ import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 const BASELINE_COMMIT = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
@@ -26,7 +27,7 @@ const baseline = resolve(process.env.PDRS_BASELINE);
 const gitExecutable = realpathSync(
   process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim(),
 );
-const binding = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable);
+const binding = bindBaseline({ baseline, commit: BASELINE_COMMIT, gitExecutable }).provenance;
 const gitEnv = Object.fromEntries(
   Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')),
 );
@@ -101,14 +102,7 @@ for (const closureEntry of closureEntries) {
   for (const path of await sourceClosure(closureEntry)) closureSet.add(path);
 }
 const closure = [...closureSet].sort();
-const sourceSha256: Record<string, string> = {};
-for (const path of closure) {
-  assert.ok(path.startsWith('src/'), `import closure escaped src/: ${path}`);
-  const committed = git('show', `${BASELINE_COMMIT}:${path}`);
-  const working = await readFile(join(baseline, path));
-  assert.deepEqual(working, committed, `${path} differs from ${BASELINE_COMMIT}`);
-  sourceSha256[path] = createHash('sha256').update(committed).digest('hex');
-}
+const sourceSha256 = await baselineSourceHashes(baseline, closure);
 
 const { DefaultContextRuntime } = await import(
   pathToFileURL(join(baseline, entry)).href
@@ -1416,6 +1410,6 @@ const oracle = {
   symlinks,
   cases: recordedCases,
 };
-assert.equal(bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable).sha256, binding.sha256);
+assert.equal(bindBaseline({ baseline, commit: BASELINE_COMMIT, gitExecutable }).provenance.sha256, binding.sha256);
 await writeFile(join(output, 'oracle.json'), `${JSON.stringify(oracle, null, 2)}\n`);
 console.log(JSON.stringify({ output, cases: recordedCases.length }));

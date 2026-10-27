@@ -9,7 +9,8 @@ import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import {sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide the fixture output directory');
@@ -28,7 +29,7 @@ const git = (...args: string[]) =>
     env: gitEnv,
     maxBuffer: 32 * 1024 * 1024,
   });
-const sourceCommit = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable).ref;
+const sourceCommit = bindBaseline({ baseline, commit: BASELINE_COMMIT, gitExecutable }).provenance.ref;
 const trackedChanges = git('status', '--porcelain', '--untracked-files=no').toString();
 assert.equal(
   trackedChanges,

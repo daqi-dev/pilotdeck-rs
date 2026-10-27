@@ -23,12 +23,12 @@ fn complete_config_snapshot_replays_real_typescript_oracle() {
         oracle.get("count").and_then(JsValue::as_number),
         Some(cases.len() as f64)
     );
-    assert_eq!(cases.len(), 180, "fixture count changed");
+    assert_eq!(cases.len(), 1140, "#305 exact snapshot fixture count");
     let sources = oracle
         .get("sources")
         .and_then(JsValue::as_object)
         .expect("sources");
-    assert_eq!(sources.len(), 21, "source hash set changed");
+    assert_eq!(sources.len(), 650, "#303 exact import closure source count");
     for (_, value) in sources.entries() {
         assert!(
             value
@@ -62,7 +62,13 @@ fn complete_config_snapshot_replays_real_typescript_oracle() {
                 _ => {}
             }
         } else {
-            fs::write(home.join("pilotdeck.yaml"), yaml).expect("global yaml");
+            let mut bytes = yaml.into_bytes();
+            if text(case.get("sourceKind")).as_deref() == Some("bytes") {
+                bytes.extend_from_slice(b"unused: \"");
+                bytes.extend_from_slice(&[0xff, 0xfe, 0x80]);
+                bytes.extend_from_slice(b"\"\n");
+            }
+            fs::write(home.join("pilotdeck.yaml"), bytes).expect("#305 global yaml");
         }
         let project = case
             .get("project")
@@ -92,6 +98,37 @@ fn complete_config_snapshot_replays_real_typescript_oracle() {
         env.insert("HOME".into(), home.to_string_lossy().into_owned());
         if case.get("noPilotHome").and_then(JsValue::as_bool) != Some(true) {
             env.insert("PILOT_HOME".into(), home.to_string_lossy().into_owned());
+        }
+        match text(case.get("sourceKind")).as_deref() {
+            Some("relative") => {
+                let mut relative = PathBuf::new();
+                for _ in cwd.components().skip(1) {
+                    relative.push("..");
+                }
+                relative.push(
+                    home.join("pilotdeck.yaml")
+                        .strip_prefix("/")
+                        .expect("#305 absolute config path"),
+                );
+                env.insert(
+                    "PILOTDECK_CONFIG_PATH".into(),
+                    relative.to_string_lossy().into_owned(),
+                );
+            }
+            Some("alternate") => {
+                let alternate = home.join("other.yaml");
+                fs::write(
+                    &alternate,
+                    text(case.get("yaml")).expect("#305 alternate yaml"),
+                )
+                .expect("#305 alternate config file");
+                env.insert(
+                    "PILOTDECK_CONFIG_PATH".into(),
+                    format!("  {}  ", alternate.display()),
+                );
+            }
+            Some("bytes") | None => {}
+            Some(kind) => panic!("#305 unsupported sourceKind {kind}"),
         }
         let version = case
             .get("version")
@@ -217,7 +254,13 @@ fn complete_config_snapshot_replays_real_typescript_oracle() {
                     Some(content_hash(config)),
                     "{id}: production contentHash is not self-consistent",
                 );
-                let mut normalized = normalize(value, &root, &cwd);
+                let relative_config_path =
+                    (text(case.get("sourceKind")).as_deref() == Some("relative")).then(|| {
+                        env.get("PILOTDECK_CONFIG_PATH")
+                            .expect("#305 relative config input")
+                            .as_str()
+                    });
+                let mut normalized = normalize(value, &root, &cwd, relative_config_path);
                 let hash = content_hash(normalized.get("config").expect("normalized config"));
                 if let JsValue::Object(object) = &mut normalized {
                     object.insert("contentHash".into(), hash.as_str().into());
@@ -352,20 +395,30 @@ fn replace_units(value: &JsString, needle: &[u16], replacement: &[u16]) -> JsStr
     JsString::from_utf16(out)
 }
 
-fn normalize(value: JsValue, root: &Path, cwd: &Path) -> JsValue {
+fn normalize(
+    value: JsValue,
+    root: &Path,
+    cwd: &Path,
+    relative_config_path: Option<&str>,
+) -> JsValue {
     // Operate on UTF-16 units so lone surrogates in real values survive the
     // temporary-path substitution.
     let root: Vec<u16> = root.to_string_lossy().encode_utf16().collect();
     let cwd: Vec<u16> = cwd.to_string_lossy().encode_utf16().collect();
+    let relative: Vec<u16> = relative_config_path.unwrap_or("").encode_utf16().collect();
     fn walk(
         value: &JsValue,
         root: &[u16],
         cwd: &[u16],
         root_replacement: &[u16],
         cwd_replacement: &[u16],
+        relative: &[u16],
     ) -> JsValue {
         match value {
             JsValue::String(s) => {
+                if !relative.is_empty() && s.units() == relative {
+                    return JsValue::from("<RELATIVE_CONFIG_PATH>");
+                }
                 let text = replace_units(s, root, root_replacement);
                 let text = replace_units(&text, cwd, cwd_replacement);
                 JsValue::String(text)
@@ -373,7 +426,7 @@ fn normalize(value: JsValue, root: &Path, cwd: &Path) -> JsValue {
             JsValue::Array(items) => JsValue::Array(
                 items
                     .iter()
-                    .map(|v| walk(v, root, cwd, root_replacement, cwd_replacement))
+                    .map(|v| walk(v, root, cwd, root_replacement, cwd_replacement, relative))
                     .collect(),
             ),
             JsValue::Object(object) => {
@@ -383,7 +436,14 @@ fn normalize(value: JsValue, root: &Path, cwd: &Path) -> JsValue {
                     let key = replace_units(&key, cwd, cwd_replacement);
                     out.insert(
                         key,
-                        walk(value, root, cwd, root_replacement, cwd_replacement),
+                        walk(
+                            value,
+                            root,
+                            cwd,
+                            root_replacement,
+                            cwd_replacement,
+                            relative,
+                        ),
                     );
                 }
                 JsValue::Object(out)
@@ -397,6 +457,7 @@ fn normalize(value: JsValue, root: &Path, cwd: &Path) -> JsValue {
         &cwd,
         &"<ROOT>".encode_utf16().collect::<Vec<_>>(),
         &"<CWD>".encode_utf16().collect::<Vec<_>>(),
+        &relative,
     )
 }
 
@@ -511,5 +572,96 @@ fn js_eq(actual: &JsValue, expected: &JsValue) -> bool {
                 )
         }
         _ => false,
+    }
+}
+
+#[test]
+fn all_successful_config_corpus_cases_have_snapshot_projections() {
+    use std::collections::BTreeSet;
+    let oracle = pilotdeck_protocol::parse_json(ORACLE).expect("#305 snapshot JSON");
+    let JsValue::Array(cases) = oracle.get("cases").expect("#305 snapshot cases") else {
+        panic!("#305 snapshot cases array");
+    };
+    for (name, json, count) in [
+        ("catalog", include_str!("fixtures/config/catalog.json"), 20),
+        (
+            "diagnostics",
+            include_str!("fixtures/config/diagnostics.json"),
+            1015,
+        ),
+    ] {
+        let corpus = pilotdeck_protocol::parse_json(json).expect("#305 input corpus JSON");
+        let JsValue::Array(inputs) = corpus.get("cases").expect("#305 input cases") else {
+            panic!("#305 input cases array");
+        };
+        let expected: Vec<_> = inputs
+            .iter()
+            .filter(|item| {
+                item.get("load")
+                    .and_then(|load| load.get("ok"))
+                    .and_then(JsValue::as_bool)
+                    == Some(true)
+            })
+            .map(|item| {
+                format!(
+                    "existing-{name}-{}",
+                    text(item.get("id")).expect("#305 input id")
+                )
+            })
+            .collect();
+        assert_eq!(expected.len(), count, "#305 {name} successful input count");
+        let expected: BTreeSet<_> = expected.into_iter().collect();
+        assert_eq!(
+            expected.len(),
+            count,
+            "#305 {name} unique successful input IDs"
+        );
+        let prefix = format!("existing-{name}-");
+        let actual: Vec<_> = cases
+            .iter()
+            .filter(|item| item.get("snapshot").is_some())
+            .map(|item| text(item.get("id")).expect("#305 snapshot id"))
+            .filter(|id| id.starts_with(&prefix))
+            .collect();
+        assert_eq!(
+            actual.len(),
+            expected.len(),
+            "#305 {name} exact projection count"
+        );
+        assert_eq!(
+            actual.into_iter().collect::<BTreeSet<_>>(),
+            expected,
+            "#305 {name} successful case IDs"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires the fixed TS baseline and Node v22.22.0"]
+fn config_snapshot_regenerates_identically() {
+    baseline::regenerates_identically("config-snapshot");
+}
+
+#[test]
+fn relative_source_normalization_preserves_path_spelling_semantics() {
+    let root = Path::new("/tmp/fixture");
+    let cwd = Path::new("/work");
+    let input = "../tmp/fixture/home/pilotdeck.yaml";
+    let normalized = normalize(input.into(), root, cwd, Some(input));
+    assert_eq!(
+        text(Some(&normalized)).as_deref(),
+        Some("<RELATIVE_CONFIG_PATH>"),
+        "#305 relative input spelling is portable"
+    );
+    for different in [
+        "/tmp/fixture/home/pilotdeck.yaml",
+        "./../tmp/fixture/home/pilotdeck.yaml",
+    ] {
+        let normalized = normalize(different.into(), root, cwd, Some(input));
+        assert_ne!(
+            text(Some(&normalized)).as_deref(),
+            Some("<RELATIVE_CONFIG_PATH>"),
+            "#305 absolute or changed relative spelling must remain observable"
+        );
     }
 }

@@ -10,6 +10,7 @@ assert.ok(process.argv[2], 'provide an output directory');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const sourceCommit = assertBaseline(baseline);
 const sources = [
+  'src/mcp/runtime/SessionMcpRuntimeRegistry.ts',
   'src/agent/scope/AgentHandle.ts', 'src/agent/session/createAgentSession.ts',
   'src/cli/ProjectRuntimeRegistry.ts', 'src/cli/ProjectSessionFactory.ts',
   'src/cli/GatewaySessionResourceLeaseBundle.ts',

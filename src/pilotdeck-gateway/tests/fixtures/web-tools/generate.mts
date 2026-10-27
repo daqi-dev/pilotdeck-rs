@@ -11,7 +11,8 @@ import { register } from 'node:module';
 import { createServer as createNetServer } from 'node:net';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import {sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 import * as cases from './cases.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
@@ -24,7 +25,7 @@ assert.equal(locale, 'en-US', 'generate with LANG=en_US.UTF-8');
 const gitExecutable = realpathSync(
   process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim(),
 );
-const sourceCommit = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable).ref;
+const sourceCommit = bindBaseline({ baseline, commit: BASELINE_COMMIT, gitExecutable }).provenance.ref;
 const ENTRIES = ['src/tool/builtin/webFetch.ts', 'src/tool/builtin/webSearch.ts'];
 const sourceSha256 = sourceClosureSha256(baseline, BASELINE_COMMIT, gitExecutable, ENTRIES);
 // networkFetch jitters retries with Math.random; pin it so delays replay.

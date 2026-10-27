@@ -1,3 +1,4 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Run from the repo root with Node 22 and the fixed baseline's tsx loader; see
 // README.md.
 //
@@ -5,8 +6,7 @@
 // baseline `AgentSessionEventRecorder` / `JsonlTranscriptWriter`; no recorder
 // implementation is copied into the fixture.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,20 +15,7 @@ assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline
 assert.ok(process.argv[2], 'provide the fixture directory or a cross-test scratch directory');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], {
-  encoding: 'utf8',
-}).trim();
-assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'baseline must be the fixed PilotDeck commit');
-const trackedChanges = execFileSync(
-  'git',
-  ['-C', baseline, 'status', '--porcelain', '--untracked-files=no'],
-  { encoding: 'utf8' },
-);
-assert.equal(
-  trackedChanges,
-  '',
-  `baseline has uncommitted changes to tracked files:\n${trackedChanges}`,
-);
+const sourceCommit = assertBaseline(baseline);
 
 const SOURCES = [
   'agent/session/AgentSessionEventRecorder.ts',
@@ -42,19 +29,7 @@ const SOURCES = [
   'session/events/SessionDomainValidation.ts',
   'session/persistence/JsonlSessionPersistence.ts',
 ];
-const sourceSha256: Record<string, string> = {};
-for (const source of SOURCES) {
-  const path = `src/${source}`;
-  const workingTreeHash = createHash('sha256').update(await readFile(join(baseline, path))).digest('hex');
-  const committed = execFileSync('git', ['-C', baseline, 'show', `${sourceCommit}:${path}`]);
-  const committedHash = createHash('sha256').update(committed).digest('hex');
-  assert.equal(
-    workingTreeHash,
-    committedHash,
-    `${path} differs from ${sourceCommit}; the baseline checkout is not clean`,
-  );
-  sourceSha256[path] = committedHash;
-}
+const sourceSha256 = await baselineSourceHashes(baseline, SOURCES.map(source => `src/${source}`));
 
 const load = (path: string) => import(pathToFileURL(join(baseline, 'src', path)).href);
 const { AgentSessionEventRecorder } = await load('agent/session/AgentSessionEventRecorder.ts');

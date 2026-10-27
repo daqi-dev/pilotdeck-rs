@@ -6,7 +6,8 @@ import { createServer } from 'node:http';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import {sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide the output directory');
@@ -17,7 +18,7 @@ const locale = new Intl.Collator().resolvedOptions().locale;
 assert.equal(locale, 'en-US', 'generate with LANG=en_US.UTF-8');
 const gitExecutable = process.env.PDRS_GIT
   || execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-const sourceCommit = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable).ref;
+const sourceCommit = bindBaseline({ baseline, commit: BASELINE_COMMIT, gitExecutable }).provenance.ref;
 const ENTRY = 'src/model/streaming/streamModel.ts';
 const sourceSha256 = sourceClosureSha256(baseline, BASELINE_COMMIT, gitExecutable, [ENTRY]);
 const { complete } = await import(pathToFileURL(join(baseline, ENTRY)).href);

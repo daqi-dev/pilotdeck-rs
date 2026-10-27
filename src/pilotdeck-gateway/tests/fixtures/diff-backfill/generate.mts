@@ -6,7 +6,8 @@ import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync } fro
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import {sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 assert.ok(process.argv[2], 'provide an existing output parent');
@@ -14,7 +15,7 @@ assert.match(process.version, /^v22\./);
 const baseline = resolve(process.env.PDRS_BASELINE);
 const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const git = realpathSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim());
-const sourceCommit = bindSourceTree(baseline, commit, git).ref;
+const sourceCommit = bindBaseline({ baseline, commit, gitExecutable: git }).provenance.ref;
 const entries = ['src/context/budget/TokenAccountingRuntime.ts',
   'src/context/instructions/InstructionDiscovery.ts', 'src/model/request/validateModelRequest.ts',
   'src/model/providers/anthropic/stream.ts', 'src/session/transcript/TranscriptReader.ts',

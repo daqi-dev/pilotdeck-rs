@@ -1,3 +1,4 @@
+import { baselineSourceHashes } from '../_shared/baseline.mts';
 // PDRS_BASELINE=<fixed checkout> node --import <baseline>/node_modules/tsx/dist/loader.mjs generate.mts <output-parent>
 // Each run creates an exclusive mkdtemp directory under output-parent. No deletes.
 import assert from 'node:assert/strict';
@@ -7,7 +8,7 @@ import { realpathSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 assert.ok(process.argv[2], 'provide an output parent directory');
@@ -15,7 +16,7 @@ const baseline = resolve(process.env.PDRS_BASELINE!);
 const outputParent = resolve(process.argv[2]);
 const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const git = realpathSync(process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim());
-const sourceCommit = bindSourceTree(baseline, commit, git).ref;
+const sourceCommit = bindBaseline({ baseline, commit, gitExecutable: git }).provenance.ref;
 const sources = [
   'src/tool/registry/ToolRegistry.ts',
   'src/tool/execution/repairToolName.ts',
@@ -25,9 +26,7 @@ const sources = [
   'src/agent/modules/capability/executionDeadline.ts',
   'src/tool/protocol/subagentTimeout.ts',
 ];
-const sourceSha256 = Object.fromEntries(await Promise.all(sources.map(async source => [source,
-  createHash('sha256').update(await readFile(join(baseline, source))).digest('hex'),
-])));
+const sourceSha256 = await baselineSourceHashes(baseline, sources);
 const load = (source: string) => import(pathToFileURL(join(baseline, source)).href);
 const { ToolRegistry } = await load(sources[0]);
 const { repairToolName } = await load(sources[1]);

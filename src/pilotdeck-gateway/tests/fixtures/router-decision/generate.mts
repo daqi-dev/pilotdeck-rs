@@ -1,3 +1,4 @@
+import { baselineSourceHashes } from '../_shared/baseline.mts';
 // Run from the repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -7,7 +8,7 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide the fixture directory');
@@ -19,7 +20,7 @@ assert.equal(locale, 'en-US', 'generate with LANG=en_US.UTF-8');
 const gitExecutable = realpathSync(
   process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim(),
 );
-const sourceCommit = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable).ref;
+const sourceCommit = bindBaseline({ baseline, commit: BASELINE_COMMIT, gitExecutable }).provenance.ref;
 
 // Pin the process clock so the runtime's `now`/TTL and any Date use is fixed.
 const RealDate = Date;
@@ -74,18 +75,7 @@ async function sourceClosure(entry: string, seen: Set<string>): Promise<void> {
 const closure = new Set<string>();
 await sourceClosure('src/router/RouterRuntime.ts', closure);
 await sourceClosure('src/pilot/config/loadPilotConfig.ts', closure);
-const sourceSha256: Record<string, string> = {};
-const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
-const git = (...args: string[]) => execFileSync(gitExecutable, ['--no-replace-objects', '-C', baseline, ...args], { env: gitEnv, maxBuffer: 32 * 1024 * 1024 });
-const trackedChanges = git('status', '--porcelain', '--untracked-files=no').toString();
-assert.equal(trackedChanges, '', `baseline has uncommitted changes to tracked files:\n${trackedChanges}`);
-for (const path of [...closure].sort()) {
-  assert.ok(path.startsWith('src/'), `import closure escaped src/: ${path}`);
-  const committed = git('show', `${BASELINE_COMMIT}:${path}`);
-  const working = await readFile(join(baseline, path));
-  assert.equal(createHash('sha256').update(working).digest('hex'), createHash('sha256').update(committed).digest('hex'), `${path} differs from ${BASELINE_COMMIT}`);
-  sourceSha256[path] = createHash('sha256').update(working).digest('hex');
-}
+const sourceSha256 = await baselineSourceHashes(baseline, [...closure, 'src/model/index.ts']);
 
 const load = (path: string) => import(pathToFileURL(join(baseline, 'src', path)).href);
 const { createRouterRuntime } = await load('router/RouterRuntime.ts');

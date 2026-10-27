@@ -1,9 +1,9 @@
 {
   "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
   "sourceSha256": {
-    "src/extension/hooks/config/parseHooksConfig.ts": "476047d78084c278793ebc6beb05a1c2b2d0f5ea7810ea1b5eb179f8062598b6",
     "src/extension/hooks/config/matchHook.ts": "10416b65f9d88a0398cde3a411bf8b404b927deed5e2a32eabcca6a913724d71",
     "src/extension/hooks/config/matchHookCondition.ts": "acc2ad1318db794e9ad6dc511c165f233322d2260169c58517e9e9a0c61d7b96",
+    "src/extension/hooks/config/parseHooksConfig.ts": "476047d78084c278793ebc6beb05a1c2b2d0f5ea7810ea1b5eb179f8062598b6",
     "src/extension/hooks/protocol/events.ts": "3fde15287d6f60276d8fe48f1793773f8be580fb26831210141c09099c94ce18",
     "src/extension/hooks/protocol/input.ts": "a9c66001df1e27e191d63a27aa912938dce91c3b6b8bf20f01b090b66977c6cc",
     "src/extension/hooks/protocol/output.ts": "54716f955ed8220214a26bea73163cc8e2f6663a3027154a5830f29574943db7",

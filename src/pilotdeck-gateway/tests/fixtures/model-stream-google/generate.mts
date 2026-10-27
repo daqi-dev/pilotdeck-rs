@@ -9,7 +9,8 @@ import { createServer as createHttpServer, STATUS_CODES, type IncomingMessage, t
 import { createServer as createNetServer } from 'node:net';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import {sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.execArgv.includes('--stack-size=8192'), 'deep schema fixtures require --stack-size=8192');
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
@@ -22,7 +23,7 @@ assert.equal(locale, 'en-US', 'generate with LANG=en_US.UTF-8');
 const gitExecutable = realpathSync(
   process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim(),
 );
-const sourceCommit = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable).ref;
+const sourceCommit = bindBaseline({ baseline, commit: BASELINE_COMMIT, gitExecutable }).provenance.ref;
 const ENTRY = 'src/model/streaming/streamModel.ts';
 const sourceSha256 = sourceClosureSha256(baseline, BASELINE_COMMIT, gitExecutable, [ENTRY]);
 // Native retry jitter uses Math.random; pin it so delays replay.

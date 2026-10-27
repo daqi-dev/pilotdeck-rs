@@ -1,3 +1,4 @@
+import { baselineSourceHashes } from '../_shared/baseline.mts';
 // Run from the repository root with Node 22 and the fixed baseline's tsx
 // loader; see README.md. Everything below executes the real baseline modules:
 // command hooks spawn real scripts in this run's mkdtemp tree, HTTP hooks talk
@@ -11,7 +12,7 @@ import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.equal(process.version, 'v22.22.0');
@@ -33,7 +34,7 @@ const git = (...args: string[]) =>
     env: gitEnv,
     maxBuffer: 32 * 1024 * 1024,
   });
-const sourceCommit = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable).ref;
+const sourceCommit = bindBaseline({ baseline, commit: BASELINE_COMMIT, gitExecutable }).provenance.ref;
 assert.equal(git('status', '--porcelain', '--untracked-files=no').toString(), '',
   'baseline has uncommitted changes to tracked files');
 
@@ -66,13 +67,7 @@ const sources = [
   'src/runtime/commandShell.ts',
   'src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts',
 ];
-const sourceSha256: Record<string, string> = {};
-for (const path of sources) {
-  const committed = git('show', `${BASELINE_COMMIT}:${path}`);
-  const working = await readFile(join(baseline, path));
-  assert.deepEqual(working, committed, `${path} differs from ${BASELINE_COMMIT}`);
-  sourceSha256[path] = createHash('sha256').update(committed).digest('hex');
-}
+const sourceSha256 = await baselineSourceHashes(baseline, sources);
 
 // Pin the one run-varying field HookRuntime puts on a pending async hook.
 const RealDate = Date;

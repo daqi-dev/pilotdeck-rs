@@ -1,9 +1,8 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Real fixed-baseline oracle for the host `event.emit` adapter.
 // The dispatcher's private SidecarTurnProtocol is exported in memory only;
 // baseline sources are never copied into this repository.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -14,38 +13,14 @@ assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 assert.ok(process.argv[2], 'provide output directory');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-const commit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-assert.equal(commit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85');
-// The checkout is mutable in place; a dirty tracked file would change the
-// numbers below while `rev-parse HEAD` still reports the pinned commit.
-const trackedChanges = execFileSync(
-  'git',
-  ['-C', baseline, 'status', '--porcelain', '--untracked-files=no'],
-  { encoding: 'utf8' },
-);
-assert.equal(
-  trackedChanges,
-  '',
-  `baseline has uncommitted changes to tracked files:\n${trackedChanges}`,
-);
+const commit = assertBaseline(baseline);
 
 const base = 'src/agent/modules/transport/';
 const clientFile = base + 'agentLoopSidecarClient.ts';
 const dispatcherFile = base + 'sidecarDefaultModuleDispatcher.ts';
 const eventsFile = 'src/agent/protocol/events.ts';
 const files = [clientFile, dispatcherFile, eventsFile];
-const sourceSha256: Record<string, string> = {};
-for (const source of files) {
-  const workingTreeHash = createHash('sha256').update(await readFile(join(baseline, source))).digest('hex');
-  const committed = execFileSync('git', ['-C', baseline, 'show', `${commit}:${source}`]);
-  const committedHash = createHash('sha256').update(committed).digest('hex');
-  assert.equal(
-    workingTreeHash,
-    committedHash,
-    `${source} differs from ${commit}; the baseline checkout is not clean`,
-  );
-  sourceSha256[source] = committedHash;
-}
+const sourceSha256 = await baselineSourceHashes(baseline, files);
 
 const requireBaseline = createRequire(join(baseline, 'package.json'));
 const requireTsx = createRequire(requireBaseline.resolve('tsx'));

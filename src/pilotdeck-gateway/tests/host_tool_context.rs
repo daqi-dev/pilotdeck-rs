@@ -400,8 +400,12 @@ async fn project_runtime(runtime: &ToolRuntimeContext) -> JsValue {
 async fn replay_real_ts_constructors() {
     let fixture = baseline::oracle(include_str!("fixtures/host-tool-context/oracle.json"));
     assert_eq!(
-        field(&fixture, "sourceSha256").as_object().unwrap().len(),
-        5
+        field(&fixture, "sourceSha256")
+            .as_object()
+            .expect("#303 source hash object")
+            .len(),
+        650,
+        "#303 exact import closure source count"
     );
     let cases = field(&fixture, "cases");
     assert_eq!(array(&cases).len(), 82);

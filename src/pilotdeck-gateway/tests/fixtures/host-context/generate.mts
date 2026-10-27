@@ -1,3 +1,4 @@
+import { baselineSourceHashes } from '../_shared/baseline.mts';
 // Real TS dispatcher + protocol, with injected context/budget/model ports.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -8,17 +9,16 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const sourceCommit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const gitExecutable = realpathSync(process.env.PDRS_GIT || execFileSync('which', ['git'], {encoding:'utf8'}).trim());
-const binding = bindSourceTree(baseline, sourceCommit, gitExecutable);
+const binding = bindBaseline({ baseline, commit: sourceCommit, gitExecutable }).provenance;
 const sources = ['agent/modules/transport/sidecarDefaultModuleDispatcher.ts', 'agent/modules/transport/agentLoopSidecarClient.ts',
   'agent/modules/transport/sidecarToolContext.ts', 'agent/loop/modelRequestAssembly.ts', 'model/request/materializeMediaReferences.ts',
   'model/protocol/clone.ts', 'context/cache/CachePlan.ts', 'context/compaction/CompactionPort.ts'];
-const sourceSha256: Record<string,string> = {};
-for (const p of sources) sourceSha256['src/'+p] = createHash('sha256').update(await readFile(join(baseline,'src',p))).digest('hex');
+const sourceSha256 = await baselineSourceHashes(baseline, sources.map(source => `src/${source}`));
 const load = (p: string) => import(pathToFileURL(join(baseline,'src',p)).href);
 const { createSidecarDefaultModuleDispatcher } = await load(sources[0]);
 const { createSidecarContextRequestIdentityServices } = await load(sources[2]);
@@ -183,6 +183,6 @@ for(const raw of specs) {
   cases.push(normalize({...raw,calls,methods:dispatcher.manifest.hostModules.context.methods,response}));
   await dispatcher.dispose();
 }
-assert.equal(bindSourceTree(baseline,sourceCommit,gitExecutable).sha256,binding.sha256);
+assert.equal(bindBaseline({ baseline, commit: sourceCommit, gitExecutable }).provenance.sha256,binding.sha256);
 await writeFile(join(output,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,cases},null,2)+'\n');
 console.log(JSON.stringify({output,cases:cases.length}));

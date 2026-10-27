@@ -1,3 +1,4 @@
+import { baselineSourceHashes } from '../_shared/baseline.mts';
 // Run from the repository root with the fixed baseline's tsx loader:
 //   PDRS_BASELINE=/abs/PilotDeck node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 //     src/pilotdeck-gateway/tests/fixtures/memory/generate.mts \
@@ -15,7 +16,7 @@ import { realpathSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide the fixture output directory');
@@ -36,7 +37,7 @@ const git = (...args: string[]) =>
     env: gitEnv,
     maxBuffer: 32 * 1024 * 1024,
   });
-const sourceCommit = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable).ref;
+const sourceCommit = bindBaseline({ baseline, commit: BASELINE_COMMIT, gitExecutable }).provenance.ref;
 const trackedChanges = git('status', '--porcelain', '--untracked-files=no').toString();
 assert.equal(trackedChanges, '', `baseline has uncommitted changes to tracked files:\n${trackedChanges}`);
 
@@ -45,13 +46,7 @@ const sourceFiles = [
   'src/cli/createLocalGateway.ts',
   'src/gateway/dialog/errors.ts',
 ];
-const sourceSha256: Record<string, string> = {};
-for (const path of sourceFiles) {
-  const committed = git('show', `${BASELINE_COMMIT}:${path}`);
-  const working = await readFile(join(baseline, path));
-  assert.deepEqual(working, committed, `${path} differs from ${BASELINE_COMMIT}`);
-  sourceSha256[path] = createHash('sha256').update(committed).digest('hex');
-}
+const sourceSha256 = await baselineSourceHashes(baseline, sourceFiles);
 
 const { ProjectMemoryBundle } = await import(
   pathToFileURL(join(baseline, 'src/cli/ProjectMemoryBundle.ts')).href
