@@ -183,6 +183,15 @@ async function runCase(baseline, scratch, home, spec) {
     const store = repository.getFileMemoryStore();
     if (spec.ensureMeta) store.ensureProjectMeta({});
     const expected = {};
+    // `DreamReviewRunnerOptions.logger` (`dream-review.ts:528-541`): the
+    // merge-planning catch forwards `logger.warn` at line 838. Record every
+    // level so an extra call is a fixture difference, not silently dropped.
+    const logs = [];
+    const logger = {
+      info: (message) => logs.push(`info: ${String(message)}`),
+      warn: (message) => logs.push(String(message)),
+      error: (message) => logs.push(`error: ${String(message)}`),
+    };
     let randomIndex = 0;
     Math.random = () => RANDOMS[randomIndex++] ?? 0.5;
     let script = spec.script;
@@ -201,7 +210,7 @@ async function runCase(baseline, scratch, home, spec) {
       script = resolveTokens(script, Object.fromEntries(filtered.map((entry, index) => [`${pool}${index}`, entry.relativePath])));
       expected.input = jsonSafe({kind: spec.kind, entries: filtered, records, projectMeta});
       const extractor = new ScriptedExtractor(script);
-      const runner = new DreamRewriteRunner(repository, extractor);
+      const runner = new DreamRewriteRunner(repository, extractor, {logger});
       const {trace} = traceSeed(hashText);
       const result = await runner['runCategoryDream']({
         trace,
@@ -215,7 +224,7 @@ async function runCase(baseline, scratch, home, spec) {
       expected.calls = jsonSafe(extractor.calls);
     } else if (spec.method === 'mergeGeneralProjectMetas') {
       const extractor = new ScriptedExtractor(script);
-      const runner = new DreamRewriteRunner(repository, extractor);
+      const runner = new DreamRewriteRunner(repository, extractor, {logger});
       const {trace} = traceSeed(hashText);
       expected.result = jsonSafe(await runner['mergeGeneralProjectMetas'](trace, store));
       expected.trace = jsonSafe(trace);
@@ -226,7 +235,7 @@ async function runCase(baseline, scratch, home, spec) {
         : store.getProjectMeta(spec.projectMeta);
       if (!projectMeta) throw new Error(`fixture project meta ${spec.projectMeta} missing`);
       const extractor = new ScriptedExtractor(script);
-      const runner = new DreamRewriteRunner(repository, extractor);
+      const runner = new DreamRewriteRunner(repository, extractor, {logger});
       const {trace} = traceSeed(hashText);
       expected.result = jsonSafe(await runner['runProjectMetaReview']({trace, workspaceStore: store, projectMeta}));
       expected.trace = jsonSafe(trace);
@@ -235,6 +244,7 @@ async function runCase(baseline, scratch, home, spec) {
       throw new Error(`unknown fixture method ${spec.method}`);
     }
 
+    expected.logs = jsonSafe(logs);
     expected.tree = tree(repository.getFileMemoryStore().getRootDir());
     return JSON.parse(JSON.stringify(clean({
       name: spec.name,

@@ -443,6 +443,7 @@
             }
           }
         ],
+        "logs": [],
         "tree": [
           {
             "relativePath": "MEMORY.md",
@@ -847,6 +848,7 @@
             }
           }
         ],
+        "logs": [],
         "tree": [
           {
             "relativePath": "Feedback/use-tabs-1bdde1a031.md",
@@ -980,6 +982,7 @@
           }
         },
         "calls": [],
+        "logs": [],
         "tree": []
       }
     },
@@ -1144,6 +1147,7 @@
           }
         },
         "calls": [],
+        "logs": [],
         "tree": [
           {
             "relativePath": "MEMORY.md",
@@ -1594,6 +1598,7 @@
             }
           }
         ],
+        "logs": [],
         "tree": [
           {
             "relativePath": "GeneralProjects/alpha-p1.md",
@@ -2007,6 +2012,7 @@
             }
           }
         ],
+        "logs": [],
         "tree": [
           {
             "relativePath": "MEMORY.md",
@@ -2392,6 +2398,7 @@
             }
           }
         ],
+        "logs": [],
         "tree": [
           {
             "relativePath": "MEMORY.md",
@@ -2660,6 +2667,7 @@
             }
           }
         ],
+        "logs": [],
         "tree": [
           {
             "relativePath": "GeneralProjects/alpha-p1.md",
@@ -2810,6 +2818,7 @@
           }
         },
         "calls": [],
+        "logs": [],
         "tree": [
           {
             "relativePath": "GeneralProjects/alpha-p1.md",
@@ -2988,6 +2997,9 @@
               ]
             }
           }
+        ],
+        "logs": [
+          "[clawxmemory] General project meta merge planning failed: Error: fixture model failed"
         ],
         "tree": [
           {
@@ -3313,6 +3325,7 @@
             }
           }
         ],
+        "logs": [],
         "tree": [
           {
             "relativePath": "GeneralProjects/alpha-p1.md",
@@ -3587,6 +3600,7 @@
             }
           }
         ],
+        "logs": [],
         "tree": [
           {
             "relativePath": "Feedback/prefer-rust-946eddee2f.md",
@@ -3820,6 +3834,7 @@
             }
           }
         ],
+        "logs": [],
         "tree": [
           {
             "relativePath": "MEMORY.md",
@@ -3962,6 +3977,7 @@
           }
         },
         "calls": [],
+        "logs": [],
         "tree": [
           {
             "relativePath": "MEMORY.md",
@@ -4167,6 +4183,7 @@
             }
           }
         ],
+        "logs": [],
         "tree": [
           {
             "relativePath": "GeneralProjects/alpha-p1.md",
@@ -4445,6 +4462,7 @@
             }
           }
         ],
+        "logs": [],
         "tree": [
           {
             "relativePath": "Feedback/local-mirror-feedback-f0baec8687.md",
