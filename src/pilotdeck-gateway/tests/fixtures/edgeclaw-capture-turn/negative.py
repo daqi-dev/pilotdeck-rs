@@ -10,7 +10,9 @@ refuses to mutate a product tree that differs from HEAD):
 Each mutant names the exact test that must fail and the failure shape that
 proves the test really executed: an `assertion` diagnostic, or a panic at this
 integration test file for `assert!` / `expect_err` paths. A compile error or a
-different test failing is INVALID evidence.
+different test failing is INVALID evidence. Every mutant is classified before
+the summary; a non-KILLED mutant never aborts the remaining loop, and any
+non-KILLED result exits 1.
 """
 import hashlib
 import json
@@ -86,7 +88,9 @@ def main():
             '            Some(JsValue::Null) => String::new(),',
             'malformed_session_id_matches_ts_startswith_failure',
             'panic',
-            'non-string sessionId must reject like isAlwaysOnSession: null',
+            # Bind both halves: the named test's own rejection wording and the
+            # TS product text it is supposed to match (#786).
+            "#786 non-string sessionId must reject like isAlwaysOnSession (TS: reading 'startsWith')",
         ),
         mutate(
             'supports-capture-turn-removed',
@@ -183,6 +187,7 @@ def main():
             return True
 
         assert run('positive', '') == 0, 'positive tests must pass before mutating'
+        failures = []
         try:
             for mutant in mutants:
                 name, path = mutant['name'], mutant['path']
@@ -193,9 +198,24 @@ def main():
                 gate = wait_for_slot(root / 'scripts/cargo-slots.sh')
                 path.write_text(mutated)
                 try:
-                    code = run(name, mutant['test'], gate)
-                    raw = (output / f'{name}.log').read_text()
-                    killed = code == 101 and failure_shape(mutant, raw)
+                    try:
+                        code = run(name, mutant['test'], gate)
+                        raw = (output / f'{name}.log').read_text()
+                        killed = code == 101 and failure_shape(mutant, raw)
+                        reason = None if killed else (
+                            'bound test still passed' if code == 0
+                            else f'exit={code}: bound failure missing'
+                        )
+                    except Exception as error:
+                        # A timeout or harness fault is INVALID, not a reason to
+                        # stop: the remaining mutants must still be classified.
+                        code, killed = None, False
+                        reason = f'{type(error).__name__}: {error}'
+                    status = (
+                        'KILLED' if killed
+                        else 'SURVIVED' if code == 0
+                        else 'INVALID'
+                    )
                     results.append(dict(
                         name=name,
                         file=str(path.relative_to(root)),
@@ -203,10 +223,12 @@ def main():
                         failure=mutant['failure'],
                         anchor=mutant['anchor'],
                         exit=code,
-                        killed=killed,
+                        status=status,
+                        reason=reason,
                     ))
-                    print(f'{name}: killed={killed}, exit={code}', flush=True)
-                    assert killed, f'{name}: expected {mutant["test"]} to fail with {mutant["failure"]}'
+                    print(f'{name}: {status}, exit={code}', flush=True)
+                    if status != 'KILLED':
+                        failures.append(name)
                 finally:
                     assert path.read_text() == mutated, 'another writer changed the mutant'
                     path.write_text(original)
@@ -215,16 +237,32 @@ def main():
                 path.name: path.read_text() == originals[path]
                 for path in files
             }
-            (output / 'summary.json').write_text(json.dumps(dict(
-                results=results,
-                restored=restored,
-                beforeSha256={path.name: hashlib.sha256(
-                    originals[path].encode()).hexdigest() for path in files},
-                afterSha256={path.name: hashlib.sha256(
-                    path.read_bytes()).hexdigest() for path in files},
-            ), indent=2) + '\n')
             assert all(restored.values()), restored
-        assert run('restored', '') == 0, 'restored product must pass'
+        restored_ok = run('restored', '') == 0
+        counts = {
+            state: sum(row['status'] == state for row in results)
+            for state in ('KILLED', 'SURVIVED', 'INVALID')
+        }
+        (output / 'summary.json').write_text(json.dumps(dict(
+            results=results,
+            failures=failures,
+            counts=counts,
+            restored=restored,
+            restoredPass=restored_ok,
+            beforeSha256={path.name: hashlib.sha256(
+                originals[path].encode()).hexdigest() for path in files},
+            afterSha256={path.name: hashlib.sha256(
+                path.read_bytes()).hexdigest() for path in files},
+        ), indent=2) + '\n')
+        print('summary: ' + ', '.join(
+            f'{state}={count}' for state, count in counts.items()), flush=True)
+        if failures or not restored_ok:
+            print(
+                f'NOT KILLED: {", ".join(failures) or "<none>"}; '
+                f'restored_passed={restored_ok}',
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
 
 if __name__ == '__main__':

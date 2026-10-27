@@ -97,7 +97,13 @@ impl MemoryResolver for Resolver {
                 "projectRoot".into(),
                 JsValue::String(input.project_root.into()),
             );
-            call.insert("errored".into(), input.errored.clone());
+            // TS forwards `input.errored` only when the caller supplied it; a
+            // missing key stays missing instead of becoming an Undefined key
+            // (#786). JSON serialization hides the difference today, but a
+            // key-set comparison must not see a phantom property.
+            if !input.errored.is_undefined() {
+                call.insert("errored".into(), input.errored.clone());
+            }
             call.insert(
                 "messages".into(),
                 JsValue::Array(messages.iter().map(ContextMemoryMessage::to_js).collect()),
@@ -128,9 +134,13 @@ fn obj(items: impl IntoIterator<Item = (&'static str, JsValue)>) -> JsValue {
     JsValue::Object(object)
 }
 fn same(actual: &JsValue, expected: &JsValue, name: &str) {
-    let actual = stringify_json(actual).unwrap().unwrap();
-    let expected = stringify_json(expected).unwrap().unwrap();
-    assert_eq!(actual, expected, "{name}");
+    let actual = stringify_json(actual)
+        .unwrap_or_else(|error| panic!("#786 {name} actual must stringify: {error}"))
+        .unwrap_or_else(|| panic!("#786 {name} actual JSON is undefined"));
+    let expected = stringify_json(expected)
+        .unwrap_or_else(|error| panic!("#786 {name} expected must stringify: {error}"))
+        .unwrap_or_else(|| panic!("#786 {name} expected JSON is undefined"));
+    assert_eq!(actual, expected, "#786 {name}");
 }
 fn mode(name: &str) -> Mode {
     match name {
@@ -146,7 +156,11 @@ fn input_fields(spec: &JsValue) -> JsObject {
     fields.insert("sessionId".into(), field(spec, "sessionId").clone());
     fields.insert("turnId".into(), JsValue::from("turn"));
     fields.insert("messages".into(), field(spec, "messages").clone());
-    fields.insert("errored".into(), field(spec, "errored").clone());
+    // Mirror TS input: an omitted `errored` stays absent, while explicit null
+    // or a non-boolean value is forwarded verbatim (#786).
+    if let Some(errored) = spec.get("errored") {
+        fields.insert("errored".into(), errored.clone());
+    }
     fields
 }
 async fn run_scenario(spec: &JsValue) -> (JsValue, Arc<Resolver>) {
@@ -379,17 +393,31 @@ async fn malformed_session_id_matches_ts_startswith_failure() {
                 ("content", JsValue::Array(vec![JsValue::from("hi")])),
             ])]),
         );
-        let error = runtime
+        let result = runtime
             .capture_turn(ContextInput {
                 fields,
                 abort_signal: None,
                 budget_evaluator: None,
             })
-            .await
-            .expect_err("non-string sessionId must reject like isAlwaysOnSession")
-            .to_string();
-        assert!(error.contains(expected), "{error}");
-        assert!(!resolver.invoked());
+            .await;
+        let error = match result {
+            // Keep the TS product text in the panic itself: the negative
+            // control binds `#786 ... (TS: reading 'startsWith')`, so a
+            // non-rejecting mutant must not be able to satisfy the anchor with
+            // the test's own wording alone.
+            Ok(_) => panic!(
+                "#786 non-string sessionId must reject like isAlwaysOnSession (TS: {expected})"
+            ),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            error.contains(expected),
+            "#786 product error must contain the TS text {expected}: {error}"
+        );
+        assert!(
+            !resolver.invoked(),
+            "#786 rejected non-string sessionId must not reach the resolver"
+        );
     }
 }
 #[tokio::test]
