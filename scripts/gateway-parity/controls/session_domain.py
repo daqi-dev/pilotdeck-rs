@@ -73,20 +73,9 @@ CLEANUP_BLOCKED = session_domain_module.CLEANUP_BLOCKED
 CLEANUP_NOT_VERIFIED = session_domain_module.CLEANUP_NOT_VERIFIED
 CLEANUP_UNVERIFIED_STATUS = session_domain_module.CLEANUP_UNVERIFIED_STATUS
 
-# Batch aggregation is pessimistic (human decision A, 2026-10-25, decision-164:
-# "装置报告的顶层状态不得比它的任一子核验更乐观").  Lower is more optimistic;
-# the batch takes the maximum of its sub-report statuses, and an unknown status
-# is FAIL rather than silently PASS.  PASS is the only exit-0 value.
-BATCH_STATUS_ORDER = ('PASS', 'PASS_WITH_SKIPS', 'NOT_RUN', 'BLOCKED', 'FAIL')
-
-
-def aggregate_status(*statuses):
-    """Most pessimistic known status; unknown values fail closed."""
-    known = [status for status in statuses if status is not None]
-    if any(status not in BATCH_STATUS_ORDER for status in known):
-        return 'FAIL'
-    return max(known, key=BATCH_STATUS_ORDER.index, default='PASS')
-
+# Batch aggregation lives in exactly one place: common.aggregate_status().
+# Human decision A (2026-10-25, decision-164): "装置报告的顶层状态不得比它的
+# 任一子核验更乐观".  Every top-level status/exit computation below calls it.
 
 CALIBRATION_CASES = {
     'calibration-repetition': 'COVERAGE',
@@ -766,8 +755,9 @@ def cleanup_controls(output):
     skipped = [row['name'] for row in results if row.get('passed') is None]
     case_status = ('FAIL' if not executed or any(not row['passed'] for row in executed)
                    else 'PASS')
-    report = {'status': aggregate_status(case_status,
-                                         'PASS_WITH_SKIPS' if skipped else None),
+    status, _ = common.aggregate_status(case_status,
+                                        'PASS_WITH_SKIPS' if skipped else None)
+    report = {'status': status,
               'scope': 'cleanup probe behavior controls; not native evidence',
               'skipped': skipped, 'cases': results}
     save(output / 'cleanup-controls.json', report)
@@ -797,10 +787,11 @@ def run_all(output, source=None):
         results.append({'case': name, 'command': command, 'exitCode': proc.returncode,
                         'expectedRule': expected, 'firstRule': verdict.get('rule'), 'passed': passed})
     cleanup = cleanup_controls(output)
-    report = {'status': aggregate_status(
-                  'PASS' if all(r['passed'] for r in results) else 'FAIL',
-                  'PASS_WITH_SKIPS' if not_run else None,
-                  cleanup['status']),
+    status, _ = common.aggregate_status(
+        'PASS' if all(r['passed'] for r in results) else 'FAIL',
+        'PASS_WITH_SKIPS' if not_run else None,
+        cleanup['status'])
+    report = {'status': status,
               'scope': 'apparatus mutation tests only', 'cases': results,
               'notRun': [{'case': case, 'reason': 'requires real calibration --source'} for case in not_run]}
     report['cleanup'] = cleanup
@@ -819,20 +810,18 @@ def main():
     if args.case == 'all':
         report = run_all(args.output.resolve(), args.source)
         print(json.dumps(report, ensure_ascii=False))
-        return int(report['status'] != 'PASS')
+        return common.aggregate_status(report['status'])[1]
     args.output.mkdir(parents=True, exist_ok=False)
     try:
         check_case(args.case, args.output.resolve(), args.source)
     except (ValueError, OSError, KeyError, TypeError, StopIteration, subprocess.SubprocessError) as error:
         result = {'status': 'FAIL', 'rule': getattr(error, 'rule', 'CONTROL_EXECUTION'), 'detail': str(error)}
-        code = 1
     else:
         result = {'status': 'PASS', 'rule': None}
-        code = 0
     result.update(case=args.case, scope='apparatus fixture; not native run evidence')
     save(args.output / 'verdict.json', result)
     print(json.dumps(result, ensure_ascii=False))
-    return code
+    return common.aggregate_status(result['status'])[1]
 
 
 if __name__ == '__main__':

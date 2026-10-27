@@ -42,6 +42,7 @@ probe is BLOCKED before any census, so their positive expectation is unprovable
 there.  Skips are never counted as passes; the summary is PASS_WITH_SKIPS.
 """
 import argparse
+import ast
 import contextlib
 import copy
 import importlib.util
@@ -102,7 +103,8 @@ def summarize_results(results):
     """Pessimistic fixture summary: a skip is never a pass.
 
     A row with ``passed=None`` must carry the explicit ``skipped`` marker;
-    otherwise the missing result is malformed and fails closed.
+    otherwise the missing result is malformed and fails closed.  The final
+    status and exit code come from the one shared common.aggregate_status().
     """
     executed = [row for row in results if row.get('passed') is not None]
     skipped = [row for row in results
@@ -111,8 +113,10 @@ def summarize_results(results):
                  if row.get('passed') is None and not row.get('skipped')]
     if (malformed or not executed
             or any(row.get('passed') is False for row in executed)):
-        return 'FAIL', skipped
-    return ('PASS_WITH_SKIPS' if skipped else 'PASS'), skipped
+        return md.common.aggregate_status('FAIL')[0], skipped
+    status, _ = md.common.aggregate_status(
+        'PASS', 'PASS_WITH_SKIPS' if skipped else None)
+    return status, skipped
 
 
 def pid_state(pid):
@@ -824,6 +828,303 @@ def status_controls(md):
     return results
 
 
+# Static enumeration of every top-level status/exit-code computation in the
+# E1 apparatus.  A registered point must call common.aggregate_status(); a new
+# point that does not is unregistered and fails closed.  Functions that look
+# like status/exit code but are not a batch summary carry an explicit reason;
+# the enumeration test fails on any new key, so a new summary cannot be added
+# without updating this table.
+AGGREGATION_POINTS = {
+    ('scripts/gateway-parity/controls/session_domain.py', 'cleanup_controls'): 'controls-cleanup',
+    ('scripts/gateway-parity/controls/session_domain.py', 'run_all'): 'controls-run-all',
+    ('scripts/gateway-parity/controls/session_domain.py', 'main'): 'controls-main',
+    ('scripts/gateway-parity/session_domain.py', 'main'): 'calibrate-main',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
+     'summarize_results'): 'fixture-summarize',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
+     'main'): 'fixture-main',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_controls.py',
+     'main'): 'negative-main',
+}
+NON_AGGREGATION_POINTS = {
+    ('scripts/gateway-parity/common.py', 'aggregate_status'):
+        'the single shared implementation (definition, not a call site)',
+    ('scripts/gateway-parity/check_frozen.py', 'main'):
+        'single frozen-hash gate; own PASS/FAIL and exit contract, no child batch',
+    ('scripts/gateway-parity/check_ruler.py', 'main'):
+        'A2 ruler gate; PENDING_REVIEW/exit 2 contract is outside the E1 batch order',
+    ('scripts/gateway-parity/compare.py', 'main'):
+        'single comparison result; no skip/tri-state children',
+    ('scripts/gateway-parity/controls/prerequisites.py', 'run_prerequisites'):
+        'boolean prerequisite suite; per-comparison status labels are not a top-level batch',
+    ('scripts/gateway-parity/session_domain.py', 'cleanup_status'):
+        'domain mapping VERIFIED->PASS else PASS_WITH_CLEANUP_UNVERIFIED; one cleanup status, not a child summary',
+    ('scripts/gateway-parity/session_domain.py', 'run_fixture'):
+        'launcher audit status DONE/FAIL for one run, not a batch',
+    ('scripts/gateway-parity/session_domain.py', 'deadline_report'):
+        'four-cell NOT_RUN structural self-check; exit 0 is the documented structure contract, not a child batch',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
+     'batch_aggregation_control'):
+        'test-only; calls the shared function to assert the order',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
+     'aggregation_audit'):
+        'the audit itself; test-only',
+}
+
+
+STATUS_WORDS = frozenset(('PASS', 'PASS_WITH_SKIPS', 'NOT_RUN', 'BLOCKED', 'FAIL',
+                          'PASS_WITH_CLEANUP_UNVERIFIED'))
+
+
+def _status_words():
+    return STATUS_WORDS
+
+
+def _status_literals(node):
+    words = _status_words()
+    return any(isinstance(n, ast.Constant) and n.value in words for n in ast.walk(node))
+
+
+def _has_passed_aggregate(node):
+    return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+               and n.func.id in ('all', 'any') and 'passed' in ast.unparse(n)
+               for n in ast.walk(node))
+
+
+def _is_status_target(target):
+    if isinstance(target, ast.Name):
+        return target.id == 'status'
+    if isinstance(target, ast.Subscript):
+        return isinstance(target.slice, ast.Constant) and target.slice.value == 'status'
+    return False
+
+
+def _is_report_status(target, value):
+    return (isinstance(target, ast.Name) and target.id in ('report', 'summary', 'result')
+            and isinstance(value, ast.Dict)
+            and any(isinstance(key, ast.Constant) and key.value == 'status'
+                    for key in value.keys))
+
+
+def aggregation_markers(function):
+    """Markers that make *function* a top-level status/exit computation."""
+    markers = set()
+    for node in ast.walk(function):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if _is_status_target(target) and (
+                        _status_literals(node.value)
+                        or _has_passed_aggregate(node.value)
+                        or 'aggregate_status' in ast.unparse(node.value)):
+                    markers.add('assign-status')
+                elif _is_report_status(target, node.value):
+                    markers.add('assign-report-status')
+        elif isinstance(node, ast.Return) and node.value is not None:
+            value = node.value
+            if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                    and value.func.id == 'int' and _status_literals(value)):
+                markers.add('return-int-status')
+            if (isinstance(value, ast.Subscript) and isinstance(value.value, ast.Call)
+                    and 'aggregate_status' in ast.unparse(value.value.func)):
+                markers.add('return-aggregate-code')
+            if isinstance(value, ast.IfExp) and (
+                    _status_literals(value) or _has_passed_aggregate(value)):
+                markers.add('return-conditional-status')
+        elif (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
+              and isinstance(node.exc.func, ast.Name) and node.exc.func.id == 'SystemExit'
+              and node.exc.args and (_status_literals(node.exc.args[0])
+                                     or _has_passed_aggregate(node.exc.args[0]))):
+            markers.add('raise-exit-status')
+        elif isinstance(node, ast.Call) and 'aggregate_status' in ast.unparse(node.func):
+            markers.add('calls-aggregate')
+    return markers
+
+
+def calls_shared(function):
+    return any(isinstance(node, ast.Call)
+               and 'aggregate_status' in ast.unparse(node.func)
+               for node in ast.walk(function))
+
+
+def scan_aggregation_tree(tree, rel):
+    found = {}
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        markers = aggregation_markers(function)
+        if markers:
+            found[(rel, function.name)] = (markers, function)
+    return found
+
+
+def aggregation_audit():
+    """Enumerate every aggregation point and require the one shared function.
+
+    The detector is self-tested with an inline summary (must be flagged) and a
+    shared call (must be recognized), so deleting a call cannot pass silently.
+    """
+    files = [path for path in (
+        sorted((ROOT / 'scripts/gateway-parity').rglob('*.py'))
+        + sorted(Path(__file__).resolve().parent.glob('*.py')))
+        if 'node_modules' not in path.parts and '__pycache__' not in path.parts]
+    found = {}
+    failures = []
+    if not callable(getattr(md.common, 'aggregate_status', None)):
+        failures.append('#164-fix-r7 aggregation-audit: common.aggregate_status is missing')
+    for path in files:
+        try:
+            tree = ast.parse(path.read_text(encoding='utf-8'))
+        except (OSError, SyntaxError) as error:
+            failures.append(f'#164-fix-r7 aggregation-audit: cannot scan '
+                            f'{path.relative_to(ROOT).as_posix()}: {type(error).__name__}: {error}')
+            continue
+        found.update(scan_aggregation_tree(tree, path.relative_to(ROOT).as_posix()))
+
+    points = {}
+    for key, point_id in sorted(AGGREGATION_POINTS.items()):
+        rel, name = key
+        if key not in found:
+            points[point_id] = {'file': rel, 'function': name, 'shared': False}
+            failures.append(f'#164-fix-r7 aggregation-audit: registered point missing '
+                            f'{rel}:{name}')
+            continue
+        markers, function = found[key]
+        shared = calls_shared(function) and 'return-int-status' not in markers
+        points[point_id] = {'file': rel, 'function': name, 'shared': shared,
+                            'markers': sorted(markers)}
+        if not shared:
+            failures.append(f'#164-fix-r7 aggregation-audit: {rel}:{name} must call '
+                            'common.aggregate_status')
+        if 'return-int-status' in markers:
+            failures.append(f'#164-fix-r7 aggregation-audit: {rel}:{name} must call '
+                            'common.aggregate_status (found int(...) exit computation)')
+
+    unclassified = []
+    for key, (markers, _function) in sorted(found.items()):
+        if key in AGGREGATION_POINTS or key in NON_AGGREGATION_POINTS:
+            continue
+        unclassified.append({'file': key[0], 'function': key[1],
+                             'markers': sorted(markers)})
+        failures.append(f'#164-fix-r7 aggregation-audit: unregistered aggregation point '
+                        f'{key[0]}:{key[1]} markers={sorted(markers)}')
+
+    probe = ast.parse(
+        "def _bypass(rows):\n"
+        "    report = {'status': 'PASS' if all(row['passed'] for row in rows) else 'FAIL'}\n"
+        "    return report\n"
+        "def _shared(rows):\n"
+        "    status, code = common.aggregate_status('PASS', 'PASS_WITH_SKIPS')\n"
+        "    return status, code\n")
+    probe_found = scan_aggregation_tree(probe, '<self-test>')
+    bypass = probe_found.get(('<self-test>', '_bypass'))
+    shared = probe_found.get(('<self-test>', '_shared'))
+    if not bypass or calls_shared(bypass[1]):
+        failures.append('#164-fix-r7 aggregation-audit: detector self-test did not '
+                        'flag an inline summary')
+    if not shared or not calls_shared(shared[1]):
+        failures.append('#164-fix-r7 aggregation-audit: detector self-test did not '
+                        'recognize a shared call')
+    return {'mode': 'aggregation-audit', 'points': points,
+            'nonPoints': sorted(f'{rel}:{name}' for rel, name in NON_AGGREGATION_POINTS),
+            'unclassified': unclassified, 'failures': failures,
+            'failureCount': len(failures),
+            'firstFailure': failures[0] if failures else None,
+            'passed': not failures}
+
+
+def control_failure(mode, error):
+    """A setup failure still carries a dedicated, searchable message."""
+    message = f'#164-fix-r7 {mode}: {type(error).__name__}: {error}'
+    return {'mode': mode, 'passed': False, 'failures': [message],
+            'failureCount': 1, 'firstFailure': message}
+
+
+def load_negative_controls():
+    path = Path(__file__).resolve().with_name('negative_controls.py')
+    spec = importlib.util.spec_from_file_location(
+        'session_cleanup_negative_controls', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def negative_restored_replays(output):
+    """Replay negative_controls.main()'s final aggregation in memory.
+
+    The real main() runs with one mutant selected; source writes, the child
+    check and the restored-positive summary are patched, so no tracked byte is
+    touched.  This is the final aggregation point the r6 review found: a
+    restored PASS_WITH_SKIPS child must make the batch non-PASS, never PASS/0.
+    """
+    nc = load_negative_controls()
+    name = nc.MUTATIONS[0][0]
+    sources = {Path(row[1]) for row in nc.MUTATIONS}
+    real_write_text = Path.write_text
+    real_write_bytes = Path.write_bytes
+
+    def guarded_write_text(path, data, *args, **kwargs):
+        if path in sources:
+            return len(data)
+        return real_write_text(path, data, *args, **kwargs)
+
+    def guarded_write_bytes(path, data, *args, **kwargs):
+        if path in sources:
+            return len(data)
+        return real_write_bytes(path, data, *args, **kwargs)
+
+    @contextlib.contextmanager
+    def fake_mutating(*_args, **_kwargs):
+        yield {source: source.read_bytes() for source in sources}
+
+    cases = (
+        ('pass', 'darwin', 'PASS', 0, 'KILLED', True, ('PASS', 0)),
+        ('skip', 'linux', 'PASS_WITH_SKIPS', 1, 'KILLED', True,
+         ('PASS_WITH_SKIPS', 1)),
+        ('survived', 'darwin', 'PASS', 0, 'SURVIVED', True, ('FAIL', 1)),
+        ('invalid', 'darwin', 'PASS', 0, 'INVALID', True, ('BLOCKED', 2)),
+        ('restored_failed', 'darwin', 'PASS', 0, 'KILLED', False, ('FAIL', 1)),
+    )
+    rows = {}
+    for tag, platform, restored_status, restored_code, verdict, rows_ok, want in cases:
+        case = output / ('negative-restored-' + tag)
+        result_rows = ([{'mode': 'wiring', 'status': 'PASS_WITH_CLEANUP_UNVERIFIED',
+                         'passed': True}]
+                       + ([{'mode': 'clean', 'passed': None, 'skipped': 'non-darwin'}]
+                          if restored_status == 'PASS_WITH_SKIPS' else [])) if rows_ok else []
+        fake_summary = {'status': restored_status, 'results': result_rows}
+        fake = SimpleNamespace(returncode=restored_code, stdout='', stderr='')
+        saved = (nc.sys.argv, nc.sys.platform, nc.mutating_sources, nc.run_check,
+                 nc.read_summary, nc.classify, nc.pgrep_launcher, nc.MUTATIONS)
+        nc.MUTATIONS = [row for row in nc.MUTATIONS if row[0] == name]
+        nc.mutating_sources = fake_mutating
+        nc.run_check = lambda *_a, **_k: fake
+        nc.read_summary = lambda *_a, **_k: (fake_summary, None)
+        nc.classify = lambda *_a, **_k: (verdict, 'injected')
+        nc.pgrep_launcher = lambda: ''
+        nc.sys.argv = ['negative_controls.py', '--output', str(case), '--only', name]
+        nc.sys.platform = platform
+        try:
+            with patch.object(Path, 'write_text', guarded_write_text), \
+                    patch.object(Path, 'write_bytes', guarded_write_bytes):
+                code = nc.main()
+            report = json.loads((case / 'summary.json').read_text())
+            observed = (report.get('status'), code)
+            failures = [] if observed == want else [
+                f'#164-fix-r7 negative-restored {tag}: {observed!r}, want {want!r}']
+        except Exception as error:
+            observed = (None, None)
+            failures = [f'#164-fix-r7 negative-restored {tag}: '
+                        f'{type(error).__name__}: {error}']
+        finally:
+            (nc.sys.argv, nc.sys.platform, nc.mutating_sources, nc.run_check,
+             nc.read_summary, nc.classify, nc.pgrep_launcher, nc.MUTATIONS) = saved
+        rows[f'{tag}Status'] = observed[0]
+        rows[f'{tag}Returncode'] = observed[1]
+        rows[f'{tag}Passed'] = not failures
+        rows[f'{tag}Failures'] = failures
+    return rows
+
+
 def batch_aggregation_control(md, output):
     """Pin the batch status order, exit codes, and the calibrate mapping.
 
@@ -863,19 +1164,21 @@ def batch_aggregation_control(md, output):
                 'notRun': len(report['notRun'])}
 
     order = {
-        'pass': controls.aggregate_status('PASS', None),
-        'skip': controls.aggregate_status('PASS', 'PASS_WITH_SKIPS'),
-        'blocked': controls.aggregate_status('PASS', 'BLOCKED'),
-        'notRun': controls.aggregate_status('PASS', 'NOT_RUN'),
-        'fail': controls.aggregate_status('PASS', 'FAIL'),
-        'unknown': controls.aggregate_status('PASS', 'NOT_A_STATUS'),
+        'pass': controls.common.aggregate_status('PASS', None)[0],
+        'skip': controls.common.aggregate_status('PASS', 'PASS_WITH_SKIPS')[0],
+        'blocked': controls.common.aggregate_status('PASS', 'BLOCKED')[0],
+        'notRun': controls.common.aggregate_status('PASS', 'NOT_RUN')[0],
+        'fail': controls.common.aggregate_status('PASS', 'FAIL')[0],
+        'unknown': controls.common.aggregate_status('PASS', 'NOT_A_STATUS')[0],
     }
+    negative_restored = negative_restored_replays(output)
     observed = {
         'withSkips': replay('with-skips', 'PASS_WITH_SKIPS'),
         'blocked': replay('blocked', 'BLOCKED'),
         'notRun': replay('not-run', 'PASS', source=False),
         'allPass': replay('all-pass', 'PASS'),
         'order': order,
+        'negativeRestored': negative_restored,
         'summaries': {
             'allPass': summarize_results([{'passed': True}, {'passed': True}])[0],
             'withSkip': summarize_results([{'passed': True},
@@ -931,7 +1234,7 @@ def batch_aggregation_control(md, output):
     }
     expected = {
         'withSkips': {'status': 'PASS_WITH_SKIPS', 'returncode': 1},
-        'blocked': {'status': 'BLOCKED', 'returncode': 1},
+        'blocked': {'status': 'BLOCKED', 'returncode': 2},
         'notRun': {'status': 'PASS_WITH_SKIPS', 'returncode': 1},
         'allPass': {'status': 'PASS', 'returncode': 0},
         'order': {'pass': 'PASS', 'skip': 'PASS_WITH_SKIPS',
@@ -945,15 +1248,33 @@ def batch_aggregation_control(md, output):
                              'controlsSkipped': ['cleanup-empty-group'],
                              'failureRule': 'CONTROLS_SKIPPED',
                              'returncode': 2},
+        'negativeRestored': {
+            'passStatus': 'PASS', 'passReturncode': 0,
+            'skipStatus': 'PASS_WITH_SKIPS', 'skipReturncode': 1,
+            'survivedStatus': 'FAIL', 'survivedReturncode': 1,
+            'invalidStatus': 'BLOCKED', 'invalidReturncode': 2,
+            'restored_failedStatus': 'FAIL', 'restored_failedReturncode': 1,
+        },
     }
-    passed = True
+    audit = aggregation_audit()
+    observed['aggregationAudit'] = {
+        key: audit[key] for key in ('failureCount', 'firstFailure', 'passed')}
+    failures = list(audit['failures'])
     for name, want in expected.items():
         got = observed.get(name) or {}
         for key, value in want.items():
             if got.get(key) != value:
-                passed = False
+                failures.append(
+                    f'#164-fix-r7 batch-aggregation: {name}.{key}={got.get(key)!r}, '
+                    f'want {value!r}')
+    for row in negative_restored.values():
+        if isinstance(row, list):
+            failures.extend(row)
     return {'mode': 'batch-aggregation', **observed,
-            'expected': expected, 'passed': bool(passed)}
+            'expected': expected, 'failures': failures,
+            'failureCount': len(failures),
+            'firstFailure': failures[0] if failures else None,
+            'passed': not failures}
 
 
 def main():
@@ -965,7 +1286,8 @@ def main():
                                            'census-truncated', 'census-enumeration',
                                            'pid-blocked', 'linux-filtered-proc',
                                            'signal-entry', 'reap-state', 'wiring',
-                                           'runtime-negative', 'batch-aggregation', 'all'),
+                                           'runtime-negative', 'batch-aggregation',
+                                           'aggregation-audit', 'all'),
                         default='all')
     args = parser.parse_args()
     output = args.output.resolve()
@@ -975,7 +1297,7 @@ def main():
     results = []
     modes = ('clean', 'leak', 'ignore') if args.mode == 'all' else (
         () if args.mode in ('status', 'runtime-negative', 'blocked', 'wiring',
-                            'batch-aggregation',
+                            'batch-aggregation', 'aggregation-audit',
                             'eperm-live-member', 'identity-lost', 'census-unavailable',
                             'census-snapshot', 'census-descendant', 'census-unstable',
                             'census-truncated', 'census-enumeration', 'pid-blocked',
@@ -1050,16 +1372,28 @@ def main():
         results.append(result)
         print(json.dumps(result, ensure_ascii=False), flush=True)
     if args.mode in ('batch-aggregation', 'all'):
-        result = batch_aggregation_control(md, output)
+        try:
+            result = batch_aggregation_control(md, output)
+        except Exception as error:
+            result = control_failure('batch-aggregation', error)
+        results.append(result)
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+    if args.mode in ('aggregation-audit', 'all'):
+        try:
+            result = aggregation_audit()
+        except Exception as error:
+            result = control_failure('aggregation-audit', error)
         results.append(result)
         print(json.dumps(result, ensure_ascii=False), flush=True)
     status, skipped = summarize_results(results)
-    summary = {'status': status, 'output': str(output),
+    _, exit_code = md.common.aggregate_status(status)
+    summary = {'status': status, 'exitCode': exit_code, 'output': str(output),
                'skipped': [row.get('mode') for row in skipped], 'results': results}
     (output / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
-    print(json.dumps({'status': status, 'skipped': summary['skipped'],
+    print(json.dumps({'status': status, 'exitCode': exit_code,
+                      'skipped': summary['skipped'],
                       'summary': str(output / 'summary.json')}, ensure_ascii=False))
-    return int(status != 'PASS')
+    return exit_code
 
 
 if __name__ == '__main__':

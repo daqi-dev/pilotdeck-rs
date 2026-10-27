@@ -909,25 +909,25 @@ def main():
                 # see a non-PASS string, not a fresh DRAFT_AWAITING_A5_4.
                 report['freezeStatus'] = ('DRAFT_AWAITING_A5_4' if overall == 'PASS'
                                           else CLEANUP_UNVERIFIED_FREEZE)
-                # A caller that only reads the exit status must not treat an
-                # unverified cleanup as success.  README maps BLOCKED to exit 2.
-                if overall != 'PASS':
-                    code = 2
+                # Single shared exit-code mapping: only PASS maps to 0; a domain
+                # status outside the batch order (PASS_WITH_CLEANUP_UNVERIFIED)
+                # is BLOCKED, never an optimistic 0.
+                _, code = common.aggregate_status(
+                    overall if overall in common.BATCH_STATUS_ORDER else 'BLOCKED')
         require(report['apparatusSha256'] == hashes(), 'APPARATUS_CHANGED', 'apparatus changed while collecting evidence')
         if dependencies is not None:
             require(baseline_dependency_hashes(args.baseline.resolve()) == dependencies,
                     'BASELINE_DEPS_CHANGED', 'baseline runtime dependencies changed while collecting evidence')
         require(report['frozen'] == frozen_check(), 'FROZEN_CHANGED', 'frozen inputs changed during suite')
         if args.suite == 'calibrate' and report['frozen']['exitCode'] != 0:
-            report['status'] = 'BLOCKED'
+            report['status'], code = common.aggregate_status('BLOCKED')
             report['freezeStatus'] = 'BLOCKED'
             report['failure'] = {'rule': 'FROZEN', 'detail': 'measurements completed; see frozen check output; no acceptance PASS'}
-            code = 2
     except (EvidenceError, OSError, ValueError, KeyError, TypeError, StopIteration,
             subprocess.SubprocessError, TimeoutError, KeyboardInterrupt) as error:
         report['status'] = 'BLOCKED' if isinstance(error, (PermissionError, TimeoutError, KeyboardInterrupt)) else 'FAIL'
         report['failure'] = {'rule': getattr(error, 'rule', 'EVIDENCE'), 'detail': str(error)}
-        code = 2 if report['status'] == 'BLOCKED' else 1
+        code = common.aggregate_status(report['status'])[1]
     save(output / 'report.json', report)
     print(json.dumps({'status': report['status'], 'suite': args.suite, 'report': str(output / 'report.json'),
                       'failure': report.get('failure'), 'acceptanceStatus': report['acceptanceStatus']}, ensure_ascii=False))

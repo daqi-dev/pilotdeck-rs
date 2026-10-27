@@ -65,15 +65,23 @@ python3 -I scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gat
 `python3 -I scripts/gateway-parity/controls/session_domain.py --case all --output <新目录>`
 执行 10 类必需负控及 7 项补充回归。加 `--source <校准输出>/six-cells` 可变异真实 TS
 观察；不加时使用明确标记的合成观察，并把 7 项 calibration case 记入 `notRun`。
-每条负控须 exit 1 且首因正确。**批次汇总取所有子报告的最悲观状态**（全序
-`PASS < PASS_WITH_SKIPS < NOT_RUN < BLOCKED < FAIL`；未知状态直接判 `FAIL`）：
-只有所有 case 与 cleanup 都 `PASS` 才是顶层 `PASS` / exit 0；cleanup 在非 Darwin
-跳过 3 项正控得到 `PASS_WITH_SKIPS`，缺 `--source` 的 `notRun` 也计入
-`PASS_WITH_SKIPS`，两者都必须 exit 1，绝不能汇总成 `PASS`（人定 A：装置顶层不得
-比任一子核验乐观）。`main()` 只在顶层 `PASS` 时返回 0。逐条命令和输出落在
-`controls/results.json` 及各子目录；`cleanupSkipped` 单列跳过的 cleanup 正控。
+每条负控须 exit 1 且首因正确。**批次汇总只允许一个共享函数**
+`common.aggregate_status(*children) -> (status, exit_code)`：全序
+`PASS < PASS_WITH_SKIPS < NOT_RUN < BLOCKED < FAIL`（未知状态直接判 `FAIL`），
+返回最悲观状态及其登记退出码（`PASS=0`、`PASS_WITH_SKIPS/NOT_RUN/FAIL=1`、
+`BLOCKED=2`）。`controls/session_domain.py`、`session_domain.py` calibrate、
+fixture 的 `check_cleanup.py` 与源码负控 `negative_controls.py` 的顶层状态/退出码
+都调用它，不再各自写 `== 'PASS'` / `all(passed)` 分支。只有所有 case 与 cleanup
+都 `PASS` 才是顶层 `PASS` / exit 0；cleanup 在非 Darwin 跳过 3 项正控得到
+`PASS_WITH_SKIPS`，缺 `--source` 的 `notRun` 也计入 `PASS_WITH_SKIPS`，两者都
+必须 exit 1，绝不能汇总成 `PASS`（人定 A：装置顶层不得比任一子核验乐观）。
 `check_cleanup.py --mode batch-aggregation` 钉住该全序、`run_all()`/`main()` 的
-状态与退出码，以及 calibrate 对 `e1Controls=PASS_WITH_SKIPS` 的映射。
+状态与退出码、calibrate 对 `e1Controls=PASS_WITH_SKIPS` 的映射，以及源码负控
+「恢复正控含平台跳过 → 批次非 PASS/非零」的最终汇总点。
+`check_cleanup.py --mode aggregation-audit` 静态枚举装置内所有顶层状态/退出码
+计算点：每个登记点必须调用共享函数，新增未登记点或登记点改用 `int(...)` 直接
+算退出码即失败；`negative_controls.py` 的 `restored-skip-accepted` 与
+`aggregation-exit-bypassed` 分别钉这两条。
 
 报告区分实测成功与验收状态：冻结哈希不符时，即使测量成功，校准总判也为
 `BLOCKED` / exit 2。进程树读取受阻在 `launch.json:psCensus` 明确记录为 `BLOCKED`，
@@ -128,5 +136,11 @@ CI/shell 调用方也不会把它当通过。
 汇总同样是 `PASS_WITH_SKIPS`（exit 1），不把平台未证明的正控报成 FAIL 或 PASS。源码
 变异负控按变异绑定期望字段，未声明的 `signalError`/`probeError` 判 INVALID
 （环境/启动失败也一样）且全部跑完再汇总；`batch-status-relaxed` 只回退汇总逻辑，
-必须让 `batch-aggregation` 控制转红。
+必须让 `batch-aggregation` 控制转红。源码负控自身的顶层状态/退出码也走
+`common.aggregate_status()`：KILLED→`PASS`、SURVIVED→`FAIL`、INVALID→`BLOCKED`，
+恢复正控作为同一批的子项原样计入；因此恢复正控为 `PASS_WITH_SKIPS` 时批次为
+`PASS_WITH_SKIPS`/exit 1，不会打印 `PASS`/exit 0（`restored-skip-accepted` 负控
+只删掉恢复正控这个子项，必须让 `batch-aggregation` 的 `negativeRestored.skip*`
+转红）。`aggregation-exit-bypassed` 删掉 controls `main()` 的共享退出码调用，
+必须让 `aggregation-audit` 报出登记点未走共享函数的专属失败。
 A5.3 的白名单变更须由协调者完成双评审、哈希登记后再合并。
