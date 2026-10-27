@@ -15,6 +15,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.22.0
+      - name: CI 聚合门控与各 job 的 Node 前置守卫
+        working-directory: src/pilotdeck-gateway/tests
+        run: python3 -m unittest -v test_metadata_io_driver.EnvironmentControls
       - name: metadata observer generation 正负控（自有文件）
         run: node src/pilotdeck-gateway/tests/test_metadata_observer.mjs
 
