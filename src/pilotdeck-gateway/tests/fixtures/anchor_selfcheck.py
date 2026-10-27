@@ -14,12 +14,14 @@ from replace(..., 1)'s replacement limit. Unknown formats fail closed.
 
 Snapshot names have one Assign or one official mutating_sources with-as binding.
 An unread module-level empty dictionary before its sole official capture counts
-as one binding. Assigns may also belong to a top-level function, without a file
+as one binding. The exact exiting --check-anchors preflight below is a separate
+path from its later capture. Assigns may also belong to a top-level function, without a file
 allowlist; local dictionaries must be consumed in that same function scope.
 Dictionary keys retain their read expression; unknown snapshot syntax fails closed.
 Snapshot occurrences are allowlisted: canonical bindings, subscript reads and
 exact dict(name) copies. Existing modeled originals[key] assignments, literal
 pop(key, None) statements and read-only mapping calls remain compatibility forms.
+The exact anchors(texts) helper below may inspect a decoded snapshot view.
 Attribute names and string literals equal to a snapshot name are never aliases.
 Read chains allow only the concrete methods in SNAPSHOT_READ_METHODS. This is a
 syntax check, not execution or general Python alias/purity analysis.
@@ -53,6 +55,8 @@ UNSUPPORTED = {
     'negative_oracle_guard.py': 'JSON provenance corruption, no source before fragments',
     'test_negative_process.py': 'unit tests of the shared process/source guard',
     'test_negative_suite.py': 'unit tests of the shared mutation suite runner',
+    'session-domain-cleanup/check_cleanup.py': 'runtime process-census/probe monkeypatch controls; snapshots is an iterator of PID sets, not source bytes; no source replacement anchors',
+    'session-domain-cleanup/launcher.py': 'process-group behavior fixture with bounded children, no source mutation definitions',
     'edgeclaw-llm/test_controls.py': 'unit tests of the shared process/source guard',
     'background-output/test_negative.py': 'unit tests of the mutation runner',
     'background-panic/test_negative_controls.py': 'mutation helper unit tests on in-memory strings/JSON, no product source replacement table',
@@ -87,6 +91,9 @@ UNSUPPORTED = {
 UNSUPPORTED_SIGNALS = {
     'native-topology/run.py': {'table:CASES'},
     'native-topology/controls.py': {'call:mutate'},
+    'negative_suite.py': {'call:mutate'},
+    'test_negative_suite.py': {'table:cases'},
+    'session-domain-cleanup/check_cleanup.py': {'table:CONTROLS', 'table:cases', 'table:controls'},
     'negative_oracle_guard.py': {'table:CASES'},
     'edgeclaw-llm/test_controls.py': {'table:cases'},
     'turn-runner/negative_controls.py': {'table:mutations', 'call:mutate'},
@@ -139,6 +146,40 @@ SNAPSHOT_NAMES = {'originals', 'snapshots'}
 # transforms. Adding syntax here does not extend either narrower role.
 SNAPSHOT_READ_METHODS = {'count', 'decode', 'encode', 'replace', 'split', 'strip'}
 
+# These compatibility forms are complete AST shapes, not a general purity or
+# control-flow analysis. Changes to their bodies must be reviewed explicitly.
+SNAPSHOT_ANCHOR_HELPER = ast.parse('''
+def anchors(texts):
+    stale = []
+    for name, path, before, _, _ in cases:
+        count = texts[path].count(before)
+        if count != 1:
+            stale.append((name, count))
+    assert set(messages) == {case[0] for case in cases}, 'every mutant needs its own named assertion'
+    if stale:
+        for name, count in stale: print(f'STALE ANCHOR {name}: {count} matches', file=sys.stderr)
+        raise SystemExit(2)
+''').body[0]
+SNAPSHOT_DECODED_VIEW = ast.parse('''
+originals = {path: snapshots[path].decode() for path in (source, text)}
+''').body[0]
+SNAPSHOT_PREFLIGHT = ast.parse('''
+if sys.argv[1:] == ['--check-anchors']:
+    originals = {path: path.read_text() for path in {case[1] for case in cases}}
+    stale = []
+    for name, path, before, _after, _test in all_cases:
+        count = originals[path].count(before)
+        if count != 1:
+            stale.append((name, count, path.relative_to(root).as_posix()))
+    if stale:
+        for name, count, relative in stale:
+            print(f'STALE ANCHOR {name}: {count} matches in {relative}')
+        print('STALE ANCHORS: negative.py is out of sync with its sources; refusing to run')
+        raise SystemExit(2)
+    print(f'{len(all_cases)} anchors: ok')
+    raise SystemExit(0)
+''').body[0]
+
 
 class Unsupported(ValueError):
     pass
@@ -185,12 +226,15 @@ class Static:
         self.tree = tree
         self.defs = {}
         self.captures = {}
+        self.preflight_snapshots = set()
         self.original_updates = []
         self.parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
         bindings = self.check_snapshot_bindings()
         self.check_snapshot_uses(bindings)
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign):
+                if node in self.preflight_snapshots:
+                    continue  # This exact branch exits before the capture path.
                 for target in node.targets:
                     if isinstance(target, ast.Name):
                         if target.id in ('originals', 'snapshots') and not isinstance(node.value, (ast.Dict, ast.DictComp)):
@@ -266,6 +310,8 @@ class Static:
                 continue
             parent = self.parents.get(node)
             if isinstance(node.ctx, ast.Load):
+                if self.readonly_anchor_view(node, parent):
+                    continue
                 if isinstance(parent, ast.Subscript) and parent.value is node:
                     if isinstance(parent.ctx, ast.Load):
                         # Reads may be transformed but must not become nested
@@ -301,6 +347,44 @@ class Static:
                     raise Unsupported('unsupported snapshot mapping method')
             raise Unsupported('unsupported snapshot mapping escape or write')
 
+    def readonly_anchor_view(self, node, call):
+        """Allow only the repository's exact decoded view and read-only helper."""
+        if not (node.id == 'originals' and isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name) and call.func.id == 'anchors'
+                and call.args == [node] and not call.keywords
+                and isinstance(self.parents.get(call), ast.Expr)):
+            return False
+        helpers = [n for n in ast.walk(self.tree) if 'anchors' in bound_names(n)]
+        views = [n for n in ast.walk(self.tree) if isinstance(n, ast.Assign)
+                 and ast.dump(n) == ast.dump(SNAPSHOT_DECODED_VIEW)]
+        capture = self.captures.get('snapshots')
+        if len(helpers) != 1 or len(views) != 1 or capture is None:
+            return False
+        helper, view = helpers[0], views[0]
+        owner = self.parents.get(self.parents.get(capture))
+        # Proving the body is read-only is insufficient if the function can
+        # escape to an alias or have __code__/defaults rewritten before use.
+        for use in ast.walk(self.tree):
+            for field, value in ast.iter_fields(use):
+                if (use is helper and field == 'name'
+                        or isinstance(use, ast.Name) and field == 'id'):
+                    continue
+                values = value if isinstance(value, list) else [value]
+                if any(isinstance(item, str) and item == 'anchors' for item in values):
+                    return False
+            if isinstance(use, ast.Name) and use.id == 'anchors':
+                parent = self.parents.get(use)
+                if not (isinstance(use.ctx, ast.Load) and isinstance(parent, ast.Call)
+                        and parent.func is use):
+                    return False
+        return (ast.dump(helper) == ast.dump(SNAPSHOT_ANCHOR_HELPER)
+                and self.parents.get(helper) is self.tree
+                and helper.lineno < capture.lineno < view.lineno < call.lineno
+                and isinstance(owner, ast.With)
+                and self.parents.get(owner) is self.tree
+                and self.parents.get(view) is owner
+                and self.parents.get(self.parents[call]) is owner)
+
     def check_snapshot_bindings(self):
         """Keep the original declaration; never resolve a read through a rebind."""
         bindings = {name: [] for name in ('originals', 'snapshots')}
@@ -317,6 +401,11 @@ class Static:
             if self.empty_snapshot_placeholder(name, sites):
                 placeholder, capture = sorted(sites, key=lambda node: node.lineno)
                 allowed.add(placeholder)
+                sites = [capture]
+            elif self.exiting_snapshot_preflight(name, sites):
+                preflight, capture = sorted(sites, key=lambda node: node.lineno)
+                self.preflight_snapshots.add(self.parents[preflight])
+                allowed.add(preflight)
                 sites = [capture]
             if len(sites) != 1:
                 raise Unsupported(f'unsupported snapshot binding: {name} must have exactly one declaration')
@@ -359,6 +448,26 @@ class Static:
                               'getattr', '__getattribute__', '__import__'}:
                     raise Unsupported(f'unsupported snapshot dynamic write: {symbol}')
         return allowed
+
+    def exiting_snapshot_preflight(self, name, sites):
+        """Recognize the complete, module-level check-only branch, never a rebind."""
+        if name != 'originals' or len(sites) != 2:
+            return False
+        first, second = sorted(sites, key=lambda node: node.lineno)
+        initial, capture = self.parents.get(first), self.parents.get(second)
+        branch, owner = self.parents.get(initial), self.parents.get(capture)
+        if not (isinstance(initial, ast.Assign) and initial.targets == [first]
+                and isinstance(branch, ast.If) and self.parents.get(branch) is self.tree
+                and ast.dump(branch) == ast.dump(SNAPSHOT_PREFLIGHT)
+                and isinstance(capture, ast.withitem) and capture.optional_vars is second
+                and isinstance(owner, ast.With) and self.parents.get(owner) is self.tree
+                and branch.end_lineno < owner.lineno):
+            return False
+        return not any(isinstance(node, ast.Name) and node.id == name
+                       and isinstance(node.ctx, ast.Load)
+                       and not branch.lineno <= node.lineno <= branch.end_lineno
+                       and node.lineno <= capture.context_expr.end_lineno
+                       for node in ast.walk(self.tree))
 
     def empty_snapshot_placeholder(self, name, sites):
         """A never-observed module placeholder is part of its sole capture."""

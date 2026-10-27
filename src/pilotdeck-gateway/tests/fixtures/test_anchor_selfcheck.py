@@ -1069,6 +1069,137 @@ mutants = [('sample', source, text, part + 'after')]
             self.write(good)
             self.run_check(label='#827 placeholder-constructor restored')
 
+    def decoded_anchor_view(self):
+        (self.root / 'src/text.rs').write_text('before\n')
+        return textwrap.dedent("""\
+            from negative_process import mutating_sources
+            text = root / 'src/text.rs'
+            cases = [('sample', source, 'before', 'after', 'message')]
+            messages = {'sample': 'message'}
+            def anchors(texts):
+                stale = []
+                for name, path, before, _, _ in cases:
+                    count = texts[path].count(before)
+                    if count != 1:
+                        stale.append((name, count))
+                assert set(messages) == {case[0] for case in cases}, 'every mutant needs its own named assertion'
+                if stale:
+                    for name, count in stale: print(f'STALE ANCHOR {name}: {count} matches', file=sys.stderr)
+                    raise SystemExit(2)
+            with mutating_sources(root, [source, text]) as snapshots:
+                originals = {path: snapshots[path].decode() for path in (source, text)}
+                anchors(originals)
+                mutants = [('view', source, originals[source].strip(), 'after')]
+            """)
+
+    def test_snapshot_decoded_view_exact_helper(self):
+        body = self.decoded_anchor_view()
+        self.write(body)
+        self.run_check(label='#827 decoded-view original')
+        self.write(body.replace("originals[source].strip()", "originals[source].strip().replace('before', 'missing')"))
+        self.assertIn('expected=1 actual=0', self.run_check(1, label='#827 decoded-view changed-value'),
+                      '#827 decoded-view must resolve captured bytes')
+        self.write(body)
+        self.run_check(label='#827 decoded-view restored')
+
+    def test_snapshot_decoded_view_rejects_helper_or_binding_changes(self):
+        good = self.decoded_anchor_view()
+        changes = [
+            good.replace('    stale = []', '    texts.clear()\n    stale = []'),
+            good.replace('    stale = []', "    texts[source] = 'missing'\n    stale = []"),
+            good.replace('    stale = []', '    leak(texts)\n    stale = []'),
+            good.replace('    stale = []', '    return texts\n    stale = []'),
+            good.replace('def anchors(texts):', '@decorator\ndef anchors(texts):'),
+            good.replace('def anchors(texts):', 'def anchors(texts, extra=None):'),
+            good + 'anchors = unknown\n',
+            good + 'del anchors\n',
+            good + 'anchors.__code__ = poison.__code__\n',
+            good + 'callback = anchors\ncallback.__code__ = poison.__code__\n',
+            good + 'replace_code(anchors)\n',
+            good + 'module.anchors.__code__ = poison.__code__\n',
+            good + "sys.modules[__name__].__setattr__('anchors', poison)\n",
+            good + 'register(anchors=poison)\n',
+            good.replace('anchors(originals)', 'anchors(originals, extra=True)'),
+            good.replace('anchors(originals)', 'result = anchors(originals)'),
+            good.replace('snapshots[path].decode()', 'snapshots[path]'),
+            good.replace('snapshots[path].decode()', 'snapshots[path].decode(errors="ignore")'),
+            good.replace('for path in (source, text)', 'for path in (source, text) if path'),
+            good.replace('for path in (source, text)', 'for path in [source, text]'),
+            good.replace('    anchors(originals)\n', '') + 'anchors(originals)\n',
+            good.replace('    originals =', '    anchors(originals)\n    originals ='),
+            good[:good.index('with mutating_sources')] + 'if True:\n'
+                + textwrap.indent(good[good.index('with mutating_sources'):], '    '),
+        ]
+        for changed in changes:
+            with self.subTest(changed=changed):
+                self.write(good)
+                self.run_check(label='#827 decoded-helper original')
+                self.write(changed)
+                self.assertIn('unsupported snapshot', self.run_check(1, label='#827 decoded-helper rejected'),
+                              '#827 decoded-helper must reject unverified mapping consumers')
+                self.write(good)
+                self.run_check(label='#827 decoded-helper restored')
+
+    def exiting_anchor_preflight(self):
+        return textwrap.dedent("""\
+            from negative_process import mutating_sources
+            cases = [('sample', source, 'before', 'after', 'test')]
+            all_cases = list(cases)
+            if sys.argv[1:] == ['--check-anchors']:
+                originals = {path: path.read_text() for path in {case[1] for case in cases}}
+                stale = []
+                for name, path, before, _after, _test in all_cases:
+                    count = originals[path].count(before)
+                    if count != 1:
+                        stale.append((name, count, path.relative_to(root).as_posix()))
+                if stale:
+                    for name, count, relative in stale:
+                        print(f'STALE ANCHOR {name}: {count} matches in {relative}')
+                    print('STALE ANCHORS: negative.py is out of sync with its sources; refusing to run')
+                    raise SystemExit(2)
+                print(f'{len(all_cases)} anchors: ok')
+                raise SystemExit(0)
+            with mutating_sources(root, [source]) as originals:
+                mutants = [('capture', source, originals[source].decode().strip(), 'after')]
+            """)
+
+    def test_snapshot_exiting_preflight_uses_official_capture(self):
+        body = self.exiting_anchor_preflight()
+        self.write(body)
+        self.run_check(label='#827 exiting-preflight original')
+        self.write(body.replace('originals[source].decode().strip()',
+                                "originals[source].decode().strip().replace('before', 'missing')"))
+        self.assertIn('expected=1 actual=0', self.run_check(1, label='#827 exiting-preflight changed-value'),
+                      '#827 exiting-preflight must resolve later capture bytes')
+        self.write(body)
+        self.run_check(label='#827 exiting-preflight restored')
+
+    def test_snapshot_exiting_preflight_rejects_other_control_flow(self):
+        good = self.exiting_anchor_preflight()
+        changes = [
+            good.replace('    raise SystemExit(0)\n', ''),
+            good.replace('    raise SystemExit(0)', '    if stale:\n        raise SystemExit(0)'),
+            good.replace("['--check-anchors']", "['--unknown']"),
+            good.replace('with mutating_sources', 'else:\n    pass\nwith mutating_sources'),
+            good.replace('with mutating_sources', "old = originals[source]\nwith mutating_sources"),
+            good.replace('with mutating_sources(root, [source])', 'with mutating_sources(root, [originals[source]])'),
+            good + 'originals = {}\n',
+            good.replace('from negative_process import', 'from other import'),
+            good.replace('with mutating_sources', 'with unknown'),
+            good.replace('    stale = []', '    originals.clear()\n    stale = []'),
+            good.replace('    stale = []', '    leak(originals)\n    stale = []'),
+            'if True:\n' + textwrap.indent(good, '    '),
+        ]
+        for changed in changes:
+            with self.subTest(changed=changed):
+                self.write(good)
+                self.run_check(label='#827 preflight-shape original')
+                self.write(changed)
+                self.assertIn('unsupported snapshot', self.run_check(1, label='#827 preflight-shape rejected'),
+                              '#827 preflight-shape must reject nonexclusive bindings')
+                self.write(good)
+                self.run_check(label='#827 preflight-shape restored')
+
     def test_snapshot_comprehension_tracks_real_paths(self):
         other = self.root / 'src/other/example.rs'
         other.parent.mkdir()
@@ -1397,6 +1528,47 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
             self.assertIn('unsupported exemption signals', self.run_check(1, label='helper-hidden-mutation'))
         self.write("raise RuntimeError('must not execute')\n")
         self.run_check(label='signal-free-helper-restored')
+
+    def check_rebased_helper_registration(self, name, expected):
+        label = '#827 rebased-helper ' + name
+        self.assertIn(name, PRODUCTION_UNSUPPORTED, label + ' registration')
+        self.assertTrue(PRODUCTION_UNSUPPORTED[name].strip(), label + ' reason')
+        self.assertEqual(PRODUCTION_UNSUPPORTED_SIGNALS.get(name, set()), expected,
+                         label + ' signals')
+        self.move_script(name)
+        body = (PATH.parent / name).read_text()
+        self.script.write_text(body)
+        CHECK.UNSUPPORTED[name] = PRODUCTION_UNSUPPORTED[name]
+        if expected:
+            CHECK.UNSUPPORTED_SIGNALS[name] = expected
+        self.run_check(label=label + ' original')
+        self.script.write_text(body + '\nmutation()\n')
+        self.assertIn('unsupported exemption signals', self.run_check(1, label=label + ' added-signal'),
+                      label + ' must reject additional mutation signals')
+        self.script.write_text(body)
+        if expected:
+            CHECK.UNSUPPORTED_SIGNALS[name] = set()
+            self.assertIn('unsupported exemption signals', self.run_check(1, label=label + ' missing-signal'),
+                          label + ' must require every registered signal')
+            CHECK.UNSUPPORTED_SIGNALS[name] = expected
+        self.script.unlink()
+        self.assertIn('stale/empty', self.run_check(1, label=label + ' missing-file'),
+                      label + ' must reject stale exemption')
+        self.script.write_text(body)
+        self.run_check(label=label + ' restored')
+
+    def test_rebased_negative_suite_registration(self):
+        self.check_rebased_helper_registration('negative_suite.py', {'call:mutate'})
+
+    def test_rebased_negative_suite_tests_registration(self):
+        self.check_rebased_helper_registration('test_negative_suite.py', {'table:cases'})
+
+    def test_rebased_cleanup_probe_registration(self):
+        self.check_rebased_helper_registration('session-domain-cleanup/check_cleanup.py',
+                                              {'table:CONTROLS', 'table:cases', 'table:controls'})
+
+    def test_rebased_cleanup_launcher_registration(self):
+        self.check_rebased_helper_registration('session-domain-cleanup/launcher.py', set())
 
     def test_registered_exemption_signals_are_exact_and_stale_checked(self):
         for name, signals in PRODUCTION_UNSUPPORTED_SIGNALS.items():
