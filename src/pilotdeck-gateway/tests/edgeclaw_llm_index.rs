@@ -296,6 +296,9 @@ async fn oracle_matrix() {
         )
         .await
         .expect("bounded loopback case");
+        // The wire bytes are the primary parity evidence, so they compare
+        // before the derived debug trace: a prompt mutation otherwise dies
+        // on `debug <case>` first, where the negative controls do not bind.
         equal(
             &actual,
             expected.get("result").unwrap(),
@@ -303,16 +306,16 @@ async fn oracle_matrix() {
             &format!("result {name}"),
         );
         equal(
-            &JsValue::Array(debug),
-            expected.get("debug").unwrap(),
-            &server.origin,
-            &format!("debug {name}"),
-        );
-        equal(
             &js(json!(*server.requests.lock().unwrap())),
             expected.get("requests").unwrap(),
             &server.origin,
             &format!("requests {name}"),
+        );
+        equal(
+            &JsValue::Array(debug),
+            expected.get("debug").unwrap(),
+            &server.origin,
+            &format!("debug {name}"),
         );
         let expected_calls = match expected.get("calls") {
             Some(JsValue::Number(calls)) => *calls as usize,
