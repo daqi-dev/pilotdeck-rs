@@ -31,6 +31,10 @@ assert os.environ.get("CARGO_TARGET_DIR"), "caller must set CARGO_TARGET_DIR"
 binding = root / "src/pilotdeck-gateway/src/skills/binding.rs"
 external = root / "src/pilotdeck-gateway/src/skills/external.rs"
 
+# A mutation may list several markers only when the same failing assertion
+# message contains every marker.  ``cases_for`` turns each marker into its own
+# Case, so a marker bound to a sibling assertion that still passes under the
+# mutation is INVALID (fix-r3: body-read/manifest dual markers).
 MUTATIONS = {
     "external-branch-removed": (
         binding,
@@ -132,7 +136,7 @@ MUTATIONS = {
         "                    flight.settle(ManifestOutcome::Done(Ok(())));",
         "skills::external_tests::concurrent_manifest_failure_is_shared_by_every_waiter",
         [
-            "#929 first manifest failure must surface",
+            "#929 first manifest failure must surface to the concurrent waiter",
             "#929 concurrent waiter must receive the same manifest failure",
         ],
     ),
