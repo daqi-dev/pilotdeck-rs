@@ -20,6 +20,7 @@ bundle = root / 'src/pilotdeck-gateway/src/runtime/plugins.rs'
 tests = root / 'src/pilotdeck-gateway/src/runtime/plugins/catalog_tests.rs'
 # Explicit tables are also checked by anchor_selfcheck.py without executing us.
 mutations = [
+    ('locale-guard', tests, 'node_locale(|key| std::env::var(key).ok()).to_string()', 'node_locale(|_| Some("en_US.UTF-8".into())).to_string()', 'catalog_locale_contract'),
     ('oracle-cardinality', tests, 'let results = case["results"].as_array().expect(MESSAGE);', 'let results = &case["results"].as_array().expect(MESSAGE)[..requests.len() - 1];', 'catalog_empty'),
     ('selected-cycle', source, '.to_js_value()\n                .map_err(|e| PluginRuntimeError::new(e.message.to_utf8().unwrap_or_default()))?', '.to_js_value().unwrap_or_else(|_| object([]))', 'catalog_selected_cycle_boundary'),
     ('metadata-projection', source, 'set(item, "metadata", value);', 'set(item, "metadata", object([])); let _ = value;', 'catalog_metadata'),
@@ -63,6 +64,7 @@ def main():
     env = os.environ.copy()
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only', LANG='en_US.UTF-8')
     env.pop('LC_ALL', None)
+    env.pop('LC_MESSAGES', None)
     summary = []
     for name, path, before, after, short_test in mutations:
         if selected and name not in selected:
@@ -74,6 +76,8 @@ def main():
         marker = '#887 catalog lease finally' if short_test == 'catalog_lease_finally' else '#887 commands catalog oracle'
         if short_test == 'catalog_normalized_paths':
             marker = '#887 commands catalog oracle: normalized-paths'
+        if short_test == 'catalog_locale_contract':
+            marker = '#887 catalog locale guard bypassed: zh_CN.UTF-8'
         def run(label, args):
             slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=180)
             (out / f'{name}.{label}.slots.log').write_text(slot.stdout + slot.stderr)
