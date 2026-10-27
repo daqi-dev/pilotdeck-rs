@@ -20,6 +20,27 @@ diagnostics = root / 'src/pilotdeck-gateway/tests/fixtures/config/diagnostics.js
 changes_generator = root / 'src/pilotdeck-gateway/tests/fixtures/config-changes/generate.mts'
 snapshot_generator = root / 'src/pilotdeck-gateway/tests/fixtures/config-snapshot/generate.mts'
 cases = [
+    # Invalid corpus inputs must fail the generator at their own #305 assertion.
+    ('invalid-source-kind', catalog,
+     '    {\n      "id": "basic",\n      "yaml": "schemaVersion: 1\\nagent:\\n  model: parity/deterministic\\nmodel:\\n  providers:\\n    parity:\\n      protocol: openai\\n      url: http://127.0.0.1:28794/v1\\n      apiKey: mock-only\\n      models:\\n        deterministic: {}\\n",\n      "params": {},\n      "env": {},\n',
+     '    {\n      "id": "negative-source-kind",\n      "yaml": "schemaVersion: 1\\nagent:\\n  model: parity/deterministic\\nmodel:\\n  providers:\\n    parity:\\n      protocol: openai\\n      url: http://127.0.0.1:28794/v1\\n      apiKey: mock-only\\n      models:\\n        deterministic: {}\\n",\n      "params": {},\n      "env": {},\n      "sourceKind": "invalid",\n',
+     'config_snapshot_regenerates_identically', '#305 unsupported successful sourceKind negative-source-kind: invalid'),
+    ('non-string-env', catalog,
+     '    {\n      "id": "basic",\n      "yaml": "schemaVersion: 1\\nagent:\\n  model: parity/deterministic\\nmodel:\\n  providers:\\n    parity:\\n      protocol: openai\\n      url: http://127.0.0.1:28794/v1\\n      apiKey: mock-only\\n      models:\\n        deterministic: {}\\n",\n      "params": {},\n      "env": {},\n',
+     '    {\n      "id": "negative-env-number",\n      "yaml": "schemaVersion: 1\\nagent:\\n  model: parity/deterministic\\nmodel:\\n  providers:\\n    parity:\\n      protocol: openai\\n      url: http://127.0.0.1:28794/v1\\n      apiKey: mock-only\\n      models:\\n        deterministic: {}\\n",\n      "params": {},\n      "env": {\n        "NEGATIVE": 7\n      },\n',
+     'config_snapshot_regenerates_identically', '#305 unsupported successful environment negative-env-number'),
+    ('pilot-home-env-placeholder', catalog,
+     '    {\n      "id": "basic",\n      "yaml": "schemaVersion: 1\\nagent:\\n  model: parity/deterministic\\nmodel:\\n  providers:\\n    parity:\\n      protocol: openai\\n      url: http://127.0.0.1:28794/v1\\n      apiKey: mock-only\\n      models:\\n        deterministic: {}\\n",\n      "params": {},\n      "env": {},\n',
+     '    {\n      "id": "negative-env-pilot-home",\n      "yaml": "schemaVersion: 1\\nagent:\\n  model: parity/deterministic\\nmodel:\\n  providers:\\n    parity:\\n      protocol: openai\\n      url: http://127.0.0.1:28794/v1\\n      apiKey: mock-only\\n      models:\\n        deterministic: {}\\n",\n      "params": {},\n      "env": {\n        "NEGATIVE": "<PILOT_HOME>"\n      },\n',
+     'config_snapshot_regenerates_identically', '#305 unsupported successful environment negative-env-pilot-home'),
+    ('root-env-placeholder', catalog,
+     '    {\n      "id": "basic",\n      "yaml": "schemaVersion: 1\\nagent:\\n  model: parity/deterministic\\nmodel:\\n  providers:\\n    parity:\\n      protocol: openai\\n      url: http://127.0.0.1:28794/v1\\n      apiKey: mock-only\\n      models:\\n        deterministic: {}\\n",\n      "params": {},\n      "env": {},\n',
+     '    {\n      "id": "negative-env-root",\n      "yaml": "schemaVersion: 1\\nagent:\\n  model: parity/deterministic\\nmodel:\\n  providers:\\n    parity:\\n      protocol: openai\\n      url: http://127.0.0.1:28794/v1\\n      apiKey: mock-only\\n      models:\\n        deterministic: {}\\n",\n      "params": {},\n      "env": {\n        "NEGATIVE": "<ROOT>"\n      },\n',
+     'config_snapshot_regenerates_identically', '#305 unsupported successful environment negative-env-root'),
+    ('success-load-failure', catalog,
+     '    {\n      "id": "basic",\n      "yaml": "schemaVersion: 1\\nagent:\\n  model: parity/deterministic\\nmodel:\\n  providers:\\n    parity:\\n      protocol: openai\\n      url: http://127.0.0.1:28794/v1\\n      apiKey: mock-only\\n      models:\\n        deterministic: {}\\n",\n      "params": {},\n      "env": {},\n',
+     '    {\n      "id": "negative-success-load",\n      "yaml": "{}",\n      "params": {},\n      "env": {},\n',
+     'config_snapshot_regenerates_identically', '#305 successful corpus case failed to load: existing-catalog-negative-success-load:'),
     ('skip-relative-normalization', snapshot_generator,
      "value === relativeConfigPath", "value === undefined",
      'config_snapshot_regenerates_identically', '#280 config-snapshot/oracle.json differs'),
