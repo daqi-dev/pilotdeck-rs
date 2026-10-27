@@ -696,6 +696,247 @@
       "browserCalls": []
     },
     {
+      "name": "sessions-null-params",
+      "method": "manager_sessions",
+      "params": null,
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading 'projectKey')"
+        }
+      },
+      "catalogCalls": [],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-undefined-params",
+      "method": "manager_sessions",
+      "params": null,
+      "paramsUndefined": true,
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading 'projectKey')"
+        }
+      },
+      "catalogCalls": [],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-projectKey-number",
+      "method": "manager_sessions",
+      "params": {
+        "projectKey": 42
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "error": {
+          "name": "TypeError",
+          "code": "ERR_INVALID_ARG_TYPE",
+          "message": "The \"paths[0]\" argument must be of type string. Received type number (42)"
+        }
+      },
+      "catalogCalls": [],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-projectKey-array",
+      "method": "manager_sessions",
+      "params": {
+        "projectKey": []
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "error": {
+          "name": "TypeError",
+          "code": "ERR_INVALID_ARG_TYPE",
+          "message": "The \"paths[0]\" argument must be of type string. Received an instance of Array"
+        }
+      },
+      "catalogCalls": [],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-projectKey-object",
+      "method": "manager_sessions",
+      "params": {
+        "projectKey": {}
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "error": {
+          "name": "TypeError",
+          "code": "ERR_INVALID_ARG_TYPE",
+          "message": "The \"paths[0]\" argument must be of type string. Received an instance of Object"
+        }
+      },
+      "catalogCalls": [],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-projectKey-bool",
+      "method": "manager_sessions",
+      "params": {
+        "projectKey": true
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "error": {
+          "name": "TypeError",
+          "code": "ERR_INVALID_ARG_TYPE",
+          "message": "The \"paths[0]\" argument must be of type string. Received type boolean (true)"
+        }
+      },
+      "catalogCalls": [],
+      "browserCalls": []
+    },
+    {
       "name": "browsers-success",
       "method": "manager_browsers",
       "params": {
@@ -982,6 +1223,55 @@
       ]
     },
     {
+      "name": "tail-partial-existing",
+      "includeInternal": false,
+      "files": [
+        {
+          "name": "s-1.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":1,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt one\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-2\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T",
+          "mtime": 1700000000000
+        }
+      ],
+      "outcome": [
+        {
+          "sessionId": "s-1",
+          "summary": "matrix prompt one",
+          "lastModified": 1700000000000,
+          "fileSize": 295,
+          "firstPrompt": "matrix prompt one",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        }
+      ]
+    },
+    {
+      "name": "metadata-title-spaces",
+      "includeInternal": false,
+      "files": [
+        {
+          "name": "meta-1.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":1,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt one\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"matrix-session-9\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":9,\"metadata\":{\"title\":\"  title  \",\"aiTitle\":\"ai\",\"tag\":\"tag-1\",\"parentSessionId\":\"parent-1\",\"forkedFromTurnId\":\"fork-1\"}}\n",
+          "mtime": 1700000000500
+        }
+      ],
+      "outcome": [
+        {
+          "sessionId": "meta-1",
+          "summary": "  title  ",
+          "lastModified": 1700000000500,
+          "fileSize": 445,
+          "customTitle": "  title  ",
+          "aiTitle": "ai",
+          "firstPrompt": "matrix prompt one",
+          "cwd": "<dir>",
+          "tag": "tag-1",
+          "createdAt": 1792281600000,
+          "parentSessionId": "parent-1",
+          "forkedFromTurnId": "fork-1"
+        }
+      ]
+    },
+    {
       "name": "internal-hidden",
       "includeInternal": false,
       "files": [
@@ -1035,6 +1325,69 @@
         },
         {
           "sessionId": "s-1",
+          "summary": "matrix prompt one",
+          "lastModified": 1700000000000,
+          "fileSize": 197,
+          "firstPrompt": "matrix prompt one",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        }
+      ]
+    },
+    {
+      "name": "internal-compact-default",
+      "includeInternal": false,
+      "files": [
+        {
+          "name": "normal.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":1,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt one\"}]}]}\n",
+          "mtime": 1700000000000
+        },
+        {
+          "name": "always-on-discovery:1.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-2\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":2,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt two\"}]}]}\n{\"type\":\"control_boundary\",\"sessionId\":\"always-on-discovery:1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":2,\"boundary\":{\"kind\":\"compact\"}}\n",
+          "mtime": 1700000001000
+        }
+      ],
+      "outcome": [
+        {
+          "sessionId": "normal",
+          "summary": "matrix prompt one",
+          "lastModified": 1700000000000,
+          "fileSize": 197,
+          "firstPrompt": "matrix prompt one",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        }
+      ]
+    },
+    {
+      "name": "internal-compact-included",
+      "includeInternal": true,
+      "files": [
+        {
+          "name": "normal.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":1,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt one\"}]}]}\n",
+          "mtime": 1700000000000
+        },
+        {
+          "name": "always-on-discovery:1.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-2\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":2,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt two\"}]}]}\n{\"type\":\"control_boundary\",\"sessionId\":\"always-on-discovery:1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":2,\"boundary\":{\"kind\":\"compact\"}}\n",
+          "mtime": 1700000001000
+        }
+      ],
+      "outcome": [
+        {
+          "sessionId": "always-on-discovery:1",
+          "summary": "matrix prompt two",
+          "lastModified": 1700000001000,
+          "fileSize": 361,
+          "firstPrompt": "matrix prompt two",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        },
+        {
+          "sessionId": "normal",
           "summary": "matrix prompt one",
           "lastModified": 1700000000000,
           "fileSize": 197,
@@ -1138,6 +1491,155 @@
           "lastModified": 1700000000000,
           "fileSize": 197,
           "firstPrompt": "matrix prompt one",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        }
+      ]
+    },
+    {
+      "name": "pagination-negative-limit",
+      "includeInternal": false,
+      "limit": -1,
+      "offset": 0,
+      "files": [
+        {
+          "name": "s-1.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":1,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt one\"}]}]}\n",
+          "mtime": 1700000000000
+        },
+        {
+          "name": "s-2.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-2\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":2,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt two\"}]}]}\n",
+          "mtime": 1700000001000
+        },
+        {
+          "name": "s-3.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-3\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":3,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt three\"}]}]}\n",
+          "mtime": 1700000002000
+        },
+        {
+          "name": "s-4.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-4\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":4,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt four\"}]}]}\n",
+          "mtime": 1700000003000
+        },
+        {
+          "name": "s-5.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-5\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":5,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt five\"}]}]}\n",
+          "mtime": 1700000004000
+        }
+      ],
+      "outcome": [
+        {
+          "sessionId": "s-5",
+          "summary": "matrix prompt five",
+          "lastModified": 1700000004000,
+          "fileSize": 198,
+          "firstPrompt": "matrix prompt five",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        },
+        {
+          "sessionId": "s-4",
+          "summary": "matrix prompt four",
+          "lastModified": 1700000003000,
+          "fileSize": 198,
+          "firstPrompt": "matrix prompt four",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        },
+        {
+          "sessionId": "s-3",
+          "summary": "matrix prompt three",
+          "lastModified": 1700000002000,
+          "fileSize": 199,
+          "firstPrompt": "matrix prompt three",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        },
+        {
+          "sessionId": "s-2",
+          "summary": "matrix prompt two",
+          "lastModified": 1700000001000,
+          "fileSize": 197,
+          "firstPrompt": "matrix prompt two",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        }
+      ]
+    },
+    {
+      "name": "pagination-negative-end",
+      "includeInternal": false,
+      "limit": -6,
+      "offset": 1,
+      "files": [
+        {
+          "name": "s-1.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":1,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt one\"}]}]}\n",
+          "mtime": 1700000000000
+        },
+        {
+          "name": "s-2.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-2\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":2,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt two\"}]}]}\n",
+          "mtime": 1700000001000
+        },
+        {
+          "name": "s-3.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-3\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":3,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt three\"}]}]}\n",
+          "mtime": 1700000002000
+        },
+        {
+          "name": "s-4.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-4\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":4,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt four\"}]}]}\n",
+          "mtime": 1700000003000
+        },
+        {
+          "name": "s-5.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-5\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":5,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt five\"}]}]}\n",
+          "mtime": 1700000004000
+        }
+      ],
+      "outcome": []
+    },
+    {
+      "name": "pagination-fractional",
+      "includeInternal": false,
+      "limit": 1.5,
+      "offset": 0,
+      "files": [
+        {
+          "name": "s-1.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":1,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt one\"}]}]}\n",
+          "mtime": 1700000000000
+        },
+        {
+          "name": "s-2.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-2\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":2,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt two\"}]}]}\n",
+          "mtime": 1700000001000
+        },
+        {
+          "name": "s-3.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-3\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":3,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt three\"}]}]}\n",
+          "mtime": 1700000002000
+        },
+        {
+          "name": "s-4.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-4\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":4,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt four\"}]}]}\n",
+          "mtime": 1700000003000
+        },
+        {
+          "name": "s-5.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-5\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":5,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt five\"}]}]}\n",
+          "mtime": 1700000004000
+        }
+      ],
+      "outcome": [
+        {
+          "sessionId": "s-5",
+          "summary": "matrix prompt five",
+          "lastModified": 1700000004000,
+          "fileSize": 198,
+          "firstPrompt": "matrix prompt five",
           "cwd": "<dir>",
           "createdAt": 1792281600000
         }

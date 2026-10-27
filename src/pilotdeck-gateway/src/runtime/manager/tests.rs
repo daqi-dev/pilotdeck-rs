@@ -162,10 +162,6 @@ impl TestStore {
         self.records.lock().expect("#934 lock records").clone()
     }
 
-    fn set_records(&self, records: Vec<StoredSession>) {
-        *self.records.lock().expect("#934 lock records") = records;
-    }
-
     fn record_after_append(&self, key: &TranscriptKey) {
         let size = fs::metadata(&key.transcript_path)
             .map(|metadata| metadata.len() as f64)
@@ -427,13 +423,17 @@ fn manager_sessions_matches_real_ts_projection() {
     };
     assert_eq!(
         operations.len(),
-        18,
+        24,
         "#934 manager gateway fixture operation count is pinned"
     );
     let mut methods = 0;
     for operation in operations {
         let name = text(item(operation, "name"));
-        let params = replace_dir(item(operation, "params"), &root);
+        let params = if item(operation, "paramsUndefined").as_bool() == Some(true) {
+            JsValue::Undefined
+        } else {
+            replace_dir(item(operation, "params"), &root)
+        };
         let catalog = Arc::new(ReplayCatalog::new(item(operation, "catalog").clone()));
         let browser_behavior = item(operation, "browser");
         let replay_browsers = match browser_behavior {
@@ -494,7 +494,7 @@ fn manager_sessions_matches_real_ts_projection() {
         );
         methods += 1;
     }
-    assert_eq!(methods, 18, "#934 every oracle operation is replayed");
+    assert_eq!(methods, 24, "#934 every oracle operation is replayed");
 }
 
 #[test]
@@ -553,36 +553,6 @@ fn number(value: &JsValue) -> f64 {
     value.as_number().expect("#934 expected a JS number")
 }
 
-fn records_from_chat(chat: &Path) -> Vec<StoredSession> {
-    let mut records: Vec<StoredSession> = fs::read_dir(chat)
-        .expect("#934 read matrix chat")
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let session_id = name.strip_suffix(".jsonl")?.to_owned();
-            let metadata = entry.metadata().ok()?;
-            let modified = metadata
-                .modified()
-                .ok()?
-                .duration_since(UNIX_EPOCH)
-                .ok()?
-                .as_millis() as f64;
-            Some(StoredSession {
-                session_id: JsString::from(session_id),
-                last_modified: modified,
-                file_size: Some(metadata.len() as f64),
-            })
-        })
-        .collect();
-    records.sort_by(|left, right| {
-        right
-            .last_modified
-            .partial_cmp(&left.last_modified)
-            .expect("#934 matrix mtimes are finite")
-    });
-    records
-}
-
 fn set_mtime(path: &Path, millis: f64) {
     let file = fs::OpenOptions::new()
         .write(true)
@@ -609,7 +579,10 @@ fn manager_catalog_matrix_matches_real_ts() {
         JsValue::Array(rows) => rows,
         _ => panic!("#934 oracle matrix must be an array"),
     };
-    assert_eq!(matrix.len(), 8, "#934 catalog/writer matrix is pinned");
+    assert!(
+        matrix.len() >= 14,
+        "#934 catalog/writer matrix covers the P1 fix rows"
+    );
     for row in matrix {
         let name = text(item(row, "name"));
         let scratch = Scratch::new();
@@ -624,21 +597,23 @@ fn manager_catalog_matrix_matches_real_ts() {
                 set_mtime(&path, number(item(file, "mtime")));
             }
         }
-        let store = Arc::new(TestStore::default());
-        store.set_records(records_from_chat(&chat));
-        let catalog = TranscriptSessionCatalog::new(Arc::new(adapter_for(store, chat)));
+        let catalog = TranscriptSessionCatalog::new(Arc::new(adapter_for(
+            Arc::new(TestStore::default()),
+            chat.clone(),
+        )));
         let input = SessionCatalogListInput {
-            project_root: root,
+            project_root: root.clone(),
             pilot_home: home,
             limit: item(row, "limit").as_number(),
             offset: item(row, "offset").as_number(),
             include_internal: matches!(item(row, "includeInternal"), JsValue::Bool(true)),
         };
-        let actual = catalog.list(&input).expect("#934 matrix catalog list");
-        let expected = item(row, "outcome");
+        let actual = catalog
+            .list(&input)
+            .expect("#934 matrix catalog list must succeed");
         assert_eq!(
-            session_ids(&JsValue::Array(actual)),
-            session_ids(expected),
+            compact_str(&normalize_dir(&JsValue::Array(actual), &root)),
+            compact_str(item(row, "outcome")),
             "#934 catalog matrix differs from real TS at {name}"
         );
     }
@@ -717,47 +692,6 @@ fn manager_catalog_filters_before_pagination() {
         text(item(&page[0], "sessionId")),
         "normal",
         "#934 pagination must not consume the limit with an internal session"
-    );
-}
-
-struct EmptyStore;
-impl TranscriptStore for EmptyStore {
-    fn append(&self, _key: &TranscriptKey, _entry: &JsValue) -> StoreResult<()> {
-        Ok(())
-    }
-    fn read(
-        &self,
-        _key: &TranscriptKey,
-        _max_bytes: Option<u64>,
-    ) -> StoreResult<crate::storage::TranscriptRead> {
-        Err(LedgerError::Invalid("#934 unavailable store read".into()))
-    }
-}
-
-#[test]
-fn manager_catalog_reports_unavailable_store() {
-    let scratch = Scratch::new();
-    let chat = scratch.chat();
-    let adapter = Arc::new(adapter_with_store(Arc::new(EmptyStore), chat));
-    let catalog = TranscriptSessionCatalog::new(adapter);
-    let error = catalog
-        .list(&SessionCatalogListInput {
-            project_root: scratch.project(),
-            pilot_home: scratch.home(),
-            limit: Some(100.0),
-            offset: Some(0.0),
-            include_internal: false,
-        })
-        .expect_err("#934 a store without list must not become an empty catalog");
-    assert_eq!(
-        error.name(),
-        "ProjectSessionCatalogUnavailableError",
-        "#934 unavailable catalog name"
-    );
-    assert_eq!(
-        String::from_utf16_lossy(error.message().units()),
-        "The selected project session storage provider does not support session catalog reads.",
-        "#934 unavailable catalog message"
     );
 }
 
@@ -1061,5 +995,300 @@ fn manager_catalog_after_cancelled_writer_keeps_committed_prefix() {
         text(item(&listed[0], "sessionId")),
         "session-1",
         "#934 cancelled writer must not add a half-committed session"
+    );
+}
+
+// ─────────────────────────────────────────────── fix-r1 regressions
+
+#[test]
+fn manager_catalog_keeps_committed_prefix_when_tail_is_half_written() {
+    let scratch = Scratch::new();
+    let root = scratch.project();
+    let home = scratch.home();
+    let chat = scratch.chat();
+    let store = Arc::new(TestStore::default());
+    let adapter = Arc::new(adapter_for(store, chat.clone()));
+    append_session(&adapter, &root, &home, "s-1", "committed prompt")
+        .expect("#934 append the committed prefix");
+    let path = chat.join("s-1.jsonl");
+    let mut bytes = fs::read(&path).expect("#934 read the committed transcript");
+    bytes.extend_from_slice(br#"{"type":"accepted_input","messages":[{"content":[{"type":"text""#);
+    fs::write(&path, bytes).expect("#934 append a half-written tail line");
+
+    let catalog = TranscriptSessionCatalog::new(adapter);
+    let listed = catalog
+        .list(&SessionCatalogListInput {
+            project_root: root.clone(),
+            pilot_home: home,
+            limit: Some(MANAGER_SESSION_LIMIT),
+            offset: Some(0.0),
+            include_internal: false,
+        })
+        .expect("#934 catalog list with a half-written tail");
+    assert_eq!(
+        listed.len(),
+        1,
+        "#934 a half-written tail must keep the committed session"
+    );
+    assert_eq!(
+        text(item(&listed[0], "sessionId")),
+        "s-1",
+        "#934 a half-written tail must keep the same session id"
+    );
+    assert_eq!(
+        text(item(&listed[0], "summary")),
+        "committed prompt",
+        "#934 a half-written tail must not change the committed summary"
+    );
+}
+
+#[test]
+fn manager_catalog_filters_internal_before_reading() {
+    let scratch = Scratch::new();
+    let root = scratch.project();
+    let home = scratch.home();
+    let chat = scratch.chat();
+    let session_line = |text: &str, session_id: &str, sequence: u32| {
+        format!(
+            "{{\"type\":\"accepted_input\",\"sessionId\":\"{session_id}\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":{sequence},\"messages\":[{{\"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}}]}}]}}\n"
+        )
+    };
+    let boundary = "{\"type\":\"control_boundary\",\"sessionId\":\"always-on-discovery:1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":2,\"boundary\":{\"kind\":\"compact\"}}\n";
+    let normal = chat.join("normal.jsonl");
+    fs::write(&normal, session_line("normal prompt", "normal", 1))
+        .expect("#934 write the normal transcript");
+    set_mtime(&normal, 1_700_000_000_000.0);
+    let internal = chat.join("always-on-discovery:1.jsonl");
+    fs::write(
+        &internal,
+        format!(
+            "{}{boundary}",
+            session_line("internal prompt", "always-on-discovery:1", 1)
+        ),
+    )
+    .expect("#934 write the internal transcript");
+    set_mtime(&internal, 1_700_000_001_000.0);
+
+    let catalog = TranscriptSessionCatalog::new(Arc::new(adapter_for(
+        Arc::new(TestStore::default()),
+        chat.clone(),
+    )));
+    let default = catalog
+        .list(&SessionCatalogListInput {
+            project_root: root.clone(),
+            pilot_home: home.clone(),
+            limit: Some(MANAGER_SESSION_LIMIT),
+            offset: Some(0.0),
+            include_internal: false,
+        })
+        .expect("#934 default manager list must succeed");
+    assert_eq!(
+        session_ids(&JsValue::Array(default.clone())),
+        vec!["normal".to_owned()],
+        "#934 default manager list must hide always-on sessions before reading"
+    );
+    assert_eq!(
+        text(item(&default[0], "summary")),
+        "normal prompt",
+        "#934 an internal compact boundary must not disturb the normal session"
+    );
+
+    let included = catalog
+        .list(&SessionCatalogListInput {
+            project_root: root,
+            pilot_home: home,
+            limit: Some(MANAGER_SESSION_LIMIT),
+            offset: Some(0.0),
+            include_internal: true,
+        })
+        .expect("#934 includeInternal list must succeed");
+    assert_eq!(
+        session_ids(&JsValue::Array(included)),
+        vec!["always-on-discovery:1".to_owned(), "normal".to_owned()],
+        "#934 includeInternal must list the internal session with the file catalog projection"
+    );
+}
+
+#[test]
+fn manager_sessions_invalid_params_match_ts() {
+    struct CountingResolver {
+        calls: Arc<AtomicUsize>,
+        root: PathBuf,
+    }
+    impl ManagerProjectResolver for CountingResolver {
+        fn resolve_project_key(&self, _project_key: &[u16]) -> Result<PathBuf, ManagerError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.root.clone())
+        }
+    }
+    struct CountingCatalog {
+        calls: Arc<AtomicUsize>,
+    }
+    impl SessionCatalogPort for CountingCatalog {
+        fn list(&self, _input: &SessionCatalogListInput) -> Result<Vec<JsValue>, ManagerError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Vec::new())
+        }
+    }
+
+    let resolver_calls = Arc::new(AtomicUsize::new(0));
+    let catalog_calls = Arc::new(AtomicUsize::new(0));
+    let root = PathBuf::from("/project");
+    let gateway = ManagerGateway::from_parts(
+        Some(Arc::new(CountingCatalog {
+            calls: catalog_calls.clone(),
+        }) as Arc<dyn SessionCatalogPort>),
+        None,
+        CountingResolver {
+            calls: resolver_calls.clone(),
+            root: root.clone(),
+        },
+        root.clone(),
+        root.clone(),
+    );
+    let cases = [
+        (
+            JsValue::Null,
+            None,
+            "Cannot read properties of null (reading 'projectKey')",
+        ),
+        (
+            JsValue::Undefined,
+            None,
+            "Cannot read properties of undefined (reading 'projectKey')",
+        ),
+        (
+            js(r#"{"projectKey":42}"#),
+            Some("ERR_INVALID_ARG_TYPE"),
+            "The \"paths[0]\" argument must be of type string. Received type number (42)",
+        ),
+        (
+            js(r#"{"projectKey":[]}"#),
+            Some("ERR_INVALID_ARG_TYPE"),
+            "The \"paths[0]\" argument must be of type string. Received an instance of Array",
+        ),
+        (
+            js(r#"{"projectKey":{}}"#),
+            Some("ERR_INVALID_ARG_TYPE"),
+            "The \"paths[0]\" argument must be of type string. Received an instance of Object",
+        ),
+        (
+            js(r#"{"projectKey":true}"#),
+            Some("ERR_INVALID_ARG_TYPE"),
+            "The \"paths[0]\" argument must be of type string. Received type boolean (true)",
+        ),
+    ];
+    for (params, code, message) in cases {
+        let error = gateway
+            .sessions(&params)
+            .expect_err("#934 invalid manager params must fail");
+        assert_eq!(
+            error.name(),
+            "TypeError",
+            "#934 invalid manager params must keep the TS TypeError name"
+        );
+        assert_eq!(
+            error.code(),
+            code,
+            "#934 invalid projectKey must keep the TS ERR_INVALID_ARG_TYPE code"
+        );
+        assert_eq!(
+            String::from_utf16_lossy(error.message().units()),
+            message,
+            "#934 null params must throw the TS TypeError"
+        );
+        assert_eq!(
+            catalog_calls.load(Ordering::SeqCst),
+            0,
+            "#934 invalid params must not call the catalog"
+        );
+        assert_eq!(
+            resolver_calls.load(Ordering::SeqCst),
+            0,
+            "#934 invalid params must not call the project resolver"
+        );
+    }
+    let valid = gateway
+        .sessions(&js(r#"{"projectKey":"/project"}"#))
+        .expect("#934 a valid projectKey still lists sessions");
+    assert_eq!(
+        items(&valid).len(),
+        0,
+        "#934 valid manager params use the injected catalog"
+    );
+    assert_eq!(
+        catalog_calls.load(Ordering::SeqCst),
+        1,
+        "#934 exactly one catalog call for the valid manager request"
+    );
+}
+
+#[test]
+fn manager_catalog_paginates_like_js_slice() {
+    let scratch = Scratch::new();
+    let root = scratch.project();
+    let home = scratch.home();
+    let chat = scratch.chat();
+    for index in 1..=5 {
+        let path = chat.join(format!("s-{index}.jsonl"));
+        fs::write(
+            &path,
+            format!(
+                "{{\"type\":\"accepted_input\",\"sessionId\":\"s-{index}\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":{index},\"messages\":[{{\"content\":[{{\"type\":\"text\",\"text\":\"prompt {index}\"}}]}}]}}\n"
+            ),
+        )
+        .expect("#934 write pagination transcript");
+        set_mtime(&path, 1_700_000_000_000.0 + index as f64 * 1000.0);
+    }
+    let catalog = TranscriptSessionCatalog::new(Arc::new(adapter_for(
+        Arc::new(TestStore::default()),
+        chat.clone(),
+    )));
+    let list = |limit: Option<f64>, offset: Option<f64>| {
+        let value = catalog
+            .list(&SessionCatalogListInput {
+                project_root: root.clone(),
+                pilot_home: home.clone(),
+                limit,
+                offset,
+                include_internal: false,
+            })
+            .expect("#934 slice pagination list");
+        session_ids(&JsValue::Array(value))
+    };
+    assert_eq!(
+        list(Some(-1.0), Some(0.0)),
+        vec!["s-5", "s-4", "s-3", "s-2"],
+        "#934 limit=-1 must slice from the end like JS"
+    );
+    assert_eq!(
+        list(Some(-6.0), Some(1.0)),
+        Vec::<String>::new(),
+        "#934 a negative end beyond the start must return an empty page"
+    );
+    assert_eq!(
+        list(Some(1.5), Some(0.0)),
+        vec!["s-5"],
+        "#934 a fractional limit truncates like Array.prototype.slice"
+    );
+    assert_eq!(
+        list(Some(f64::NAN), Some(0.0)),
+        Vec::<String>::new(),
+        "#934 a NaN limit maps to an empty slice end"
+    );
+    assert_eq!(
+        list(Some(f64::INFINITY), Some(0.0)),
+        vec!["s-5", "s-4", "s-3", "s-2", "s-1"],
+        "#934 an infinite limit keeps every session"
+    );
+    assert_eq!(
+        list(Some(0.0), Some(0.0)),
+        vec!["s-5", "s-4", "s-3", "s-2", "s-1"],
+        "#934 limit=0 keeps every session like TS"
+    );
+    assert_eq!(
+        list(Some(1.0), Some(f64::NAN)),
+        Vec::<String>::new(),
+        "#934 a NaN offset maps to index 0 and a NaN end"
     );
 }

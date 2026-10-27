@@ -11,7 +11,7 @@
 //! `SessionCatalogPort`, browsers from a host-injected port.
 
 use super::catalog::{GatewaySessionCatalogConsumer, SessionCatalogPort};
-use crate::metadata::{Metadata, NativeFiles};
+use crate::metadata::{self, Metadata, NativeFiles};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     fmt,
@@ -292,14 +292,41 @@ impl<R: ManagerProjectResolver> ManagerProjection<R> {
     }
 
     fn resolve_source_project(&self, input: &JsValue) -> Result<PathBuf, ManagerError> {
+        // TS `managerSessions(input)` first reads `input.projectKey`; a nullish
+        // input throws before `resolveProjectKey` and never reaches the catalog.
+        if let Some(kind) = match input {
+            JsValue::Undefined => Some("undefined"),
+            JsValue::Null => Some("null"),
+            _ => None,
+        } {
+            return Err(ManagerError::plain(
+                "TypeError",
+                format!("Cannot read properties of {kind} (reading 'projectKey')"),
+            ));
+        }
         let requested = field(input, "projectKey");
-        let units = if nullish(requested) {
-            self.fallback_project_root
+        let units = match requested {
+            // `input.projectKey ?? fallbackProjectRoot`
+            JsValue::Undefined | JsValue::Null => self
+                .fallback_project_root
                 .to_string_lossy()
                 .encode_utf16()
-                .collect()
-        } else {
-            string_units(requested)
+                .collect(),
+            // `path.resolve(projectKey)` accepts only strings; other values are
+            // rejected by Node's validateString before the catalog is called.
+            JsValue::String(text) => text.units().to_vec(),
+            other => {
+                // Reuse the gateway's existing Node `util.inspect` wording.
+                let received = metadata::argument_received(other)
+                    .unwrap_or_else(|| "an instance of Object".into());
+                return Err(ManagerError::new(
+                    "TypeError",
+                    Some("ERR_INVALID_ARG_TYPE".into()),
+                    format!(
+                        "The \"paths[0]\" argument must be of type string. Received {received}"
+                    ),
+                ));
+            }
         };
         self.resolver.resolve_project_key(&units)
     }
@@ -372,10 +399,6 @@ fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
     value.get(key).unwrap_or(&UNDEFINED)
 }
 
-fn nullish(value: &JsValue) -> bool {
-    matches!(value, JsValue::Null | JsValue::Undefined)
-}
-
 fn truthy(value: &JsValue) -> bool {
     match value {
         JsValue::Undefined | JsValue::Null => false,
@@ -398,17 +421,4 @@ fn matches_session_key(session: &JsValue, key: &JsValue) -> bool {
             .and_then(JsValue::as_string)
             .is_some_and(|value| value == key)
     })
-}
-
-fn string_units(value: &JsValue) -> Vec<u16> {
-    match value {
-        JsValue::String(text) => text.units().to_vec(),
-        JsValue::Undefined => "undefined".encode_utf16().collect(),
-        JsValue::Null => "null".encode_utf16().collect(),
-        JsValue::Bool(value) => value.to_string().encode_utf16().collect(),
-        JsValue::Number(number) => crate::js_value::number_string(*number)
-            .encode_utf16()
-            .collect(),
-        _ => crate::js_value::to_string_units(value).unwrap_or_default(),
-    }
 }

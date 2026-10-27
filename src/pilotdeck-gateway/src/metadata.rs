@@ -59,6 +59,17 @@ pub(crate) fn js_trim(value: &str) -> &str {
     value.trim_matches(js_space)
 }
 
+/// TS `SessionList.ts:10` `isInternalSession`: `always-on-(discovery|workspace|report)`
+/// followed by `:` or `-`. Shared with the manager file catalog so the prefix
+/// rule has one definition inside the gateway.
+pub(crate) fn is_internal_session(session_id: &str) -> bool {
+    ["discovery", "workspace", "report"].iter().any(|kind| {
+        session_id
+            .strip_prefix(&format!("always-on-{kind}"))
+            .is_some_and(|rest| rest.starts_with([':', '-']))
+    })
+}
+
 pub(crate) fn js_trim_start(value: &str) -> &str {
     value.trim_start_matches(js_space)
 }
@@ -704,17 +715,7 @@ impl<F: Files> Metadata<F> {
             let Some(session) = name.strip_suffix(".jsonl") else {
                 continue;
             };
-            if [
-                "always-on-discovery",
-                "always-on-workspace",
-                "always-on-report",
-            ]
-            .iter()
-            .any(|prefix| {
-                session
-                    .strip_prefix(prefix)
-                    .is_some_and(|rest| rest.starts_with([':', '-']))
-            }) {
+            if is_internal_session(session) {
                 continue;
             }
             let path = chat_dir.join(name);
@@ -775,7 +776,7 @@ fn summary_string(value: &JsValue) -> Option<String> {
         .map(|value| String::from_utf16_lossy(value.units()))
 }
 
-fn captured_field(source: &str, field: &str) -> Result<Option<String>, ()> {
+pub(crate) fn captured_field(source: &str, field: &str) -> Result<Option<String>, ()> {
     const FIELDS: [&str; 6] = [
         "title",
         "aiTitle",
@@ -823,7 +824,7 @@ fn node_date_ms(ms: f64) -> f64 {
     }
 }
 
-fn accepted_text(source: &str, last: bool) -> Option<String> {
+pub(crate) fn accepted_text(source: &str, last: bool) -> Option<String> {
     let mut result = None;
     'lines: for line in source.split('\n') {
         if !line.contains("\"type\":\"accepted_input\"") {
@@ -924,7 +925,7 @@ fn session_has_summary(bytes: &[u8]) -> Result<bool, ()> {
     Ok(visible)
 }
 
-fn strict_metadata(line: &str) -> Option<JsValue> {
+pub(crate) fn strict_metadata(line: &str) -> Option<JsValue> {
     if !line.contains("\"type\":\"session_metadata\"") {
         return None;
     }

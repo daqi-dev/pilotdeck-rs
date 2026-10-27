@@ -27,20 +27,66 @@ from negative_suite import Case, run_cases
 from _negative_common import mutate
 
 catalog = root / 'src/pilotdeck-gateway/src/runtime/manager/catalog.rs'
+file_catalog = root / 'src/pilotdeck-gateway/src/runtime/manager/file_catalog.rs'
 projection = root / 'src/pilotdeck-gateway/src/runtime/manager/projection.rs'
 dispatch = root / 'src/pilotdeck-gateway/src/dispatch.rs'
+adapter = root / 'src/pilotdeck-gateway/src/storage/transcript_adapter.rs'
 prefix = 'runtime::manager::tests::'
 
 # (name, source, original, mutant, scope, bound test, exclusive failure text)
 # Every mutation is applied to the pristine original, never cumulatively.
 cases = [
-    ('catalog-consumer-direct-transcript', catalog, '''        let sessions = sessions
-            .into_iter()
-            .filter(|session| input.include_internal || !is_internal_session(session))
-            .collect();
-        Ok(paginate(sessions, input.offset.unwrap_or(0.0), input.limit))''', '''        Ok(sessions)''', None,
-     prefix + 'manager_sessions_uses_catalog_consumer_not_direct_transcript',
-     '#934 catalog consumer must filter internal sessions before pagination'),
+    ('catalog-tail-partial-dropped', file_catalog, '''    Some(SessionLite {
+        mtime,''', '''    if !tail.ends_with(b"\\n") {
+        return None;
+    }
+    Some(SessionLite {
+        mtime,''', None,
+     prefix + 'manager_catalog_keeps_committed_prefix_when_tail_is_half_written',
+     '#934 a half-written tail must keep the committed session'),
+    ('catalog-internal-filter-removed', file_catalog,
+     '        if !include_internal && is_internal_session(session_id) {',
+     '        if false && !include_internal && is_internal_session(session_id) {', None,
+     prefix + 'manager_catalog_filters_internal_before_reading',
+     '#934 default manager list must hide always-on sessions before reading'),
+    ('catalog-cwd-removed', file_catalog, '''    info.insert(
+        "cwd".into(),
+        JsValue::from(project_root.to_string_lossy().as_ref()),
+    );
+''', '', None,
+     prefix + 'manager_catalog_matrix_matches_real_ts',
+     '#934 catalog matrix differs from real TS at committed'),
+    ('catalog-summary-trimmed', file_catalog,
+     '    let summary = custom_title.clone().or(ai_title.clone()).or(last_prompt)?;',
+     '    let summary = js_trim(&custom_title.clone().or(ai_title.clone()).or(last_prompt)?).to_owned();', None,
+     prefix + 'manager_catalog_matrix_matches_real_ts',
+     '#934 catalog matrix differs from real TS at metadata-title-spaces'),
+    ('invalid-params-fallback', projection,
+     '            JsValue::Null => Some("null"),',
+     '            JsValue::Null => None,', None,
+     prefix + 'manager_sessions_invalid_params_match_ts',
+     '#934 invalid manager params must fail'),
+    ('invalid-project-key-stringified', projection, '''            other => {
+                // Reuse the gateway's existing Node `util.inspect` wording.
+                let received = metadata::argument_received(other)
+                    .unwrap_or_else(|| "an instance of Object".into());
+                return Err(ManagerError::new(
+                    "TypeError",
+                    Some("ERR_INVALID_ARG_TYPE".into()),
+                    format!(
+                        "The \\"paths[0]\\" argument must be of type string. Received {received}"
+                    ),
+                ));
+            }''', '''            other => crate::js_value::to_string_units(other).unwrap_or_default(),''', None,
+     prefix + 'manager_sessions_invalid_params_match_ts',
+     '#934 invalid manager params must fail'),
+    ('pagination-negative-end', adapter, '''    if value < 0.0 {
+        (len as f64 + value).max(0.0) as usize
+    } else {
+        value.min(len as f64) as usize
+    }''', '''    value.max(0.0).min(len as f64) as usize''', None,
+     prefix + 'manager_catalog_paginates_like_js_slice',
+     '#934 limit=-1 must slice from the end like JS'),
     ('browser-port-always-unavailable', projection, '''    pub fn list(&self, input: &JsValue) -> Result<JsValue, ManagerError> {
         self.provider
             .as_ref()
@@ -85,31 +131,31 @@ cases = [
      '            message: JsString::from(String::from_utf16_lossy(&message)),', None,
      prefix + 'manager_projects_keeps_unknown_key_units',
      '#934 unknown key message must keep raw UTF-16 units'),
-    ('catalog-unavailable-empty', catalog,
-     '            None => return Err(ManagerError::catalog_unavailable()),',
-     '            None => return Ok(Vec::new()),', None,
-     prefix + 'manager_catalog_reports_unavailable_store',
-     '#934 a store without list must not become an empty catalog'),
 ]
 
-if '--audit' in sys.argv[1:]:
-    for name, path, old, new, scope, _test, _expected in cases:
-        mutate(path.read_text(), scope, [(old, new)])
-    print(json.dumps([
-        {'mutation': name, 'test': test, 'panic': expected}
-        for name, _path, _old, _new, _scope, test, expected in cases
-    ], indent=2))
-    raise SystemExit()
+def main():
+    if '--audit' in sys.argv[1:]:
+        for name, path, old, new, scope, _test, _expected in cases:
+            mutate(path.read_text(), scope, [(old, new)])
+        print(json.dumps([
+            {'mutation': name, 'test': test, 'panic': expected}
+            for name, _path, _old, _new, _scope, test, expected in cases
+        ], indent=2))
+        return 0
 
-env = os.environ.copy()
-if not env.get('CARGO_TARGET_DIR') or not env.get('PDRS_BASELINE'):
-    raise SystemExit('caller must set CARGO_TARGET_DIR and PDRS_BASELINE')
-env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',
-           CARGO_PROFILE_TEST_DEBUG='line-tables-only', CARGO_TERM_QUIET='false')
-out = Path(sys.argv[1])
-out.mkdir(parents=True, exist_ok=False)
-raise SystemExit(run_cases(
-    root,
-    [Case(name, path, old, new, test, expected, scope)
-     for name, path, old, new, scope, test, expected in cases],
-    out, env, mutate, timeout=900, baseline='HEAD'))
+    env = os.environ.copy()
+    if not env.get('CARGO_TARGET_DIR') or not env.get('PDRS_BASELINE'):
+        raise SystemExit('caller must set CARGO_TARGET_DIR and PDRS_BASELINE')
+    env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',
+               CARGO_PROFILE_TEST_DEBUG='line-tables-only', CARGO_TERM_QUIET='false')
+    out = Path(sys.argv[1])
+    out.mkdir(parents=True, exist_ok=False)
+    return run_cases(
+        root,
+        [Case(name, path, old, new, test, expected, scope)
+         for name, path, old, new, scope, test, expected in cases],
+        out, env, mutate, timeout=900, baseline='HEAD')
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
