@@ -137,9 +137,9 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(len(driver.SOURCE_FILES), 15)
         self.assertEqual(set(driver.SOURCE_FILES), expected)
 
-    def ci_jobs(self):
+    def ci_jobs(self, issue='#904'):
         text = (Path(__file__).resolve().parents[3]/'.github/workflows/ci.yml').read_text()
-        self.assertEqual(text.count('\njobs:\n'), 1, '#904 one jobs mapping')
+        self.assertEqual(text.count('\njobs:\n'), 1, f'{issue} one jobs mapping')
         jobs = {}
         name = None
         for line in text.split('\njobs:\n', 1)[1].splitlines(keepends=True):
@@ -150,25 +150,25 @@ class EnvironmentControls(unittest.TestCase):
             header = re.fullmatch(r'  ([\w-]+):\s*(?:#.*)?\n?', line)
             if header:
                 name = header[1]
-                self.assertNotIn(name, jobs, '#904 unique job names')
+                self.assertNotIn(name, jobs, f'{issue} unique job names')
                 jobs[name] = ''
             else:
                 self.assertTrue(name is not None and line.startswith('    '),
-                                '#904 unsupported job declaration')
+                                f'{issue} unsupported job declaration')
                 jobs[name] += line
         # New jobs must explicitly register their Node setup and merge gating here:
         # metadata-observer/rust/a51-coverage need their own Node and check gates;
         # check only aggregates; gateway-schema-baseline has Node and its own required check.
         self.assertEqual(set(jobs), {'metadata-observer', 'check', 'rust', 'a51-coverage',
-                                    'gateway-schema-baseline'}, '#904 exact five CI jobs')
+                                    'gateway-schema-baseline'}, f'{issue} exact five CI jobs')
         return jobs
 
-    def ci_steps(self, name, body):
+    def ci_steps(self, name, body, issue='#904'):
         self.assertEqual(len(re.findall(r'^    steps:$', body, re.M)), 1,
-                         f'#904 {name} has one steps sequence')
+                         f'{issue} {name} has one steps sequence')
         return re.split(r'^      - ', re.split(r'^    steps:\n', body, flags=re.M)[1], flags=re.M)[1:]
 
-    def ci_run_commands(self, step):
+    def ci_run_commands(self, step, issue='#904'):
         lines, commands, runs = step.splitlines(), [], 0
         i = 0
         while i < len(lines):
@@ -177,7 +177,7 @@ class EnvironmentControls(unittest.TestCase):
             if not run:
                 continue
             runs += 1
-            self.assertEqual(runs, 1, '#904 step has at most one run field')
+            self.assertEqual(runs, 1, f'{issue} step has at most one run field')
             value = run[2].strip()
             # ci_steps removes the first line's "      - "; its key still has indent 8.
             parent_indent = len(run[1]) if run[1] else 8
@@ -190,12 +190,12 @@ class EnvironmentControls(unittest.TestCase):
                     block.append(line.strip())
                 i += 1
             if re.fullmatch(r'[|>][0-9]*[+-]?\s*(#.*)?', value):
-                self.assertTrue(block, '#904 run block must not be empty')
+                self.assertTrue(block, f'{issue} run block must not be empty')
                 commands.extend(block)
             else:
                 self.assertTrue(value and value[0] not in '|>[]{}&*!%@#'
-                                and not value.startswith('${{'), '#904 unsupported run scalar')
-                self.assertFalse(block, '#904 single-line run cannot have a continuation')
+                                and not value.startswith('${{'), f'{issue} unsupported run scalar')
+                self.assertFalse(block, f'{issue} single-line run cannot have a continuation')
                 commands.append(value)
         return commands
 
@@ -314,6 +314,229 @@ class EnvironmentControls(unittest.TestCase):
         for name, changed, message in cases:
             with self.subTest(mutation=name):
                 self.assert_ci_rejects(changed, target, message)
+
+    def test_b2_and_smoke_keep_commands_in_their_own_jobs(self):
+        jobs = self.ci_jobs(issue='#918')
+        shell_key = r"""(?:^|[\s{,])['"]?shell['"]?\s*:"""
+        self.assertNotRegex(self.ci_workflow_fixture().split('\njobs:\n', 1)[0], shell_key,
+                            '#918 workflow preserves default fail-fast shell')
+        steps = {job: self.ci_steps(job, body, issue='#918') for job, body in jobs.items()}
+        commands = {job: [self.ci_run_commands(step, issue='#918') for step in items]
+                    for job, items in steps.items()}
+        b2 = [
+            'python3 -I scripts/test-approval-provenance.py',
+            'python3 -I scripts/test-review-deepseek.py',
+            'python3 -I scripts/test-review-roles.py',
+            'bash scripts/test-pdrs-loop.sh',
+            'python3 -I scripts/check-approval-provenance.py',
+            'python3 -I scripts/ui-server-parity/check_frozen.py',
+        ]
+        smoke = ['python3 -I scripts/test-smoke-real-provider.py']
+        for label, owner, title, expected in (
+                ('B2', 'a51-coverage', 'B2 冻结与批准依据（干净检出）', b2),
+                ('smoke', 'rust', 'smoke provider 装置正负控（含 Rust probe）', smoke)):
+            locations = [(job, i) for job, items in steps.items() for i, step in enumerate(items)
+                         if step.startswith(f'name: {title}\n')]
+            self.assertEqual([job for job, _ in locations], [owner],
+                             f'#918 {label} step belongs only to {owner}')
+            index = locations[0][1]
+            step = steps[owner][index]
+            self.assertEqual(commands[owner][index], expected,
+                             f'#918 {label} preserves exact commands and order')
+            for command in expected:
+                # Match the script path too, so changed flags/extra duplicate invocations fail closed.
+                path = command.split()[-1]
+                occurrences = [(job, i) for job, blocks in commands.items()
+                               for i, block in enumerate(blocks) for value in block if path in value]
+                self.assertEqual(occurrences, [(owner, index)],
+                                 f'#918 command occurs once in {owner}: {path}')
+            self.assertEqual(re.findall(r'^        working-directory: (.*)$', step, re.M), ['.'],
+                             f'#918 {label} runs at repository root')
+            if label == 'B2':
+                self.assertEqual(re.findall(r'^        run: (.*)$', step, re.M), ['|'],
+                                 '#918 B2 preserves literal run form')
+            self.assertNotRegex(step, r"""(?m)^(?:        |)['"]?(?:if|continue-on-error)['"]?:""",
+                                f'#918 {label} step cannot skip or ignore failure')
+            prefix = jobs[owner].split('    steps:\n', 1)[0]
+            self.assertNotRegex(step + prefix, shell_key,
+                                f'#918 {label} preserves default fail-fast shell')
+            self.assertNotRegex(prefix,
+                                r"""(?m)^    ['"]?(?:if|continue-on-error|needs)['"]?:""",
+                                f'#918 {owner} job stays independent and unconditional')
+            self.assertTrue(steps[owner][0].startswith('uses: actions/checkout@v4\n'),
+                            f'#918 {owner} starts with checkout')
+            checkout_lines = [line.strip() for line in steps[owner][0].splitlines()
+                              if line.strip() and not line.lstrip().startswith('#')]
+            expected_checkout = ['uses: actions/checkout@v4']
+            if owner == 'rust':
+                expected_checkout += ['with:', 'fetch-depth: 0']
+            self.assertEqual(checkout_lines, expected_checkout,
+                             f'#918 {owner} checkout preserves clean root defaults')
+            if label == 'B2':
+                self.assertEqual(index, 1, '#918 B2 immediately follows checkout before npm and clone')
+            else:
+                prior = commands[owner][:index]
+                prerequisites = ['rustup show active-toolchain', 'cargo test --all']
+                positions = [[i for i, block in enumerate(prior) if block == [command]]
+                             for command in prerequisites]
+                self.assertTrue(all(len(found) == 1 for found in positions),
+                                '#918 smoke follows Rust toolchain and workspace tests')
+                self.assertLess(positions[0][0], positions[1][0],
+                                '#918 smoke Rust prerequisites keep their order')
+
+    def ci_b2_smoke_mutations(self):
+        workflow = self.ci_workflow_fixture()
+        jobs = self.ci_jobs(issue='#918')
+        titles = {'B2': ('a51-coverage', 'B2 冻结与批准依据（干净检出）'),
+                  'smoke': ('rust', 'smoke provider 装置正负控（含 Rust probe）')}
+        cases = []
+
+        def change(label, owner, old, new, message):
+            self.assertEqual(jobs[owner].count(old), 1, f'#918 unique mutation anchor: {label}')
+            changed = jobs[owner].replace(old, new, 1)
+            cases.append((label, workflow.replace(jobs[owner], changed, 1), message))
+
+        for label, (owner, title) in titles.items():
+            steps = self.ci_steps(owner, jobs[owner], issue='#918')
+            matching = [step for step in steps if step.startswith(f'name: {title}\n')]
+            self.assertEqual(len(matching), 1, f'#918 unique {label} control step')
+            step = matching[0]
+            raw = '      - ' + step
+            name_message = f'#918 {label} step belongs only to {owner}'
+            command_message = f'#918 {label} preserves exact commands and order'
+            change(f'{label}-delete-step', owner, raw, '', name_message)
+            for destination in jobs:
+                if destination == owner:
+                    continue
+                for action in ('move', 'copy'):
+                    changed = workflow.replace(jobs[owner], jobs[owner].replace(raw, '', 1), 1) if action == 'move' else workflow
+                    destination_body = jobs[destination] + raw
+                    cases.append((f'{label}-{action}-to-{destination}',
+                                  changed.replace(jobs[destination], destination_body, 1), name_message))
+            lines = [line for line in raw.splitlines(keepends=True)
+                     if 'scripts/' in line]
+            for i, line in enumerate(lines):
+                # For smoke preserve a valid run field when removing its only command.
+                replacement = '        run: echo removed\n' if label == 'smoke' else ''
+                change(f'{label}-delete-command-{i}', owner, line, replacement, command_message)
+                change(f'{label}-change-command-{i}', owner, line,
+                       line.replace('scripts/', 'scripts/missing/', 1), command_message)
+                command = line.strip().removeprefix('run: ')
+                path = command.split()[-1]
+                change(f'{label}-duplicate-command-{i}', owner, raw,
+                       raw + f'      - run: {command}\n',
+                       f'#918 command occurs once in {owner}: {path}')
+            if label == 'B2':
+                for i in range(len(lines) - 1):
+                    change(f'B2-swap-{i}-{i + 1}', owner, raw,
+                           raw.replace(lines[i] + lines[i + 1], lines[i + 1] + lines[i], 1), command_message)
+                change('B2-folded-run', owner, raw, raw.replace('run: |', 'run: >', 1),
+                       '#918 B2 preserves literal run form')
+                for prefix in ('      - run: npm ci\n', '      - run: git init pilotdeck-baseline\n'):
+                    change(f'B2-after-{prefix.strip()}', owner, raw, prefix + raw,
+                           '#918 B2 immediately follows checkout before npm and clone')
+            else:
+                change('smoke-extra-command', owner, raw,
+                       raw.replace('        run: ', '        run: |\n          ', 1) + '          echo extra\n',
+                       command_message)
+                for command in ('rustup show active-toolchain', 'cargo test --all'):
+                    # Relocate the actual smoke step before each prerequisite.
+                    removed = jobs[owner].replace(raw, '', 1)
+                    prerequisites = [item for item in steps
+                                     if self.ci_run_commands(item, issue='#918') == [command]]
+                    self.assertEqual(len(prerequisites), 1, f'#918 unique smoke prerequisite: {command}')
+                    prerequisite = '      - ' + prerequisites[0]
+                    changed = removed.replace(prerequisite, raw + prerequisite, 1)
+                    cases.append((f'smoke-before-{command}', workflow.replace(jobs[owner], changed, 1),
+                                  '#918 smoke follows Rust toolchain and workspace tests'))
+                first, second = 'run: rustup show active-toolchain', 'run: cargo test --all'
+                swapped = jobs[owner].replace(first, 'run: SWAP', 1).replace(second, first, 1).replace('run: SWAP', second, 1)
+                cases.append(('smoke-swapped-prerequisites', workflow.replace(jobs[owner], swapped, 1),
+                              '#918 smoke Rust prerequisites keep their order'))
+            for cwd in ('', '        working-directory: src\n'):
+                change(f'{label}-cwd-{cwd.strip()}', owner, raw,
+                       raw.replace('        working-directory: .\n', cwd, 1),
+                       f'#918 {label} runs at repository root')
+            for field in ('if: false', "'if': false", '"if": false', 'continue-on-error: true',
+                          "'continue-on-error': true", '"continue-on-error": true'):
+                change(f'{label}-step-{field}', owner, raw,
+                       raw.replace('        working-directory:', f'        {field}\n        working-directory:', 1),
+                       f'#918 {label} step cannot skip or ignore failure')
+            for field in ('if: false', "'if': false", '"if": false', 'continue-on-error: true',
+                          "'continue-on-error': true", '"continue-on-error": true',
+                          'needs: metadata-observer', "'needs': metadata-observer", '"needs": metadata-observer'):
+                change(f'{label}-job-{field}', owner, '    steps:\n',
+                       f'    {field}\n    steps:\n', f'#918 {owner} job stays independent and unconditional')
+            checkout = '      - ' + steps[0]
+            change(f'{label}-missing-checkout', owner, checkout, '', f'#918 {owner} starts with checkout')
+            for field in ('if: false', "'if': false", '"if": false', 'continue-on-error: true',
+                          "'continue-on-error': true", '"continue-on-error": true'):
+                change(f'{label}-checkout-{field}', owner, checkout,
+                       checkout.replace('uses: actions/checkout@v4\n', f'uses: actions/checkout@v4\n        {field}\n', 1),
+                       f'#918 {owner} checkout preserves clean root defaults')
+            for field in ('path: nested', "'path': nested", '"path": nested', 'sparse-checkout: src',
+                          'filter: blob:none', 'repository: example/other', 'ref: main'):
+                # Keep Rust's existing with/fetch-depth mapping valid.
+                altered = (checkout.replace('        with:\n', f'        with:\n          {field}\n', 1)
+                           if '        with:\n' in checkout else
+                           checkout + f'        with:\n          {field}\n')
+                change(f'{label}-checkout-{field}', owner, checkout, altered,
+                       f'#918 {owner} checkout preserves clean root defaults')
+            if owner == 'rust':
+                change('smoke-checkout-shallow', owner, checkout,
+                       checkout.replace('fetch-depth: 0', 'fetch-depth: 1', 1),
+                       '#918 rust checkout preserves clean root defaults')
+            for key in ('shell', "'shell'", '"shell"'):
+                change(f'{label}-step-{key}', owner, raw,
+                       raw.replace('        working-directory:', f'        {key}: bash {{0}}\n        working-directory:', 1),
+                       f'#918 {label} preserves default fail-fast shell')
+                if owner == 'rust':
+                    old = '    defaults:\n      run:\n'
+                    new = old + f'        {key}: bash {{0}}\n'
+                else:
+                    old = '    steps:\n'
+                    new = f'    defaults:\n      run:\n        {key}: bash {{0}}\n' + old
+                change(f'{label}-job-default-{key}', owner, old, new,
+                       f'#918 {label} preserves default fail-fast shell')
+        for defaults in ('defaults:\n  run:\n    shell: bash {0}\n',
+                         'defaults: {run: {shell: "bash {0}"}}\n',
+                         "defaults:\n  run:\n    'shell': bash {0}\n"):
+            cases.append((f'workflow-{defaults!r}', defaults + workflow,
+                          '#918 workflow preserves default fail-fast shell'))
+        return cases
+
+    def test_ci_rejects_b2_and_smoke_placement_drift(self):
+        target = 'test_b2_and_smoke_keep_commands_in_their_own_jobs'
+        full_name = f'{__name__}.EnvironmentControls.{target}'
+        results = []
+        # The shared negative_suite runs Rust source mutations; these are only in-memory YAML.
+        # Run and classify every case, then fail once, including unexpected exceptions as INVALID.
+        for name, workflow, message in self.ci_b2_smoke_mutations():
+            status, reason = 'INVALID', 'positive control did not complete'
+            positive = restored = False
+            try:
+                getattr(self, target)()
+                positive = True
+                with patch.object(Path, 'read_text', return_value=workflow):
+                    try:
+                        getattr(self, target)()
+                    except AssertionError as error:
+                        status = 'KILLED' if message in str(error) else 'INVALID'
+                        reason = str(error)
+                    else:
+                        status, reason = 'SURVIVED', 'bound test passed mutated workflow'
+                getattr(self, target)()  # The real workflow must still pass after restoration.
+                restored = True
+            except Exception as error:
+                status, reason = 'INVALID', f'{type(error).__name__}: {error}'
+            results.append((name, status))
+            print(f'{name}: {status}: positive={positive}, restored={restored}: '
+                  f'{full_name}: {message}: {reason}', flush=True)
+        counts = {status: sum(result == status for _, result in results)
+                  for status in ('KILLED', 'SURVIVED', 'INVALID')}
+        print(f'#918 negative summary: {counts}', flush=True)
+        self.assertTrue(results and all(status == 'KILLED' for _, status in results),
+                        f'#918 every mutation must fail its bound assertion: {results}')
 
     def assert_ci_rejects(self, workflow, test_name, message):
         # Invoke the real CI check on an in-memory workflow mutation, never edit ci.yml.
