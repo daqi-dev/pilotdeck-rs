@@ -15,9 +15,9 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned
 from negative_selection import select
+from verdict import Judge
 
 fixture = Path(__file__).resolve().parent
 workspace = fixture.parents[3]
@@ -129,8 +129,10 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
     mutants.append(mutation('config-snapshotted-before-refresh', submit, block, before_refresh, 'guard-refresh-enables',
         submit_marker('guard-refresh-enables', 2, 'terminal')))
 
-    # #813 fix-r4: both baseline rows survive a subset; a failing baseline
-    # breaks before any mutant verdict.
+    # #813 fix-r11: both baseline rows always run first. A failing baseline
+    # no longer stops the sweep (fix-r8/r10 stopped or hid later mismatches);
+    # its dependent mutants still run for diagnostics but are judged INVALID,
+    # so repeating the unmutated failure can never count as KILLED.
     selected = select(
         [dict(name='baseline-pure', test=pure, marker=None),
          dict(name='baseline-submit', test=replay, marker=None)] + mutants,
@@ -138,6 +140,7 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
         always=('baseline-pure', 'baseline-submit'))
     command = ['cargo', 'test', '--offline', '--manifest-path', str(workspace / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib']
     summary = []
+    judge = Judge()
     deadline = time.monotonic() + 1800
     try:
         (out / 'original-sha256.json').write_text(json.dumps({str(p.relative_to(repo)): hashlib.sha256(data).hexdigest() for p, data in original.items()}, indent=2) + '\n')
@@ -183,24 +186,12 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
                     assert path.read_bytes() == modified[path], f'concurrent edit preserved: {path}'
                     if modified[path] != data: path.write_bytes(data)
             marker = control['marker']
-            valid = not timed_out and ((returncode == 0 and 'test result: ok. 1 passed; 0 failed;' in raw
-                and f'test {control["test"]} ... ok' in raw) if marker is None else (
-                returncode == 101 and 'test result: FAILED' in raw
-                and named_test_killed(raw, control['test'], marker, control.get('target'))
-                and 'could not compile' not in raw))
+            # #813 fix-r11: the baseline verdict dominates every mutant on the
+            # same test. Judge still receives each run, so the sweep and its
+            # logs are complete; only a dependent verdict turns INVALID.
+            valid, reason = judge.verdict(control, returncode=returncode,
+                                          timed_out=timed_out, raw=raw)
             (out / f'{control["name"]}.log').write_text('COMMAND ' + ' '.join(cmd) + '\n' + slots.stdout + slots.stderr + raw + f'\nexit={returncode} timed_out={timed_out}\n')
-            if valid:
-                reason = 'killed' if marker is not None else 'baseline passed'
-            elif timed_out:
-                reason = 'timeout (watchdog), not an assertion failure'
-            elif 'could not compile' in raw:
-                reason = 'compile error'
-            elif returncode == 0:
-                reason = 'survived (test passed)'
-            elif returncode != 101:
-                reason = f'unexpected exit {returncode}'
-            else:
-                reason = 'failed without the declared marker'
             # run_owned reaps the group itself, so the leader pid is not exported.
             summary.append(dict(name=control['name'], case=control.get('case'), marker=marker, before=control.get('before'), after=control.get('after'), pid=None, reaped=True, exit=returncode, timed_out=timed_out, valid=valid, reason=reason))
             (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
