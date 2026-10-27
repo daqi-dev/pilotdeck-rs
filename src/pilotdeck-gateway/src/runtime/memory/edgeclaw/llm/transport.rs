@@ -87,8 +87,10 @@ fn retryable_status(status: u16) -> bool {
 }
 
 /// Optional runtime seams. Sleep is awaited inline; no background worker or
-/// detached auth callback is created. Telemetry is a separate follow-up package.
+/// detached auth callback is created. Telemetry callbacks are optional and inline.
 pub trait LlmRuntime: Send + Sync {
+    fn track_feature_loop_stage(&self, _event: JsValue) {}
+    fn track_error(&self, _error: &LlmError, _event: JsValue) {}
     fn env(&self, name: &str) -> Option<String> {
         std::env::var(name).ok()
     }
@@ -175,6 +177,12 @@ impl LlmMemoryExtractor {
                 &"\" does not have a baseUrl".into(),
             ])));
         }
+        self.runtime.track_feature_loop_stage(model_event(
+            &selection,
+            input,
+            "model_request",
+            false,
+        ));
         let env = |name: &str| self.runtime.env(name);
         let api_key = match resolve_api_key(&self.config, &selection.provider, &env, None) {
             Ok(key) => key,
@@ -201,7 +209,11 @@ impl LlmMemoryExtractor {
                 self.retry(&url, &headers, &fallback, input).await
             }
             Err(error) => Err(error),
-        }?;
+        }
+        .inspect_err(|error| {
+            self.runtime
+                .track_error(error, model_event(&selection, input, "model_request", true));
+        })?;
         let bytes = read_body(
             response.0.into_body(),
             response.1,
@@ -219,6 +231,12 @@ impl LlmMemoryExtractor {
             message: json_syntax::parse_error_units(&decoded.encode_utf16().collect::<Vec<_>>())
                 .unwrap_or_else(|| error.to_string().into()),
         })?;
+        self.runtime.track_feature_loop_stage(model_event(
+            &selection,
+            input,
+            "model_response",
+            false,
+        ));
         extract_text(&api, &payload)
     }
     pub async fn call_structured_json_with_debug(
@@ -384,6 +402,53 @@ impl LlmMemoryExtractor {
         }
         unreachable!("third attempt always returns")
     }
+}
+fn model_event(
+    selection: &ModelSelection,
+    input: &StructuredInput,
+    stage: &str,
+    failed: bool,
+) -> JsValue {
+    let label = text(&input.request_label).to_lowercase();
+    let phase = if ["retrieve", "retrieval", "recall"]
+        .iter()
+        .any(|s| label.contains(s))
+    {
+        "retrieve"
+    } else if label.contains("dream") || label.contains("rewrite") {
+        "dream"
+    } else if label.contains("capture") || label.contains("extract") {
+        "capture"
+    } else {
+        "index"
+    };
+    let mut metadata = fields([
+        ("provider", string(&selection.provider)),
+        ("model", string(&selection.model)),
+        (
+            "providerBaseUrl",
+            selection
+                .base_url
+                .as_ref()
+                .map(string)
+                .unwrap_or(JsValue::Undefined),
+        ),
+    ]);
+    let mut event = fields([
+        ("module", "memory".into()),
+        ("ownerModule", "memory".into()),
+        ("executionKind", "memory".into()),
+        ("phase", phase.into()),
+        ("loopStage", stage.into()),
+    ]);
+    if failed {
+        event.insert("errorCategory".into(), "model_request_error".into());
+    } else {
+        metadata.insert("requestLabel".into(), string(&input.request_label));
+        event.insert("outcome".into(), "success".into());
+    }
+    event.insert("metadata".into(), JsValue::Object(metadata));
+    JsValue::Object(event)
 }
 async fn wait_deadline(deadline: Deadline) {
     match deadline {

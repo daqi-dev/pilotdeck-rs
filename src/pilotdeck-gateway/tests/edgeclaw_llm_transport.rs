@@ -105,6 +105,20 @@ impl Drop for DropCount<'_> {
     }
 }
 impl LlmRuntime for Runtime {
+    fn track_feature_loop_stage(&self, event: JsValue) {
+        self.events
+            .lock()
+            .expect("#868 stage event lock")
+            .push(event);
+    }
+    fn track_error(&self, error: &LlmError, event: JsValue) {
+        let mut event = event.as_object().expect("#868 error event object").clone();
+        event.insert("error".into(), JsValue::String(error.message.clone()));
+        self.events
+            .lock()
+            .expect("#868 error event lock")
+            .push(JsValue::Object(event));
+    }
     fn env(&self, _: &str) -> Option<String> {
         None
     }
@@ -338,16 +352,11 @@ fn check(
         origin,
         &format!("result {name}"),
     );
-    let auth: Vec<_> = array(expected.get("events").unwrap())
-        .iter()
-        .filter(|v| v.get("auth").is_some())
-        .cloned()
-        .collect();
     equal(
         &JsValue::Array(runtime.events.lock().unwrap().clone()),
-        &JsValue::Array(auth),
+        expected.get("events").expect("#868 oracle events"),
         origin,
-        &format!("auth {name}"),
+        &format!("#868 telemetry events {name}"),
     );
     equal(
         &JsValue::Array(debug),
@@ -530,6 +539,21 @@ async fn pending_and_cancellation_matrix() {
         } else {
             drop(future);
             assert!(debug.is_empty());
+            equal(
+                &JsValue::Array(
+                    runtime
+                        .events
+                        .lock()
+                        .expect("#868 pending events lock")
+                        .clone(),
+                ),
+                case.get("expected")
+                    .expect("#868 pending expected")
+                    .get("events")
+                    .expect("#868 pending events"),
+                "http://127.0.0.1:12345",
+                "#868 pending snapshot and cancellation preserve telemetry",
+            );
             assert_eq!(
                 transport.calls.load(Ordering::SeqCst) as f64,
                 case.get("expected")
@@ -598,7 +622,27 @@ async fn body_deadline_matrix() {
         let input = input(&spec);
         let start = tokio::time::Instant::now();
         let mut debug = Vec::new();
-        let actual = call(&extractor, &input, &spec, &mut debug).await;
+        let mut future = Box::pin(call(&extractor, &input, &spec, &mut debug));
+        assert!(
+            poll_once(future.as_mut()).await.is_none(),
+            "#868 body waits before deadline"
+        );
+        equal(
+            &JsValue::Array(
+                runtime
+                    .events
+                    .lock()
+                    .expect("#868 body events lock")
+                    .clone(),
+            ),
+            case.get("expected")
+                .expect("#868 body expected")
+                .get("events")
+                .expect("#868 body events"),
+            "http://127.0.0.1:12345",
+            "#868 body pending telemetry matches TS before D-2 deadline",
+        );
+        let actual = future.await;
         equal(
             &actual,
             &js(json!({"error":"recall fixture request timed out after 7ms","name":"Error"})),
