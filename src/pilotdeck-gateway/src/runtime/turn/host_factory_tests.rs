@@ -569,7 +569,7 @@ async fn live_session_shares_recorder_and_reads_current_history() {
         move |_, shared| {
             assert!(
                 Arc::ptr_eq(&shared, &expected_recorder),
-                "ports factory must receive the session Recorder"
+                "#741k ports factory must receive the session Recorder"
             );
             observed_calls.fetch_add(1, Ordering::SeqCst);
             ports(None)
@@ -577,65 +577,96 @@ async fn live_session_shares_recorder_and_reads_current_history() {
     )
     .into_live_session(recorder.clone(), move || {
         observed_history.fetch_add(1, Ordering::SeqCst);
-        current_history.lock().unwrap().clone()
+        current_history
+            .lock()
+            .expect("#741k input fixture setup")
+            .clone()
     });
-    assert_eq!(port_calls.load(Ordering::SeqCst), 0);
-    assert_eq!(history_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        port_calls.load(Ordering::SeqCst),
+        0,
+        "#741k input fixture invariant"
+    );
+    assert_eq!(
+        history_calls.load(Ordering::SeqCst),
+        0,
+        "#741k input fixture invariant"
+    );
     for index in 0..2 {
         let previous = parse_json(&format!(
             r#"{{"role":"assistant","content":"history-{index}"}}"#
         ))
-        .unwrap();
-        *history.lock().unwrap() = vec![previous.clone()];
+        .expect("#741k input fixture setup");
+        *history.lock().expect("#741k input fixture setup") = vec![previous.clone()];
         let mut turn = session
-            .submit(parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(), {
-                let mut options = wire().as_object().unwrap().clone();
-                options.insert(
-                    "turnId".into(),
-                    JsValue::String(format!("history-{index}").into()),
-                );
-                JsValue::Object(options)
-            })
-            .unwrap();
+            .submit(
+                parse_json(r#"{"type":"text","text":"hello"}"#).expect("#741k input fixture setup"),
+                {
+                    let mut options = wire()
+                        .as_object()
+                        .expect("#741k input fixture setup")
+                        .clone();
+                    options.insert(
+                        "turnId".into(),
+                        JsValue::String(format!("history-{index}").into()),
+                    );
+                    JsValue::Object(options)
+                },
+            )
+            .expect("#741k input fixture setup");
         let mut completed = None;
-        while let Some(event) = bounded(turn.next()).await.unwrap() {
+        while let Some(event) = bounded(turn.next())
+            .await
+            .expect("#741k input fixture setup")
+        {
             if event.get("type") == Some(&"turn_completed".into()) {
                 completed = Some(event);
             }
         }
-        let completed = completed.expect("peer completed the turn");
+        let completed = completed.expect("#741k peer completed the turn");
         assert_eq!(
             completed
                 .get("result")
                 .and_then(|result| result.get("type")),
             Some(&"success".into()),
-            "every history turn must execute successfully in its own sidecar"
+            "#741k every history turn must execute successfully in its own sidecar"
         );
         assert_eq!(
             completed.get("messages"),
             Some(&JsValue::Array(vec![
                 previous,
                 parse_json(r#"{"role":"user","content":[{"type":"text","text":"hello"}]}"#)
-                    .unwrap(),
+                    .expect("#741k input fixture setup"),
             ])),
-            "fresh history must reach the sidecar on every submit"
+            "#741k fresh history must reach the sidecar on every submit"
         );
-        let bytes = std::fs::read_to_string(recorder.writer().path()).unwrap();
+        let bytes =
+            std::fs::read_to_string(recorder.writer().path()).expect("#741k input fixture setup");
         assert_eq!(
             bytes
                 .lines()
-                .map(|line| parse_json(line).unwrap())
+                .map(|line| parse_json(line).expect("#741k input fixture setup"))
                 .filter(|row| row.get("type") == Some(&"accepted_input".into()))
                 .count(),
             index + 1,
-            "each factory turn must persist accepted_input"
+            "#741k each factory turn must persist accepted_input"
         );
-        assert_eq!(port_calls.load(Ordering::SeqCst), index + 1);
-        assert_eq!(history_calls.load(Ordering::SeqCst), index + 1);
+        assert_eq!(
+            port_calls.load(Ordering::SeqCst),
+            index + 1,
+            "#741k input fixture invariant"
+        );
+        assert_eq!(
+            history_calls.load(Ordering::SeqCst),
+            index + 1,
+            "#741k input fixture invariant"
+        );
         assert_peer_reaped(&pid_file).await;
     }
-    session.dispose().await.unwrap();
-    bounded(registry.dispose()).await.unwrap();
+    session.dispose().await.expect("#741k input fixture setup");
+    bounded(registry.dispose())
+        .await
+        .expect("#741k input fixture setup");
 }
 
 // #885 fix-r1: a deleted-cwd composition failure must reach the turn stream as

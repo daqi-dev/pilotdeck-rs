@@ -7,15 +7,11 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from _negative_common import mutate, run
+from _negative_common import mutate, run, check_mutations
 
 root = Path(__file__).resolve().parents[5]
-out = Path(sys.argv[1]).resolve()
-out.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/runtime/turn/runner.rs'
 env = os.environ.copy()
-if not env.get('CARGO_TARGET_DIR'):
-    raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
 command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
            '-p', 'pilotdeck-gateway', '--lib', 'runtime::turn::runner::tests']
 mutations = [
@@ -52,6 +48,12 @@ mutations = [
     ('best-effort-status', 'status', [('.await;', '.await.expect("mutant status failure");')]),
 ]
 
+if sys.argv[1:] == ['--check']:
+    raise SystemExit(check_mutations((n, source, s, r) for n, s, r in mutations))
+if not env.get('CARGO_TARGET_DIR'):
+    raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
+out = Path(sys.argv[1]).resolve()
+out.mkdir(parents=True, exist_ok=False)
 if sys.argv[2:]:
     selected = set(sys.argv[2:])
     assert selected <= {row[0] for row in mutations}, 'unknown mutation'

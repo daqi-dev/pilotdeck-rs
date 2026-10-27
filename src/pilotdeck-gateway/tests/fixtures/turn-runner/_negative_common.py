@@ -32,3 +32,22 @@ def run(name, *, root, out, command, env):
     result = run_owned(command, cwd=root, env=env, timeout=900)
     (out / f'{name}.log').write_text(result.stdout + result.stderr)
     return result
+
+
+def check_mutations(rows, transform=mutate):
+    """Read-only preflight using exactly the runtime mutation transform."""
+    import json
+    results = []
+    for name, path, scope, replacements in rows:
+        try:
+            original = path.read_text()
+            changed = transform(original, scope, replacements)
+            if changed == original:
+                raise ValueError('mutation leaves the source unchanged')
+            results.append({'mutation': name, 'status': 'CHECKED'})
+        except Exception as error:
+            results.append({'mutation': name, 'status': 'INVALID',
+                            'reason': f'{type(error).__name__}: {error}'})
+    print(json.dumps({'controls': results, 'checked': sum(
+        row['status'] == 'CHECKED' for row in results), 'total': len(results)}, indent=2))
+    return int(not results or any(row['status'] != 'CHECKED' for row in results))

@@ -7,15 +7,11 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from _negative_common import mutate, run
+from _negative_common import mutate, run, check_mutations
 
 root = Path(__file__).resolve().parents[5]
-out = Path(sys.argv[1]).resolve()
-out.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/storage/recorder.rs'
 env = os.environ.copy()
-if not env.get('CARGO_TARGET_DIR'):
-    raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
 command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
            '-p', 'pilotdeck-gateway', '--test', 'recorder_completion']
 # Scope first, then require one indentation-independent statement anchor.
@@ -31,6 +27,12 @@ mutations = [
     ('reset-start', 'start_turn', [('inner.completed_turn_id = None;', '')]),
     ('reset-restore', 'restore', [('inner.completed_turn_id = None;', '')]),
 ]
+if sys.argv[1:] == ['--check']:
+    raise SystemExit(check_mutations((n, source, s, r) for n, s, r in mutations))
+if not env.get('CARGO_TARGET_DIR'):
+    raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
+out = Path(sys.argv[1]).resolve()
+out.mkdir(parents=True, exist_ok=False)
 run = partial(run, root=root, out=out, command=command, env=env)
 baseline = os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
 with mutating_sources(root, [source], baseline=baseline) as originals:
