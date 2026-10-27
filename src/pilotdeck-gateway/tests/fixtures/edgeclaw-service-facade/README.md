@@ -21,6 +21,7 @@ outputs live in `_tmp/20261026-issue-775/probe/`.
 | closed | `captureTurn` with no normalized messages (`[]` or tool-only) | — | returns `{captured: false, normalizedMessages: []}` without touching SQLite | replayed by `closed-empty`; a non-empty message still throws `database is not open` |
 | closed | `close` again (2nd, 3rd) | — | throws `Error: database is not open` | replayed |
 | open | `defaultIndexingSettings` non-finite / large finite (`NaN`, `+Infinity`, `1e20`) | — | `getSettings` preserves the JS number; `JSON.stringify` stores it as `null`; the null read falls back to the default | replayed by `settings-nonfinite`; Rust storage uses `f64` |
+| open | `saveSettings` interval `-0` / `"-0"` / `"-0.0"` | — | `clampInt` projects it to `+0` (`Object.is(value, -0) === false`; `JSON.stringify` emits `0`) | replayed by `save_settings_projects_negative_zero_like_ts`; Rust mirrors TS `Math.max(min, Math.min(max, …))`. Node v22.22.0 probe: `_tmp/20261026-issue-775/fix-r3/probe/negative-zero.json` |
 | open | workspace data-dir slug | — | `sha1(resolve(workspaceDir)).slice(0, 10)` | both sides assert the slug before replacing it with `$HASH`; a wrong seed fails the comparison |
 | open → closed | `flush` (async) | close while the classify request is awaiting | promise rejects `Error: database is not open`; memory files already written stay | **N/A here**: async orchestration is A6.6-edgeclaw-19; the close-during-await cell is covered by #770's heartbeat matrix. Probe: `probe/close-during-await.mts` → `probe/during.json` |
 | open | `flush` / `retrieve` / `dream` | — | not part of this package's facade | implemented by A6.6-edgeclaw-19 |
@@ -39,12 +40,13 @@ it writes a memory file and does not touch SQLite.
 - `verify.mts` — re-runs the same scenarios and requires the Rust-produced
   `rust-observations.json` to equal both the oracle and the fresh TS run.
 - `oracle.json` — committed goldens (12 scenarios).
-- `negative.py` — fourteen in-place mutations of `service/mod.rs` (plus the
-  fix-r1 P0/P1/P2 regressions). Each mutant names the one test it must kill and
-  the exact assertion message; the runner applies every mutant, records
+- `negative.py` — fifteen in-place mutations of `service/mod.rs` and
+  `storage.rs` (plus the fix-r1 P0/P1/P2 regressions and fix-r3's `-0`
+  projection). Each mutant names the one test it must kill and the exact
+  assertion message; the runner applies every mutant, records
   KILLED/SURVIVED/INVALID and exits non-zero on any non-KILLED. Each mutant was
-  compile-checked before delivery; the official run needs the file to be
-  committed first (the guard refuses an untracked product source).
+  compile-checked before delivery; the official run needs the files to be
+  committed first (the guard refuses an uncommitted product source).
 
 ## Commands
 

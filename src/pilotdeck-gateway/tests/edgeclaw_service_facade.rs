@@ -1192,6 +1192,70 @@ fn nonfinite_settings_keep_js_number_semantics() {
     service.close().expect("#775 close nonfinite service");
 }
 
+/// `saveSettings` exposes each interval through the returned `IndexingSettings`,
+/// the indexer copy and the SQLite readback. TS `clampInt` ends with
+/// `Math.max(min, …)`, so numeric `-0` and the strings `"-0"`/`"-0.0"` all
+/// project to `+0`; Rust `f64::clamp` would keep the sign. Node v22.22.0
+/// probe: `_tmp/20261026-issue-775/fix-r3/probe/negative-zero.json`.
+#[test]
+fn save_settings_projects_negative_zero_like_ts() {
+    let scratch = Scratch::new("edgeclaw-negative-zero");
+    let home = scratch.path().join("home");
+    fs::create_dir_all(&home).expect("#775 negative-zero home");
+    let mut options = ServiceOptions::new(scratch.path().join("workspace"));
+    options.root_dir = Some(scratch.path().join("root"));
+    let service = service_for(options, &home, None);
+    for (label, value) in [
+        ("numeric -0", JsValue::Number(-0.0)),
+        ("numeric 0", JsValue::Number(0.0)),
+        ("string \"-0\"", JsValue::from("-0")),
+        ("string \"-0.0\"", JsValue::from("-0.0")),
+    ] {
+        let mut partial = JsObject::new();
+        partial.insert("autoIndexIntervalMinutes".into(), value.clone());
+        partial.insert("autoDreamIntervalMinutes".into(), value);
+        let saved = service
+            .save_settings(&JsValue::Object(partial))
+            .expect("#775 negative-zero saveSettings");
+        assert!(
+            !saved.auto_index_interval_minutes.is_sign_negative(),
+            "#775 saveSettings {label} autoIndexIntervalMinutes returned -0"
+        );
+        assert!(
+            !saved.auto_dream_interval_minutes.is_sign_negative(),
+            "#775 saveSettings {label} autoDreamIntervalMinutes returned -0"
+        );
+        let indexer = service.indexer_settings();
+        assert!(
+            !indexer.auto_index_interval_minutes.is_sign_negative()
+                && !indexer.auto_dream_interval_minutes.is_sign_negative(),
+            "#775 saveSettings {label} indexer kept -0"
+        );
+        let readback = service
+            .get_settings()
+            .expect("#775 negative-zero getSettings");
+        assert!(
+            !readback.auto_index_interval_minutes.is_sign_negative()
+                && !readback.auto_dream_interval_minutes.is_sign_negative(),
+            "#775 saveSettings {label} SQLite readback kept -0"
+        );
+        let returned = saved.to_js();
+        let index = returned
+            .get("autoIndexIntervalMinutes")
+            .and_then(JsValue::as_number)
+            .expect("#775 negative-zero returned autoIndexIntervalMinutes");
+        let dream = returned
+            .get("autoDreamIntervalMinutes")
+            .and_then(JsValue::as_number)
+            .expect("#775 negative-zero returned autoDreamIntervalMinutes");
+        assert!(
+            !index.is_sign_negative() && !dream.is_sign_negative(),
+            "#775 saveSettings {label} returned object kept -0"
+        );
+    }
+    service.close().expect("#775 close negative-zero service");
+}
+
 #[test]
 fn reopen_restores_persisted_indexer_settings() {
     let scratch = Scratch::new("edgeclaw-reopen-settings");
