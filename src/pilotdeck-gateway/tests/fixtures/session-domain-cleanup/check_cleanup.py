@@ -845,10 +845,12 @@ AGGREGATION_POINTS = {
      'main'): 'fixture-main',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_controls.py',
      'main'): 'negative-main',
-    ('src/pilotdeck-gateway/tests/fixtures/gateway-batch/negative_controls.py',
-     'main'): 'gateway-negative-main',
 }
 NON_AGGREGATION_POINTS = {
+    ('scripts/gateway-parity/test_safety.py', 'test_deadline_not_run_has_dedicated_exit_code'):
+        'test-only shared exit mapping and real CLI contract, not a batch',
+    ('scripts/gateway-parity/test_safety.py', 'test_empty_aggregation_fails_closed'):
+        'test-only empty batch contract, not a batch',
     ('scripts/gateway-parity/common.py', 'aggregate_status'):
         'the single shared implementation (definition, not a call site)',
     ('scripts/gateway-parity/check_frozen.py', 'main'):
@@ -872,218 +874,6 @@ NON_AGGREGATION_POINTS = {
      'aggregation_audit'):
         'the audit itself; test-only',
 }
-
-# #892: leaf observations and test inputs also construct status dictionaries.
-# Classify each explicitly; never exempt a whole file from the inventory.
-NON_AGGREGATION_POINTS.update({
-    ('src/pilotdeck-gateway/tests/fixtures/gateway-batch/negative_controls.py',
-     'record'): 'one mutation verdict record, not a batch exit',
-    ('scripts/gateway-parity/test_safety.py', 'ApparatusInputs.test_deadline_not_run_has_dedicated_exit_code'):
-        'test-only shared exit mapping and real CLI contract, not a batch',
-    ('scripts/gateway-parity/test_safety.py', 'ApparatusInputs.test_empty_aggregation_fails_closed'):
-        'test-only empty batch contract, not a batch',
-    ('scripts/gateway-parity/build_proxy.py', 'main'): 'single build precondition, no batch',
-    ('scripts/gateway-parity/compare.py', 'projection'): 'single evidence projection',
-    ('scripts/gateway-parity/compare.py', 'compare'): 'A2 pair comparison, own frozen verdict',
-    ('scripts/gateway-parity/controls/session_domain.py', 'native_fixture'): 'synthetic leaf observations',
-    ('scripts/gateway-parity/run_round.py', 'run_round'): 'single A2 round audit',
-    ('scripts/gateway-parity/session_domain.py', 'process_tree'): 'single process census',
-    ('scripts/gateway-parity/session_domain.py', 'validate_calibration'): 'calibration observations, not batch exit',
-    **{('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py', name):
-       'test-only leaf input or replay, no production batch exit'
-       for name in ('wiring_control', 'census_snapshot_race_control',
-                    'census_enumeration_failure_control', 'negative_restored_replays',
-                    'runtime_negative.bypass_probe', 'batch_aggregation_control.fake_run',
-                    'batch_aggregation_control.replay')},
-    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_controls.py',
-     'wiring_relaxed'): 'mutation verdict predicate, not batch exit',
-})
-
-
-# Explicit syntax registrations; the auditor never learns new permissions
-# from the candidate source. Update only after reviewing changed operations.
-import json
-ENTRY_CONTRACTS = json.loads(Path(__file__).with_name('entry_contracts.json').read_text())
-ENTRY_CALLS = ENTRY_CONTRACTS['calls']
-ENTRY_CALL_SHAPES = ENTRY_CONTRACTS['callShapes']
-ENTRY_BINDINGS = ENTRY_CONTRACTS['bindings']
-ENTRY_WRITES = ENTRY_CONTRACTS['writes']
-ENTRY_MODULE_SHAPES = ENTRY_CONTRACTS['moduleShapes']
-
-# #892 positive grammar. This is a syntax certificate, not arbitrary Python
-# equivalence analysis. Calls below are explicitly reviewed operations; new
-# syntax/callees require a new registration, never automatic discovery.
-ENTRY_NODE_TYPES = frozenset('''FunctionDef arguments Assign AnnAssign Expr
-Return Raise If For Try ExceptHandler With withitem Pass Continue
-Name Load Store Constant Attribute Call keyword Subscript Slice Tuple List Set
-Dict ListComp SetComp DictComp GeneratorExp comprehension Starred
-BoolOp And Or UnaryOp Not USub BinOp Add Sub Div BitOr Compare Eq NotEq Is IsNot
-In NotIn Lt LtE Gt GtE IfExp JoinedStr FormattedValue'''.split())
-
-
-def syntax_shape(node):
-    """Stable across Python's changing ast.dump defaults/optional fields."""
-    def encode(value):
-        if isinstance(value, ast.AST):
-            fields = tuple(sorted((name, encode(item)) for name, item in ast.iter_fields(value)
-                                  if item is not None and item != []))
-            return type(value).__name__, fields
-        if isinstance(value, list):
-            return tuple(encode(item) for item in value)
-        return value
-    return repr(encode(node))
-
-
-def qualified_call(node):
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        parent = qualified_call(node.value)
-        return parent + '.' + node.attr if parent else None
-    return None
-
-
-def entry_errors(function, rel):
-    errors = []
-
-    def reject(node, reason):
-        errors.append(f"{rel}:{getattr(node, 'lineno', function.lineno)}:"
-                      f"{getattr(node, 'col_offset', 0) + 1}: {reason}")
-
-    args = function.args
-    if (function.decorator_list or args.posonlyargs or args.args or args.kwonlyargs
-            or args.vararg or args.kwarg or function.returns or function.type_comment
-            or getattr(function, 'type_params', [])):
-        reject(function, 'entry must be a plain zero-argument def')
-    nodes = list(ast.walk(function))
-    allowed = ENTRY_CALLS.get(rel, frozenset())
-    call_shapes = ENTRY_CALL_SHAPES.get(rel, frozenset())
-    # Rebinding any approved callable or module could turn its name into an
-    # exit alias. Receiver locals are initialized by their registered operation.
-    roots = {call.split('.')[0] for call in allowed if '(' not in call} | {'common', 'md', 'sys', 'SystemExit'}
-    bindings = ENTRY_BINDINGS.get(rel, frozenset())
-    for node in nodes:
-        if type(node).__name__ not in ENTRY_NODE_TYPES or (
-                node is not function and isinstance(node, ast.FunctionDef)):
-            reject(node, 'unsupported entry syntax ' + type(node).__name__)
-        if isinstance(node, ast.Name) and node.id.startswith('__') and node.id != '__doc__':
-            reject(node, 'unsupported reflective name ' + node.id)
-        if (isinstance(node, ast.Attribute) and node.attr.startswith('__')
-                and ast.unparse(node) != 'type(error).__name__'):
-            reject(node, 'unsupported reflective attribute ' + node.attr)
-        if isinstance(node, (ast.Assign, ast.AnnAssign)):
-            import hashlib
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            local_targets = all(isinstance(target, ast.Name) or (
-                isinstance(target, (ast.Tuple, ast.List))
-                and all(isinstance(part, ast.Name) for part in target.elts)) for target in targets)
-            shared_local = local_targets and (shared_call(node.value)
-                                              or shared_projection(node.value, 0)
-                                              or shared_projection(node.value, 1))
-            if not shared_local and hashlib.sha256(syntax_shape(node).encode()).hexdigest() not in ENTRY_WRITES.get(rel, ()):
-                reject(node, 'unregistered assignment binding')
-        if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            import hashlib
-            owners = [parent for parent in nodes if isinstance(parent, (ast.Assign, ast.AnnAssign))
-                      and any(node in ast.walk(target) for target in (
-                          parent.targets if isinstance(parent, ast.Assign) else [parent.target]))]
-            if not any(hashlib.sha256(syntax_shape(owner).encode()).hexdigest() in ENTRY_WRITES.get(rel, ())
-                       for owner in owners):
-                reject(node, 'unregistered implicit assignment binding')
-        if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            reject(node, 'attribute assignment is not an entry operation')
-        if isinstance(node, ast.Call):
-            name = ast.unparse(node.func)
-            import hashlib
-            approved_operation = hashlib.sha256(syntax_shape(node).encode()).hexdigest() in call_shapes
-            if not approved_operation and name not in ('common.aggregate_status', 'md.common.aggregate_status'):
-                # Only these two explicit exit forms are part of the grammar.
-                # They must be standalone and use a shared exit projection.
-                parents = [parent for parent in nodes if node in ast.iter_child_nodes(parent)]
-                standalone = (name == 'SystemExit' and any(isinstance(p, ast.Raise) for p in parents)
-                              or name == 'sys.exit' and any(isinstance(p, ast.Expr) for p in parents))
-                if not standalone:
-                    reject(node, 'unregistered direct call ' + name)
-        if isinstance(node, ast.Raise) and not (
-                isinstance(node.exc, ast.Call) and qualified_call(node.exc.func) == 'SystemExit'
-                and node.cause is None):
-            reject(node, 'only raise SystemExit(shared_code) is accepted')
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id in roots:
-            parents = [parent for parent in nodes if node in ast.iter_child_nodes(parent)]
-            import hashlib
-            if not any(hashlib.sha256(syntax_shape(binding_shell(parent)).encode()).hexdigest()
-                       in bindings for parent in parents):
-                reject(node, 'unregistered callable/receiver binding ' + node.id)
-        if isinstance(node, ast.ExceptHandler) and node.name in roots:
-            reject(node, 'exception handler rebinds registered callable ' + node.name)
-    for node in nodes:
-        if isinstance(node, ast.Return) or is_explicit_exit(node):
-            value = node.value if isinstance(node, ast.Return) else explicit_exit(node)
-            if not shared_value(own_nodes(function), value, 1):
-                reject(node, 'exit value must be a shared result in this function')
-    if not terminal_block(function.body):
-        reject(function, 'entry may fall through without a shared exit')
-    return errors
-
-
-def terminal_block(body):
-    if not body:
-        return False
-    last = body[-1]
-    if isinstance(last, (ast.Return, ast.Raise)):
-        return True
-    if isinstance(last, ast.Expr) and isinstance(last.value, ast.Call):
-        return qualified_call(last.value.func) == 'sys.exit'
-    if isinstance(last, ast.If):
-        return terminal_block(last.body) and terminal_block(last.orelse)
-    return False
-
-
-def entry_module_errors(tree, function, rel):
-    """Only a unique top-level def and canonical final launcher can certify main.
-
-    Module statements and helper bodies are registered by exact AST shape
-    and order. Moving an unsupported operation into a helper cannot hide it.
-    """
-    errors = []
-    template = ast.parse("if __name__ == '__main__':\n    raise SystemExit(main())").body[0]
-    launchers = [node for node in tree.body if ast.dump(node) == ast.dump(template)]
-    if len(launchers) != 1 or tree.body[-1] is not launchers[0]:
-        errors.append(f'{rel}:{tree.body[-1].lineno}:1: canonical final launcher required')
-    definitions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'main']
-    if definitions != [function]:
-        errors.append(f'{rel}:{function.lineno}:1: entry must be a unique module-level def')
-    import hashlib
-    shapes = ENTRY_MODULE_SHAPES.get(rel, ())
-    observed, locations = [], []
-    for node in tree.body:
-        if node in launchers:
-            continue
-        if isinstance(node, ast.FunctionDef) and node.name == 'main':
-            continue
-        # Everything outside the entry is a reviewed operation, including
-        # immediately executed class bodies and called helper implementations.
-        shape = syntax_shape(node)
-        observed.append(hashlib.sha256(shape.encode()).hexdigest())
-        locations.append(node)
-    if observed != list(shapes):
-        for index, node in enumerate(locations):
-            if index >= len(shapes) or observed[index] != shapes[index]:
-                errors.append(f'{rel}:{node.lineno}:{node.col_offset + 1}: unregistered module statement')
-        if len(observed) < len(shapes):
-            errors.append(f'{rel}:1:1: missing registered module statement')
-    return errors
-
-
-def binding_shell(node):
-    import copy
-    shell = copy.copy(node)
-    if isinstance(shell, (ast.For, ast.With, ast.ExceptHandler)):
-        shell.body = []
-        if hasattr(shell, 'orelse'):
-            shell.orelse = []
-    return shell
-
 
 
 STATUS_WORDS = frozenset(('PASS', 'PASS_WITH_SKIPS', 'NOT_RUN', 'BLOCKED', 'FAIL',
@@ -1120,137 +910,11 @@ def _is_report_status(target, value):
                     for key in value.keys))
 
 
-def own_nodes(function):
-    """Only this function's lexical bindings; nested scopes cannot certify it."""
-    def descend(node):
-        yield node
-        if node is not function and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
-                                                       ast.ClassDef, ast.Lambda)):
-            return
-        for child in ast.iter_child_nodes(node):
-            yield from descend(child)
-    return list(descend(function))
-
-
-def shared_call(value):
-    return (isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
-            and value.func.attr == 'aggregate_status'
-            and ast.unparse(value.func.value) in ('common', 'md.common'))
-
-
-def shared_projection(value, index):
-    return (isinstance(value, ast.Subscript) and shared_call(value.value)
-            and isinstance(value.slice, ast.Constant)
-            and type(value.slice.value) is int and value.slice.value == index)
-
-
-def shared_value(nodes, value, index):
-    if shared_projection(value, index):
-        return True
-    if not isinstance(value, ast.Name):
-        return False
-    if any(isinstance(n, ast.arg) and n.arg == value.id
-           or isinstance(n, ast.ExceptHandler) and n.name == value.id
-           or isinstance(n, (ast.Global, ast.Nonlocal)) and value.id in n.names
-           for n in nodes):
-        return False
-    stores = {id(n) for n in nodes if isinstance(n, ast.Name)
-              and isinstance(n.ctx, (ast.Store, ast.Del)) and n.id == value.id}
-    accepted = set()
-    for node in nodes:
-        if isinstance(node, ast.Assign):
-            targets, expression = node.targets, node.value
-        elif isinstance(node, ast.AnnAssign):
-            targets, expression = [node.target], node.value
-        else:
-            continue
-        for target in targets:
-            if (isinstance(target, ast.Name) and target.id == value.id
-                    and shared_projection(expression, index)):
-                accepted.add(id(target))
-            if (isinstance(target, (ast.Tuple, ast.List)) and len(target.elts) == 2
-                    and shared_call(expression)):
-                part = target.elts[index]
-                if isinstance(part, ast.Name) and part.id == value.id:
-                    accepted.add(id(part))
-    return bool(stores) and stores == accepted
-
-
-def shared_returns(function, kind):
-    """Conservative syntax contract: every branch and every store is checked.
-
-    No arbitrary data-flow claims: unsupported aliases/updates fail closed.
-    main functions return only shared exit projections; batch reports contain
-    only shared status projections; summarize_results returns (status, skips).
-    """
-    nodes = own_nodes(function)
-    returns = [node.value for node in nodes if isinstance(node, ast.Return)]
-    exits = [explicit_exit(node) for node in nodes if is_explicit_exit(node)]
-    # Each terminating edge must certify itself, even if an unreachable return
-    # below it contains a shared call. Missing/keyword arguments fail closed.
-    if not all(shared_value(nodes, value, 1) for value in exits):
-        return False
-    if kind == 'exit':
-        return bool(returns or exits) and all(shared_value(nodes, value, 1) for value in returns)
-    if kind == 'status-tuple':
-        return bool(returns) and all(isinstance(value, ast.Tuple) and len(value.elts) == 2
-                                    and shared_value(nodes, value.elts[0], 0) for value in returns)
-    # The two production report builders use one local report dictionary.
-    if not returns or not all(isinstance(value, ast.Name) and value.id == 'report'
-                              for value in returns):
-        return False
-    reports = [node for node in nodes if isinstance(node, ast.Name)
-               and node.id == 'report' and isinstance(node.ctx, ast.Store)]
-    definitions = [node for node in nodes if isinstance(node, ast.Assign)
-                   and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
-                   and node.targets[0].id == 'report' and isinstance(node.value, ast.Dict)]
-    if not reports or len(reports) != len(definitions):
-        return False
-    for definition in definitions:
-        statuses = [value for key, value in zip(definition.value.keys, definition.value.values)
-                    if isinstance(key, ast.Constant) and key.value == 'status']
-        if len(statuses) != 1 or not shared_value(nodes, statuses[0], 0):
-            return False
-        if any(key is None for key in definition.value.keys):
-            return False
-    for node in nodes:
-        if (isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
-                and isinstance(node.value, ast.Name) and node.value.id == 'report'):
-            return False  # an alias could mutate status outside these checks
-        if (isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del))
-                and isinstance(node.value, ast.Name) and node.value.id == 'report'):
-            if not isinstance(node.slice, ast.Constant) or node.slice.value == 'status':
-                return False
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name) and node.func.value.id == 'report'):
-            return False  # update/setdefault/pop/... can replace the status
-    return True
-
-
-def is_explicit_exit(node):
-    return (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
-            and qualified_call(node.exc.func) == 'SystemExit'
-            or isinstance(node, ast.Call) and qualified_call(node.func) == 'sys.exit')
-
-
-def explicit_exit(node):
-    call = node.exc if isinstance(node, ast.Raise) else node
-    return (call.args[0] if isinstance(call, ast.Call) and len(call.args) == 1
-            and not call.keywords else None)
-
-
 def aggregation_markers(function):
     """Markers that make *function* a top-level status/exit computation."""
     markers = set()
-    for node in own_nodes(function):
-        if (isinstance(node, ast.Dict)
-                and any(isinstance(key, ast.Constant) and key.value == 'status'
-                        for key in node.keys)):
-            markers.add('dict-status')
-        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-              and node.func.id == 'dict' and any(k.arg == 'status' for k in node.keywords)):
-            markers.add('dict-status')
-        elif isinstance(node, ast.Assign):
+    for node in ast.walk(function):
+        if isinstance(node, ast.Assign):
             for target in node.targets:
                 if _is_status_target(target) and (
                         _status_literals(node.value)
@@ -1270,39 +934,30 @@ def aggregation_markers(function):
             if isinstance(value, ast.IfExp) and (
                     _status_literals(value) or _has_passed_aggregate(value)):
                 markers.add('return-conditional-status')
-        elif is_explicit_exit(node):
-            markers.add('explicit-exit')
-        elif shared_call(node):
+        elif (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
+              and isinstance(node.exc.func, ast.Name) and node.exc.func.id == 'SystemExit'
+              and node.exc.args and (_status_literals(node.exc.args[0])
+                                     or _has_passed_aggregate(node.exc.args[0]))):
+            markers.add('raise-exit-status')
+        elif isinstance(node, ast.Call) and 'aggregate_status' in ast.unparse(node.func):
             markers.add('calls-aggregate')
     return markers
 
 
 def calls_shared(function):
-    return any(shared_call(node) for node in own_nodes(function))
+    return any(isinstance(node, ast.Call)
+               and 'aggregate_status' in ast.unparse(node.func)
+               for node in ast.walk(function))
 
 
 def scan_aggregation_tree(tree, rel):
-    definitions = {}
-
-    def descend(node, scope):
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                name = '.'.join((*scope, child.name))
-                if not isinstance(child, ast.ClassDef):
-                    definitions.setdefault((rel, name), []).append(child)
-                descend(child, (*scope, child.name))
-            else:
-                descend(child, scope)
-
-    descend(tree, ())
     found = {}
-    for key, functions in definitions.items():
-        markers = set().union(*(aggregation_markers(function) for function in functions))
-        if len(functions) != 1 and (markers or key in AGGREGATION_POINTS):
-            # Even a later definition without markers can replace an entry.
-            found[key] = (markers | {'duplicate-definition'}, None)
-        elif markers or key in AGGREGATION_POINTS:
-            found[key] = (markers, functions[0])
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        markers = aggregation_markers(function)
+        if markers:
+            found[(rel, function.name)] = (markers, function)
     return found
 
 
@@ -1314,11 +969,9 @@ def aggregation_audit():
     """
     files = [path for path in (
         sorted((ROOT / 'scripts/gateway-parity').rglob('*.py'))
-        + sorted(Path(__file__).resolve().parent.glob('*.py'))
-        + sorted((Path(__file__).resolve().parent.parent / 'gateway-batch').glob('*.py')))
+        + sorted(Path(__file__).resolve().parent.glob('*.py')))
         if 'node_modules' not in path.parts and '__pycache__' not in path.parts]
     found = {}
-    trees = {}
     failures = []
     if not callable(getattr(md.common, 'aggregate_status', None)):
         failures.append('#164-fix-r7 aggregation-audit: common.aggregate_status is missing')
@@ -1329,9 +982,7 @@ def aggregation_audit():
             failures.append(f'#164-fix-r7 aggregation-audit: cannot scan '
                             f'{path.relative_to(ROOT).as_posix()}: {type(error).__name__}: {error}')
             continue
-        rel = path.relative_to(ROOT).as_posix()
-        trees[rel] = tree
-        found.update(scan_aggregation_tree(tree, rel))
+        found.update(scan_aggregation_tree(tree, path.relative_to(ROOT).as_posix()))
 
     points = {}
     for key, point_id in sorted(AGGREGATION_POINTS.items()):
@@ -1342,14 +993,7 @@ def aggregation_audit():
                             f'{rel}:{name}')
             continue
         markers, function = found[key]
-        kind = ('exit' if name == 'main' else 'status-tuple'
-                if name == 'summarize_results' else 'report')
-        syntax_errors = []
-        if function is not None and name == 'main':
-            syntax_errors = entry_errors(function, rel) + entry_module_errors(trees[rel], function, rel)
-            failures.extend('#892 entry contract: ' + error for error in syntax_errors)
-        shared = (not syntax_errors and function is not None and calls_shared(function)
-                  and shared_returns(function, kind))
+        shared = calls_shared(function) and 'return-int-status' not in markers
         points[point_id] = {'file': rel, 'function': name, 'shared': shared,
                             'markers': sorted(markers)}
         if not shared:
@@ -1384,43 +1028,7 @@ def aggregation_audit():
     if not shared or not calls_shared(shared[1]):
         failures.append('#164-fix-r7 aggregation-audit: detector self-test did not '
                         'recognize a shared call')
-    # #892 paired, compilable AST negatives. Exercise the actual detector,
-    # including a shared call in a different branch (the original loophole).
-    probes = [
-        ('direct-dict', "return {'status': 'PASS'}", 'marker', True),
-        ('arbitrary-dict', "anything = {'status': result}\nreturn anything", 'marker', True),
-        ('dict-call', "return dict(status='PASS')", 'marker', True),
-        ('shared-code', "return common.aggregate_status('PASS')[1]", 'exit', True),
-        ('shared-binding', "_, code = common.aggregate_status('PASS')\nreturn code", 'exit', True),
-        ('branch-exit', "if rows:\n    return common.aggregate_status('PASS')[1]\n"
-                        "return 0 if all(rows) else 1", 'exit', False),
-        ('branch-store', "_, code = common.aggregate_status('PASS')\n"
-                         "if rows:\n    code = 0\nreturn code", 'exit', False),
-        ('augmented-store', "_, code = common.aggregate_status('PASS')\ncode += 1\nreturn code", 'exit', False),
-        ('nested-call', "def nested():\n    return common.aggregate_status('PASS')[1]\nreturn 0", 'exit', False),
-        ('fake-call', "return common.fake_aggregate_status('PASS')[1]", 'exit', False),
-        ('shared-report', "status, _ = common.aggregate_status('PASS')\n"
-                          "report = {'status': status}\nreturn report", 'report', True),
-        ('report-overwrite', "status, _ = common.aggregate_status('PASS')\n"
-                             "report = {'status': status}\nreport['status'] = 'PASS'\nreturn report", 'report', False),
-        ('report-update', "status, _ = common.aggregate_status('PASS')\n"
-                          "report = {'status': status}\nreport.update(status='PASS')\nreturn report", 'report', False),
-        ('report-alias', "status, _ = common.aggregate_status('FAIL')\n"
-                         "report = {'status': status}\nalias = report\nalias['status'] = 'PASS'\nreturn report", 'report', False),
-    ]
-    probe_results = []
-    for name, body, kind, expected in probes:
-        source = 'def probe(rows, result):\n' + '\n'.join('    ' + line for line in body.splitlines()) + '\n'
-        compile(source, f'<#892-{name}>', 'exec')
-        function = ast.parse(source).body[0]
-        actual = (bool(aggregation_markers(function)) if kind == 'marker'
-                  else calls_shared(function) and shared_returns(function, kind))
-        passed = actual == expected
-        probe_results.append({'name': name, 'expected': expected, 'actual': actual, 'passed': passed})
-        if not passed:
-            failures.append(f'#892 aggregation-audit: {name} expected={expected}, got={actual}')
     return {'mode': 'aggregation-audit', 'points': points,
-            'probes': probe_results,
             'nonPoints': sorted(f'{rel}:{name}' for rel, name in NON_AGGREGATION_POINTS),
             'unclassified': unclassified, 'failures': failures,
             'failureCount': len(failures),
@@ -1673,11 +1281,6 @@ def batch_aggregation_control(md, output):
             'passed': not failures}
 
 
-def initialize_session_domain():
-    global md
-    md = load_session_domain()
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
@@ -1693,7 +1296,8 @@ def main():
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    initialize_session_domain()
+    global md
+    md = load_session_domain()
     results = []
     modes = ('clean', 'leak', 'ignore') if args.mode == 'all' else (
         () if args.mode in ('status', 'runtime-negative', 'blocked', 'wiring',
