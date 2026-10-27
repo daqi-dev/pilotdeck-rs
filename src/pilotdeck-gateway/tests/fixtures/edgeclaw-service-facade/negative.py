@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Prove the EdgeClaw service facade checks fail on their own product mutation.
 
-The new `service/mod.rs` must be committed before this runner can obtain the
-`mutating_sources` HEAD guard. Until then it refuses with the shared
-`SourceBaselineError` instead of mutating an uncommitted product tree.
+The new `service/mod.rs` and `storage.rs` sources must be committed before this
+runner can obtain the `mutating_sources` HEAD guard. Until then it refuses with
+the shared `SourceBaselineError` instead of mutating an uncommitted product
+tree.
 
     CARGO_TARGET_DIR=/abs/target python3 \
         src/pilotdeck-gateway/tests/fixtures/edgeclaw-service-facade/negative.py \
@@ -31,6 +32,7 @@ from negative_process import (
 
 ROOT = Path(__file__).resolve().parents[5]
 SERVICE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/service/mod.rs'
+STORAGE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage.rs'
 TEST = 'ts_service_facade_scenarios_match'
 TEST_FILE = 'pilotdeck-gateway/tests/edgeclaw_service_facade.rs'
 
@@ -54,6 +56,9 @@ ANCHORS = {
     # (capture-normalization's assistant-only/tool-only turns), before the
     # closed-empty scenario 11 ever runs; bind the first observable cell.
     'closed-capture-empty-not-early': '#775 facade steps for scenario 3 capture-normalization',
+    # fix-r3: `clampInt` must project `-0` to `+0` like TS `Math.max(min, …)`;
+    # the first returned value (numeric -0) is the binding observable.
+    'settings-negative-zero': '#775 saveSettings numeric -0 autoIndexIntervalMinutes returned -0',
 }
 
 
@@ -158,6 +163,13 @@ MUTANTS = [
         'if normalized_messages.is_empty() {',
         'if false && normalized_messages.is_empty() {',
     ),
+    mutation(
+        'settings-negative-zero',
+        STORAGE,
+        'number.floor().min(max as f64).max(min as f64)',
+        'number.floor().clamp(min as f64, max as f64)',
+        test='save_settings_projects_negative_zero_like_ts',
+    ),
 ]
 
 
@@ -242,9 +254,10 @@ def main():
         print(f"{mutant['name']}: {status}: {reason}", flush=True)
 
     try:
-        with mutating_sources(ROOT, [SERVICE], baseline='HEAD') as snapshots:
-            original = snapshots[SERVICE].decode()
+        with mutating_sources(ROOT, [SERVICE, STORAGE], baseline='HEAD') as snapshots:
             for mutant in selected:
+                path = mutant['path']
+                original = snapshots[path].decode()
                 occurrences = original.count(mutant['old'])
                 if occurrences != 1:
                     record(
@@ -259,7 +272,7 @@ def main():
                 mutated = original.replace(mutant['old'], mutant['new'], 1)
                 status, reason = 'INVALID', ''
                 try:
-                    SERVICE.write_text(mutated)
+                    path.write_text(mutated)
                     # Force Cargo to observe the write even on a filesystem
                     # with coarse mtimes; a cached binary would fake SURVIVED.
                     time.sleep(1.1)
@@ -269,10 +282,10 @@ def main():
                 except Exception as error:  # noqa: BLE001 - summarized as INVALID
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
-                    SERVICE.write_text(original)
+                    path.write_text(original)
                     time.sleep(1.1)
-                    if SERVICE.read_text() != original:
-                        raise RuntimeError(f'byte restoration failed: {SERVICE}')
+                    if path.read_text() != original:
+                        raise RuntimeError(f'byte restoration failed: {path}')
                 if not passed(
                     run(f"{mutant['name']}-restored", mutant['test']), mutant['test']
                 ):

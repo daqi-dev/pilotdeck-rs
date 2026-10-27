@@ -1231,6 +1231,8 @@ fn sanitize_indexing_settings(
 
 /// `clampInt` (`sqlite.ts:244-253`): numbers are floored, strings go through
 /// `parseInt(value, 10)`, non-finite values fall back, then clamp to the range.
+/// The clamp is `Math.max(min, Math.min(max, …))` in that order: the final
+/// `Math.max` projects `-0` to `+0`, which Rust's `f64::clamp` does not.
 /// The fallback may itself be non-finite (a merged default), so the result is
 /// kept as a JS number.
 fn clamp_int(value: Option<&JsValue>, fallback: f64, min: i64, max: i64) -> f64 {
@@ -1240,7 +1242,7 @@ fn clamp_int(value: Option<&JsValue>, fallback: f64, min: i64, max: i64) -> f64 
         _ => None,
     };
     match numeric {
-        Some(number) if number.is_finite() => number.floor().clamp(min as f64, max as f64),
+        Some(number) if number.is_finite() => number.floor().min(max as f64).max(min as f64),
         _ => fallback,
     }
 }
@@ -1336,6 +1338,18 @@ mod tests {
             60.0
         );
         assert_eq!(clamp_int(Some(&JsValue::Number(-3.2)), 5.0, 0, 10_080), 0.0);
+        // Node v22.22.0 `clampInt(-0 | "-0" | "-0.0")` projects to `+0`.
+        // Compare bits: `-0.0 == 0.0` would hide the sign regression.
+        assert_eq!(
+            clamp_int(Some(&JsValue::Number(-0.0)), 5.0, 0, 10_080).to_bits(),
+            0,
+            "#775 numeric -0 flips to +0"
+        );
+        assert_eq!(
+            clamp_int(Some(&JsValue::from("-0.0")), 5.0, 0, 10_080).to_bits(),
+            0,
+            "#775 string -0.0 flips to +0"
+        );
         assert_eq!(
             clamp_int(Some(&JsValue::Number(99_999.0)), 5.0, 0, 10_080),
             10_080.0
