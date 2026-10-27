@@ -832,6 +832,18 @@ def deadline_report():
     return result
 
 
+def load_session_controls():
+    # Still lazy: deadline and independent controls do not import the suite.
+    spec = importlib.util.spec_from_file_location('session_controls', SCRIPT / 'controls/session_domain.py')
+    controls = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(controls)
+    return controls
+
+
+def evidence_rule(error):
+    return getattr(error, 'rule', 'EVIDENCE')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--suite', choices=('calibrate', 'deadline'), required=True)
@@ -879,10 +891,7 @@ def main():
                 require(audit['launcherAndFixtureReaped'], 'CLEANUP', 'launcher/fixture cleanup incomplete')
                 report.update(validate_calibration(output / 'six-cells', output, args.baseline.resolve()))
                 # Imported lazily to keep the independent negative-control CLI usable.
-                import importlib.util
-                spec = importlib.util.spec_from_file_location('session_controls', SCRIPT / 'controls/session_domain.py')
-                controls = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(controls)
+                controls = load_session_controls()
                 report['e1Controls'] = controls.run_all(output / 'controls', output / 'six-cells')
                 controls_status = report['e1Controls']['status']
                 require(controls_status in ('PASS', 'PASS_WITH_SKIPS'),
@@ -927,7 +936,7 @@ def main():
     except (EvidenceError, OSError, ValueError, KeyError, TypeError, StopIteration,
             subprocess.SubprocessError, TimeoutError, KeyboardInterrupt) as error:
         report['status'] = 'BLOCKED' if isinstance(error, (PermissionError, TimeoutError, KeyboardInterrupt)) else 'FAIL'
-        report['failure'] = {'rule': getattr(error, 'rule', 'EVIDENCE'), 'detail': str(error)}
+        report['failure'] = {'rule': evidence_rule(error), 'detail': str(error)}
         code = common.aggregate_status(report['status'])[1]
     save(output / 'report.json', report)
     print(json.dumps({'status': report['status'], 'suite': args.suite, 'report': str(output / 'report.json'),

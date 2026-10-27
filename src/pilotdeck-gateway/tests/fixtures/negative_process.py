@@ -335,3 +335,28 @@ def wait_for_slot(script, *, timeout=900, interval=30):
         if result.returncode != 1:
             result.check_returncode()
         time.sleep(min(interval, max(0, deadline - time.monotonic())))
+
+
+def committed_status_contract(root):
+    """Recover the shared pure status contract even when common.py is dirty.
+
+    Only the three literal tables and aggregate_status from committed HEAD are
+    evaluated. No working-tree module, bootstrap or import is executed. This
+    does not authorize mutation: mutating_sources still enforces every byte.
+    """
+    import ast
+    from types import SimpleNamespace
+    source = _git(root, 'show', 'HEAD:scripts/gateway-parity/common.py').decode()
+    tree = ast.parse(source)
+    names = {'BATCH_STATUS_ORDER', 'BATCH_EXIT_CODES', 'MUTATION_STATUS'}
+    namespace = {}
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name) and node.targets[0].id in names):
+            namespace[node.targets[0].id] = ast.literal_eval(node.value)
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                 and node.name == 'aggregate_status']
+    if set(namespace) != names or len(functions) != 1:
+        raise RuntimeError('#166 committed shared status contract is incomplete')
+    exec(compile(ast.Module(body=functions, type_ignores=[]), '<HEAD status contract>', 'exec'), namespace)
+    return SimpleNamespace(aggregate_status=namespace['aggregate_status'])

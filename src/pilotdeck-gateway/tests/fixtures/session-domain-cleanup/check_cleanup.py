@@ -877,7 +877,7 @@ NON_AGGREGATION_POINTS = {
 # Classify each explicitly; never exempt a whole file from the inventory.
 NON_AGGREGATION_POINTS.update({
     ('src/pilotdeck-gateway/tests/fixtures/gateway-batch/negative_controls.py',
-     'main.record'): 'one mutation verdict record, not a batch exit',
+     'record'): 'one mutation verdict record, not a batch exit',
     ('scripts/gateway-parity/test_safety.py', 'ApparatusInputs.test_deadline_not_run_has_dedicated_exit_code'):
         'test-only shared exit mapping and real CLI contract, not a batch',
     ('scripts/gateway-parity/test_safety.py', 'ApparatusInputs.test_empty_aggregation_fails_closed'):
@@ -898,6 +898,192 @@ NON_AGGREGATION_POINTS.update({
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_controls.py',
      'wiring_relaxed'): 'mutation verdict predicate, not batch exit',
 })
+
+
+# Explicit syntax registrations; the auditor never learns new permissions
+# from the candidate source. Update only after reviewing changed operations.
+import json
+ENTRY_CONTRACTS = json.loads(Path(__file__).with_name('entry_contracts.json').read_text())
+ENTRY_CALLS = ENTRY_CONTRACTS['calls']
+ENTRY_CALL_SHAPES = ENTRY_CONTRACTS['callShapes']
+ENTRY_BINDINGS = ENTRY_CONTRACTS['bindings']
+ENTRY_WRITES = ENTRY_CONTRACTS['writes']
+ENTRY_MODULE_SHAPES = ENTRY_CONTRACTS['moduleShapes']
+
+# #892 positive grammar. This is a syntax certificate, not arbitrary Python
+# equivalence analysis. Calls below are explicitly reviewed operations; new
+# syntax/callees require a new registration, never automatic discovery.
+ENTRY_NODE_TYPES = frozenset('''FunctionDef arguments Assign AnnAssign Expr
+Return Raise If For Try ExceptHandler With withitem Pass Continue
+Name Load Store Constant Attribute Call keyword Subscript Slice Tuple List Set
+Dict ListComp SetComp DictComp GeneratorExp comprehension Starred
+BoolOp And Or UnaryOp Not USub BinOp Add Sub Div BitOr Compare Eq NotEq Is IsNot
+In NotIn Lt LtE Gt GtE IfExp JoinedStr FormattedValue'''.split())
+
+
+def syntax_shape(node):
+    """Stable across Python's changing ast.dump defaults/optional fields."""
+    def encode(value):
+        if isinstance(value, ast.AST):
+            fields = tuple(sorted((name, encode(item)) for name, item in ast.iter_fields(value)
+                                  if item is not None and item != []))
+            return type(value).__name__, fields
+        if isinstance(value, list):
+            return tuple(encode(item) for item in value)
+        return value
+    return repr(encode(node))
+
+
+def qualified_call(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = qualified_call(node.value)
+        return parent + '.' + node.attr if parent else None
+    return None
+
+
+def entry_errors(function, rel):
+    errors = []
+
+    def reject(node, reason):
+        errors.append(f"{rel}:{getattr(node, 'lineno', function.lineno)}:"
+                      f"{getattr(node, 'col_offset', 0) + 1}: {reason}")
+
+    args = function.args
+    if (function.decorator_list or args.posonlyargs or args.args or args.kwonlyargs
+            or args.vararg or args.kwarg or function.returns or function.type_comment
+            or getattr(function, 'type_params', [])):
+        reject(function, 'entry must be a plain zero-argument def')
+    nodes = list(ast.walk(function))
+    allowed = ENTRY_CALLS.get(rel, frozenset())
+    call_shapes = ENTRY_CALL_SHAPES.get(rel, frozenset())
+    # Rebinding any approved callable or module could turn its name into an
+    # exit alias. Receiver locals are initialized by their registered operation.
+    roots = {call.split('.')[0] for call in allowed if '(' not in call} | {'common', 'md', 'sys', 'SystemExit'}
+    bindings = ENTRY_BINDINGS.get(rel, frozenset())
+    for node in nodes:
+        if type(node).__name__ not in ENTRY_NODE_TYPES or (
+                node is not function and isinstance(node, ast.FunctionDef)):
+            reject(node, 'unsupported entry syntax ' + type(node).__name__)
+        if isinstance(node, ast.Name) and node.id.startswith('__') and node.id != '__doc__':
+            reject(node, 'unsupported reflective name ' + node.id)
+        if (isinstance(node, ast.Attribute) and node.attr.startswith('__')
+                and ast.unparse(node) != 'type(error).__name__'):
+            reject(node, 'unsupported reflective attribute ' + node.attr)
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            import hashlib
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            local_targets = all(isinstance(target, ast.Name) or (
+                isinstance(target, (ast.Tuple, ast.List))
+                and all(isinstance(part, ast.Name) for part in target.elts)) for target in targets)
+            shared_local = local_targets and (shared_call(node.value)
+                                              or shared_projection(node.value, 0)
+                                              or shared_projection(node.value, 1))
+            if not shared_local and hashlib.sha256(syntax_shape(node).encode()).hexdigest() not in ENTRY_WRITES.get(rel, ()):
+                reject(node, 'unregistered assignment binding')
+        if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            import hashlib
+            owners = [parent for parent in nodes if isinstance(parent, (ast.Assign, ast.AnnAssign))
+                      and any(node in ast.walk(target) for target in (
+                          parent.targets if isinstance(parent, ast.Assign) else [parent.target]))]
+            if not any(hashlib.sha256(syntax_shape(owner).encode()).hexdigest() in ENTRY_WRITES.get(rel, ())
+                       for owner in owners):
+                reject(node, 'unregistered implicit assignment binding')
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            reject(node, 'attribute assignment is not an entry operation')
+        if isinstance(node, ast.Call):
+            name = ast.unparse(node.func)
+            import hashlib
+            approved_operation = hashlib.sha256(syntax_shape(node).encode()).hexdigest() in call_shapes
+            if not approved_operation and name not in ('common.aggregate_status', 'md.common.aggregate_status'):
+                # Only these two explicit exit forms are part of the grammar.
+                # They must be standalone and use a shared exit projection.
+                parents = [parent for parent in nodes if node in ast.iter_child_nodes(parent)]
+                standalone = (name == 'SystemExit' and any(isinstance(p, ast.Raise) for p in parents)
+                              or name == 'sys.exit' and any(isinstance(p, ast.Expr) for p in parents))
+                if not standalone:
+                    reject(node, 'unregistered direct call ' + name)
+        if isinstance(node, ast.Raise) and not (
+                isinstance(node.exc, ast.Call) and qualified_call(node.exc.func) == 'SystemExit'
+                and node.cause is None):
+            reject(node, 'only raise SystemExit(shared_code) is accepted')
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id in roots:
+            parents = [parent for parent in nodes if node in ast.iter_child_nodes(parent)]
+            import hashlib
+            if not any(hashlib.sha256(syntax_shape(binding_shell(parent)).encode()).hexdigest()
+                       in bindings for parent in parents):
+                reject(node, 'unregistered callable/receiver binding ' + node.id)
+        if isinstance(node, ast.ExceptHandler) and node.name in roots:
+            reject(node, 'exception handler rebinds registered callable ' + node.name)
+    for node in nodes:
+        if isinstance(node, ast.Return) or is_explicit_exit(node):
+            value = node.value if isinstance(node, ast.Return) else explicit_exit(node)
+            if not shared_value(own_nodes(function), value, 1):
+                reject(node, 'exit value must be a shared result in this function')
+    if not terminal_block(function.body):
+        reject(function, 'entry may fall through without a shared exit')
+    return errors
+
+
+def terminal_block(body):
+    if not body:
+        return False
+    last = body[-1]
+    if isinstance(last, (ast.Return, ast.Raise)):
+        return True
+    if isinstance(last, ast.Expr) and isinstance(last.value, ast.Call):
+        return qualified_call(last.value.func) == 'sys.exit'
+    if isinstance(last, ast.If):
+        return terminal_block(last.body) and terminal_block(last.orelse)
+    return False
+
+
+def entry_module_errors(tree, function, rel):
+    """Only a unique top-level def and canonical final launcher can certify main.
+
+    Module statements and helper bodies are registered by exact AST shape
+    and order. Moving an unsupported operation into a helper cannot hide it.
+    """
+    errors = []
+    template = ast.parse("if __name__ == '__main__':\n    raise SystemExit(main())").body[0]
+    launchers = [node for node in tree.body if ast.dump(node) == ast.dump(template)]
+    if len(launchers) != 1 or tree.body[-1] is not launchers[0]:
+        errors.append(f'{rel}:{tree.body[-1].lineno}:1: canonical final launcher required')
+    definitions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'main']
+    if definitions != [function]:
+        errors.append(f'{rel}:{function.lineno}:1: entry must be a unique module-level def')
+    import hashlib
+    shapes = ENTRY_MODULE_SHAPES.get(rel, ())
+    observed, locations = [], []
+    for node in tree.body:
+        if node in launchers:
+            continue
+        if isinstance(node, ast.FunctionDef) and node.name == 'main':
+            continue
+        # Everything outside the entry is a reviewed operation, including
+        # immediately executed class bodies and called helper implementations.
+        shape = syntax_shape(node)
+        observed.append(hashlib.sha256(shape.encode()).hexdigest())
+        locations.append(node)
+    if observed != list(shapes):
+        for index, node in enumerate(locations):
+            if index >= len(shapes) or observed[index] != shapes[index]:
+                errors.append(f'{rel}:{node.lineno}:{node.col_offset + 1}: unregistered module statement')
+        if len(observed) < len(shapes):
+            errors.append(f'{rel}:1:1: missing registered module statement')
+    return errors
+
+
+def binding_shell(node):
+    import copy
+    shell = copy.copy(node)
+    if isinstance(shell, (ast.For, ast.With, ast.ExceptHandler)):
+        shell.body = []
+        if hasattr(shell, 'orelse'):
+            shell.orelse = []
+    return shell
+
 
 
 STATUS_WORDS = frozenset(('PASS', 'PASS_WITH_SKIPS', 'NOT_RUN', 'BLOCKED', 'FAIL',
@@ -935,20 +1121,13 @@ def _is_report_status(target, value):
 
 
 def own_nodes(function):
-    """Skip deferred bodies, but inspect expressions executed at definition.
-
-    Class bodies/bases, decorators and defaults execute in the caller. They
-    can terminate it even though nested function/lambda bodies cannot.
-    """
+    """Only this function's lexical bindings; nested scopes cannot certify it."""
     def descend(node):
         yield node
-        if node is not function and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            children = (list(getattr(node, 'decorator_list', []))
-                        + list(node.args.defaults)
-                        + [value for value in node.args.kw_defaults if value is not None])
-        else:
-            children = ast.iter_child_nodes(node)
-        for child in children:
+        if node is not function and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                                       ast.ClassDef, ast.Lambda)):
+            return
+        for child in ast.iter_child_nodes(node):
             yield from descend(child)
     return list(descend(function))
 
@@ -970,8 +1149,13 @@ def shared_value(nodes, value, index):
         return True
     if not isinstance(value, ast.Name):
         return False
+    if any(isinstance(n, ast.arg) and n.arg == value.id
+           or isinstance(n, ast.ExceptHandler) and n.name == value.id
+           or isinstance(n, (ast.Global, ast.Nonlocal)) and value.id in n.names
+           for n in nodes):
+        return False
     stores = {id(n) for n in nodes if isinstance(n, ast.Name)
-              and isinstance(n.ctx, ast.Store) and n.id == value.id}
+              and isinstance(n.ctx, (ast.Store, ast.Del)) and n.id == value.id}
     accepted = set()
     for node in nodes:
         if isinstance(node, ast.Assign):
@@ -1044,13 +1228,9 @@ def shared_returns(function, kind):
 
 
 def is_explicit_exit(node):
-    if isinstance(node, ast.Raise):
-        return node.exc is not None and any(
-            isinstance(value, (ast.Name, ast.Attribute))
-            and ast.unparse(value) in ('SystemExit', 'builtins.SystemExit')
-            for value in ast.walk(node.exc))
-    return (isinstance(node, ast.Call)
-            and ast.unparse(node.func) in ('sys.exit', 'os._exit'))
+    return (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
+            and qualified_call(node.exc.func) == 'SystemExit'
+            or isinstance(node, ast.Call) and qualified_call(node.func) == 'sys.exit')
 
 
 def explicit_exit(node):
@@ -1121,7 +1301,7 @@ def scan_aggregation_tree(tree, rel):
         if len(functions) != 1 and (markers or key in AGGREGATION_POINTS):
             # Even a later definition without markers can replace an entry.
             found[key] = (markers | {'duplicate-definition'}, None)
-        elif markers:
+        elif markers or key in AGGREGATION_POINTS:
             found[key] = (markers, functions[0])
     return found
 
@@ -1138,6 +1318,7 @@ def aggregation_audit():
         + sorted((Path(__file__).resolve().parent.parent / 'gateway-batch').glob('*.py')))
         if 'node_modules' not in path.parts and '__pycache__' not in path.parts]
     found = {}
+    trees = {}
     failures = []
     if not callable(getattr(md.common, 'aggregate_status', None)):
         failures.append('#164-fix-r7 aggregation-audit: common.aggregate_status is missing')
@@ -1148,7 +1329,9 @@ def aggregation_audit():
             failures.append(f'#164-fix-r7 aggregation-audit: cannot scan '
                             f'{path.relative_to(ROOT).as_posix()}: {type(error).__name__}: {error}')
             continue
-        found.update(scan_aggregation_tree(tree, path.relative_to(ROOT).as_posix()))
+        rel = path.relative_to(ROOT).as_posix()
+        trees[rel] = tree
+        found.update(scan_aggregation_tree(tree, rel))
 
     points = {}
     for key, point_id in sorted(AGGREGATION_POINTS.items()):
@@ -1161,7 +1344,12 @@ def aggregation_audit():
         markers, function = found[key]
         kind = ('exit' if name == 'main' else 'status-tuple'
                 if name == 'summarize_results' else 'report')
-        shared = function is not None and calls_shared(function) and shared_returns(function, kind)
+        syntax_errors = []
+        if function is not None and name == 'main':
+            syntax_errors = entry_errors(function, rel) + entry_module_errors(trees[rel], function, rel)
+            failures.extend('#892 entry contract: ' + error for error in syntax_errors)
+        shared = (not syntax_errors and function is not None and calls_shared(function)
+                  and shared_returns(function, kind))
         points[point_id] = {'file': rel, 'function': name, 'shared': shared,
                             'markers': sorted(markers)}
         if not shared:
@@ -1485,6 +1673,11 @@ def batch_aggregation_control(md, output):
             'passed': not failures}
 
 
+def initialize_session_domain():
+    global md
+    md = load_session_domain()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
@@ -1500,8 +1693,7 @@ def main():
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    global md
-    md = load_session_domain()
+    initialize_session_domain()
     results = []
     modes = ('clean', 'leak', 'ignore') if args.mode == 'all' else (
         () if args.mode in ('status', 'runtime-negative', 'blocked', 'wiring',

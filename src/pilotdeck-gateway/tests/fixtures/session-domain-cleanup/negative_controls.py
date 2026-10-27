@@ -43,6 +43,7 @@ sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-session-cleanup-neg-pyc-')
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import committed_status_contract
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'scripts/gateway-parity/session_domain.py'
@@ -81,6 +82,19 @@ def match(rows, mode, expected):
     return True, (f"{mode}: "
                   + ', '.join(f'{path}={observed[path]!r}' for path in expected)
                   + ', passed=False')
+
+
+def aggregation_failure(rows, message, point=None):
+    """Bind an audit control to its exact finding, independent of error order."""
+    expected = {f'points.{point}.shared': False} if point else {}
+    valid, detail = match(rows, 'aggregation-audit', expected)
+    if not valid:
+        return valid, detail
+    row = next(row for row in rows if row.get('mode') == 'aggregation-audit')
+    failures = row.get('failures')
+    if not isinstance(failures, list) or message not in failures:
+        return False, f'aggregation-audit: missing dedicated finding {message!r}'
+    return True, f'{detail}, dedicated finding={message!r}'
 
 
 def status_mapping(rows):
@@ -247,11 +261,11 @@ MUTATIONS = [
      "    return common.aggregate_status(*(MUTATION_STATUS.get(row['status'], 'FAIL') for row in results))[1]",
      "    return int(any(row['status'] != 'KILLED' for row in results))"),
     ('restored-skip-accepted', NEGATIVE,
-     "        top_status, exit_code = common.aggregate_status(\n"
-     "            *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary),\n"
-     "            restored_summary.get('status') if restored_ok else 'FAIL')",
-     "        top_status, exit_code = common.aggregate_status(\n"
-     "            *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary))"),
+     "            top_status, exit_code = common.aggregate_status(\n"
+     "                *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary),\n"
+     "                restored_summary.get('status') if restored_ok else 'FAIL')",
+     "            top_status, exit_code = common.aggregate_status(\n"
+     "                *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary))"),
 ]
 
 JUDGES = {
@@ -387,37 +401,33 @@ JUDGES = {
         ()),
     'aggregation-exit-bypassed': (
         'aggregation-audit',
-        lambda rows: match(rows, 'aggregation-audit', {
-            'firstFailure': '#164-fix-r7 aggregation-audit: '
+        lambda rows: aggregation_failure(rows,
+                            '#164-fix-r7 aggregation-audit: '
                             'scripts/gateway-parity/controls/session_domain.py:main '
                             'must call common.aggregate_status',
-            'points.controls-main.shared': False,
-        }),
+                            'controls-main'),
         False,
         ()),
     'aggregation-direct-return': (
         'aggregation-audit',
-        lambda rows: match(rows, 'aggregation-audit', {
-            'firstFailure': '#164-fix-r7 aggregation-audit: unregistered aggregation point '
-                            "scripts/gateway-parity/controls/session_domain.py:unregistered_892 markers=['dict-status']",
-        }), False, ()),
+        lambda rows: aggregation_failure(rows,
+                            '#164-fix-r7 aggregation-audit: unregistered aggregation point '
+                            "scripts/gateway-parity/controls/session_domain.py:unregistered_892 markers=['dict-status']"),
+        False, ()),
     'aggregation-branch-exit': (
         'aggregation-audit',
-        lambda rows: match(rows, 'aggregation-audit', {
-            'firstFailure': '#164-fix-r7 aggregation-audit: '
+        lambda rows: aggregation_failure(rows,
+                            '#164-fix-r7 aggregation-audit: '
                             'scripts/gateway-parity/controls/session_domain.py:main '
                             'must call common.aggregate_status',
-            'points.controls-main.shared': False,
-        }), False, ()),
+                            'controls-main'), False, ()),
     'gateway-aggregation-bypassed': (
         'aggregation-audit',
-        lambda rows: match(rows, 'aggregation-audit', {
-            # #166: removing main's only aggregate call also removes its last
-            # aggregation marker; the registered-point guard rejects it first.
-            'firstFailure': '#164-fix-r7 aggregation-audit: registered point missing '
-                            'src/pilotdeck-gateway/tests/fixtures/gateway-batch/negative_controls.py:main',
-            'points.gateway-negative-main.shared': False,
-        }), False, ()),
+        lambda rows: aggregation_failure(rows,
+                            '#164-fix-r7 aggregation-audit: '
+                            'src/pilotdeck-gateway/tests/fixtures/gateway-batch/negative_controls.py:main '
+                            'must call common.aggregate_status',
+                            'gateway-negative-main'), False, ()),
     'restored-skip-accepted': (
         'batch-aggregation',
         lambda rows: match(rows, 'batch-aggregation', {
@@ -494,6 +504,23 @@ def classify(name, judge_spec, result, case):
     return 'SURVIVED', f'check failed without this mutation\'s fields: {detail}'
 
 
+def load_pristine_common():
+    spec = importlib.util.spec_from_file_location('session_cleanup_common', COMMON_SOURCE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def require_single_anchor(original, old, name):
+    if original.count(old) != 1:
+        raise ValueError(f'#{name} anchor expired: count={original.count(old)}')
+
+
+def require_restored(source, digest):
+    if hashlib.sha256(source.read_bytes()).hexdigest() != digest:
+        raise RuntimeError(f'source restore hash mismatch: {source.name}')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
@@ -504,7 +531,8 @@ def main():
     args = parser.parse_args()
     known = {row[0] for row in MUTATIONS}
     if set(args.only) - known or len(args.only) != len(set(args.only)):
-        parser.error('unknown or duplicate --only mutant')
+        common = committed_status_contract(ROOT)
+        return common.aggregate_status('BLOCKED')[1]
     selected = ([row for row in MUTATIONS if row[0] in args.only]
                 if args.only else list(MUTATIONS))
     output = args.output.resolve()
@@ -514,116 +542,120 @@ def main():
     invalid = []
     survived = []
     sources = sorted({COMMON_SOURCE, *(Path(row[1]) for row in MUTATIONS)}, key=str)
-    with mutating_sources(ROOT, sources, baseline=args.baseline) as snapshots:
-        # Import only after every source, including the verdict table, is pristine.
-        _spec = importlib.util.spec_from_file_location('session_cleanup_common', COMMON_SOURCE)
-        common = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(common)
-        # INVALID remains BLOCKED, never a killed mutant or a passing batch.
-        MUTATION_STATUS = common.MUTATION_STATUS
-        originals = {source: snapshots[source] for source in sources}
-        digests = {source: hashlib.sha256(originals[source]).hexdigest()
-                   for source in sources}
-        contents = {source: originals[source].decode() for source in sources}
-        try:
-            for mutation in selected:
-                name, source, old, new = mutation
-                source = Path(source)
-                judge_spec = JUDGES[name]
-                mode = judge_spec[0]
-                case = output / name  # check_cleanup.py owns/creates this directory
-                returncode = None
-                try:
-                    if contents[source].count(old) != 1:
-                        raise ValueError(f'#{name} anchor expired: count={contents[source].count(old)}')
-                    changed = contents[source].replace(old, new, 1)
-                    compile(changed, str(source), 'exec')
-                    (output / f'{name}-compile.log').write_text('Python compile: PASS\n')
-                    source.write_text(changed)
+    try:
+        with mutating_sources(ROOT, sources, baseline=args.baseline) as originals:
+            # Import only after every source, including the verdict table, is pristine.
+            common = load_pristine_common()
+            # INVALID remains BLOCKED, never a killed mutant or a passing batch.
+            MUTATION_STATUS = common.MUTATION_STATUS
+            digests = {source: hashlib.sha256(originals[source]).hexdigest()
+                       for source in sources}
+            contents = {source: originals[source].decode() for source in sources}
+            try:
+                for mutation in selected:
+                    name, source, old, new = mutation
+                    source = Path(source)
+                    judge_spec = JUDGES[name]
+                    mode = judge_spec[0]
+                    case = output / name  # check_cleanup.py owns/creates this directory
+                    returncode = None
                     try:
-                        run = run_check(case, mode)
-                        returncode = run.returncode
-                        log = run.stdout + run.stderr
-                        (output / f'{name}.log').write_text(log)
-                        verdict, detail = classify(name, judge_spec, run, case)
-                    except (subprocess.SubprocessError, OSError) as error:
-                        (output / f'{name}.log').write_text(f'{type(error).__name__}: {error}\n')
-                        verdict, detail = classify(name, judge_spec, error, case)
-                except Exception as error:
-                    verdict, detail = 'INVALID', f'{type(error).__name__}: {error}'
-                finally:
+                        require_single_anchor(contents[source], old, name)
+                        changed = contents[source].replace(old, new, 1)
+                        compile(changed, str(source), 'exec')
+                        (output / f'{name}-compile.log').write_text('Python compile: PASS\n')
+                        source.write_text(changed)
+                        try:
+                            run = run_check(case, mode)
+                            returncode = run.returncode
+                            log = run.stdout + run.stderr
+                            (output / f'{name}.log').write_text(log)
+                            verdict, detail = classify(name, judge_spec, run, case)
+                        except (subprocess.SubprocessError, OSError) as error:
+                            (output / f'{name}.log').write_text(f'{type(error).__name__}: {error}\n')
+                            verdict, detail = classify(name, judge_spec, error, case)
+                    except Exception as error:
+                        verdict, detail = 'INVALID', f'{type(error).__name__}: {error}'
+                    finally:
+                        source.write_bytes(originals[source])
+                        require_restored(source, digests[source])
+                    entry = {'mutation': name, 'mode': mode, 'verdict': verdict,
+                             'detail': detail, 'returncode': returncode,
+                             'source': source.relative_to(ROOT).as_posix()}
+                    summary.append(entry)
+                    if verdict == 'INVALID':
+                        invalid.append(entry)
+                    elif verdict == 'SURVIVED':
+                        survived.append(entry)
+                    print(f'{name}: {verdict} {detail}'.rstrip(), flush=True)
+            finally:
+                for source in sources:
                     source.write_bytes(originals[source])
-                    if hashlib.sha256(source.read_bytes()).hexdigest() != digests[source]:
-                        raise RuntimeError(f'source restore hash mismatch: {source.name}')
-                entry = {'mutation': name, 'mode': mode, 'verdict': verdict,
-                         'detail': detail, 'returncode': returncode,
-                         'source': source.relative_to(ROOT).as_posix()}
-                summary.append(entry)
-                if verdict == 'INVALID':
-                    invalid.append(entry)
-                elif verdict == 'SURVIVED':
-                    survived.append(entry)
-                print(f'{name}: {verdict} {detail}'.rstrip(), flush=True)
-        finally:
-            for source in sources:
-                source.write_bytes(originals[source])
-        restored_case = output / 'restored-positive'  # must not pre-exist
-        restored_error = None
-        try:
-            restored = run_check(restored_case, 'all')
-            (output / 'restored-positive.log').write_text(restored.stdout + restored.stderr)
-            restored_summary, restored_error = read_summary(restored_case)
-        except (subprocess.SubprocessError, OSError) as error:
-            restored = None
-            restored_summary = None
-            restored_error = f'{type(error).__name__}: {error}'
-        expected_status = 'PASS' if sys.platform == 'darwin' else 'PASS_WITH_SKIPS'
-        expected_code = 0 if expected_status == 'PASS' else 1
-        restored_ok = False
-        if restored_summary is not None:
-            rows = restored_summary.get('results') or []
-            wiring = [row for row in rows if row.get('mode') == 'wiring']
-            if expected_status == 'PASS':
-                rows_ok = all(row.get('passed') is True for row in rows)
-            else:
-                rows_ok = (all(row.get('passed') in (True, None) for row in rows)
-                           and any(row.get('passed') is None for row in rows))
-            restored_ok = (restored.returncode == expected_code
-                           and restored_summary.get('status') == expected_status
-                           and bool(rows) and rows_ok
-                           and bool(wiring) and wiring[0].get('status')
-                           == 'PASS_WITH_CLEANUP_UNVERIFIED')
-            if not restored_ok:
-                restored_error = (f'rc={restored.returncode} status={restored_summary.get("status")!r} '
-                                  f'rows={len(rows)} wiring={bool(wiring)}')
-        (output / 'pgrep-after.txt').write_text(pgrep_launcher())
-        # The restored positive is a child of the same batch: a PASS_WITH_SKIPS
-        # child (non-Darwin platform skips) can never become PASS/0.
-        top_status, exit_code = common.aggregate_status(
-            *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary),
-            restored_summary.get('status') if restored_ok else 'FAIL')
-        report = {'status': top_status, 'sourceSha256': digests[SOURCE],
-                  'sourceSha256All': {source.relative_to(ROOT).as_posix(): digests[source]
-                                      for source in sources},
-                  'baseline': args.baseline,
-                  'selected': [row[0] for row in selected],
-                  'mutations': summary, 'restoredPass': restored_ok,
-                  'restoredStatus': (restored_summary.get('status')
-                                     if restored_summary is not None else None),
-                  'restoredError': restored_error,
-                  'invalid': [row['mutation'] for row in invalid],
-                  'survived': [row['mutation'] for row in survived]}
-        (output / 'summary.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
-        restored_label = (restored_summary.get('status')
-                          if restored_summary is not None else 'FAIL')
-        print(f'restored positive: {restored_label} '
-              f'{"ok" if restored_ok else "FAIL"} {restored_error or ""}'.rstrip(),
-              flush=True)
-        print(json.dumps({'status': top_status, 'exitCode': exit_code,
-                          'killed': len(summary) - len(invalid) - len(survived),
-                          'invalid': len(invalid), 'survived': len(survived),
-                          'restoredPass': restored_ok}, ensure_ascii=False))
-        return exit_code
+            restored_case = output / 'restored-positive'  # must not pre-exist
+            restored_error = None
+            try:
+                restored = run_check(restored_case, 'all')
+                (output / 'restored-positive.log').write_text(restored.stdout + restored.stderr)
+                restored_summary, restored_error = read_summary(restored_case)
+            except (subprocess.SubprocessError, OSError) as error:
+                restored = None
+                restored_summary = None
+                restored_error = f'{type(error).__name__}: {error}'
+            expected_status = 'PASS' if sys.platform == 'darwin' else 'PASS_WITH_SKIPS'
+            expected_code = 0 if expected_status == 'PASS' else 1
+            restored_ok = False
+            if restored_summary is not None:
+                rows = restored_summary.get('results') or []
+                wiring = [row for row in rows if row.get('mode') == 'wiring']
+                if expected_status == 'PASS':
+                    rows_ok = all(row.get('passed') is True for row in rows)
+                else:
+                    rows_ok = (all(row.get('passed') in (True, None) for row in rows)
+                               and any(row.get('passed') is None for row in rows))
+                restored_ok = (restored.returncode == expected_code
+                               and restored_summary.get('status') == expected_status
+                               and bool(rows) and rows_ok
+                               and bool(wiring) and wiring[0].get('status')
+                               == 'PASS_WITH_CLEANUP_UNVERIFIED')
+                if not restored_ok:
+                    restored_error = (f'rc={restored.returncode} status={restored_summary.get("status")!r} '
+                                      f'rows={len(rows)} wiring={bool(wiring)}')
+            (output / 'pgrep-after.txt').write_text(pgrep_launcher())
+            # The restored positive is a child of the same batch: a PASS_WITH_SKIPS
+            # child (non-Darwin platform skips) can never become PASS/0.
+            top_status, exit_code = common.aggregate_status(
+                *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary),
+                restored_summary.get('status') if restored_ok else 'FAIL')
+            report = {'status': top_status, 'sourceSha256': digests[SOURCE],
+                      'sourceSha256All': {source.relative_to(ROOT).as_posix(): digests[source]
+                                          for source in sources},
+                      'baseline': args.baseline,
+                      'selected': [row[0] for row in selected],
+                      'mutations': summary, 'restoredPass': restored_ok,
+                      'restoredStatus': (restored_summary.get('status')
+                                         if restored_summary is not None else None),
+                      'restoredError': restored_error,
+                      'invalid': [row['mutation'] for row in invalid],
+                      'survived': [row['mutation'] for row in survived]}
+            (output / 'summary.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
+            restored_label = (restored_summary.get('status')
+                              if restored_summary is not None else 'FAIL')
+            print(f'restored positive: {restored_label} '
+                  f'{"ok" if restored_ok else "FAIL"} {restored_error or ""}'.rstrip(),
+                  flush=True)
+            print(json.dumps({'status': top_status, 'exitCode': exit_code,
+                              'killed': len(summary) - len(invalid) - len(survived),
+                              'invalid': len(invalid), 'survived': len(survived),
+                              'restoredPass': restored_ok}, ensure_ascii=False))
+            return exit_code
+    except Exception as error:
+        common = committed_status_contract(ROOT)
+        report = {'status': 'BLOCKED', 'restoredPass': False,
+                  'mutations': [{'mutation': row[0], 'verdict': 'INVALID',
+                                 'detail': f'source guard: {error}'} for row in selected]}
+        (output / 'summary.json').write_text(json.dumps(report, indent=2) + '\n')
+        return common.aggregate_status('BLOCKED')[1]
+    return common.aggregate_status('BLOCKED')[1]
 
 
 if __name__ == '__main__':
