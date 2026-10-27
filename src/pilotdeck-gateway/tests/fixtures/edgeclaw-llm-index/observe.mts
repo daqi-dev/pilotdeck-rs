@@ -32,6 +32,18 @@ const BATCH = [
 const META_FULL = {projectId: 'p-1', projectName: '项目一', description: 'meta 描述 😀', status: 'active', updatedAt: '2026-01-02T03:04:05.678Z'};
 const CLASSIFICATION = {type: 'user', reason: 'identity', evidence: '我是达达'};
 const NOTE_OK = JSON.stringify({skip: false, reason: '', name: '笔记名', description: '一行描述', markdown: '# 正文\n\n- 要点'});
+// A raw unpaired surrogate: every recording layer JSON.stringify-escapes it,
+// so it reaches the wire (and the oracle) as ASCII `\\ud800` and only the
+// inner parse sees the code unit itself.
+const SURROGATE = String.fromCharCode(0xd800);
+const SUR_NOTE = JSON.stringify({name: 'X', description: 'd', markdown: 'm'}).replace('X', SURROGATE);
+const SUR_LABELS = JSON.stringify({should_store: true, labels: [{type: 'user', reason: 'X', evidence: 'e'}]}).replace('"reason":"X"', `"reason":"${SURROGATE}"`);
+// `metaDeep`/`shortlistDeep` are construction markers: the deep value is
+// built on both sides from `{field, depth}` instead of being recorded, both
+// because V8's own JSON.stringify cannot record it and because serde_json's
+// 128-level recursion limit cannot replay it.
+const deepValue = (depth: number) => { let value: any = {}; for (let i = 0; i < depth; i++) value = {x: value}; return value; };
+const DEEP = {field: 'projectId', depth: 10000};
 
 function specs() {
   const out: any[] = [];
@@ -88,6 +100,10 @@ function specs() {
   classify('classify-control-chars', [ok('responses', '{"should_store":true,"labels":[{"type":"user","reason":"line1\nline2\ttab","evidence":"e"}]}')]);
   classify('classify-http-400', [bad(400)]);
   classify('classify-agent-empty', [ok('responses', JSON_RESULT([LABEL('user')]))], {agentId: ''});
+  classify('classify-lone-surrogate-reason', [ok('responses', SUR_LABELS)]);
+  classify('classify-meta-description-number', [ok('responses', JSON_RESULT([LABEL('user')]))], {meta: {description: 5}});
+  classify('classify-deep-meta', [ok('responses', JSON_RESULT([LABEL('user')]))], {metaDeep: DEEP});
+  classify('classify-no-model', [ok('responses', JSON_RESULT([LABEL('user')]))], {noModel: true});
 
   // -- create ---------------------------------------------------------------
   const create = (name: string, steps: any[], extra: Record<string, any> = {}) => out.push({
@@ -116,6 +132,15 @@ function specs() {
   create('create-http-400', [bad(400)]);
   create('create-meta-typeerror', [ok('responses', NOTE_OK)], {meta: {projectId: 'p-1'}});
   create('create-meta-ok', [ok('responses', NOTE_OK)], {meta: META_FULL});
+  create('create-lone-surrogate-name', [ok('responses', SUR_NOTE)]);
+  create('create-meta-description-number', [ok('responses', NOTE_OK)], {meta: {description: 5}});
+  create('create-meta-description-bool', [ok('responses', NOTE_OK)], {meta: {description: true}});
+  create('create-meta-description-array', [ok('responses', NOTE_OK)], {meta: {description: []}});
+  create('create-meta-description-object', [ok('responses', NOTE_OK)], {meta: {description: {}}});
+  create('create-deep-meta', [ok('responses', NOTE_OK)], {metaDeep: DEEP});
+  create('create-no-model', [ok('responses', NOTE_OK)], {noModel: true});
+  create('create-project-no-model', [ok('responses', NOTE_OK)], {noModel: true, classification: {type: 'project', reason: 'r', evidence: 'e'}});
+  create('create-feedback-no-model', [ok('responses', NOTE_OK)], {noModel: true, classification: {type: 'feedback', reason: 'r', evidence: 'e'}});
 
   // -- select ---------------------------------------------------------------
   const CANDIDATE_RICH = {
@@ -159,6 +184,16 @@ function specs() {
   select('select-no-recent-messages', [ok('responses', DECISION('create_new', '', 'r'))], {recentUserMessages: undefined});
   select('select-http-400', [bad(400)]);
   select('select-bad-json', [ok('responses', '{"decision":}')]);
+  select('select-lone-surrogate-reason', [ok('responses', DECISION('create_new', '', SURROGATE))]);
+  select('select-candidate-name-number', [ok('responses', DECISION('attach_existing', 'p1', 'r'))], {candidate: {type: 'project', name: 5, description: 'd'}});
+  select('select-deep-shortlist', [ok('responses', DECISION('create_new', '', 'r'))], {shortlistDeep: DEEP});
+  select('select-no-model', [ok('responses', DECISION('create_new', '', 'r'))], {noModel: true});
+  // Non-array candidate list fields: V8 names the receiver's source
+  // expression, so the warning carries `input.candidate.<field>` — never the
+  // field's value (probe-truncated-list.out).
+  select('select-candidate-decisions-number', [ok('responses', DECISION('attach_existing', 'p1', 'r'))], {candidate: {type: 'project', name: 'n', description: 'd', decisions: 5}});
+  select('select-candidate-constraints-string', [ok('responses', DECISION('attach_existing', 'p1', 'r'))], {candidate: {type: 'project', name: 'n', description: 'd', constraints: '字符串值'}});
+  select('select-candidate-notes-object', [ok('responses', DECISION('attach_existing', 'p1', 'r'))], {candidate: {type: 'project', name: 'n', description: 'd', notes: {}}});
   return out;
 }
 
@@ -179,11 +214,13 @@ export async function collect(baseline: string) {
   const cases: any[] = [];
   try { for (const spec of specs()) {
     let now = 0;
-    const debug: any[] = [], events: any[] = [];
+    const debug: any[] = [], warnings: string[] = [], events: any[] = [];
     const server = await stub(spec.steps,()=>now);
-    const config = {agents:{defaults:{model:{primary:'p/m'}}},models:{providers:{p:{api:spec.api,baseUrl:server.origin+'/v1',apiKey:'fixture-key',models:[{id:'m'}]}}}};
+    const config = spec.noModel ? {} : {agents:{defaults:{model:{primary:'p/m'}}},models:{providers:{p:{api:spec.api,baseUrl:server.origin+'/v1',apiKey:'fixture-key',models:[{id:'m'}]}}}};
     const runtime = {telemetry:{trackFeatureLoopStage:(event:any)=>events.push(event),trackError:(e:any,event:any)=>events.push({...event,error:e.message})}};
-    const extractor:any=new LlmMemoryExtractor(config,runtime);
+    const extractor:any=new LlmMemoryExtractor(config,runtime,{warn:(message:string)=>warnings.push(message)});
+    const meta = spec.meta ?? (spec.metaDeep === undefined ? undefined
+      : {description: 'd', [spec.metaDeep.field]: deepValue(spec.metaDeep.depth)});
     const batch = (spec.messages ?? []).map((message:any)=>({role:message.role,content:message.content}));
     const focus = spec.focus.ref !== undefined ? batch[spec.focus.ref]
       : spec.focus.copy !== undefined ? {...batch[spec.focus.copy]}
@@ -193,7 +230,7 @@ export async function collect(baseline: string) {
       ...(spec.sessionKey === undefined ? {} : {sessionKey: spec.sessionKey}),
       focusUserTurn: focus,
       batchContextMessages: batch,
-      ...(spec.meta === undefined ? {} : {currentProjectMeta: spec.meta}),
+      ...(meta === undefined ? {} : {currentProjectMeta: meta}),
       ...(spec.agentId === undefined ? {} : {agentId: spec.agentId}),
       debugTrace: (value:any)=>debug.push(value),
     };
@@ -211,7 +248,8 @@ export async function collect(baseline: string) {
         candidatePreview: spec.candidatePreview,
         focusTurn: focus,
         ...(spec.recentUserMessages === undefined ? {} : {recentUserMessages: spec.recentUserMessages}),
-        shortlist: spec.shortlist,
+        shortlist: spec.shortlistDeep === undefined ? spec.shortlist
+          : [{description: 'd', matchedText: 'm', [spec.shortlistDeep.field]: deepValue(spec.shortlistDeep.depth)}],
         ...(spec.agentId === undefined ? {} : {agentId: spec.agentId}),
         debugTrace: input.debugTrace,
       })};
@@ -226,7 +264,7 @@ export async function collect(baseline: string) {
       clearTimeout(watchdog);
     }
     await tick();
-    cases.push({spec, expected: normalized({result, requests: server.requests, debug, calls: server.requests.length}, server.origin)});
+    cases.push({spec, expected: normalized({result, requests: server.requests, debug, warnings, calls: server.requests.length}, server.origin)});
     // Snapshot through JSON: `undefined` spec keys drop exactly as they do in
     // oracle.json, so verify compares the same shapes it records.
     cases[cases.length-1] = JSON.parse(JSON.stringify(cases[cases.length-1]));

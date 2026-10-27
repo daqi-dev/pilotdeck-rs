@@ -20,43 +20,60 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway \
 
 ## Recorded contract
 
-73 cells cover the three index-side LLM calls of `llm-extraction.ts`
+93 cells cover the three index-side LLM calls of `llm-extraction.ts`
 (`:2519-2684, :3018-3125`) plus their `:994-1106` helpers:
-`classifyMemoryTurn` (~31 cells: label normalization, dedupe, unknown types,
+`classifyMemoryTurn` (~35 cells: label normalization, dedupe, unknown types,
 `should_store` truthiness, role filtering, focus by reference/value/absent,
 first/last window edges, truncation of the 320/400-unit limits, plain and
 surrounding text, bad JSON, literal control characters inside JSON strings,
-HTTP 400, empty agent id), the three `create*MemoryNote` wrappers (~21 cells:
-all three kinds, missing session key, `skip === true` strictness, missing
-name/empty description/whitespace markdown, generic project names, 80/180-unit
-truncation, non-string fields, the loose-fallback parse, its failure without a
-fallback, envelope-free text, HTTP 400, a window `TypeError` from a project-meta
-record that escapes before the request, and a full meta record), and
-`selectIndexProject` (~21 cells: attach/create-new, invalid ids with and without
-a reason, id trimming, blank/non-string reasons, non-string/case variants of
-`decision` and `selected_project_id`, empty shortlist, rich and minimal
-candidates, partial shortlist records, no recent messages, HTTP 400, bad JSON).
+HTTP 400, empty agent id, a lone-surrogate label reason, a non-string
+`meta.description`, 10000-deep metadata, and no model configured), the three
+`create*MemoryNote` wrappers (~30 cells: all three kinds, missing session key,
+`skip === true` strictness, missing name/empty description/whitespace markdown,
+generic project names, 80/180-unit truncation, non-string fields, the
+loose-fallback parse, its failure without a fallback, envelope-free text,
+HTTP 400, a window `TypeError` from a project-meta record that escapes before
+the request, a full meta record, a lone-surrogate note name, non-string
+`meta.description` of every JS type, 10000-deep metadata, and no model
+configured for all three kinds), and `selectIndexProject` (~28 cells:
+attach/create-new, invalid ids with and without a reason, id trimming,
+blank/non-string reasons, non-string/case variants of `decision` and
+`selected_project_id`, empty shortlist, rich and minimal candidates, partial
+shortlist records, no recent messages, HTTP 400, bad JSON, a lone-surrogate
+decision reason, a non-string candidate name, 10000-deep shortlist records,
+no model configured, and non-array candidate list fields — number, string,
+object — whose V8 messages name the receiver's source expression
+`input.candidate.<field>`, never the field's value).
 
 Every case runs against a real loopback HTTP stub (`../edgeclaw-llm/stub.mts`)
 recording `{method, url, headers, body, at}`; `requests` is the wire assertion
 and `at` is the constant stub clock (0) because no case uses a retryable status,
 so no backoff timers exist. `result` records the returned classification /
 candidate / decision (or the escaped `TypeError` for the pre-try window build),
-`debug` the full debug-trace event list, and `calls` the request count. Key
-order is immaterial in the comparison (both sides sort object keys); string
-bytes, including prompt text and request bodies, are compared exactly after
-replacing the random listener origin with `$ORIGIN`.
+`debug` the full debug-trace event list, `warnings` the constructor logger's
+fallback warnings (`[clawxmemory] … fallback: <String(error)>`), and `calls`
+the request count. Key order is immaterial in the comparison (both sides sort
+object keys); string bytes, including prompt text and request bodies, are
+compared exactly after replacing the random listener origin with `$ORIGIN`.
+
+Values that neither V8's `JSON.stringify` (it throws past ~7000 nesting) nor
+serde_json (128-level recursion limit) can record or replay are marked
+`{field, depth}` (`metaDeep`, `shortlistDeep`) and built in code on both sides;
+a raw unpaired surrogate reaches the wire as ASCII `\ud800` because every
+recording layer escapes it.
 
 The generator isolates HOME, freezes `Date.now` at 1792972800000 and
 `Math.random` at 0.25, and gives every case a 5 s real watchdog. Each spec is
 snapshotted through JSON before it is recorded so `undefined`-valued keys drop
 exactly as they do in oracle.json.
 
-`negative.py` holds 14 single-anchor mutants of
+`negative.py` holds 26 single-anchor mutants of
 `src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/index.rs`, each bound to
 the named assertion of `tests/edgeclaw_llm_index.rs` (`oracle_matrix`) that the
 mutation trips first; the wire `requests` assertion compares before the derived
-`debug` trace so prompt mutations die where they are bound.
-`index.rs` is a new file, so `mutating_sources` refuses to run before the
-coordinator commits it; `--check-anchors` runs pre-commit and the full executor
-runs post-commit.
+`debug` trace so prompt mutations die where they are bound, and `result`
+compares before `warnings` so error-shape mutations die where they are bound.
+A per-mutant timeout or spawn failure is recorded as TIMEOUT/INVALID and the
+sweep continues; only a source-restore failure aborts. `index.rs` is a new
+file, so `mutating_sources` refuses to run before the coordinator commits it;
+`--check-anchors` runs pre-commit and the full executor runs post-commit.

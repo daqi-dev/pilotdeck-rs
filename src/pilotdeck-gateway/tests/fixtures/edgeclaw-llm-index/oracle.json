@@ -114,6 +114,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -225,6 +226,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -356,6 +358,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -472,6 +475,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -598,6 +602,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -701,6 +706,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -812,6 +818,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -923,6 +930,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -1034,6 +1042,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -1133,6 +1142,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -1251,6 +1261,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -1365,6 +1376,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -1435,6 +1447,9 @@
         },
         "requests": [],
         "debug": [],
+        "warnings": [
+          "[clawxmemory] memory turn classification fallback: TypeError: Cannot read properties of undefined (reading 'replace')"
+        ],
         "calls": 0
       }
     },
@@ -1507,6 +1522,9 @@
         },
         "requests": [],
         "debug": [],
+        "warnings": [
+          "[clawxmemory] memory turn classification fallback: TypeError: Cannot read properties of null (reading 'replace')"
+        ],
         "calls": 0
       }
     },
@@ -1619,6 +1637,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -1731,6 +1750,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -1842,6 +1862,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -1953,6 +1974,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -2067,6 +2089,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -2166,6 +2189,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -2253,6 +2277,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -2364,6 +2389,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -2475,6 +2501,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -2562,6 +2589,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -2659,6 +2687,9 @@
             "timedOut": false,
             "errorMessage": "No JSON object found in extraction response"
           }
+        ],
+        "warnings": [
+          "[clawxmemory] memory turn classification fallback: Error: No JSON object found in extraction response"
         ],
         "calls": 1
       }
@@ -2771,6 +2802,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -2868,6 +2900,9 @@
             "timedOut": false,
             "errorMessage": "Unexpected token '}', \"{\"should_store\":}\" is not valid JSON"
           }
+        ],
+        "warnings": [
+          "[clawxmemory] memory turn classification fallback: SyntaxError: Unexpected token '}', \"{\"should_store\":}\" is not valid JSON"
         ],
         "calls": 1
       }
@@ -2967,6 +3002,9 @@
             "errorMessage": "Bad control character in string literal in JSON at position 61 (line 1 column 62)"
           }
         ],
+        "warnings": [
+          "[clawxmemory] memory turn classification fallback: SyntaxError: Bad control character in string literal in JSON at position 61 (line 1 column 62)"
+        ],
         "calls": 1
       }
     },
@@ -3064,6 +3102,9 @@
             "timedOut": false,
             "errorMessage": "Memory turn classification request failed (400): bad"
           }
+        ],
+        "warnings": [
+          "[clawxmemory] memory turn classification fallback: Error: Memory turn classification request failed (400): bad"
         ],
         "calls": 1
       }
@@ -3177,7 +3218,354 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
+      }
+    },
+    {
+      "spec": {
+        "name": "classify-lone-surrogate-reason",
+        "kind": "classify",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"should_store\\\":true,\\\"labels\\\":[{\\\"type\\\":\\\"user\\\",\\\"reason\\\":\\\"\\ud800\\\",\\\"evidence\\\":\\\"e\\\"}]}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        }
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "shouldStore": true,
+            "labels": [
+              {
+                "type": "user",
+                "reason": "\ud800",
+                "evidence": "e"
+              }
+            ]
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/responses",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "3578",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"input\":[{\"role\":\"system\",\"content\":\"You classify one focus user turn for a long-term memory indexing pipeline.\\n\\nYou are only deciding categories. Do not generate the memory file yet.\\n\\nRules:\\n- Base the decision on the focus user turn first.\\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\\n- Assistant text is context only. Never classify something that exists only in assistant wording.\\n- A turn can match multiple categories, but at most once per category.\\n- Allowed categories:\\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\\n- Identity test: only use user when the focus turn is describing the user as a person.\\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\\n- If the user explicitly says \\\"请记住\\\", \\\"帮我记住\\\", or \\\"remember this\\\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\\n- If nothing durable should be remembered, return should_store=false and labels=[].\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"should_store\\\": true,\\n  \\\"labels\\\": [\\n    {\\n      \\\"type\\\": \\\"user | project | feedback\\\",\\n      \\\"reason\\\": \\\"why this category applies\\\",\\n      \\\"evidence\\\": \\\"short quote or evidence summary from the focus turn\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"current_project_meta\\\": null,\\n  \\\"focus_user_turn\\\": {\\n    \\\"role\\\": \\\"user\\\",\\n    \\\"content\\\": \\\"u2 请记住我是达达，一名工程师\\\"\\n  },\\n  \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n    \\\"turn_index\\\": 1,\\n    \\\"messages\\\": [\\n      {\\n        \\\"role\\\": \\\"user\\\",\\n        \\\"content\\\": \\\"u2 请记住我是达达，一名工程师\\\"\\n      },\\n      {\\n        \\\"role\\\": \\\"assistant\\\",\\n        \\\"content\\\": \\\"a2 已记住\\\"\\n      }\\n    ]\\n  },\\n  \\\"previous_turns\\\": [\\n    {\\n      \\\"turn_index\\\": 1,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"u1 我在做 Rust 移植\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a1 好的\\\"\\n        }\\n      ]\\n    }\\n  ],\\n  \\\"next_turns\\\": [\\n    {\\n      \\\"turn_index\\\": 1,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"u3 另外回复请用中文\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a3 好的\\\"\\n        }\\n      ]\\n    },\\n    {\\n      \\\"turn_index\\\": 2,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"u4 明天继续\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a4 行\\\"\\n        }\\n      ]\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ],
+        "debug": [
+          {
+            "requestLabel": "Memory turn classification",
+            "systemPrompt": "You classify one focus user turn for a long-term memory indexing pipeline.\n\nYou are only deciding categories. Do not generate the memory file yet.\n\nRules:\n- Base the decision on the focus user turn first.\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\n- Assistant text is context only. Never classify something that exists only in assistant wording.\n- A turn can match multiple categories, but at most once per category.\n- Allowed categories:\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\n- Identity test: only use user when the focus turn is describing the user as a person.\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\n- If the user explicitly says \"请记住\", \"帮我记住\", or \"remember this\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\n- If nothing durable should be remembered, return should_store=false and labels=[].\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"should_store\": true,\n  \"labels\": [\n    {\n      \"type\": \"user | project | feedback\",\n      \"reason\": \"why this category applies\",\n      \"evidence\": \"short quote or evidence summary from the focus turn\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"current_project_meta\": null,\n  \"focus_user_turn\": {\n    \"role\": \"user\",\n    \"content\": \"u2 请记住我是达达，一名工程师\"\n  },\n  \"focus_turn_with_neighbor_assistant_context\": {\n    \"turn_index\": 1,\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": \"u2 请记住我是达达，一名工程师\"\n      },\n      {\n        \"role\": \"assistant\",\n        \"content\": \"a2 已记住\"\n      }\n    ]\n  },\n  \"previous_turns\": [\n    {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u1 我在做 Rust 移植\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a1 好的\"\n        }\n      ]\n    }\n  ],\n  \"next_turns\": [\n    {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u3 另外回复请用中文\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a3 好的\"\n        }\n      ]\n    },\n    {\n      \"turn_index\": 2,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u4 明天继续\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a4 行\"\n        }\n      ]\n    }\n  ]\n}",
+            "rawResponse": "{\"should_store\":true,\"labels\":[{\"type\":\"user\",\"reason\":\"\ud800\",\"evidence\":\"e\"}]}",
+            "parsedResult": {
+              "should_store": true,
+              "labels": [
+                {
+                  "type": "user",
+                  "reason": "\ud800",
+                  "evidence": "e"
+                }
+              ]
+            }
+          }
+        ],
+        "warnings": [],
+        "calls": 1
+      }
+    },
+    {
+      "spec": {
+        "name": "classify-meta-description-number",
+        "kind": "classify",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"should_store\\\":true,\\\"labels\\\":[{\\\"type\\\":\\\"user\\\",\\\"reason\\\":\\\"user reason\\\",\\\"evidence\\\":\\\"user evidence\\\"}]}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "meta": {
+          "description": 5
+        }
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "shouldStore": false,
+            "labels": []
+          }
+        },
+        "requests": [],
+        "debug": [],
+        "warnings": [
+          "[clawxmemory] memory turn classification fallback: TypeError: value.replace is not a function"
+        ],
+        "calls": 0
+      }
+    },
+    {
+      "spec": {
+        "name": "classify-deep-meta",
+        "kind": "classify",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"should_store\\\":true,\\\"labels\\\":[{\\\"type\\\":\\\"user\\\",\\\"reason\\\":\\\"user reason\\\",\\\"evidence\\\":\\\"user evidence\\\"}]}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "metaDeep": {
+          "field": "projectId",
+          "depth": 10000
+        }
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "shouldStore": false,
+            "labels": []
+          }
+        },
+        "requests": [],
+        "debug": [],
+        "warnings": [
+          "[clawxmemory] memory turn classification fallback: RangeError: Maximum call stack size exceeded"
+        ],
+        "calls": 0
+      }
+    },
+    {
+      "spec": {
+        "name": "classify-no-model",
+        "kind": "classify",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"should_store\\\":true,\\\"labels\\\":[{\\\"type\\\":\\\"user\\\",\\\"reason\\\":\\\"user reason\\\",\\\"evidence\\\":\\\"user evidence\\\"}]}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "noModel": true
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "shouldStore": false,
+            "labels": []
+          }
+        },
+        "requests": [],
+        "debug": [
+          {
+            "requestLabel": "Memory turn classification",
+            "systemPrompt": "You classify one focus user turn for a long-term memory indexing pipeline.\n\nYou are only deciding categories. Do not generate the memory file yet.\n\nRules:\n- Base the decision on the focus user turn first.\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\n- Assistant text is context only. Never classify something that exists only in assistant wording.\n- A turn can match multiple categories, but at most once per category.\n- Allowed categories:\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\n- Identity test: only use user when the focus turn is describing the user as a person.\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\n- If the user explicitly says \"请记住\", \"帮我记住\", or \"remember this\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\n- If nothing durable should be remembered, return should_store=false and labels=[].\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"should_store\": true,\n  \"labels\": [\n    {\n      \"type\": \"user | project | feedback\",\n      \"reason\": \"why this category applies\",\n      \"evidence\": \"short quote or evidence summary from the focus turn\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"current_project_meta\": null,\n  \"focus_user_turn\": {\n    \"role\": \"user\",\n    \"content\": \"u2 请记住我是达达，一名工程师\"\n  },\n  \"focus_turn_with_neighbor_assistant_context\": {\n    \"turn_index\": 1,\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": \"u2 请记住我是达达，一名工程师\"\n      },\n      {\n        \"role\": \"assistant\",\n        \"content\": \"a2 已记住\"\n      }\n    ]\n  },\n  \"previous_turns\": [\n    {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u1 我在做 Rust 移植\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a1 好的\"\n        }\n      ]\n    }\n  ],\n  \"next_turns\": [\n    {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u3 另外回复请用中文\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a3 好的\"\n        }\n      ]\n    },\n    {\n      \"turn_index\": 2,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u4 明天继续\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a4 行\"\n        }\n      ]\n    }\n  ]\n}",
+            "rawResponse": "",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "Could not resolve an OpenClaw model for memory extraction"
+          }
+        ],
+        "warnings": [
+          "[clawxmemory] memory turn classification fallback: Error: Could not resolve an OpenClaw model for memory extraction"
+        ],
+        "calls": 0
       }
     },
     {
@@ -3291,6 +3679,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -3405,6 +3794,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -3519,6 +3909,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -3631,6 +4022,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -3734,6 +4126,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -3847,6 +4240,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -3960,6 +4354,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -4063,6 +4458,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -4167,6 +4563,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -4279,6 +4676,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -4383,6 +4781,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -4487,6 +4886,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -4599,6 +4999,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -4711,6 +5112,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -4815,6 +5217,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -4931,6 +5334,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -5032,6 +5436,9 @@
             "timedOut": false,
             "errorMessage": "Unexpected token '}', \"{\"name\":}\" is not valid JSON"
           }
+        ],
+        "warnings": [
+          "[clawxmemory] user memory create fallback: SyntaxError: Unexpected token '}', \"{\"name\":}\" is not valid JSON"
         ],
         "calls": 1
       }
@@ -5135,6 +5542,9 @@
             "errorMessage": "No JSON envelope found in extraction response"
           }
         ],
+        "warnings": [
+          "[clawxmemory] user memory create fallback: Error: No JSON envelope found in extraction response"
+        ],
         "calls": 1
       }
     },
@@ -5237,6 +5647,9 @@
             "errorMessage": "User memory create request failed (400): bad"
           }
         ],
+        "warnings": [
+          "[clawxmemory] user memory create fallback: Error: User memory create request failed (400): bad"
+        ],
         "calls": 1
       }
     },
@@ -5314,6 +5727,7 @@
         },
         "requests": [],
         "debug": [],
+        "warnings": [],
         "calls": 0
       }
     },
@@ -5435,7 +5849,773 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
+      }
+    },
+    {
+      "spec": {
+        "name": "create-lone-surrogate-name",
+        "kind": "create",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"name\\\":\\\"\\ud800\\\",\\\"description\\\":\\\"d\\\",\\\"markdown\\\":\\\"m\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "classification": {
+          "type": "user",
+          "reason": "identity",
+          "evidence": "我是达达"
+        },
+        "timestamp": "2026-01-01T00:00:00.000Z",
+        "sessionKey": "sess-1"
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "type": "user",
+            "scope": "global",
+            "name": "\ud800",
+            "description": "d",
+            "body": "m",
+            "capturedAt": "2026-01-01T00:00:00.000Z",
+            "sourceSessionKey": "sess-1"
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/responses",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "3075",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"input\":[{\"role\":\"system\",\"content\":\"You create one append-only user memory note from a focus user turn.\\n\\nRules:\\n- Create at most one user note.\\n- The note must capture only durable cross-project personal identity/background information about who the user is.\\n- Keep only long-lived identity facts such as name, profession, stable role context, life background, or durable relationship context.\\n- Do not include language choices, answer structure, formatting habits, style preferences, file boundaries, tool boundaries, or project-specific collaboration rules.\\n- One note should express one durable identity/background fact rather than a full profile rewrite.\\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\\n- Keep the note readable markdown.\\n- Do not force the note into a fixed profile template. Use headings only when they genuinely help readability.\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"skip\\\": false,\\n  \\\"reason\\\": \\\"\\\",\\n  \\\"name\\\": \\\"short user-memory title\\\",\\n  \\\"description\\\": \\\"one-line description\\\",\\n  \\\"markdown\\\": \\\"markdown body\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"classification\\\": {\\n    \\\"type\\\": \\\"user\\\",\\n    \\\"reason\\\": \\\"identity\\\",\\n    \\\"evidence\\\": \\\"我是达达\\\"\\n  },\\n  \\\"context\\\": {\\n    \\\"current_project_meta\\\": null,\\n    \\\"focus_user_turn\\\": {\\n      \\\"role\\\": \\\"user\\\",\\n      \\\"content\\\": \\\"u2 请记住我是达达，一名工程师\\\"\\n    },\\n    \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n      \\\"turn_index\\\": 1,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"u2 请记住我是达达，一名工程师\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a2 已记住\\\"\\n        }\\n      ]\\n    },\\n    \\\"previous_turns\\\": [\\n      {\\n        \\\"turn_index\\\": 1,\\n        \\\"messages\\\": [\\n          {\\n            \\\"role\\\": \\\"user\\\",\\n            \\\"content\\\": \\\"u1 我在做 Rust 移植\\\"\\n          },\\n          {\\n            \\\"role\\\": \\\"assistant\\\",\\n            \\\"content\\\": \\\"a1 好的\\\"\\n          }\\n        ]\\n      }\\n    ],\\n    \\\"next_turns\\\": [\\n      {\\n        \\\"turn_index\\\": 1,\\n        \\\"messages\\\": [\\n          {\\n            \\\"role\\\": \\\"user\\\",\\n            \\\"content\\\": \\\"u3 另外回复请用中文\\\"\\n          },\\n          {\\n            \\\"role\\\": \\\"assistant\\\",\\n            \\\"content\\\": \\\"a3 好的\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"turn_index\\\": 2,\\n        \\\"messages\\\": [\\n          {\\n            \\\"role\\\": \\\"user\\\",\\n            \\\"content\\\": \\\"u4 明天继续\\\"\\n          },\\n          {\\n            \\\"role\\\": \\\"assistant\\\",\\n            \\\"content\\\": \\\"a4 行\\\"\\n          }\\n        ]\\n      }\\n    ]\\n  }\\n}\"}]}",
+            "at": 0
+          }
+        ],
+        "debug": [
+          {
+            "requestLabel": "User memory create",
+            "systemPrompt": "You create one append-only user memory note from a focus user turn.\n\nRules:\n- Create at most one user note.\n- The note must capture only durable cross-project personal identity/background information about who the user is.\n- Keep only long-lived identity facts such as name, profession, stable role context, life background, or durable relationship context.\n- Do not include language choices, answer structure, formatting habits, style preferences, file boundaries, tool boundaries, or project-specific collaboration rules.\n- One note should express one durable identity/background fact rather than a full profile rewrite.\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\n- Keep the note readable markdown.\n- Do not force the note into a fixed profile template. Use headings only when they genuinely help readability.\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"skip\": false,\n  \"reason\": \"\",\n  \"name\": \"short user-memory title\",\n  \"description\": \"one-line description\",\n  \"markdown\": \"markdown body\"\n}",
+            "userPrompt": "{\n  \"classification\": {\n    \"type\": \"user\",\n    \"reason\": \"identity\",\n    \"evidence\": \"我是达达\"\n  },\n  \"context\": {\n    \"current_project_meta\": null,\n    \"focus_user_turn\": {\n      \"role\": \"user\",\n      \"content\": \"u2 请记住我是达达，一名工程师\"\n    },\n    \"focus_turn_with_neighbor_assistant_context\": {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u2 请记住我是达达，一名工程师\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a2 已记住\"\n        }\n      ]\n    },\n    \"previous_turns\": [\n      {\n        \"turn_index\": 1,\n        \"messages\": [\n          {\n            \"role\": \"user\",\n            \"content\": \"u1 我在做 Rust 移植\"\n          },\n          {\n            \"role\": \"assistant\",\n            \"content\": \"a1 好的\"\n          }\n        ]\n      }\n    ],\n    \"next_turns\": [\n      {\n        \"turn_index\": 1,\n        \"messages\": [\n          {\n            \"role\": \"user\",\n            \"content\": \"u3 另外回复请用中文\"\n          },\n          {\n            \"role\": \"assistant\",\n            \"content\": \"a3 好的\"\n          }\n        ]\n      },\n      {\n        \"turn_index\": 2,\n        \"messages\": [\n          {\n            \"role\": \"user\",\n            \"content\": \"u4 明天继续\"\n          },\n          {\n            \"role\": \"assistant\",\n            \"content\": \"a4 行\"\n          }\n        ]\n      }\n    ]\n  }\n}",
+            "rawResponse": "{\"name\":\"\ud800\",\"description\":\"d\",\"markdown\":\"m\"}",
+            "parsedResult": {
+              "name": "\ud800",
+              "description": "d",
+              "markdown": "m"
+            }
+          }
+        ],
+        "warnings": [],
+        "calls": 1
+      }
+    },
+    {
+      "spec": {
+        "name": "create-meta-description-number",
+        "kind": "create",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"skip\\\":false,\\\"reason\\\":\\\"\\\",\\\"name\\\":\\\"笔记名\\\",\\\"description\\\":\\\"一行描述\\\",\\\"markdown\\\":\\\"# 正文\\\\n\\\\n- 要点\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "classification": {
+          "type": "user",
+          "reason": "identity",
+          "evidence": "我是达达"
+        },
+        "timestamp": "2026-01-01T00:00:00.000Z",
+        "sessionKey": "sess-1",
+        "meta": {
+          "description": 5
+        }
+      },
+      "expected": {
+        "result": {
+          "error": "value.replace is not a function",
+          "name": "TypeError"
+        },
+        "requests": [],
+        "debug": [],
+        "warnings": [],
+        "calls": 0
+      }
+    },
+    {
+      "spec": {
+        "name": "create-meta-description-bool",
+        "kind": "create",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"skip\\\":false,\\\"reason\\\":\\\"\\\",\\\"name\\\":\\\"笔记名\\\",\\\"description\\\":\\\"一行描述\\\",\\\"markdown\\\":\\\"# 正文\\\\n\\\\n- 要点\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "classification": {
+          "type": "user",
+          "reason": "identity",
+          "evidence": "我是达达"
+        },
+        "timestamp": "2026-01-01T00:00:00.000Z",
+        "sessionKey": "sess-1",
+        "meta": {
+          "description": true
+        }
+      },
+      "expected": {
+        "result": {
+          "error": "value.replace is not a function",
+          "name": "TypeError"
+        },
+        "requests": [],
+        "debug": [],
+        "warnings": [],
+        "calls": 0
+      }
+    },
+    {
+      "spec": {
+        "name": "create-meta-description-array",
+        "kind": "create",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"skip\\\":false,\\\"reason\\\":\\\"\\\",\\\"name\\\":\\\"笔记名\\\",\\\"description\\\":\\\"一行描述\\\",\\\"markdown\\\":\\\"# 正文\\\\n\\\\n- 要点\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "classification": {
+          "type": "user",
+          "reason": "identity",
+          "evidence": "我是达达"
+        },
+        "timestamp": "2026-01-01T00:00:00.000Z",
+        "sessionKey": "sess-1",
+        "meta": {
+          "description": []
+        }
+      },
+      "expected": {
+        "result": {
+          "error": "value.replace is not a function",
+          "name": "TypeError"
+        },
+        "requests": [],
+        "debug": [],
+        "warnings": [],
+        "calls": 0
+      }
+    },
+    {
+      "spec": {
+        "name": "create-meta-description-object",
+        "kind": "create",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"skip\\\":false,\\\"reason\\\":\\\"\\\",\\\"name\\\":\\\"笔记名\\\",\\\"description\\\":\\\"一行描述\\\",\\\"markdown\\\":\\\"# 正文\\\\n\\\\n- 要点\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "classification": {
+          "type": "user",
+          "reason": "identity",
+          "evidence": "我是达达"
+        },
+        "timestamp": "2026-01-01T00:00:00.000Z",
+        "sessionKey": "sess-1",
+        "meta": {
+          "description": {}
+        }
+      },
+      "expected": {
+        "result": {
+          "error": "value.replace is not a function",
+          "name": "TypeError"
+        },
+        "requests": [],
+        "debug": [],
+        "warnings": [],
+        "calls": 0
+      }
+    },
+    {
+      "spec": {
+        "name": "create-deep-meta",
+        "kind": "create",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"skip\\\":false,\\\"reason\\\":\\\"\\\",\\\"name\\\":\\\"笔记名\\\",\\\"description\\\":\\\"一行描述\\\",\\\"markdown\\\":\\\"# 正文\\\\n\\\\n- 要点\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "classification": {
+          "type": "user",
+          "reason": "identity",
+          "evidence": "我是达达"
+        },
+        "timestamp": "2026-01-01T00:00:00.000Z",
+        "sessionKey": "sess-1",
+        "metaDeep": {
+          "field": "projectId",
+          "depth": 10000
+        }
+      },
+      "expected": {
+        "result": {
+          "error": "Maximum call stack size exceeded",
+          "name": "RangeError"
+        },
+        "requests": [],
+        "debug": [],
+        "warnings": [],
+        "calls": 0
+      }
+    },
+    {
+      "spec": {
+        "name": "create-no-model",
+        "kind": "create",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"skip\\\":false,\\\"reason\\\":\\\"\\\",\\\"name\\\":\\\"笔记名\\\",\\\"description\\\":\\\"一行描述\\\",\\\"markdown\\\":\\\"# 正文\\\\n\\\\n- 要点\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "classification": {
+          "type": "user",
+          "reason": "identity",
+          "evidence": "我是达达"
+        },
+        "timestamp": "2026-01-01T00:00:00.000Z",
+        "sessionKey": "sess-1",
+        "noModel": true
+      },
+      "expected": {
+        "result": {
+          "ok": null
+        },
+        "requests": [],
+        "debug": [
+          {
+            "requestLabel": "User memory create",
+            "systemPrompt": "You create one append-only user memory note from a focus user turn.\n\nRules:\n- Create at most one user note.\n- The note must capture only durable cross-project personal identity/background information about who the user is.\n- Keep only long-lived identity facts such as name, profession, stable role context, life background, or durable relationship context.\n- Do not include language choices, answer structure, formatting habits, style preferences, file boundaries, tool boundaries, or project-specific collaboration rules.\n- One note should express one durable identity/background fact rather than a full profile rewrite.\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\n- Keep the note readable markdown.\n- Do not force the note into a fixed profile template. Use headings only when they genuinely help readability.\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"skip\": false,\n  \"reason\": \"\",\n  \"name\": \"short user-memory title\",\n  \"description\": \"one-line description\",\n  \"markdown\": \"markdown body\"\n}",
+            "userPrompt": "{\n  \"classification\": {\n    \"type\": \"user\",\n    \"reason\": \"identity\",\n    \"evidence\": \"我是达达\"\n  },\n  \"context\": {\n    \"current_project_meta\": null,\n    \"focus_user_turn\": {\n      \"role\": \"user\",\n      \"content\": \"u2 请记住我是达达，一名工程师\"\n    },\n    \"focus_turn_with_neighbor_assistant_context\": {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u2 请记住我是达达，一名工程师\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a2 已记住\"\n        }\n      ]\n    },\n    \"previous_turns\": [\n      {\n        \"turn_index\": 1,\n        \"messages\": [\n          {\n            \"role\": \"user\",\n            \"content\": \"u1 我在做 Rust 移植\"\n          },\n          {\n            \"role\": \"assistant\",\n            \"content\": \"a1 好的\"\n          }\n        ]\n      }\n    ],\n    \"next_turns\": [\n      {\n        \"turn_index\": 1,\n        \"messages\": [\n          {\n            \"role\": \"user\",\n            \"content\": \"u3 另外回复请用中文\"\n          },\n          {\n            \"role\": \"assistant\",\n            \"content\": \"a3 好的\"\n          }\n        ]\n      },\n      {\n        \"turn_index\": 2,\n        \"messages\": [\n          {\n            \"role\": \"user\",\n            \"content\": \"u4 明天继续\"\n          },\n          {\n            \"role\": \"assistant\",\n            \"content\": \"a4 行\"\n          }\n        ]\n      }\n    ]\n  }\n}",
+            "rawResponse": "",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "Could not resolve an OpenClaw model for memory extraction"
+          }
+        ],
+        "warnings": [
+          "[clawxmemory] user memory create fallback: Error: Could not resolve an OpenClaw model for memory extraction"
+        ],
+        "calls": 0
+      }
+    },
+    {
+      "spec": {
+        "name": "create-project-no-model",
+        "kind": "create",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"skip\\\":false,\\\"reason\\\":\\\"\\\",\\\"name\\\":\\\"笔记名\\\",\\\"description\\\":\\\"一行描述\\\",\\\"markdown\\\":\\\"# 正文\\\\n\\\\n- 要点\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "classification": {
+          "type": "project",
+          "reason": "r",
+          "evidence": "e"
+        },
+        "timestamp": "2026-01-01T00:00:00.000Z",
+        "sessionKey": "sess-1",
+        "noModel": true
+      },
+      "expected": {
+        "result": {
+          "ok": null
+        },
+        "requests": [],
+        "debug": [
+          {
+            "requestLabel": "Project memory create",
+            "systemPrompt": "You create one append-only project memory note from a focus user turn.\n\nRules:\n- Create at most one project note.\n- The note belongs to the current project only.\n- Capture durable project facts: what the project is, stable scope, goals, key progress, blockers, risks, important decisions, important next steps.\n- Do not reduce the note to a vague status line.\n- Do not focus on highly volatile percentages, fleeting schedules, or trivial short-term updates unless they reveal a durable blocker/risk/fact.\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\n- Keep the note readable markdown.\n- Prefer meaningful headings when useful, such as: ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes.\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"skip\": false,\n  \"reason\": \"\",\n  \"name\": \"short project-memory title\",\n  \"description\": \"one-line description\",\n  \"markdown\": \"markdown body\"\n}",
+            "userPrompt": "{\n  \"classification\": {\n    \"type\": \"project\",\n    \"reason\": \"r\",\n    \"evidence\": \"e\"\n  },\n  \"context\": {\n    \"current_project_meta\": null,\n    \"focus_user_turn\": {\n      \"role\": \"user\",\n      \"content\": \"u2 请记住我是达达，一名工程师\"\n    },\n    \"focus_turn_with_neighbor_assistant_context\": {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u2 请记住我是达达，一名工程师\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a2 已记住\"\n        }\n      ]\n    },\n    \"previous_turns\": [\n      {\n        \"turn_index\": 1,\n        \"messages\": [\n          {\n            \"role\": \"user\",\n            \"content\": \"u1 我在做 Rust 移植\"\n          },\n          {\n            \"role\": \"assistant\",\n            \"content\": \"a1 好的\"\n          }\n        ]\n      }\n    ],\n    \"next_turns\": [\n      {\n        \"turn_index\": 1,\n        \"messages\": [\n          {\n            \"role\": \"user\",\n            \"content\": \"u3 另外回复请用中文\"\n          },\n          {\n            \"role\": \"assistant\",\n            \"content\": \"a3 好的\"\n          }\n        ]\n      },\n      {\n        \"turn_index\": 2,\n        \"messages\": [\n          {\n            \"role\": \"user\",\n            \"content\": \"u4 明天继续\"\n          },\n          {\n            \"role\": \"assistant\",\n            \"content\": \"a4 行\"\n          }\n        ]\n      }\n    ]\n  }\n}",
+            "rawResponse": "",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "Could not resolve an OpenClaw model for memory extraction"
+          }
+        ],
+        "warnings": [
+          "[clawxmemory] project memory create fallback: Error: Could not resolve an OpenClaw model for memory extraction"
+        ],
+        "calls": 0
+      }
+    },
+    {
+      "spec": {
+        "name": "create-feedback-no-model",
+        "kind": "create",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"skip\\\":false,\\\"reason\\\":\\\"\\\",\\\"name\\\":\\\"笔记名\\\",\\\"description\\\":\\\"一行描述\\\",\\\"markdown\\\":\\\"# 正文\\\\n\\\\n- 要点\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "classification": {
+          "type": "feedback",
+          "reason": "r",
+          "evidence": "e"
+        },
+        "timestamp": "2026-01-01T00:00:00.000Z",
+        "sessionKey": "sess-1",
+        "noModel": true
+      },
+      "expected": {
+        "result": {
+          "ok": null
+        },
+        "requests": [],
+        "debug": [
+          {
+            "requestLabel": "Feedback memory create",
+            "systemPrompt": "You create one append-only feedback memory note from a focus user turn.\n\nRules:\n- Create at most one feedback note.\n- The note belongs to the current project only.\n- Use feedback for collaboration rules, delivery order, style constraints, title/body template rules, confirmed output expectations, language rules, and file/tool boundaries.\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\n- Keep the note readable markdown.\n- Prefer meaningful headings when useful, especially: ## Rule, ## Why, ## How To Apply, ## Notes.\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"skip\": false,\n  \"reason\": \"\",\n  \"name\": \"short feedback-memory title\",\n  \"description\": \"one-line description\",\n  \"markdown\": \"markdown body\"\n}",
+            "userPrompt": "{\n  \"classification\": {\n    \"type\": \"feedback\",\n    \"reason\": \"r\",\n    \"evidence\": \"e\"\n  },\n  \"context\": {\n    \"current_project_meta\": null,\n    \"focus_user_turn\": {\n      \"role\": \"user\",\n      \"content\": \"u2 请记住我是达达，一名工程师\"\n    },\n    \"focus_turn_with_neighbor_assistant_context\": {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"u2 请记住我是达达，一名工程师\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a2 已记住\"\n        }\n      ]\n    },\n    \"previous_turns\": [\n      {\n        \"turn_index\": 1,\n        \"messages\": [\n          {\n            \"role\": \"user\",\n            \"content\": \"u1 我在做 Rust 移植\"\n          },\n          {\n            \"role\": \"assistant\",\n            \"content\": \"a1 好的\"\n          }\n        ]\n      }\n    ],\n    \"next_turns\": [\n      {\n        \"turn_index\": 1,\n        \"messages\": [\n          {\n            \"role\": \"user\",\n            \"content\": \"u3 另外回复请用中文\"\n          },\n          {\n            \"role\": \"assistant\",\n            \"content\": \"a3 好的\"\n          }\n        ]\n      },\n      {\n        \"turn_index\": 2,\n        \"messages\": [\n          {\n            \"role\": \"user\",\n            \"content\": \"u4 明天继续\"\n          },\n          {\n            \"role\": \"assistant\",\n            \"content\": \"a4 行\"\n          }\n        ]\n      }\n    ]\n  }\n}",
+            "rawResponse": "",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "Could not resolve an OpenClaw model for memory extraction"
+          }
+        ],
+        "warnings": [
+          "[clawxmemory] feedback memory create fallback: Error: Could not resolve an OpenClaw model for memory extraction"
+        ],
+        "calls": 0
       }
     },
     {
@@ -5627,6 +6807,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -5818,6 +6999,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -6008,6 +7190,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -6199,6 +7382,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -6389,6 +7573,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -6581,6 +7766,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -6771,6 +7957,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -6962,6 +8149,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -7153,6 +8341,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -7344,6 +8533,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -7535,6 +8725,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -7726,6 +8917,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -7915,6 +9107,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -8047,6 +9240,7 @@
         },
         "requests": [],
         "debug": [],
+        "warnings": [],
         "calls": 0
       }
     },
@@ -8239,6 +9433,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -8395,6 +9590,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -8552,6 +9748,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -8727,6 +9924,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -8868,6 +10066,9 @@
         },
         "requests": [],
         "debug": [],
+        "warnings": [
+          "[clawxmemory] file memory project assignment fallback: TypeError: Cannot read properties of undefined (reading 'replace')"
+        ],
         "calls": 0
       }
     },
@@ -9033,6 +10234,7 @@
             }
           }
         ],
+        "warnings": [],
         "calls": 1
       }
     },
@@ -9221,6 +10423,9 @@
             "timedOut": false,
             "errorMessage": "File memory project assignment request failed (400): bad"
           }
+        ],
+        "warnings": [
+          "[clawxmemory] file memory project assignment fallback: Error: File memory project assignment request failed (400): bad"
         ],
         "calls": 1
       }
@@ -9411,7 +10616,1058 @@
             "errorMessage": "Unexpected token '}', \"{\"decision\":}\" is not valid JSON"
           }
         ],
+        "warnings": [
+          "[clawxmemory] file memory project assignment fallback: SyntaxError: Unexpected token '}', \"{\"decision\":}\" is not valid JSON"
+        ],
         "calls": 1
+      }
+    },
+    {
+      "spec": {
+        "name": "select-lone-surrogate-reason",
+        "kind": "select",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"decision\\\":\\\"create_new\\\",\\\"selected_project_id\\\":\\\"\\\",\\\"reason\\\":\\\"\\\\ud800\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "candidate": {
+          "type": "project",
+          "name": "候选 项目",
+          "description": "候选描述",
+          "rule": "回复用中文",
+          "summary": "摘要",
+          "why": "原因",
+          "howToApply": "应用",
+          "stage": "阶段",
+          "decisions": [
+            "决定一",
+            "决定二",
+            "d0",
+            "d1",
+            "d2",
+            "d3",
+            "d4",
+            "d5",
+            "d6",
+            "d7",
+            "d8",
+            "d9",
+            "d10"
+          ],
+          "constraints": [
+            "约束一"
+          ],
+          "nextSteps": [
+            "下一步"
+          ],
+          "blockers": [
+            "阻塞"
+          ],
+          "timeline": [
+            "时间线"
+          ],
+          "notes": [
+            "备注"
+          ]
+        },
+        "candidatePreview": "## 候选预览\n正文 😀",
+        "recentUserMessages": [
+          {
+            "role": "user",
+            "content": "最近消息 1"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 2"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 3"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 4"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 5"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 6"
+          }
+        ],
+        "shortlist": [
+          {
+            "projectId": "p1",
+            "projectName": "项目一",
+            "description": "描述一",
+            "status": "active",
+            "updatedAt": "2026-01-02T03:04:05.678Z",
+            "score": 0.9,
+            "exact": 1,
+            "source": "query",
+            "matchedText": "匹配 文本"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "项目二",
+            "description": "描述二",
+            "status": "archived",
+            "updatedAt": "2025-12-31T23:59:59.999Z",
+            "score": 0.5,
+            "exact": 0,
+            "source": "recent",
+            "matchedText": "p2 匹配"
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "decision": "create_new",
+            "reason": "\ud800"
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/responses",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2929",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"input\":[{\"role\":\"system\",\"content\":\"You assign a newly generated long-term memory item to a General Chat project.\\nThis is index-time memory assignment, not recall.\\nReturn JSON only with decision, selected_project_id, and reason.\\ndecision must be one of: attach_existing, create_new.\\nThe primary evidence is candidate_memory_preview: the memory item that will be written.\\nUse the focus user turn and recent user messages only as supporting context for disambiguation.\\nChoose attach_existing only when the candidate clearly belongs to exactly one existing General project.\\nChoose create_new when the candidate is a new project, evidence is insufficient, multiple projects remain plausible, or the match is only a broad domain similarity.\\nDo not attach just because projects share a category such as SaaS, copywriting, Xiaohongshu, marketing, planning, or content creation.\\nAll shortlist projects are General-local assignment targets; never infer or write to an external workspace.\\nIf decision is attach_existing, selected_project_id must be one id from the shortlist.\\nIf decision is create_new, selected_project_id must be an empty string.\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"candidate\\\": {\\n    \\\"type\\\": \\\"project\\\",\\n    \\\"name\\\": \\\"候选 项目\\\",\\n    \\\"description\\\": \\\"候选描述\\\",\\n    \\\"rule\\\": \\\"回复用中文\\\",\\n    \\\"summary\\\": \\\"摘要\\\",\\n    \\\"why\\\": \\\"原因\\\",\\n    \\\"how_to_apply\\\": \\\"应用\\\",\\n    \\\"stage\\\": \\\"阶段\\\",\\n    \\\"decisions\\\": [\\n      \\\"决定一\\\",\\n      \\\"决定二\\\",\\n      \\\"d0\\\",\\n      \\\"d1\\\",\\n      \\\"d2\\\",\\n      \\\"d3\\\",\\n      \\\"d4\\\",\\n      \\\"d5\\\",\\n      \\\"d6\\\",\\n      \\\"d7\\\"\\n    ],\\n    \\\"constraints\\\": [\\n      \\\"约束一\\\"\\n    ],\\n    \\\"next_steps\\\": [\\n      \\\"下一步\\\"\\n    ],\\n    \\\"blockers\\\": [\\n      \\\"阻塞\\\"\\n    ],\\n    \\\"timeline\\\": [\\n      \\\"时间线\\\"\\n    ],\\n    \\\"notes\\\": [\\n      \\\"备注\\\"\\n    ]\\n  },\\n  \\\"candidate_memory_preview\\\": \\\"## 候选预览 正文 😀\\\",\\n  \\\"focus_user_turn\\\": \\\"u2 请记住我是达达，一名工程师\\\",\\n  \\\"recent_user_messages\\\": [\\n    \\\"最近消息 3\\\",\\n    \\\"最近消息 4\\\",\\n    \\\"最近消息 5\\\",\\n    \\\"最近消息 6\\\"\\n  ],\\n  \\\"shortlist\\\": [\\n    {\\n      \\\"project_id\\\": \\\"p1\\\",\\n      \\\"project_name\\\": \\\"项目一\\\",\\n      \\\"description\\\": \\\"描述一\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"updated_at\\\": \\\"2026-01-02T03:04:05.678Z\\\",\\n      \\\"shortlist_score\\\": 0.9,\\n      \\\"shortlist_exact\\\": 1,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"匹配 文本\\\"\\n    },\\n    {\\n      \\\"project_id\\\": \\\"p2\\\",\\n      \\\"project_name\\\": \\\"项目二\\\",\\n      \\\"description\\\": \\\"描述二\\\",\\n      \\\"status\\\": \\\"archived\\\",\\n      \\\"updated_at\\\": \\\"2025-12-31T23:59:59.999Z\\\",\\n      \\\"shortlist_score\\\": 0.5,\\n      \\\"shortlist_exact\\\": 0,\\n      \\\"shortlist_source\\\": \\\"recent\\\",\\n      \\\"matched_text\\\": \\\"p2 匹配\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ],
+        "debug": [
+          {
+            "requestLabel": "File memory project assignment",
+            "systemPrompt": "You assign a newly generated long-term memory item to a General Chat project.\nThis is index-time memory assignment, not recall.\nReturn JSON only with decision, selected_project_id, and reason.\ndecision must be one of: attach_existing, create_new.\nThe primary evidence is candidate_memory_preview: the memory item that will be written.\nUse the focus user turn and recent user messages only as supporting context for disambiguation.\nChoose attach_existing only when the candidate clearly belongs to exactly one existing General project.\nChoose create_new when the candidate is a new project, evidence is insufficient, multiple projects remain plausible, or the match is only a broad domain similarity.\nDo not attach just because projects share a category such as SaaS, copywriting, Xiaohongshu, marketing, planning, or content creation.\nAll shortlist projects are General-local assignment targets; never infer or write to an external workspace.\nIf decision is attach_existing, selected_project_id must be one id from the shortlist.\nIf decision is create_new, selected_project_id must be an empty string.",
+            "userPrompt": "{\n  \"candidate\": {\n    \"type\": \"project\",\n    \"name\": \"候选 项目\",\n    \"description\": \"候选描述\",\n    \"rule\": \"回复用中文\",\n    \"summary\": \"摘要\",\n    \"why\": \"原因\",\n    \"how_to_apply\": \"应用\",\n    \"stage\": \"阶段\",\n    \"decisions\": [\n      \"决定一\",\n      \"决定二\",\n      \"d0\",\n      \"d1\",\n      \"d2\",\n      \"d3\",\n      \"d4\",\n      \"d5\",\n      \"d6\",\n      \"d7\"\n    ],\n    \"constraints\": [\n      \"约束一\"\n    ],\n    \"next_steps\": [\n      \"下一步\"\n    ],\n    \"blockers\": [\n      \"阻塞\"\n    ],\n    \"timeline\": [\n      \"时间线\"\n    ],\n    \"notes\": [\n      \"备注\"\n    ]\n  },\n  \"candidate_memory_preview\": \"## 候选预览 正文 😀\",\n  \"focus_user_turn\": \"u2 请记住我是达达，一名工程师\",\n  \"recent_user_messages\": [\n    \"最近消息 3\",\n    \"最近消息 4\",\n    \"最近消息 5\",\n    \"最近消息 6\"\n  ],\n  \"shortlist\": [\n    {\n      \"project_id\": \"p1\",\n      \"project_name\": \"项目一\",\n      \"description\": \"描述一\",\n      \"status\": \"active\",\n      \"updated_at\": \"2026-01-02T03:04:05.678Z\",\n      \"shortlist_score\": 0.9,\n      \"shortlist_exact\": 1,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"匹配 文本\"\n    },\n    {\n      \"project_id\": \"p2\",\n      \"project_name\": \"项目二\",\n      \"description\": \"描述二\",\n      \"status\": \"archived\",\n      \"updated_at\": \"2025-12-31T23:59:59.999Z\",\n      \"shortlist_score\": 0.5,\n      \"shortlist_exact\": 0,\n      \"shortlist_source\": \"recent\",\n      \"matched_text\": \"p2 匹配\"\n    }\n  ]\n}",
+            "rawResponse": "{\"decision\":\"create_new\",\"selected_project_id\":\"\",\"reason\":\"\\ud800\"}",
+            "parsedResult": {
+              "decision": "create_new",
+              "selected_project_id": "",
+              "reason": "\ud800"
+            }
+          }
+        ],
+        "warnings": [],
+        "calls": 1
+      }
+    },
+    {
+      "spec": {
+        "name": "select-candidate-name-number",
+        "kind": "select",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"decision\\\":\\\"attach_existing\\\",\\\"selected_project_id\\\":\\\"p1\\\",\\\"reason\\\":\\\"r\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "candidate": {
+          "type": "project",
+          "name": 5,
+          "description": "d"
+        },
+        "candidatePreview": "## 候选预览\n正文 😀",
+        "recentUserMessages": [
+          {
+            "role": "user",
+            "content": "最近消息 1"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 2"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 3"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 4"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 5"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 6"
+          }
+        ],
+        "shortlist": [
+          {
+            "projectId": "p1",
+            "projectName": "项目一",
+            "description": "描述一",
+            "status": "active",
+            "updatedAt": "2026-01-02T03:04:05.678Z",
+            "score": 0.9,
+            "exact": 1,
+            "source": "query",
+            "matchedText": "匹配 文本"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "项目二",
+            "description": "描述二",
+            "status": "archived",
+            "updatedAt": "2025-12-31T23:59:59.999Z",
+            "score": 0.5,
+            "exact": 0,
+            "source": "recent",
+            "matchedText": "p2 匹配"
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "decision": "create_new",
+            "reason": "Project assignment failed; creating a new General project is safer than forcing an existing project."
+          }
+        },
+        "requests": [],
+        "debug": [],
+        "warnings": [
+          "[clawxmemory] file memory project assignment fallback: TypeError: value.replace is not a function"
+        ],
+        "calls": 0
+      }
+    },
+    {
+      "spec": {
+        "name": "select-deep-shortlist",
+        "kind": "select",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"decision\\\":\\\"create_new\\\",\\\"selected_project_id\\\":\\\"\\\",\\\"reason\\\":\\\"r\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "candidate": {
+          "type": "project",
+          "name": "候选 项目",
+          "description": "候选描述",
+          "rule": "回复用中文",
+          "summary": "摘要",
+          "why": "原因",
+          "howToApply": "应用",
+          "stage": "阶段",
+          "decisions": [
+            "决定一",
+            "决定二",
+            "d0",
+            "d1",
+            "d2",
+            "d3",
+            "d4",
+            "d5",
+            "d6",
+            "d7",
+            "d8",
+            "d9",
+            "d10"
+          ],
+          "constraints": [
+            "约束一"
+          ],
+          "nextSteps": [
+            "下一步"
+          ],
+          "blockers": [
+            "阻塞"
+          ],
+          "timeline": [
+            "时间线"
+          ],
+          "notes": [
+            "备注"
+          ]
+        },
+        "candidatePreview": "## 候选预览\n正文 😀",
+        "recentUserMessages": [
+          {
+            "role": "user",
+            "content": "最近消息 1"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 2"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 3"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 4"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 5"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 6"
+          }
+        ],
+        "shortlist": [
+          {
+            "projectId": "p1",
+            "projectName": "项目一",
+            "description": "描述一",
+            "status": "active",
+            "updatedAt": "2026-01-02T03:04:05.678Z",
+            "score": 0.9,
+            "exact": 1,
+            "source": "query",
+            "matchedText": "匹配 文本"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "项目二",
+            "description": "描述二",
+            "status": "archived",
+            "updatedAt": "2025-12-31T23:59:59.999Z",
+            "score": 0.5,
+            "exact": 0,
+            "source": "recent",
+            "matchedText": "p2 匹配"
+          }
+        ],
+        "shortlistDeep": {
+          "field": "projectId",
+          "depth": 10000
+        }
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "decision": "create_new",
+            "reason": "Project assignment failed; creating a new General project is safer than forcing an existing project."
+          }
+        },
+        "requests": [],
+        "debug": [],
+        "warnings": [
+          "[clawxmemory] file memory project assignment fallback: RangeError: Maximum call stack size exceeded"
+        ],
+        "calls": 0
+      }
+    },
+    {
+      "spec": {
+        "name": "select-no-model",
+        "kind": "select",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"decision\\\":\\\"create_new\\\",\\\"selected_project_id\\\":\\\"\\\",\\\"reason\\\":\\\"r\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "candidate": {
+          "type": "project",
+          "name": "候选 项目",
+          "description": "候选描述",
+          "rule": "回复用中文",
+          "summary": "摘要",
+          "why": "原因",
+          "howToApply": "应用",
+          "stage": "阶段",
+          "decisions": [
+            "决定一",
+            "决定二",
+            "d0",
+            "d1",
+            "d2",
+            "d3",
+            "d4",
+            "d5",
+            "d6",
+            "d7",
+            "d8",
+            "d9",
+            "d10"
+          ],
+          "constraints": [
+            "约束一"
+          ],
+          "nextSteps": [
+            "下一步"
+          ],
+          "blockers": [
+            "阻塞"
+          ],
+          "timeline": [
+            "时间线"
+          ],
+          "notes": [
+            "备注"
+          ]
+        },
+        "candidatePreview": "## 候选预览\n正文 😀",
+        "recentUserMessages": [
+          {
+            "role": "user",
+            "content": "最近消息 1"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 2"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 3"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 4"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 5"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 6"
+          }
+        ],
+        "shortlist": [
+          {
+            "projectId": "p1",
+            "projectName": "项目一",
+            "description": "描述一",
+            "status": "active",
+            "updatedAt": "2026-01-02T03:04:05.678Z",
+            "score": 0.9,
+            "exact": 1,
+            "source": "query",
+            "matchedText": "匹配 文本"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "项目二",
+            "description": "描述二",
+            "status": "archived",
+            "updatedAt": "2025-12-31T23:59:59.999Z",
+            "score": 0.5,
+            "exact": 0,
+            "source": "recent",
+            "matchedText": "p2 匹配"
+          }
+        ],
+        "noModel": true
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "decision": "create_new",
+            "reason": "Project assignment failed; creating a new General project is safer than forcing an existing project."
+          }
+        },
+        "requests": [],
+        "debug": [
+          {
+            "requestLabel": "File memory project assignment",
+            "systemPrompt": "You assign a newly generated long-term memory item to a General Chat project.\nThis is index-time memory assignment, not recall.\nReturn JSON only with decision, selected_project_id, and reason.\ndecision must be one of: attach_existing, create_new.\nThe primary evidence is candidate_memory_preview: the memory item that will be written.\nUse the focus user turn and recent user messages only as supporting context for disambiguation.\nChoose attach_existing only when the candidate clearly belongs to exactly one existing General project.\nChoose create_new when the candidate is a new project, evidence is insufficient, multiple projects remain plausible, or the match is only a broad domain similarity.\nDo not attach just because projects share a category such as SaaS, copywriting, Xiaohongshu, marketing, planning, or content creation.\nAll shortlist projects are General-local assignment targets; never infer or write to an external workspace.\nIf decision is attach_existing, selected_project_id must be one id from the shortlist.\nIf decision is create_new, selected_project_id must be an empty string.",
+            "userPrompt": "{\n  \"candidate\": {\n    \"type\": \"project\",\n    \"name\": \"候选 项目\",\n    \"description\": \"候选描述\",\n    \"rule\": \"回复用中文\",\n    \"summary\": \"摘要\",\n    \"why\": \"原因\",\n    \"how_to_apply\": \"应用\",\n    \"stage\": \"阶段\",\n    \"decisions\": [\n      \"决定一\",\n      \"决定二\",\n      \"d0\",\n      \"d1\",\n      \"d2\",\n      \"d3\",\n      \"d4\",\n      \"d5\",\n      \"d6\",\n      \"d7\"\n    ],\n    \"constraints\": [\n      \"约束一\"\n    ],\n    \"next_steps\": [\n      \"下一步\"\n    ],\n    \"blockers\": [\n      \"阻塞\"\n    ],\n    \"timeline\": [\n      \"时间线\"\n    ],\n    \"notes\": [\n      \"备注\"\n    ]\n  },\n  \"candidate_memory_preview\": \"## 候选预览 正文 😀\",\n  \"focus_user_turn\": \"u2 请记住我是达达，一名工程师\",\n  \"recent_user_messages\": [\n    \"最近消息 3\",\n    \"最近消息 4\",\n    \"最近消息 5\",\n    \"最近消息 6\"\n  ],\n  \"shortlist\": [\n    {\n      \"project_id\": \"p1\",\n      \"project_name\": \"项目一\",\n      \"description\": \"描述一\",\n      \"status\": \"active\",\n      \"updated_at\": \"2026-01-02T03:04:05.678Z\",\n      \"shortlist_score\": 0.9,\n      \"shortlist_exact\": 1,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"匹配 文本\"\n    },\n    {\n      \"project_id\": \"p2\",\n      \"project_name\": \"项目二\",\n      \"description\": \"描述二\",\n      \"status\": \"archived\",\n      \"updated_at\": \"2025-12-31T23:59:59.999Z\",\n      \"shortlist_score\": 0.5,\n      \"shortlist_exact\": 0,\n      \"shortlist_source\": \"recent\",\n      \"matched_text\": \"p2 匹配\"\n    }\n  ]\n}",
+            "rawResponse": "",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "Could not resolve an OpenClaw model for memory extraction"
+          }
+        ],
+        "warnings": [
+          "[clawxmemory] file memory project assignment fallback: Error: Could not resolve an OpenClaw model for memory extraction"
+        ],
+        "calls": 0
+      }
+    },
+    {
+      "spec": {
+        "name": "select-candidate-decisions-number",
+        "kind": "select",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"decision\\\":\\\"attach_existing\\\",\\\"selected_project_id\\\":\\\"p1\\\",\\\"reason\\\":\\\"r\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "candidate": {
+          "type": "project",
+          "name": "n",
+          "description": "d",
+          "decisions": 5
+        },
+        "candidatePreview": "## 候选预览\n正文 😀",
+        "recentUserMessages": [
+          {
+            "role": "user",
+            "content": "最近消息 1"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 2"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 3"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 4"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 5"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 6"
+          }
+        ],
+        "shortlist": [
+          {
+            "projectId": "p1",
+            "projectName": "项目一",
+            "description": "描述一",
+            "status": "active",
+            "updatedAt": "2026-01-02T03:04:05.678Z",
+            "score": 0.9,
+            "exact": 1,
+            "source": "query",
+            "matchedText": "匹配 文本"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "项目二",
+            "description": "描述二",
+            "status": "archived",
+            "updatedAt": "2025-12-31T23:59:59.999Z",
+            "score": 0.5,
+            "exact": 0,
+            "source": "recent",
+            "matchedText": "p2 匹配"
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "decision": "create_new",
+            "reason": "Project assignment failed; creating a new General project is safer than forcing an existing project."
+          }
+        },
+        "requests": [],
+        "debug": [],
+        "warnings": [
+          "[clawxmemory] file memory project assignment fallback: TypeError: (input.candidate.decisions ?? []).slice is not a function"
+        ],
+        "calls": 0
+      }
+    },
+    {
+      "spec": {
+        "name": "select-candidate-constraints-string",
+        "kind": "select",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"decision\\\":\\\"attach_existing\\\",\\\"selected_project_id\\\":\\\"p1\\\",\\\"reason\\\":\\\"r\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "candidate": {
+          "type": "project",
+          "name": "n",
+          "description": "d",
+          "constraints": "字符串值"
+        },
+        "candidatePreview": "## 候选预览\n正文 😀",
+        "recentUserMessages": [
+          {
+            "role": "user",
+            "content": "最近消息 1"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 2"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 3"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 4"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 5"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 6"
+          }
+        ],
+        "shortlist": [
+          {
+            "projectId": "p1",
+            "projectName": "项目一",
+            "description": "描述一",
+            "status": "active",
+            "updatedAt": "2026-01-02T03:04:05.678Z",
+            "score": 0.9,
+            "exact": 1,
+            "source": "query",
+            "matchedText": "匹配 文本"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "项目二",
+            "description": "描述二",
+            "status": "archived",
+            "updatedAt": "2025-12-31T23:59:59.999Z",
+            "score": 0.5,
+            "exact": 0,
+            "source": "recent",
+            "matchedText": "p2 匹配"
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "decision": "create_new",
+            "reason": "Project assignment failed; creating a new General project is safer than forcing an existing project."
+          }
+        },
+        "requests": [],
+        "debug": [],
+        "warnings": [
+          "[clawxmemory] file memory project assignment fallback: TypeError: (input.candidate.constraints ?? []).slice(...).map is not a function"
+        ],
+        "calls": 0
+      }
+    },
+    {
+      "spec": {
+        "name": "select-candidate-notes-object",
+        "kind": "select",
+        "api": "responses",
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"output_text\":\"{\\\"decision\\\":\\\"attach_existing\\\",\\\"selected_project_id\\\":\\\"p1\\\",\\\"reason\\\":\\\"r\\\"}\"}"
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": "u1 我在做 Rust 移植"
+          },
+          {
+            "role": "assistant",
+            "content": "a1 好的"
+          },
+          {
+            "role": "user",
+            "content": "u2 请记住我是达达，一名工程师"
+          },
+          {
+            "role": "assistant",
+            "content": "a2 已记住"
+          },
+          {
+            "role": "user",
+            "content": "u3 另外回复请用中文"
+          },
+          {
+            "role": "assistant",
+            "content": "a3 好的"
+          },
+          {
+            "role": "user",
+            "content": "u4 明天继续"
+          },
+          {
+            "role": "assistant",
+            "content": "a4 行"
+          },
+          {
+            "role": "user",
+            "content": "u5 下班了"
+          },
+          {
+            "role": "assistant",
+            "content": "a5 拜"
+          }
+        ],
+        "focus": {
+          "ref": 2
+        },
+        "candidate": {
+          "type": "project",
+          "name": "n",
+          "description": "d",
+          "notes": {}
+        },
+        "candidatePreview": "## 候选预览\n正文 😀",
+        "recentUserMessages": [
+          {
+            "role": "user",
+            "content": "最近消息 1"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 2"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 3"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 4"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 5"
+          },
+          {
+            "role": "user",
+            "content": "最近消息 6"
+          }
+        ],
+        "shortlist": [
+          {
+            "projectId": "p1",
+            "projectName": "项目一",
+            "description": "描述一",
+            "status": "active",
+            "updatedAt": "2026-01-02T03:04:05.678Z",
+            "score": 0.9,
+            "exact": 1,
+            "source": "query",
+            "matchedText": "匹配 文本"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "项目二",
+            "description": "描述二",
+            "status": "archived",
+            "updatedAt": "2025-12-31T23:59:59.999Z",
+            "score": 0.5,
+            "exact": 0,
+            "source": "recent",
+            "matchedText": "p2 匹配"
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "ok": {
+            "decision": "create_new",
+            "reason": "Project assignment failed; creating a new General project is safer than forcing an existing project."
+          }
+        },
+        "requests": [],
+        "debug": [],
+        "warnings": [
+          "[clawxmemory] file memory project assignment fallback: TypeError: (input.candidate.notes ?? []).slice is not a function"
+        ],
+        "calls": 0
       }
     }
   ]

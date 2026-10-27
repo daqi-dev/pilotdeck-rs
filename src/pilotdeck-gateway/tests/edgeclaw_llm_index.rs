@@ -13,7 +13,7 @@ use pilotdeck_gateway::runtime::{
                 ClassifyTurnInput, IndexError, MemoryClassificationLabel, MemoryCreateKind,
                 MemoryNoteInput, SelectIndexProjectInput,
             },
-            transport::LlmMemoryExtractor,
+            transport::{LlmLogger, LlmMemoryExtractor},
         },
         messages::{MemoryMessage, MemoryRole},
     },
@@ -22,7 +22,7 @@ use pilotdeck_gateway::runtime::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use serde_json::{Value, json};
 use std::{
-    sync::{Arc, atomic::AtomicU64},
+    sync::{Arc, Mutex, atomic::AtomicU64},
     time::Duration,
 };
 
@@ -74,6 +74,11 @@ fn equal(actual: &JsValue, expected: &JsValue, origin: &str, name: &str) {
 }
 
 fn config(spec: &Value, origin: &str) -> JsValue {
+    if spec.get("noModel").is_some() {
+        // The review probe's empty config: model resolution fails before any
+        // request, so the fallback warning carries the resolution error.
+        return js(json!({}));
+    }
     js(json!({
         "agents": {"defaults": {"model": {"primary": "p/m"}}},
         "models": {"providers": {"p": {
@@ -135,6 +140,7 @@ fn outcome(result: Result<JsValue, &IndexError>) -> JsValue {
                 JsValue::String(
                     match error {
                         IndexError::Type(_) => "TypeError",
+                        IndexError::Range => "RangeError",
                         _ => "Error",
                     }
                     .into(),
@@ -143,6 +149,30 @@ fn outcome(result: Result<JsValue, &IndexError>) -> JsValue {
         }
     }
     JsValue::Object(out)
+}
+
+/// The TS constructor's optional `logger`; every fallback warning lands here.
+#[derive(Default)]
+struct RecordingLogger(Mutex<Vec<JsString>>);
+impl LlmLogger for RecordingLogger {
+    fn warn(&self, message: &JsString) {
+        self.0
+            .lock()
+            .expect("#768 logger lock")
+            .push(message.clone());
+    }
+}
+
+/// The `{field, depth}` spec marker: both sides build the deep value in code
+/// because neither V8's JSON.stringify nor serde_json can record/replay it.
+fn deep_value(field: &str, depth: u64) -> JsValue {
+    let mut value = JsValue::Object(JsObject::new());
+    for _ in 0..depth {
+        let mut wrap = JsObject::new();
+        wrap.insert(field.into(), value);
+        value = JsValue::Object(wrap);
+    }
+    value
 }
 
 async fn run_case(
@@ -163,7 +193,18 @@ async fn run_case(
         Some(index) => &batch[index as usize],
         None => standalone.as_ref().expect("focus message"),
     };
-    let meta = spec.get("meta").map(|meta| js(meta.clone()));
+    let meta = spec.get("meta").map(|meta| js(meta.clone())).or_else(|| {
+        spec.get("metaDeep").map(|deep| {
+            let field = deep["field"].as_str().expect("#768 metaDeep field");
+            let mut record = JsObject::new();
+            record.insert("description".into(), JsValue::String("d".into()));
+            record.insert(
+                field.into(),
+                deep_value(field, deep["depth"].as_u64().unwrap()),
+            );
+            JsValue::Object(record)
+        })
+    });
     match spec["kind"].as_str().unwrap() {
         "classify" => {
             let input = ClassifyTurnInput {
@@ -221,12 +262,24 @@ async fn run_case(
         }
         "select" => {
             let candidate = js(spec["candidate"].clone());
-            let shortlist: Vec<JsValue> = spec["shortlist"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|project| js(project.clone()))
-                .collect();
+            let shortlist: Vec<JsValue> = if let Some(deep) = spec.get("shortlistDeep") {
+                let field = deep["field"].as_str().expect("#768 shortlistDeep field");
+                let mut record = JsObject::new();
+                record.insert("description".into(), JsValue::String("d".into()));
+                record.insert("matchedText".into(), JsValue::String("m".into()));
+                record.insert(
+                    field.into(),
+                    deep_value(field, deep["depth"].as_u64().unwrap()),
+                );
+                vec![JsValue::Object(record)]
+            } else {
+                spec["shortlist"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|project| js(project.clone()))
+                    .collect()
+            };
             let recent: Option<Vec<MemoryMessage>> = spec
                 .get("recentUserMessages")
                 .map(|list| list.as_array().unwrap().iter().map(message).collect());
@@ -284,14 +337,19 @@ async fn oracle_matrix() {
             clock,
         )
         .await;
+        let recorder = Arc::new(RecordingLogger::default());
         let extractor = LlmMemoryExtractor::new(
             config(&spec, &server.origin),
             Arc::new(HyperModelTransport::new()),
             Arc::new(()),
-        );
+        )
+        .with_logger(recorder.clone());
         let mut debug = Vec::new();
+        // 30s, not 5s: a mutant that drops the depth gate replays a ~200MB
+        // deep prompt through the stub at opt-level 0 (~5s alone), and its
+        // kill must be the named result assertion — never a watchdog Elapsed.
         let actual = tokio::time::timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(30),
             run_case(&spec, &extractor, &mut debug),
         )
         .await
@@ -317,6 +375,19 @@ async fn oracle_matrix() {
             &server.origin,
             &format!("debug {name}"),
         );
+        let warnings: Vec<JsValue> = recorder
+            .0
+            .lock()
+            .expect("#768 warnings lock")
+            .iter()
+            .map(|warning| JsValue::String(warning.clone()))
+            .collect();
+        equal(
+            &JsValue::Array(warnings),
+            expected.get("warnings").unwrap(),
+            &server.origin,
+            &format!("warnings {name}"),
+        );
         let expected_calls = match expected.get("calls") {
             Some(JsValue::Number(calls)) => *calls as usize,
             _ => panic!("calls {name}"),
@@ -336,7 +407,7 @@ async fn oracle_matrix() {
         }
         count += 1;
     }
-    assert_eq!(count, 73, "every oracle case replays");
+    assert_eq!(count, 93, "every oracle case replays");
 }
 
 #[test]

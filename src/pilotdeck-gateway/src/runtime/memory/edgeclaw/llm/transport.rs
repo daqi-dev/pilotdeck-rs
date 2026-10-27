@@ -62,6 +62,19 @@ impl LlmError {
     pub(crate) fn timeout(&self) -> bool {
         self.name == "AbortError" || text(&self.message).to_lowercase().contains("timeout")
     }
+    /// `String(error)` for an `Error` instance: `name: message`, or just one of
+    /// them when the other is empty (`Error.prototype.toString`).
+    pub fn js_string(&self) -> JsString {
+        let mut units: Vec<u16> = self.name.encode_utf16().collect();
+        if self.message.is_empty() {
+            return JsString::from_utf16(units);
+        }
+        if !units.is_empty() {
+            units.extend_from_slice(&[u16::from(b':'), u16::from(b' ')]);
+        }
+        units.extend_from_slice(self.message.units());
+        JsString::from_utf16(units)
+    }
 }
 impl std::fmt::Display for LlmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -92,6 +105,16 @@ pub trait LlmRuntime: Send + Sync {
 }
 impl LlmRuntime for () {}
 
+/// The optional `logger?.warn?.(...)` seam from the fixed TS baseline.
+/// Nothing is emitted unless a caller installs a logger, so the default remains
+/// silent exactly like `logger === undefined`.
+pub trait LlmLogger: Send + Sync {
+    fn warn(&self, message: &JsString);
+}
+impl LlmLogger for () {
+    fn warn(&self, _message: &JsString) {}
+}
+
 #[derive(Clone, Debug)]
 pub struct StructuredInput {
     pub system_prompt: JsString,
@@ -105,6 +128,7 @@ pub struct LlmMemoryExtractor {
     config: JsValue,
     transport: Arc<dyn ModelHttpTransport>,
     runtime: Arc<dyn LlmRuntime>,
+    logger: Option<Arc<dyn LlmLogger>>,
     transport_timeout: Duration,
 }
 impl LlmMemoryExtractor {
@@ -117,7 +141,18 @@ impl LlmMemoryExtractor {
             config,
             transport,
             runtime,
+            logger: None,
             transport_timeout: Duration::from_secs(300),
+        }
+    }
+    /// TS constructor's third argument; absent means no warning output.
+    pub fn with_logger(mut self, logger: Arc<dyn LlmLogger>) -> Self {
+        self.logger = Some(logger);
+        self
+    }
+    pub(crate) fn warn(&self, message: JsString) {
+        if let Some(logger) = &self.logger {
+            logger.warn(&message);
         }
     }
     /// Match the host dispatcher: Node defaults to 300 s; the CLI installs 600 s.
