@@ -72,7 +72,7 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
         mutation('tool-threshold-plus-one', guard, '*failures < limit', '*failures < limit + 1.0',
             marker=guard_trip_marker(accumulate, 4)),
         mutation('tool-threshold-minus-one', guard, '*failures < limit', '*failures < limit - 1.0',
-            marker=guard_trip_marker(accumulate, 4)),
+            marker=guard_trip_marker(accumulate, 2)),
         mutation('model-threshold-plus-one', guard, 'self.model_failures < limit',
             'self.model_failures < limit + 1.0', marker=guard_trip_marker(model_window, 3)),
         mutation('model-threshold-minus-one', guard, 'self.model_failures < limit',
