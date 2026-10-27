@@ -1,6 +1,7 @@
 """Run every selected control without treating harness failures as kills."""
 from dataclasses import dataclass
 import json
+import re
 import subprocess
 
 from negative_process import mutating_sources, run_owned, wait_for_slot
@@ -17,16 +18,33 @@ class Case:
     scope: object = None
 
 
-def failed_tests(log, prefix):
-    """Failed names from libtest's authoritative ``failures:`` list.
+def failed_tests(stdout, prefix):
+    """Failed names from the outer libtest ``failures:`` list only.
 
     With ``--nocapture`` (or parallel workers) a test's own output can land
     between the test name and its verdict, so ``... FAILED`` must not be
     required to stay adjacent to the name (#879). The indented list after the
-    run is the one spelling libtest guarantees.
+    run is the one spelling libtest guarantees. Only the outer run's final
+    list counts (#889): a bounded worker runs its own libtest, and its
+    ``failures:`` list only ever surfaces embedded in a parent panic message
+    on stderr, just like a panic echoing indented cell names, so both are
+    excluded by reading stdout's last ``failures:`` section - which libtest
+    prints after every test's own output.
     """
-    return {line.strip() for line in log.splitlines()
-            if line.startswith(f'    {prefix}')}
+    lines = stdout.splitlines()
+    headers = [i for i, line in enumerate(lines) if line == 'failures:']
+    if not headers:
+        return set()
+    names = set()
+    for line in lines[headers[-1] + 1:]:
+        if not line.startswith('    '):
+            if line:
+                break  # the summary line ends the outer failures list
+            continue
+        name = line.strip()
+        if name.startswith(prefix):
+            names.add(name)
+    return names
 
 
 def case_name(test):
@@ -34,20 +52,77 @@ def case_name(test):
     return test.removesuffix('_cwd').replace('_', '-')
 
 
-def cell_hits(log, prefix, tests, marker, case_name):
-    """Split declared cells into dedicated-marker kills and unrelated panics.
+def panic_blocks(stderr, prefix, test, worker):
+    """A parent test's own panic blocks; the embedded worker's stays inside.
 
-    A declared cell counts as hit only when the ``failures:`` list names it and
-    the log carries its dedicated ``<marker> <case>`` message; a declared cell
-    failing without that message is unrelated, never a kill.
+    With ``--nocapture`` panics go to stderr and a parent's message embeds
+    its bounded worker's whole captured output, so the worker's own panic
+    line must not end the parent's block. A block runs from the test's
+    ``thread '<name>' panicked at`` line up to the next panic of any other
+    thread, or the end of stderr.
     """
-    failed = failed_tests(log, prefix)
+    name = re.escape(prefix + test)
+    embedded = re.escape(prefix + worker)
+    pattern = (rf"thread '{name}'(?: \(\d+\))? panicked at.*?"
+               rf"(?=\nthread '(?!{embedded}')[^']+'(?: \(\d+\))? panicked at|\Z)")
+    return re.findall(pattern, stderr, re.S)
+
+
+def target_hits(result, prefix, targets, worker):
+    """Split declared ``(test, dedicated message)`` targets into hits/unrelated.
+
+    A target counts as hit only when the outer ``failures:`` list names it and
+    every one of its own panic blocks carries its dedicated message; a
+    declared failure without that message in its own block is unrelated,
+    never a kill. A real run has exactly one block per test, so the
+    every-block requirement stays fail-closed when a foreign panic echoes
+    this test's panic-start line (#889).
+    """
+    if not targets:
+        raise ValueError('at least one declared target is required')
+    failed = failed_tests(result.stdout, prefix)
     hit, unrelated = [], []
-    for test in tests:
+    for test, message in targets:
         if f'{prefix}{test}' not in failed:
             continue
-        (hit if f'{marker} {case_name(test)}' in log else unrelated).append(test)
+        blocks = panic_blocks(result.stderr, prefix, test, worker)
+        (hit if blocks and all(message in block for block in blocks)
+         else unrelated).append(test)
     return hit, unrelated
+
+
+def cell_hits(result, prefix, tests, marker, worker, case_name=case_name):
+    """Matrix cells compose their dedicated message from marker and case id."""
+    return target_hits(result, prefix,
+                       [(test, f'{marker} {case_name(test)}') for test in tests],
+                       worker)
+
+
+def judge(result, prefix, tests, marker, worker, *, any_cell=False):
+    """Classify a matrix negative run: ``(killed, reason, hits)``.
+
+    ``any_cell`` keeps the #879b ``absolute-guard`` semantics: one declared
+    cell red with its dedicated message is a kill even when a sibling cell is
+    structurally unreachable for that mutation.
+    """
+    log = result.stdout + result.stderr
+    if result.returncode == 0:
+        return False, 'assertion did not fail', []
+    if 'error[' in log or 'could not compile' in log:
+        return False, 'compile failure', []
+    if result.returncode != 101 or 'panicked at' not in log:
+        return False, 'missing named runtime failure (build error, wrong panic, or missing test)', []
+    hit, unrelated = cell_hits(result, prefix, tests, marker, worker)
+    if unrelated:
+        return False, f'declared cells failed without the dedicated marker: {unrelated}', hit
+    missed = [test for test in tests if test not in hit]
+    if any_cell:
+        if hit:
+            return True, 'a declared cell failed at its dedicated assertion', hit
+        return False, f'no declared cell was red with the marker: {missed}', hit
+    if len(hit) == len(tests):
+        return True, 'declared cells failed at their dedicated assertions', hit
+    return False, f'declared cells stayed green: {missed}', hit
 
 
 def passed(result, test):

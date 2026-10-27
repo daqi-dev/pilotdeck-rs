@@ -8,16 +8,17 @@ import difflib
 import json
 import os
 from pathlib import Path
-import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import target_hits
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/context/tool_budget.rs'
 FIXTURE = Path(__file__).resolve().parent
 PREFIX = 'runtime::context::tool_budget::cwd_tests::'
+WORKER = 'environment_worker'  # regression.rs's bounded case worker thread
 CWD = '''let cwd = std::env::current_dir().map_err(|error| {
                 ToolBudgetError::new(
                     crate::node_io::diagnostic_or_unknown(&error, "uv_cwd", None).1,
@@ -89,19 +90,15 @@ def passed(result, log):
 def classify(result, log, targets):
     if passed(result, log):
         return 'SURVIVED', 'all matrix tests still passed'
-    # A target's own captured panic block must contain its dedicated message;
-    # a marker printed by a different failed test never counts as a kill.
-    expected_failures = []
-    for test, marker in targets:
-        full = PREFIX + test
-        block = re.search(r"thread '" + re.escape(full)
-                          + r"'(?: \(\d+\))? panicked at.*?(?=\nthread '" + re.escape(PREFIX)
-                          + r"(?!environment_worker')[^']+'(?: \(\d+\))? panicked at|\Z)",
-                          result.stderr, re.S)
-        expected_failures.append(
-            f'{full} ... FAILED' in log and block is not None and marker in block.group())
+    # The shared judgment binds every target to its own evidence: the outer
+    # libtest failures list names it and its own panic block (which embeds
+    # the bounded worker's output) carries its dedicated message. Neither an
+    # adjacent `... FAILED` spelling nor a marker in another test's panic or
+    # echo ever counts (#889).
+    hit, unrelated = target_hits(result, PREFIX, targets, WORKER)
     if (result.returncode == 101 and 'test result: FAILED.' in log
-            and 'error: could not compile' not in log and all(expected_failures)):
+            and 'error: could not compile' not in log
+            and not unrelated and len(hit) == len(targets)):
         return 'KILLED', 'named runtime assertions failed'
     return 'INVALID', 'missing named runtime failure; compile/setup/timeout is not a kill'
 
@@ -129,6 +126,9 @@ def main():
         raise SystemExit('usage: negative_controls.py <new-output-directory> [mutation ...]')
     out = Path(sys.argv[1]).resolve()
     out.mkdir(parents=True, exist_ok=False)
+    # The default is HEAD; NEGATIVE_BASELINE only lets a pre-submit sample
+    # point at a temporary commit-tree object without moving HEAD.
+    baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
     paths = [SOURCE, FIXTURE / 'regression.rs', FIXTURE / 'oracle.json',
              FIXTURE / 'generate.mts', Path(__file__).resolve()]
     results = []
@@ -137,7 +137,7 @@ def main():
         status, reason, restored = 'INVALID', 'not run', False
         try:
             check_anchor(mutation)
-            with mutating_sources(ROOT, paths) as originals:
+            with mutating_sources(ROOT, paths, baseline=baseline) as originals:
                 original = originals[source].decode()
                 if original.count(old) != 1:
                     raise RuntimeError('stale anchor after locking')
@@ -151,7 +151,7 @@ def main():
                 source.write_text(changed)
                 negative, log = run(out, f'{name}-negative', env)
                 status, reason = classify(negative, log, targets)
-            with mutating_sources(ROOT, paths):
+            with mutating_sources(ROOT, paths, baseline=baseline):
                 result, log = run(out, f'{name}-restored', env)
                 restored = passed(result, log)
             if not restored:

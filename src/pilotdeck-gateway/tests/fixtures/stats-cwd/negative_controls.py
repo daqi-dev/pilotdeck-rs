@@ -15,13 +15,14 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import case_name, cell_hits
+from negative_suite import judge
 
 ROOT = Path(__file__).resolve().parents[5]
 STATS = ROOT / 'src/pilotdeck-gateway/src/runtime/model/stats.rs'
 ROUTER = ROOT / 'src/pilotdeck-gateway/src/runtime/model/router.rs'
 FIXTURE = Path(__file__).resolve().parent
 PREFIX = 'runtime::model::stats::cwd_tests::'
+WORKER = 'environment_worker'  # regression.rs's bounded case worker thread
 COLLECTOR = '#879 stats cwd collector matrix:'
 RUNTIME = '#879 stats cwd runtime matrix:'
 CWD = '''    let cwd = std::env::current_dir().map_err(|error| {
@@ -138,31 +139,6 @@ def passed(result, log):
             and log.count('PDRS_VERIFIED_CHILD ') == 44)
 
 
-def failure_reason(result, log, name, tests, marker):
-    if result.returncode == 0:
-        return 'assertion did not fail'
-    if 'error[' in log or 'could not compile' in log:
-        return 'compile failure'
-    hit, unrelated = cell_hits(log, PREFIX, tests, marker, case_name)
-    if unrelated:
-        return f'declared cells failed without the dedicated marker: {unrelated}'
-    missed = [test for test in tests if test not in hit]
-    if name in ANY_CELL:
-        return f'no declared cell was red with the marker: {missed}'
-    return f'declared cells stayed green: {missed}'
-
-
-def killed(result, log, name, tests, marker):
-    if result.returncode != 101 or 'panicked at' not in log:
-        return False
-    if 'error[' in log or 'could not compile' in log:
-        return False
-    hit, unrelated = cell_hits(log, PREFIX, tests, marker, case_name)
-    if unrelated:
-        return False
-    return len(hit) == len(tests) if name not in ANY_CELL else bool(hit)
-
-
 def record(results, name, status, reason):
     results.append({'name': name, 'status': status, 'reason': reason})
     print(f'{name}: {status} ({reason})', flush=True)
@@ -209,11 +185,11 @@ def main():
                 if negative.returncode == 0:
                     record(results, name, 'SURVIVED', f'assertion did not fail on {tests}')
                     continue
-                if not killed(negative, log, name, tests, marker):
-                    reason = failure_reason(negative, log, name, tests, marker)
+                killed_ok, reason, hits = judge(negative, PREFIX, tests, marker, WORKER,
+                                                any_cell=name in ANY_CELL)
+                if not killed_ok:
                     record(results, name, 'INVALID', f'{reason}; expected RED on {tests}')
                     continue
-                hits, _ = cell_hits(log, PREFIX, tests, marker, case_name)
             with mutating_sources(ROOT, paths, baseline=baseline):
                 restored, log = run(out, f'{name}-restored', env)
                 if not passed(restored, log):

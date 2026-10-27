@@ -13,6 +13,11 @@ import negative_suite as suite
 
 TEST = 'runtime::fixture::bound_test'
 ANCHOR = 'bound assertion message'
+PREFIX = 'runtime::fixture::'
+WORKER = 'environment_worker'
+CELLS = ['relative_deleted_cwd', 'tilde_deleted_cwd', 'empty_deleted_cwd']
+FOREIGN = 'tilde_normal_cwd'
+MARKER = 'matrix message'
 
 
 def output(kind):
@@ -24,6 +29,57 @@ def output(kind):
             f'test {TEST} ... FAILED\ntest result: FAILED\n',
             f'panicked at fixture.rs:1: {ANCHOR}\n')
     raise ValueError(kind)
+
+
+def libtest_stdout(failed, interleave=False, doubled_header=True, extra_stdout=''):
+    """Synthesize the outer libtest pretty run; a receipt can split a verdict."""
+    lines = [f'running {len(CELLS)} tests']
+    for test in CELLS:
+        verdict = 'FAILED' if test in failed else 'ok'
+        if interleave:
+            lines.append(f'test {PREFIX}{test} ... PDRS_VERIFIED_CHILD {suite.case_name(test)}')
+            lines.append(verdict)
+        else:
+            lines.append(f'test {PREFIX}{test} ... {verdict}')
+    if failed:
+        # Current libtest prints the header twice; older toolchains once.
+        lines += ['', 'failures:'] + (['', 'failures:'] if doubled_header else [''])
+        lines += [f'    {PREFIX}{test}' for test in CELLS if test in failed]
+    lines += ['', f'test result: {"FAILED" if failed else "ok"}. '
+               f'{len(CELLS) - len(failed)} passed; {len(failed)} failed; 2 ignored;']
+    return '\n'.join(lines) + '\n' + extra_stdout
+
+
+def panic_text(test, message, thread_id=True):
+    line = f"thread '{PREFIX}{test}'" + (" (35084990)" if thread_id else '')
+    return (f'{line} panicked at fixture.rs:9:5:\n{message}\n'
+            'note: run with `RUST_BACKTRACE=1` for a backtrace\n')
+
+
+def worker_panic(case, marker=MARKER):
+    """The bounded worker's own panic, embedded in its parent's message."""
+    return (f"thread '{PREFIX}{WORKER}' (35085019) panicked at fixture.rs:83:5:\n"
+            f'assertion `left == right` failed: {marker} {case}\n'
+            'note: run with `RUST_BACKTRACE=1` for a backtrace\n')
+
+
+def parent_failure(test, marker=MARKER):
+    """A real kill shape: the parent's message embeds the worker's whole output.
+
+    Mirrors the host log (test_process.rs:32 panic embedding the worker's
+    libtest run, its nested ``failures:`` list and its own panic).
+    """
+    case = suite.case_name(test)
+    message = (f'{PREFIX}{WORKER}/{case}: expected one passed test and receipt '
+               f'{case}: exit status: 101\n\nrunning 1 test\n'
+               f'test {PREFIX}{WORKER} ... FAILED\n\nfailures:\n\nfailures:\n'
+               f'    {PREFIX}{WORKER}\n\ntest result: FAILED. 0 passed; 1 failed; '
+               f'0 ignored;\n\n{worker_panic(case, marker)}')
+    return panic_text(test, message)
+
+
+def run_result(stdout, stderr, code=101):
+    return subprocess.CompletedProcess([], code, stdout, stderr)
 
 
 class FailureListTests(unittest.TestCase):
@@ -41,31 +97,155 @@ class FailureListTests(unittest.TestCase):
         self.assertNotIn(f'test {cell} ... FAILED', log,
                          'sample must genuinely break the old adjacency')
 
+    def test_failures_list_uses_the_last_header(self):
+        # The current toolchain prints the header twice; the names follow the
+        # last one, and the outer summary line ends the list.
+        stdout = libtest_stdout(CELLS[:1])
+        self.assertEqual(suite.failed_tests(stdout, PREFIX), {PREFIX + CELLS[0]})
+        single = libtest_stdout(CELLS[:1], doubled_header=False)
+        self.assertEqual(suite.failed_tests(single, PREFIX), {PREFIX + CELLS[0]})
+        self.assertEqual(suite.failed_tests(libtest_stdout([]), PREFIX), set())
+
     def test_case_name_dashes_cwd_cells(self):
         self.assertEqual(suite.case_name('relative_deleted_cwd'), 'relative-deleted')
         self.assertEqual(suite.case_name('missing_home_normal_cwd'), 'missing-home-normal')
 
     def test_cell_hits_split_marker_and_foreign_failures(self):
-        marker = 'matrix message'
-        cell, foreign = 'relative_deleted_cwd', 'tilde_deleted_cwd'
-        listed = '\nfailures:\n    runtime::fixture::relative_deleted_cwd\n'
-        # A declared failure with its dedicated message is the only hit.
-        self.assertEqual(
-            suite.cell_hits(listed + f'{marker} {suite.case_name(cell)}\n',
-                            'runtime::fixture::', [cell], marker, suite.case_name),
-            ([cell], []))
+        cell = CELLS[0]
+        # A declared failure whose own panic block carries the dedicated
+        # message is the only hit.
+        result = run_result(libtest_stdout([cell]), panic_text(cell, f'{MARKER} relative-deleted'))
+        self.assertEqual(suite.cell_hits(result, PREFIX, [cell], MARKER, WORKER), ([cell], []))
         # A declared failure without that message is unrelated, never a kill.
-        self.assertEqual(
-            suite.cell_hits(listed, 'runtime::fixture::', [cell], marker, suite.case_name),
-            ([], [cell]))
+        result = run_result(libtest_stdout([cell]), panic_text(cell, 'unrelated panic'))
+        self.assertEqual(suite.cell_hits(result, PREFIX, [cell], MARKER, WORKER), ([], [cell]))
         # A foreign failure quoting the declared message, plus the adjacent
         # `... FAILED` spelling as an echo, is still not a hit.
-        coincidence = ('\nfailures:\n    runtime::fixture::tilde_deleted_cwd\n'
-                       f'test runtime::fixture::{cell} ... FAILED\n'
-                       f'{marker} {suite.case_name(cell)}\n')
-        self.assertEqual(
-            suite.cell_hits(coincidence, 'runtime::fixture::', [cell], marker, suite.case_name),
-            ([], []))
+        echo = (f'test {PREFIX}{cell} ... FAILED\n{MARKER} {suite.case_name(cell)}\n')
+        result = run_result(libtest_stdout([FOREIGN], extra_stdout=''.join(
+            f'echo: test {PREFIX}{test} ... FAILED\n' for test in CELLS[:1])),
+            panic_text(FOREIGN, echo))
+        log = result.stdout + result.stderr
+        self.assertIn(f'{PREFIX}{cell} ... FAILED', log)
+        self.assertIn(f'{MARKER} {suite.case_name(cell)}', log)
+        self.assertEqual(suite.cell_hits(result, PREFIX, [cell], MARKER, WORKER), ([], []))
+
+    def test_interleaved_receipt_and_embedded_worker_panic_kills(self):
+        # The real kill shape: receipts split the verdict spelling, and the
+        # dedicated message arrives inside the worker's panic, which is
+        # itself embedded in the parent's panic message.
+        declared = CELLS[:2]
+        stdout = libtest_stdout(declared, interleave=True)
+        stderr = ''.join(parent_failure(test) for test in declared)
+        result = run_result(stdout, stderr)
+        log = stdout + stderr
+        for test in declared:
+            self.assertNotIn(f'{PREFIX}{test} ... FAILED', log,
+                             'sample must genuinely break the old adjacency')
+            self.assertNotIn(f'{MARKER} {suite.case_name(test)}', stdout,
+                            'the dedicated message only exists on stderr')
+        killed, reason, hits = suite.judge(result, PREFIX, declared, MARKER, WORKER)
+        self.assertTrue(killed, reason)
+        self.assertEqual(hits, declared)
+
+    def test_foreign_panic_echoing_declared_cells_is_not_a_kill(self):
+        # Composite scenario #889 A: every declared cell passes and only a
+        # foreign test fails, but its multi-line panic echoes the declared
+        # cells' indented failures-list names and their dedicated messages.
+        declared = CELLS[:2]
+        echo = '\n'.join(f'    {PREFIX}{test}\n{MARKER} {suite.case_name(test)}'
+                         for test in declared)
+        result = run_result(libtest_stdout([FOREIGN]), panic_text(FOREIGN, echo))
+        log = result.stdout + result.stderr
+        for test in declared:
+            self.assertIn(f'    {PREFIX}{test}', log,
+                          'sample must genuinely echo the indented cell name')
+            self.assertIn(f'{MARKER} {suite.case_name(test)}', log,
+                          'sample must genuinely echo the dedicated message')
+        self.assertEqual(suite.cell_hits(result, PREFIX, declared, MARKER, WORKER), ([], []))
+        killed, reason, _ = suite.judge(result, PREFIX, declared, MARKER, WORKER)
+        self.assertFalse(killed, 'an echo inside a foreign panic is not a kill')
+        self.assertIn('stayed green', reason)
+
+    def test_declared_setup_failure_with_foreign_markers_is_not_a_kill(self):
+        # Composite scenario #889 B: the declared cells are in the outer
+        # failures list, but only because their setup failed; every dedicated
+        # message comes from another test's panic.
+        declared = CELLS[:2]
+        setup = ''.join(panic_text(test, 'setup failed: Permission denied')
+                        for test in declared)
+        stray = panic_text(FOREIGN, '; '.join(
+            f'{MARKER} {suite.case_name(test)}' for test in declared))
+        result = run_result(libtest_stdout([*declared, FOREIGN]), setup + stray)
+        log = result.stdout + result.stderr
+        for test in declared:
+            self.assertIn(f'{MARKER} {suite.case_name(test)}', log,
+                          'sample must carry the dedicated message somewhere')
+        self.assertEqual(suite.cell_hits(result, PREFIX, declared, MARKER, WORKER),
+                         ([], declared))
+        killed, reason, _ = suite.judge(result, PREFIX, declared, MARKER, WORKER)
+        self.assertFalse(killed, 'a marker outside the cell\'s own panic is not a kill')
+        self.assertIn('without the dedicated marker', reason)
+
+    def test_nested_worker_failures_list_never_counts_as_outer(self):
+        # A declared cell's own block embeds the worker's whole libtest run,
+        # including the worker's own ``failures:`` list. The kill must stand
+        # on the outer list alone, and the worker's name must not leak in.
+        declared = CELLS[:2]
+        stdout = libtest_stdout(declared)
+        stderr = ''.join(parent_failure(test) for test in declared)
+        self.assertEqual(suite.failed_tests(stdout, PREFIX),
+                         {PREFIX + test for test in declared})
+        self.assertNotIn(PREFIX + WORKER, suite.failed_tests(stdout, PREFIX))
+        killed, reason, _ = suite.judge(run_result(stdout, stderr),
+                                        PREFIX, declared, MARKER, WORKER)
+        self.assertTrue(killed, reason)
+
+    def test_worker_panic_inside_a_foreign_block_does_not_leak(self):
+        # The worker panic carrying a declared cell's message sits inside a
+        # foreign parent's block; the declared cell failed for another reason.
+        declared = CELLS[:1]
+        stderr = (panic_text(declared[0], 'setup failed: Permission denied')
+                  + panic_text(FOREIGN, worker_panic(suite.case_name(declared[0]))))
+        result = run_result(libtest_stdout([*declared, FOREIGN]), stderr)
+        self.assertIn(f'{MARKER} {suite.case_name(declared[0])}', result.stderr)
+        self.assertEqual(suite.cell_hits(result, PREFIX, declared, MARKER, WORKER),
+                         ([], declared))
+
+    def test_empty_tests_refuse_to_judge(self):
+        # An empty declaration must not satisfy 0 == 0 as a kill (#889 guard).
+        result = run_result(libtest_stdout([]), panic_text(FOREIGN, 'unrelated'))
+        for call in (lambda: suite.cell_hits(result, PREFIX, [], MARKER, WORKER),
+                     lambda: suite.target_hits(result, PREFIX, [], WORKER),
+                     lambda: suite.judge(result, PREFIX, [], MARKER, WORKER)):
+            with self.assertRaises(ValueError):
+                call()
+
+    def test_any_cell_keeps_partial_kill_semantics(self):
+        # #879b absolute-guard: one declared cell red with its dedicated
+        # message is a kill under any_cell, even while a sibling stays green.
+        declared = CELLS[:2]
+        stdout = libtest_stdout([declared[0]])
+        stderr = parent_failure(declared[0])
+        result = run_result(stdout, stderr)
+        killed, _, hits = suite.judge(result, PREFIX, declared, MARKER, WORKER, any_cell=True)
+        self.assertTrue(killed)
+        self.assertEqual(hits, [declared[0]])
+        killed, reason, _ = suite.judge(result, PREFIX, declared, MARKER, WORKER)
+        self.assertFalse(killed)
+        self.assertIn('stayed green', reason)
+
+    def test_panic_blocks_keep_the_embedded_worker_panic_inside(self):
+        blocks = suite.panic_blocks(parent_failure(CELLS[0]) + parent_failure(CELLS[1]),
+                                    PREFIX, CELLS[0], WORKER)
+        self.assertEqual(len(blocks), 1)
+        self.assertIn(f'{MARKER} {suite.case_name(CELLS[0])}', blocks[0])
+        self.assertIn(f"thread '{PREFIX}{WORKER}'", blocks[0],
+                      'the embedded worker panic belongs to the parent block')
+        # A panic without the thread id is still a block start.
+        blocks = suite.panic_blocks(panic_text(CELLS[0], 'x', thread_id=False), PREFIX,
+                                    CELLS[0], WORKER)
+        self.assertEqual(len(blocks), 1)
 
 
 class SuiteTests(unittest.TestCase):

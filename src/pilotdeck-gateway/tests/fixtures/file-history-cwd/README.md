@@ -18,4 +18,6 @@ ignored 重生成守卫：在 `src/` 下运行 `cargo test -p pilotdeck-gateway 
 负控先 `python3 src/pilotdeck-gateway/tests/fixtures/file-history-cwd/negative_controls.py --check` 核 10 个唯一锚点。
 提交后指定 `<新证据目录> [变异名 ...]` 运行。脚本要求调用方设置本树 `CARGO_TARGET_DIR`，经 `mutating_sources` 默认 HEAD 守卫、`wait_for_slot` 和 `run_owned` 执行正控 → 变异 → 恢复；逐项记 KILLED/SURVIVED/INVALID 与原因，全部结束后汇总，任一非 KILLED 则非零退出。锚点过期、编译/设置失败、超时均为 INVALID。
 
-10 项覆盖：cwd 根目录回退、syscall/错误格式、绝对路径误读 cwd、两个入口吞错、mark 提前无 snapshot 早退、track 报错前污染状态、`.` / `..` 归一化。每项同时绑定测试全名及该测试捕获的 `#879` 消息，避免另一用例的 panic 误充判杀。全量可能超过 20 分钟，协调者提交后分批跑，不在未提交树伪造 HEAD。
+10 项覆盖：cwd 根目录回退、syscall/错误格式、绝对路径误读 cwd、两个入口吞错、mark 提前无 snapshot 早退、track 报错前污染状态、`.` / `..` 归一化。每项同时绑定测试全名及该测试捕获的 `#879` 消息，避免另一用例的 panic 误充判杀。fix-r1（#889）起判杀改用共享 `negative_suite.target_hits`：外层 libtest `failures:` 清单（仅 stdout 最后一段，嵌套 worker 的清单与 panic 回显都在 stderr，不参与）点名该测试，且该测试自身 panic 块（内嵌 worker 输出）携带专属消息；相邻 `... FAILED` 拼写或别处 panic/回显里的消息不再判杀。全量可能超过 20 分钟，协调者提交后分批跑，不在未提交树伪造
+HEAD。提交前样本可用 `NEGATIVE_BASELINE=<临时 git commit-tree 对象>` 指向同字节的临时
+基线（不移动 HEAD），默认值仍是 HEAD。

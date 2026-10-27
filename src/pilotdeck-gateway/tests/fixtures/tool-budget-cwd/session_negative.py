@@ -11,16 +11,17 @@ import difflib
 import json
 import os
 from pathlib import Path
-import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import target_hits
 
 ROOT = Path(__file__).resolve().parents[5]
 FACTORY = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/host_factory.rs'
 LIVE = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 PREFIX = 'runtime::turn::host_factory::tests::'
+WORKER = 'session_cwd_environment_worker'  # host_factory_tests.rs's bounded worker
 TEST = 'session_composition_uv_cwd_error_reaches_stream_unwrapped'
 SESSION_KIND = '.map_err(|error| HostError::new(HostErrorKind::Session, error.message))?'
 SESSION_BRANCH = '''Err(error) if error.kind == HostErrorKind::Session => {
@@ -72,22 +73,15 @@ def passed(result, log):
 def classify(result, log, targets):
     if passed(result, log):
         return 'SURVIVED', 'propagation test still passed'
-    # A target's own captured panic block must contain its dedicated message;
-    # a marker printed by a different failed test never counts as a kill. The
-    # parent's message embeds the worker's whole captured output
-    # (test_process.rs:137), so the worker's own panic line must not terminate
-    # the parent block: only another parent test in this module does.
-    expected_failures = []
-    for test, marker in targets:
-        full = PREFIX + test
-        block = re.search(r"thread '" + re.escape(full)
-                          + r"'(?: \(\d+\))? panicked at.*?(?=\nthread '" + re.escape(PREFIX)
-                          + r"(?!session_cwd_environment_worker')[^']+'(?: \(\d+\))? panicked at|\Z)",
-                          result.stderr + result.stdout, re.S)
-        expected_failures.append(
-            f'{full} ... FAILED' in log and block is not None and marker in block.group())
+    # The shared judgment binds the target to its own evidence: the outer
+    # libtest failures list names it and its own panic block carries its
+    # dedicated message. The parent's message embeds the worker's whole
+    # captured output (test_process.rs:137), so the worker's own panic line
+    # must not terminate the parent block (#889).
+    hit, unrelated = target_hits(result, PREFIX, targets, WORKER)
     if (result.returncode == 101 and 'test result: FAILED.' in log
-            and 'error: could not compile' not in log and all(expected_failures)):
+            and 'error: could not compile' not in log
+            and not unrelated and len(hit) == len(targets)):
         return 'KILLED', 'named runtime assertions failed'
     return 'INVALID', 'missing named runtime failure; compile/setup/timeout is not a kill'
 
@@ -115,6 +109,9 @@ def main():
         raise SystemExit('usage: session_negative.py <new-output-directory> [mutation ...]')
     out = Path(sys.argv[1]).resolve()
     out.mkdir(parents=True, exist_ok=False)
+    # The default is HEAD; NEGATIVE_BASELINE only lets a pre-submit sample
+    # point at a temporary commit-tree object without moving HEAD.
+    baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
     paths = [FACTORY, LIVE, Path(__file__).resolve()]
     results = []
     for mutation in mutations:
@@ -122,7 +119,7 @@ def main():
         status, reason, restored = 'INVALID', 'not run', False
         try:
             check_anchor(mutation)
-            with mutating_sources(ROOT, paths) as originals:
+            with mutating_sources(ROOT, paths, baseline=baseline) as originals:
                 original = originals[source].decode()
                 if original.count(old) != 1:
                     raise RuntimeError('stale anchor after locking')
@@ -136,7 +133,7 @@ def main():
                 source.write_text(changed)
                 negative, log = run(out, f'{name}-negative', env)
                 status, reason = classify(negative, log, targets)
-            with mutating_sources(ROOT, paths):
+            with mutating_sources(ROOT, paths, baseline=baseline):
                 result, log = run(out, f'{name}-restored', env)
                 restored = passed(result, log)
             if not restored:
