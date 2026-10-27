@@ -53,9 +53,9 @@ fn stats_dateparse_matches_real_ts_in_three_timezones() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         // #273: libtest exits 0 even when --exact matches nothing after a rename;
-        // only the summary line proves the zone child really ran.
+        // only the libtest receipt proves the zone child really ran.
         assert!(
-            output.status.success() && stdout.contains("1 passed") && stdout.contains("0 failed"),
+            crate::test_exact_receipt::single_pass(&output.status, CHILD, &stdout),
             "#273 TZ rerun matched no test: TZ={zone}: {status}\n{stdout}\n{stderr}",
             status = output.status
         );

@@ -931,6 +931,30 @@ mod tests {
         assert!(!f.path.join("project/~").exists());
         assert!(!f.path.join("home/custom").exists());
     }
+    const UMASK_CHILD: &str = "skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp";
+
+    /// #273: libtest receipt for an `--exact` child — exit 0, one `running 1
+    /// test` banner, one passing summary, and the per-test `... ok` line. No
+    /// shared test-support crate in pilotdeck-cli: keep in sync with
+    /// `src/pilotdeck-gateway/tests/common/exact_receipt.rs`.
+    fn single_pass(status: &std::process::ExitStatus, test: &str, output: &str) -> bool {
+        let summaries: Vec<&str> = output
+            .lines()
+            .filter(|line| line.starts_with("test result:"))
+            .collect();
+        let receipt = format!("test {test} ... ok");
+        status.success()
+            && output
+                .lines()
+                .filter(|line| *line == "running 1 test")
+                .count()
+                == 1
+            && summaries.len() == 1
+            && summaries[0]
+                .starts_with("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured;")
+            && output.lines().any(|line| line == receipt)
+    }
+
     #[test]
     fn copy_tree_preserves_modes_like_node_async_cp() {
         // umask is process-wide: set it only in an exec child running this test.
@@ -939,22 +963,16 @@ mod tests {
             child
                 .args(["-c", "umask 022; exec \"$@\"", "pdrs-copy-umask-test"])
                 .arg(std::env::current_exe().expect("#273 umask test binary path"))
-                .args([
-                    "--exact",
-                    "skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp",
-                    "--nocapture",
-                ])
+                .args(["--exact", UMASK_CHILD, "--nocapture"])
                 .env("PDRS_TEST_COPY_UMASK", "1");
             let output = child.output().expect("#273 umask child spawn");
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             // #273: a renamed test makes this --exact filter match nothing, and
-            // libtest still exits 0 — only the summary line proves the rerun
+            // libtest still exits 0 — only the libtest receipt proves the rerun
             // executed this test rather than a vacuous zero-match pass.
             assert!(
-                output.status.success()
-                    && stdout.contains("1 passed")
-                    && stdout.contains("0 failed"),
+                single_pass(&output.status, UMASK_CHILD, &stdout),
                 "#273 umask rerun matched no test: {status}\n{stdout}\n{stderr}",
                 status = output.status
             );

@@ -27,6 +27,9 @@ pub mod storage;
 #[path = "../tests/common/baseline.rs"]
 mod test_baseline;
 #[cfg(test)]
+#[path = "../tests/common/exact_receipt.rs"]
+mod test_exact_receipt;
+#[cfg(test)]
 #[path = "../tests/common/oracle_locale.rs"]
 mod test_oracle_locale;
 #[cfg(test)]

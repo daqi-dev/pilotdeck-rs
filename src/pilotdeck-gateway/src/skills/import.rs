@@ -726,8 +726,14 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         };
         let output = fs::read_to_string(log_path).unwrap();
+        // #273: same libtest receipt criterion as the exact-rerun sites — a
+        // renamed filter would otherwise pass vacuously with exit 0.
         assert!(
-            status.success() && output.contains("1 passed"),
+            crate::test_exact_receipt::single_pass(
+                &status,
+                "skills::import::tests::tree_files_low_fd_child",
+                &output
+            ),
             "low-fd child: {status}\n{output}"
         );
     }
