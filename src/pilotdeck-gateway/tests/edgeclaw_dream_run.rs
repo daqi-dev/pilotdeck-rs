@@ -396,11 +396,13 @@ fn find_case<'a>(oracle: &'a JsValue, name: &str) -> &'a JsValue {
         .unwrap_or_else(|| panic!("#774 case {name} missing"))
 }
 
-/// Owns one replay scratch tree and restores any temporary permission modes
-/// before removing it, including when an assertion unwinds.
+/// Owns one replay scratch tree and restores the *original* permission modes
+/// before removing it, including when an assertion unwinds. Storing the
+/// requested fault mode instead (0444/0555) leaves the tree undeletable and
+/// leaks one scratch directory per run (#774 P2).
 struct ScratchGuard {
     root: std::path::PathBuf,
-    modes: Vec<(std::path::PathBuf, u32)>,
+    modes: Vec<(std::path::PathBuf, fs::Permissions)>,
 }
 
 impl ScratchGuard {
@@ -415,10 +417,13 @@ impl ScratchGuard {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
+            let original = fs::metadata(path)
+                .unwrap_or_else(|error| panic!("#774 scratch metadata {}: {error}", path.display()))
+                .permissions();
+            self.modes.push((path.to_path_buf(), original));
             fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap_or_else(|error| {
                 panic!("#774 scratch chmod {} {mode:o}: {error}", path.display())
             });
-            self.modes.push((path.to_path_buf(), mode));
         }
         #[cfg(not(unix))]
         {
@@ -437,12 +442,11 @@ impl std::ops::Deref for ScratchGuard {
 
 impl Drop for ScratchGuard {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            for (path, mode) in self.modes.drain(..).rev() {
-                let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
-            }
+        for (path, permissions) in self.modes.drain(..).rev() {
+            // A fault mode (0444/0555) blocks `remove_dir_all`; restore the
+            // real pre-fault permissions first. Ignore errors here: panicking
+            // during unwind would abort the process.
+            let _ = fs::set_permissions(path, permissions);
         }
         let _ = fs::remove_dir_all(&self.root);
     }
@@ -787,6 +791,48 @@ fn run_general_merge() {
 #[test]
 fn category_warning_then_error() {
     replay("category-warning-then-error");
+}
+
+#[test]
+fn scratch_guard_removes_scratch_after_restoring_fault_mode_on_return() {
+    let root = std::env::temp_dir().join(format!("pdrs-774-guard-return-{}", uuid::Uuid::new_v4()));
+    {
+        let mut scratch = ScratchGuard::new(root.clone());
+        let notes = root.join("UserIdentityNotes");
+        fs::create_dir_all(&notes)
+            .unwrap_or_else(|error| panic!("#774 guard return mkdir {}: {error}", notes.display()));
+        fs::write(notes.join("note.md"), "note")
+            .unwrap_or_else(|error| panic!("#774 guard return write: {error}"));
+        scratch.set_permissions(&notes, 0o555);
+        assert!(
+            notes.exists(),
+            "#774 guard return fixture must exist before drop"
+        );
+    }
+    assert!(
+        !root.exists(),
+        "#774 scratch guard must remove the tree after restoring fault permissions on return"
+    );
+}
+
+#[test]
+fn scratch_guard_removes_scratch_after_restoring_fault_mode_on_unwind() {
+    let root = std::env::temp_dir().join(format!("pdrs-774-guard-unwind-{}", uuid::Uuid::new_v4()));
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut scratch = ScratchGuard::new(root.clone());
+        let notes = root.join("UserIdentityNotes");
+        fs::create_dir_all(&notes)
+            .unwrap_or_else(|error| panic!("#774 guard unwind mkdir {}: {error}", notes.display()));
+        fs::write(notes.join("note.md"), "note")
+            .unwrap_or_else(|error| panic!("#774 guard unwind write: {error}"));
+        scratch.set_permissions(&notes, 0o555);
+        panic!("#774 injected unwind exercises ScratchGuard::drop");
+    }));
+    assert!(unwound.is_err(), "#774 injected panic must unwind");
+    assert!(
+        !root.exists(),
+        "#774 scratch guard must remove the tree after restoring fault permissions on unwind"
+    );
 }
 
 #[test]

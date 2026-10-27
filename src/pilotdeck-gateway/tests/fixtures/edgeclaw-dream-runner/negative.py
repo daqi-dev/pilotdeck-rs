@@ -184,6 +184,13 @@ mutations = [
   }''',
      '',
      'scratch_root_is_run_exclusive'),
+    # 25. P2-2: the allocator call is retained, but `collectCases` is fed the
+    #     fixed stage path. The parent-only fixed-scratch mutant above dies on
+    #     the allocation assertion, so it cannot cover this gap.
+    ('observe-fixed-path-retained-allocator', observe,
+     '    return await collectCases(baseline, scratch.owned);',
+     "    return await collectCases(baseline, '/tmp/pdrs-dream-runner-observe');",
+     'scratch_root_is_run_exclusive'),
 ]
 
 fragments = {
@@ -211,6 +218,7 @@ fragments = {
     'run-scratch-fixed-root': '#773 scratch roots must be distinct mkdtemp dirs',
     'observe-fixed-scratch': '#773 dream-runner observe must allocate its scratch through createRunScratch',
     'run-scratch-parent-delete': '#773 remove refused: the run parent must not be removed',
+    'observe-fixed-path-retained-allocator': '#773 dream-runner observe must not use the shared fixed stage path',
 }
 
 if '--check-anchors' in sys.argv:

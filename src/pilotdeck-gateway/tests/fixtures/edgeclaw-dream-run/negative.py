@@ -28,6 +28,8 @@ root = Path(__file__).resolve().parents[5]
 run = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/dream/run.rs'
 runner = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/dream/runner.rs'
 helpers = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/dream/helpers.rs'
+observe = root / 'src/pilotdeck-gateway/tests/fixtures/edgeclaw-dream-run/observe.mts'
+test_file = root / 'src/pilotdeck-gateway/tests/edgeclaw_dream_run.rs'
 
 mutations = [
     # 1. `isNoOp` forgets that a metadata update was applied: a metadata-only
@@ -147,6 +149,24 @@ mutations = [
      '        if selected.len() >= DREAM_USER_NOTE_MAX_FILES {',
      '        if selected.len() > DREAM_USER_NOTE_MAX_FILES {',
      'run_single_window_truncation'),
+    # 16. P2-2: the allocator call is retained, but `collectCases` is fed the
+    #     fixed stage path. The old regex spelled the fixture directory into
+    #     the path, so only this mutant exercises the corrected guard.
+    ('observe-fixed-path', observe,
+     '    return await collectCases(baseline, scratch.owned);',
+     "    return await collectCases(baseline, '/tmp/pdrs-dream-run-observe');",
+     'scratch_root_is_run_exclusive'),
+    # 17/18. P2: ScratchGuard stores the requested fault mode instead of the
+    #        pre-fault permissions, so Drop cannot delete the scratch tree on
+    #        either the normal-return or the unwind path.
+    ('scratch-guard-restores-original-on-return', test_file,
+     '            self.modes.push((path.to_path_buf(), original));',
+     '            self.modes.push((path.to_path_buf(), fs::Permissions::from_mode(mode)));',
+     'scratch_guard_removes_scratch_after_restoring_fault_mode_on_return'),
+    ('scratch-guard-restores-original-on-unwind', test_file,
+     '            self.modes.push((path.to_path_buf(), original));',
+     '            self.modes.push((path.to_path_buf(), fs::Permissions::from_mode(mode)));',
+     'scratch_guard_removes_scratch_after_restoring_fault_mode_on_unwind'),
 ]
 
 fragments = {
@@ -165,6 +185,11 @@ fragments = {
     'early-exit-general-condition': '#774 result run-empty-general',
     'whitespace-body-accepted': '#774 result run-single-whitespace-profile',
     'window-file-cap-off-by-one': '#774 result run-single-window-truncation',
+    'observe-fixed-path': '#774 edgeclaw-dream-run observe must not use the shared fixed stage path',
+    'scratch-guard-restores-original-on-return':
+        '#774 scratch guard must remove the tree after restoring fault permissions on return',
+    'scratch-guard-restores-original-on-unwind':
+        '#774 scratch guard must remove the tree after restoring fault permissions on unwind',
 }
 
 if '--check-anchors' in sys.argv:

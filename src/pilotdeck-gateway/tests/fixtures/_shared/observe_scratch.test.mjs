@@ -7,9 +7,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
+// Each fixture's allocator prefix is independent of its directory name: the
+// historical fixed stage paths were `/tmp/pdrs-dream-runner-observe` and
+// `/tmp/pdrs-dream-run-observe`. Spelling the prefix out keeps this guard
+// pointed at the path it actually protects (#774 P2-2).
 const fixtures = [
-  {name: 'edgeclaw-dream-runner', tag: '#773 dream-runner'},
-  {name: 'edgeclaw-dream-run', tag: '#774 edgeclaw-dream-run'},
+  {name: 'edgeclaw-dream-runner', tag: '#773 dream-runner', scratchPrefix: 'pdrs-dream-runner-observe'},
+  {name: 'edgeclaw-dream-run', tag: '#774 edgeclaw-dream-run', scratchPrefix: 'pdrs-dream-run-observe'},
 ];
 
 for (const fixture of fixtures) {
@@ -26,7 +30,7 @@ for (const fixture of fixtures) {
     );
     assert.doesNotMatch(
       source,
-      new RegExp(`['"]/tmp/pdrs-${fixture.name}-observe`),
+      new RegExp(`['"]/tmp/${fixture.scratchPrefix}`),
       `${fixture.tag} observe must not use the shared fixed stage path`,
     );
     assert.doesNotMatch(
