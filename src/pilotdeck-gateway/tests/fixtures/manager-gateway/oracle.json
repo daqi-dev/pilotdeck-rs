@@ -1,0 +1,1147 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sources": {
+    "src/cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "src/cli/ProjectRuntimeRegistry.ts": "0df6b0e82be872c2a2d57f85e73136d75865ff1fc2c4ded2e5e5550d7a9353d9",
+    "src/gateway/GatewaySessionCatalog.ts": "50c7b0289b8bc641ca6c65b662d6ffede4f7af8e22ab5c0bc11b970401f3df9a",
+    "src/gateway/dialog/projectRegistry.ts": "adab87e1783dc39f017e7d6b9bbd9aaa286b60235ad622709752499443e794fb",
+    "src/gateway/dialog/errors.ts": "20668c4b0074c1cd2b9d375b11a3a8c93c47faddf8264844b6a6206f1630804c",
+    "src/pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a",
+    "src/gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "src/gateway/protocol/types.ts": "e3c9d4e11b3a2acbc3dd5445896bbaef1cef332a82cfe11d4da0668de4de589a",
+    "src/gateway/server/GatewayWsConnection.ts": "cbc27036572bbb7874b195a97ce584fee3f621c48a617f3e48c3fb010e154d0f",
+    "src/session/catalog/SessionCatalogPort.ts": "575d37cf3f82591146748b3cef990e627a17f792adaf4cc5c7c59b41b7aa66d0",
+    "src/session/storage/SessionList.ts": "f0649c933de46d312fd5f519734999ae191fddf82956369c6c67a203140a8d9d"
+  },
+  "command": "PDRS_BASELINE=/path/to/PilotDeck node --import \"$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs\" src/pilotdeck-gateway/tests/fixtures/manager-gateway/generate.mts <output>",
+  "node": "v22.22.0",
+  "iso": "HOME/XDG_*/TMPDIR and PILOT_HOME are per-run directories",
+  "projectRoot": "<dir>",
+  "operations": [
+    {
+      "name": "sessions-all",
+      "method": "manager_sessions",
+      "params": {
+        "projectKey": "<dir>"
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          },
+          {
+            "sessionId": "s-2",
+            "summary": "two",
+            "lastModified": 2,
+            "cwd": "/fixture",
+            "sessionKey": "alias-2"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "ok": {
+          "items": [
+            {
+              "sessionId": "s-1",
+              "summary": "one",
+              "lastModified": 3,
+              "fileSize": 10,
+              "customTitle": "T",
+              "firstPrompt": "hi",
+              "cwd": "/fixture",
+              "createdAt": 1,
+              "sessionKey": "s-1"
+            },
+            {
+              "sessionId": "s-2",
+              "summary": "two",
+              "lastModified": 2,
+              "cwd": "/fixture",
+              "sessionKey": "alias-2"
+            }
+          ]
+        }
+      },
+      "catalogCalls": [
+        {
+          "projectRoot": "<dir>",
+          "pilotHome": "<dir>",
+          "limit": 100,
+          "offset": 0
+        }
+      ],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-filter-id",
+      "method": "manager_sessions",
+      "params": {
+        "projectKey": "<dir>",
+        "sessionKey": "s-1"
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          },
+          {
+            "sessionId": "s-2",
+            "summary": "two",
+            "lastModified": 2,
+            "cwd": "/fixture",
+            "sessionKey": "alias-2"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "ok": {
+          "items": [
+            {
+              "sessionId": "s-1",
+              "summary": "one",
+              "lastModified": 3,
+              "fileSize": 10,
+              "customTitle": "T",
+              "firstPrompt": "hi",
+              "cwd": "/fixture",
+              "createdAt": 1,
+              "sessionKey": "s-1"
+            }
+          ]
+        }
+      },
+      "catalogCalls": [
+        {
+          "projectRoot": "<dir>",
+          "pilotHome": "<dir>",
+          "limit": 100,
+          "offset": 0
+        }
+      ],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-filter-alias",
+      "method": "manager_sessions",
+      "params": {
+        "projectKey": "<dir>",
+        "sessionKey": "alias-2"
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          },
+          {
+            "sessionId": "s-2",
+            "summary": "two",
+            "lastModified": 2,
+            "cwd": "/fixture",
+            "sessionKey": "alias-2"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "ok": {
+          "items": [
+            {
+              "sessionId": "s-2",
+              "summary": "two",
+              "lastModified": 2,
+              "cwd": "/fixture",
+              "sessionKey": "alias-2"
+            }
+          ]
+        }
+      },
+      "catalogCalls": [
+        {
+          "projectRoot": "<dir>",
+          "pilotHome": "<dir>",
+          "limit": 100,
+          "offset": 0
+        }
+      ],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-filter-none",
+      "method": "manager_sessions",
+      "params": {
+        "projectKey": "<dir>",
+        "sessionKey": "missing"
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          },
+          {
+            "sessionId": "s-2",
+            "summary": "two",
+            "lastModified": 2,
+            "cwd": "/fixture",
+            "sessionKey": "alias-2"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "ok": {
+          "items": []
+        }
+      },
+      "catalogCalls": [
+        {
+          "projectRoot": "<dir>",
+          "pilotHome": "<dir>",
+          "limit": 100,
+          "offset": 0
+        }
+      ],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-empty",
+      "method": "manager_sessions",
+      "params": {
+        "projectKey": "<dir>"
+      },
+      "catalog": {
+        "items": []
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "ok": {
+          "items": []
+        }
+      },
+      "catalogCalls": [
+        {
+          "projectRoot": "<dir>",
+          "pilotHome": "<dir>",
+          "limit": 100,
+          "offset": 0
+        }
+      ],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-empty-string-key",
+      "method": "manager_sessions",
+      "params": {
+        "projectKey": "<dir>",
+        "sessionKey": ""
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          },
+          {
+            "sessionId": "s-2",
+            "summary": "two",
+            "lastModified": 2,
+            "cwd": "/fixture",
+            "sessionKey": "alias-2"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "ok": {
+          "items": [
+            {
+              "sessionId": "s-1",
+              "summary": "one",
+              "lastModified": 3,
+              "fileSize": 10,
+              "customTitle": "T",
+              "firstPrompt": "hi",
+              "cwd": "/fixture",
+              "createdAt": 1,
+              "sessionKey": "s-1"
+            },
+            {
+              "sessionId": "s-2",
+              "summary": "two",
+              "lastModified": 2,
+              "cwd": "/fixture",
+              "sessionKey": "alias-2"
+            }
+          ]
+        }
+      },
+      "catalogCalls": [
+        {
+          "projectRoot": "<dir>",
+          "pilotHome": "<dir>",
+          "limit": 100,
+          "offset": 0
+        }
+      ],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-zero-key",
+      "method": "manager_sessions",
+      "params": {
+        "projectKey": "<dir>",
+        "sessionKey": 0
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          },
+          {
+            "sessionId": "s-2",
+            "summary": "two",
+            "lastModified": 2,
+            "cwd": "/fixture",
+            "sessionKey": "alias-2"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "ok": {
+          "items": [
+            {
+              "sessionId": "s-1",
+              "summary": "one",
+              "lastModified": 3,
+              "fileSize": 10,
+              "customTitle": "T",
+              "firstPrompt": "hi",
+              "cwd": "/fixture",
+              "createdAt": 1,
+              "sessionKey": "s-1"
+            },
+            {
+              "sessionId": "s-2",
+              "summary": "two",
+              "lastModified": 2,
+              "cwd": "/fixture",
+              "sessionKey": "alias-2"
+            }
+          ]
+        }
+      },
+      "catalogCalls": [
+        {
+          "projectRoot": "<dir>",
+          "pilotHome": "<dir>",
+          "limit": 100,
+          "offset": 0
+        }
+      ],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-number-key",
+      "method": "manager_sessions",
+      "params": {
+        "projectKey": "<dir>",
+        "sessionKey": 5
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          },
+          {
+            "sessionId": "s-2",
+            "summary": "two",
+            "lastModified": 2,
+            "cwd": "/fixture",
+            "sessionKey": "alias-2"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "ok": {
+          "items": []
+        }
+      },
+      "catalogCalls": [
+        {
+          "projectRoot": "<dir>",
+          "pilotHome": "<dir>",
+          "limit": 100,
+          "offset": 0
+        }
+      ],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-fallback",
+      "method": "manager_sessions",
+      "params": {},
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          },
+          {
+            "sessionId": "s-2",
+            "summary": "two",
+            "lastModified": 2,
+            "cwd": "/fixture",
+            "sessionKey": "alias-2"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "ok": {
+          "items": [
+            {
+              "sessionId": "s-1",
+              "summary": "one",
+              "lastModified": 3,
+              "fileSize": 10,
+              "customTitle": "T",
+              "firstPrompt": "hi",
+              "cwd": "/fixture",
+              "createdAt": 1,
+              "sessionKey": "s-1"
+            },
+            {
+              "sessionId": "s-2",
+              "summary": "two",
+              "lastModified": 2,
+              "cwd": "/fixture",
+              "sessionKey": "alias-2"
+            }
+          ]
+        }
+      },
+      "catalogCalls": [
+        {
+          "projectRoot": "<dir>",
+          "pilotHome": "<dir>",
+          "limit": 100,
+          "offset": 0
+        }
+      ],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-unknown-project",
+      "method": "manager_sessions",
+      "params": {
+        "projectKey": "<dir>/unknown"
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "error": {
+          "name": "DialogGatewayError",
+          "code": "PROJECT_NOT_FOUND",
+          "message": "Unknown projectKey: <dir>/unknown"
+        }
+      },
+      "catalogCalls": [],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-catalog-structured-error",
+      "method": "manager_sessions",
+      "params": {
+        "projectKey": "<dir>"
+      },
+      "catalog": {
+        "error": {
+          "name": "DialogGatewayError",
+          "code": "CATALOG_DOWN",
+          "message": "catalog offline"
+        }
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "error": {
+          "name": "DialogGatewayError",
+          "code": "CATALOG_DOWN",
+          "message": "catalog offline"
+        }
+      },
+      "catalogCalls": [
+        {
+          "projectRoot": "<dir>",
+          "pilotHome": "<dir>",
+          "limit": 100,
+          "offset": 0
+        }
+      ],
+      "browserCalls": []
+    },
+    {
+      "name": "sessions-catalog-raw-error",
+      "method": "manager_sessions",
+      "params": {
+        "projectKey": "<dir>"
+      },
+      "catalog": {
+        "error": {
+          "name": "TypeError",
+          "message": "catalog exploded"
+        }
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "error": {
+          "name": "TypeError",
+          "message": "catalog exploded"
+        }
+      },
+      "catalogCalls": [
+        {
+          "projectRoot": "<dir>",
+          "pilotHome": "<dir>",
+          "limit": 100,
+          "offset": 0
+        }
+      ],
+      "browserCalls": []
+    },
+    {
+      "name": "browsers-success",
+      "method": "manager_browsers",
+      "params": {
+        "projectKey": "<dir>",
+        "sessionKey": "s-1"
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "ok": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "catalogCalls": [],
+      "browserCalls": [
+        {
+          "projectKey": "<dir>",
+          "sessionKey": "s-1"
+        }
+      ]
+    },
+    {
+      "name": "browsers-empty",
+      "method": "manager_browsers",
+      "params": {
+        "projectKey": "<dir>"
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": []
+        }
+      },
+      "outcome": {
+        "ok": {
+          "items": []
+        }
+      },
+      "catalogCalls": [],
+      "browserCalls": [
+        {
+          "projectKey": "<dir>"
+        }
+      ]
+    },
+    {
+      "name": "browsers-missing-session",
+      "method": "manager_browsers",
+      "params": {
+        "projectKey": "<dir>"
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          }
+        ]
+      },
+      "browser": {
+        "result": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "ok": {
+          "items": [
+            {
+              "browserId": "b-1",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "catalogCalls": [],
+      "browserCalls": [
+        {
+          "projectKey": "<dir>"
+        }
+      ]
+    },
+    {
+      "name": "browsers-structured-error",
+      "method": "manager_browsers",
+      "params": {
+        "projectKey": "<dir>"
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          }
+        ]
+      },
+      "browser": {
+        "error": {
+          "name": "DialogGatewayError",
+          "code": "BROWSER_DOWN",
+          "message": "browser offline"
+        }
+      },
+      "outcome": {
+        "error": {
+          "name": "DialogGatewayError",
+          "code": "BROWSER_DOWN",
+          "message": "browser offline"
+        }
+      },
+      "catalogCalls": [],
+      "browserCalls": [
+        {
+          "projectKey": "<dir>"
+        }
+      ]
+    },
+    {
+      "name": "browsers-raw-error",
+      "method": "manager_browsers",
+      "params": {
+        "projectKey": "<dir>"
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          }
+        ]
+      },
+      "browser": {
+        "error": {
+          "name": "Error",
+          "message": "browser exploded"
+        }
+      },
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "message": "browser exploded"
+        }
+      },
+      "catalogCalls": [],
+      "browserCalls": [
+        {
+          "projectKey": "<dir>"
+        }
+      ]
+    },
+    {
+      "name": "browsers-absent",
+      "method": "manager_browsers",
+      "params": {
+        "projectKey": "<dir>"
+      },
+      "catalog": {
+        "items": [
+          {
+            "sessionId": "s-1",
+            "summary": "one",
+            "lastModified": 3,
+            "fileSize": 10,
+            "customTitle": "T",
+            "firstPrompt": "hi",
+            "cwd": "/fixture",
+            "createdAt": 1,
+            "sessionKey": "s-1"
+          }
+        ]
+      },
+      "browser": "absent",
+      "outcome": {
+        "error": {
+          "name": "DialogGatewayError",
+          "code": "CAPABILITY_UNAVAILABLE",
+          "message": "Gateway manager browser provider is unavailable."
+        }
+      },
+      "catalogCalls": [],
+      "browserCalls": []
+    }
+  ],
+  "matrix": [
+    {
+      "name": "empty",
+      "includeInternal": false,
+      "files": [],
+      "outcome": []
+    },
+    {
+      "name": "before-append",
+      "includeInternal": false,
+      "files": [],
+      "outcome": []
+    },
+    {
+      "name": "committed",
+      "includeInternal": false,
+      "files": [
+        {
+          "name": "s-1.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":1,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt one\"}]}]}\n",
+          "mtime": 1700000000000
+        }
+      ],
+      "outcome": [
+        {
+          "sessionId": "s-1",
+          "summary": "matrix prompt one",
+          "lastModified": 1700000000000,
+          "fileSize": 197,
+          "firstPrompt": "matrix prompt one",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        }
+      ]
+    },
+    {
+      "name": "internal-hidden",
+      "includeInternal": false,
+      "files": [
+        {
+          "name": "s-1.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":1,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt one\"}]}]}\n",
+          "mtime": 1700000000000
+        },
+        {
+          "name": "always-on-discovery:1.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-2\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":2,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt two\"}]}]}\n",
+          "mtime": 1700000001000
+        }
+      ],
+      "outcome": [
+        {
+          "sessionId": "s-1",
+          "summary": "matrix prompt one",
+          "lastModified": 1700000000000,
+          "fileSize": 197,
+          "firstPrompt": "matrix prompt one",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        }
+      ]
+    },
+    {
+      "name": "internal-included",
+      "includeInternal": true,
+      "files": [
+        {
+          "name": "s-1.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":1,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt one\"}]}]}\n",
+          "mtime": 1700000000000
+        },
+        {
+          "name": "always-on-discovery:1.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-2\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":2,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt two\"}]}]}\n",
+          "mtime": 1700000001000
+        }
+      ],
+      "outcome": [
+        {
+          "sessionId": "always-on-discovery:1",
+          "summary": "matrix prompt two",
+          "lastModified": 1700000001000,
+          "fileSize": 197,
+          "firstPrompt": "matrix prompt two",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        },
+        {
+          "sessionId": "s-1",
+          "summary": "matrix prompt one",
+          "lastModified": 1700000000000,
+          "fileSize": 197,
+          "firstPrompt": "matrix prompt one",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        }
+      ]
+    },
+    {
+      "name": "partial-skipped",
+      "includeInternal": false,
+      "files": [
+        {
+          "name": "s-1.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":1,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt one\"}]}]}\n",
+          "mtime": 1700000000000
+        },
+        {
+          "name": "partial.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-2\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T",
+          "mtime": 1700000002000
+        }
+      ],
+      "outcome": [
+        {
+          "sessionId": "s-1",
+          "summary": "matrix prompt one",
+          "lastModified": 1700000000000,
+          "fileSize": 197,
+          "firstPrompt": "matrix prompt one",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        }
+      ]
+    },
+    {
+      "name": "limit-offset",
+      "includeInternal": false,
+      "limit": 1,
+      "offset": 1,
+      "files": [
+        {
+          "name": "s-1.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":1,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt one\"}]}]}\n",
+          "mtime": 1700000000000
+        },
+        {
+          "name": "s-2.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-2\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":2,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt two\"}]}]}\n",
+          "mtime": 1700000001000
+        },
+        {
+          "name": "s-3.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-3\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":3,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt three\"}]}]}\n",
+          "mtime": 1700000002000
+        }
+      ],
+      "outcome": [
+        {
+          "sessionId": "s-2",
+          "summary": "matrix prompt two",
+          "lastModified": 1700000001000,
+          "fileSize": 197,
+          "firstPrompt": "matrix prompt two",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        }
+      ]
+    },
+    {
+      "name": "limit-zero",
+      "includeInternal": false,
+      "limit": 0,
+      "offset": 0,
+      "files": [
+        {
+          "name": "s-1.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-1\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":1,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt one\"}]}]}\n",
+          "mtime": 1700000000000
+        },
+        {
+          "name": "s-2.jsonl",
+          "content": "{\"type\":\"accepted_input\",\"sessionId\":\"matrix-session-2\",\"turnId\":\"turn-1\",\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"sequence\":2,\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"matrix prompt two\"}]}]}\n",
+          "mtime": 1700000001000
+        }
+      ],
+      "outcome": [
+        {
+          "sessionId": "s-2",
+          "summary": "matrix prompt two",
+          "lastModified": 1700000001000,
+          "fileSize": 197,
+          "firstPrompt": "matrix prompt two",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        },
+        {
+          "sessionId": "s-1",
+          "summary": "matrix prompt one",
+          "lastModified": 1700000000000,
+          "fileSize": 197,
+          "firstPrompt": "matrix prompt one",
+          "cwd": "<dir>",
+          "createdAt": 1792281600000
+        }
+      ]
+    }
+  ]
+}
