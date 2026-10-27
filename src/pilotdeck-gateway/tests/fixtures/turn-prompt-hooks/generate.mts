@@ -21,7 +21,7 @@ writeFileSync(join(out,'.generation-owner'),'turn-prompt-hooks\n',{flag:'wx'});
 const now=()=>new Date('2026-10-26T00:00:00.000Z');
 const [{AgentLoop},{createSidecarAgentTurnCapabilities}]=await Promise.all(['agent/loop/AgentLoop.ts','agent/loop/AgentTurnCapabilities.ts'].map(p=>import(pathToFileURL(join(root,'src',p)).href)));
 const rows=[];
-for(const name of ['none','pass','blocks','context','block','throw','timeout','reject','accepted-fails','block-complete-fails','pending','abort-pending','drop-pending','abort-after-submitted','blocks-coerce','blocks-null']) {
+for(const name of ['none','pass','blocks','context','block','throw','timeout','reject','accepted-fails','block-complete-fails','pending','abort-pending','drop-pending','abort-after-submitted','blocks-coerce','blocks-null','blocks-empty']) {
   const timer=setTimeout(()=>{console.error(`#741 prompt ${name} exceeded 5s`);process.exit(1);},5000);
   try {
     const path=join(out,name+'.jsonl');writeFileSync(path,'',{flag:'wx'});
@@ -63,7 +63,7 @@ for(const name of ['none','pass','blocks','context','block','throw','timeout','r
       yield {type:'turn_completed',sessionId:'s',turnId:'t',result};return {result,messages:input.messages};}};
     const runner=new TurnRunner(loop,writer,undefined,now,name==='none'?undefined:runtime,
       {cwd:'/fixture',transcriptPath:'/fixture/s.jsonl',collectFileArtifacts:false},{eventRecorder:recorder});
-    const rawInput=name==='blocks-coerce'?{type:'blocks',content:[{type:'text',text:42},{type:'text',text:false},{type:'text',text:null},{type:'text',text:{}}]}:name==='blocks-null'?{type:'blocks',content:[null]}:name==='blocks'?{type:'blocks',content:[{type:'text',text:'first\ud800'},{type:'image',source:{type:'url',url:'https://example.invalid/image'}},{type:'text',text:'second'}]}:{type:'text',text:'probe\ud800'};
+    const rawInput=name==='blocks-empty'?{type:'blocks',content:[]}:name==='blocks-coerce'?{type:'blocks',content:[{type:'text',text:42},{type:'text',text:false},{type:'text',text:null},{type:'text',text:{}}]}:name==='blocks-null'?{type:'blocks',content:[null]}:name==='blocks'?{type:'blocks',content:[{type:'text',text:'first\ud800'},{type:'image',source:{type:'url',url:'https://example.invalid/image'}},{type:'text',text:'second'}]}:{type:'text',text:'probe\ud800'};
     const controller=new AbortController();
     const history=[{role:'assistant',content:[{type:'text',text:'history'}]}];
     const synthetic=[{role:'user',content:[{type:'text',text:'synthetic'}],metadata:{synthetic:true}}];

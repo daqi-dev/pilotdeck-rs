@@ -387,7 +387,78 @@ macro_rules! case {
 }
 case!(forward_event_session_started,);
 case!(forward_event_session_ended,);
-case!(forward_event_user_prompt_submitted,);
+#[tokio::test]
+async fn forward_event_user_prompt_submitted() {
+    // #936 explicitly closes the host-only prefix boundary. Retain the TS
+    // golden as evidence of the rejected behavior, not a rewritten oracle.
+    let row = rows()
+        .into_iter()
+        .find(|r| r.get("name") == Some(&"event_user_prompt_submitted".into()))
+        .expect("#936 host prompt oracle");
+    let mut f = Fixture::new(&row);
+    let mut events = vec![];
+    while let Some(event) = next(&mut f.turn).await.expect("#936 host prompt next") {
+        events.push(event);
+    }
+    let kinds: Vec<_> = events
+        .iter()
+        .map(|e| e.get("type").cloned().expect("#936 host prompt type"))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "turn_started",
+            "input_accepted",
+            "user_prompt_submitted",
+            "agent_status",
+            "turn_failed",
+            "turn_completed"
+        ]
+        .map(JsValue::from),
+        "#936 host prompt forged prefix rejected"
+    );
+    let error = events[4].get("error").expect("#936 host prompt error");
+    assert_eq!(
+        error.get("code"),
+        Some(&"agent_invalid_state".into()),
+        "#936 host prompt rejection code"
+    );
+    assert_eq!(error.get("message"),Some(&"Host execution failed: Stream integrity violation: host lifecycle event in AgentLoop stream.".into()),"#936 host prompt rejection message");
+    assert_eq!(
+        events[5]
+            .get("result")
+            .expect("#936 host prompt result")
+            .get("type"),
+        Some(&"error".into()),
+        "#936 host prompt durable failure"
+    );
+    let bytes =
+        std::fs::read_to_string(&f.key.transcript_path).expect("#936 host prompt transcript");
+    let types: Vec<_> = bytes
+        .lines()
+        .map(|line| {
+            parse_json(line)
+                .expect("#936 host prompt JSONL")
+                .get("type")
+                .cloned()
+                .expect("#936 host prompt durable type")
+        })
+        .collect();
+    assert_eq!(
+        types,
+        [
+            "turn_started",
+            "accepted_input",
+            "turn_result",
+            "agent_status_message"
+        ]
+        .map(JsValue::from),
+        "#936 host prompt durable rejection order"
+    );
+    let runtime = f.registry.resolve(None).expect("#936 host prompt runtime");
+    wait_for_cleanup(&f.session, &runtime).await;
+    assert_eq!(runtime.lease_count(), 0, "#936 host prompt lease release");
+}
 case!(forward_event_setup_completed,);
 case!(forward_event_model_request_started,);
 case!(forward_event_model_event,);
