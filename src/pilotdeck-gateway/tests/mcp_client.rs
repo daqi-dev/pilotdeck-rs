@@ -11,7 +11,7 @@ mod baseline;
 mod scratch;
 
 use pilotdeck_gateway::runtime::mcp::{
-    client::{McpCallOptions, McpClient, McpClientOptions},
+    client::{McpAbort, McpAbortSignal, McpCallOptions, McpClient, McpClientOptions},
     naming::{
         build_mcp_tool_wire_name, parse_mcp_tool_wire_name, recursively_sanitize_unicode,
         sanitize_unicode_string, truncate_mcp_tool_description,
@@ -26,6 +26,7 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+use tokio::sync::watch;
 
 const ORACLE: &str = include_str!("fixtures/mcp-client/oracle.json");
 const SCENARIOS: usize = 26;
@@ -1330,6 +1331,228 @@ async fn double_timeout(after_ready: bool) {
     joined.expect("third caller joins W2");
     started.expect("W2 must not be superseded by a stale timeout");
     assert_eq!(read_logs(&dir).len(), 2, "only W1 and W2 may exist");
+}
+
+// ──────────────────────────────────────────────────────────── #401
+
+/// A caller-side `AbortSignal` backed by a tokio watch channel, so a test can
+/// abort mid-request by sending `true` (or start pre-aborted).
+struct TestAbort(watch::Receiver<bool>);
+impl McpAbort for TestAbort {
+    fn is_aborted(&self) -> bool {
+        *self.0.borrow()
+    }
+    fn aborted(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        let mut receiver = self.0.clone();
+        Box::pin(async move {
+            while !*receiver.borrow_and_update() {
+                if receiver.changed().await.is_err() {
+                    return;
+                }
+            }
+        })
+    }
+}
+
+fn test_signal(aborted: bool) -> (watch::Sender<bool>, McpAbortSignal) {
+    let (sender, receiver) = watch::channel(aborted);
+    (
+        sender,
+        McpAbortSignal::new(std::sync::Arc::new(TestAbort(receiver))),
+    )
+}
+
+fn frames_containing(dir: &Path, index: usize, needle: &str) -> Option<usize> {
+    read_logs(dir).get(index).map(|log| {
+        log.iter()
+            .filter(|entry| {
+                field(entry, "line")
+                    .as_string()
+                    .is_some_and(|line| line.to_utf8().unwrap().contains(needle))
+            })
+            .count()
+    })
+}
+
+/// #401: a user cancel aborting a request mid-flight on a shared connection.
+/// The TS baseline's `Protocol.request` `cancel(reason)` rejects the aborted
+/// call as `McpError(-32001, String(reason))` — the same code a timeout uses —
+/// so `callWithReconnect` recycles the transport for both and the sibling
+/// call on the same client dies with `Connection closed`. Node v22.22.0
+/// probes (`_tmp/20261026-issue-347/probe-401/probe-user-cancel.mjs` and
+/// `probe-timeout.mjs`) show the baseline behaves exactly this way, so this
+/// test locks the port to that behavior instead of diverging.
+#[tokio::test]
+async fn user_cancel_mid_request_shares_the_timeout_recycle_path() {
+    let scratch = Scratch::new("mcp-client-user-cancel");
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let after = r#"{"send":{"jsonrpc":"2.0","id":"$id","result":{"content":[{"type":"text","text":"after recycle"}]}}}"#;
+    let client = race_client(
+        &dir,
+        &[
+            // x and b are deliberately unscripted: both stay pending.
+            format!(r#"{{"initialize":[{INIT_REPLY}]}}"#),
+            format!(r#"{{"initialize":[{INIT_REPLY}],"tools/call:c":[{after}]}}"#),
+        ],
+        None,
+    );
+    client.start().await.expect("first connection");
+    let (abort, signal) = test_signal(false);
+    let call = |name: &'static str, signal: Option<McpAbortSignal>| {
+        let client = client.clone();
+        tokio::spawn(async move {
+            client
+                .call_tool(
+                    &name.into(),
+                    &JsValue::Null,
+                    McpCallOptions {
+                        signal,
+                        ..McpCallOptions::default()
+                    },
+                )
+                .await
+        })
+    };
+    let cancelled = call("x", Some(signal));
+    let sibling = call("b", None);
+    for _ in 0..400 {
+        if frames_containing(&dir, 0, "tools/call").is_some_and(|count| count >= 2) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        frames_containing(&dir, 0, "tools/call").is_some_and(|count| count >= 2),
+        "#401 both calls must be pending before the cancel"
+    );
+    abort.send(true).expect("abort signal");
+    let cancelled_error = cancelled.await.unwrap().unwrap_err();
+    assert_eq!(
+        cancelled_error.client_code().unwrap().as_str(),
+        "mcp_call_timeout",
+        "#401 a mid-request user cancel surfaces as the timeout code, like the TS baseline"
+    );
+    assert_eq!(
+        cancelled_error.message(),
+        "MCP call timed out (server=mock): MCP error -32001: AbortError: This operation was aborted",
+        "#401 the cancelled call carries the AbortError reason under -32001"
+    );
+    assert_eq!(
+        client.status().as_str(),
+        "error",
+        "#401 the recycle marks the client error"
+    );
+    let sibling_error = sibling.await.unwrap().unwrap_err();
+    assert_eq!(
+        sibling_error.client_code().unwrap().as_str(),
+        "mcp_call_failed",
+        "#401 the shared transport recycle fails the sibling call"
+    );
+    assert_eq!(
+        sibling_error.message(),
+        "MCP call failed (server=mock): MCP error -32000: Connection closed",
+        "#401 the sibling call dies with Connection closed when the transport is recycled"
+    );
+    let third = client
+        .call_tool(&"c".into(), &JsValue::Null, McpCallOptions::default())
+        .await
+        .expect("#401 the recycled client reconnects for the next call");
+    assert_eq!(
+        text(&third.content),
+        r#"[{"type":"text","text":"after recycle"}]"#,
+        "#401 the follow-up call answers on the fresh connection"
+    );
+    client.close().await;
+    settle(&dir, false).await;
+    assert!(
+        frames_containing(&dir, 0, "notifications/cancelled").is_some_and(|count| count == 1),
+        "#401 the cancel notification reached the server before the recycle"
+    );
+    assert_eq!(read_logs(&dir).len(), 2, "exactly one fresh connection");
+}
+
+/// #401: a pre-aborted signal. The baseline's
+/// `options.signal.throwIfAborted()` rejects the caller's own call with the
+/// `DOMException` text (no `McpError` code), without touching the shared
+/// connection: the sibling call and the client status are unaffected and no
+/// frame is written. Node v22.22.0 probe:
+/// `_tmp/20261026-issue-347/probe-401/probe-preaborted.mjs`.
+#[tokio::test]
+async fn pre_aborted_signal_fails_only_the_caller() {
+    let scratch = Scratch::new("mcp-client-pre-aborted");
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let sibling_reply = r#"{"send":{"jsonrpc":"2.0","id":"$id","result":{"content":[{"type":"text","text":"sibling ok"}]}}}"#;
+    let client = race_client(
+        &dir,
+        &[format!(
+            r#"{{"initialize":[{INIT_REPLY}],"tools/call:b":[{sibling_reply}]}}"#
+        )],
+        None,
+    );
+    client.start().await.expect("connection");
+    let (_, signal) = test_signal(true);
+    // A bounded timeout keeps a regression on this path (the check removed, the
+    // request actually sent) failing fast on the message instead of hanging.
+    let refused = client
+        .call_tool(
+            &"x".into(),
+            &JsValue::Null,
+            McpCallOptions {
+                signal: Some(signal),
+                timeout_ms: Some(500.0),
+            },
+        )
+        .await
+        .expect_err("#401 a pre-aborted signal must reject the call");
+    assert_eq!(
+        refused.client_code().unwrap().as_str(),
+        "mcp_call_failed",
+        "#401 a pre-aborted signal is a plain call failure, not the timeout path"
+    );
+    assert_eq!(
+        refused.message(),
+        "MCP call failed (server=mock): This operation was aborted",
+        "#401 the DOMException text is preserved"
+    );
+    assert_eq!(
+        client.status().as_str(),
+        "ready",
+        "#401 no recycle happened for a pre-aborted signal"
+    );
+    let sibling = client
+        .call_tool(&"b".into(), &JsValue::Null, McpCallOptions::default())
+        .await
+        .expect("#401 the sibling call survives a pre-aborted refusal");
+    assert_eq!(
+        text(&sibling.content),
+        r#"[{"type":"text","text":"sibling ok"}]"#,
+        "#401 the shared connection still answers"
+    );
+    client.close().await;
+    settle(&dir, false).await;
+    let frames: Vec<String> = read_logs(&dir)[0]
+        .iter()
+        .filter(|entry| {
+            field(entry, "event")
+                .as_string()
+                .is_some_and(|event| event.equals_str("frame"))
+        })
+        .map(|entry| {
+            field(entry, "line")
+                .as_string()
+                .and_then(|line| line.to_utf8().ok())
+                .unwrap_or_default()
+        })
+        .collect();
+    assert_eq!(
+        frames.len(),
+        3,
+        "#401 only the handshake frames and the sibling call are written: {frames:?}"
+    );
+    assert!(
+        !frames.iter().any(|frame| frame.contains(r#""name":"x""#)),
+        "#401 a pre-aborted call writes no frame: {frames:?}"
+    );
 }
 
 /// #681（A6.5-MCP-CONNECT-HOSTNAME-001）：主机名 URL 的拒连文案显示解析出

@@ -1,12 +1,12 @@
 use super::{
     HandlerRegistration, ModelField, ModelRef, OrganizationPolicy, ResolveSettingsOptions,
-    SdkConfigChangeHandler, SdkSessionError, SelectorKind, SessionHandlerRegistry,
-    SessionHookHandler, apply_organization_task_budget_cap, array, assert_managed_model_allowed,
-    assert_organization_setting_sources_allowed, field, is_null, is_organization_model_allowed,
-    js_object, json_text, map_settings_error, nullish, number, number_text,
-    organization_provider_policy_rejection, own, path_js, primitive_type, resolve_configured_model,
-    resolve_session_settings, set_property, truthy, validate_managed_permissions,
-    validate_selector_policy, validate_setting_sources,
+    SdkConfigChangeHandler, SdkSessionError, SdkSessionProjects, SelectorKind,
+    SessionHandlerRegistry, SessionHookHandler, apply_organization_task_budget_cap, array,
+    assert_managed_model_allowed, assert_organization_setting_sources_allowed, field, is_null,
+    is_organization_model_allowed, js_object, json_text, map_settings_error, nullish, number,
+    number_text, organization_provider_policy_rejection, own, path_js, primitive_type,
+    resolve_configured_model, resolve_session_settings, set_property, truthy,
+    validate_managed_permissions, validate_selector_policy, validate_setting_sources,
 };
 use crate::{
     config::{Env, session_overrides::SessionConfigOverrides, session_value::SessionValue},
@@ -147,6 +147,10 @@ pub struct SdkSessionOptions {
     /// `os.homedir()` override; `None` reads the process HOME like Node.
     pub homedir: Option<PathBuf>,
     pub resolver: Arc<dyn SdkRuntimeResolver>,
+    /// The shared `sdkSessionProjects` table (#347③): the SDK MCP slice
+    /// (`runtime::mcp::sdk`) receives the same instance so both write one
+    /// map, like the single TS registry field.
+    pub projects: Arc<SdkSessionProjects>,
     pub organization_policy: Option<OrganizationPolicy>,
     pub plugin_loader: Option<Arc<dyn SdkPluginLoader>>,
     pub task_budget: Option<Arc<dyn SdkTaskBudget>>,
@@ -166,6 +170,7 @@ impl SdkSessionOptions {
             env,
             homedir: None,
             resolver,
+            projects: SdkSessionProjects::shared(),
             organization_policy: None,
             plugin_loader: Some(Arc::new(DiskSdkPluginLoader)),
             task_budget: None,
@@ -179,6 +184,11 @@ impl SdkSessionOptions {
     }
     pub fn with_organization_policy(mut self, policy: Option<OrganizationPolicy>) -> Self {
         self.organization_policy = policy;
+        self
+    }
+    /// Share `sdkSessionProjects` with the SDK MCP slice.
+    pub fn with_projects(mut self, projects: Arc<SdkSessionProjects>) -> Self {
+        self.projects = projects;
         self
     }
     pub fn with_homedir(mut self, homedir: impl Into<PathBuf>) -> Self {
@@ -210,19 +220,22 @@ pub struct SdkSessionRegistry {
     configs: Vec<(JsString, JsValue)>,
     plugins: Vec<(JsString, Vec<Arc<LoadedPlugin>>)>,
     thinking: Vec<(JsString, JsValue)>,
-    projects: Vec<(JsString, PathBuf)>,
+    /// The shared `sdkSessionProjects` table; `setSdkSessionConfig` and the
+    /// SDK MCP slice write the same entries (#347③).
+    projects: Arc<SdkSessionProjects>,
     overrides: Option<SessionConfigOverrides>,
     handlers: SessionHandlerRegistry,
 }
 
 impl SdkSessionRegistry {
     pub fn new(options: SdkSessionOptions) -> Self {
+        let projects = Arc::clone(&options.projects);
         Self {
             options,
             configs: Vec::new(),
             plugins: Vec::new(),
             thinking: Vec::new(),
-            projects: Vec::new(),
+            projects,
             overrides: None,
             handlers: SessionHandlerRegistry::new(),
         }
@@ -255,8 +268,11 @@ impl SdkSessionRegistry {
     pub fn thinking_entries(&self) -> &[(JsString, JsValue)] {
         &self.thinking
     }
-    pub fn project_entries(&self) -> &[(JsString, PathBuf)] {
-        &self.projects
+    /// `this.sdkSessionProjects` snapshot: insertion-ordered key/root pairs
+    /// (the shared table, #347③). Keys stay `JsValue` because the SDK MCP
+    /// slice stores whatever `input.sessionKey` was, like the TS `Map`.
+    pub fn project_entries(&self) -> Vec<(JsValue, JsString)> {
+        self.projects.entries()
     }
 
     pub fn session_config(&self, session_key: &JsString) -> Option<&JsValue> {
@@ -274,11 +290,8 @@ impl SdkSessionRegistry {
             .unwrap_or(&[])
     }
 
-    pub fn session_project(&self, session_key: &JsString) -> Option<&Path> {
-        self.projects
-            .iter()
-            .find(|(key, _)| key == session_key)
-            .map(|(_, root)| root.as_path())
+    pub fn session_project(&self, session_key: &JsString) -> Option<JsString> {
+        self.projects.project(&JsValue::String(session_key.clone()))
     }
 
     /// `None` means no override entry; `Some(Null)` is an explicit `null`.
@@ -327,14 +340,12 @@ impl SdkSessionRegistry {
     }
 
     fn set_project(&mut self, session_key: &JsString, root: PathBuf) {
-        match self.projects.iter_mut().find(|(key, _)| key == session_key) {
-            Some((_, current)) => *current = root,
-            None => self.projects.push((session_key.clone(), root)),
-        }
+        self.projects
+            .set(&JsValue::String(session_key.clone()), path_js(&root));
     }
 
     fn delete_project(&mut self, session_key: &JsString) {
-        self.projects.retain(|(key, _)| key != session_key);
+        self.projects.delete(&JsValue::String(session_key.clone()));
     }
 
     fn resolve_settings(
@@ -422,10 +433,9 @@ impl SdkSessionRegistry {
     ) -> Result<(), SdkSessionError> {
         let project_root = match project_key {
             Some(key) => key.clone(),
-            None => match self.session_project(session_key) {
-                Some(root) => path_js(root),
-                None => path_js(&self.options.fallback_project_root),
-            },
+            None => self
+                .session_project(session_key)
+                .unwrap_or_else(|| path_js(&self.options.fallback_project_root)),
         };
         let runtime = self.options.resolver.resolve(Some(&project_root))?;
         let resolved = match model {
@@ -591,14 +601,16 @@ impl SdkSessionRegistry {
             .is_some_and(|value| matches!(value, JsValue::Bool(false)))
     }
 
-    /// `clearSdkSessionState`. MCP fields are owned by A6.5 and not modeled
-    /// here; the task-budget clear is called only when a project was recorded.
+    /// `clearSdkSessionState`. The MCP fields (servers, permission overrides
+    /// and generated rules) are owned by A6.5's `SdkMcpConfig`, which clears
+    /// them through the same shared projects table; the task-budget clear is
+    /// called only when a project was recorded.
     pub fn clear_session_state(&mut self, session_key: &JsString) -> Result<(), SdkSessionError> {
-        if let Some(root) = self.session_project(session_key).map(Path::to_path_buf)
+        if let Some(root) = self.session_project(session_key)
             && let Some(budget) = &self.options.task_budget
         {
             budget
-                .clear_session(&path_js(&root), session_key)
+                .clear_session(&root, session_key)
                 .map_err(task_budget_error)?;
         }
         self.delete_config(session_key);

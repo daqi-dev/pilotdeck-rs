@@ -242,7 +242,11 @@ async fn plugin_lifecycle_and_clear_state() {
     );
     assert_eq!(registry.session_plugins(&"s".into()).len(), 1);
     assert_eq!(registry.session_plugins(&"s".into())[0].name, "plugin-a");
-    assert_eq!(registry.session_project(&"s".into()), Some(scratch.path()));
+    assert_eq!(
+        registry.session_project(&"s".into()),
+        Some(scratch.path().to_string_lossy().into_owned().into()),
+        "#347 the shared projects table records the session root"
+    );
     assert!(
         !registry
             .set_session_config(&"s".into(), &config, None, None)

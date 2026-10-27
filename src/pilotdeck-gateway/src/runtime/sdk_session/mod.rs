@@ -36,11 +36,14 @@ use std::{fmt, path::Path};
 
 mod handlers;
 mod policy;
+mod projects;
 mod registry;
 mod settings;
 
 pub use handlers::*;
 pub use policy::*;
+pub use projects::SdkSessionProjects;
+pub(crate) use projects::same_key;
 pub use registry::*;
 pub use settings::*;
 
