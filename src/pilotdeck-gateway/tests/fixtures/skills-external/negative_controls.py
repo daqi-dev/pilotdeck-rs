@@ -98,25 +98,50 @@ MUTATIONS = {
         external,
         """            let body = match tokio::time::timeout_at(
                 deadline,
-                crate::fetch_redirect::read_body(""",
+                crate::fetch_redirect::read_text_body(""",
         """            let body = match tokio::time::timeout_at(
                 tokio::time::Instant::now() + Duration::from_secs(30),
-                crate::fetch_redirect::read_body(""",
+                crate::fetch_redirect::read_text_body(""",
         "skills::external_tests::stalled_body_is_bounded_by_the_request_timeout",
         ["#929 stalled body must return within timeoutMs instead of waiting forever"],
     ),
+    "body-deadline-reset": (
+        external,
+        """            let body = match tokio::time::timeout_at(
+                deadline,
+                crate::fetch_redirect::read_text_body(""",
+        """            let body = match tokio::time::timeout_at(
+                tokio::time::Instant::now() + request.timeout,
+                crate::fetch_redirect::read_text_body(""",
+        "skills::external_tests::redirects_and_body_share_one_deadline",
+        ["#929 redirects plus body must return MODULE_TIMEOUT, not restart the deadline for the body"],
+    ),
+    "body-read-stops-at-limit": (
+        external,
+        "                crate::fetch_redirect::read_text_body(",
+        "                crate::fetch_redirect::read_body(",
+        "skills::external_tests::over_limit_body_keeps_the_timeout_priority",
+        [
+            "#929 over-limit body must reach the shared deadline and MODULE_TIMEOUT, not an early protocol error",
+            "#929 over-limit body keeps the timeout priority, got",
+        ],
+    ),
     "manifest-failure-not-shared": (
         external,
-        """                    *flight
-                        .result
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(result.clone());""",
-        """                    *flight
-                        .result
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Ok(()));""",
+        "                    flight.settle(ManifestOutcome::Done(result.clone()));",
+        "                    flight.settle(ManifestOutcome::Done(Ok(())));",
         "skills::external_tests::concurrent_manifest_failure_is_shared_by_every_waiter",
-        ["#929 concurrent waiter must receive the same manifest failure"],
+        [
+            "#929 first manifest failure must surface",
+            "#929 concurrent waiter must receive the same manifest failure",
+        ],
+    ),
+    "owner-abandoned-not-published": (
+        external,
+        "        self.flight.settle(ManifestOutcome::Abandoned);",
+        "        // P0-1 negative control: no terminal state is published.",
+        "skills::external_tests::cancelled_owner_before_waiter_notification_is_recovered",
+        ["#929 P0 a waiter that cloned the flight before owner cancellation must return within 2s"],
     ),
     "bom-not-stripped": (
         external,
