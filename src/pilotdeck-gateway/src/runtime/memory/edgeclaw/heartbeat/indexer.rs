@@ -1826,7 +1826,9 @@ impl From<IndexError> for HeartbeatError {
     }
 }
 impl HeartbeatError {
-    fn message(&self) -> JsString {
+    /// TS catch-block `error.message`; the service facade delegates here so a
+    /// new variant cannot drift from the indexer's own mapping.
+    pub(crate) fn message(&self) -> JsString {
         match self {
             Self::Storage(StorageError::Closed) => JsString::from("database is not open"),
             Self::Storage(error) => JsString::from(error.to_string()),

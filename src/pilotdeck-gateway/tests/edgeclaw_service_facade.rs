@@ -16,6 +16,8 @@ mod scratch;
 
 use pilotdeck_gateway::runtime::memory::edgeclaw::{
     file_memory::FileMemoryClock,
+    heartbeat::indexer::HeartbeatError,
+    llm::index::IndexError,
     messages::CaptureStrategy,
     retriever::{RandomToken, RetrieverClock},
     service::{
@@ -407,8 +409,11 @@ fn run_ops(scenario: &Scenario<'_>, ops: &[JsValue]) -> Vec<Value> {
             }
             "get" => {
                 let ids = decode_js(args.get("ids").expect("#775 get ids"));
-                let max_lines = args.get("maxLines").and_then(JsValue::as_number);
-                step(run, &name, &args, service.get(&ids, max_lines))
+                // Keep `null`, `undefined` and numbers distinct: TS only
+                // defaults an omitted/undefined second argument. `maxLines`
+                // may arrive as a `$type` envelope (`-0`), so decode it first.
+                let max_lines = args.get("maxLines").map(decode_js);
+                step(run, &name, &args, service.get(&ids, max_lines.as_ref()))
             }
             "getUserSummary" => step(run, &name, &args, service.get_user_summary()),
             "getProjectMeta" => step(run, &name, &args, service.get_project_meta()),
@@ -1403,6 +1408,26 @@ fn ts_service_facade_scenarios_match() {
     );
     let oracle: Value = serde_json::from_str(ORACLE).expect("#775 oracle is valid JSON");
     compare(&oracle, &oracle_js);
+}
+
+/// fix-r5 P2: the facade must reuse the indexer's catch-block message table.
+/// `IndexError` carries raw UTF-16 units; the old hand-copied `Display` path
+/// went through `utf8_lossy` and turned a lone surrogate into U+FFFD.
+#[test]
+fn service_error_heartbeat_message_reuses_heartbeat_message() {
+    let lone = JsString::from_utf16(vec![0xD800]);
+    let index = ServiceError::Heartbeat(HeartbeatError::Index(IndexError::Type(lone.clone())));
+    assert_eq!(
+        index.js_message(),
+        lone,
+        "#775 ServiceError::js_message must reuse HeartbeatError::message (lone surrogate preserved)"
+    );
+    let json = ServiceError::Heartbeat(HeartbeatError::Json("boom".into()));
+    assert_eq!(
+        json.js_message(),
+        JsString::from("boom"),
+        "#775 ServiceError::js_message must reuse HeartbeatError::message for Json"
+    );
 }
 
 /// Port of `tests/context/edgeclaw-memory-session-clear.spec.ts`: wiping one

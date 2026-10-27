@@ -577,6 +577,38 @@
           }
         },
         {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": {
+              "$type": "undefined"
+            }
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": null
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": {
+              "$type": "number",
+              "value": "-0"
+            }
+          }
+        },
+        {
           "op": "getUserSummary"
         },
         {
@@ -947,6 +979,92 @@
               "relativePath": "Project/alpha-note-c8acc71a5e.md",
               "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md",
               "content": "## Summary\nAlpha note summary",
+              "preview": "Summary Alpha note summary"
+            }
+          ]
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": {
+              "$type": "undefined"
+            }
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md",
+              "content": "## Summary\nAlpha note summary",
+              "preview": "Summary Alpha note summary"
+            }
+          ]
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": null
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md",
+              "content": "",
+              "preview": "Summary Alpha note summary"
+            }
+          ]
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": {
+              "$type": "number",
+              "value": "-0"
+            }
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md",
+              "content": "",
               "preview": "Summary Alpha note summary"
             }
           ]

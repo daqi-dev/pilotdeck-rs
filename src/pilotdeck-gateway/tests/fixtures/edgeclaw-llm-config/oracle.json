@@ -7773,6 +7773,22 @@
       "fn": "mergeIndexingSettings",
       "args": [
         {
+          "autoIndexIntervalMinutes": {
+            "$number": "-0"
+          },
+          "autoDreamIntervalMinutes": -0.4
+        }
+      ],
+      "expected": {
+        "reasoningMode": "answer_first",
+        "autoIndexIntervalMinutes": 0,
+        "autoDreamIntervalMinutes": 0
+      }
+    },
+    {
+      "fn": "mergeIndexingSettings",
+      "args": [
+        {
           "autoIndexIntervalMinutes": "5",
           "autoDreamIntervalMinutes": true
         }

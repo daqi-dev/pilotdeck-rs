@@ -171,13 +171,7 @@ impl ServiceError {
         match self {
             Self::File(error) => error.js_message(),
             Self::Storage(error) => JsString::from(error.to_string()),
-            Self::Heartbeat(error) => match error {
-                HeartbeatError::Storage(StorageError::Closed) => {
-                    JsString::from("database is not open")
-                }
-                HeartbeatError::File(error) => error.js_message(),
-                other => JsString::from(other.to_string()),
-            },
+            Self::Heartbeat(error) => error.message(),
             Self::Llm(error) => error.message.clone(),
         }
     }
@@ -480,10 +474,17 @@ impl EdgeClawMemoryService {
         Ok(self.repository.list_memory_entries(options)?)
     }
 
-    pub fn get(&self, ids: &JsValue, max_lines: Option<f64>) -> Result<JsValue> {
-        Ok(self
-            .repository
-            .get_memory_records_by_ids(ids, max_lines.unwrap_or(80.0))?)
+    /// `get` (`service.ts:984-986`): the TS default parameter applies only to
+    /// `undefined`. `null` reaches `trimContentLines`, where `null <= 0` is
+    /// true and yields empty content; keep that third state instead of folding
+    /// it into the default 80.
+    pub fn get(&self, ids: &JsValue, max_lines: Option<&JsValue>) -> Result<JsValue> {
+        let max_lines = match max_lines {
+            None | Some(JsValue::Undefined) => 80.0,
+            Some(JsValue::Null) => 0.0,
+            Some(value) => value.as_number().unwrap_or(80.0),
+        };
+        Ok(self.repository.get_memory_records_by_ids(ids, max_lines)?)
     }
 
     pub fn get_user_summary(&self) -> Result<JsValue> {
