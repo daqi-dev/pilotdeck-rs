@@ -65,7 +65,10 @@ impl HostHandler for Handler {
             && payload_type == Some("model_request_started".into()))
             || (self.block_model_event && payload_type == Some("model_event".into()))
             || (self.block_turn_failed && payload_type == Some("turn_failed".into()));
-        self.events.lock().unwrap().push(event);
+        self.events
+            .lock()
+            .expect("#741i/#855: host handler test queue must remain unpoisoned")
+            .push(event);
         let fail = self.fail_event;
         Box::pin(async move {
             if fail {
@@ -95,7 +98,7 @@ impl HostHandler for Handler {
         self.drain_calls.fetch_add(1, Ordering::SeqCst);
         self.drains
             .lock()
-            .unwrap()
+            .expect("#741i/#855: host handler test queue must remain unpoisoned")
             .pop_front()
             .unwrap_or(Ok(vec![]))
     }
@@ -107,21 +110,26 @@ impl HostHandler for Handler {
 }
 
 fn options() -> JsValue {
-    parse_json(r#"{"sessionId":"session","turnId":"turn","runId":"run","operationId":"operation","requestId":"request"}"#).unwrap()
+    parse_json(r#"{"sessionId":"session","turnId":"turn","runId":"run","operationId":"operation","requestId":"request"}"#).expect("#741i/#855: static turn fixture must parse and retain its shape")
 }
 
 fn turn_options(turn: &str) -> JsValue {
-    let mut fields = options().as_object().unwrap().clone();
+    let mut fields = options()
+        .as_object()
+        .expect("#741i/#855: static turn fixture must parse and retain its shape")
+        .clone();
     fields.insert("turnId".into(), turn.into());
     JsValue::Object(fields)
 }
 
 fn input() -> JsValue {
-    parse_json(r#"{"type":"text","text":"original\ud800"}"#).unwrap()
+    parse_json(r#"{"type":"text","text":"original\ud800"}"#)
+        .expect("#741i/#855: static turn fixture must parse and retain its shape")
 }
 
 fn input_messages() -> JsValue {
-    parse_json(r#"[{"role":"user","content":[{"type":"text","text":"original\ud800"}]}]"#).unwrap()
+    parse_json(r#"[{"role":"user","content":[{"type":"text","text":"original\ud800"}]}]"#)
+        .expect("#741i/#855: static turn fixture must parse and retain its shape")
 }
 
 fn wire(payload: &JsValue, final_event: bool) -> JsValue {
@@ -144,11 +152,11 @@ fn stream(
         result: None,
         events,
         identity: parse_execute_request(&input(), &options(), vec![])
-            .unwrap()
+            .expect("#741i/#855: static turn fixture must parse and retain its shape")
             .0
             .identity,
         input: parse_execute_request(&input(), &options(), vec![])
-            .unwrap()
+            .expect("#741i/#855: static turn fixture must parse and retain its shape")
             .1,
         integrity,
         delivered: StreamIntegrity::new(),
@@ -183,7 +191,7 @@ async fn deliver(
 async fn next(turn: &mut dyn LiveTurn) -> Result<Option<JsValue>, RuntimeError> {
     timeout(Duration::from_secs(15), turn.next())
         .await
-        .expect("LiveTurn must make progress")
+        .expect("#741i/#855: LiveTurn must make progress (timeout is not a mutation kill)")
 }
 
 async fn persisted_failure(turn: &mut dyn LiveTurn) -> String {
@@ -294,11 +302,29 @@ fn assert_aborted(event: &JsValue) {
 }
 
 fn assert_aborted_turn(event: &JsValue, turn: &str) {
-    assert_eq!(event.get("type"), Some(&"turn_completed".into()));
-    assert_eq!(event.get("sessionId"), Some(&"session".into()));
-    assert_eq!(event.get("turnId"), Some(&turn.into()));
-    assert_eq!(event.get("messages"), Some(&input_messages()));
-    let result = event.get("result").unwrap();
+    assert_eq!(
+        event.get("type"),
+        Some(&"turn_completed".into()),
+        "#741i/#855: aborted terminal preserves its fields"
+    );
+    assert_eq!(
+        event.get("sessionId"),
+        Some(&"session".into()),
+        "#741i/#855: aborted terminal preserves its fields"
+    );
+    assert_eq!(
+        event.get("turnId"),
+        Some(&turn.into()),
+        "#741i/#855: aborted terminal preserves its fields"
+    );
+    assert_eq!(
+        event.get("messages"),
+        Some(&input_messages()),
+        "#741i/#855: aborted terminal preserves its fields"
+    );
+    let result = event
+        .get("result")
+        .expect("#741i/#855: aborted terminal field/projector must exist");
     for (key, expected) in [
         ("type", "aborted".into()),
         ("sessionId", "session".into()),
@@ -308,26 +334,49 @@ fn assert_aborted_turn(event: &JsValue, turn: &str) {
         ("usage", JsValue::Object(JsObject::new())),
         ("permissionDenials", JsValue::Array(vec![])),
     ] {
-        assert_eq!(result.get(key), Some(&expected), "{key}");
+        assert_eq!(
+            result.get(key),
+            Some(&expected),
+            "#741i/#855: aborted terminal {key}"
+        );
     }
     let started = result
         .get("startedAt")
         .and_then(JsValue::as_string)
-        .unwrap();
-    assert!(started.to_utf8().unwrap().ends_with('Z'));
-    assert_eq!(result.get("startedAt"), result.get("completedAt"));
+        .expect("#741i/#855: aborted terminal field/projector must exist");
+    assert!(
+        started
+            .to_utf8()
+            .expect("#741i/#855: aborted terminal field/projector must exist")
+            .ends_with('Z'),
+        "#741i/#855: aborted timestamp is UTC"
+    );
+    assert_eq!(
+        result.get("startedAt"),
+        result.get("completedAt"),
+        "#741i/#855: aborted terminal preserves its fields"
+    );
     let projected = GatewayAgentEventProjector::default()
         .project(&GatewayAgentEventProjectionInput {
             event,
             run_id: "run",
             forward_subagent_text: false,
         })
-        .unwrap();
-    assert_eq!(projected.len(), 1);
-    assert_eq!(projected[0].get("type"), Some(&"turn_completed".into()));
+        .expect("#741i/#855: aborted terminal field/projector must exist");
+    assert_eq!(
+        projected.len(),
+        1,
+        "#741i/#855: aborted terminal preserves its fields"
+    );
+    assert_eq!(
+        projected[0].get("type"),
+        Some(&"turn_completed".into()),
+        "#741i/#855: aborted terminal preserves its fields"
+    );
     assert_eq!(
         projected[0].get("finishReason"),
-        Some(&"aborted_streaming".into())
+        Some(&"aborted_streaming".into()),
+        "#741i/#855: aborted terminal preserves its fields"
     );
 }
 
@@ -635,16 +684,17 @@ async fn assert_reaped(pid: u32) {
     timeout(Duration::from_secs(5), async {
         loop {
             match rustix::process::test_kill_process(
-                rustix::process::Pid::from_raw(pid as i32).unwrap(),
+                rustix::process::Pid::from_raw(pid as i32)
+                    .expect("#741i/#855: sidecar child pid must be valid"),
             ) {
                 Err(rustix::io::Errno::SRCH) => break,
                 Ok(()) => tokio::time::sleep(Duration::from_millis(10)).await,
-                Err(error) => panic!("cannot inspect sidecar child {pid}: {error}"),
+                Err(error) => panic!("#741i/#855: cannot inspect sidecar child {pid}: {error}"),
             }
         }
     })
     .await
-    .expect("sidecar child was not closed after the stream failed closed");
+    .expect("#741i/#855: sidecar child was not closed after the stream failed closed");
 }
 
 #[tokio::test]
@@ -1678,10 +1728,19 @@ fn host_event(kind: &str) -> JsValue {
 }
 
 fn queue_host_events(inner: &Handler, events: &[JsValue]) {
-    inner.drains.lock().unwrap().push_back(Ok(events
-        .iter()
-        .map(|event| event.as_object().unwrap().clone())
-        .collect()));
+    inner
+        .drains
+        .lock()
+        .expect("#741i/#855: buffered host event test setup must succeed")
+        .push_back(Ok(events
+            .iter()
+            .map(|event| {
+                event
+                    .as_object()
+                    .expect("#741i/#855: buffered host event test setup must succeed")
+                    .clone()
+            })
+            .collect()));
 }
 
 fn buffered_handler(
@@ -1817,7 +1876,10 @@ async fn host_buffer_lifecycle_leak_fails_closed() {
 /// Poll once without sleeps or scheduler races, retaining the pending future.
 async fn assert_pending<T>(future: &mut HostFuture<T>) {
     std::future::poll_fn(|cx| {
-        assert!(future.as_mut().poll(cx).is_pending());
+        assert!(
+            future.as_mut().poll(cx).is_pending(),
+            "#741i/#855: controlled host future must remain pending"
+        );
         std::task::Poll::Ready(())
     })
     .await;
@@ -2781,11 +2843,16 @@ impl crate::storage::TranscriptStore for RecordingStore {
         }
         if entry.get("type") == Some(&self.kind.into()) {
             self.attempts.fetch_add(1, Ordering::SeqCst);
-            if let Some((entered, release)) = self.gate.lock().unwrap().take() {
+            if let Some((entered, release)) = self
+                .gate
+                .lock()
+                .expect("#741i/#855: recording test gate must remain unpoisoned")
+                .take()
+            {
                 let _ = entered.send(());
-                release
-                    .recv_timeout(Duration::from_secs(10))
-                    .expect("test must release blocking I/O");
+                release.recv_timeout(Duration::from_secs(10)).expect(
+                    "#741i/#855: test must release blocking I/O (timeout is not a mutation kill)",
+                );
             }
             if self.attempts.load(Ordering::SeqCst) <= self.fail {
                 return Err(std::io::Error::other("recording write failed").into());

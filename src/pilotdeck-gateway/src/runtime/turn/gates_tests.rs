@@ -348,12 +348,14 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
     let pump_starts = || super::super::pump_starts_for_test();
     super::super::reset_pump_starts_for_test();
     let root = std::env::temp_dir().join(format!("pdrs-pump-gates-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(&root).expect("#855: pump gate setup/read/cleanup must succeed");
     let registry = Arc::new(ProjectRuntimeRegistry::new(
         &root,
         Arc::new(|_: &std::path::Path, _: &mut ResourceBundle| Ok(())),
     ));
-    let runtime = registry.resolve(None).unwrap();
+    let runtime = registry
+        .resolve(None)
+        .expect("#855: pump gate setup/read/cleanup must succeed");
     let key = TranscriptKey {
         project_root: root.clone(),
         pilot_home: root.join("home"),
@@ -374,15 +376,27 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
     let handler = Arc::new(Handler::default());
     // Pre-spawned so the factory poll that arms a pre-gate pump happens
     // promptly; the peer only sends its first frame after execute starts.
-    let client = spawn_client("live-payload").await.unwrap();
-    let pid = client.child_id().unwrap();
+    let client = spawn_client("live-payload")
+        .await
+        .expect("#855: pump gate setup/read/cleanup must succeed");
+    let pid = client
+        .child_id()
+        .expect("#855: pump gate setup/read/cleanup must succeed");
     let initial = Mutex::new(Some(client));
     let session = LiveSessionAdapter::new(recorder, Vec::new, {
         let owner = registry.clone();
         let handler = handler.clone();
         move |_| {
-            let lease = Arc::new(owner.acquire(None).unwrap());
-            let client = initial.lock().unwrap().take().unwrap();
+            let lease = Arc::new(
+                owner
+                    .acquire(None)
+                    .expect("#855: pump gate setup/read/cleanup must succeed"),
+            );
+            let client = initial
+                .lock()
+                .expect("#855: pump gate setup/read/cleanup must succeed")
+                .take()
+                .expect("#855: pump gate setup/read/cleanup must succeed");
             let handler = handler.clone();
             Box::pin(async move {
                 Ok((
@@ -393,12 +407,17 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
             })
         }
     });
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut projection = Vec::new();
+    let mut turn = session
+        .submit(input(), options())
+        .expect("#855: pump gate setup/read/cleanup must succeed");
     if case == "reject" {
-        let error = next(turn.as_mut()).await.unwrap_err();
+        let error = next(turn.as_mut())
+            .await
+            .expect_err("#855 [reject]: start write must fail");
         assert!(
             error.message.contains("recording write failed"),
-            "{error:?}"
+            "#855 [reject]: recording error must survive: {error:?}"
         );
         // The failure terminal is this scenario's end state: the stream
         // already released the execution future, so a pump that started
@@ -415,11 +434,11 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
                     tokio::select! {
                         biased;
                         _ = &mut entry => {},
-                        result = &mut waiting => panic!("recording gate must precede delivery: {result:?}"),
+                        result = &mut waiting => panic!("#855 [{case}]: recording gate must precede delivery: {result:?}"),
                     }
                 })
                 .await
-                .expect("append must enter the gate");
+                .expect("#855: append must enter the gate");
             // The gate holds: with the preflight write parked, next() never
             // reaches the select that polls the execution future, so no
             // pump can have ticked, started or drained anything.
@@ -431,16 +450,20 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
             assert_eq!(
                 handler.drain_calls.load(Ordering::SeqCst),
                 0,
-                "no pump tick while the gate holds"
+                "#855 [{case}]: no pump tick while the gate holds"
             );
             assert_eq!(
                 handler.calls.load(Ordering::SeqCst),
                 0,
-                "no module call before the gate commits"
+                "#855 [{case}]: no module call before the gate commits"
             );
             assert!(
-                handler.events.lock().unwrap().is_empty(),
-                "no host event before the gate commits"
+                handler
+                    .events
+                    .lock()
+                    .expect("#855: pump gate setup/read/cleanup must succeed")
+                    .is_empty(),
+                "#855 [{case}]: no host event before the gate commits"
             );
             if case == "open" {
                 // A pump armed at admission is already due by gate-open.
@@ -448,21 +471,42 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
                 assert_eq!(
                     handler.drain_calls.load(Ordering::SeqCst),
                     0,
-                    "still no pump tick inside the closed window"
+                    "#855 [{case}]: still no pump tick inside the closed window"
                 );
             }
             if case == "cancel" {
-                session.abort(&"user-stop".into()).unwrap();
+                session
+                    .abort(&"user-stop".into())
+                    .expect("#855: pump gate setup/read/cleanup must succeed");
             }
         } // Cancel only next's borrow; the same driver stays owned.
-        release.send(()).unwrap();
+        release
+            .send(())
+            .expect("#855: pump gate setup/read/cleanup must succeed");
+        let started = next(turn.as_mut())
+            .await
+            .expect("#855: start read must succeed")
+            .expect("#855: start event must exist");
+        projection.push(started.get("type").expect("#855: start event type").clone());
         assert_eq!(
-            next(turn.as_mut()).await.unwrap().unwrap().get("type"),
-            Some(&"turn_started".into())
+            started.get("type"),
+            Some(&"turn_started".into()),
+            "#855 [{case}]: start must be the first committed gate event"
+        );
+        let accepted = next(turn.as_mut())
+            .await
+            .expect("#855: accepted input read must succeed")
+            .expect("#855: accepted input event must exist");
+        projection.push(
+            accepted
+                .get("type")
+                .expect("#855: accepted input event type")
+                .clone(),
         );
         assert_eq!(
-            next(turn.as_mut()).await.unwrap().unwrap().get("type"),
-            Some(&"input_accepted".into())
+            accepted.get("type"),
+            Some(&"input_accepted".into()),
+            "#855 [{case}]: accepted input follows start"
         );
         if case == "open" {
             // Exactly one poll past the open gate: this poll sends
@@ -471,16 +515,24 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
             // be due within this poll; a pump wrapped before the gate
             // drained on its long-expired timer right here.
             let mut pending = turn.next();
-            assert_recording_pending(pending.as_mut(), "execution must not finish at gate open");
+            assert_recording_pending(
+                pending.as_mut(),
+                "#855: execution must not finish at gate open",
+            );
             assert_eq!(
                 handler.drain_calls.load(Ordering::SeqCst),
                 0,
-                "the pump must not tick at gate open"
+                "#855 [{case}]: the pump must not tick at gate open"
             );
             drop(pending);
         }
         if case == "cancel" {
-            assert_aborted(&next(turn.as_mut()).await.unwrap().unwrap());
+            assert_aborted(
+                &next(turn.as_mut())
+                    .await
+                    .expect("#855: pump gate setup/read/cleanup must succeed")
+                    .expect("#855: pump gate setup/read/cleanup must succeed"),
+            );
             // The abort terminal is this scenario's end state: the
             // cancellation must have won the select past the open gate
             // before with_pump was ever entered.
@@ -490,22 +542,76 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
                 "#855 [cancel]: the pump must never start, not even before the abort terminal"
             );
         } else {
-            let completed = next(turn.as_mut()).await.unwrap().unwrap();
-            assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
+            // Node v22.22.0, real TS gates/pump probe: model_request_started
+            // survives between durable admission and the authoritative final.
+            // Do not skip arbitrary events: the minimal peer has exactly one.
+            let model = next(turn.as_mut())
+                .await
+                .expect("#741i [open]: model request read must succeed")
+                .expect("#741i [open]: model request event must exist");
             assert_eq!(
-                completed.get("result").unwrap().get("type"),
-                Some(&"success".into())
+                model.get("type"),
+                Some(&"model_request_started".into()),
+                "#741i [open]: model_request_started must precede turn_completed"
+            );
+            projection.push(model.get("type").expect("#741i: model event type").clone());
+            let completed = next(turn.as_mut())
+                .await
+                .expect("#855: pump gate setup/read/cleanup must succeed")
+                .expect("#855: pump gate setup/read/cleanup must succeed");
+            projection.push(
+                completed
+                    .get("type")
+                    .expect("#741i: completed event type")
+                    .clone(),
+            );
+            assert_eq!(
+                completed.get("type"),
+                Some(&"turn_completed".into()),
+                "#741i [open]: authoritative terminal follows model request"
+            );
+            assert_eq!(
+                completed
+                    .get("result")
+                    .expect("#855: pump gate setup/read/cleanup must succeed")
+                    .get("type"),
+                Some(&"success".into()),
+                "#741i [open]: authoritative terminal keeps success"
             );
         }
     }
     assert_eq!(
-        next(turn.as_mut()).await.unwrap(),
+        next(turn.as_mut())
+            .await
+            .expect("#855: pump gate setup/read/cleanup must succeed"),
         None,
-        "stream closes once"
+        "#855 [{case}]: stream closes once"
+    );
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/pump-order-cases/oracle.json"
+    ));
+    let Some(JsValue::Array(rows)) = oracle.get("cases") else {
+        panic!("#741i: pump oracle cases");
+    };
+    let row = rows
+        .iter()
+        .find(|row| row.get("name") == Some(&case.into()))
+        .expect("#741i: pump oracle case exists");
+    // The pre-execute cancellation terminal is the existing, unapproved
+    // A7.2-TURN-ABORT-001 difference; assert_aborted checks it separately.
+    assert_eq!(
+        Some(&JsValue::Array(projection)),
+        row.get("projection"),
+        "#741i [{case}]: consumed gate stream matches real TS projection"
     );
     drop(turn);
     timeout(Duration::from_secs(15), async {
-        while session.state.lock().unwrap().active.is_some()
+        while session
+            .state
+            .lock()
+            .expect("#855: pump gate setup/read/cleanup must succeed")
+            .active
+            .is_some()
             || runtime.lease_count() != 0
             || handler.disposed.load(Ordering::SeqCst) == 0
         {
@@ -513,7 +619,7 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
         }
     })
     .await
-    .expect("owned cleanup must release slot, lease and handler");
+    .expect("#855: owned cleanup must release slot, lease and handler");
     assert_reaped(pid).await;
     // #855: post-cleanup re-check — neither the terminal nor the owned
     // cleanup may start (or re-arm) a pump after the scenario's end state.
@@ -522,7 +628,13 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
         usize::from(case == "open"),
         "#855 [{case}]: the pump must start only after the gate commits"
     );
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("#855: pump gate setup/read/cleanup must succeed");
+}
+
+#[test]
+#[ignore = "requires fixed PDRS_BASELINE and Node v22.22.0/tsx"]
+fn pump_order_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("pump-order-cases");
 }
 
 /// Each scenario is its own test so a gate-order mutant fails all three
