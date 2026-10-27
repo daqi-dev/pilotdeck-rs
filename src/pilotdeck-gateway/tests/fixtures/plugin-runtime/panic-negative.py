@@ -14,7 +14,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_panic import named_test_killed
+from negative_panic import named_test_failed, named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_selection import baseline_passed, select
 
@@ -45,11 +45,8 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
         '                        future.as_mut().poll(cx)\n'
         '                    }))\n'
         '                    .unwrap_or_else(|payload| {\n'
-        '                        let message = payload\n'
-        '                            .downcast_ref::<String>()\n'
-        '                            .cloned()\n'
-        '                            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))\n'
-        '                            .unwrap_or_else(|| "Plugin dispose callback panicked.".to_owned());\n'
+        '                        let message = crate::runtime::cleanup_task::panic_message(payload.as_ref())\n'
+        '                            .unwrap_or("Plugin dispose callback panicked.");\n'
         '                        std::task::Poll::Ready(Err(PluginRuntimeError::new(message)))\n'
         '                    })\n'
         '                }));',
@@ -102,62 +99,102 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
     TEST_PREFIX = 'runtime::plugins::tests::'
     baseline_tests = list(dict.fromkeys(test for _name, _mutation, test, _marker in cases))
     summary = []
+    count = {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 0, 'PASS': 0}
     start = time.monotonic()
+
+    def record(row):
+        summary.append(row)
+        count[row['status']] += 1
+        print(json.dumps(row), flush=True)
+
     try:
         # #813 fix-r4: a subset run must first prove the selected target tests
         # are green without a mutation. Otherwise a pre-existing failure would
-        # be attributed to the mutant and count as KILLED.
+        # be attributed to the mutant and count as KILLED. A failed baseline
+        # invalidates only its dependent mutants; every other mutant still runs
+        # so one host round reports every problem (#813 fix-r12).
+        failed_baselines = set()
         for test in baseline_tests:
             test_name = TEST_PREFIX + test
-            assert SOURCE.read_bytes() == BASE, 'source changed outside exclusive runner'
-            slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh',
-                                 timeout=max(1, 590 - (time.monotonic() - start)))
-            (OUT / f'baseline-{test}.slots.log').write_text(slot.stdout + slot.stderr)
-            result = run_owned([
-                'cargo', 'test', '--offline', '--manifest-path', str(ROOT / 'src/Cargo.toml'),
-                '-p', 'pilotdeck-gateway', '--lib', test_name,
-                '--', '--exact', '--nocapture', '--test-threads=1',
-            ], cwd=ROOT, env=ENV, timeout=max(1, min(150, 590 - (time.monotonic() - start))))
-            output = result.stdout + result.stderr
-            (OUT / f'baseline-{test}.log').write_text(output)
-            passed = (result.returncode == 0 and baseline_passed(output, test_name))
-            summary.append(dict(mutation='baseline', test=test_name, exit=result.returncode,
-                                killed=False, baseline=passed))
-            print(json.dumps(summary[-1]), flush=True)
-            if not passed:
-                raise SystemExit(f'baseline {test_name} failed: INVALID before mutation')
-        for name, mutation, test, marker in cases:
-            test_name = TEST_PREFIX + test
-            assert mutation != BASE, f'{name} must change bytes'
-            assert SOURCE.read_bytes() == BASE, 'source changed outside exclusive runner'
-            slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh',
-                                 timeout=max(1, 590 - (time.monotonic() - start)))
-            (OUT / f'{name}.slots.log').write_text(slot.stdout + slot.stderr)
+            passed, exit_code, detail = False, None, ''
             try:
-                SOURCE.write_bytes(mutation)
+                assert SOURCE.read_bytes() == BASE, 'source changed outside exclusive runner'
+                slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh',
+                                     timeout=max(1, 590 - (time.monotonic() - start)))
+                (OUT / f'baseline-{test}.slots.log').write_text(slot.stdout + slot.stderr)
                 result = run_owned([
                     'cargo', 'test', '--offline', '--manifest-path', str(ROOT / 'src/Cargo.toml'),
                     '-p', 'pilotdeck-gateway', '--lib', test_name,
                     '--', '--exact', '--nocapture', '--test-threads=1',
                 ], cwd=ROOT, env=ENV, timeout=max(1, min(150, 590 - (time.monotonic() - start))))
+                exit_code = result.returncode
+                output = result.stdout + result.stderr
+                (OUT / f'baseline-{test}.log').write_text(output)
+                passed = (result.returncode == 0 and baseline_passed(output, test_name))
+                detail = 'unmutated target test is green' if passed else 'baseline failed'
+            except Exception as error:
+                detail = f'baseline: {type(error).__name__}: {error}'
+            if not passed:
+                failed_baselines.add(test_name)
+            record(dict(mutation='baseline', test=test_name, exit=exit_code,
+                        baseline=passed, status='PASS' if passed else 'INVALID',
+                        reason=detail))
+        for name, mutation, test, marker in cases:
+            test_name = TEST_PREFIX + test
+            status, reason, exit_code, mutated = 'INVALID', '', None, False
+            if test_name in failed_baselines:
+                record(dict(mutation=name, mutationSha256=hashlib.sha256(mutation).hexdigest(),
+                            exit=None, test=test_name, marker=marker, status='INVALID',
+                            reason='baseline failed; mutant verdict would be ambiguous'))
+                continue
+            try:
+                assert mutation != BASE, f'{name} must change bytes'
+                assert SOURCE.read_bytes() == BASE, 'source changed outside exclusive runner'
+                slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh',
+                                     timeout=max(1, 590 - (time.monotonic() - start)))
+                (OUT / f'{name}.slots.log').write_text(slot.stdout + slot.stderr)
+                SOURCE.write_bytes(mutation)
+                mutated = True
+                result = run_owned([
+                    'cargo', 'test', '--offline', '--manifest-path', str(ROOT / 'src/Cargo.toml'),
+                    '-p', 'pilotdeck-gateway', '--lib', test_name,
+                    '--', '--exact', '--nocapture', '--test-threads=1',
+                ], cwd=ROOT, env=ENV, timeout=max(1, min(150, 590 - (time.monotonic() - start))))
+                exit_code = result.returncode
                 output = result.stdout + result.stderr
                 (OUT / f'{name}.log').write_text(output)
                 # #813: `test {test_name} ... FAILED` plus the marker inside that
                 # test's panic block, never ordinary stdout or a sibling test.
-                killed = (result.returncode == 101
-                          and named_test_killed(output, test_name, marker)
-                          and 'could not compile' not in output)
-                summary.append(dict(mutation=name, mutationSha256=hashlib.sha256(mutation).hexdigest(),
-                                    exit=result.returncode, test=test_name, killed=killed, marker=marker))
-                print(json.dumps(summary[-1]), flush=True)
-                assert killed, 'require behavioral failure, not compile error or parent timeout'
+                if result.returncode == 0 and baseline_passed(output, test_name):
+                    status, reason = 'SURVIVED', 'bound test still passed'
+                elif (result.returncode == 101
+                      and named_test_killed(output, test_name, marker)
+                      and 'could not compile' not in output):
+                    status, reason = 'KILLED', 'bound test failed at its assertion'
+                elif named_test_failed(output, test_name):
+                    status, reason = 'INVALID', 'bound test failed without the bound assertion'
+                elif 'could not compile' in output:
+                    status, reason = 'INVALID', 'mutant did not compile'
+                else:
+                    status, reason = 'INVALID', f'bound test did not fail (exit {result.returncode})'
+            except Exception as error:
+                status, reason = 'INVALID', f'{type(error).__name__}: {error}'
             finally:
-                assert SOURCE.read_bytes() == mutation
-                SOURCE.write_bytes(BASE)
+                if mutated:
+                    if SOURCE.read_bytes() == mutation:
+                        SOURCE.write_bytes(BASE)
+                    else:
+                        status, reason = 'INVALID', (
+                            reason + '; mutation bytes changed outside runner').lstrip('; ')
+            record(dict(mutation=name, mutationSha256=hashlib.sha256(mutation).hexdigest(),
+                        exit=exit_code, test=test_name, marker=marker,
+                        status=status, reason=reason))
     finally:
         assert SOURCE.read_bytes() == BASE
         (OUT / 'summary.json').write_text(json.dumps(dict(
             sourceSha256=hashlib.sha256(BASE).hexdigest(), restored=True,
-            invalid=any(row.get('baseline') is False for row in summary),
+            counts=count,
+            invalid=count['INVALID'] > 0,
             seconds=time.monotonic() - start, cases=summary,
         ), indent=2) + '\n')
+    raise SystemExit(int(count['INVALID'] > 0 or count['SURVIVED'] > 0))
