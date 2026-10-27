@@ -328,11 +328,20 @@ impl capability::ToolExecution for Tools {
     }
 }
 fn ports(context_runtime: Option<Arc<dyn context::ContextRuntime>>) -> SessionPorts {
+    ports_with_tool_results_dir(
+        context_runtime,
+        std::env::temp_dir().join("pdrs-host-factory-tools"),
+    )
+}
+fn ports_with_tool_results_dir(
+    context_runtime: Option<Arc<dyn context::ContextRuntime>>,
+    tool_results_dir: PathBuf,
+) -> SessionPorts {
     let signal = Cancellation::new();
     SessionPorts {
         model: RouterModelPortOptions::main_agent(),
         recorder: None,
-        tool_results_dir: std::env::temp_dir().join("pdrs-host-factory-tools"),
+        tool_results_dir,
         context_runtime,
         context_identity: context_identity(),
         context_config: JsObject::new(),
@@ -627,6 +636,137 @@ async fn live_session_shares_recorder_and_reads_current_history() {
     }
     session.dispose().await.unwrap();
     bounded(registry.dispose()).await.unwrap();
+}
+
+// #885 fix-r1: a deleted-cwd composition failure must reach the turn stream as
+// the original TS uv_cwd diagnostic. The session-context bundle in TS composes
+// inside ProjectSessionFactory.createSession and throws the constructor error
+// unchanged (SessionContextRuntimeBundle.ts:85, ProjectSessionFactory.ts:160-163);
+// the Rust composition entry assembles lazily per turn, so the observable parity
+// is: submit is admitted, and the first stream poll returns the exact message
+// before any lifecycle event was delivered.
+const SESSION_CWD_WORKER: &str =
+    "runtime::turn::host_factory::tests::session_cwd_environment_worker";
+
+#[test]
+fn session_composition_uv_cwd_error_reaches_stream_unwrapped() {
+    let scratch = Scratch::new();
+    let root = std::fs::canonicalize(&scratch.0).expect("#885 canonical scratch root");
+    std::fs::create_dir(root.join("cwd")).expect("#885 scratch cwd directory");
+    crate::test_process::run_cases(
+        SESSION_CWD_WORKER,
+        vec![(
+            "relative-deleted".into(),
+            vec![
+                ("PDRS_SESSION_CWD_CASE".into(), "relative-deleted".into()),
+                (
+                    "PDRS_SESSION_CWD_ROOT".into(),
+                    root.to_str().expect("#885 UTF-8 scratch root").into(),
+                ),
+            ],
+        )],
+    );
+}
+
+#[tokio::test]
+#[ignore = "worker only; parent supplies isolated cwd and checks one receipt"]
+async fn session_cwd_environment_worker() {
+    let name = std::env::var("PDRS_SESSION_CWD_CASE").expect("#885 parent case");
+    let root = std::env::var("PDRS_SESSION_CWD_ROOT").expect("#885 parent scratch root");
+    let oracle = parse_json(include_str!(
+        "../../../tests/fixtures/tool-budget-cwd/oracle.json"
+    ))
+    .expect("#885 tool-budget-cwd oracle JSON");
+    let expected = oracle
+        .get("cases")
+        .and_then(|cases| match cases {
+            JsValue::Array(items) => Some(items),
+            _ => None,
+        })
+        .expect("#885 oracle cases")
+        .iter()
+        .find(|row| {
+            row.get("name")
+                .and_then(JsValue::as_string)
+                .is_some_and(|value| value.equals_str("relative-deleted"))
+        })
+        .expect("#885 oracle relative-deleted row")
+        .get("outcome")
+        .and_then(|outcome| outcome.get("error"))
+        .and_then(|error| error.get("message"))
+        .and_then(JsValue::as_string)
+        .expect("#885 oracle uv_cwd message")
+        .to_utf8()
+        .expect("#885 oracle message UTF-8");
+
+    let cwd = Path::new(&root).join("cwd");
+    let original = std::env::current_dir().expect("#885 original cwd");
+    std::env::set_current_dir(&cwd).expect("#885 enter scratch cwd");
+    std::fs::remove_dir(&cwd).expect("#885 remove scratch cwd");
+    assert!(
+        std::env::current_dir().is_err(),
+        "#885 deleted cwd must fail current_dir"
+    );
+
+    let scratch = Scratch::new();
+    let registry = registry(&scratch);
+    // The composition error returns from `assemble` before any sidecar spawn,
+    // so the command is never executed.
+    let deployment = Deployment::Stdio {
+        command: "pdrs-885-never-spawned".into(),
+        args: vec![],
+        cwd: PathBuf::from(&root),
+        env: Env::new(),
+    };
+    let session = TurnHostFactory::new(
+        registry.clone(),
+        deployment,
+        Limits::default(),
+        Some(JsString::from("fixture")),
+        move |_, _| ports_with_tool_results_dir(None, PathBuf::from("../spill")),
+    )
+    .into_live_session(test_recorder(), Vec::new);
+    let mut submitted = session.submit(
+        parse_json(r#"{"type":"text","text":"hello"}"#).expect("#885 input JSON"),
+        wire(),
+    );
+    let first_poll: Option<Result<Option<JsValue>, String>> = match submitted {
+        Ok(ref mut turn) => Some(bounded(turn.next()).await.map_err(|error| error.message)),
+        Err(ref error) => Some(Err(error.message.clone())),
+    };
+    // Restore before assertions, even if the product returned an unexpected result.
+    std::env::set_current_dir(original).expect("#885 restore original cwd");
+
+    let mut turn = match submitted {
+        Ok(turn) => turn,
+        Err(error) => panic!(
+            "#885 submit must admit the turn before composition: {}",
+            error.message
+        ),
+    };
+    let first = first_poll.expect("#885 first poll result");
+    match first {
+        Err(message) => assert_eq!(
+            message, expected,
+            "#885 composition failure must preserve the TS uv_cwd message on the first poll"
+        ),
+        Ok(event) => panic!(
+            "#885 composition failure must fail the first poll before any event, got {event:?}"
+        ),
+    }
+    // No lifecycle event may precede the error: the next poll after the failed
+    // one is the stream's end.
+    assert_eq!(
+        bounded(turn.next()).await.expect("#885 post-error poll"),
+        None,
+        "#885 failed composition must not emit further events"
+    );
+    drop(turn);
+    bounded(registry.dispose())
+        .await
+        .expect("#885 registry dispose");
+    drop(session);
+    crate::test_process::receipt(&name);
 }
 
 #[tokio::test]

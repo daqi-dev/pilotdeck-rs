@@ -30,3 +30,11 @@ ignored 重生成守卫：在 `src/` 下运行 `cargo test -p pilotdeck-gateway 
 4 项覆盖：cwd 根目录回退（含暖缓存格）、syscall/错误格式、绝对路径误读 cwd。
 每项同时绑定测试全名及该测试捕获的 `#885` 消息，避免另一用例的 panic 误充判杀。
 全量可能超过 20 分钟，协调者提交后分批跑，不在未提交树伪造 HEAD。
+
+fix-r1 追加传播回归与负控 `session_negative.py`：`host_factory_tests.rs` 的
+`session_composition_uv_cwd_error_reaches_stream_unwrapped`（worker 子进程删 cwd）经
+`TurnHostFactory::into_live_session` 公开组合入口断言 submit 先接纳、首次轮询返回与
+本 oracle `relative-deleted` 逐字节相同的 uv_cwd 消息、任何生命周期事件之前失败。
+`session_negative.py` 同样先 `--check` 核 2 个唯一锚点（`host_factory.rs` 的 Session
+kind 映射、`live.rs` finish 的原样返回分支），提交后由协调者在 HEAD 守卫下运行；
+正控要求 1 passed 且 1 个 `PDRS_VERIFIED_CHILD` 回执。

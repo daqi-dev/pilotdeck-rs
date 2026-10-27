@@ -556,6 +556,12 @@ impl LiveTurnStream {
                 causes: vec![RuntimeError::new(format!("{:?}", error))],
                 js_error: None,
             }),
+            // A session-composition failure predates any host execution; the
+            // composition boundary already carries the TS session-creation
+            // message, so `Host execution failed:` must not wrap it (#885).
+            Err(error) if error.kind == HostErrorKind::Session => {
+                Err(RuntimeError::new(error.message))
+            }
             Err(error) => Err(map_host_error(error)),
         }
     }
