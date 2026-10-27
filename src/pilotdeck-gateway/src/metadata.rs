@@ -338,9 +338,36 @@ pub(crate) fn resolve_path(cwd: &Path, path: &Path) -> PathBuf {
 }
 
 /// Node `path.resolve(cwd, path)` when `cwd` may itself be relative.
-pub(crate) fn resolve_process_path(cwd: &Path, path: &Path) -> PathBuf {
-    let process_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-    resolve_path(&resolve_path(&process_cwd, cwd), path)
+pub(crate) fn resolve_process_path(cwd: &Path, path: &Path) -> io::Result<PathBuf> {
+    // Node resolves right to left: an absolute argument makes process cwd irrelevant.
+    if path.is_absolute() {
+        return Ok(resolve_path(Path::new(""), path));
+    }
+    if cwd.is_absolute() {
+        return Ok(resolve_path(cwd, path));
+    }
+    let process_cwd = std::env::current_dir()
+        .map_err(|error| io::Error::new(error.kind(), ProcessCwdError(error)))?;
+    Ok(resolve_path(&resolve_path(&process_cwd, cwd), path))
+}
+
+// Keep the same kind/Display as from_env, and retain the native errno for
+// callers whose existing error boundary also exposes a JS error code.
+#[derive(Debug)]
+struct ProcessCwdError(io::Error);
+impl std::fmt::Display for ProcessCwdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&crate::node_io::diagnostic_or_unknown(&self.0, "uv_cwd", None).1)
+    }
+}
+impl std::error::Error for ProcessCwdError {}
+
+pub(crate) fn process_cwd_diagnostic(error: &io::Error) -> (&'static str, String) {
+    let source = error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<ProcessCwdError>())
+        .map_or(error, |inner| &inner.0);
+    crate::node_io::diagnostic_or_unknown(source, "uv_cwd", None)
 }
 
 const UTF16_SLASH: u16 = b'/' as u16;
@@ -993,3 +1020,7 @@ pub(crate) mod tests;
 #[cfg(all(test, unix))]
 #[path = "../tests/fixtures/metadata-from-env/regression.rs"]
 mod from_env_tests;
+
+#[cfg(all(test, unix))]
+#[path = "../tests/fixtures/metadata-process-cwd/regression.rs"]
+mod process_cwd_tests;

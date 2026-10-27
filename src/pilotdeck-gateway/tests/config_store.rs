@@ -335,7 +335,13 @@ async fn run_step(
             "diagnostics",
             normalize(&JsValue::Array(store(ctx).diagnostics()), &root_units(ctx)),
         )),
-        "watch" => *watch = Some(store(ctx).start_watching(WatchOptions::default())),
+        "watch" => {
+            *watch = Some(
+                store(ctx)
+                    .start_watching(WatchOptions::default())
+                    .expect("#879 healthy watcher paths"),
+            )
+        }
         "unwatch" => watch.take().expect("watching").stop().await,
         "wait" => {
             let ms = step.get("ms").and_then(JsValue::as_number).expect("ms");

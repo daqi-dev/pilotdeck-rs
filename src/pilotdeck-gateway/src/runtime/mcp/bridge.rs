@@ -348,7 +348,7 @@ static IMAGE_LINK: LazyLock<regex::Regex> = LazyLock::new(|| {
 });
 
 /// `path.resolve(cwd, rel)` (POSIX, lexical).
-fn resolve_path(cwd: &str, relative: &str) -> PathBuf {
+fn resolve_path(cwd: &str, relative: &str) -> std::io::Result<PathBuf> {
     crate::metadata::resolve_process_path(Path::new(cwd), Path::new(relative))
 }
 
@@ -357,7 +357,11 @@ fn extract_file_images(text: &JsString, cwd: &str, policy: &ImageReadPolicy) -> 
     let mut images = Vec::new();
     for capture in IMAGE_LINK.captures_iter(&text) {
         let relative = &capture[1];
-        let Some(bytes) = policy.read(&resolve_path(cwd, relative)) else {
+        // TS catches path.resolve and readFile together, per image link.
+        let Ok(path) = resolve_path(cwd, relative) else {
+            continue;
+        };
+        let Some(bytes) = policy.read(&path) else {
             continue;
         };
         let ext = relative.rsplit('.').next().unwrap_or("png").to_lowercase();

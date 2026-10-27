@@ -1218,37 +1218,58 @@ impl LoadMcpServerConfigResult {
 }
 
 /// `getGlobalMcpConfigFilePath`.
-pub fn global_mcp_config_file_path(pilot_home: &Path) -> PathBuf {
-    absolute(pilot_home).join(MCP_CONFIG_FILE_NAME)
+pub fn global_mcp_config_file_path(pilot_home: &Path) -> std::io::Result<PathBuf> {
+    Ok(absolute(pilot_home)?.join(MCP_CONFIG_FILE_NAME))
 }
 
 /// `getProjectMcpConfigFilePath`.
-pub fn project_mcp_config_file_path(project_root: &Path) -> PathBuf {
-    absolute(project_root)
+pub fn project_mcp_config_file_path(project_root: &Path) -> std::io::Result<PathBuf> {
+    Ok(absolute(project_root)?
         .join(".pilotdeck")
-        .join(MCP_CONFIG_FILE_NAME)
+        .join(MCP_CONFIG_FILE_NAME))
 }
 
 /// `path.resolve`: normalize dot segments relative to the process cwd.
-fn absolute(path: &Path) -> PathBuf {
+fn absolute(path: &Path) -> std::io::Result<PathBuf> {
     crate::metadata::resolve_process_path(Path::new(""), path)
 }
 
-/// `loadMcpServerConfig(projectRoot, pilotHome)`. `Err` is the uncaught
-/// `RangeError` of a too-deep `expandMcpConfig`.
+/// Uncaught path resolution or recursive placeholder expansion failure.
+#[derive(Debug)]
+pub enum McpConfigLoadError {
+    Cwd(std::io::Error),
+    CallStackExceeded(CallStackExceeded),
+}
+impl std::fmt::Display for McpConfigLoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Cwd(error) => error.fmt(f),
+            Self::CallStackExceeded(error) => error.fmt(f),
+        }
+    }
+}
+impl std::error::Error for McpConfigLoadError {}
+impl From<CallStackExceeded> for McpConfigLoadError {
+    fn from(error: CallStackExceeded) -> Self {
+        Self::CallStackExceeded(error)
+    }
+}
+
+/// `loadMcpServerConfig(projectRoot, pilotHome)`. Path errors escape before
+/// file reads; recursive expansion retains its existing RangeError.
 pub fn load_mcp_server_config(
     project_root: &Path,
     pilot_home: &Path,
     environment: &dyn McpEnvironment,
-) -> Result<LoadMcpServerConfigResult, CallStackExceeded> {
+) -> Result<LoadMcpServerConfigResult, McpConfigLoadError> {
     let mut diagnostics = Vec::new();
     let global = read_mcp_config(
-        &global_mcp_config_file_path(pilot_home),
+        &global_mcp_config_file_path(pilot_home).map_err(McpConfigLoadError::Cwd)?,
         &mut diagnostics,
         environment,
     )?;
     let project = read_mcp_config(
-        &project_mcp_config_file_path(project_root),
+        &project_mcp_config_file_path(project_root).map_err(McpConfigLoadError::Cwd)?,
         &mut diagnostics,
         environment,
     )?;
@@ -1357,15 +1378,23 @@ mod tests {
     fn config_paths_use_shared_lexical_resolution() {
         let cwd = std::env::current_dir().unwrap();
         assert_eq!(
-            global_mcp_config_file_path(Path::new("a/../b/./")),
+            global_mcp_config_file_path(Path::new("a/../b/./"))
+                .expect("#879 healthy MCP config path"),
             cwd.join("b").join(MCP_CONFIG_FILE_NAME)
         );
         assert_eq!(
-            project_mcp_config_file_path(Path::new("/a/../../中/./x/..")),
+            project_mcp_config_file_path(Path::new("/a/../../中/./x/.."))
+                .expect("#879 healthy MCP config path"),
             Path::new("/中/.pilotdeck").join(MCP_CONFIG_FILE_NAME)
         );
-        assert_eq!(absolute(Path::new("")), cwd);
-        assert_eq!(absolute(Path::new("/../")), Path::new("/"));
+        assert_eq!(
+            absolute(Path::new("")).expect("#879 healthy MCP config path"),
+            cwd
+        );
+        assert_eq!(
+            absolute(Path::new("/../")).expect("#879 healthy MCP config path"),
+            Path::new("/")
+        );
     }
 
     /// The shared libuv table must reproduce every row the old hand-written

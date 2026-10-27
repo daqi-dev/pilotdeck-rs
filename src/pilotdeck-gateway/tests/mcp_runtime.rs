@@ -856,7 +856,8 @@ fn replays_ts_parse_and_patch() {
             &string(field(case, "projectRoot"), "projectRoot"),
             &string(field(case, "pilotHome"), "pilotHome"),
             &builtin_paths(),
-        );
+        )
+        .expect("#879 healthy MCP patch paths");
         // Key order of the TS object comes from `{ ...spec, command, cwd, args }`
         // and carries no meaning; the values are compared exactly.
         assert_eq!(
@@ -1141,10 +1142,13 @@ fn provider_op<'a>(run: &'a ProviderRun, op: JsValue) -> LocalFuture<'a, Fields>
                 unit(lease.release().await)
             }
             "perSession" => {
-                let specs = run.subject.per_session_server_specs(
-                    &plugins(),
-                    field(&op, "force").as_bool() == Some(true),
-                );
+                let specs = run
+                    .subject
+                    .per_session_server_specs(
+                        &plugins(),
+                        field(&op, "force").as_bool() == Some(true),
+                    )
+                    .expect("#879 healthy per-session MCP paths");
                 vec![(
                     "ok",
                     specs.map_or(JsValue::Null, |specs| {
