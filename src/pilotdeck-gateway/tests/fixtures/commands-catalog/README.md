@@ -4,7 +4,7 @@
 
 ## locale 与回放
 
-金样固定为 **en-US**（`generate.mts:11`）。`replay` 在任何文件操作和页面比较之前检查实际 locale；非 en-US 会以 `#887 commands catalog oracle requires en-US` 明确失败，避免把环境差异误报为产品回归。locale 优先级为 `LC_ALL` → `LC_MESSAGES` → `LANG`，因此只设置 LANG 不足以覆盖已有 LC_*。生产 provider 仍使用调用进程的实际 locale。
+金样固定为 **en-US**（`generate.mts:11`）。`replay` 在任何文件操作和页面比较之前检查实际 locale；非 en-US 会以 `#887 oracle requires en-US` 明确失败，避免把环境差异误报为产品回归。locale 优先级为 `LC_ALL` → `LC_MESSAGES` → `LANG`，因此只设置 LANG 不足以覆盖已有 LC_*。生产 provider 仍使用调用进程的实际 locale。
 
 ```sh
 export CARGO_TARGET_DIR=/absolute/path/to/this-tree/_build/cargo-target
@@ -15,7 +15,7 @@ bash scripts/cargo-slots.sh
 cargo test -q --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib runtime::plugins::catalog::
 ```
 
-`catalog_locale_contract` 在独立测试子进程中验证 en-US 通过、zh-CN 明确拒绝；不修改并行测试进程的全局环境。每个子进程退出即完成，30 秒仍未退出则杀死并报错。
+`catalog_locale_contract` 与 `plugin_runtime_locale_contract` 共用守卫及契约助手，按 `../node-locale/oracle.json` 的每格在独立子进程中验证：en-US 通过，其余 resolved locale 明确拒绝；不修改并行测试进程的全局环境。每个子进程退出即完成，30 秒仍未退出则杀死并报错。
 
 ## 重生成
 
@@ -40,4 +40,4 @@ python3 src/pilotdeck-gateway/tests/fixtures/commands-catalog/negative_controls.
 
 ## 前置于 U5 的 wire limit 解码
 
-当前 `CommandsListInput.limit: Option<u32>` 是已类型化的 provider 输入，不是 JSON 解码器。U5 原生入口必须区分未提供、合法整数和非法输入：不得把 1.5 截为 1、-1 转为 None、超 u32 数值截断。缺省/null 按真实 TS 的 `?? 50` 语义处理；1..100 整数接受，其余（包括字符串、布尔值）返回 INVALID_LIMIT。本轮 Node v22.22.0 实测覆盖上述 11 种输入，原始记录在 `_tmp/20261026-issue-887/fix-r2/ts-wire-limit.log`。U5 仍须补充对应的可重生成金样、真实 wire 入口测试与负控；本包未实现 wire decoder，未据此宣称 U5 完成。
+当前 `CommandsListInput.limit: Option<u32>` 是已类型化的 provider 输入，不是 JSON 解码器。U5 原生入口必须区分未提供、合法整数和非法输入：不得把 1.5 截为 1、-1 转为 None、超 u32 数值截断。缺省/null 按真实 TS 的 `?? 50` 语义处理；1..100 整数接受，其余（包括字符串、布尔值）返回 INVALID_LIMIT。本轮 Node v22.22.0 实测覆盖上述 11 种输入，实测记录见 #887 评审证据。U5 仍须补充对应的可重生成金样、真实 wire 入口测试与负控；本包未实现 wire decoder，未据此宣称 U5 完成。

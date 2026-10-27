@@ -329,7 +329,7 @@ fn regenerates_twice_identically() {
     ] {
         for _ in 0..2 {
             let scratch = scratch::Scratch::new("html-markdown");
-            let output = std::process::Command::new("node")
+            let output = baseline::node_command()
                 .arg("--import")
                 .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
                 .arg(
@@ -338,8 +338,6 @@ fn regenerates_twice_identically() {
                         .join(script),
                 )
                 .arg(scratch.path())
-                .env("LANG", "en_US.UTF-8")
-                .env_remove("LC_ALL")
                 .output()
                 .unwrap();
             assert!(

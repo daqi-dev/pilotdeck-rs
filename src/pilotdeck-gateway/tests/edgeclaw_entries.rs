@@ -728,7 +728,7 @@ fn ts_entries_and_failure_residue_replay() {
 }
 fn node(script: &str, args: &[&Path]) {
     let base = PathBuf::from(std::env::var("PDRS_BASELINE").unwrap());
-    let mut child = Command::new("node")
+    let mut child = baseline::node_command()
         .arg("--import")
         .arg(base.join("node_modules/tsx/dist/loader.mjs"))
         .arg(
@@ -737,8 +737,6 @@ fn node(script: &str, args: &[&Path]) {
                 .join(script),
         )
         .args(args)
-        .env("LANG", "en_US.UTF-8")
-        .env_remove("LC_ALL")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()

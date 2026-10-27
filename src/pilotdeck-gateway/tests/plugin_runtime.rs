@@ -4,6 +4,10 @@
 //! from the oracle. See fixtures/plugin-runtime/README.md for scope.
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "../src/node_locale.rs"]
+mod node_locale;
+#[path = "common/oracle_locale.rs"]
+mod oracle_locale;
 use pilotdeck_gateway::{hooks::protocol::HooksSettings, runtime::plugins::*};
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use serde_json::{Value, json};
@@ -240,6 +244,7 @@ impl Drop for Scratch {
     }
 }
 async fn replay(s: &Value) {
+    oracle_locale::require_en_us();
     let scratch =
         Scratch(std::env::temp_dir().join(format!("pdrs-runtime-{}", uuid::Uuid::new_v4())));
     let root = &scratch.0;
@@ -616,4 +621,9 @@ scenarios! {
     (runtime_catalog_release_failure_only_warns, "catalog-release-failure-only-warns"),
     (runtime_catalog_resolve_failure_skips_refresh, "catalog-resolve-failure-skips-refresh"),
     (runtime_catalog_on_draining_runtime, "catalog-on-draining-runtime"),
+}
+
+#[tokio::test]
+async fn plugin_runtime_locale_contract() {
+    oracle_locale::replay_locale_contract("runtime_empty_directories", "plugin-runtime").await;
 }

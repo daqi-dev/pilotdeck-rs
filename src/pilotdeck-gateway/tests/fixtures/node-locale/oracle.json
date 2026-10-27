@@ -1,0 +1,350 @@
+{
+  "node": "v22.22.0",
+  "localeProbe": [
+    {
+      "id": "unset",
+      "env": {},
+      "locale": "en-US",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    },
+    {
+      "id": "C",
+      "env": {
+        "LANG": "C"
+      },
+      "locale": "en-US",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    },
+    {
+      "id": "POSIX",
+      "env": {
+        "LANG": "POSIX"
+      },
+      "locale": "en-US",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    },
+    {
+      "id": "C.UTF-8",
+      "env": {
+        "LANG": "C.UTF-8"
+      },
+      "locale": "en-US",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    },
+    {
+      "id": "invalid",
+      "env": {
+        "LANG": "not_a_locale!!!"
+      },
+      "locale": "not",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    },
+    {
+      "id": "modifier",
+      "env": {
+        "LANG": "en_US@modifier"
+      },
+      "locale": "en-US-modifier",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    },
+    {
+      "id": "empty-LANG",
+      "env": {
+        "LANG": ""
+      },
+      "locale": "und",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    },
+    {
+      "id": "empty-LC_ALL",
+      "env": {
+        "LC_ALL": "",
+        "LANG": "en_US.UTF-8"
+      },
+      "locale": "und",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    },
+    {
+      "id": "empty-LC_MESSAGES",
+      "env": {
+        "LC_MESSAGES": "",
+        "LANG": "en_US.UTF-8"
+      },
+      "locale": "und",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    },
+    {
+      "id": "hyphen",
+      "env": {
+        "LANG": "zh-CN"
+      },
+      "locale": "zh-CN",
+      "order": [
+        "_x",
+        "😀",
+        "你好",
+        "文件",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z"
+      ]
+    },
+    {
+      "id": "en-US",
+      "env": {
+        "LANG": "en_US.UTF-8"
+      },
+      "locale": "en-US",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    },
+    {
+      "id": "zh-CN",
+      "env": {
+        "LANG": "zh_CN.UTF-8"
+      },
+      "locale": "zh-CN",
+      "order": [
+        "_x",
+        "😀",
+        "你好",
+        "文件",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z"
+      ]
+    },
+    {
+      "id": "invalid-language",
+      "env": {
+        "LANG": "!!!"
+      },
+      "locale": "und",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    },
+    {
+      "id": "invalid-suffix",
+      "env": {
+        "LANG": "tr_TR_invalid!!!"
+      },
+      "locale": "tr-TR",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    },
+    {
+      "id": "invalid-extension",
+      "env": {
+        "LANG": "not-a-real-locale"
+      },
+      "locale": "not",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    },
+    {
+      "id": "modifier-charset",
+      "env": {
+        "LANG": "en_US.UTF-8@modifier"
+      },
+      "locale": "en-US-modifier",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    },
+    {
+      "id": "modifier-short",
+      "env": {
+        "LANG": "en_US@foo"
+      },
+      "locale": "en-US-x-lvariant-foo",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    },
+    {
+      "id": "messages-priority",
+      "env": {
+        "LANG": "en_US.UTF-8",
+        "LC_MESSAGES": "zh_CN.UTF-8"
+      },
+      "locale": "zh-CN",
+      "order": [
+        "_x",
+        "😀",
+        "你好",
+        "文件",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z"
+      ]
+    },
+    {
+      "id": "all-priority",
+      "env": {
+        "LANG": "zh_CN.UTF-8",
+        "LC_MESSAGES": "zh_CN.UTF-8",
+        "LC_ALL": "en_US.UTF-8"
+      },
+      "locale": "en-US",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ]
+    }
+  ]
+}

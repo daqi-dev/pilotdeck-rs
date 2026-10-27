@@ -427,7 +427,7 @@ fn real_ts_reads_rust_capture_observations() {
     )
     .unwrap();
     let baseline = std::env::var_os("PDRS_BASELINE").expect("PDRS_BASELINE");
-    let mut command = Command::new("node");
+    let mut command = baseline::node_command();
     command
         .arg("--disable-warning=ExperimentalWarning")
         .arg("--import")
@@ -438,8 +438,6 @@ fn real_ts_reads_rust_capture_observations() {
         )
         .arg(&path)
         .env("PDRS_BASELINE", &baseline)
-        .env("LANG", "en_US.UTF-8")
-        .env_remove("LC_ALL")
         .stdin(Stdio::null());
     run_node(&mut command, scratch.path());
 }

@@ -936,15 +936,13 @@ mod tests {
         let scratch =
             std::env::temp_dir().join(format!("pdrs-skills-tree-files-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&scratch).unwrap();
-        let output = std::process::Command::new("node")
+        let output = crate::test_baseline::node_command()
             .arg("--disable-warning=ExperimentalWarning")
             .arg("--import")
             .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
             .arg(fixtures.join("generate.mts"))
             .arg(&scratch)
             .env("PDRS_BASELINE", &baseline)
-            .env("LANG", "en_US.UTF-8")
-            .env_remove("LC_ALL")
             .output()
             .unwrap();
         assert!(

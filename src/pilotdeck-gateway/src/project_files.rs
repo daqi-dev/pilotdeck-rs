@@ -639,27 +639,8 @@ pub(crate) fn native_stat(root: &Path, path: &Path) -> io::Result<(Stat, bool)> 
     ))
 }
 
-// Node/ICU's POSIX default locale precedence, measured in node-runtime.json.
-pub(crate) fn node_locale(env: impl FnMut(&str) -> Option<String>) -> Locale {
-    let value = ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .into_iter()
-        .find_map(env)
-        .unwrap_or_else(|| "en-US".into());
-    let language = value
-        .split(['.', '@'])
-        .next()
-        .unwrap_or("")
-        .replace('_', "-");
-    if language.is_empty() {
-        return Locale::UNKNOWN;
-    }
-    if language == "C" || language == "POSIX" {
-        return "en-US".parse().unwrap();
-    }
-    language
-        .parse()
-        .unwrap_or_else(|_| "en-US".parse().unwrap())
-}
+pub(crate) use crate::node_locale::node_locale;
+
 fn lowercase(value: &str, locale: &LanguageIdentifier, substring: bool) -> String {
     // Node v22.22.0 / V8 12.4: Latin-1 fast casing ignores the locale only
     // for non-sliced strings. Substrings shorter than 13 UTF-16 units are

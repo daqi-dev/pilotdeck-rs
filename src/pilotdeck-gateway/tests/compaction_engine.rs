@@ -830,7 +830,7 @@ fn generator_twice_is_byte_identical() {
     let mut outputs = Vec::new();
     for index in 0..2 {
         let output = scratch.path().join(format!("run-{index}"));
-        let result = std::process::Command::new("node")
+        let result = baseline::node_command()
             .arg("--import")
             .arg(std::path::Path::new(&baseline).join("node_modules/tsx/dist/loader.mjs"))
             .arg(
@@ -840,8 +840,6 @@ fn generator_twice_is_byte_identical() {
             .arg(&output)
             .env("PDRS_BASELINE", &baseline)
             .env("PDRS_GIT", &git)
-            .env("LANG", "en_US.UTF-8")
-            .env_remove("LC_ALL")
             .output()
             .unwrap();
         assert!(
