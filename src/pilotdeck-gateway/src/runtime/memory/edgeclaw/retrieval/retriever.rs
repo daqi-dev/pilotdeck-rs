@@ -152,8 +152,127 @@ pub struct ReasoningRetriever {
     extractor: Arc<LlmMemoryExtractor>,
     clock: RetrieverClock,
     random_token: RandomToken,
-    recall_cache: Mutex<HashMap<JsString, RecallCacheEntry>>,
-    runtime_stats: Mutex<RetrievalRuntimeStats>,
+    cache: RetrievalCache,
+}
+
+/// The recall cache and the last-recall stats share one mutex. The TS
+/// baseline mutates both inside one synchronous step: a hit reads the cache
+/// and updates the stats without yielding, and a miss writes the cache entry
+/// and the stats together. One state lock reproduces that atomicity; two
+/// locks let a concurrent hit land between the miss cache insert and the miss
+/// stats write, leaving `lastRecallCacheHit=false` after the hit completed.
+struct RetrievalCache {
+    state: Mutex<RetrieverState>,
+    #[cfg(test)]
+    commit_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+}
+
+#[derive(Default)]
+struct RetrieverState {
+    recall_cache: HashMap<JsString, RecallCacheEntry>,
+    runtime_stats: RetrievalRuntimeStats,
+}
+
+impl RetrievalCache {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(RetrieverState::default()),
+            #[cfg(test)]
+            commit_hook: Mutex::new(None),
+        }
+    }
+
+    fn get_runtime_stats(&self) -> JsObject {
+        self.lock_state().runtime_stats.to_object()
+    }
+
+    fn clear(&self) {
+        self.lock_state().recall_cache.clear();
+    }
+
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, RetrieverState> {
+        self.state.lock().expect("#767 retrieval state lock")
+    }
+
+    /// Hit path: the cache lookup and the stats update are one step.
+    fn lookup_hit(&self, key: &JsString, mode: &JsString, now: i64) -> Option<JsObject> {
+        let mut state = self.lock_state();
+        let cached = state.recall_cache.get(key)?.clone();
+        if cached.expires_at <= now {
+            return None;
+        }
+        let result = cache_hit_result(&cached.result, mode);
+        write_hit_stats(&mut state.runtime_stats, &result, mode);
+        Some(result)
+    }
+
+    /// Miss tail: the TS `recallCache.set` and `runtimeStats = {...}` run in
+    /// the same synchronous step, so a concurrent hit can never observe one
+    /// without the other.
+    fn commit_miss(
+        &self,
+        key: JsString,
+        result: &JsObject,
+        elapsed_ms: f64,
+        mode: &JsString,
+        now: i64,
+    ) {
+        let mut state = self.lock_state();
+        state.recall_cache.insert(
+            key,
+            RecallCacheEntry {
+                expires_at: now.saturating_add(RECALL_CACHE_TTL_MS),
+                result: result.clone(),
+            },
+        );
+        #[cfg(test)]
+        self.notify_commit_hook();
+        let previous = state.runtime_stats.clone();
+        state.runtime_stats = RetrievalRuntimeStats {
+            last_recall_ms: elapsed_ms,
+            recall_timeouts: previous.recall_timeouts,
+            last_recall_mode: debug_field(result, "mode").unwrap_or_else(|| s("none")),
+            last_recall_path: debug_field(result, "path").unwrap_or_else(|| mode.clone()),
+            last_recall_injected: !string_field(result, "context").is_empty(),
+            last_recall_cache_hit: false,
+        };
+    }
+
+    #[cfg(test)]
+    fn set_commit_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) {
+        *self.commit_hook.lock().expect("#767 commit hook lock") = Some(hook);
+    }
+
+    #[cfg(test)]
+    fn notify_commit_hook(&self) {
+        let hook = self
+            .commit_hook
+            .lock()
+            .expect("#767 commit hook lock")
+            .clone();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
+    #[cfg(test)]
+    fn test_state_lock_available(&self) -> bool {
+        match self.state.try_lock() {
+            Ok(_) => true,
+            Err(std::sync::TryLockError::WouldBlock) => false,
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                panic!("#767 retrieval state lock poisoned")
+            }
+        }
+    }
+}
+
+fn write_hit_stats(stats: &mut RetrievalRuntimeStats, result: &JsObject, mode: &JsString) {
+    stats.last_recall_ms = 0.0;
+    stats.last_recall_mode = debug_field(result, "mode").unwrap_or_else(|| s("none"));
+    stats.last_recall_path = debug_field(result, "path").unwrap_or_else(|| mode.clone());
+    stats.last_recall_injected = !string_field(result, "context").is_empty();
+    stats.last_recall_cache_hit = true;
 }
 
 impl ReasoningRetriever {
@@ -184,24 +303,17 @@ impl ReasoningRetriever {
             extractor,
             clock,
             random_token,
-            recall_cache: Mutex::new(HashMap::new()),
-            runtime_stats: Mutex::new(RetrievalRuntimeStats::default()),
+            cache: RetrievalCache::new(),
         }
     }
 
     pub fn get_runtime_stats(&self) -> JsObject {
-        self.runtime_stats
-            .lock()
-            .expect("#767 runtime stats lock")
-            .to_object()
+        self.cache.get_runtime_stats()
     }
 
     /// `resetTransientState`: only the recall cache is transient.
     pub fn reset_transient_state(&self) {
-        self.recall_cache
-            .lock()
-            .expect("#767 recall cache lock")
-            .clear();
+        self.cache.clear();
     }
 
     /// `service.search`: force `retrievalMode: "explicit"`.
@@ -243,18 +355,9 @@ impl ReasoningRetriever {
         let snapshot = JsString::from(self.repository.get_snapshot_version()?);
         let cache_key = recall_cache_key(&mode, query, &recent, &snapshot);
 
-        let cached = self
-            .recall_cache
-            .lock()
-            .expect("#767 recall cache lock")
-            .get(&cache_key)
-            .cloned();
-        if let Some(cached) = cached
-            && cached.expires_at > (self.clock)()
-        {
-            let result = cache_hit_result(&cached.result, &mode);
-            self.record_cache_hit_stats(&result, &mode);
-            return Ok(result);
+        let cached = self.cache.lookup_hit(&cache_key, &mode, (self.clock)());
+        if let Some(cached) = cached {
+            return Ok(cached);
         }
 
         let mut trace = create_trace(query, &mode, (self.clock)(), &(self.random_token)());
@@ -892,41 +995,9 @@ impl ReasoningRetriever {
             ])
         };
 
-        self.recall_cache
-            .lock()
-            .expect("#767 recall cache lock")
-            .insert(
-                cache_key,
-                RecallCacheEntry {
-                    expires_at: (self.clock)().saturating_add(RECALL_CACHE_TTL_MS),
-                    result: result.clone(),
-                },
-            );
-        {
-            let previous = self
-                .runtime_stats
-                .lock()
-                .expect("#767 runtime stats lock")
-                .clone();
-            *self.runtime_stats.lock().expect("#767 runtime stats lock") = RetrievalRuntimeStats {
-                last_recall_ms: elapsed_ms as f64,
-                recall_timeouts: previous.recall_timeouts,
-                last_recall_mode: debug_field(&result, "mode").unwrap_or_else(|| s("none")),
-                last_recall_path: debug_field(&result, "path").unwrap_or_else(|| mode.clone()),
-                last_recall_injected: !string_field(&result, "context").is_empty(),
-                last_recall_cache_hit: false,
-            };
-        }
+        self.cache
+            .commit_miss(cache_key, &result, elapsed_ms as f64, &mode, (self.clock)());
         Ok(result)
-    }
-
-    fn record_cache_hit_stats(&self, result: &JsObject, mode: &JsString) {
-        let mut stats = self.runtime_stats.lock().expect("#767 runtime stats lock");
-        stats.last_recall_ms = 0.0;
-        stats.last_recall_mode = debug_field(result, "mode").unwrap_or_else(|| s("none"));
-        stats.last_recall_path = debug_field(result, "path").unwrap_or_else(|| mode.clone());
-        stats.last_recall_injected = !string_field(result, "context").is_empty();
-        stats.last_recall_cache_hit = true;
     }
 
     fn readable_project(&self, logical: &JsString) -> Result<Option<ReadableProjectCatalogEntry>> {
@@ -1267,7 +1338,13 @@ fn context_details(
                 .collect(),
             _ => Vec::new(),
         };
-        let mut blocks: Vec<JsString> = user_paths.clone();
+        // TS only lists the user profile paths when `hasUserSummary` is true;
+        // `user_paths` still feeds the records de-duplication below.
+        let mut blocks: Vec<JsString> = if has_user {
+            user_paths.clone()
+        } else {
+            Vec::new()
+        };
         if project_meta.is_some() {
             blocks.push(s("project.meta.md"));
         }
@@ -1389,4 +1466,106 @@ fn default_random_token() -> JsString {
         out.push(DIGITS[((state >> 33) % 36) as usize] as char);
     }
     JsString::from(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    fn committed_result() -> JsObject {
+        object(vec![
+            ("context", JsValue::String(s("recalled context"))),
+            (
+                "debug",
+                JsValue::Object(object(vec![
+                    ("mode", JsValue::from("llm")),
+                    ("path", JsValue::from("auto")),
+                ])),
+            ),
+        ])
+    }
+
+    /// C1: a hit that starts after the miss cache insert must not lose its
+    /// `cacheHit=true` to the miss stats write. The hook runs at the commit
+    /// point; the pre-fix two-lock code released the cache before this point,
+    /// so the hit completed inside the sleep and the miss overwrote it.
+    #[test]
+    fn concurrent_hit_is_not_lost_by_miss_commit() {
+        let cache = Arc::new(RetrievalCache::new());
+        let hit_cache = cache.clone();
+        let stats_cache = cache.clone();
+        let (inserted_tx, inserted_rx) = mpsc::channel();
+        let (hit_done_tx, hit_done_rx) = mpsc::channel();
+        let hit_done_rx = Mutex::new(hit_done_rx);
+        cache.set_commit_hook(Arc::new(move || {
+            inserted_tx
+                .send(())
+                .expect("#767 P1-1 commit hook signals the cache insert");
+            thread::sleep(Duration::from_millis(100));
+        }));
+        let miss_result = committed_result();
+        let miss = thread::spawn(move || {
+            cache.commit_miss(s("same-key"), &miss_result, 7.0, &s("auto"), 100);
+        });
+        let hit = thread::spawn(move || {
+            inserted_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("#767 P1-1 hit waits for the miss cache insert");
+            let result = hit_cache.lookup_hit(&s("same-key"), &s("auto"), 100);
+            assert!(
+                result.is_some(),
+                "#767 P1-1 hit observes the committed cache entry"
+            );
+            hit_done_tx
+                .send(())
+                .expect("#767 P1-1 hit reports completion");
+        });
+        miss.join().expect("#767 P1-1 miss thread");
+        hit.join().expect("#767 P1-1 hit thread");
+        hit_done_rx
+            .lock()
+            .expect("#767 P1-1 hit receiver")
+            .try_recv()
+            .expect("#767 P1-1 hit completed");
+        assert_eq!(
+            stats_cache
+                .get_runtime_stats()
+                .get("lastRecallCacheHit")
+                .and_then(JsValue::as_bool),
+            Some(true),
+            "#767 P1-1 the completed hit stays the last recall stat"
+        );
+    }
+
+    /// C1/C7 structural guard: at the commit point between the cache insert
+    /// and the stats write the state mutex is still held, so a concurrent
+    /// lookup or stats read cannot observe half of the commit.
+    #[test]
+    fn commit_keeps_cache_and_stats_in_one_critical_section() {
+        let cache = Arc::new(RetrievalCache::new());
+        let weak = Arc::downgrade(&cache);
+        let observed = Arc::new(Mutex::new(None));
+        let sink = observed.clone();
+        cache.set_commit_hook(Arc::new(move || {
+            let cache = weak
+                .upgrade()
+                .expect("#767 P1-1 commit hook sees the live cache");
+            *sink.lock().expect("#767 P1-1 observation slot") =
+                Some(cache.test_state_lock_available());
+        }));
+        let result = committed_result();
+        cache.commit_miss(s("same-key"), &result, 7.0, &s("auto"), 100);
+        assert_eq!(
+            *observed.lock().expect("#767 P1-1 observation slot"),
+            Some(false),
+            "#767 P1-1 cache insert and stats write are one critical section"
+        );
+        assert!(
+            cache.lookup_hit(&s("same-key"), &s("auto"), 100).is_some(),
+            "#767 P1-1 the committed cache entry is still visible"
+        );
+    }
 }

@@ -764,7 +764,9 @@ async fn m10_reset_during_await() {
     let options = RetrievalOptions::default();
     let pending = retriever.retrieve(&query, &options);
     let (first, ()) = tokio::join!(pending, async {
-        transport.wait(1).await;
+        transport
+            .wait(1, "#767 M10-7 reset-during-await request")
+            .await;
         retriever.reset_transient_state();
         gate.add_permits(1);
     });
@@ -840,7 +842,7 @@ async fn m10_cancelled_retrieve_leaves_cache_empty() {
                 "#767 cancelled retrieve unexpectedly completed: ok={}",
                 result.is_ok()
             ),
-            _ = transport.wait(1) => {}
+            _ = transport.wait(1, "#767 M10-9 cancellation request") => {}
         }
     }
     assert_eq!(
@@ -881,7 +883,9 @@ async fn m10_cancelled_retrieve_leaves_cache_empty() {
     stores.close().expect("#767 close matrix stores");
 }
 
-/// M10-8/9: same-key concurrent requests both call the model; the later set wins.
+/// M10-8/9: same-key concurrent requests both call the model. The later
+/// completion writes the cache entry and the stats together, so the cached
+/// route names which call finished last.
 #[tokio::test]
 async fn m10_same_key_concurrent() {
     let oracle = matrix_oracle();
@@ -892,6 +896,12 @@ async fn m10_same_key_concurrent() {
             .find(|cell| cell["name"] == name)
             .unwrap_or_else(|| panic!("#767 missing matrix cell {name}"))
     };
+    let route = |result: &JsObject| {
+        as_json(&JsValue::Object(result.clone()))["debug"]["route"]
+            .as_str()
+            .map(str::to_string)
+    };
+    let expected = cell("same-key-concurrent");
     let (_scratch, stores) = matrix_store("m10-concurrent").await;
     let clock = Arc::new(AtomicU64::new(MATRIX_CLOCK as u64));
     let transport = Arc::new(GatedTransport::new(vec!["user", "project"]));
@@ -907,14 +917,31 @@ async fn m10_same_key_concurrent() {
         result
     };
     let c2 = retriever.retrieve(&query, &options);
-    let (c1, c2, ()) = tokio::join!(c1, c2, async {
-        transport.wait(2).await;
-        first_gate.add_permits(1);
-        first_done.notified().await;
-        second_gate.add_permits(1);
-    });
-    c1.expect("#767 concurrent first");
-    c2.expect("#767 concurrent second");
+    let joined = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(c1, c2, async {
+            transport
+                .wait(2, "#767 M10-8 same-key concurrent requests")
+                .await;
+            first_gate.add_permits(1);
+            first_done.notified().await;
+            second_gate.add_permits(1);
+        })
+    })
+    .await
+    .unwrap_or_else(|_| panic!("#767 M10-8 same-key gated scenario timed out"));
+    let (c1, c2, ()) = joined;
+    let c1 = c1.expect("#767 concurrent first");
+    let c2 = c2.expect("#767 concurrent second");
+    assert_eq!(
+        route(&c1).as_deref(),
+        expected["firstRoute"].as_str(),
+        "#767 M10-8 first completed route"
+    );
+    assert_eq!(
+        route(&c2).as_deref(),
+        expected["secondRoute"].as_str(),
+        "#767 M10-8 second completed route"
+    );
     let cached = retriever
         .retrieve(&query, &options)
         .await
@@ -933,47 +960,119 @@ async fn m10_same_key_concurrent() {
         "#767 M10-8 cached after concurrent"
     );
     assert_eq!(
-        cached
-            .get("debug")
-            .and_then(JsValue::as_object)
-            .and_then(|debug| debug.get("route")),
-        Some(&JsValue::String(JsString::from("project"))),
-        "#767 M10-8 later set wins"
+        route(&cached).as_deref(),
+        expected["cachedRoute"].as_str(),
+        "#767 M10-8 later completion wins"
     );
-    assert_matrix_stats(
-        &retriever.get_runtime_stats(),
-        cell("same-key-concurrent"),
-        ALL_STATS,
-        "#767 M10-8",
-    );
-    let expected = cell("same-key-concurrent");
     assert_eq!(
         expected["cachedRoute"].as_str(),
         Some("project"),
-        "#767 TS matrix later set wins"
+        "#767 TS matrix later completion wins"
     );
     assert_eq!(
         expected["decides"].as_u64(),
         Some(2),
         "#767 TS matrix both concurrent calls reached the model"
     );
-    let reset_cell = cell("reset-during-await");
-    assert_eq!(
-        reset_cell["secondCacheHit"].as_bool(),
-        Some(true),
-        "#767 TS matrix reset during await still caches"
+    assert_matrix_stats(
+        &retriever.get_runtime_stats(),
+        expected,
+        ALL_STATS,
+        "#767 M10-8",
     );
-    let ttl_hit_cell = cell("ttl-29999-hit");
+    stores.close().expect("#767 close matrix stores");
+}
+
+/// M10-9 reverse: the second-started call completes first, so the first
+/// completion (`user`) writes the cache last.
+#[tokio::test]
+async fn m10_same_key_concurrent_reverse() {
+    let oracle = matrix_oracle();
+    let matrix = oracle["matrix"].as_array().expect("#767 matrix");
+    let cell = |name: &str| {
+        matrix
+            .iter()
+            .find(|cell| cell["name"] == name)
+            .unwrap_or_else(|| panic!("#767 missing matrix cell {name}"))
+    };
+    let route = |result: &JsObject| {
+        as_json(&JsValue::Object(result.clone()))["debug"]["route"]
+            .as_str()
+            .map(str::to_string)
+    };
+    let expected = cell("same-key-concurrent-reverse");
+    let (_scratch, stores) = matrix_store("m10-concurrent-reverse").await;
+    let clock = Arc::new(AtomicU64::new(MATRIX_CLOCK as u64));
+    let transport = Arc::new(GatedTransport::new(vec!["user", "project"]));
+    let first_gate = transport.gate(0);
+    let second_gate = transport.gate(1);
+    let retriever = matrix_retriever(&stores, &transport, clock);
+    let query = JsString::from("concurrent");
+    let options = RetrievalOptions::default();
+    let second_done = Notify::new();
+    let c1 = retriever.retrieve(&query, &options);
+    let c2 = async {
+        let result = retriever.retrieve(&query, &options).await;
+        second_done.notify_one();
+        result
+    };
+    let joined = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(c1, c2, async {
+            transport
+                .wait(2, "#767 M10-9 same-key reverse concurrent requests")
+                .await;
+            second_gate.add_permits(1);
+            second_done.notified().await;
+            first_gate.add_permits(1);
+        })
+    })
+    .await
+    .unwrap_or_else(|_| panic!("#767 M10-9 same-key reverse gated scenario timed out"));
+    let (c1, c2, ()) = joined;
+    let c1 = c1.expect("#767 concurrent reverse first");
+    let c2 = c2.expect("#767 concurrent reverse second");
     assert_eq!(
-        ttl_hit_cell["cacheHit"].as_bool(),
-        Some(true),
-        "#767 TS matrix ttl hit"
+        route(&c1).as_deref(),
+        expected["firstRoute"].as_str(),
+        "#767 M10-9 reverse first route"
     );
-    let ttl_miss_cell = cell("ttl-boundary-miss");
     assert_eq!(
-        ttl_miss_cell["cacheHit"].as_bool(),
-        Some(false),
-        "#767 TS matrix ttl boundary"
+        route(&c2).as_deref(),
+        expected["secondRoute"].as_str(),
+        "#767 M10-9 reverse second route"
+    );
+    let cached = retriever
+        .retrieve(&query, &options)
+        .await
+        .expect("#767 concurrent reverse cache");
+    assert_eq!(
+        transport.count(),
+        2,
+        "#767 M10-9 reverse both call the model"
+    );
+    assert_eq!(
+        cached
+            .get("debug")
+            .and_then(JsValue::as_object)
+            .and_then(|debug| debug.get("cacheHit")),
+        Some(&JsValue::Bool(true)),
+        "#767 M10-9 reverse cached after concurrent"
+    );
+    assert_eq!(
+        route(&cached).as_deref(),
+        expected["cachedRoute"].as_str(),
+        "#767 M10-9 reverse later completion wins"
+    );
+    assert_eq!(
+        expected["cachedRoute"].as_str(),
+        Some("user"),
+        "#767 TS matrix reverse later completion wins"
+    );
+    assert_matrix_stats(
+        &retriever.get_runtime_stats(),
+        expected,
+        ALL_STATS,
+        "#767 M10-9",
     );
     stores.close().expect("#767 close matrix stores");
 }
@@ -1046,9 +1145,20 @@ impl GatedTransport {
     fn count(&self) -> u64 {
         self.requests.load(Ordering::SeqCst)
     }
-    async fn wait(&self, count: u64) {
-        while self.count() < count {
-            tokio::time::sleep(Duration::from_millis(1)).await;
+    /// Bounded wait: a merged/short-circuited concurrent request must fail
+    /// with the calling M10 cell's message instead of hanging the suite.
+    async fn wait(&self, count: u64, label: &str) {
+        let waited = tokio::time::timeout(Duration::from_secs(5), async {
+            while self.count() < count {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await;
+        if waited.is_err() {
+            panic!(
+                "{label}: gated transport timed out after 5s waiting for {count} requests; saw {}",
+                self.count()
+            );
         }
     }
 }

@@ -4081,6 +4081,489 @@
       ]
     },
     {
+      "name": "empty-user-profile",
+      "mode": "single",
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"route\\\":\\\"mix\\\"}\"}}]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"selected_ids\\\":[]}\"}}]}"
+        }
+      ],
+      "storage": {
+        "memoryFiles": [
+          {
+            "path": "Feedback/交付规则-541f4e2d10.md",
+            "content": "---\nname: 交付规则\ndescription: 交付规则说明\ntype: feedback\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-26T00:00:00.000Z\ncaptured_at: 2026-10-21T00:00:00.000Z\nsource_session_key: s-feedback\n---\n## Rule\n先跑测试再交付。\n"
+          },
+          {
+            "path": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-26T00:00:00.000Z\n\n## Current Project Meta\n- [Alpha 项目](project.meta.md) — Alpha 项目说明\n\n## Project Memory\n- [Alpha 计划](Project/alpha-计划-d23d1e3ac5.md) — 计划说明\n\n## Feedback Memory\n- [交付规则](Feedback/交付规则-541f4e2d10.md) — 交付规则说明\n\n## User Memory\n- [用户😀](../../global/UserIdentity/user-profile.md) — 用户画像\n"
+          },
+          {
+            "path": "Project/alpha-计划-d23d1e3ac5.md",
+            "content": "---\nname: Alpha 计划\ndescription: 计划说明\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-26T00:00:00.000Z\ncaptured_at: 2026-10-20T00:00:00.000Z\nsource_session_key: s-project\n---\n## Summary\n本周完成检索主线。\n"
+          },
+          {
+            "path": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Alpha 项目\ndescription: Alpha 项目说明\nstatus: active\ncreated_at: 2026-10-26T00:00:00.000Z\nupdated_at: 2026-10-26T00:00:00.000Z\n---\n\n## Summary\nAlpha 项目说明\n"
+          }
+        ],
+        "globalFiles": [
+          {
+            "path": "UserIdentity/user-profile.md",
+            "content": "---\nname: 用户😀\ndescription: 用户画像\ntype: user\nscope: global\nupdated_at: 2026-10-26T00:00:00.000Z\ncaptured_at: 2026-10-19T00:00:00.000Z\nsource_session_key: s-user\n---\n## Preferences\n- 用户偏好中文回复。\n"
+          }
+        ]
+      },
+      "operations": [
+        {
+          "kind": "retrieve",
+          "query": "mix with empty user identity",
+          "input": {
+            "recentMessages": {
+              "$undefined": true
+            },
+            "workspaceHint": {
+              "$undefined": true
+            },
+            "retrievalMode": {
+              "$undefined": true
+            }
+          },
+          "result": {
+            "query": "mix with empty user identity",
+            "intent": "mix",
+            "context": "## ClawXMemory Recall\nroute=mix\n\n### [project_meta] project.meta.md (2026-10-26T00:00:00.000Z)\n## Project Name\nAlpha 项目\n\n## Description\nAlpha 项目说明\n\n## Status\nactive\n\n### [feedback] Feedback/交付规则-541f4e2d10.md (2026-10-26T00:00:00.000Z)\n## Rule\n先跑测试再交付。\n\n### [project] Project/alpha-计划-d23d1e3ac5.md (2026-10-26T00:00:00.000Z)\n## Summary\n本周完成检索主线。\n\nTreat these file memories as the authoritative long-term memory for this turn when relevant.",
+            "trace": {
+              "traceId": "trace_0164e86464",
+              "query": "mix with empty user identity",
+              "mode": "auto",
+              "startedAt": "2026-10-26T00:00:00.000Z",
+              "finishedAt": "2026-10-26T00:00:00.000Z",
+              "steps": [
+                {
+                  "stepId": "trace_0164e86464:step:1",
+                  "kind": "recall_start",
+                  "title": "Recall Started",
+                  "status": "info",
+                  "inputSummary": "mix with empty user identity",
+                  "outputSummary": "mode=auto",
+                  "details": [
+                    {
+                      "key": "recall-start-inputs",
+                      "label": "Recall Inputs",
+                      "labelI18n": {
+                        "key": "trace.detail.recall_inputs",
+                        "fallback": "Recall Inputs"
+                      },
+                      "kind": "kv",
+                      "entries": [
+                        {
+                          "label": "query",
+                          "value": "mix with empty user identity"
+                        },
+                        {
+                          "label": "mode",
+                          "value": "auto"
+                        },
+                        {
+                          "label": "recentUserMessages",
+                          "value": "0"
+                        },
+                        {
+                          "label": "workspaceHint",
+                          "value": ""
+                        }
+                      ]
+                    }
+                  ],
+                  "titleI18n": {
+                    "key": "trace.step.recall_start",
+                    "fallback": "Recall Started"
+                  }
+                },
+                {
+                  "stepId": "trace_0164e86464:step:2",
+                  "kind": "memory_gate",
+                  "title": "Memory Gate",
+                  "status": "success",
+                  "inputSummary": "mix with empty user identity",
+                  "outputSummary": "route=mix",
+                  "details": [
+                    {
+                      "key": "gate-route",
+                      "label": "Route",
+                      "labelI18n": {
+                        "key": "trace.detail.route",
+                        "fallback": "Route"
+                      },
+                      "kind": "kv",
+                      "entries": [
+                        {
+                          "label": "route",
+                          "value": "mix"
+                        },
+                        {
+                          "label": "recentUserMessages",
+                          "value": "0"
+                        },
+                        {
+                          "label": "workspaceHint",
+                          "value": ""
+                        }
+                      ]
+                    }
+                  ],
+                  "promptDebug": {
+                    "requestLabel": "File memory gate",
+                    "systemPrompt": "You decide whether the current query should trigger long-term memory recall.\nReturn JSON only with a single field route.\nValid route values: none, user, project, mix.\nUse none unless the query clearly needs long-term memory.\nUse user only when the query is asking about stable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationships.\nDo not use user for reply preferences, language choices, formatting rules, style guidance, file/tool boundaries, or delivery rules; those belong to project.\nUse project when the query only needs current project memory, including project facts, collaboration rules, delivery style, file boundaries, or project status.\nUse mix only when the query genuinely needs both current project memory and the user's stable identity/background at the same time.\nDo not use mix just because both could be helpful; choose mix only when both are actually necessary to answer well.",
+                    "userPrompt": "{\n  \"query\": \"mix with empty user identity\",\n  \"recent_messages\": []\n}",
+                    "rawResponse": "{\"route\":\"mix\"}",
+                    "parsedResult": {
+                      "route": "mix"
+                    }
+                  },
+                  "titleI18n": {
+                    "key": "trace.step.memory_gate",
+                    "fallback": "Memory Gate"
+                  }
+                },
+                {
+                  "stepId": "trace_0164e86464:step:3",
+                  "kind": "user_base_loaded",
+                  "title": "User Base Loaded",
+                  "status": "warning",
+                  "inputSummary": "global user profile",
+                  "outputSummary": "No stable user profile was available.",
+                  "details": [
+                    {
+                      "key": "user-summary",
+                      "label": "User Profile",
+                      "labelI18n": {
+                        "key": "trace.detail.user_profile",
+                        "fallback": "User Profile"
+                      },
+                      "kind": "kv",
+                      "entries": [
+                        {
+                          "label": "route",
+                          "value": "mix"
+                        },
+                        {
+                          "label": "required",
+                          "value": "yes"
+                        },
+                        {
+                          "label": "identityBackground",
+                          "value": "0"
+                        }
+                      ]
+                    },
+                    {
+                      "key": "user-summary-files",
+                      "label": "Source Files",
+                      "labelI18n": {
+                        "key": "trace.detail.source_files",
+                        "fallback": "Source Files"
+                      },
+                      "kind": "list",
+                      "items": [
+                        "global/UserIdentity/user-profile.md | 2026-10-26T00:00:00.000Z"
+                      ]
+                    }
+                  ],
+                  "titleI18n": {
+                    "key": "trace.step.user_base_loaded",
+                    "fallback": "User Base Loaded"
+                  }
+                },
+                {
+                  "stepId": "trace_0164e86464:step:4",
+                  "kind": "manifest_scanned",
+                  "title": "Manifest Scanned",
+                  "status": "success",
+                  "inputSummary": "current workspace project memory",
+                  "outputSummary": "2 recall header entries ready.",
+                  "details": [
+                    {
+                      "key": "manifest-scan-summary",
+                      "label": "Manifest Scan",
+                      "labelI18n": {
+                        "key": "trace.detail.manifest_scan",
+                        "fallback": "Manifest Scan"
+                      },
+                      "kind": "kv",
+                      "entries": [
+                        {
+                          "label": "count",
+                          "value": "2"
+                        },
+                        {
+                          "label": "route",
+                          "value": "mix"
+                        },
+                        {
+                          "label": "scope",
+                          "value": "workspace_project"
+                        },
+                        {
+                          "label": "limit",
+                          "value": "200"
+                        },
+                        {
+                          "label": "workspaceHint",
+                          "value": ""
+                        }
+                      ]
+                    },
+                    {
+                      "key": "manifest-scan-preview",
+                      "label": "Sorted Candidates",
+                      "labelI18n": {
+                        "key": "trace.detail.sorted_candidates",
+                        "fallback": "Sorted Candidates"
+                      },
+                      "kind": "list",
+                      "items": [
+                        "2026-10-26T00:00:00.000Z | feedback | Feedback/交付规则-541f4e2d10.md | 交付规则说明",
+                        "2026-10-26T00:00:00.000Z | project | Project/alpha-计划-d23d1e3ac5.md | 计划说明"
+                      ]
+                    }
+                  ],
+                  "titleI18n": {
+                    "key": "trace.step.manifest_scanned",
+                    "fallback": "Manifest Scanned"
+                  }
+                },
+                {
+                  "stepId": "trace_0164e86464:step:5",
+                  "kind": "manifest_selected",
+                  "title": "Manifest Selected",
+                  "status": "success",
+                  "inputSummary": "2 entries",
+                  "outputSummary": "2 file ids selected.",
+                  "details": [
+                    {
+                      "key": "manifest-selection-input",
+                      "label": "Manifest Candidate IDs",
+                      "labelI18n": {
+                        "key": "trace.detail.manifest_candidate_ids",
+                        "fallback": "Manifest Candidate IDs"
+                      },
+                      "kind": "list",
+                      "items": [
+                        "Feedback/交付规则-541f4e2d10.md",
+                        "Project/alpha-计划-d23d1e3ac5.md"
+                      ]
+                    },
+                    {
+                      "key": "selected-files",
+                      "label": "Selected File IDs",
+                      "labelI18n": {
+                        "key": "trace.detail.selected_file_ids",
+                        "fallback": "Selected File IDs"
+                      },
+                      "kind": "list",
+                      "items": [
+                        "Feedback/交付规则-541f4e2d10.md",
+                        "Project/alpha-计划-d23d1e3ac5.md"
+                      ]
+                    }
+                  ],
+                  "promptDebug": {
+                    "requestLabel": "File memory selection",
+                    "systemPrompt": "You select a small number of memory files from a compact manifest.\nReturn JSON only with selected_ids.\nSelect at most 5 ids and prefer recent items that are directly useful for the query.",
+                    "userPrompt": "{\n  \"query\": \"mix with empty user identity\",\n  \"route\": \"mix\",\n  \"recent_user_messages\": [],\n  \"project\": {\n    \"project_id\": \"current_project\",\n    \"project_name\": \"Alpha 项目\",\n    \"description\": \"Alpha 项目说明\",\n    \"status\": \"active\"\n  },\n  \"manifest\": [\n    {\n      \"id\": \"Feedback/交付规则-541f4e2d10.md\",\n      \"type\": \"feedback\",\n      \"scope\": \"project\",\n      \"project_id\": \"current_project\",\n      \"updated_at\": \"2026-10-26T00:00:00.000Z\",\n      \"description\": \"交付规则说明\"\n    },\n    {\n      \"id\": \"Project/alpha-计划-d23d1e3ac5.md\",\n      \"type\": \"project\",\n      \"scope\": \"project\",\n      \"project_id\": \"current_project\",\n      \"updated_at\": \"2026-10-26T00:00:00.000Z\",\n      \"description\": \"计划说明\"\n    }\n  ],\n  \"limit\": 5\n}",
+                    "rawResponse": "{\"selected_ids\":[]}",
+                    "parsedResult": {
+                      "selected_ids": []
+                    }
+                  },
+                  "titleI18n": {
+                    "key": "trace.step.manifest_selected",
+                    "fallback": "Manifest Selected"
+                  }
+                },
+                {
+                  "stepId": "trace_0164e86464:step:6",
+                  "kind": "files_loaded",
+                  "title": "Files Loaded",
+                  "status": "success",
+                  "inputSummary": "2 requested",
+                  "outputSummary": "2 files loaded.",
+                  "details": [
+                    {
+                      "key": "requested-files",
+                      "label": "Requested IDs",
+                      "labelI18n": {
+                        "key": "trace.detail.requested_ids",
+                        "fallback": "Requested IDs"
+                      },
+                      "kind": "list",
+                      "items": [
+                        "Feedback/交付规则-541f4e2d10.md",
+                        "Project/alpha-计划-d23d1e3ac5.md"
+                      ]
+                    },
+                    {
+                      "key": "loaded-files",
+                      "label": "Loaded Files",
+                      "labelI18n": {
+                        "key": "trace.detail.loaded_files",
+                        "fallback": "Loaded Files"
+                      },
+                      "kind": "list",
+                      "items": [
+                        "Feedback/交付规则-541f4e2d10.md | 2026-10-26T00:00:00.000Z",
+                        "Project/alpha-计划-d23d1e3ac5.md | 2026-10-26T00:00:00.000Z"
+                      ]
+                    }
+                  ],
+                  "titleI18n": {
+                    "key": "trace.step.files_loaded",
+                    "fallback": "Files Loaded"
+                  }
+                },
+                {
+                  "stepId": "trace_0164e86464:step:7",
+                  "kind": "context_rendered",
+                  "title": "Context Rendered",
+                  "status": "success",
+                  "inputSummary": "2 files",
+                  "outputSummary": "Memory context prepared.",
+                  "details": [
+                    {
+                      "key": "context-rendered-summary",
+                      "label": "Context Summary",
+                      "labelI18n": {
+                        "key": "trace.detail.context_summary",
+                        "fallback": "Context Summary"
+                      },
+                      "kind": "kv",
+                      "entries": [
+                        {
+                          "label": "route",
+                          "value": "mix"
+                        },
+                        {
+                          "label": "userBaseInjected",
+                          "value": "no"
+                        },
+                        {
+                          "label": "projectMetaInjected",
+                          "value": "yes"
+                        },
+                        {
+                          "label": "selectedProject",
+                          "value": ""
+                        },
+                        {
+                          "label": "disambiguationRequired",
+                          "value": "no"
+                        },
+                        {
+                          "label": "fileCount",
+                          "value": "2"
+                        },
+                        {
+                          "label": "characters",
+                          "value": "440"
+                        },
+                        {
+                          "label": "lines",
+                          "value": "22"
+                        }
+                      ]
+                    },
+                    {
+                      "key": "context-rendered-blocks",
+                      "label": "Injected Blocks",
+                      "labelI18n": {
+                        "key": "trace.detail.injected_blocks",
+                        "fallback": "Injected Blocks"
+                      },
+                      "kind": "list",
+                      "items": [
+                        "project.meta.md",
+                        "Feedback/交付规则-541f4e2d10.md",
+                        "Project/alpha-计划-d23d1e3ac5.md"
+                      ]
+                    }
+                  ],
+                  "titleI18n": {
+                    "key": "trace.step.context_rendered",
+                    "fallback": "Context Rendered"
+                  }
+                }
+              ]
+            },
+            "debug": {
+              "mode": "llm",
+              "elapsedMs": 0,
+              "cacheHit": false,
+              "path": "auto",
+              "route": "mix",
+              "manifestCount": 2,
+              "selectedFileIds": [
+                "Feedback/交付规则-541f4e2d10.md",
+                "Project/alpha-计划-d23d1e3ac5.md"
+              ]
+            }
+          },
+          "stats": {
+            "lastRecallMs": 0,
+            "recallTimeouts": 0,
+            "lastRecallMode": "llm",
+            "lastRecallPath": "auto",
+            "lastRecallInjected": true,
+            "lastRecallCacheHit": false
+          },
+          "requests": [
+            {
+              "method": "POST",
+              "url": "/chat/completions",
+              "headers": {
+                "accept": "*/*",
+                "accept-encoding": "gzip, deflate",
+                "accept-language": "*",
+                "authorization": "Bearer fixture-key",
+                "connection": "keep-alive",
+                "content-length": "1221",
+                "content-type": "application/json",
+                "host": "$HOST",
+                "sec-fetch-mode": "cors",
+                "user-agent": "node"
+              },
+              "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You decide whether the current query should trigger long-term memory recall.\\nReturn JSON only with a single field route.\\nValid route values: none, user, project, mix.\\nUse none unless the query clearly needs long-term memory.\\nUse user only when the query is asking about stable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationships.\\nDo not use user for reply preferences, language choices, formatting rules, style guidance, file/tool boundaries, or delivery rules; those belong to project.\\nUse project when the query only needs current project memory, including project facts, collaboration rules, delivery style, file boundaries, or project status.\\nUse mix only when the query genuinely needs both current project memory and the user's stable identity/background at the same time.\\nDo not use mix just because both could be helpful; choose mix only when both are actually necessary to answer well.\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"query\\\": \\\"mix with empty user identity\\\",\\n  \\\"recent_messages\\\": []\\n}\"}]}",
+              "at": 1792972800000
+            },
+            {
+              "method": "POST",
+              "url": "/chat/completions",
+              "headers": {
+                "accept": "*/*",
+                "accept-encoding": "gzip, deflate",
+                "accept-language": "*",
+                "authorization": "Bearer fixture-key",
+                "connection": "keep-alive",
+                "content-length": "1206",
+                "content-type": "application/json",
+                "host": "$HOST",
+                "sec-fetch-mode": "cors",
+                "user-agent": "node"
+              },
+              "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You select a small number of memory files from a compact manifest.\\nReturn JSON only with selected_ids.\\nSelect at most 5 ids and prefer recent items that are directly useful for the query.\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"query\\\": \\\"mix with empty user identity\\\",\\n  \\\"route\\\": \\\"mix\\\",\\n  \\\"recent_user_messages\\\": [],\\n  \\\"project\\\": {\\n    \\\"project_id\\\": \\\"current_project\\\",\\n    \\\"project_name\\\": \\\"Alpha 项目\\\",\\n    \\\"description\\\": \\\"Alpha 项目说明\\\",\\n    \\\"status\\\": \\\"active\\\"\\n  },\\n  \\\"manifest\\\": [\\n    {\\n      \\\"id\\\": \\\"Feedback/交付规则-541f4e2d10.md\\\",\\n      \\\"type\\\": \\\"feedback\\\",\\n      \\\"scope\\\": \\\"project\\\",\\n      \\\"project_id\\\": \\\"current_project\\\",\\n      \\\"updated_at\\\": \\\"2026-10-26T00:00:00.000Z\\\",\\n      \\\"description\\\": \\\"交付规则说明\\\"\\n    },\\n    {\\n      \\\"id\\\": \\\"Project/alpha-计划-d23d1e3ac5.md\\\",\\n      \\\"type\\\": \\\"project\\\",\\n      \\\"scope\\\": \\\"project\\\",\\n      \\\"project_id\\\": \\\"current_project\\\",\\n      \\\"updated_at\\\": \\\"2026-10-26T00:00:00.000Z\\\",\\n      \\\"description\\\": \\\"计划说明\\\"\\n    }\\n  ],\\n  \\\"limit\\\": 5\\n}\"}]}",
+              "at": 1792972800000
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "service-wrappers",
       "mode": "single",
       "steps": [
@@ -7583,14 +8066,14 @@
       "stats": {
         "lastRecallMs": 0,
         "recallTimeouts": 0,
-        "lastRecallMode": "llm",
+        "lastRecallMode": "local_fallback",
         "lastRecallPath": "auto",
-        "lastRecallInjected": true,
+        "lastRecallInjected": false,
         "lastRecallCacheHit": true
       },
-      "firstContext": "## ClawXMemory Recall\nroute=user\n\n### [user] global/UserIdentity/user-profile.md (2026-10-21T00:00:00.000Z)\n## 身份背景\n- 背景\n\nTreat these file memories as the authoritative long-term memory for this turn when relevant.",
+      "firstContext": "",
       "secondCacheHit": true,
-      "secondContext": "## ClawXMemory Recall\nroute=user\n\n### [user] global/UserIdentity/user-profile.md (2026-10-21T00:00:00.000Z)\n## 身份背景\n- 背景\n\nTreat these file memories as the authoritative long-term memory for this turn when relevant.",
+      "secondContext": "",
       "calls": 1
     },
     {
@@ -7605,9 +8088,29 @@
       },
       "decides": 2,
       "calls": 0,
+      "firstRoute": "user",
+      "secondRoute": "project",
       "cachedRoute": "project",
       "cachedCacheHit": true,
       "cachedIntent": "project"
+    },
+    {
+      "name": "same-key-concurrent-reverse",
+      "stats": {
+        "lastRecallMs": 0,
+        "recallTimeouts": 0,
+        "lastRecallMode": "local_fallback",
+        "lastRecallPath": "auto",
+        "lastRecallInjected": false,
+        "lastRecallCacheHit": true
+      },
+      "decides": 2,
+      "calls": 0,
+      "firstRoute": "user",
+      "secondRoute": "project",
+      "cachedRoute": "user",
+      "cachedCacheHit": true,
+      "cachedIntent": "user"
     }
   ]
 }
