@@ -777,8 +777,9 @@ async fn session_cwd_environment_worker() {
     };
     let first = first_poll.expect("#885 first poll result");
     match first {
-        Err(message) => assert_eq!(
-            message, expected,
+        Err(message) => crate::negative_assert_eq!(
+            message,
+            expected,
             "#885 composition failure must preserve the TS uv_cwd message on the first poll"
         ),
         Ok(event) => panic!(

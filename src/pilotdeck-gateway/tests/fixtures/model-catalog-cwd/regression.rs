@@ -11,18 +11,31 @@ const WORKER: &str = "model_catalog::cwd_tests::environment_worker";
 fn matrix(name: &str) {
     crate::test_baseline::oracle(ORACLE);
     let scratch = crate::test_scratch::Scratch::new("model-cwd");
-    let root = fs::canonicalize(scratch.path()).unwrap();
+    let root = fs::canonicalize(scratch.path()).expect("#946 cwd fixture setup/value required");
     let cwd = root.join("cwd");
     let user = root.join("user");
-    fs::create_dir(&cwd).unwrap();
-    fs::create_dir(&user).unwrap();
-    let kind = name.rsplit_once('-').unwrap().0;
+    fs::create_dir(&cwd).expect("#946 cwd fixture setup/value required");
+    fs::create_dir(&user).expect("#946 cwd fixture setup/value required");
+    let kind = name
+        .rsplit_once('-')
+        .expect("#946 cwd fixture setup/value required")
+        .0;
     let mut env = vec![
         ("PDRS_MODEL_CWD_CASE".into(), name.into()),
-        ("PDRS_MODEL_CWD_ROOT".into(), root.to_str().unwrap().into()),
+        (
+            "PDRS_MODEL_CWD_ROOT".into(),
+            root.to_str()
+                .expect("#946 cwd fixture setup/value required")
+                .into(),
+        ),
     ];
     if kind != "missing-home" {
-        env.push(("HOME".into(), user.to_str().unwrap().into()));
+        env.push((
+            "HOME".into(),
+            user.to_str()
+                .expect("#946 cwd fixture setup/value required")
+                .into(),
+        ));
     }
     let (input, home) = match kind {
         "relative" => (Some("../home".into()), root.join("home")),
@@ -39,11 +52,14 @@ fn matrix(name: &str) {
     if let Some(input) = input {
         env.push(("PILOT_HOME".into(), input));
     }
-    fs::create_dir_all(&home).unwrap();
-    fs::write(home.join("pilotdeck.yaml"), include_str!("config.json")).unwrap();
+    fs::create_dir_all(&home).expect("#946 cwd fixture setup/value required");
+    fs::write(home.join("pilotdeck.yaml"), include_str!("config.json"))
+        .expect("#946 cwd fixture setup/value required");
     env.push((
         "PDRS_MODEL_EXPECT_HOME".into(),
-        home.to_str().unwrap().into(),
+        home.to_str()
+            .expect("#946 cwd fixture setup/value required")
+            .into(),
     ));
     crate::test_process::run_cases(WORKER, vec![(name.into(), env)]);
 }
@@ -51,7 +67,9 @@ fn matrix(name: &str) {
 fn frame(route: Route) -> Value {
     match route {
         Route::Forward => json!("forward"),
-        Route::LocalResponse(bytes) => serde_json::from_slice(&bytes).unwrap(),
+        Route::LocalResponse(bytes) => {
+            serde_json::from_slice(&bytes).expect("#946 cwd fixture setup/value required")
+        }
     }
 }
 
@@ -60,17 +78,19 @@ fn frame(route: Route) -> Value {
 fn environment_worker() {
     let name = std::env::var("PDRS_MODEL_CWD_CASE").expect("parent case required");
     let root = std::env::var("PDRS_MODEL_CWD_ROOT").expect("parent scratch required");
-    let home = std::env::var("PDRS_MODEL_EXPECT_HOME").unwrap();
+    let home =
+        std::env::var("PDRS_MODEL_EXPECT_HOME").expect("#946 cwd fixture setup/value required");
     let cwd = Path::new(&root).join("cwd");
-    let oracle: Value = serde_json::from_str(ORACLE).unwrap();
+    let oracle: Value =
+        serde_json::from_str(ORACLE).expect("#946 cwd fixture setup/value required");
     let deleted = name.ends_with("-deleted");
     let missing_home = name.starts_with("missing-home-");
     let needs_cwd = name.starts_with("relative-") || name.starts_with("empty-");
     let env: Env = std::env::vars().collect();
-    let original_cwd = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&cwd).unwrap();
+    let original_cwd = std::env::current_dir().expect("#946 cwd fixture setup/value required");
+    std::env::set_current_dir(&cwd).expect("#946 cwd fixture setup/value required");
     if deleted {
-        fs::remove_dir_all(&cwd).unwrap();
+        fs::remove_dir_all(&cwd).expect("#946 cwd fixture setup/value required");
         assert!(std::env::current_dir().is_err(), "deleted cwd setup failed");
     }
     let actual = match native_metadata(&env) {
@@ -78,16 +98,16 @@ fn environment_worker() {
         Ok(None) => Value::Null,
         Err(error) => json!({
             "name": error.name, "code": error.code,
-            "message": error.message.to_utf8().unwrap(),
+            "message": error.message.to_utf8().expect("#946 cwd fixture setup/value required"),
         }),
     };
     let row = oracle["cases"]
         .as_array()
-        .unwrap()
+        .expect("#946 cwd fixture setup/value required")
         .iter()
         .find(|row| row["name"] == name);
     let expected = if deleted && needs_cwd {
-        let error = &row.unwrap()["outcome"]["error"];
+        let error = &row.expect("#946 cwd fixture setup/value required")["outcome"]["error"];
         json!({"name": error["name"], "code": error["code"], "message": error["message"]})
     } else if missing_home || deleted {
         // Absolute homes succeed in TS, but native Metadata still needs cwd.
@@ -96,7 +116,7 @@ fn environment_worker() {
     } else {
         json!({"home": home, "cwd": cwd})
     };
-    assert_eq!(actual, expected, "native metadata matrix: {name}");
+    crate::negative_assert_eq!(actual, expected, "native metadata matrix: {name}");
 
     let request = parse_json(
         &json!({
@@ -104,13 +124,13 @@ fn environment_worker() {
         })
         .to_string(),
     )
-    .unwrap();
+    .expect("#946 cwd fixture setup/value required");
     let expected_frame = if missing_home || (deleted && !needs_cwd) {
         json!("forward")
     } else {
-        row.unwrap()["frame"].clone()
+        row.expect("#946 cwd fixture setup/value required")["frame"].clone()
     };
-    assert_eq!(
+    crate::negative_assert_eq!(
         frame(crate::dispatch::route_catalog::<NativeFiles>(
             &request, None, &env
         )),
@@ -125,8 +145,8 @@ fn environment_worker() {
             })
             .to_string(),
         )
-        .unwrap();
-        assert_eq!(
+        .expect("#946 cwd fixture setup/value required");
+        crate::negative_assert_eq!(
             frame(crate::dispatch::route_with_metadata::<NativeFiles>(
                 &request, None
             )),
@@ -134,7 +154,7 @@ fn environment_worker() {
             "session metadata route matrix: {name}"
         );
     }
-    std::env::set_current_dir(original_cwd).unwrap();
+    std::env::set_current_dir(original_cwd).expect("#946 cwd fixture setup/value required");
     crate::test_process::receipt(&name);
 }
 

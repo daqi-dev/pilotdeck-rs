@@ -9,18 +9,31 @@ const WORKER: &str = "metadata::from_env_tests::environment_worker";
 fn matrix(name: &str) {
     crate::test_baseline::oracle(ORACLE);
     let scratch = crate::test_scratch::Scratch::new("metadata-env");
-    let root = fs::canonicalize(scratch.path()).unwrap();
+    let root = fs::canonicalize(scratch.path()).expect("#946 cwd fixture setup/value required");
     let cwd = root.join("cwd");
     let user = root.join("user");
-    fs::create_dir(&cwd).unwrap();
-    fs::create_dir(&user).unwrap();
-    let kind = name.rsplit_once('-').unwrap().0;
+    fs::create_dir(&cwd).expect("#946 cwd fixture setup/value required");
+    fs::create_dir(&user).expect("#946 cwd fixture setup/value required");
+    let kind = name
+        .rsplit_once('-')
+        .expect("#946 cwd fixture setup/value required")
+        .0;
     let mut env = vec![
         ("PDRS_METADATA_CASE".into(), name.into()),
-        ("PDRS_METADATA_ROOT".into(), root.to_str().unwrap().into()),
+        (
+            "PDRS_METADATA_ROOT".into(),
+            root.to_str()
+                .expect("#946 cwd fixture setup/value required")
+                .into(),
+        ),
     ];
     if kind != "missing-home" {
-        env.push(("HOME".into(), user.to_str().unwrap().into()));
+        env.push((
+            "HOME".into(),
+            user.to_str()
+                .expect("#946 cwd fixture setup/value required")
+                .into(),
+        ));
     }
     let home = match kind {
         "relative" => Some("relative/../home".into()),
@@ -43,7 +56,8 @@ fn environment_worker() {
     let name = std::env::var("PDRS_METADATA_CASE").expect("parent case required");
     let root = std::env::var("PDRS_METADATA_ROOT").expect("parent scratch required");
     let cwd = Path::new(&root).join("cwd");
-    let oracle: Value = serde_json::from_str(ORACLE).unwrap();
+    let oracle: Value =
+        serde_json::from_str(ORACLE).expect("#946 cwd fixture setup/value required");
     let mut expected = if name.starts_with("unset-") || name == "missing-home-normal" {
         // Existing Rust safety gates: no implicit default home, and no tilde
         // expansion without HOME. TS's default home remains in the oracle.
@@ -51,21 +65,24 @@ fn environment_worker() {
     } else {
         oracle["cases"]
             .as_array()
-            .unwrap()
+            .expect("#946 cwd fixture setup/value required")
             .iter()
             .find(|row| row["name"] == name)
-            .unwrap()["boot"]["outcome"]
+            .expect("#946 cwd fixture setup/value required")["boot"]["outcome"]
             .clone()
     };
     if expected.get("error").is_some() {
         // io::Error has a kind and Display, not JS name/code/syscall properties.
-        assert_eq!(expected["error"]["code"], "ENOENT");
+        assert_eq!(
+            expected["error"]["code"], "ENOENT",
+            "#946 oracle error code"
+        );
         expected = json!({"error": expected["error"]["message"]});
     }
-    let original_cwd = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&cwd).unwrap();
+    let original_cwd = std::env::current_dir().expect("#946 cwd fixture setup/value required");
+    std::env::set_current_dir(&cwd).expect("#946 cwd fixture setup/value required");
     if name.ends_with("-deleted") {
-        fs::remove_dir(&cwd).unwrap();
+        fs::remove_dir(&cwd).expect("#946 cwd fixture setup/value required");
         assert!(std::env::current_dir().is_err(), "deleted cwd setup failed");
     }
     let result = Metadata::from_env();
@@ -76,27 +93,37 @@ fn environment_worker() {
         }),
         Ok(None) => Value::Null,
         Err(error) => {
-            assert_eq!(error.kind(), io::ErrorKind::NotFound);
+            assert_eq!(
+                error.kind(),
+                io::ErrorKind::NotFound,
+                "#946 metadata error kind"
+            );
             json!({"error": error.to_string()})
         }
     };
-    assert_eq!(outcome, expected, "metadata from_env matrix: {name}");
+    crate::negative_assert_eq!(outcome, expected, "metadata from_env matrix: {name}");
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .unwrap();
+        .expect("#946 cwd fixture setup/value required");
     let (downstream, down_peer) = tokio::io::duplex(64);
     let (upstream, up_peer) = tokio::io::duplex(64);
     drop((down_peer, up_peer));
     let paired = runtime.block_on(crate::pairing::run(downstream, upstream));
     if let Some(error) = expected.get("error") {
-        assert!(paired.is_err(), "pairing propagates cwd failure: {name}");
-        let actual = paired.unwrap_err();
-        assert_eq!(actual.kind(), io::ErrorKind::NotFound);
+        crate::negative_assert!(paired.is_err(), "pairing propagates cwd failure: {name}");
+        let actual = paired.expect_err("#946 cwd fixture expected error");
+        assert_eq!(
+            actual.kind(),
+            io::ErrorKind::NotFound,
+            "#946 pairing error kind"
+        );
         assert_eq!(
             actual.to_string(),
-            error.as_str().unwrap(),
+            error
+                .as_str()
+                .expect("#946 cwd fixture setup/value required"),
             "pairing preserves cwd error message: {name}"
         );
     } else {
@@ -105,7 +132,7 @@ fn environment_worker() {
             "pairing normal/disabled initialization: {name}"
         );
     }
-    std::env::set_current_dir(original_cwd).unwrap();
+    std::env::set_current_dir(original_cwd).expect("#946 cwd fixture setup/value required");
     println!("METADATA_ENV_MATCH {name}: {outcome}");
     crate::test_process::receipt(&name);
 }

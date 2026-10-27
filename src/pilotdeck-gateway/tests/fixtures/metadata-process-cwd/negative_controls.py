@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""#879 HEAD-only controls. Run all selected mutations before reporting failure.
+"""#946 HEAD-only nonce receipt controls; account for every selected mutant.
 
-New/uncommitted sources deliberately fail closed; commit first on the host.
+--check validates anchors. --compile-only compiles every selected mutant.
+Provide a new output directory and optional mutation names; CARGO_TARGET_DIR
+must be supplied. Commit first: the source guard is never bypassed.
 """
-import difflib
-import json
-import os
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+# negative_suite owns mutating_sources, run_owned and wait_for_slot.
+from negative_suite import matrix_main
 
 ROOT = Path(__file__).resolve().parents[5]
 META = ROOT / 'src/pilotdeck-gateway/src/metadata.rs'
@@ -109,7 +109,7 @@ MUTATIONS = [
     ('provider-error-shape', REG,
      'name: "Error".into(),\n        code: Some(code.into()),',
      'name: "RuntimeError".into(),\n        code: Some(code.into()),',
-     'relative_deleted', '#879 provider error shape:'),
+     'relative_deleted', '#879 provider error shape: relative-deleted'),
     ('remote-spec-needs-cwd', REG,
      'else {\n        return Ok(spec);\n    };\n    let replacements:',
      'else {\n        let _ = resolve_path(project_root)?;\n        return Ok(spec);\n    };\n    let replacements:',
@@ -131,111 +131,13 @@ MUTATIONS = [
 ]
 
 
-def write_new(path, value):
-    with path.open('x') as stream:
-        stream.write(value)
-
-
-def run(out, label, test, env, *, compile_only=False):
-    slots = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=600, interval=15)
-    write_new(out / f'{label}.slots.log', slots.stdout + slots.stderr)
-    command = ['cargo', 'test', '--offline', '-q', '-p', 'pilotdeck-gateway', '--lib', PREFIX + test,
-               '--', '--exact', '--nocapture', '--format=pretty', '--test-threads=1']
-    if compile_only:
-        command = ['cargo', 'check', '--offline', '-q', '-p', 'pilotdeck-gateway', '--tests']
-    write_new(out / f'{label}.command.json', json.dumps({
-        'command': command, 'cwd': str(ROOT / 'src'),
-        'CARGO_TARGET_DIR': env['CARGO_TARGET_DIR']}, indent=2) + '\n')
-    result = run_owned(command, cwd=ROOT / 'src', env=env, timeout=900)
-    log = result.stdout + result.stderr
-    write_new(out / f'{label}.log', log)
-    return result, log
-
-
-def positive(result, log, test):
-    if not (result.returncode == 0
-            and 'test result: ok. 1 passed; 0 failed; 0 ignored;' in log
-            and log.count(f'PDRS_VERIFIED_CHILD {test.replace("_", "-")}') == 1):
-        raise RuntimeError('#879 positive/restored run must pass exactly one named test and receipt')
-
 
 def main():
-    if sys.argv[1:] == ['--check']:
-        failures = []
-        for name, source, before, _after, _test, _marker in MUTATIONS:
-            count = source.read_text().count(before)
-            if count != 1:
-                failures.append(f'{name}: expected 1 anchor, actual {count}')
-        print('\n'.join(failures) if failures else f'#879 anchors: {len(MUTATIONS)} unique sites OK')
-        return int(bool(failures))
-    compile_only = '--compile-only' in sys.argv[1:]
-    args = [arg for arg in sys.argv[1:] if arg != '--compile-only']
-    env = os.environ.copy()
-    if not env.get('CARGO_TARGET_DIR'):
-        raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
-    if not args:
-        raise SystemExit('usage: negative_controls.py --check | [--compile-only] NEW_OUTPUT_DIRECTORY [mutation ...]')
-    out = Path(args[0]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
-    names = args[1:]
-    selected = [row for row in MUTATIONS if not names or row[0] in names]
-    if not selected or (names and len(selected) != len(names)):
-        raise SystemExit('unknown or duplicate mutation name')
-    guarded = [META, CONFIG, STORE, PROTO, REG, BRIDGE, FIXTURE / 'regression.rs',
-               FIXTURE / 'oracle.json', FIXTURE / 'generate.mts', Path(__file__).resolve()]
-    results = []
-    for name, source, before, after, test, marker in selected:
-        item = {'name': name, 'test': PREFIX + test, 'status': 'INVALID', 'restoredPass': False}
-        try:
-            with mutating_sources(ROOT, guarded) as originals:
-                original = originals[source].decode()
-                expected = 1
-                actual = original.count(before)
-                if actual != expected:
-                    raise RuntimeError(f'stale anchor: expected {expected}, actual {actual}')
-                if not compile_only:
-                    result, log = run(out, f'{name}-positive', test, env)
-                    positive(result, log, test)
-                changed = original.replace(before, after)
-                write_new(out / f'{name}.patch', ''.join(difflib.unified_diff(
-                    original.splitlines(True), changed.splitlines(True),
-                    fromfile=str(source.relative_to(ROOT)), tofile=str(source.relative_to(ROOT)))))
-                source.write_text(changed)
-                result, log = run(out, f'{name}-compile', test, env, compile_only=True)
-                if result.returncode != 0:
-                    raise RuntimeError('mutant did not compile; not a runtime kill')
-                item['compiled'] = True
-                if compile_only:
-                    item.update(status='COMPILED', reason='mutant cargo check --tests passed')
-                else:
-                    result, log = run(out, f'{name}-negative', test, env)
-                    if (result.returncode == 101 and 'panicked at' in log and marker in log
-                            and PREFIX + test in log
-                            and 'test result: FAILED. 0 passed; 1 failed; 0 ignored;' in log):
-                        item.update(status='KILLED', reason=f'named runtime assertion: {marker}')
-                    elif result.returncode == 0:
-                        positive(result, log, test)
-                        item.update(status='SURVIVED', reason='mutated named test passed')
-                    else:
-                        item['reason'] = 'compile/setup/timeout/wrong-assertion failures are not kills'
-            if not compile_only:
-                with mutating_sources(ROOT, guarded):
-                    result, log = run(out, f'{name}-restored', test, env)
-                    positive(result, log, test)
-                    item['restoredPass'] = True
-        except Exception as error:
-            item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
-        results.append(item)
-        write_new(out / f'{name}.result.json', json.dumps(item, indent=2) + '\n')
-        print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
-    write_new(out / 'summary.json', json.dumps(results, indent=2) + '\n')
-    counts = {status: sum(row['status'] == status for row in results)
-              for status in ['KILLED', 'SURVIVED', 'INVALID', 'COMPILED']}
-    print(json.dumps(counts), flush=True)
-    success = 'COMPILED' if compile_only else 'KILLED'
-    return 0 if all(row['status'] == success and (compile_only or row['restoredPass'])
-                    for row in results) else 1
+    return matrix_main(ROOT, __file__, PREFIX, MUTATIONS,
+                       passed_count=1, child_count=1,
+                       paths=[META, CONFIG, STORE, PROTO, REG, BRIDGE, FIXTURE / "regression.rs", FIXTURE / "oracle.json", FIXTURE / "generate.mts"],
+                       any_cell=(), exact=True)
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    raise SystemExit(main())

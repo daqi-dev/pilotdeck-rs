@@ -114,3 +114,214 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD'):
               for state in ('KILLED', 'SURVIVED', 'INVALID')}
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
     return int(not results or any(row['status'] != 'KILLED' for row in results))
+
+
+# #946 matrix protocol. The legacy Case API above belongs to a separate migration.
+# Only libtest's named FAILED lines remain textual; panic/diagnostic prose is
+# never evidence. Each run owns new files, keyed by (full test, exact assertion).
+class ReceiptRun:
+    ENV = 'PDRS_NEGATIVE_RECEIPTS'
+    PARENT_ENV = 'PDRS_NEGATIVE_PARENT_TEST'
+
+    def __init__(self, out, label, targets):
+        import secrets
+        from pathlib import Path
+        self.directory = Path(out).resolve() / (label + '.receipts')
+        self.directory.mkdir(exist_ok=False)
+        if not targets or len({test for test, _ in targets}) != len(targets):
+            raise ValueError('nonempty targets with unique test identities required')
+        self.nonce = secrets.token_hex(32)
+        self.paths = {target: self.directory / f'{index}.receipt'
+                      for index, target in enumerate(targets)}
+        self.config = {'nonce': self.nonce, 'targets': [
+            {'test': test, 'assertion': assertion, 'path': str(path)}
+            for (test, assertion), path in self.paths.items()]}
+        _write_new(self.directory / 'run.json', json.dumps(self.config, indent=2) + '\n')
+
+    def environment(self, env):
+        result = dict(env)
+        result.pop(self.PARENT_ENV, None)
+        result[self.ENV] = json.dumps(self.config)
+        return result
+
+    def matches(self, test, assertion):
+        import os
+        import stat
+        path = self.paths.get((test, assertion))
+        if path is None:
+            return False
+        try:
+            # No symlink/device/FIFO, and no unbounded reads of corrupt output.
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+            with os.fdopen(fd, 'rb') as stream:
+                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                    return False
+                return stream.read(65) == self.nonce.encode('ascii')
+        except OSError:
+            return False
+
+
+def judge(result, prefix, targets, receipts, *, any_cell=False):
+    """Require named FAILED and this run's exact assertion receipt, never prose."""
+    if (result.returncode != 101 or not targets
+            or len({test for test, _ in targets}) != len(targets)):
+        return False, 'missing runtime failure or invalid targets', []
+    # --show-output captures diagnostics until after each complete result line.
+    # A receipt still cannot substitute for the named libtest failure.
+    lines = set(result.stdout.splitlines())
+    hits = [test for test, assertion in targets
+            if f'test {prefix}{test} ... FAILED' in lines
+            and receipts.matches(prefix + test, assertion)]
+    unrelated = [test for test, _ in targets
+                 if f'test {prefix}{test} ... FAILED' in lines and test not in hits]
+    if unrelated:
+        return False, f'declared failures lack current assertion receipts: {unrelated}', hits
+    killed = bool(hits) if any_cell else len(hits) == len(targets)
+    return killed, ('named assertions produced current nonce receipts' if killed else
+                    'missing named FAILED line or current assertion receipt'), hits
+
+
+def _write_new(path, text):
+    with path.open('x') as stream:
+        stream.write(text)
+
+
+def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
+                paths, any_cell=(), exact=False, args=None):
+    """HEAD-only matrix controls; compile, run, restore, account for every row.
+
+    Rows keep the fixture's declarative anchors for anchor_selfcheck. Six-field
+    rows bind a list of cells to a message prefix, or one test to an exact
+    assertion; five-field rows already contain (test, assertion) pairs.
+    """
+    import os
+    import sys
+    import difflib
+    from pathlib import Path
+    args = list(sys.argv[1:] if args is None else args)
+    compile_only = '--compile-only' in args
+    args = [arg for arg in args if arg != '--compile-only']
+
+    def targets(row):
+        if len(row) == 5:
+            return list(row[4])
+        tests, assertion = row[4:]
+        if isinstance(tests, str):
+            return [(tests, assertion)]
+        return [(test, assertion + ' ' + test.removesuffix('_cwd').replace('_', '-'))
+                for test in tests]
+
+    def anchor(row, original):
+        if original.count(row[2]) != 1 or row[2] == row[3] or not targets(row):
+            raise ValueError(f'{row[0]}: stale/invalid anchor or empty targets')
+
+    if args == ['--check']:
+        errors = []
+        for row in rows:
+            try:
+                anchor(row, row[1].read_text())
+            except Exception as error:
+                errors.append(str(error))
+        print('\n'.join(errors) if errors else f'{len(rows)} unique anchors checked')
+        return int(bool(errors))
+    if not args:
+        raise SystemExit('usage: script --check | [--compile-only] NEW_OUTPUT_DIR [mutation ...]')
+    selected = [row for row in rows if not args[1:] or row[0] in args[1:]]
+    if not selected or (args[1:] and len(selected) != len(args[1:])):
+        raise SystemExit('unknown/duplicate mutation')
+    env = dict(os.environ)
+    if not env.get('CARGO_TARGET_DIR'):
+        raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
+    # Positive/compile/restored runs never inherit a stale protocol from a caller.
+    env.pop(ReceiptRun.ENV, None)
+    env.pop(ReceiptRun.PARENT_ENV, None)
+    out = Path(args[0]).resolve()
+    out.mkdir(parents=True, exist_ok=False)
+    fixture_root = Path(__file__).resolve().parent
+    guarded = list(dict.fromkeys([*paths, Path(script).resolve(), Path(__file__).resolve(),
+        fixture_root / 'negative_process.py', fixture_root.parent / 'common/negative_receipt.rs',
+        root / 'src/pilotdeck-gateway/src/test_process.rs']))
+    results = []
+
+    def run(label, row, run_env, *, compile=False):
+        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=600, interval=15)
+        _write_new(out / f'{label}.slots.log', slot.stdout + slot.stderr)
+        command = ['cargo', 'test', '--offline', '-q', '-p', 'pilotdeck-gateway', '--lib']
+        if compile:
+            command += ['--no-run']
+        else:
+            command += [prefix + targets(row)[0][0] if exact else prefix, '--',
+                        '--show-output', '--format=pretty', '--test-threads=1']
+            if exact:
+                command.append('--exact')
+        _write_new(out / f'{label}.command.json', json.dumps({
+            'command': command, 'cwd': str(root / 'src'),
+            'CARGO_TARGET_DIR': run_env['CARGO_TARGET_DIR']}, indent=2) + '\n')
+        try:
+            result = run_owned(command, cwd=root / 'src', env=run_env, timeout=900)
+        except Exception as error:
+            _write_new(out / f'{label}.error.txt', f'{type(error).__name__}: {error}\n')
+            raise
+        _write_new(out / f'{label}.stdout', result.stdout)
+        _write_new(out / f'{label}.stderr', result.stderr)
+        return result
+
+    def positive(result):
+        # Keep the previous matrix's pass/child cardinalities.
+        return (result.returncode == 0
+                and f'test result: ok. {passed_count} passed; 0 failed;' in result.stdout
+                and result.stdout.count('PDRS_VERIFIED_CHILD ') == child_count)
+
+    for row in selected:
+        name, source, old, new = row[:4]
+        item = dict(name=name, status='INVALID', reason='not run', compiled=False,
+                    restoredPass=False, targets=targets(row))
+        try:
+            with mutating_sources(root, guarded) as originals:
+                original = originals[source].decode()
+                anchor(row, original)
+                try:
+                    if not compile_only and not positive(run(name + '-positive', row, env)):
+                        raise RuntimeError('positive matrix did not pass with all child receipts')
+                    changed = original.replace(old, new, 1)
+                    _write_new(out / f'{name}.patch', ''.join(difflib.unified_diff(
+                        original.splitlines(True), changed.splitlines(True),
+                        fromfile=str(source.relative_to(root)), tofile=str(source.relative_to(root)))))
+                    source.write_text(changed)
+                    if run(name + '-compile', row, env, compile=True).returncode != 0:
+                        raise RuntimeError('mutant did not compile; never a kill')
+                    item['compiled'] = True
+                    if compile_only:
+                        item.update(status='COMPILED', reason='mutant cargo test --no-run passed')
+                    else:
+                        receipts = ReceiptRun(out, name + '-negative',
+                                              [(prefix + t, a) for t, a in targets(row)])
+                        result = run(name + '-negative', row, receipts.environment(env))
+                        killed, reason, hits = judge(result, prefix, targets(row), receipts,
+                                                     any_cell=name in any_cell)
+                        item.update(status='KILLED' if killed else
+                                    ('SURVIVED' if positive(result) else 'INVALID'),
+                                    reason=reason, hits=hits)
+                except Exception as error:
+                    item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+                finally:
+                    # Restore inside the guard before the positive check. The
+                    # guard also verifies every protected byte on context exit.
+                    source.write_bytes(originals[source])
+                    if source.read_bytes() != originals[source]:
+                        raise RuntimeError('source restoration failed')
+                if not compile_only:
+                    item['restoredPass'] = positive(run(name + '-restored', row, env))
+                    if not item['restoredPass']:
+                        item.update(status='INVALID', reason=item['reason'] + '; restored matrix failed')
+        except Exception as error:
+            item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+        results.append(item)
+        _write_new(out / f'{name}.result.json', json.dumps(item, indent=2) + '\n')
+        print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
+    counts = {state: sum(row['status'] == state for row in results)
+              for state in ('KILLED', 'SURVIVED', 'INVALID', 'COMPILED')}
+    _write_new(out / 'summary.json', json.dumps({'controls': results, 'counts': counts}, indent=2) + '\n')
+    print(json.dumps(counts), flush=True)
+    success = 'COMPILED' if compile_only else 'KILLED'
+    return int(any(row['status'] != success for row in results))

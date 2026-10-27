@@ -90,7 +90,7 @@ fn environment_worker() {
             "toolResultsDir": row["outcome"]["toolResultsDir"],
         })
     };
-    assert_eq!(actual, expected, "#885 outcome matrix: {name}");
+    crate::negative_assert_eq!(actual, expected, "#885 outcome matrix: {name}");
     crate::test_process::receipt(&name);
 }
 

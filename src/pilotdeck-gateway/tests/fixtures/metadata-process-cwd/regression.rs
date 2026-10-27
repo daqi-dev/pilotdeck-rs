@@ -53,7 +53,7 @@ fn path_outcome(result: io::Result<std::path::PathBuf>, root: &str) -> Value {
         Err(error) => {
             assert_eq!(error.kind(), io::ErrorKind::NotFound, "#879 cwd error kind");
             let (code, message) = super::process_cwd_diagnostic(&error);
-            assert_eq!(
+            crate::negative_assert_eq!(
                 error.to_string(),
                 message,
                 "#879 cwd Display matches from_env shape"
@@ -127,7 +127,7 @@ fn cwd_worker() {
             "#879 setup: cwd must be deleted"
         );
     }
-    assert_eq!(
+    crate::negative_assert_eq!(
         path_outcome(
             resolve_process_path(Path::new(&base), Path::new(&path)),
             &root
@@ -145,7 +145,7 @@ fn cwd_worker() {
             protocol::project_mcp_config_file_path(Path::new(input)),
         ),
     ] {
-        assert_eq!(
+        crate::negative_assert_eq!(
             path_outcome(result, &root),
             row[entry]["outcome"],
             "#879 {entry} outcome: {name}"
@@ -165,8 +165,9 @@ fn cwd_worker() {
                 "message":error.message.to_utf8().expect("#879 pilot-project error UTF-8"), "syscall":"uv_cwd"}})
         }
     };
-    assert_eq!(
-        pilot_project, row["pilot-project"]["outcome"],
+    crate::negative_assert_eq!(
+        pilot_project,
+        row["pilot-project"]["outcome"],
         "#879 pilot-project outcome: {name}"
     );
     let expected_error = row["pilot-project"]["outcome"].get("error");
@@ -186,9 +187,10 @@ fn cwd_worker() {
         ),
     ] {
         if let Some(expected) = expected_error {
-            let error = result.expect_err(&format!(
-                "#879 config must propagate cwd failure: {entry}/{name}"
-            ));
+            let error = crate::test_negative_receipt::expect_err(
+                result,
+                &format!("#879 config must propagate cwd failure: {entry}/{name}"),
+            );
             assert_eq!(
                 json!({"name":error.name, "code":error.code, "message":error.message.to_utf8().expect("#879 config error UTF-8")}),
                 json!({"name":expected["name"], "code":expected["code"], "message":expected["message"]}),
@@ -206,10 +208,11 @@ fn cwd_worker() {
         let loaded =
             protocol::load_mcp_server_config(Path::new(input), config_home, &SystemEnvironment);
         if let Some(expected) = row[entry]["outcome"].get("error") {
-            let error = loaded.expect_err(&format!(
-                "#879 loader must propagate cwd failure: {entry}/{name}"
-            ));
-            assert!(
+            let error = crate::test_negative_receipt::expect_err(
+                loaded,
+                &format!("#879 loader must propagate cwd failure: {entry}/{name}"),
+            );
+            crate::negative_assert!(
                 matches!(error, protocol::McpConfigLoadError::Cwd(_)),
                 "#879 loader cwd variant: {entry}/{name}"
             );
@@ -257,7 +260,7 @@ fn cwd_worker() {
         } else {
             row[if id == "browser-use" { "browser" } else { id }]["outcome"].clone()
         };
-        assert_eq!(actual, expected, "#879 patch outcome: {id}/{name}");
+        crate::negative_assert_eq!(actual, expected, "#879 patch outcome: {id}/{name}");
     }
     let remote = protocol::McpServerSpec {
         id: "funasr".into(),
@@ -268,8 +271,15 @@ fn cwd_worker() {
         },
     };
     assert_eq!(
-        registry::patch_project_scoped_mcp_spec(remote.clone(), input, input, &Default::default())
-            .expect("#879 remote spec must not need cwd"),
+        crate::test_negative_receipt::expect_ok(
+            registry::patch_project_scoped_mcp_spec(
+                remote.clone(),
+                input,
+                input,
+                &Default::default()
+            ),
+            "#879 remote spec must not need cwd"
+        ),
         remote,
         "#879 remote spec remains unchanged"
     );
@@ -285,9 +295,12 @@ fn cwd_worker() {
         });
     let result = provider.per_session_server_specs(&JsObject::new(), false);
     if let Some(expected) = expected_error {
-        let error = result.expect_err("#879 provider must propagate cwd failure");
+        let error = crate::test_negative_receipt::expect_err(
+            result,
+            "#879 provider must propagate cwd failure",
+        );
         let js = error.js_error().expect("#879 provider retains JS error");
-        assert_eq!(
+        crate::negative_assert_eq!(
             json!({"name":js.name,"code":js.code,"message":js.message.to_utf8().expect("#879 provider message UTF-8")}),
             json!({"name":expected["name"],"code":expected["code"],"message":expected["message"]}),
             "#879 provider error shape: {name}"
@@ -308,7 +321,7 @@ fn cwd_worker() {
             .expect("#879 bridge JSON value"),
     )
     .expect("#879 bridge JSON");
-    assert_eq!(
+    crate::negative_assert_eq!(
         json!({"content":actual}),
         row["bridge"]["outcome"],
         "#879 bridge outcome: {name}"
