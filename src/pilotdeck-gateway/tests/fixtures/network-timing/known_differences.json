@@ -11,10 +11,6 @@
     "RETRY-TIE": {
       "ignoreReason": "#456 差异：同刻父先注册时 Rust 仍推进下一次重试",
       "ledger": "specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-RETRY-TIE-001.md"
-    },
-    "MCP-BODY-ERROR": {
-      "ignoreReason": "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError",
-      "ledger": "specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-ERROR-CLASS-003.md"
     }
   },
   "cells": [
@@ -809,7 +805,7 @@
         "content": null,
         "delivery": "throw",
         "message": "terminated",
-        "name": "NetworkFetchError",
+        "name": "TypeError",
         "retries": 0
       }
     },
@@ -830,175 +826,7 @@
         "content": null,
         "delivery": "throw",
         "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_get/body/idle/continuation-first",
-      "test": "mcp_get_body_idle_continuation_first",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
         "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_get/body/idle/parent-first",
-      "test": "mcp_get_body_idle_parent_first",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_get/body/idle/tie-parent-first",
-      "test": "mcp_get_body_idle_tie_parent_first",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_get/body/idle/tie-parent-last",
-      "test": "mcp_get_body_idle_tie_parent_last",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_get/body/rejected/continuation-first",
-      "test": "mcp_get_body_rejected_continuation_first",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_get/body/rejected/parent-first",
-      "test": "mcp_get_body_rejected_parent_first",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_get/body/rejected/tie-parent-first",
-      "test": "mcp_get_body_rejected_tie_parent_first",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_get/body/rejected/tie-parent-last",
-      "test": "mcp_get_body_rejected_tie_parent_last",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
         "retries": 0
       }
     },
@@ -1187,7 +1015,7 @@
         "content": null,
         "delivery": "throw",
         "message": "terminated",
-        "name": "NetworkFetchError",
+        "name": "TypeError",
         "retries": 0
       }
     },
@@ -1208,175 +1036,7 @@
         "content": null,
         "delivery": "throw",
         "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_post/body/idle/continuation-first",
-      "test": "mcp_post_body_idle_continuation_first",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
         "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_post/body/idle/parent-first",
-      "test": "mcp_post_body_idle_parent_first",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_post/body/idle/tie-parent-first",
-      "test": "mcp_post_body_idle_tie_parent_first",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_post/body/idle/tie-parent-last",
-      "test": "mcp_post_body_idle_tie_parent_last",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_post/body/rejected/continuation-first",
-      "test": "mcp_post_body_rejected_continuation_first",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_post/body/rejected/parent-first",
-      "test": "mcp_post_body_rejected_parent_first",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_post/body/rejected/tie-parent-first",
-      "test": "mcp_post_body_rejected_tie_parent_first",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
-        "retries": 0
-      }
-    },
-    {
-      "id": "mcp_post/body/rejected/tie-parent-last",
-      "test": "mcp_post_body_rejected_tie_parent_last",
-      "category": "MCP-BODY-ERROR",
-      "ts": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "TypeError",
-        "retries": 0
-      },
-      "rust": {
-        "calls": 1,
-        "content": null,
-        "delivery": "throw",
-        "message": "terminated",
-        "name": "NetworkFetchError",
         "retries": 0
       }
     },

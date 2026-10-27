@@ -36,16 +36,16 @@ use super::protocol::{Inbound, parse_inbound_value};
 use super::wire::{Wire, frame_text, lock};
 use crate::runtime::{
     model::http::{
-        ConnectDeadline, ProxyConfig, ProxyConnect, ProxyError, ProxySettings,
-        proxy_https_connector, retry_after_header_ms,
+        BodyFailure, ConnectDeadline, ModelBody, ProxyConfig, ProxyConnect, ProxyError,
+        ProxySettings, encoding, proxy_https_connector, retry_after_header_ms,
     },
     network::{Exchange, ExchangeFuture, delay, exchange_continuing, node_timer_duration},
     tools::ToolCancellation,
 };
 use crate::{fetch_redirect, js_value};
 use bytes::Bytes;
-use http_body_util::Full;
-use hyper::{Method, Request, StatusCode, body::Incoming, header};
+use http_body_util::{BodyExt, Full};
+use hyper::{Method, Request, StatusCode, header};
 use hyper_rustls::HttpsConnector;
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use pilotdeck_protocol::{JsValue, json_syntax, parse_json};
@@ -220,15 +220,20 @@ async fn fetch_once(
     url: &Url,
     headers: &HeaderList,
     body: Option<String>,
-) -> Result<hyper::Response<Incoming>, McpClientError> {
+) -> Result<hyper::Response<ModelBody>, McpClientError> {
     fetch_with(method, url, headers, body, |request| async move {
         // Checked per redirect hop: every hop is a new dispatch, and a hop
         // that routes through the proxy must not carry caller credentials.
         reject_proxy_authorization(proxy, &request)?;
         let target = request.uri().clone();
+        let method = request.method().clone();
+        let follow_redirects = request
+            .extensions()
+            .get::<fetch_redirect::FollowRedirects>()
+            .is_some();
         let response = client.request(request).await;
         let error = match response {
-            Ok(response) => return Ok(response),
+            Ok(response) => return decode_mcp_response(&method, response, follow_redirects),
             Err(error) => error,
         };
         let cause = match classify_failure(&error) {
@@ -264,6 +269,36 @@ async fn fetch_once(
         }
     })
     .await
+}
+
+/// Decode each socket response before fetch's redirect/status policy. The
+/// shared decoder retains wire headers and owns the five-layer decision.
+fn decode_mcp_response(
+    method: &Method,
+    response: hyper::Response<hyper::body::Incoming>,
+    follow_redirects: bool,
+) -> Result<hyper::Response<ModelBody>, McpClientError> {
+    // Only diagnostic metadata: legacy EventSource flattens fetch's cause.
+    // Do not duplicate the decoder's acceptance / rejection decision here.
+    let count = header_value(response.headers(), "content-encoding")
+        .unwrap_or_default()
+        .split(',')
+        .count();
+    encoding::decode_response(
+        method,
+        response.map(|body| body.map_err(|_| BodyFailure::Terminated).boxed()),
+        follow_redirects,
+    )
+    .map_err(|error| {
+        network_error(
+            "network_fetch_failed",
+            format!(
+                "{}\u{0}too many content-encodings in response: {count}, maximum allowed is {}",
+                error.message,
+                encoding::MAX_CONTENT_ENCODINGS,
+            ),
+        )
+    })
 }
 
 /// The URL's port, with the scheme's default (undici's `port = port || 443` /
@@ -702,7 +737,7 @@ async fn network_fetch(
     mode: Fetch,
     aborted: &ToolCancellation,
     continuation_before_abort: bool,
-) -> Result<hyper::Response<(Incoming, bool)>, McpClientError> {
+) -> Result<hyper::Response<(ModelBody, bool)>, McpClientError> {
     network_fetch_continuing_with(
         method.clone(),
         mode,
@@ -1073,7 +1108,7 @@ where
             McpClientError::plain("Error", fetch_redirect::STRING_TOO_LONG)
         }
         fetch_redirect::BodyError::Terminated | fetch_redirect::BodyError::Aborted => {
-            network_error("network_connection_reset", "terminated".into())
+            McpClientError::plain("TypeError", "terminated")
         }
     })
 }
@@ -1467,7 +1502,7 @@ async fn start_sse(
 /// `_handleSseStream(stream, options, isReconnectable)`.
 async fn handle_sse_stream(
     wire: Weak<Wire>,
-    body: Incoming,
+    body: ModelBody,
     before_abort: bool,
     reconnectable: bool,
 ) {
@@ -3320,3 +3355,7 @@ async fn final_network_error_rechecks_parent_like_real_ts() {
 #[cfg(test)]
 #[path = "../../../tests/common/network_timing_mcp.rs"]
 mod network_timing_tests;
+
+#[cfg(test)]
+#[path = "http_encoding_tests.rs"]
+mod encoding_tests;

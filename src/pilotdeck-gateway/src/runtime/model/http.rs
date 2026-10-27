@@ -45,7 +45,7 @@ use super::providers::{self, StreamState};
 use super::router::AbortFlag;
 use crate::host::ModuleError;
 
-mod encoding;
+pub(crate) mod encoding;
 mod errors;
 mod sse;
 mod tls;
