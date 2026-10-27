@@ -101,12 +101,26 @@ fn equal(actual: &JsValue, expected: &JsValue, message: &str) {
 }
 
 /// Replace the per-case absolute store root so the oracle stays path-free.
+/// The replacement works on UTF-16 units: `String::from_utf16_lossy` would
+/// turn a fixture's lone surrogate into U+FFFD before comparison.
 fn clean_paths(value: &JsValue, root: &str) -> JsValue {
     match value {
         JsValue::String(text) => {
-            let decoded = String::from_utf16_lossy(text.units());
-            let replaced = decoded.replace(root, "$ROOT");
-            JsValue::String(JsString::from(replaced))
+            let needle: Vec<u16> = root.encode_utf16().collect();
+            let replacement: Vec<u16> = "$ROOT".encode_utf16().collect();
+            let units = text.units();
+            let mut out = Vec::with_capacity(units.len());
+            let mut index = 0;
+            while index < units.len() {
+                if !needle.is_empty() && units[index..].starts_with(&needle) {
+                    out.extend(&replacement);
+                    index += needle.len();
+                } else {
+                    out.push(units[index]);
+                    index += 1;
+                }
+            }
+            JsValue::String(JsString::from_utf16(out))
         }
         JsValue::Array(items) => {
             JsValue::Array(items.iter().map(|item| clean_paths(item, root)).collect())
@@ -198,7 +212,21 @@ impl ScriptedExtractor {
             debug(event.clone());
         }
         if let Some(message) = step.get("throws") {
-            return Err(LlmError::new(text(message)));
+            let message = message
+                .as_string()
+                .expect("#773 throws must be a string")
+                .clone();
+            let mut error = LlmError::new(message);
+            if let Some(name) = step.get("throwsName").and_then(JsValue::as_string) {
+                error.name = if name.is_empty() {
+                    ""
+                } else if name.equals_str("Error") {
+                    "Error"
+                } else {
+                    panic!("#773 unsupported fixture error name {name:?}")
+                };
+            }
+            return Err(error);
         }
         Ok(step
             .get("result")
@@ -266,7 +294,7 @@ impl DreamEnvironment for ScriptedEnvironment {
 /// Records the TS `logger.warn` calls the runner forwards
 /// (`dream-review.ts:838`). Only `warn` is exercised by these sub-flows.
 struct RecordingLogger {
-    warnings: Mutex<Vec<String>>,
+    warnings: Mutex<Vec<JsString>>,
 }
 
 impl RecordingLogger {
@@ -276,7 +304,7 @@ impl RecordingLogger {
         }
     }
 
-    fn warnings(&self) -> Vec<String> {
+    fn warnings(&self) -> Vec<JsString> {
         self.warnings
             .lock()
             .expect("#773 logger warnings lock")
@@ -285,11 +313,11 @@ impl RecordingLogger {
 }
 
 impl DreamLogger for RecordingLogger {
-    fn warn(&self, message: &str) {
+    fn warn(&self, message: &JsString) {
         self.warnings
             .lock()
             .expect("#773 logger warnings lock")
-            .push(message.to_string());
+            .push(message.clone());
     }
 }
 
@@ -606,13 +634,7 @@ fn replay(name: &str) {
         expected.get("calls").expect("#773 expected calls"),
         &format!("#773 calls {name}"),
     );
-    let logs = JsValue::Array(
-        logger
-            .warnings()
-            .into_iter()
-            .map(|message| JsValue::String(JsString::from(message)))
-            .collect(),
-    );
+    let logs = JsValue::Array(logger.warnings().into_iter().map(JsValue::String).collect());
     equal(
         &logs,
         expected.get("logs").expect("#773 expected logs"),
@@ -678,6 +700,18 @@ fn merge_skip_single() {
 #[test]
 fn merge_plan_error() {
     replay("merge-plan-error");
+}
+#[test]
+fn merge_plan_error_empty_message() {
+    replay("merge-plan-error-empty-message");
+}
+#[test]
+fn merge_plan_error_empty_name() {
+    replay("merge-plan-error-empty-name");
+}
+#[test]
+fn merge_plan_error_lone_surrogate() {
+    replay("merge-plan-error-lone-surrogate");
 }
 #[test]
 fn merge_invalid_groups() {
