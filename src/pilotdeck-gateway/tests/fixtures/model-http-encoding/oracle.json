@@ -969,6 +969,312 @@
       }
     }
   ],
+  "tokenBoundaries": [
+    {
+      "name": "five-trailing-comma",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,",
+      "wire": "1f8b080000000000001393efe6600003e1c9ef9f2530303f3cf97ebeaa8181bdcdcfba7dab1a1bffceb3af9f263bf3f7dfea1b46cc8187f5dbe4bf771bcc4f4af1a890fa1929ba428261ebc95b2a6640ed00ea14bd0048000000",
+      "status": 200,
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "name": "double-comma",
+      "encoding": "gzip,,gzip",
+      "wire": "1f8b080000000000001393efe6600003e1d3e7d918dcefdea9640272008e020fe916000000",
+      "status": 200,
+      "result": {
+        "status": 200,
+        "hex": "1f8b080000000000001393efe6600003e1d3e7d918dcefdea9640272008e020fe916000000"
+      }
+    },
+    {
+      "name": "space-token",
+      "encoding": "gzip, \t ,gzip",
+      "wire": "1f8b080000000000001393efe6600003e1d3e7d918dcefdea9640272008e020fe916000000",
+      "status": 200,
+      "result": {
+        "status": 200,
+        "hex": "1f8b080000000000001393efe6600003e1d3e7d918dcefdea9640272008e020fe916000000"
+      }
+    },
+    {
+      "name": "empty-value",
+      "encoding": "",
+      "wire": "6f6b",
+      "status": 200,
+      "result": {
+        "status": 200,
+        "hex": "6f6b"
+      }
+    },
+    {
+      "name": "six-empty-tokens",
+      "encoding": ", , , , ,",
+      "wire": "6f6b",
+      "status": 200,
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "name": "multi-line-five",
+      "encoding": [
+        "gzip,gzip,gzip",
+        "gzip,gzip"
+      ],
+      "wire": "1f8b080000000000001393efe6600003e1c9ef9f2530303f3cf97ebeaa8181bdcdcfba7dab1a1bffceb3af9f263bf3f7dfea1b46cc8187f5dbe4bf771bcc4f4af1a890fa1929ba428261ebc95b2a6640ed00ea14bd0048000000",
+      "status": 200,
+      "result": {
+        "status": 200,
+        "hex": "6f6b"
+      }
+    },
+    {
+      "name": "multi-line-six",
+      "encoding": [
+        "gzip,gzip,gzip",
+        "gzip,gzip,gzip"
+      ],
+      "wire": "1f8b080000000000001393efe6600003e1c9ef9f2530303f3cf97ebeaa8181bdcdcfba7dab1a1bf79e3dbfab76b594f4ff739bd7cf57b3fefcfdfe2b69b7338ded5f6f3fd95f2e7dc6dfebe38a09bf243577393525be3e19ad95e6f096e195c85e060fa08100fb5973d45a000000",
+      "status": 200,
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "name": "no-content-six",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "",
+      "status": 204,
+      "result": {
+        "status": 204,
+        "hex": ""
+      }
+    },
+    {
+      "name": "not-modified-six",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "",
+      "status": 304,
+      "result": {
+        "status": 304,
+        "hex": ""
+      }
+    }
+  ],
+  "redirects": [
+    {
+      "name": "301-follow",
+      "status": 301,
+      "redirect": "follow",
+      "location": "/target",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "status": 200,
+        "text": "target-ok"
+      }
+    },
+    {
+      "name": "301-manual",
+      "status": 301,
+      "redirect": "manual",
+      "location": "/target",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "name": "302-follow",
+      "status": 302,
+      "redirect": "follow",
+      "location": "/target",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "status": 200,
+        "text": "target-ok"
+      }
+    },
+    {
+      "name": "302-manual",
+      "status": 302,
+      "redirect": "manual",
+      "location": "/target",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "name": "303-follow",
+      "status": 303,
+      "redirect": "follow",
+      "location": "/target",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "status": 200,
+        "text": "target-ok"
+      }
+    },
+    {
+      "name": "303-manual",
+      "status": 303,
+      "redirect": "manual",
+      "location": "/target",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "name": "307-follow",
+      "status": 307,
+      "redirect": "follow",
+      "location": "/target",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "status": 200,
+        "text": "target-ok"
+      }
+    },
+    {
+      "name": "307-manual",
+      "status": 307,
+      "redirect": "manual",
+      "location": "/target",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "name": "308-follow",
+      "status": 308,
+      "redirect": "follow",
+      "location": "/target",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "status": 200,
+        "text": "target-ok"
+      }
+    },
+    {
+      "name": "308-manual",
+      "status": 308,
+      "redirect": "manual",
+      "location": "/target",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "name": "no-location",
+      "status": 302,
+      "redirect": "follow",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "name": "empty-location",
+      "status": 302,
+      "redirect": "follow",
+      "location": "",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "name": "non-redirect-status",
+      "status": 200,
+      "redirect": "follow",
+      "location": "/target",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "name": "target-six",
+      "status": 302,
+      "redirect": "follow",
+      "location": "/target",
+      "targetSix": true,
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "too many content-encodings in response: 6, maximum allowed is 5"
+      }
+    },
+    {
+      "name": "pending-predecessor",
+      "status": 302,
+      "redirect": "follow",
+      "location": "/target",
+      "bodyState": "pending",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "status": 200,
+        "text": "target-ok"
+      }
+    },
+    {
+      "name": "disconnected-predecessor",
+      "status": 302,
+      "redirect": "follow",
+      "location": "/target",
+      "bodyState": "disconnect",
+      "encoding": "gzip,gzip,gzip,gzip,gzip,gzip",
+      "wire": "78",
+      "result": {
+        "status": 200,
+        "text": "target-ok"
+      }
+    }
+  ],
   "sizes": [
     {
       "encoding": "gzip",

@@ -1050,6 +1050,10 @@ impl ModelHttpTransport for HyperModelTransport {
     fn send(&self, request: Request<Full<Bytes>>) -> TransportFuture {
         let client = self.client.clone();
         let method = request.method().clone();
+        let follow_redirects = request
+            .extensions()
+            .get::<crate::fetch_redirect::FollowRedirects>()
+            .is_some();
         TransportFuture::io(async move {
             let response = client
                 .request(request)
@@ -1058,6 +1062,7 @@ impl ModelHttpTransport for HyperModelTransport {
             encoding::decode_response(
                 &method,
                 response.map(|body| body.map_err(|_| BodyFailure::Terminated).boxed()),
+                follow_redirects,
             )
         })
     }

@@ -32,10 +32,17 @@ for(const [name,encoding,wire] of specs.slice(0,3)) {
 }
 const cases:any[]=[];
 let current:any, seen:string|undefined, release:((destroy?:boolean)=>void)|undefined;
+let redirectPredecessor:http.ServerResponse|undefined;
 const server=http.createServer((req,res)=>{
+ if(current.redirectCase && req.url==='/target'){
+  if(current.bodyState==='disconnect')redirectPredecessor?.destroy();
+  res.writeHead(200,current.targetSix?{'content-encoding':'gzip,gzip,gzip,gzip,gzip,gzip'}:{});
+  res.end('target-ok');return;
+ }
  seen=req.headers['x-test'] as string|undefined;
- res.writeHead(current.status??200,{'content-encoding':current.encoding,'connection':current.stream?'keep-alive':'close',...((current.stream||current.heartbeat)?{'transfer-encoding':'chunked'}:{'content-length':current.wire.length})});
- if(current.heartbeat){
+ res.writeHead(current.status??200,{'content-encoding':current.encoding,'connection':current.stream?'keep-alive':'close',...(current.location===undefined?{}:{location:current.location}),...((current.stream||current.heartbeat||current.bodyState)?{'transfer-encoding':'chunked'}:{'content-length':current.wire.length})});
+ if(current.bodyState){redirectPredecessor=res;res.flushHeaders();}
+ else if(current.heartbeat){
   const wire=current.wire;let at=1;res.write(wire.subarray(0,at));
   const timer=setInterval(()=>{if(at===4){clearInterval(timer);res.end(wire.subarray(at));}else{res.write(wire.subarray(at,++at));}},400);
   res.on('close',()=>clearInterval(timer));
@@ -63,6 +70,42 @@ try {
    catch(e:any){result={error:e.message,name:e.name,cause:e.cause?.message};}
    layers.push({encoding:coding,depth,method,wire:wire.toString('hex'),result});
   }
+ }
+ const tokenBoundaries:any[]=[];
+ const gzipLayers=(depth:number)=>{let wire=Buffer.from('ok');for(let i=0;i<depth;i++)wire=z.gzipSync(wire);return wire;};
+ for(const [name,encoding,wire,status=200] of [
+  ['five-trailing-comma','gzip,gzip,gzip,gzip,gzip,',gzipLayers(5)],
+  ['double-comma','gzip,,gzip',gzipLayers(2)],
+  ['space-token','gzip, \t ,gzip',gzipLayers(2)],
+  ['empty-value','',Buffer.from('ok')],
+  ['six-empty-tokens',', , , , ,',Buffer.from('ok')],
+  ['multi-line-five',['gzip,gzip,gzip','gzip,gzip'],gzipLayers(5)],
+  ['multi-line-six',['gzip,gzip,gzip','gzip,gzip,gzip'],gzipLayers(6)],
+  ['no-content-six','gzip,gzip,gzip,gzip,gzip,gzip',Buffer.alloc(0),204],
+  ['not-modified-six','gzip,gzip,gzip,gzip,gzip,gzip',Buffer.alloc(0),304],
+ ] as any[]){
+  current={encoding,wire,status};let result:any;
+  try{const r=await fetch(url);result={status:r.status,hex:Buffer.from(await r.arrayBuffer()).toString('hex')};}
+  catch(e:any){result={error:e.message,name:e.name,cause:e.cause?.message};}
+  tokenBoundaries.push({name,encoding,wire:wire.toString('hex'),status,result});
+ }
+ const redirects:any[]=[];
+ const redirectSpecs:any[]=[];
+ for(const status of [301,302,303,307,308])for(const redirect of ['follow','manual'])redirectSpecs.push({name:`${status}-${redirect}`,status,redirect,location:'/target'});
+ redirectSpecs.push(
+  {name:'no-location',status:302,redirect:'follow'},
+  {name:'empty-location',status:302,redirect:'follow',location:''},
+  {name:'non-redirect-status',status:200,redirect:'follow',location:'/target'},
+  {name:'target-six',status:302,redirect:'follow',location:'/target',targetSix:true},
+  {name:'pending-predecessor',status:302,redirect:'follow',location:'/target',bodyState:'pending'},
+  {name:'disconnected-predecessor',status:302,redirect:'follow',location:'/target',bodyState:'disconnect'},
+ );
+ for(const spec of redirectSpecs){
+  current={...spec,redirectCase:true,encoding:'gzip,gzip,gzip,gzip,gzip,gzip',wire:Buffer.from('x')};let result:any;
+  try{const r=await fetch(url,{redirect:spec.redirect});result={status:r.status,text:await r.text()};}
+  catch(e:any){result={error:e.message,name:e.name,cause:e.cause?.message};}
+  finally{redirectPredecessor?.destroy();redirectPredecessor=undefined;}
+  redirects.push({...spec,encoding:current.encoding,wire:current.wire.toString('hex'),result});
  }
  const sizes:any[]=[];
  for(const encoding of ['gzip','br'])for(const size of [16384,16385]){
@@ -135,7 +178,7 @@ try {
  // Isolate the real 512 MiB text conversions from the small replay fixtures.
  // This child uses actual fetch and emits only lengths/error shapes.
  const sizeProbe=execFileSync(process.execPath,['--expose-gc',fileURLToPath(new URL('./size-probe.mjs',import.meta.url))],{encoding:'utf8',timeout:120000}).trim().split('\n').map(line=>JSON.parse(line));
- const oracle={sourceCommit,sourceSha256,node:process.version,payload,cases,headers,lifecycle,endings,interrupted,progress,layers,sizes,sizeProbe};
+ const oracle={sourceCommit,sourceSha256,node:process.version,payload,cases,headers,lifecycle,endings,interrupted,progress,layers,tokenBoundaries,redirects,sizes,sizeProbe};
  mkdirSync(out,{recursive:true});writeFileSync(resolve(out,'oracle.json'),JSON.stringify(oracle,null,2)+'\n',{flag:'wx'});
  console.log(JSON.stringify(oracle,null,2));
 }finally{clearTimeout(watchdog);server.closeAllConnections();server.close();}
