@@ -401,13 +401,13 @@ async fn malformed_session_id_matches_ts_startswith_failure() {
             })
             .await;
         let error = match result {
-            // Keep the TS product text in the panic itself: the negative
-            // control binds `#786 ... (TS: reading 'startsWith')`, so a
-            // non-rejecting mutant must not be able to satisfy the anchor with
-            // the test's own wording alone.
-            Ok(_) => panic!(
-                "#786 non-string sessionId must reject like isAlwaysOnSession (TS: {expected})"
-            ),
+            // Rejection-only panic: the negative control binds this message
+            // without the test's `expected` wording. Product error text is
+            // proven separately by the assertion below, so neither anchor
+            // can be satisfied by the other branch (#786 / #774 P2-2).
+            // Keep this message free of `expected`: that text belongs to the
+            // product-error assertion below, not to the rejection branch.
+            Ok(_) => panic!("#786 non-string sessionId must reject like isAlwaysOnSession"),
             Err(error) => error.to_string(),
         };
         assert!(

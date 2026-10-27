@@ -58,6 +58,7 @@ UNSUPPORTED = {
     'session-domain-cleanup/check_cleanup.py': 'runtime process-census/probe monkeypatch controls; snapshots is an iterator of PID sets, not source bytes; no source replacement anchors',
     'session-domain-cleanup/launcher.py': 'process-group behavior fixture with bounded children, no source mutation definitions',
     'edgeclaw-llm/test_controls.py': 'unit tests of the shared process/source guard',
+    'edgeclaw-capture-turn/test_negative.py': 'unit tests of the restore-positive summary path using in-memory timeout/start failures, no product source replacement table',
     'edgeclaw-llm-telemetry/test_controls.py': 'runner unit tests using synthetic cargo output and mocked source reads, no product mutation definitions',
     'background-output/test_negative.py': 'unit tests of the mutation runner',
     'background-panic/test_negative_controls.py': 'mutation helper unit tests on in-memory strings/JSON, no product source replacement table',
