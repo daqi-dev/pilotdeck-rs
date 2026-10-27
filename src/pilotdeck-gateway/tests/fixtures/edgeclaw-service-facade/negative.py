@@ -7,12 +7,13 @@ The new `service/mod.rs` must be committed before this runner can obtain the
 
     CARGO_TARGET_DIR=/abs/target python3 \
         src/pilotdeck-gateway/tests/fixtures/edgeclaw-service-facade/negative.py \
-        _tmp/20261026-issue-775/negative-service-facade
+        _tmp/20261026-issue-775/negative-service-facade [mutant ...]
 
 Every selected mutant is applied, compiled and run, then restored. The runner
 does not stop at the first failure: it records KILLED / SURVIVED / INVALID for
 all cases and exits non-zero if any case is not KILLED. Compile errors and
-failures that do not land on the named test's assertion are INVALID.
+failures that do not land on the named test's assertion are INVALID. Without
+mutant names it runs the full set; names are for debugging one binding.
 """
 import json
 import os
@@ -48,7 +49,11 @@ ANCHORS = {
     'workspace-data-dir-seed': '#775 workspace data-dir slug',
     'settings-truncate-nonfinite': '#775 facade steps for scenario 10 settings-nonfinite',
     'reopen-indexer-defaults': '#775 reopened indexer restores autoIndexIntervalMinutes',
-    'closed-capture-empty-not-early': '#775 facade steps for scenario 11 closed-empty',
+    # fix-r2: the early return is shared by every mostly-empty capture. This
+    # mutant first turns `captured: false` into `true` in scenario 3
+    # (capture-normalization's assistant-only/tool-only turns), before the
+    # closed-empty scenario 11 ever runs; bind the first observable cell.
+    'closed-capture-empty-not-early': '#775 facade steps for scenario 3 capture-normalization',
 }
 
 
@@ -184,6 +189,15 @@ def classify(result, mutant):
 
 def main():
     output = Path(sys.argv[1]).resolve()
+    requested = sys.argv[2:]
+    known = {mutant['name'] for mutant in MUTANTS}
+    unknown = [name for name in requested if name not in known]
+    if unknown:
+        print(f'unknown mutant(s): {", ".join(unknown)}', file=sys.stderr)
+        return 2
+    selected = [
+        mutant for mutant in MUTANTS if not requested or mutant['name'] in requested
+    ]
     output.mkdir(parents=True, exist_ok=True)
     target = os.environ.get('CARGO_TARGET_DIR')
     if not target:
@@ -230,7 +244,7 @@ def main():
     try:
         with mutating_sources(ROOT, [SERVICE], baseline='HEAD') as snapshots:
             original = snapshots[SERVICE].decode()
-            for mutant in MUTANTS:
+            for mutant in selected:
                 occurrences = original.count(mutant['old'])
                 if occurrences != 1:
                     record(
@@ -266,7 +280,7 @@ def main():
                 record(mutant, status, reason)
     except SourceBaselineError as error:
         # The new service file is not in HEAD yet: refuse, never fake a status.
-        for mutant in MUTANTS[len(results):]:
+        for mutant in selected[len(results):]:
             record(mutant, 'INVALID', f'source guard: {error}')
         counts = {
             state: sum(row['status'] == state for row in results)
