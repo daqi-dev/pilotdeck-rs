@@ -18,6 +18,8 @@
 - `expected.result`：方法返回值；
 - `expected.trace`：完整 trace（steps、details、mutations、promptDebug）；
 - `expected.calls`：桩收到的每个 LLM 输入；
+- `expected.logs`：runner 经 `logger.warn` 发出的日志（`dream-review.ts:838`，
+  其余级别也记录，防止额外调用被静默丢弃）；
 - `expected.tree`：操作后的内存文件树（相对路径 + 内容）。
 
 绝对路径统一替换为 `$ROOT`，因此金样可在任意工作树重放。
@@ -47,15 +49,16 @@ PDRS_BASELINE="$PDRS_BASELINE" cargo test --manifest-path src/Cargo.toml \
 ## 负控
 
 `negative.py` 用 `negative_process.mutating_sources` 锁定并恢复 `runner.rs`，
-先校验 15 个变异锚点恰好各出现一次（过期报 `STALE ANCHOR` 并退出 2，不冒充
-SURVIVED），再跑未变异套件要求退出 0；逐格只跑该变异绑定的 `#[test]`，要求
-测试失败且日志出现该格专属的 `#773 ...` 断言消息。编译失败、无关 panic、
-缺专属消息都记 INVALID。每格跑完恢复 baseline 字节，最后再核一次；逐项汇总
-KILLED/SURVIVED/INVALID，任一非 KILLED 即非零退出。cargo 强制使用调用方
-`CARGO_TARGET_DIR` 并走 `run_owned` + `wait_for_slot`。
+先校验 16 个变异锚点恰好各出现一次（过期报 `STALE ANCHOR` 并退出 2，不冒充
+SURVIVED），再对**本次选中变异的目测试去重**逐个跑未变异源码，任一目标测试
+未通过即拒绝判杀并以 1 退出；逐格只跑该变异绑定的 `#[test]`，要求测试本身
+失败（`test <name> ... FAILED`）且日志出现该格专属的 `#773 ...` 断言消息。
+编译失败、无关 panic、缺专属消息都记 INVALID。每格跑完恢复 baseline 字节，
+最后再核一次；逐项汇总 KILLED/SURVIVED/INVALID，任一非 KILLED 即非零退出。
+cargo 强制使用调用方 `CARGO_TARGET_DIR` 并走 `run_owned` + `wait_for_slot`。
 
-新文件在提交前不在 HEAD，`mutating_sources` 会按设计拒绝；本树只跑
-`python3 .../negative.py --check-anchors`，全量由协调者在宿主提交后跑：
+fix-r1 的产品改动在提交前与 HEAD 不一致，`mutating_sources` 会按设计拒绝；
+本树只跑 `python3 .../negative.py --check-anchors`，全量由协调者在宿主提交后跑：
 
 ```sh
 cd <tree>

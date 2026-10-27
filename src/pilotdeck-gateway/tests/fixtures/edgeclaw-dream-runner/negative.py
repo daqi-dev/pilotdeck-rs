@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Reversible product mutations for edgeclaw-dream-runner (#773).
 
-Every mutant is a one-line change to `dream/runner.rs`. Before any mutation the
-unmutated suite runs once and must exit 0; a broken environment is not a kill.
-A kill requires the named test to fail at the mutant's own ``#773 ...``
-assertion message. Compile failures, unrelated panics and missing anchor
-messages are INVALID, never KILLED. Stale anchors exit 2 instead of being
-reported as SURVIVED. Every mutant runs, then the script prints the aggregate
-KILLED/SURVIVED/INVALID lists and exits 1 if anything was not killed.
+Every mutant is a one-line change to `dream/runner.rs`. Before any mutation
+every *selected* target test runs once on the unmutated source and must pass;
+a broken environment is not a kill. A kill requires the named test itself to
+fail at the mutant's own ``#773 ...`` assertion message. Compile failures,
+unrelated panics and missing anchor messages are INVALID, never KILLED. Stale
+anchors exit 2 instead of being reported as SURVIVED. Every mutant runs, then
+the script prints the aggregate KILLED/SURVIVED/INVALID lists and exits 1 if
+anything was not killed.
 
-`mutating_sources` requires the product tree to match the baseline. The new
-`dream/runner.rs` is not in HEAD before the coordinator commits it, so a normal
-run is expected to refuse here; the author tree only runs ``--check-anchors``.
+`mutating_sources` requires the product tree to match the baseline. The fix-r1
+product changes are not committed before the coordinator commits them, so a
+normal run is expected to refuse here; the author tree only runs
+``--check-anchors``.
 Never use a shadow git or a second build directory. cargo always uses the
 caller's ``CARGO_TARGET_DIR`` and ``wait_for_slot``.
 """
@@ -108,6 +110,11 @@ mutations = [
      'if source_kind.equals_str("workspace_external_mirror") {',
      'if source_kind.equals_str("never_mirror") {',
      'meta_review_mirror'),
+    # 16. The merge planning warning loses its "planning" wording.
+    ('merge-warning-prefix', runner,
+     '"[clawxmemory] General project meta merge planning failed: {}"',
+     '"[clawxmemory] General project meta merge failed: {}"',
+     'merge_plan_error'),
 ]
 
 fragments = {
@@ -126,6 +133,7 @@ fragments = {
     'meta-default-reason': '#773 result meta-review-empty',
     'meta-preview-separator': '#773 trace meta-review-update',
     'meta-review-mirror-branch': '#773 trace meta-review-mirror',
+    'merge-warning-prefix': '#773 logs merge-plan-error',
 }
 
 if '--check-anchors' in sys.argv:
@@ -163,7 +171,9 @@ def run_suite(test):
 def failure_is_bound(log, fragment, test):
     if 'could not compile' in log:
         return False
-    if f'test {test} ... FAILED' not in log and 'panicked at' not in log:
+    # The named test itself must fail. A panic from another thread or the
+    # harness must not stand in for the mutation's own assertion.
+    if f'test {test} ... FAILED' not in log:
         return False
     return fragment in log
 
@@ -183,10 +193,27 @@ with mutating_sources(root, [runner], baseline=baseline) as originals:
         print('STALE ANCHORS: negative.py is out of sync with the product source; refusing to run')
         sys.exit(2)
 
-    slots, run, log = run_suite('category_project_cluster')
-    (out / 'baseline.log').write_text(slots.stdout + slots.stderr + log)
-    if run.returncode != 0:
-        print('BASELINE FAILED: unmutated category_project_cluster must pass before mutations')
+    # Prove every *target* test passes on the unmutated source before any
+    # mutation. Checking one fixed test let an unrelated pre-existing failure
+    # in a selected mutant's target satisfy the bound message and be counted
+    # as KILLED. Run each selected target test once, deduplicated.
+    selected = [case for case in mutations if not only or case[0] in only]
+    target_tests = list(dict.fromkeys(case[4] for case in selected))
+    baseline_log = []
+    baseline_failures = []
+    for test in target_tests:
+        try:
+            slots, run, log = run_suite(test)
+            baseline_log.append(f'== test {test}\n{slots.stdout}{slots.stderr}{log}')
+            if run.returncode != 0:
+                baseline_failures.append(test)
+        except Exception as error:
+            baseline_log.append(f'== test {test}\n{type(error).__name__}: {error}\n')
+            baseline_failures.append(f'{test} ({type(error).__name__})')
+    (out / 'baseline.log').write_text(''.join(baseline_log))
+    if baseline_failures:
+        print('BASELINE FAILED: unmutated target tests must pass before mutations: '
+              + ', '.join(baseline_failures))
         sys.exit(1)
 
     for name, path, before, after, test in mutations:

@@ -123,6 +123,17 @@ impl FileMemoryError {
             _ => self.to_string().into(),
         }
     }
+    /// `error.name` as Node's `String(error)` prefixes it. The Dream merge
+    /// planning catch only sees validation [`Self::Type`] errors; other
+    /// variants fall back to the base `Error` name.
+    pub fn js_name(&self) -> &'static str {
+        match self {
+            Self::Type(_) => "TypeError",
+            Self::Range(_) => "RangeError",
+            Self::Bundle(_) => "MemoryBundleValidationError",
+            _ => "Error",
+        }
+    }
 }
 impl From<std::io::Error> for FileMemoryError {
     fn from(e: std::io::Error) -> Self {

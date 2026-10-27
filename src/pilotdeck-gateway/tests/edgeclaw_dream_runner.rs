@@ -14,7 +14,7 @@ use pilotdeck_gateway::runtime::memory::edgeclaw::{
     dream::{
         helpers::create_dream_trace,
         runner::{
-            CategoryDreamResult, DreamEnvironment, DreamExtractor, DreamRewriteRunner,
+            CategoryDreamResult, DreamEnvironment, DreamExtractor, DreamLogger, DreamRewriteRunner,
             GeneralProjectMergeResult, MetaReviewResult,
         },
     },
@@ -263,6 +263,36 @@ impl DreamEnvironment for ScriptedEnvironment {
     }
 }
 
+/// Records the TS `logger.warn` calls the runner forwards
+/// (`dream-review.ts:838`). Only `warn` is exercised by these sub-flows.
+struct RecordingLogger {
+    warnings: Mutex<Vec<String>>,
+}
+
+impl RecordingLogger {
+    fn new() -> Self {
+        Self {
+            warnings: Mutex::new(vec![]),
+        }
+    }
+
+    fn warnings(&self) -> Vec<String> {
+        self.warnings
+            .lock()
+            .expect("#773 logger warnings lock")
+            .clone()
+    }
+}
+
+impl DreamLogger for RecordingLogger {
+    fn warn(&self, message: &str) {
+        self.warnings
+            .lock()
+            .expect("#773 logger warnings lock")
+            .push(message.to_string());
+    }
+}
+
 fn category_value(result: &CategoryDreamResult) -> JsValue {
     let mut out = JsObject::new();
     out.insert(
@@ -433,7 +463,9 @@ fn replay(name: &str) {
         randoms,
         index: Mutex::new(0),
     };
-    let runner = DreamRewriteRunner::new(&repository, &extractor, &environment);
+    let logger = RecordingLogger::new();
+    let runner =
+        DreamRewriteRunner::new(&repository, &extractor, &environment).with_logger(&logger);
     let started_at = JsString::from(string_field(case, "startedAt"));
     let suffix = JsString::from(string_field(case, "randomSuffix"));
     let mut trace = create_dream_trace(&JsString::from("manual"), &started_at, &suffix);
@@ -573,6 +605,18 @@ fn replay(name: &str) {
         &JsValue::Array(calls),
         expected.get("calls").expect("#773 expected calls"),
         &format!("#773 calls {name}"),
+    );
+    let logs = JsValue::Array(
+        logger
+            .warnings()
+            .into_iter()
+            .map(|message| JsValue::String(JsString::from(message)))
+            .collect(),
+    );
+    equal(
+        &logs,
+        expected.get("logs").expect("#773 expected logs"),
+        &format!("#773 logs {name}"),
     );
     let mut files = vec![];
     tree(store.get_root_dir(), "", &mut files);
