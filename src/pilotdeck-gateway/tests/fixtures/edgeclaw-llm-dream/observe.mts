@@ -299,6 +299,50 @@ function specs(): any[] {
       },
       text: JSON.stringify({clusters: []}),
     },
+    // fix-r2 P1-1: JSON.parse runs on a JavaScript string, so the inner JSON may
+    // hold an unpaired surrogate. Keep both directions and the diagnostic.
+    {
+      name: 'planDreamClusters#6', fn: 'planDreamClusters',
+      input: {
+        kind: 'project',
+        headers: [HEADER('Project/a.md', 'A', 'a', 'U1'), HEADER('Project/b.md', 'B', 'b', 'U2')],
+      },
+      text: '{"summary":"' + String.fromCharCode(0xd800) + '","clusters":[]}',
+    },
+    {
+      name: 'planDreamClusters#7', fn: 'planDreamClusters',
+      input: {
+        kind: 'project',
+        headers: [HEADER('Project/a.md', 'A', 'a', 'U1'), HEADER('Project/b.md', 'B', 'b', 'U2')],
+      },
+      text: '{"summary":"' + String.fromCharCode(0xdc00) + '","clusters":[]}',
+    },
+    // V8 quotes the offending unpaired surrogate in the SyntaxError message.
+    {
+      name: 'planDreamClusters#8', fn: 'planDreamClusters',
+      input: {
+        kind: 'project',
+        headers: [HEADER('Project/a.md', 'A', 'a', 'U1'), HEADER('Project/b.md', 'B', 'b', 'U2')],
+      },
+      text: '{"summary":' + String.fromCharCode(0xd800) + '}',
+    },
+    // fix-r2 P1-2: ECMAScript `m` anchors also match after U+2028/U+2029.
+    {
+      name: 'rewriteUserProfile#7', fn: 'rewriteUserProfile',
+      input: {
+        existingProfile: null,
+        candidates: [{type: 'user', description: 'person', body: 'person'}],
+      },
+      text: JSON.stringify({identity_background_markdown: ['alpha\u2028## beta']}),
+    },
+    {
+      name: 'rewriteUserProfile#8', fn: 'rewriteUserProfile',
+      input: {
+        existingProfile: null,
+        candidates: [{type: 'user', description: 'person', body: 'person'}],
+      },
+      text: JSON.stringify({identity_background_markdown: ['alpha\u2029- beta']}),
+    },
   ];
 }
 

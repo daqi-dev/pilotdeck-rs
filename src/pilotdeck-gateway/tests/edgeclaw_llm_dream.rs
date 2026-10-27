@@ -10,19 +10,25 @@ mod baseline;
 #[path = "support/llm_stub.rs"]
 mod llm_stub;
 
+use bytes::Bytes;
+use http_body_util::Full;
+use hyper::Request;
 use llm_stub::LlmStub;
 use pilotdeck_gateway::runtime::{
     memory::edgeclaw::{
         dream::helpers::{validate_exclusive_clusters, validate_general_project_merge_groups},
         llm::transport::LlmMemoryExtractor,
     },
-    model::http::HyperModelTransport,
+    model::http::{HyperModelTransport, ModelHttpTransport, TransportFuture},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use serde_json::{Value, json};
 use std::{
     collections::HashSet,
-    sync::{Arc, atomic::AtomicU64},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -257,7 +263,7 @@ fn check_validation(
 async fn wire_matrix() {
     let oracle = oracle();
     let cases = array(oracle.get("cases").expect("#771 oracle cases"));
-    assert_eq!(cases.len(), 23, "#771 oracle case count");
+    assert_eq!(cases.len(), 28, "#771 oracle case count");
     let mut seen = HashSet::new();
     for case in cases {
         let name = string_field(case, "name");
@@ -351,6 +357,162 @@ async fn wire_matrix() {
         server.close().await;
     }
     assert_eq!(seen.len(), 5, "#771 every Dream LLM method must be covered");
+}
+
+/// A transport that records the attempt and never resolves, so the Dream
+/// wrapper's own `timeoutMs` choice is the only thing that can end the call.
+struct HangingTransport {
+    calls: AtomicUsize,
+}
+
+impl ModelHttpTransport for HangingTransport {
+    fn send(&self, _request: Request<Full<Bytes>>) -> TransportFuture {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        TransportFuture::io(std::future::pending())
+    }
+}
+
+/// TS defaults for the five Dream methods (`llm-extraction.ts`): 45 s for the
+/// profile rewrite, 180 s for cluster plan/refine, 120 s for the meta calls.
+const DEFAULT_TIMEOUTS: [(&str, f64, &str); 5] = [
+    ("planDreamClusters", 180_000.0, "Dream project cluster plan"),
+    (
+        "refineDreamCluster",
+        180_000.0,
+        "Dream project cluster refine",
+    ),
+    (
+        "planGeneralProjectMetaMerges",
+        120_000.0,
+        "General project meta merge plan",
+    ),
+    (
+        "reviewDreamProjectMeta",
+        120_000.0,
+        "Dream project meta review",
+    ),
+    ("rewriteUserProfile", 45_000.0, "User profile rewrite"),
+];
+
+fn request_case<'a>(cases: &'a [JsValue], method: &str) -> &'a JsValue {
+    cases
+        .iter()
+        .find(|case| string_field(case, "fn") == method && !steps(case).is_empty())
+        .unwrap_or_else(|| panic!("#771 timeout fixture missing a request case for {method}"))
+}
+
+#[tokio::test(start_paused = true)]
+async fn timeout_matrix() {
+    let oracle = oracle();
+    let cases = array(oracle.get("cases").expect("#771 oracle cases"));
+    let mut covered = HashSet::new();
+    for (method, default, label) in DEFAULT_TIMEOUTS {
+        let case = request_case(cases, method);
+        let input = case
+            .get("input")
+            .and_then(JsValue::as_object)
+            .unwrap_or_else(|| panic!("#771 timeout input {method}"));
+        let transport = Arc::new(HangingTransport {
+            calls: AtomicUsize::new(0),
+        });
+        let extractor = LlmMemoryExtractor::new(
+            config("http://127.0.0.1:12345"),
+            transport.clone(),
+            Arc::new(()),
+        );
+        let start = tokio::time::Instant::now();
+        let (outcome, debug) = invoke(&extractor, case, input).await;
+        // A chat request without `response_format` is retried once, so each
+        // attempt burns its own deadline: two attempts per default value.
+        assert_eq!(
+            start.elapsed(),
+            Duration::from_millis((default * 2.0) as u64),
+            "#771 timeout {method} default {default}ms"
+        );
+        let message = format!("{label} request timed out after {default}ms");
+        if method == "rewriteUserProfile" {
+            assert_eq!(
+                outcome.get("result"),
+                Some(&JsValue::Null),
+                "#771 timeout {method} result"
+            );
+            let record = debug
+                .first()
+                .unwrap_or_else(|| panic!("#771 timeout {method} debug record"));
+            assert_eq!(
+                record.get("timedOut"),
+                Some(&JsValue::Bool(true)),
+                "#771 timeout {method} debug timeout"
+            );
+            assert_eq!(
+                record.get("errorMessage"),
+                Some(&JsValue::String(message.into())),
+                "#771 timeout {method} message"
+            );
+        } else {
+            let error = outcome
+                .get("error")
+                .unwrap_or_else(|| panic!("#771 timeout {method} error"));
+            assert_eq!(
+                string_field(error, "name"),
+                "Error",
+                "#771 timeout {method} name"
+            );
+            assert_eq!(
+                string_field(error, "message"),
+                message,
+                "#771 timeout {method} message"
+            );
+        }
+        assert_eq!(
+            transport.calls.load(Ordering::SeqCst),
+            2,
+            "#771 timeout {method} attempts"
+        );
+        covered.insert(method);
+    }
+    assert_eq!(
+        covered.len(),
+        5,
+        "#771 timeout every Dream LLM method must be covered"
+    );
+
+    // An explicit `timeoutMs` wins over the method default.
+    let case = request_case(cases, "planDreamClusters");
+    let mut input = case
+        .get("input")
+        .and_then(JsValue::as_object)
+        .cloned()
+        .unwrap_or_else(|| panic!("#771 timeout override input"));
+    input.insert("timeoutMs".into(), JsValue::Number(7.0));
+    let transport = Arc::new(HangingTransport {
+        calls: AtomicUsize::new(0),
+    });
+    let extractor = LlmMemoryExtractor::new(
+        config("http://127.0.0.1:12345"),
+        transport.clone(),
+        Arc::new(()),
+    );
+    let start = tokio::time::Instant::now();
+    let (outcome, _) = invoke(&extractor, case, &input).await;
+    assert_eq!(
+        start.elapsed(),
+        Duration::from_millis(14),
+        "#771 timeout planDreamClusters override 7ms"
+    );
+    let error = outcome
+        .get("error")
+        .unwrap_or_else(|| panic!("#771 timeout override error"));
+    assert_eq!(
+        string_field(error, "message"),
+        "Dream project cluster plan request timed out after 7ms",
+        "#771 timeout planDreamClusters override message"
+    );
+    assert_eq!(
+        transport.calls.load(Ordering::SeqCst),
+        2,
+        "#771 timeout override attempts"
+    );
 }
 
 #[test]

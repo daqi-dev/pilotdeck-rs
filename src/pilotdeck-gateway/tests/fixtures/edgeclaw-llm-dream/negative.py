@@ -100,6 +100,31 @@ mutations = [
      '                    .is_some_and(|kind| kind.equals_str("user"))',
      '                    .is_some_and(|_| true)',
      'wire_matrix'),
+    # 15. fix-r2 P1-1: inner JSON decoding becomes lossy again.
+    ('parse-model-json-utf16', dream,
+     'let text = json_text(envelope.units());',
+     'let text = String::from_utf16_lossy(envelope.units());',
+     'wire_matrix'),
+    # 16. fix-r2 P1-1: the SyntaxError diagnostic loses the original units.
+    ('parse-model-json-error-units', dream,
+     'json_syntax::parse_error_units(envelope.units())',
+     'json_syntax::parse_error_units(&String::from_utf16_lossy(envelope.units()).encode_utf16().collect::<Vec<_>>())',
+     'wire_matrix'),
+    # 17. fix-r2 P1-2: U+2028/U+2029 stop being ECMAScript line terminators.
+    ('markdown-line-terminators', dream,
+     r'''    value = value.replace(['\u{2028}', '\u{2029}'], "\n");''',
+     '',
+     'wire_matrix'),
+    # 18. fix-r2 P2-1: the cluster-plan default timeout drifts.
+    ('timeout-plan-default', dream,
+     'const DEFAULT_DREAM_CLUSTER_PLAN_TIMEOUT_MS: f64 = 180_000.0;',
+     'const DEFAULT_DREAM_CLUSTER_PLAN_TIMEOUT_MS: f64 = 170_000.0;',
+     'timeout_matrix'),
+    # 19. fix-r2 P2-1: an explicit timeoutMs is ignored.
+    ('timeout-explicit-override', dream,
+     '        Some(JsValue::Number(value)) => *value,',
+     '        Some(JsValue::Number(_value)) => default,',
+     'timeout_matrix'),
 ]
 
 fragments = {
@@ -117,6 +142,11 @@ fragments = {
     'refine-early-threshold': '#771 result refineDreamCluster#2',
     'merge-early-threshold': '#771 result planGeneralProjectMetaMerges#1',
     'rewrite-no-user': '#771 debug rewriteUserProfile#2',
+    'parse-model-json-utf16': '#771 result planDreamClusters#6',
+    'parse-model-json-error-units': '#771 error planDreamClusters#8',
+    'markdown-line-terminators': '#771 result rewriteUserProfile#7',
+    'timeout-plan-default': '#771 timeout planDreamClusters default 180000ms',
+    'timeout-explicit-override': '#771 timeout planDreamClusters override 7ms',
 }
 
 if '--check-anchors' in sys.argv:
@@ -142,19 +172,19 @@ unknown = only - {case[0] for case in mutations}
 assert not unknown, f'unknown NEGATIVE_ONLY cases: {sorted(unknown)}'
 
 
-def run_suite():
+def run_suite(test):
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
     command = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
                '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_llm_dream',
-               'wire_matrix', '--', '--exact']
+               test, '--', '--exact']
     run = run_owned(command, cwd=root, env=env, timeout=600)
     return slots, run, run.stdout + run.stderr
 
 
-def failure_is_bound(log, fragment):
+def failure_is_bound(log, fragment, test):
     if 'could not compile' in log:
         return False
-    if 'test wire_matrix ... FAILED' not in log and 'panicked at' not in log:
+    if f'test {test} ... FAILED' not in log and 'panicked at' not in log:
         return False
     return fragment in log
 
@@ -174,25 +204,29 @@ with mutating_sources(root, [dream], baseline=baseline) as originals:
         print('STALE ANCHORS: negative.py is out of sync with the product source; refusing to run')
         sys.exit(2)
 
-    slots, run, log = run_suite()
-    (out / 'baseline.log').write_text(slots.stdout + slots.stderr + log)
-    if run.returncode != 0:
-        print('BASELINE FAILED: unmutated suite must pass before mutations')
-        sys.exit(1)
+    baseline_logs = []
+    for test in ('wire_matrix', 'timeout_matrix'):
+        slots, run, log = run_suite(test)
+        baseline_logs.append(slots.stdout + slots.stderr + log)
+        if run.returncode != 0:
+            (out / 'baseline.log').write_text(''.join(baseline_logs))
+            print(f'BASELINE FAILED: unmutated {test} must pass before mutations')
+            sys.exit(1)
+    (out / 'baseline.log').write_text(''.join(baseline_logs))
 
-    for name, path, before, after, _test in mutations:
+    for name, path, before, after, test in mutations:
         if only and name not in only:
             continue
         try:
             source = originals[path].decode()
             path.write_text(source.replace(before, after))
-            slots, run, log = run_suite()
+            slots, run, log = run_suite(test)
             (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
             if 'could not compile' in log:
                 invalid.append((name, 'compile failure'))
             elif run.returncode == 0:
                 survived.append((name, 'test passed'))
-            elif not failure_is_bound(log, fragments[name]):
+            elif not failure_is_bound(log, fragments[name], test):
                 invalid.append((name, 'failed without the bound assertion message'))
             else:
                 killed.append(name)

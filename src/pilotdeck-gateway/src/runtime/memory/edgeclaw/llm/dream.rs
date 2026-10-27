@@ -24,7 +24,10 @@ use super::{
 };
 use crate::{
     js_value::{number_string, to_string_units_checked},
-    runtime::memory::{edgeclaw::storage::js_truthy, js_trim_units},
+    runtime::memory::{
+        edgeclaw::{storage::js_truthy, text::json_text},
+        js_trim_units,
+    },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, json_syntax, parse_json, quote_json_string};
 use regex::Regex;
@@ -767,6 +770,11 @@ fn decode(value: &str) -> JsString {
 /// `stripMarkdownSyntax(text)`.
 pub fn strip_markdown_syntax(text: &JsString) -> JsString {
     let mut value = encode(text).replace('\r', "\n");
+    // ECMAScript's `m` flag anchors after U+2028/U+2029 too; Rust `(?m)` only
+    // knows LF. Fold them to LF first (same form as `messages.rs`), which is
+    // output-equivalent because `normalizeWhitespace` collapses every JS
+    // whitespace run to one space.
+    value = value.replace(['\u{2028}', '\u{2029}'], "\n");
     value = markdown_heading_regex()
         .replace_all(&value, "")
         .into_owned();
@@ -1049,11 +1057,15 @@ fn normalize_dream_file_project_status(value: Option<&JsValue>) -> JsString {
 
 fn parse_model_json(raw: &JsString) -> Result<JsValue, LlmError> {
     let envelope = extract_first_json_object(raw).map_err(envelope_error)?;
-    let decoded = String::from_utf16_lossy(envelope.units());
-    parse_json(&decoded).map_err(|error| LlmError {
+    // `JSON.parse` runs on a JavaScript string, which may hold unpaired
+    // surrogates. Project them as `\uXXXX` escapes (the shared `json_text`)
+    // instead of `from_utf16_lossy`'s U+FFFD replacement; the original units
+    // are also what V8 quotes in a SyntaxError message.
+    let text = json_text(envelope.units());
+    parse_json(&text).map_err(|error| LlmError {
         name: "SyntaxError",
         status: None,
-        message: json_syntax::parse_error_units(&decoded.encode_utf16().collect::<Vec<_>>())
+        message: json_syntax::parse_error_units(envelope.units())
             .unwrap_or_else(|| error.to_string().into()),
     })
 }
