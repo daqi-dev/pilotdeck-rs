@@ -20,15 +20,19 @@ source = root / 'src/pilotdeck-gateway/src/runtime/model/http/encoding.rs'
 http = root / 'src/pilotdeck-gateway/src/runtime/model/http.rs'
 fetch = root / 'src/pilotdeck-gateway/src/fetch_redirect.rs'
 CASES = [
+    ('follow-300-status', fetch, '301 | 302 | 303 | 307 | 308', '300 | 301 | 302 | 303 | 307 | 308', 'encoding_follow_boundaries_match_node'),
+    ('follow-empty-location', fetch, 'response.headers().contains_key(hyper::header::LOCATION)', 'response.headers().get(hyper::header::LOCATION).is_some_and(|v| !v.is_empty())', 'encoding_follow_boundaries_match_node'),
+    ('follow-missing-location', fetch, 'response.headers().contains_key(hyper::header::LOCATION)', 'true', 'encoding_follow_boundaries_match_node'),
+    ('follow-non-redirect-status', fetch, 'if !(is_redirect_status(status)', 'if !((status > 0)', 'encoding_follow_boundaries_match_node'),
     ('redirect-follow-marker', fetch, 'request.extensions_mut().insert(FollowRedirects);', 'request.extensions_mut().remove::<FollowRedirects>();', 'encoding_redirects_match_node_follow'),
     ('redirect-manual-mode', source, 'let will_follow = follow_redirects', 'let will_follow = (follow_redirects || !follow_redirects)', 'encoding_redirects_match_node_follow'),
     ('redirect-decode-intermediate', source, 'if will_follow {', 'if false && will_follow {', 'encoding_redirects_match_node_follow'),
-    ('redirect-status-301', source, '301 | 302 | 303 | 307 | 308', '302 | 303 | 307 | 308', 'encoding_redirects_match_node_follow'),
-    ('redirect-status-302', source, '301 | 302 | 303 | 307 | 308', '301 | 303 | 307 | 308', 'encoding_redirects_match_node_follow'),
-    ('redirect-status-303', source, '301 | 302 | 303 | 307 | 308', '301 | 302 | 307 | 308', 'encoding_redirects_match_node_follow'),
-    ('redirect-status-307', source, '301 | 302 | 303 | 307 | 308', '301 | 302 | 303 | 308', 'encoding_redirects_match_node_follow'),
-    ('redirect-status-308', source, '301 | 302 | 303 | 307 | 308', '301 | 302 | 303 | 307', 'encoding_redirects_match_node_follow'),
-    ('redirect-any-status', source, 'matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308)', 'true', 'encoding_redirects_match_node_follow'),
+    ('redirect-status-301', fetch, '301 | 302 | 303 | 307 | 308', '302 | 303 | 307 | 308', 'encoding_redirects_match_node_follow'),
+    ('redirect-status-302', fetch, '301 | 302 | 303 | 307 | 308', '301 | 303 | 307 | 308', 'encoding_redirects_match_node_follow'),
+    ('redirect-status-303', fetch, '301 | 302 | 303 | 307 | 308', '301 | 302 | 307 | 308', 'encoding_redirects_match_node_follow'),
+    ('redirect-status-307', fetch, '301 | 302 | 303 | 307 | 308', '301 | 302 | 303 | 308', 'encoding_redirects_match_node_follow'),
+    ('redirect-status-308', fetch, '301 | 302 | 303 | 307 | 308', '301 | 302 | 303 | 307', 'encoding_redirects_match_node_follow'),
+    ('redirect-any-status', fetch, 'matches!(status, 301 | 302 | 303 | 307 | 308)', 'status > 0', 'encoding_redirects_match_node_follow'),
     ('redirect-no-location', source, '&& !location.is_empty();', '&& (location.is_empty() || !location.is_empty());', 'encoding_redirects_match_node_follow'),
     ('redirect-empty-location', source, '&& !location.is_empty();', '&& (response.headers().contains_key(hyper::header::LOCATION) || !location.is_empty());', 'encoding_redirects_match_node_follow'),
     ('token-count-empty', source, '.map(|s| s.trim().to_ascii_lowercase())', '.map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty())', 'encoding_token_boundaries_match_node'),
@@ -75,6 +79,7 @@ CASES = [
 
 ]
 MESSAGES = {
+    'encoding_follow_boundaries_match_node': ['#867 follow boundary follows empty Location', '#867 follow boundary returns terminal response', '#867 follow boundary status', '#867 follow boundary decoded body', '#867 follow boundary decoded bytes', '#867 follow boundary request count'],
     'encoding_redirects_match_node_follow': ['#867 redirect skips intermediate codings', '#867 redirect checks terminal codings'],
     'encoding_token_boundaries_match_node': ['#867 token boundary rejects excess codings', '#867 token boundary accepts response', '#867 token boundary body', '#867 token boundary bytes'],
     'encoding_layer_limit_matches_node': ['#867 encoding layer cap rejects before body decoding', '#867 encoding layer cap accepts five and HEAD'],

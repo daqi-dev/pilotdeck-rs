@@ -34,6 +34,7 @@ const cases:any[]=[];
 let current:any, seen:string|undefined, release:((destroy?:boolean)=>void)|undefined;
 let redirectPredecessor:http.ServerResponse|undefined;
 const server=http.createServer((req,res)=>{
+ if(current.followBoundary)current.requests++;
  if(current.redirectCase && req.url==='/target'){
   if(current.bodyState==='disconnect')redirectPredecessor?.destroy();
   res.writeHead(200,current.targetSix?{'content-encoding':'gzip,gzip,gzip,gzip,gzip,gzip'}:{});
@@ -107,6 +108,20 @@ try {
   finally{redirectPredecessor?.destroy();redirectPredecessor=undefined;}
   redirects.push({...spec,encoding:current.encoding,wire:current.wire.toString('hex'),result});
  }
+ // Legal codings make the follow loop observable: excess codings would fail
+ // before httpRedirectFetch can distinguish null Location from empty string.
+ const followBoundaries:any[]=[];
+ for(const [name,status,location] of [
+  ['empty-location',302,''],['no-location',302,undefined],
+  ['ows-location',302,' \t '],['non-redirect-status',200,'/target'],
+  ['multiple-choice-status',300,'/target'],
+ ] as const)for(const redirect of ['follow','manual'] as const){
+  current={followBoundary:true,requests:0,status,location,encoding:'gzip',wire:z.gzipSync(Buffer.from('ok'))};
+  let result:any;
+  try{const r=await fetch(url,{redirect});result={status:r.status,text:await r.text()};}
+  catch(e:any){result={error:e.message,name:e.name,cause:e.cause?.message};}
+  followBoundaries.push({name,redirect,status,location,encoding:current.encoding,wire:current.wire.toString('hex'),requests:current.requests,result});
+ }
  const sizes:any[]=[];
  for(const encoding of ['gzip','br'])for(const size of [16384,16385]){
   const input=Buffer.alloc(size,97);
@@ -178,7 +193,7 @@ try {
  // Isolate the real 512 MiB text conversions from the small replay fixtures.
  // This child uses actual fetch and emits only lengths/error shapes.
  const sizeProbe=execFileSync(process.execPath,['--expose-gc',fileURLToPath(new URL('./size-probe.mjs',import.meta.url))],{encoding:'utf8',timeout:120000}).trim().split('\n').map(line=>JSON.parse(line));
- const oracle={sourceCommit,sourceSha256,node:process.version,payload,cases,headers,lifecycle,endings,interrupted,progress,layers,tokenBoundaries,redirects,sizes,sizeProbe};
+ const oracle={sourceCommit,sourceSha256,node:process.version,payload,cases,headers,lifecycle,endings,interrupted,progress,layers,tokenBoundaries,redirects,followBoundaries,sizes,sizeProbe};
  mkdirSync(out,{recursive:true});writeFileSync(resolve(out,'oracle.json'),JSON.stringify(oracle,null,2)+'\n',{flag:'wx'});
  console.log(JSON.stringify(oracle,null,2));
 }finally{clearTimeout(watchdog);server.closeAllConnections();server.close();}

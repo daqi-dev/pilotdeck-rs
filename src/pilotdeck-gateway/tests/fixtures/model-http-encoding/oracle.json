@@ -1275,6 +1275,138 @@
       }
     }
   ],
+  "followBoundaries": [
+    {
+      "name": "empty-location",
+      "redirect": "follow",
+      "status": 302,
+      "location": "",
+      "encoding": "gzip",
+      "wire": "1f8b0800000000000013cbcf060047dddc7902000000",
+      "requests": 21,
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "redirect count exceeded"
+      }
+    },
+    {
+      "name": "empty-location",
+      "redirect": "manual",
+      "status": 302,
+      "location": "",
+      "encoding": "gzip",
+      "wire": "1f8b0800000000000013cbcf060047dddc7902000000",
+      "requests": 1,
+      "result": {
+        "status": 302,
+        "text": "ok"
+      }
+    },
+    {
+      "name": "no-location",
+      "redirect": "follow",
+      "status": 302,
+      "encoding": "gzip",
+      "wire": "1f8b0800000000000013cbcf060047dddc7902000000",
+      "requests": 1,
+      "result": {
+        "status": 302,
+        "text": "ok"
+      }
+    },
+    {
+      "name": "no-location",
+      "redirect": "manual",
+      "status": 302,
+      "encoding": "gzip",
+      "wire": "1f8b0800000000000013cbcf060047dddc7902000000",
+      "requests": 1,
+      "result": {
+        "status": 302,
+        "text": "ok"
+      }
+    },
+    {
+      "name": "ows-location",
+      "redirect": "follow",
+      "status": 302,
+      "location": " \t ",
+      "encoding": "gzip",
+      "wire": "1f8b0800000000000013cbcf060047dddc7902000000",
+      "requests": 21,
+      "result": {
+        "error": "fetch failed",
+        "name": "TypeError",
+        "cause": "redirect count exceeded"
+      }
+    },
+    {
+      "name": "ows-location",
+      "redirect": "manual",
+      "status": 302,
+      "location": " \t ",
+      "encoding": "gzip",
+      "wire": "1f8b0800000000000013cbcf060047dddc7902000000",
+      "requests": 1,
+      "result": {
+        "status": 302,
+        "text": "ok"
+      }
+    },
+    {
+      "name": "non-redirect-status",
+      "redirect": "follow",
+      "status": 200,
+      "location": "/target",
+      "encoding": "gzip",
+      "wire": "1f8b0800000000000013cbcf060047dddc7902000000",
+      "requests": 1,
+      "result": {
+        "status": 200,
+        "text": "ok"
+      }
+    },
+    {
+      "name": "non-redirect-status",
+      "redirect": "manual",
+      "status": 200,
+      "location": "/target",
+      "encoding": "gzip",
+      "wire": "1f8b0800000000000013cbcf060047dddc7902000000",
+      "requests": 1,
+      "result": {
+        "status": 200,
+        "text": "ok"
+      }
+    },
+    {
+      "name": "multiple-choice-status",
+      "redirect": "follow",
+      "status": 300,
+      "location": "/target",
+      "encoding": "gzip",
+      "wire": "1f8b0800000000000013cbcf060047dddc7902000000",
+      "requests": 1,
+      "result": {
+        "status": 300,
+        "text": "ok"
+      }
+    },
+    {
+      "name": "multiple-choice-status",
+      "redirect": "manual",
+      "status": 300,
+      "location": "/target",
+      "encoding": "gzip",
+      "wire": "1f8b0800000000000013cbcf060047dddc7902000000",
+      "requests": 1,
+      "result": {
+        "status": 300,
+        "text": "ok"
+      }
+    }
+  ],
   "sizes": [
     {
       "encoding": "gzip",
