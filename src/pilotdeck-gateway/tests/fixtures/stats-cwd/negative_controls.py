@@ -15,6 +15,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import case_name, cell_hits
 
 ROOT = Path(__file__).resolve().parents[5]
 STATS = ROOT / 'src/pilotdeck-gateway/src/runtime/model/stats.rs'
@@ -104,10 +105,6 @@ def write_new(path, text):
         stream.write(text)
 
 
-def case_name(test):
-    return test.removesuffix('_cwd').replace('_', '-')
-
-
 def check_anchors(mutations):
     # Validate before reporting anything about mutants. A stale anchor is an
     # apparatus error, never a surviving mutant or a test failure.
@@ -146,7 +143,7 @@ def failure_reason(result, log, name, tests, marker):
         return 'assertion did not fail'
     if 'error[' in log or 'could not compile' in log:
         return 'compile failure'
-    hit, unrelated = cell_hits(log, tests, marker)
+    hit, unrelated = cell_hits(log, PREFIX, tests, marker, case_name)
     if unrelated:
         return f'declared cells failed without the dedicated marker: {unrelated}'
     missed = [test for test in tests if test not in hit]
@@ -155,29 +152,12 @@ def failure_reason(result, log, name, tests, marker):
     return f'declared cells stayed green: {missed}'
 
 
-def cell_hits(log, tests, marker):
-    """Split declared cells into dedicated-marker kills and unrelated panics.
-
-    A cell that passes its first bounded child prints a receipt before the
-    second child fails, so libtest's `... FAILED` can land on the next line.
-    Read the authoritative failure list instead of requiring that adjacency.
-    """
-    failed = {line.strip() for line in log.splitlines()
-              if line.startswith(f'    {PREFIX}')}
-    hit, unrelated = [], []
-    for test in tests:
-        if f'{PREFIX}{test}' not in failed:
-            continue
-        (hit if f'{marker} {case_name(test)}' in log else unrelated).append(test)
-    return hit, unrelated
-
-
 def killed(result, log, name, tests, marker):
     if result.returncode != 101 or 'panicked at' not in log:
         return False
     if 'error[' in log or 'could not compile' in log:
         return False
-    hit, unrelated = cell_hits(log, tests, marker)
+    hit, unrelated = cell_hits(log, PREFIX, tests, marker, case_name)
     if unrelated:
         return False
     return len(hit) == len(tests) if name not in ANY_CELL else bool(hit)
@@ -233,7 +213,7 @@ def main():
                     reason = failure_reason(negative, log, name, tests, marker)
                     record(results, name, 'INVALID', f'{reason}; expected RED on {tests}')
                     continue
-                hits, _ = cell_hits(log, tests, marker)
+                hits, _ = cell_hits(log, PREFIX, tests, marker, case_name)
             with mutating_sources(ROOT, paths, baseline=baseline):
                 restored, log = run(out, f'{name}-restored', env)
                 if not passed(restored, log):

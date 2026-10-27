@@ -17,6 +17,39 @@ class Case:
     scope: object = None
 
 
+def failed_tests(log, prefix):
+    """Failed names from libtest's authoritative ``failures:`` list.
+
+    With ``--nocapture`` (or parallel workers) a test's own output can land
+    between the test name and its verdict, so ``... FAILED`` must not be
+    required to stay adjacent to the name (#879). The indented list after the
+    run is the one spelling libtest guarantees.
+    """
+    return {line.strip() for line in log.splitlines()
+            if line.startswith(f'    {prefix}')}
+
+
+def case_name(test):
+    """Matrix cells name their dedicated assertion after the dashed case id."""
+    return test.removesuffix('_cwd').replace('_', '-')
+
+
+def cell_hits(log, prefix, tests, marker, case_name):
+    """Split declared cells into dedicated-marker kills and unrelated panics.
+
+    A declared cell counts as hit only when the ``failures:`` list names it and
+    the log carries its dedicated ``<marker> <case>`` message; a declared cell
+    failing without that message is unrelated, never a kill.
+    """
+    failed = failed_tests(log, prefix)
+    hit, unrelated = [], []
+    for test in tests:
+        if f'{prefix}{test}' not in failed:
+            continue
+        (hit if f'{marker} {case_name(test)}' in log else unrelated).append(test)
+    return hit, unrelated
+
+
 def passed(result, test):
     log = result.stdout + result.stderr
     return (result.returncode == 0 and f'test {test} ... ok' in log

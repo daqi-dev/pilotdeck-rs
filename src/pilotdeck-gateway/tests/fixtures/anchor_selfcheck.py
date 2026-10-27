@@ -55,6 +55,8 @@ UNSUPPORTED = {
     'negative_oracle_guard.py': 'JSON provenance corruption, no source before fragments',
     'test_negative_process.py': 'unit tests of the shared process/source guard',
     'test_negative_suite.py': 'unit tests of the shared mutation suite runner',
+    'model-catalog-cwd/test_negative_controls.py': 'kill-judgment unit tests on synthetic interleaved cargo logs, no product mutation definitions',
+    'metadata-from-env/test_negative_controls.py': 'kill-judgment unit tests on synthetic interleaved cargo logs, no product mutation definitions',
     'session-domain-cleanup/check_cleanup.py': 'runtime process-census/probe monkeypatch controls; snapshots is an iterator of PID sets, not source bytes; no source replacement anchors',
     'session-domain-cleanup/launcher.py': 'process-group behavior fixture with bounded children, no source mutation definitions',
     'edgeclaw-llm/test_controls.py': 'unit tests of the shared process/source guard',

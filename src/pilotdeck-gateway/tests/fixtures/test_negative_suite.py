@@ -26,6 +26,48 @@ def output(kind):
     raise ValueError(kind)
 
 
+class FailureListTests(unittest.TestCase):
+    """The shared matrix judgment reads libtest's failures list, not adjacency."""
+
+    def test_failures_list_reads_names_despite_interleaved_output(self):
+        cell = 'runtime::fixture::relative_deleted_cwd'
+        log = ('running 1 test\n'
+               'test runtime::fixture::relative_deleted_cwd ... PDRS_VERIFIED_CHILD relative-deleted\n'
+               'FAILED\n'
+               '\nfailures:\n'
+               f'    {cell}\n'
+               'test result: FAILED. 0 passed; 1 failed;\n')
+        self.assertEqual(suite.failed_tests(log, 'runtime::fixture::'), {cell})
+        self.assertNotIn(f'test {cell} ... FAILED', log,
+                         'sample must genuinely break the old adjacency')
+
+    def test_case_name_dashes_cwd_cells(self):
+        self.assertEqual(suite.case_name('relative_deleted_cwd'), 'relative-deleted')
+        self.assertEqual(suite.case_name('missing_home_normal_cwd'), 'missing-home-normal')
+
+    def test_cell_hits_split_marker_and_foreign_failures(self):
+        marker = 'matrix message'
+        cell, foreign = 'relative_deleted_cwd', 'tilde_deleted_cwd'
+        listed = '\nfailures:\n    runtime::fixture::relative_deleted_cwd\n'
+        # A declared failure with its dedicated message is the only hit.
+        self.assertEqual(
+            suite.cell_hits(listed + f'{marker} {suite.case_name(cell)}\n',
+                            'runtime::fixture::', [cell], marker, suite.case_name),
+            ([cell], []))
+        # A declared failure without that message is unrelated, never a kill.
+        self.assertEqual(
+            suite.cell_hits(listed, 'runtime::fixture::', [cell], marker, suite.case_name),
+            ([], [cell]))
+        # A foreign failure quoting the declared message, plus the adjacent
+        # `... FAILED` spelling as an echo, is still not a hit.
+        coincidence = ('\nfailures:\n    runtime::fixture::tilde_deleted_cwd\n'
+                       f'test runtime::fixture::{cell} ... FAILED\n'
+                       f'{marker} {suite.case_name(cell)}\n')
+        self.assertEqual(
+            suite.cell_hits(coincidence, 'runtime::fixture::', [cell], marker, suite.case_name),
+            ([], []))
+
+
 class SuiteTests(unittest.TestCase):
     def exercise(self, first, *, positive=None, restored=None, bad_anchor=False, guard=None,
                  guard_exit=None, restore_failure=False):
