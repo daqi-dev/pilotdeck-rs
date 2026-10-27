@@ -18,6 +18,11 @@ pub(crate) const MAX_STRING_LENGTH: usize = 0x1fffffe8;
 /// V8 / Node `ERR_STRING_TOO_LONG` message for [`MAX_STRING_LENGTH`].
 pub(crate) const STRING_TOO_LONG: &str = "Cannot create a string longer than 0x1fffffe8 characters";
 
+/// Undici's redirect status set, shared with the content-decoding boundary.
+pub(crate) fn is_redirect_status(status: u16) -> bool {
+    matches!(status, 301 | 302 | 303 | 307 | 308)
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum BodyError {
     /// More than the limit's bytes arrived.
@@ -240,8 +245,10 @@ where
         request.extensions_mut().insert(FollowRedirects);
         let response = send(request).await?;
         let status = response.status().as_u16();
-        if !(matches!(status, 301 | 302 | 303 | 307 | 308)
-            && response.headers().contains_key(hyper::header::LOCATION))
+        // httpRedirectFetch tests Location against null, so an empty value
+        // redirects to the same URL until the hop limit. Content decoding has
+        // a different, truthiness-based exemption; do not merge the predicates.
+        if !(is_redirect_status(status) && response.headers().contains_key(hyper::header::LOCATION))
         {
             return Ok(response);
         }

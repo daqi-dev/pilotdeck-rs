@@ -22,7 +22,7 @@ cargo test -p pilotdeck-gateway --lib encoding_fixture_regenerates_identically -
 
 `negative.py --check-anchors` 只读核锚点。正式变异须产品源码已经提交且与 HEAD 一致；`negative_process.mutating_sources` 持树锁、核对 HEAD 并还原，cargo 由 `run_owned` 管理，调用前 `wait_for_slot`。脚本必须继承调用方的 `CARGO_TARGET_DIR`。每项做正控 → 变异精确测试 → 还原正控，逐项记录 KILLED / SURVIVED / INVALID，最后统一非零判失败；编译失败、无关 panic、超时、锚点过期均不是 KILLED。点名测试每个本地失败点均有 `#867` 消息，杀死判据绑定命名测试的 panic 块。
 
-全套 51 个变异需多次重编，交协调者宿主执行；本树未提交时应拒绝，不能创建副本仓库或绕过守卫。证据目录由调用者指定并独占创建：
+全套 55 个变异需多次重编，交协调者宿主执行；本树未提交时应拒绝，不能创建副本仓库或绕过守卫。证据目录由调用者指定并独占创建：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/model-http-encoding/negative.py _tmp/20261026-issue-867/negative-host
@@ -63,3 +63,21 @@ python3 src/pilotdeck-gateway/tests/fixtures/model-http-encoding/negative.py \
   redirect-no-location redirect-empty-location token-count-empty token-multiline \
   token-empty-chain token-empty-value token-null-204 token-null-304
 ```
+
+## fix-r3 follow 循环的合法编码边界
+
+`followBoundaries` 新增 10 格：空 Location、缺 Location、OWS Location、200 + Location、300 + Location，各测 follow/manual，正文均为合法单层 gzip。每格记录实际请求数。Node v22.22.0：空/OWS Location 的 follow **发出 21 次请求后报 fetch failed**（cause 为 redirect count exceeded）；manual 返回 302 和 `ok`。缺 Location 返回 302；200/300 不跟随。Rust 的 `encoding_follow_boundaries_match_node` 用真实多次 loopback 请求回放，包含头解析、解码和 `fetch_redirect::follow`，断言结果和请求数。服务端由显式 stop 或发送端析构终止，语义断言前 join；活动 I/O 仍受 10 秒 watchdog 限制。
+
+解码层判断 Location 的 truthiness，follow 层判断是否为 null，两者**有意不同**。Node 实测推翻「空 Location 应直接返回」的修复建议，因此保留 `contains_key`；只把五种重定向状态提成共享 `is_redirect_status`。双空 Location 在 Node 合并成 `", "`，并非空值，不能按建议过滤空头。大小写已有 `cases.upper=GZip` 和 `encoding-case` 负控；本轮最小探针另外验证 `GZIP` / `Gzip`。
+
+新增四个负控（全套 55 个）：`follow-empty-location` 把存在性改成非空；`follow-missing-location` 忽略缺头；`follow-non-redirect-status` 对所有状态跟随；`follow-300-status` 仅把 300 加入共享状态集。旧五种状态与 any-status 变异改锚共享 helper。每个变异仍先编译，再执行完整名称测试并检查专属消息；未经运行的变异不能算 KILLED。产品改动未提交时 HEAD 守卫拒跑，协调者提交后执行：
+
+```sh
+python3 src/pilotdeck-gateway/tests/fixtures/model-http-encoding/negative.py \
+  _tmp/20261026-issue-867/fix-r3/negative-host \
+  follow-empty-location follow-missing-location follow-non-redirect-status follow-300-status \
+  redirect-status-301 redirect-status-302 redirect-status-303 \
+  redirect-status-307 redirect-status-308 redirect-any-status
+```
+
+重生成仍由已有 ignored `encoding_fixture_regenerates_identically` 覆盖整个 fixture，生成器继续使用递归目录和 `wx` 独占写入。

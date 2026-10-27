@@ -37,7 +37,8 @@ pub(super) fn decode_response(
     // fetch_redirect::follow marks its requests; direct transports also serve
     // manual clients. Undici skips decoding intermediate redirect responses,
     // including the coding count, before dropping their possibly endless body.
-    // An empty Location is falsy in undici and must still pass the count check.
+    // An empty Location is falsy for decoding and still passes the count check,
+    // even though httpRedirectFetch subsequently follows it to the same URL.
     let location = response
         .headers()
         .get_all(hyper::header::LOCATION)
@@ -46,7 +47,7 @@ pub(super) fn decode_response(
         .collect::<Vec<_>>()
         .join(", ");
     let will_follow = follow_redirects
-        && matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308)
+        && crate::fetch_redirect::is_redirect_status(response.status().as_u16())
         && !location.is_empty();
     if will_follow {
         return Ok(response);

@@ -375,6 +375,122 @@ async fn encoding_redirects_match_node_follow() {
     }
 }
 
+// A real socket on every hop is necessary here: the old six-coding corpus
+// failed inside send() before the follow loop could observe a terminal response.
+#[tokio::test]
+async fn encoding_follow_boundaries_match_node() {
+    for case in corpus()["followBoundaries"]
+        .as_array()
+        .expect("#867 follow boundary cases")
+    {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("#867 follow boundary bind");
+        let url = format!(
+            "http://{}/",
+            listener.local_addr().expect("#867 follow boundary address")
+        );
+        let (stop, mut stopped) = oneshot::channel::<()>();
+        let wire = unhex(&case["wire"]);
+        let location = case
+            .get("location")
+            .map(|v| format!("Location: {}\r\n", text(v)))
+            .unwrap_or_default();
+        let head = format!(
+            "HTTP/1.1 {} OK\r\nContent-Encoding: {}\r\n{location}Content-Length: {}\r\nConnection: close\r\n\r\n",
+            case["status"]
+                .as_u64()
+                .expect("#867 follow boundary fixture status"),
+            text(&case["encoding"]),
+            wire.len(),
+        );
+        let task = tokio::spawn(async move {
+            let mut requests = 0u64;
+            // Terminated by stop after follow/manual returns, or sender drop
+            // during test unwinding. Each active socket operation is bounded.
+            loop {
+                let (mut socket, _) = tokio::select! {
+                    biased;
+                    _ = &mut stopped => break,
+                    accepted = listener.accept() => accepted.expect("#867 follow boundary accept"),
+                };
+                let mut request = Vec::new();
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let mut chunk = [0; 1024];
+                    let size = bounded(socket.read(&mut chunk))
+                        .await
+                        .expect("#867 follow boundary request read");
+                    assert!(size > 0, "#867 follow boundary complete request");
+                    request.extend_from_slice(&chunk[..size]);
+                }
+                requests += 1;
+                bounded(socket.write_all(head.as_bytes()))
+                    .await
+                    .expect("#867 follow boundary response headers");
+                bounded(socket.write_all(&wire))
+                    .await
+                    .expect("#867 follow boundary response bytes");
+                bounded(socket.shutdown())
+                    .await
+                    .expect("#867 follow boundary socket EOF");
+            }
+            requests
+        });
+        let transport = transport();
+        let result = if case["redirect"] == "follow" {
+            bounded(crate::fetch_redirect::follow(
+                url::Url::parse(&url).expect("#867 follow boundary URL"),
+                hyper::Method::GET,
+                hyper::HeaderMap::new(),
+                Bytes::new(),
+                || TransportFailure::fetch_failed(None),
+                |request| transport.send(request),
+            ))
+            .await
+        } else {
+            response_result(&url, "GET").await
+        };
+        // Shut down and join before semantic assertions: early failures must
+        // not strand a server waiting for a request count supplied by the oracle.
+        stop.send(()).expect("#867 follow boundary stop server");
+        let requests = bounded(task)
+            .await
+            .expect("#867 follow boundary server task");
+        if let Some(error) = case["result"].get("error") {
+            let failure = result.expect_err("#867 follow boundary follows empty Location");
+            assert_eq!(failure.message, text(error), "#867 follow boundary error");
+            assert_eq!(failure.cause_code, None, "#867 follow boundary cause code");
+        } else {
+            let response = result.expect("#867 follow boundary returns terminal response");
+            assert_eq!(
+                u64::from(response.status().as_u16()),
+                case["result"]["status"]
+                    .as_u64()
+                    .expect("#867 follow boundary expected status"),
+                "#867 follow boundary status"
+            );
+            let bytes = bounded(response.into_body().collect())
+                .await
+                .expect("#867 follow boundary decoded body")
+                .to_bytes();
+            assert_eq!(
+                &bytes[..],
+                text(&case["result"]["text"]).as_bytes(),
+                "#867 follow boundary decoded bytes"
+            );
+        }
+        assert_eq!(
+            requests,
+            case["requests"]
+                .as_u64()
+                .expect("#867 follow boundary expected requests"),
+            "#867 follow boundary request count: {} / {}",
+            case["name"],
+            case["redirect"]
+        );
+    }
+}
+
 fn size_body(case: &Value) -> ModelBody {
     // Split compressed input too: the decoder must refill across wire chunks.
     let wire = unhex(&case["wire"]);
