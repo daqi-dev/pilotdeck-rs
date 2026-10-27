@@ -257,7 +257,12 @@ def failure_is_bound(log, fragment, test):
 
 
 killed, survived, invalid = [], [], []
-with mutating_sources(root, [runner], baseline=baseline) as originals:
+# Derive the snapshot set from the mutation table itself. A hand-written list
+# went stale when fix-r3 added mutants for _shared/run_scratch.mjs and
+# observe.mts: mutating_sources only snapshotted runner.rs, so the first
+# `originals[path]` lookup raised KeyError and every later mutant was skipped.
+mutation_targets = list(dict.fromkeys(case[1] for case in mutations))
+with mutating_sources(root, mutation_targets, baseline=baseline) as originals:
     stale = []
     for name, path, before, _after, _test in mutations:
         count = originals[path].decode().count(before)
