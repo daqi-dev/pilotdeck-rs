@@ -227,7 +227,9 @@ async fn run(case: &JsValue) {
     let mut deps = RouterDeps::new(providers.clone());
     deps.events = Arc::new(move |event| sink.lock().unwrap().push(event));
     deps.clock = Arc::new(|| 0.0);
-    deps.stats = Some(Arc::new(Mutex::new(TokenStatsCollector::new(None, None))));
+    deps.stats = Some(Arc::new(Mutex::new(
+        TokenStatsCollector::new(None, None).expect("#879 disabled stats judge collector"),
+    )));
     let runtime =
         RouterRuntime::with_deps(RouterConfig::from_snapshot(field(case, "snapshot")), deps)
             .unwrap();

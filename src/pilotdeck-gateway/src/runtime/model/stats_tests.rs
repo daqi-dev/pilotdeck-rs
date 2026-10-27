@@ -102,7 +102,8 @@ fn rebuild_keeps_non_canonical_rows_without_panicking() {
     let config = retaining(&journal);
     let now = 1_772_366_400_500.0;
     let mut stats =
-        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now));
+        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now))
+            .expect("#879 stats retention collector");
     let snapshot = stats.snapshot();
     assert_eq!(
         snapshot.get("totalRequests").and_then(JsValue::as_number),
@@ -123,7 +124,8 @@ fn append_falls_back_to_sidecar_without_losing_visibility() {
     let config = retaining(&journal);
     let now = 1_772_366_400_500.0;
     let mut stats =
-        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now));
+        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now))
+            .expect("#879 stats lock collector");
     let lock = home.join("stats.jsonl.retention.lock");
     fs::write(&lock, b"").unwrap();
     let mut record = parse_json(
@@ -134,7 +136,8 @@ fn append_falls_back_to_sidecar_without_losing_visibility() {
     assert_eq!(fs::read_to_string(&journal).unwrap(), "");
     assert_eq!(read_stats_records(&journal), vec![record]);
     let mut reader =
-        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now));
+        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now))
+            .expect("#879 stats reader collector");
     assert_eq!(
         reader
             .snapshot()
@@ -157,7 +160,8 @@ fn clear_truncates_on_lock_timeout_like_ts() {
     let config = retaining(&journal);
     let now = 1_772_366_400_500.0;
     let mut stats =
-        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now));
+        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now))
+            .expect("#879 stats append collector");
     let lock = home.join("stats.jsonl.retention.lock");
     fs::write(&lock, b"").unwrap();
     stats.clear();
@@ -264,6 +268,23 @@ fn journal_reader_stops_at_v8_string_length() {
     fs::remove_dir_all(&root).unwrap();
 }
 
+/// `os.homedir()` in TS falls back to the passwd database when HOME is
+/// missing; Rust uses HOME only, so `~` stays literal. Pin that existing
+/// source difference (A6.4-STATS-CWD-001) instead of inventing a home.
+#[test]
+fn missing_home_keeps_tilde_literal() {
+    assert_eq!(
+        expand_pilot_home(Some("~"), None),
+        PathBuf::from("~"),
+        "#879 missing HOME must keep ~ literal"
+    );
+    assert_eq!(
+        expand_pilot_home(Some("~/data"), None),
+        PathBuf::from("~/data"),
+        "#879 missing HOME must keep ~/child literal"
+    );
+}
+
 #[test]
 fn resolve_pilot_home_matches_paths_ts() {
     use std::ffi::OsStr;
@@ -277,6 +298,18 @@ fn resolve_pilot_home_matches_paths_ts() {
     // `PILOT_HOME=""` is set, so `path.resolve("")` is the cwd (paths.rs:70).
     assert_eq!(resolve_pilot_home(Some(""), Some(home), cwd), cwd);
     assert_eq!(resolve_pilot_home(Some("~"), Some(home), cwd), home);
+    // `normalizeHomePath("~")` returns `homedir()` verbatim, so an empty or
+    // relative HOME never resolves through the cwd.
+    assert_eq!(
+        resolve_pilot_home(Some("~"), Some(OsStr::new("")), cwd),
+        PathBuf::new(),
+        "#879 ~ with empty HOME stays verbatim"
+    );
+    assert_eq!(
+        resolve_pilot_home(Some("~"), Some(OsStr::new("rel-home")), cwd),
+        PathBuf::from("rel-home"),
+        "#879 ~ with relative HOME stays verbatim"
+    );
     assert_eq!(
         resolve_pilot_home(Some("~/data"), Some(home), cwd),
         Path::new("/home/me/data")

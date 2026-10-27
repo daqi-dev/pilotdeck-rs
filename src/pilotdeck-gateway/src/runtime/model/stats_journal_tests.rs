@@ -40,6 +40,7 @@ fn collector(path: &Path) -> TokenStatsCollector {
         None,
         Arc::new(|| 1_772_366_400_500.0),
     )
+    .expect("#879 stats journal fixture collector")
 }
 fn rows() -> Vec<JsValue> {
     items(get(get(&oracle(), "expected"), "observed")).to_vec()

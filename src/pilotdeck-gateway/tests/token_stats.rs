@@ -139,8 +139,10 @@ fn replay_scenario(scenario: &JsValue) -> Result<(), String> {
     let make = || match fixed_now {
         Some(now) => {
             TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now))
+                .expect("#879 stats fixture collector")
         }
-        None => TokenStatsCollector::new(Some(&config), Some(&home)),
+        None => TokenStatsCollector::new(Some(&config), Some(&home))
+            .expect("#879 stats fixture collector"),
     };
     let mut stats = make();
 
@@ -382,7 +384,8 @@ fn snapshot_projection_is_empty_when_session_is_unknown() {
         enabled: true,
         ..StatsConfig::default()
     };
-    let mut stats = TokenStatsCollector::new(Some(&config), Some(scratch.path()));
+    let mut stats = TokenStatsCollector::new(Some(&config), Some(scratch.path()))
+        .expect("#879 stats snapshot collector");
     let session = "missing".into();
     assert_eq!(
         json(&stats.usage_snapshot_for_sdk(Some(&session))),
@@ -457,14 +460,17 @@ fn router_for(fail: bool, home: &Path) -> RouterRuntime {
     )]));
     let mut deps = RouterDeps::new(Arc::new(ScriptedInvoker { fail }));
     deps.clock = Arc::new(|| 1_700_000_000_000.0);
-    deps.stats = Some(Arc::new(std::sync::Mutex::new(TokenStatsCollector::new(
-        Some(&StatsConfig {
-            enabled: true,
-            file_path: Some(home.join("stats.jsonl")),
-            ..StatsConfig::default()
-        }),
-        Some(home),
-    ))));
+    deps.stats = Some(Arc::new(std::sync::Mutex::new(
+        TokenStatsCollector::new(
+            Some(&StatsConfig {
+                enabled: true,
+                file_path: Some(home.join("stats.jsonl")),
+                ..StatsConfig::default()
+            }),
+            Some(home),
+        )
+        .expect("#879 stats router fixture collector"),
+    )));
     RouterRuntime::with_deps(config, deps).unwrap()
 }
 

@@ -349,7 +349,10 @@ fn build_runtime(
             // collector would create/read `$PILOT_HOME/router/stats.jsonl` (and
             // migrate a real legacy stats.json). Decision replay never observes
             // usage, so inject a disabled collector instead.
-            stats: Some(Arc::new(Mutex::new(TokenStatsCollector::new(None, None)))),
+            stats: Some(Arc::new(Mutex::new(
+                TokenStatsCollector::new(None, None)
+                    .expect("#879 disabled stats fixture collector"),
+            ))),
             is_model_allowed: Arc::new(move |model: &RouterModelRef| {
                 let key = format!(
                     "{}/{}",
