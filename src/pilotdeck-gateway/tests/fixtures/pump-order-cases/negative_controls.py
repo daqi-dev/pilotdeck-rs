@@ -26,9 +26,12 @@ mutations = {
     'gate-order': (
         path,
         '''                // No connection or execute can start until both durable gates commit.
-                if execute_wait.await.is_err() {
+                let Ok(messages) = execute_wait.await else {
                     return Ok(ExecuteResult::Aborted { terminal: None });
-                }
+                };
+                request
+                    .payload
+                    .insert("messages".into(), JsValue::Array(messages));
                 let client = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),
@@ -45,15 +48,18 @@ mutations = {
         '''                // No connection or execute can start until both durable gates commit.
                 let identity = request.identity.clone();
                 let gated = handler.clone();
-                let gated_request = request;
+                let mut gated_request = request;
                 let gated_cancellation = cancellation;
                 let gated_pending_host = pending_host;
                 handler
                     .with_pump(
                         Box::pin(async move {
-                            if execute_wait.await.is_err() {
+                            let Ok(messages) = execute_wait.await else {
                                 return Ok(ExecuteResult::Aborted { terminal: None });
-                            }
+                            };
+                            gated_request
+                                .payload
+                                .insert("messages".into(), JsValue::Array(messages));
                             let client = tokio::select! {
                                 biased;
                                 _ = gated_cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),
@@ -116,6 +122,24 @@ mutations['model-prefix-lost'] = (
       '#741i [open]: model_request_started must precede turn_completed')],
 )
 
+# A legal but wrong event name must fail at the new strict host-prefix check,
+# independently in both the cancelled and the successful gate cells.
+mutations['submitted-prefix-lost'] = (
+    path,
+    '    fn deliver_recorded(&mut self, event: JsValue) -> Result<Option<JsValue>, RuntimeError> {',
+    '''    fn deliver_recorded(&mut self, mut event: JsValue) -> Result<Option<JsValue>, RuntimeError> {
+        if let JsValue::Object(ref mut object) = event {
+            if object.get("type") == Some(&"user_prompt_submitted".into()) {
+                object.insert("type".into(), "model_event".into());
+            }
+        }''',
+    'gates_pump_',
+    [('gates_pump_cancel_never_starts_the_pump',
+      '#741k [cancel]: user_prompt_submitted must follow input_accepted'),
+     ('gates_pump_open_pins_the_start_order',
+      '#741k [open]: user_prompt_submitted must follow input_accepted')],
+)
+
 from negative_suite import Case, run_cases
 
 
@@ -146,7 +170,7 @@ def bound_cases(selected):
                     marker.append('#855 [open]: the pump must not tick at gate open')
             module = 'gates_tests' if test.startswith('gates_') else 'host_pump_tests'
             full_test = f'runtime::turn::live::stream_tests::{module}::{test}'
-            bound.append(Case(name + '-' + test if name == 'gate-order' else name,
+            bound.append(Case(name + '-' + test if len(checks) > 1 else name,
                               source, old, new, full_test, marker))
     return bound
 

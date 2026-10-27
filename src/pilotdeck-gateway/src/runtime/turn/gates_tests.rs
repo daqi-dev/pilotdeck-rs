@@ -508,6 +508,23 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
             Some(&"input_accepted".into()),
             "#855 [{case}]: accepted input follows start"
         );
+        // Node v22.22.0: this host prefix survives even cancellation at the
+        // start gate. Consume exactly one event before polling execution.
+        let submitted = next(turn.as_mut())
+            .await
+            .expect("#741k: submitted prompt read must succeed")
+            .expect("#741k: submitted prompt event must exist");
+        assert_eq!(
+            submitted.get("type"),
+            Some(&"user_prompt_submitted".into()),
+            "#741k [{case}]: user_prompt_submitted must follow input_accepted"
+        );
+        projection.push(
+            submitted
+                .get("type")
+                .expect("#741k: submitted prompt event type")
+                .clone(),
+        );
         if case == "open" {
             // Exactly one poll past the open gate: this poll sends
             // execute_ready and polls the execution future once. Correct

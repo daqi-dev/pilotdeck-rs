@@ -114,7 +114,7 @@ for (const name of ['reject', 'cancel', 'open']) {
   const types = events.map(event => event.type);
   // The Rust live-payload peer deliberately emits only this subsequence of
   // the real stream; preserve the complete trace separately, without hiding it.
-  const projection = types.filter(type => ['turn_started', 'input_accepted', 'model_request_started', 'turn_completed'].includes(type));
+  const projection = types.filter(type => ['turn_started', 'input_accepted', 'user_prompt_submitted', 'model_request_started', 'turn_completed'].includes(type));
   const terminal = events.find(event => event.type === 'turn_completed')?.result.type ?? null;
   const row = {name, held, cancelledWhileHeld, counts, projection, terminal, error};
   if (name === 'open') {
