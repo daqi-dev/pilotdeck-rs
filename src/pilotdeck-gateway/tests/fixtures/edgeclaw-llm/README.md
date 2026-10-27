@@ -65,11 +65,13 @@ headers. D-2 is registered in
 `specs/gateway-parity/diffs/A6.6-EDGECLAW-LLM-BODY-DEADLINE-001.md`.
 
 The oracle retains the TS `model_request`, `model_response`, and trackError
-observations (including model_request before missing API key). **Rust telemetry
-calls are deferred** under this task's approximately 600-line package split;
-this package asserts auth invocation observations, request/result/debug, retries,
-and deadlines. The six telemetry-label cells also check label preservation in
-debug. They do not prove Rust telemetry integration.
+observations (including model_request before missing API key). **#868 connects
+the Rust telemetry callbacks** and compares the complete event arrays, including
+auth order, terminal request failures and all six label cells. The four D-2 body
+hang cells compare telemetry while pending, before the Rust-only body deadline;
+their final results remain the registered D-2 difference. Dedicated mutation
+assertions and the post-commit runner are in `../edgeclaw-llm-telemetry/` and
+`../../edgeclaw_llm_telemetry.rs`. The source oracle remains unchanged.
 
 ## Negative controls and remaining transport prerequisite
 
