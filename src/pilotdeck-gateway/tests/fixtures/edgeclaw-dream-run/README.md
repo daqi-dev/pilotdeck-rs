@@ -28,8 +28,16 @@ radix-36 后缀，之后每个 mutation 消费一条。
 
 用例覆盖：empty single / empty general（no-op）、single 完整 dream
 （双类别 refine、meta 更新、画像改写吸收 note、manifest 修复）、kept-profile
-（画像未变、note 保留）、null profile、rewrite 抛错（catch + logger.warn）、
-General 元合并 + 多项目循环 + 元审查、以及 #915 的 warning-then-error 格。
+（画像未变、note 保留）、null profile、whitespace-only profile、rewrite 抛错
+（catch + logger.warn）、画像写入失败与 note 删除失败（store 失败仍在 `run()`
+内被 catch）、metadata-only（`isNoOp` 走 `!metaUpdated`）、200 文件窗口截断、
+General 元合并后仍有两个存活项目（跨项目累加与两次元更新）、以及 #915 的
+warning-then-error 格。
+
+P1 的两个 store 故障用真实文件权限注入（`faults.profileReadOnly` /
+`faults.notesReadOnly`）：生成器和 Rust 回放都在 seed 之后把 profile 文件改成
+0444 或把 `UserIdentityNotes/` 改成 0555，失败点就在 TS `try` 内的
+`upsertUserProfile` / `deleteMemoryEntries`，不靠改 store 实现。
 
 生成与字节校验（从仓库根目录运行）：
 
@@ -58,18 +66,18 @@ PDRS_BASELINE="$PDRS_BASELINE" cargo test --manifest-path src/Cargo.toml \
 ## 负控
 
 `negative.py` 用 `negative_process.mutating_sources` 锁定并恢复
-`dream/run.rs` 与 `dream/runner.rs`，先校验 8 个变异锚点恰好各出现一次
-（过期报 `STALE ANCHOR` 并退出 2，不冒充 SURVIVED），再对选中变异的目测试
-逐个跑未变异源码（任一无变异失败即拒绝判杀），逐格只跑绑定 `#[test]`，
-要求测试本身失败且日志出现该格专属 `#774 ...` 断言。编译失败、无关 panic、
-缺专属消息都记 INVALID；每格恢复 baseline 字节；最后汇总，任一非 KILLED
-即非零退出。cargo 强制用调用方 `CARGO_TARGET_DIR` 并走
+`dream/run.rs`、`dream/runner.rs` 与 `dream/helpers.rs`，先校验 15 个变异锚点
+恰好各出现一次（过期报 `STALE ANCHOR` 并退出 2，不冒充 SURVIVED），再对选中
+变异的目标测试逐个跑未变异源码（任一无变异失败即拒绝判杀），逐格只跑绑定
+`#[test]`，要求测试本身失败且日志出现该格专属 `#774 ...` 断言。编译失败、
+无关 panic、缺专属消息都记 INVALID；每格恢复 baseline 字节；最后汇总，任一
+非 KILLED 即非零退出。cargo 强制用调用方 `CARGO_TARGET_DIR` 并走
 `run_owned` + `wait_for_slot`。
 
 `run.rs` 与 `edgeclaw_dream_run.rs` 提交前不在 HEAD，`mutating_sources`
 会按设计拒绝；本树只跑 `--check-anchors`，并用
-`_tmp/20261026-issue-774/mutation_probe.py` 手工 apply/restore 证明 8 个变异
-都能编译且在生产断言上被杀。全量由协调者在宿主提交后跑：
+`_tmp/20261026-issue-774/fix-r1/mutation_probe.py` 手工 apply/compile/restore
+证明 15 个变异都能编译且在生产断言上被杀。全量由协调者在宿主提交后跑：
 
 ```sh
 cd <tree>

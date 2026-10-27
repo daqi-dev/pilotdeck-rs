@@ -1,7 +1,7 @@
 // Calls the fixed TS DreamRewriteRunner.run directly on a real
 // MemoryRepository. Every expected value in oracle.json is produced here;
 // the Rust side only replays the same seeded repository and script.
-import {mkdirSync, readdirSync, readFileSync} from 'node:fs';
+import {chmodSync, mkdirSync, readdirSync, readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {pathToFileURL} from 'node:url';
 import {join, resolve} from 'node:path';
@@ -182,10 +182,19 @@ async function runCase(baseline: string, scratch: string, home: string, spec: an
   const {DreamRewriteRunner, MemoryRepository, hashText} = await load(baseline);
   const base = join(scratch, 'cases', spec.name);
   mkdirSync(base, {recursive: true});
+  const faults = spec.faults ?? {};
+  const globalRoot = join(base, 'global');
+  const profileFile = join(globalRoot, 'UserIdentity', 'user-profile.md');
+  const notesDir = join(globalRoot, 'UserIdentityNotes');
   const repository = makeRepository(MemoryRepository, spec.mode, base, home, spec.name);
   const savedRandom = Math.random;
   try {
     seed(repository, spec.setup ?? {});
+    // Real-store failure injection for the two persistence calls inside the
+    // TS `try` (dream-review.ts:1296-1335). Permission faults keep the failure
+    // at the store method itself; the Rust replay applies the same modes.
+    if (faults.profileReadOnly) chmodSync(profileFile, 0o444);
+    if (faults.notesReadOnly) chmodSync(notesDir, 0o555);
     const store = repository.getFileMemoryStore();
     const global = repository.getGlobalUserStore();
     const logs: string[] = [];
@@ -251,6 +260,7 @@ async function runCase(baseline: string, scratch: string, home: string, spec: an
       mode: spec.mode,
       trigger: spec.trigger ?? 'manual',
       setup: spec.setup ?? {},
+      faults: spec.faults,
       selection: spec.selection,
       dropRecords: spec.dropRecords,
       randomSuffix: spec.method === 'run' ? RUN_SUFFIX : (spec.randomSuffix ?? TRACE_SUFFIX),
@@ -262,6 +272,9 @@ async function runCase(baseline: string, scratch: string, home: string, spec: an
   } finally {
     Math.random = savedRandom;
     repository.close();
+    // Restore write modes before removing the owned scratch tree.
+    if (faults.notesReadOnly) chmodSync(notesDir, 0o755);
+    if (faults.profileReadOnly) chmodSync(profileFile, 0o644);
     await removeOwned(scratch, base, {recursive: true});
   }
 }
@@ -296,6 +309,13 @@ async function collectCases(baseline: string, scratch: string) {
   const metaB = {projectId: 'p2', projectName: 'Beta', description: 'beta project', status: 'active'};
   const note = candidate('user', 'Prefers dark mode', 'ui preference', 'Prefers dark mode.\n');
   const profile = candidate('user', 'User Profile', 'user profile', '## 身份背景\n- likes rust\n');
+  const rewrittenProfile = {
+    type: 'user',
+    scope: 'global',
+    name: 'User Profile',
+    description: 'user profile',
+    body: '## 身份背景\n- likes rust\n- prefers dark mode\n',
+  };
 
   await add({
     name: 'run-empty-single',
@@ -415,6 +435,73 @@ async function collectCases(baseline: string, scratch: string) {
     ],
   });
 
+  // P1: whitespace-only body takes the `trim()`-empty branch, not a rewrite.
+  await add({
+    name: 'run-single-whitespace-profile',
+    method: 'run',
+    mode: 'single',
+    setup: {userNotes: [note], userProfile: profile},
+    script: [
+      {method: 'rewriteUserProfile', result: {...rewrittenProfile, body: '  \n\t  '}},
+    ],
+  });
+
+  // P1: store failures inside the TS `try` are caught and become warnings.
+  await add({
+    name: 'run-single-upsert-failure',
+    method: 'run',
+    mode: 'single',
+    setup: {userNotes: [note], userProfile: profile},
+    faults: {profileReadOnly: true},
+    script: [
+      {method: 'rewriteUserProfile', result: rewrittenProfile},
+    ],
+  });
+
+  await add({
+    name: 'run-single-delete-failure',
+    method: 'run',
+    mode: 'single',
+    setup: {userNotes: [note], userProfile: profile},
+    faults: {notesReadOnly: true},
+    script: [
+      {method: 'rewriteUserProfile', result: rewrittenProfile},
+    ],
+  });
+
+  // P2: metadata-only mutation drives `isNoOp` through `!metaUpdated`.
+  await add({
+    name: 'run-single-meta-only',
+    method: 'run',
+    mode: 'single',
+    setup: {candidates: [candidate('project', 'Alpha Plan', 'alpha plan', '## Goal\nShip alpha.\n')]},
+    script: [
+      {
+        method: 'reviewDreamProjectMeta',
+        result: {
+          shouldUpdate: true,
+          reason: 'Metadata refreshed without content changes.',
+          projectMeta: {projectName: 'Alpha Renamed', description: 'alpha plan renamed', status: 'active'},
+        },
+      },
+    ],
+  });
+
+  // P2: the 200-file window boundary is wired through run(), not only helpers.
+  const windowNotes = Array.from({length: 201}, (_, index) => {
+    const label = String(index).padStart(3, '0');
+    return candidate('user', `Window Note ${label}`, 'window note', `window note ${index} body.\n`);
+  });
+  await add({
+    name: 'run-single-window-truncation',
+    method: 'run',
+    mode: 'single',
+    setup: {userNotes: windowNotes},
+    script: [
+      {method: 'rewriteUserProfile', result: rewrittenProfile},
+    ],
+  });
+
   await add({
     name: 'run-general-merge',
     method: 'run',
@@ -457,6 +544,97 @@ async function collectCases(baseline: string, scratch: string) {
           reason: 'Project metadata refreshed from General memory.',
           projectMeta: {projectName: 'Alpha Renamed', description: 'alpha project renamed', status: 'active'},
         },
+      },
+    ],
+  });
+
+  await add({
+    name: 'run-general-two-projects',
+    method: 'run',
+    mode: 'general',
+    setup: {
+      metas: [metaA, metaB, {projectId: 'p3', projectName: 'Gamma', description: 'gamma project', status: 'active'}],
+      candidates: [
+        candidate('project', 'Alpha Plan', 'alpha plan', '## Goal\nShip alpha.\n', 'p1'),
+        candidate('project', 'Alpha Notes', 'alpha notes', '## Goal\nShip the alpha release.\n', 'p1'),
+        candidate('feedback', 'Use tabs', 'formatting rule', 'Rule: use tabs.\n', 'p1'),
+        candidate('feedback', 'Use two-space tabs', 'formatting rule duplicate', 'Rule: indent with tabs.\n', 'p1'),
+        candidate('project', 'Gamma Plan', 'gamma plan', '## Goal\nShip gamma.\n', 'p3'),
+        candidate('project', 'Gamma Notes', 'gamma notes', '## Goal\nShip the gamma release.\n', 'p3'),
+        candidate('feedback', 'Gamma Rule', 'gamma rule', 'Rule: gamma.\n', 'p3'),
+      ],
+      userNotes: [note],
+      userProfile: profile,
+    },
+    script: [
+      {
+        method: 'planGeneralProjectMetaMerges',
+        result: {
+          summary: 'Found one duplicate General project node.',
+          mergeGroups: [{keeperProjectId: 'p1', duplicateProjectIds: ['p2'], reason: 'duplicate'}],
+        },
+      },
+      {
+        method: 'planDreamClusters',
+        result: {
+          summary: 'Found one duplicate project cluster in the first project.',
+          clusters: [{memberRelativePaths: ['$PROJECT0', '$PROJECT1'], reason: 'duplicate content'}],
+        },
+      },
+      {
+        method: 'refineDreamCluster',
+        result: {
+          summary: 'Merged the first project duplicate.',
+          file: {name: 'Alpha Merged', description: 'merged alpha', markdown: '# Alpha\n\nMerged body.'},
+        },
+      },
+      {
+        method: 'planDreamClusters',
+        result: {
+          summary: 'Found one duplicate feedback cluster in the first project.',
+          clusters: [{memberRelativePaths: ['$FEEDBACK1', '$FEEDBACK2'], reason: 'same rule'}],
+        },
+      },
+      {
+        method: 'refineDreamCluster',
+        result: {
+          summary: 'Merged the first project feedback.',
+          file: {name: 'Use tabs', description: 'formatting rule', markdown: 'Rule: use tabs.'},
+        },
+      },
+      {
+        method: 'reviewDreamProjectMeta',
+        result: {
+          shouldUpdate: true,
+          reason: 'First project metadata refreshed.',
+          projectMeta: {projectName: 'Alpha Renamed', description: 'alpha plan renamed', status: 'active'},
+        },
+      },
+      {
+        method: 'planDreamClusters',
+        result: {
+          summary: 'Found one duplicate project cluster in the second project.',
+          clusters: [{memberRelativePaths: ['$PROJECT2', '$PROJECT3'], reason: 'duplicate content'}],
+        },
+      },
+      {
+        method: 'refineDreamCluster',
+        result: {
+          summary: 'Merged the second project duplicate.',
+          file: {name: 'Gamma Merged', description: 'merged gamma', markdown: '# Gamma\n\nMerged body.'},
+        },
+      },
+      {
+        method: 'reviewDreamProjectMeta',
+        result: {
+          shouldUpdate: true,
+          reason: 'Second project metadata refreshed.',
+          projectMeta: {projectName: 'Gamma Renamed', description: 'gamma project renamed', status: 'active'},
+        },
+      },
+      {
+        method: 'rewriteUserProfile',
+        result: rewrittenProfile,
       },
     ],
   });

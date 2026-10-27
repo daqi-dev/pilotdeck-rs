@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Reversible product mutations for edgeclaw-dream-run (#774).
 
-Every mutant is a small product-source change in `dream/run.rs` or
-`dream/runner.rs`. Before any mutation every *selected* target test runs once
-on the unmutated source and must pass; a broken environment is not a kill. A
-kill requires the named test itself to fail at the mutant's own ``#774 ...``
-assertion message. Compile failures, unrelated panics and missing anchor
-messages are INVALID, never KILLED. Stale anchors exit 2 instead of being
-reported as SURVIVED. Every mutant runs, then the summary lists every
-KILLED/SURVIVED/INVALID; any non-KILLED exits 1.
+Every mutant is a small product-source change in `dream/run.rs`,
+`dream/runner.rs` or `dream/helpers.rs`. Before any mutation every *selected*
+target test runs once on the unmutated source and must pass; a broken
+environment is not a kill. A kill requires the named test itself to fail at the
+mutant's own ``#774 ...`` assertion message. Compile failures, unrelated panics
+and missing anchor messages are INVALID, never KILLED. Stale anchors exit 2
+instead of being reported as SURVIVED. Every mutant runs, then the summary lists
+every KILLED/SURVIVED/INVALID; any non-KILLED exits 1.
 
 `mutating_sources` requires the product tree to match the baseline. The new
 `run.rs`/test file are not in HEAD before the coordinator commits them, so a
@@ -27,16 +27,16 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 root = Path(__file__).resolve().parents[5]
 run = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/dream/run.rs'
 runner = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/dream/runner.rs'
+helpers = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/dream/helpers.rs'
 
 mutations = [
-    # 1. `isNoOp` forgets that a metadata update was applied: a real change
-    #    becomes a no-op on the null-profile path (#774 result).
+    # 1. `isNoOp` forgets that a metadata update was applied: a metadata-only
+    #    dream becomes a no-op (#774 result).
     ('noop-ignores-meta-update', run,
      '''            && !user_profile_updated
             && !meta_updated;''',
-     '''            && !user_profile_updated
-            && meta_updated;''',
-     'run_single_null_profile'),
+     '''            && !user_profile_updated;''',
+     'run_single_meta_only'),
     # 2. `reviewedFiles` stops counting the General project nodes.
     ('reviewed-files-drops-general', run,
      '''            reviewed_files: workspace_entries.len() as f64
@@ -60,23 +60,29 @@ mutations = [
      '"Dream kept the selected user notes because the rewritten profile matched the existing profile."',
      '"Dream kept the selected user notes because the rewritten profile matched."',
      'run_single_kept_profile'),
-    # 4. The caught rewrite-request failure loses its TS message prefix.
+    # 5. The caught rewrite-request failure loses its TS message prefix.
     ('rewrite-error-prefix', run,
-     '"Dream skipped user profile rewrite because the rewrite request failed: "',
-     '"Dream skipped user profile rewrite because the request failed: "',
+     '''                    let error = DreamRunnerError::Llm(error);
+                    user_rewrite_failure_message = Some(concat(&[
+                        &"Dream skipped user profile rewrite because the rewrite request failed: "
+                            .into(),''',
+     '''                    let error = DreamRunnerError::Llm(error);
+                    user_rewrite_failure_message = Some(concat(&[
+                        &"Dream skipped user profile rewrite because the request failed: "
+                            .into(),''',
      'run_single_rewrite_error'),
-    # 5. The empty-work summary changes wording.
+    # 6. The empty-work summary changes wording.
     ('default-summary-wording', run,
      'const DEFAULT_SUMMARY: &str = "Dream completed without requiring any memory changes.";',
      'const DEFAULT_SUMMARY: &str = "Dream completed without memory changes.";',
      'run_single_null_profile'),
-    # 6. #915: a refine error is swallowed, so `runCategoryDream` returns Ok
+    # 7. #915: a refine error is swallowed, so `runCategoryDream` returns Ok
     #    and the caller sees a successful partial dream.
     ('refine-error-swallowed', runner,
      '        loop_result?;',
      '        loop_result.ok();',
      'category_warning_then_error'),
-    # 7. #915: the error-exit sync drops the warning that TS keeps through the
+    # 8. #915: the error-exit sync drops the warning that TS keeps through the
     #    shared array reference.
     ('error-exit-warning-sync', runner,
      '''        sync_plan_output_warnings(
@@ -92,10 +98,59 @@ mutations = [
             &[],
         );''',
      'category_warning_then_error'),
+    # 9. P1: the profile write failure escapes `run()` instead of becoming the
+    #    user-rewrite warning. Failure before `userProfileUpdated` is set.
+    ('upsert-error-propagates', run,
+     '''                                let error = DreamRunnerError::Memory(error);
+                                user_rewrite_failure_message = Some(concat(&[''',
+     '''                                let error = DreamRunnerError::Memory(error);
+                                if !user_profile_updated {
+                                    return Err(error);
+                                }
+                                user_rewrite_failure_message = Some(concat(&[''',
+     'run_single_upsert_failure'),
+    # 10. P1: the note-deletion failure escapes `run()` after the profile was
+    #     already updated (the TS catch keeps profileUpdated and absorbed IDs).
+    ('delete-error-propagates', run,
+     '''                                let error = DreamRunnerError::Memory(error);
+                                user_rewrite_failure_message = Some(concat(&[''',
+     '''                                let error = DreamRunnerError::Memory(error);
+                                if user_profile_updated {
+                                    return Err(error);
+                                }
+                                user_rewrite_failure_message = Some(concat(&[''',
+     'run_single_delete_failure'),
+    # 11. P2: the General loop overwrites the first project's accumulated
+    #     category result instead of merging the second project into it.
+    ('general-overwrites-accumulation', run,
+     '                merge_category(&mut project_dream, &next_project);',
+     '                project_dream = next_project;',
+     'run_general_two_projects'),
+    # 12. P2 boundary: equal profile bodies take the rewrite branch.
+    ('kept-profile-equality-flipped', run,
+     '                        if previous_profile_body != body {',
+     '                        if previous_profile_body == body {',
+     'run_single_kept_profile'),
+    # 13. P2 boundary: the empty General early exit requires zero project
+    #     metas even when the workspace is empty.
+    ('early-exit-general-condition', run,
+     '            && (!is_general_mode || general_project_metas.is_empty())',
+     '            && (!is_general_mode && general_project_metas.is_empty())',
+     'run_empty_general'),
+    # 14. P2 boundary: a whitespace-only body is accepted as a rewrite.
+    ('whitespace-body-accepted', run,
+     '                    if !body.is_empty() {',
+     '                    if !body.is_empty() || body.is_empty() {',
+     'run_single_whitespace_profile'),
+    # 15. P2 boundary: the 200-file window cap admits one extra note.
+    ('window-file-cap-off-by-one', helpers,
+     '        if selected.len() >= DREAM_USER_NOTE_MAX_FILES {',
+     '        if selected.len() > DREAM_USER_NOTE_MAX_FILES {',
+     'run_single_window_truncation'),
 ]
 
 fragments = {
-    'noop-ignores-meta-update': '#774 result run-single-null-profile',
+    'noop-ignores-meta-update': '#774 result run-single-meta-only',
     'reviewed-files-drops-general': '#774 result run-general-merge',
     'deleted-files-drops-notes': '#774 result run-single-full',
     'kept-profile-wording': '#774 result run-single-kept-profile',
@@ -103,6 +158,13 @@ fragments = {
     'default-summary-wording': '#774 result run-single-null-profile',
     'refine-error-swallowed': '#774 error category-warning-then-error',
     'error-exit-warning-sync': '#774 trace category-warning-then-error',
+    'upsert-error-propagates': '#774 run result run-single-upsert-failure',
+    'delete-error-propagates': '#774 run result run-single-delete-failure',
+    'general-overwrites-accumulation': '#774 result run-general-two-projects',
+    'kept-profile-equality-flipped': '#774 result run-single-kept-profile',
+    'early-exit-general-condition': '#774 result run-empty-general',
+    'whitespace-body-accepted': '#774 result run-single-whitespace-profile',
+    'window-file-cap-off-by-one': '#774 result run-single-window-truncation',
 }
 
 if '--check-anchors' in sys.argv:
