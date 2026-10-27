@@ -73,12 +73,16 @@ def classify(result, log, targets):
     if passed(result, log):
         return 'SURVIVED', 'propagation test still passed'
     # A target's own captured panic block must contain its dedicated message;
-    # a marker printed by a different failed test never counts as a kill.
+    # a marker printed by a different failed test never counts as a kill. The
+    # parent's message embeds the worker's whole captured output
+    # (test_process.rs:137), so the worker's own panic line must not terminate
+    # the parent block: only another parent test in this module does.
     expected_failures = []
     for test, marker in targets:
         full = PREFIX + test
         block = re.search(r"thread '" + re.escape(full)
-                          + r"'(?: \(\d+\))? panicked at.*?(?=\nthread '[^']+'(?: \(\d+\))? panicked at|\Z)",
+                          + r"'(?: \(\d+\))? panicked at.*?(?=\nthread '" + re.escape(PREFIX)
+                          + r"(?!session_cwd_environment_worker')[^']+'(?: \(\d+\))? panicked at|\Z)",
                           result.stderr + result.stdout, re.S)
         expected_failures.append(
             f'{full} ... FAILED' in log and block is not None and marker in block.group())

@@ -37,4 +37,7 @@ fix-r1 追加传播回归与负控 `session_negative.py`：`host_factory_tests.r
 本 oracle `relative-deleted` 逐字节相同的 uv_cwd 消息、任何生命周期事件之前失败。
 `session_negative.py` 同样先 `--check` 核 2 个唯一锚点（`host_factory.rs` 的 Session
 kind 映射、`live.rs` finish 的原样返回分支），提交后由协调者在 HEAD 守卫下运行；
-正控要求 1 passed 且 1 个 `PDRS_VERIFIED_CHILD` 回执。
+正控要求 1 passed 且 1 个 `PDRS_VERIFIED_CHILD` 回执。fix-r2 修正其判杀分类器：父
+panic 文本内嵌 worker 全部输出（`test_process.rs:137`），截断边界只认本模块其他父
+测试 panic、不认被嵌 worker 的 panic 行，worker 专属断言消息因此完整参与判杀（与
+`negative_controls.py` 的既有 worker 排除同型）。
