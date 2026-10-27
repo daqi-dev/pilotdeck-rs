@@ -9,6 +9,7 @@ INVALID, never left claiming kills whose sources were not verifiably restored.
 No real source is mutated; nothing here runs cargo or node.
 """
 from contextlib import contextmanager
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -292,19 +293,29 @@ class RestoreFailureTests(unittest.TestCase):
         # KILLED while only the exit code told the truth. Run one real table
         # row against source COPIES with run_owned faked and the context exit
         # failing, and require the persisted rows to be rewritten INVALID.
+        # fix-r4 P1-2: every file main() hands to mutating_sources gets its
+        # own copy — isolation_probe.mjs included (the sixth since fix-r3) —
+        # and every write must land inside the copy directory: the fake
+        # context's write-back is exactly where an unpatched real path would
+        # be rewritten outside the real source guard's lock.
         name, _path, old, new = negative_controls.mutations[0]
         assert name == 'allow-rule-drops-port'
         test = negative_controls.tests[name]
         fragment = negative_controls.failure_fragments[name]
+        sources = (negative_controls.policy, negative_controls.common, negative_controls.compare,
+                   negative_controls.run_round, negative_controls.mock_gateway,
+                   negative_controls.isolation_probe)
+        # The real probe source must survive this test byte-for-byte even if
+        # the copy wiring regresses, so pin it before anything is patched.
+        real_probe = negative_controls.isolation_probe
+        real_probe_sha256 = hashlib.sha256(real_probe.read_bytes()).hexdigest()
         tmp = Path(tempfile.mkdtemp(prefix='negctl-restore-'))
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
-        copies = [tmp / source.name for source in
-                  (negative_controls.policy, negative_controls.common, negative_controls.compare,
-                   negative_controls.run_round, negative_controls.mock_gateway)]
-        for source, copy in zip((negative_controls.policy, negative_controls.common, negative_controls.compare,
-                                 negative_controls.run_round, negative_controls.mock_gateway), copies):
+        copies = [tmp / source.name for source in sources]
+        for source, copy in zip(sources, copies):
             copy.write_bytes(source.read_bytes())
         pristine = copies[0].read_bytes()
+        written = []
 
         @contextmanager
         def fake_mutating_sources(_root, paths, *, baseline='HEAD'):
@@ -314,16 +325,17 @@ class RestoreFailureTests(unittest.TestCase):
             finally:
                 for path, data in snapshots.items():
                     path.write_bytes(data)
+                    written.append(path)
                 raise RuntimeError('injected final restore verification failure')
 
         fail_log = """F
 ======================================================================
-FAIL: test_mock_profile_appends_only_the_loopback_allow (__main__.ContractTests.test_mock_profile_appends_only_the_loopback_allow)
+FAIL: test_mock_profile_appends_only_the_loopback_allow (__main__.ContractTests.test_mock_profile_appends_only_the_loopback_allow) (side='ts', mock=True)
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "scripts/cli-parity/test_cli_parity.py", line 953, in test_mock_profile_appends_only_the_loopback_allow
-    self.assertEqual(mock, base.replace('(deny network*)\\n', '(deny network*)\\n' + relax),
-AssertionError: 'base profile' != 'relaxed profile' : #933-2: exactly one allow rule, directly after the network deny
+  File "scripts/cli-parity/test_cli_parity.py", line 947, in test_mock_profile_appends_only_the_loopback_allow
+    self.assertEqual(
+AssertionError: '162612cc65cda15e942dea86b4a2a73bd44b6cf0464bd4ef8178ef57c6e5fa20' != '0f1e2d3c4b5a69788695a4b3c2d1e0f9a8b7c6d5e4f30291a8b7c6d5e4f30291a' : #933-2: the mock TS profile changed
 
 ----------------------------------------------------------------------
 Ran 1 test in 0.123s
@@ -344,6 +356,7 @@ FAILED (failures=1)
              patch.object(negative_controls, 'compare', copies[2]), \
              patch.object(negative_controls, 'run_round', copies[3]), \
              patch.object(negative_controls, 'mock_gateway', copies[4]), \
+             patch.object(negative_controls, 'isolation_probe', copies[5]), \
              patch.object(negative_controls, 'mutating_sources', fake_mutating_sources), \
              patch.object(negative_controls, 'run_owned', fake_run_owned), \
              patch.object(sys, 'argv', ['negative_controls.py', str(out), name]):
@@ -351,6 +364,16 @@ FAILED (failures=1)
                 negative_controls.main()
         self.assertEqual(caught.exception.code, 1,
                          'a restore failure must exit nonzero, never pass')
+        # fix-r4 P1-2: nothing may write a real source — every mutating_sources
+        # write-back target must be a copy under the test's own directory.
+        self.assertTrue(written, 'the fake context must actually exercise its write-back')
+        for path in written:
+            self.assertTrue(path.is_relative_to(tmp),
+                            f'a real source was written outside the copies: {path}')
+        self.assertIn(copies[5], written,
+                      'the sixth source copy (isolation_probe) must participate in the write-back')
+        self.assertEqual(hashlib.sha256(real_probe.read_bytes()).hexdigest(), real_probe_sha256,
+                         'the real isolation_probe.mjs must be byte-identical after the test')
         summary = json.loads((out / 'summary.json').read_text())
         self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
                          'the flushed KILLED row must be rewritten INVALID after the restore failure')

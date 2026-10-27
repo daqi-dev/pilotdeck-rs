@@ -25,35 +25,31 @@ from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, MOCK_PORT, OPENS
 from compare import coalesce, compare, comparison_view, expected_stdout, load_round, GATEWAY_PROBE_CHECKS, PROBE_CHECKS
 from controls import run_controls
 from host_negative_controls import check_exec_control, main as host_control_main
-from policy import MOCK_GATEWAY_ALLOW, checkout_only_ancestors
+from policy import MOCK_GATEWAY_ALLOW
 from run_round import (baseline_identity, capture, check_budget, main, mock_gateway_preflight, preflight,
                        mock_listening_line, run_round, rust_isolation, sandbox_profile, stage_rust, stop_group)
 
-
-def canonical_profile(text, script_dir=SCRIPT):
-    """#933-2 (fix-r3): the profile with only the checkout tree normalized.
-
-    The probe-script entry keeps its fixed tail — only the checkout prefix is
-    replaced, in the exact json-escaped form policy.item() writes, so a
-    non-ASCII checkout path (which never appears raw in a profile) normalizes
-    the same as any other. The checkout-only ancestor items
-    policy.checkout_only_ancestors() lists are erased as whole items, one
-    occurrence each, and only where they stand alone inside the
-    file-read-metadata rule's ancestor list: a permission literal anywhere
-    else in the profile survives normalization, so any other byte change
-    flips the digest."""
-    canonical = text.replace(json.dumps(str(script_dir) + '/')[:-1], '"<checkout>/')
-    lines = canonical.split('\n')
-    for index, line in enumerate(lines):
-        if line.startswith('(allow file-read-metadata '):
-            for path in checkout_only_ancestors(script_dir):
-                lines[index] = lines[index].replace(' (literal ' + json.dumps(str(path)) + ')', '', 1)
-    return '\n'.join(lines)
+# #933-2 (fix-r4): the profile guard pins sandbox_profile() output for fixed
+# placeholder paths — policy.SCRIPT included, since the probe literal is the
+# only checkout-derived byte any profile carries. Nothing is normalized, so
+# no normalization can mask a rule change: a relaxed rule, a changed port or
+# a reordered deny flips a digest in every checkout, while moving the checkout
+# (real, non-ASCII or nested under a system path) cannot. The Rust binary must
+# keep the staged <stage>/bin layout sandbox_profile() demands, so its parent
+# directory is literally named "bin".
+PIN_RUNTIME = Path('/PDRS/RUNTIME')
+PIN_BASELINE = Path('/PDRS/BASELINE')
+PIN_NODE = Path('/PDRS/node')
+PIN_RUST_BIN = Path('/PDRS/stage/bin/pilotdeck')
+PIN_SCRIPT = Path('/PDRS/SCRIPT')
 
 
-def canonical_profile_digest(text, script_dir=SCRIPT):
-    """#933-2: the pinned digest of canonical_profile(); see its docstring."""
-    return hashlib.sha256(canonical_profile(text, script_dir).encode()).hexdigest()
+def pinned_profile(side, mock_gateway=False):
+    """sandbox_profile() text for the placeholder paths; see PIN_* above."""
+    with patch('policy.SCRIPT', PIN_SCRIPT):
+        return sandbox_profile(PIN_RUNTIME, PIN_BASELINE,
+                               PIN_NODE if side == 'ts' else PIN_RUST_BIN,
+                               side, mock_gateway=mock_gateway)
 
 
 def bind_policy(run):
@@ -935,44 +931,34 @@ class ContractTests(unittest.TestCase):
         load.assert_not_called()
 
     def test_mock_profile_appends_only_the_loopback_allow(self):
-        # #933-2: the base profiles stay byte-identical to the previous batch.
+        # #933-2 (fix-r4 P1-1): every profile the recorder can emit is pinned
+        # by digest over the fixed placeholder paths — no normalization step
+        # exists that could mask a permission change. The four combinations
+        # cover both sides for the 29 unmarked scenarios (base) and for
+        # sessions-list-mock (mock); the ts base doubles as the probe profile
+        # both sides record (bind_policy always probes with the node binary on
+        # the ts side).
+        pinned = {('ts', False): '0a28f56cc7fd72fc4291edfd91b507fdbe0aa00b26ca5bcdb780df4d4d3cfc84',
+                  ('rust', False): '3ec5ae0ed96ca35dced10edad40648943bf03973a3a1617798793bb88909eb47',
+                  ('ts', True): '162612cc65cda15e942dea86b4a2a73bd44b6cf0464bd4ef8178ef57c6e5fa20',
+                  ('rust', True): '4010392eebb509e2930defcd9ffa12bd16bef5a00f8b1f6e8e57332ae5bb687e'}
+        for (side, mock), digest in pinned.items():
+            with self.subTest(side=side, mock=mock):
+                self.assertEqual(
+                    hashlib.sha256(pinned_profile(side, mock).encode()).hexdigest(), digest,
+                    f'#933-2: the {"mock " if mock else "base "}{side.upper()} profile changed')
+        # A different real checkout — non-ASCII, or nested under a system path —
+        # cannot flip the guard: every path input is pinned by the guard itself.
+        for other_root in ('/another-checkout', '/tmp/中文树根', '/usr/local/pilotdeck-checkout'):
+            with self.subTest(root=other_root):
+                with patch('policy.SCRIPT', Path(other_root) / 'scripts/cli-parity'):
+                    self.assertEqual(
+                        hashlib.sha256(pinned_profile('ts').encode()).hexdigest(),
+                        pinned[('ts', False)],
+                        f'#933-2: the pinned digest must hold in a checkout rooted at {other_root}')
         runtime, baseline = Path('/synthetic/runtime'), Path('/synthetic/baseline')
         ts = sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts')
         rust = sandbox_profile(runtime, baseline, '/synthetic/rust-stage/bin/pilotdeck', 'rust')
-        # The pinned digests hash the checkout-normalized profile text: the
-        # guard must hold in any checkout, not only the recording one. The
-        # Rust value carries over from the previous batch unchanged — its
-        # profile never contained a checkout path to begin with.
-        self.assertEqual(canonical_profile_digest(ts),
-                         'bd0e3103318ec8a77e37a78132d54a603ca347cb56e27623a72ac808897f21de',
-                         '#933-2: the base TS profile changed')
-        self.assertEqual(canonical_profile_digest(rust),
-                         'bed18fec0f5b10d0011f068799f1643f6c82d3d0776f3872375f94e92124b86e',
-                         '#933-2: the base Rust profile changed')
-        # Byte equality, not just equal digests: only the checkout tree may
-        # differ — including a non-ASCII root and one nested under a system
-        # path, whose shared ancestors must survive the normalization.
-        for other_root in ('/another-checkout', '/tmp/中文树根', '/usr/local/pilotdeck-checkout'):
-            with self.subTest(root=other_root):
-                other_script = Path(other_root) / 'scripts/cli-parity'
-                with patch('policy.SCRIPT', other_script):
-                    other = sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts')
-                self.assertEqual(canonical_profile(other, other_script), canonical_profile(ts),
-                                 f'#933-2: a checkout rooted at {other_root} must normalize '
-                                 'to the very same profile bytes')
-        # The normalization must not weaken the guard: anything outside the
-        # checkout tree survives it — one flipped byte anywhere else, and an
-        # extra permission literal shaped like a checkout ancestor included.
-        self.assertNotEqual(
-            canonical_profile_digest(ts.replace('(deny default)', '(deny defaulX)', 1)),
-            canonical_profile_digest(ts),
-            '#933-2: a one-byte change outside the checkout tree must flip the digest')
-        injected = ts.replace('(allow file-read-data file-map-executable ',
-                              '(allow file-read-data file-map-executable '
-                              + '(literal ' + json.dumps(str(SCRIPT.parent.parent)) + ') ', 1)
-        self.assertNotEqual(canonical_profile_digest(injected), canonical_profile_digest(ts),
-                            '#933-2: an extra permission literal shaped like a checkout '
-                            'ancestor must flip the digest')
         relax = f'(allow network-outbound (remote ip "localhost:{MOCK_PORT}"))\n'
         for side, base in (('ts', ts), ('rust', rust)):
             binary = '/synthetic/unit-test-only' if side == 'ts' else '/synthetic/rust-stage/bin/pilotdeck'

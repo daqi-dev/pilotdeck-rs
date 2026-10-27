@@ -29,6 +29,7 @@ from pathlib import Path
 import py_compile
 import re
 import sys
+import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned
@@ -52,6 +53,25 @@ mutations = [
      policy,
      'MOCK_GATEWAY_ALLOW = f\'(allow network-outbound (remote ip "localhost:{MOCK_PORT}"))\'',
      'MOCK_GATEWAY_ALLOW = f\'(allow network-outbound (remote ip "localhost"))\''),
+    # The default deny is relaxed to an allow: the sandbox would permit
+    # everything the profile does not explicitly deny.
+    ('default-deny-relaxed',
+     policy,
+     "    rules = ['(version 1)', '(deny default)', '(allow sysctl-read)',",
+     "    rules = ['(version 1)', '(allow default)', '(allow sysctl-read)',"),
+    # The two deny rules are swapped: the profile bytes (and the mock allow
+    # rule's insertion point) change while the permission set reads the same.
+    ('deny-order-swapped',
+     policy,
+     "             '(deny network*)', '(deny process-fork)']",
+     "             '(deny process-fork)', '(deny network*)']"),
+    # The apparatus port drifts away from the pinned mock profiles. The
+    # structural checks and the environment assertions all derive from the
+    # same constant, so only the pinned digests can catch the drift.
+    ('mock-port-changed',
+     common,
+     'MOCK_PORT = 28999',
+     'MOCK_PORT = 28990'),
     # The marker is ignored: every scenario gets the relaxed profile.
     ('marker-ignored',
      policy,
@@ -175,12 +195,20 @@ tests = {
     'listening-line-drifts': 'ContractTests.test_mock_gateway_answers_ping_with_pong',
     'probe-port-not-passed': 'ContractTests.test_preflight_passes_the_mock_port_to_the_isolation_probe',
     'probe-port-hardcoded': 'ContractTests.test_preflight_passes_the_mock_port_to_the_isolation_probe',
+    'default-deny-relaxed': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
+    'deny-order-swapped': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
+    'mock-port-changed': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
 }
 # The exclusive assertion message each mutant must turn red. A string is one
 # marker; a tuple lists the alternative markers of one assertion family (the
 # pong check can fail either at the frame comparison or at the EOF helper).
 failure_fragments = {
-    'allow-rule-drops-port': '#933-2: exactly one allow rule, directly after the network deny',
+    # fix-r4: the pinned mock-profile digest fires before the structural
+    # equality below, so the mutant binds to that digest assertion.
+    'allow-rule-drops-port': '#933-2: the mock TS profile changed',
+    'default-deny-relaxed': '#933-2: the base TS profile changed',
+    'deny-order-swapped': '#933-2: the base TS profile changed',
+    'mock-port-changed': '#933-2: the mock TS profile changed',
     # marker-ignored relaxes the default profile too, so the pinned base-profile
     # digest fires first (it subsumes the mock_gateway=False equality further
     # down, which can never fail before it); bind to that digest assertion.
@@ -295,16 +323,28 @@ def classify(result, test, fragments):
 
 
 def run_test(out, label, test):
-    result = run_owned([sys.executable, '-I', 'scripts/cli-parity/test_cli_parity.py', test],
-                       cwd=root, timeout=600)
+    # -X pycache_prefix pins this invocation's bytecode cache to a fresh
+    # directory: a pyc left next to a (restored) source can otherwise be
+    # executed as the mutant whenever its recorded mtime and size match the
+    # restored file — same-second, same-size mutants do exactly that, and a
+    # "positive" or "restored" control would then judge mutant bytecode.
+    with tempfile.TemporaryDirectory(prefix='negctl-pycache-') as pycache:
+        result = run_owned([sys.executable, '-I', '-X', f'pycache_prefix={pycache}',
+                            'scripts/cli-parity/test_cli_parity.py', test],
+                           cwd=root, timeout=600)
     (out / f'{label}.log').write_text(result.stdout + result.stderr)
     return result
 
 
 def compile_check(path):
-    """A mutant that cannot even compile is not evidence."""
+    """A mutant that cannot even compile is not evidence.
+
+    The bytecode goes to a throwaway file, never to the __pycache__ next to
+    the source: that pyc outlives the mutant, and run_test's children must
+    never find it (see run_test)."""
     if path.suffix == '.py':
-        py_compile.compile(str(path), doraise=True)
+        with tempfile.TemporaryDirectory(prefix='negctl-compile-') as holder:
+            py_compile.compile(str(path), cfile=str(Path(holder) / 'mutant.pyc'), doraise=True)
     else:
         result = run_owned(['node', '--check', str(path)], cwd=root, timeout=60)
         if result.returncode != 0:
