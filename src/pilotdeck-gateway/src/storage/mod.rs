@@ -34,10 +34,10 @@ pub use transcript::{
     read_transcript_limited,
 };
 pub use workspace_snapshot::{
-    ContentAddressedWorkspaceSnapshotRecorder, RestoredSnapshot, SnapshotPhase, SnapshotState,
-    WorkspaceSnapshotConfig, WorkspaceSnapshotDescriptor, WorkspaceSnapshotError,
-    WorkspaceSnapshotInput, WorkspaceSnapshotProvider, WorkspaceSnapshotResult,
-    create_workspace_snapshot_provider, resolve_workspace_snapshot_config,
+    ContentAddressedWorkspaceSnapshotRecorder, RestoredSnapshot, SnapshotPhase, SnapshotRoundHook,
+    SnapshotRoundStage, SnapshotState, WorkspaceSnapshotConfig, WorkspaceSnapshotDescriptor,
+    WorkspaceSnapshotError, WorkspaceSnapshotInput, WorkspaceSnapshotProvider,
+    WorkspaceSnapshotResult, create_workspace_snapshot_provider, resolve_workspace_snapshot_config,
 };
 
 use std::{fmt, io};

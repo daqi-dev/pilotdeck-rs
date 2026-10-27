@@ -19,9 +19,10 @@ mod scratch;
 
 use base64::Engine as _;
 use pilotdeck_gateway::storage::{
-    ContentAddressedWorkspaceSnapshotRecorder, SnapshotState, WorkspaceSnapshotConfig,
-    WorkspaceSnapshotDescriptor, WorkspaceSnapshotError, WorkspaceSnapshotInput,
-    WorkspaceSnapshotResult, create_workspace_snapshot_provider, resolve_workspace_snapshot_config,
+    ContentAddressedWorkspaceSnapshotRecorder, SnapshotRoundHook, SnapshotRoundStage,
+    SnapshotState, WorkspaceSnapshotConfig, WorkspaceSnapshotDescriptor, WorkspaceSnapshotError,
+    WorkspaceSnapshotInput, WorkspaceSnapshotResult, create_workspace_snapshot_provider,
+    resolve_workspace_snapshot_config,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 use scratch::{owned_path, remove_owned, remove_owned_with};
@@ -36,9 +37,13 @@ use std::{
         fs::{PermissionsExt, symlink},
     },
     path::{Path, PathBuf},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc,
+    },
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 const FIXTURES: &str = concat!(
@@ -103,6 +108,31 @@ impl Scratch {
 impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = remove_owned(&self.0, &self.0, true);
+    }
+}
+
+/// #293 fix-r1: restores a restricted directory's mode on every exit path
+/// (panic included). A mode-000 directory would otherwise defeat `Scratch`'s
+/// recursive removal and leak the run directory (review boundary/concurrency
+/// P2: every run left ~64 MiB under /tmp).
+struct ModeGuard(PathBuf);
+impl ModeGuard {
+    fn restrict(path: &Path) -> Self {
+        let mut mode = fs::metadata(path)
+            .expect("#293 stat the directory to restrict")
+            .permissions();
+        mode.set_mode(0o000);
+        fs::set_permissions(path, mode).expect("#293 restrict the directory to mode 000");
+        Self(path.to_owned())
+    }
+}
+impl Drop for ModeGuard {
+    fn drop(&mut self) {
+        let mut mode = fs::metadata(&self.0)
+            .expect("#293 stat the guarded directory")
+            .permissions();
+        mode.set_mode(0o700);
+        fs::set_permissions(&self.0, mode).expect("#293 restore the guarded directory to mode 700");
     }
 }
 
@@ -676,15 +706,15 @@ fn restore_refuses_object_keys_outside_the_snapshot_root() {
     let run = Scratch::new();
     let root = run.0.join("snapshots");
     let manifest_dir = root.join("workspaces/w/sessions/s/snapshots");
-    fs::create_dir_all(manifest_dir.join("esc-rel")).unwrap();
-    fs::create_dir_all(manifest_dir.join("esc-abs")).unwrap();
-    fs::create_dir_all(manifest_dir.join("fold-in")).unwrap();
-    fs::create_dir_all(root.join("objects/sub")).unwrap();
-    fs::write(root.join("objects/ok.txt"), b"inside-root\n").unwrap();
+    fs::create_dir_all(manifest_dir.join("esc-rel")).expect("#293 create the esc-rel partition");
+    fs::create_dir_all(manifest_dir.join("esc-abs")).expect("#293 create the esc-abs partition");
+    fs::create_dir_all(manifest_dir.join("fold-in")).expect("#293 create the fold-in partition");
+    fs::create_dir_all(root.join("objects/sub")).expect("#293 create the objects dir");
+    fs::write(root.join("objects/ok.txt"), b"inside-root\n").expect("#293 seed the in-root object");
     let outside = run.0.join("outside.txt");
-    fs::write(&outside, b"SECRET-outside\n").unwrap();
+    fs::write(&outside, b"SECRET-outside\n").expect("#293 seed the root-external object");
     let absolute = run.0.join("absolute.txt");
-    fs::write(&absolute, b"SECRET-absolute\n").unwrap();
+    fs::write(&absolute, b"SECRET-absolute\n").expect("#293 seed the absolute-path object");
 
     let manifest = |snapshot_id: &str, entries: &str| {
         format!(
@@ -703,7 +733,7 @@ fn restore_refuses_object_keys_outside_the_snapshot_root() {
             "{\"path\":\"after.txt\",\"entryType\":\"file\",\"size\":17,\"objectKey\":\"after.txt\"}",
         )),
     )
-    .unwrap();
+    .expect("#293 seed the esc-rel manifest");
     fs::write(
         manifest_dir.join("esc-abs/manifest.json"),
         manifest(
@@ -715,7 +745,7 @@ fn restore_refuses_object_keys_outside_the_snapshot_root() {
             ),
         ),
     )
-    .unwrap();
+    .expect("#293 seed the esc-abs manifest");
     fs::write(
         manifest_dir.join("fold-in/manifest.json"),
         manifest(
@@ -724,7 +754,7 @@ fn restore_refuses_object_keys_outside_the_snapshot_root() {
              \"objectKey\":\"objects/sub/../ok.txt\"}",
         ),
     )
-    .unwrap();
+    .expect("#293 seed the fold-in manifest");
 
     let root_text = root.to_string_lossy().into_owned();
     let provider = create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
@@ -739,7 +769,7 @@ fn restore_refuses_object_keys_outside_the_snapshot_root() {
         .expect("#293 an in-root folding objectKey must restore");
     assert!(restored.restored, "#293 fold-in restore reports restored");
     assert_eq!(
-        fs::read(target.join("folded.txt")).unwrap(),
+        fs::read(target.join("folded.txt")).expect("#293 fold-in restored a file"),
         b"inside-root\n",
         "#293 fold-in restored the root object"
     );
@@ -748,7 +778,7 @@ fn restore_refuses_object_keys_outside_the_snapshot_root() {
     let target = run.0.join("target-rel");
     let error = provider
         .restore("esc-rel", &target.to_string_lossy())
-        .expect_err("#293 a root-escaping objectKey must be refused");
+        .expect_err("#293 expected ObjectKeyEscape; a root-escaping objectKey must be refused");
     assert!(
         matches!(error, WorkspaceSnapshotError::ObjectKeyEscape),
         "#293 expected ObjectKeyEscape, got {error:?}"
@@ -759,7 +789,7 @@ fn restore_refuses_object_keys_outside_the_snapshot_root() {
         "#293 refusal message"
     );
     assert_eq!(
-        fs::read(target.join("ok.txt")).unwrap(),
+        fs::read(target.join("ok.txt")).expect("#293 the pre-refusal entry restored a file"),
         b"inside-root\n",
         "#293 the in-root entry before the refusal still restored"
     );
@@ -774,7 +804,7 @@ fn restore_refuses_object_keys_outside_the_snapshot_root() {
     let target = run.0.join("target-abs");
     let error = provider
         .restore("esc-abs", &target.to_string_lossy())
-        .expect_err("#293 an absolute objectKey must be refused");
+        .expect_err("#293 expected ObjectKeyEscape; an absolute objectKey must be refused");
     assert!(
         matches!(error, WorkspaceSnapshotError::ObjectKeyEscape),
         "#293 expected ObjectKeyEscape, got {error:?}"
@@ -785,43 +815,45 @@ fn restore_refuses_object_keys_outside_the_snapshot_root() {
     );
 }
 
-/// #293 (registered divergence A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001): two
-/// recorder instances sharing one snapshot root and one capture key; the
-/// failing round's cleanup must not delete the other round's committed
-/// manifest/`_COMMITTED` (TS unlinks both unconditionally, Node v22.22.0
-/// probe `_tmp/20261026-issue-293/probe-b-concurrent.out`). Deterministic
-/// interleave, no sleeps: R2's workspace holds a big file (wide scan window)
-/// and a last-sorted unreadable directory (the failure point); the main
-/// thread anchors on R2's `.tmp-*` directory (it passed the marker checks and
-/// is inside the try block) before running R1 to completion.
+/// #293 (registered divergence A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001, R1
+/// correction): two recorder instances sharing one snapshot root and one
+/// capture key; the failing round's cleanup must not delete the other
+/// round's committed manifest/`_COMMITTED` (TS unlinks both
+/// unconditionally, Node v22.22.0 probe
+/// `_tmp/20261026-issue-293/probe-b-concurrent.out`). The interleave is
+/// deterministic, not inferred from file times: R2's recorder holds the
+/// `BeforeFailureCleanup` seam (it already passed the marker checks and
+/// failed the scan at the last-sorted unreadable directory), the main thread
+/// runs R1 to a full commit, and only then releases R2's cleanup — so the
+/// cleanup provably runs after the other round's commit. No sleeps, no
+/// big-file timing window.
 #[test]
 fn concurrent_failure_cleanup_keeps_other_rounds_commit() {
     if rustix::process::geteuid().as_raw() == 0 {
         // Root reads through mode-000 directories; the failure point would
-        // not trigger (same skip as the TS probe).
+        // not trigger (same skip as the TS probe). Loud, never a silent
+        // pass: the `cleanup-unconditional-delete` negative control also
+        // refuses to run as root.
+        eprintln!("concurrent_failure_cleanup_keeps_other_rounds_commit: skipped as root");
         return;
     }
     let run = Scratch::new();
     let snapshot_root = run.0.join("snapshots");
     fs::create_dir_all(&snapshot_root).unwrap();
 
-    // R2 (will fail): a-bigfile is copied during the scan, zzz-blocked sorts
-    // last and fails the scandir with EACCES.
+    // R2 (will fail): zzz-blocked sorts last and fails the scandir with
+    // EACCES. The guard restores the mode on every exit path (a mode-000
+    // directory would also defeat Scratch's recursive removal).
     let slow_ws = run.0.join("ws-slow");
-    fs::create_dir_all(slow_ws.join("zzz-blocked")).unwrap();
-    fs::write(slow_ws.join("zzz-blocked/inner.txt"), b"x").unwrap();
-    fs::write(slow_ws.join("a-bigfile"), vec![b'a'; 64 * 1024 * 1024]).unwrap();
-    let mut blocked = fs::metadata(slow_ws.join("zzz-blocked"))
-        .expect("#293 stat the blocking directory")
-        .permissions();
-    blocked.set_mode(0o000);
-    fs::set_permissions(slow_ws.join("zzz-blocked"), blocked)
-        .expect("#293 make the blocking directory unreadable");
+    fs::create_dir_all(slow_ws.join("zzz-blocked")).expect("#293 create the blocking directory");
+    fs::write(slow_ws.join("zzz-blocked/inner.txt"), b"x")
+        .expect("#293 seed the blocking directory");
+    let _blocked = ModeGuard::restrict(&slow_ws.join("zzz-blocked"));
 
     // R1 (will succeed): a single small file.
     let fast_ws = run.0.join("ws-fast");
-    fs::create_dir_all(&fast_ws).unwrap();
-    fs::write(fast_ws.join("only.txt"), b"fast\n").unwrap();
+    fs::create_dir_all(&fast_ws).expect("#293 create R1's workspace");
+    fs::write(fast_ws.join("only.txt"), b"fast\n").expect("#293 seed R1's workspace");
 
     let input = |workspace_dir: &Path, run_id: &str| WorkspaceSnapshotInput {
         workspace_id: "w".into(),
@@ -837,45 +869,47 @@ fn concurrent_failure_cleanup_keeps_other_rounds_commit() {
         root: run.0.to_string_lossy().into_owned(),
         snapshot_root: snapshot_root.to_string_lossy().into_owned(),
     };
-    let r2 = ContentAddressedWorkspaceSnapshotRecorder::new(config.clone());
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let release_rx = Arc::new(std::sync::Mutex::new(release_rx));
+    let hook: SnapshotRoundHook = Arc::new(move |stage| {
+        if stage == SnapshotRoundStage::BeforeFailureCleanup {
+            entered_tx
+                .send(())
+                .expect("#293 the failure-cleanup seam channel stays open");
+            release_rx
+                .lock()
+                .expect("#293 the failure-cleanup seam mutex")
+                .recv()
+                .expect("#293 the failure-cleanup release signal arrives");
+        }
+    });
+    let r2 = ContentAddressedWorkspaceSnapshotRecorder::new_with_hook(config.clone(), hook);
     let r1 = ContentAddressedWorkspaceSnapshotRecorder::new(config.clone());
     let slow_input = input(&slow_ws, "run-r2");
     let fast_input = input(&fast_ws, "run-r1");
     let r2handle = thread::spawn(move || r2.capture_pre_user(&slow_input));
 
-    // Anchor: R2's .tmp-* proves it passed the committed/failed marker checks
-    // and is inside the try block scanning the big file. 15s termination; a
-    // finished R2 before the anchor is a broken probe, not a pass.
-    let partition = snapshot_root
-        .join("workspaces/w/sessions/s/snapshots")
-        .join(sha256_hex(b"s\0t\0pre_user"));
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        if let Ok(entries) = fs::read_dir(&partition)
-            && entries
-                .flatten()
-                .any(|entry| entry.file_name().to_string_lossy().starts_with(".tmp-"))
-        {
-            break;
-        }
-        assert!(
-            !r2handle.is_finished(),
-            "#293 R2 settled before the .tmp-* anchor; the interleave probe is broken"
-        );
-        assert!(
-            Instant::now() < deadline,
-            "#293 the .tmp-* anchor never appeared within 15s"
-        );
-        thread::yield_now();
-    }
-
+    // Deterministic interleave: R2 holds at the failure-cleanup seam (it
+    // passed the marker checks and failed inside the try block) until R1
+    // has fully committed. 15s bound; a missing signal is a broken probe,
+    // never a pass.
+    entered_rx
+        .recv_timeout(Duration::from_secs(15))
+        .expect("#293 R2 reached the failure-cleanup seam (marker checks passed, scan failed)");
     let r1result = r1
         .capture_pre_user(&fast_input)
         .expect("#293 R1 must commit its capture");
+    release_tx
+        .send(())
+        .expect("#293 release the failure-cleanup seam");
     let r2result = r2handle
         .join()
         .expect("#293 R2 must not panic")
         .expect("#293 R2 must return a failed result, not a hard error");
+    let partition = snapshot_root
+        .join("workspaces/w/sessions/s/snapshots")
+        .join(sha256_hex(b"s\0t\0pre_user"));
     let manifest_path = partition.join("manifest.json");
     let committed_path = partition.join("_COMMITTED");
     let failed_path = partition.join("_FAILED.json");
@@ -883,7 +917,7 @@ fn concurrent_failure_cleanup_keeps_other_rounds_commit() {
     assert_eq!(
         r1result.state,
         SnapshotState::Committed,
-        "#293 R1 committed before R2 failed"
+        "#293 R1 committed before R2's cleanup ran"
     );
     assert_eq!(
         r2result.state,
@@ -906,21 +940,6 @@ fn concurrent_failure_cleanup_keeps_other_rounds_commit() {
         failed.contains("EACCES"),
         "#293 R2's marker records the scandir failure: {failed}"
     );
-    // Interleave proof: R1's manifest predates R2's failure marker. If this
-    // ever reports the opposite, the window closed early and the run must be
-    // repeated rather than counted as a pass.
-    let manifest_mtime = fs::metadata(&manifest_path)
-        .expect("#293 R1 manifest metadata")
-        .modified()
-        .expect("#293 R1 manifest mtime");
-    let failed_mtime = fs::metadata(&failed_path)
-        .expect("#293 failure marker metadata")
-        .modified()
-        .expect("#293 failure marker mtime");
-    assert!(
-        manifest_mtime < failed_mtime,
-        "#293 interleave did not hold (R1 wrote after R2 failed); rerun the test"
-    );
     // Both rounds removed their own temporary directories.
     if let Ok(entries) = fs::read_dir(&partition) {
         let leftovers: Vec<_> = entries
@@ -942,6 +961,340 @@ fn concurrent_failure_cleanup_keeps_other_rounds_commit() {
     assert_eq!(
         r3result.manifest_path.as_deref(),
         Some(manifest_path.to_string_lossy().as_ref())
+    );
+}
+
+/// #293 fix-r1 (registered divergence A6.6-SNAPSHOT-OBJECTKEY-001-R1): the
+/// lexical boundary check cannot see symlinks, and a canonicalize-then-read
+/// leaves a swap-link race. A link anywhere below the snapshot root — final
+/// component, mid-directory, dangling, even pointing back inside the root —
+/// must be refused with ObjectKeyEscape, never followed into root-external
+/// content.
+#[test]
+fn restore_refuses_object_keys_through_symlinks() {
+    let run = Scratch::new();
+    let root = run.0.join("snapshots");
+    let manifest_dir = root.join("workspaces/w/sessions/s/snapshots");
+    fs::create_dir_all(manifest_dir.join("esc-link")).expect("#293 create the esc-link partition");
+    fs::create_dir_all(root.join("objects/real")).expect("#293 create the objects dir");
+    fs::write(root.join("objects/ok.txt"), b"inside-root\n").expect("#293 seed the in-root object");
+    let outside_dir = run.0.join("outside-dir");
+    fs::create_dir_all(&outside_dir).expect("#293 create the root-external dir");
+    fs::write(outside_dir.join("secret.txt"), b"SECRET-outside\n")
+        .expect("#293 seed the root-external secret");
+
+    // A final-component link to outside, a mid-directory link, a dangling
+    // link, and a link that points back inside the root: all refused (the
+    // real target of a link is never the key's own path).
+    symlink(
+        outside_dir
+            .join("secret.txt")
+            .to_string_lossy()
+            .into_owned(),
+        root.join("objects/link-out"),
+    )
+    .expect("#293 plant the outside-pointing link");
+    symlink(
+        outside_dir.to_string_lossy().into_owned(),
+        root.join("objects/dir-link"),
+    )
+    .expect("#293 plant the mid-directory link");
+    symlink(
+        run.0.join("nowhere").to_string_lossy().into_owned(),
+        root.join("objects/dangling"),
+    )
+    .expect("#293 plant the dangling link");
+    symlink("ok.txt", root.join("objects/link-in")).expect("#293 plant the in-root-pointing link");
+
+    let manifest = |snapshot_id: &str, object_key: &str| {
+        format!(
+            "{{\"snapshotId\":\"{snapshot_id}\",\"workspaceId\":\"w\",\"sessionId\":\"s\",\
+             \"turnId\":\"t\",\"runId\":\"r\",\"phase\":\"pre_user\",\
+             \"createdAt\":\"2026-01-01T00:00:00.000Z\",\"entries\":[\
+             {{\"path\":\"out.txt\",\"entryType\":\"file\",\"size\":7,\"objectKey\":\"{object_key}\"}}]}}"
+        )
+    };
+    let cases = [
+        ("esc-link", "objects/link-out"),
+        ("esc-mid", "objects/dir-link/secret.txt"),
+        ("esc-dangling", "objects/dangling"),
+        ("esc-inroot", "objects/link-in"),
+    ];
+    for (id, key) in cases {
+        fs::create_dir_all(manifest_dir.join(id))
+            .unwrap_or_else(|error| panic!("#293 create the {id} partition: {error}"));
+        fs::write(
+            manifest_dir.join(id).join("manifest.json"),
+            manifest(id, key),
+        )
+        .unwrap_or_else(|error| panic!("#293 seed the {id} manifest: {error}"));
+    }
+    let root_text = root.to_string_lossy().into_owned();
+    let provider = create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
+        root: root_text.clone(),
+        snapshot_root: root_text,
+    });
+    for (id, key) in cases {
+        let target = run.0.join(format!("target-{id}"));
+        let error = provider
+            .restore(id, &target.to_string_lossy())
+            .expect_err("#293 expected ObjectKeyEscape; a symlinked objectKey must be refused");
+        assert!(
+            matches!(error, WorkspaceSnapshotError::ObjectKeyEscape),
+            "#293 expected ObjectKeyEscape for {key}, got {error:?}"
+        );
+        assert!(
+            !target.join("out.txt").exists(),
+            "#293 nothing behind a symlinked key may be written: {key}"
+        );
+    }
+}
+
+/// #293 fix-r1 (A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R1): the ownership of a
+/// published manifest is captured from the temporary file before the rename,
+/// so a concurrent round that renames over the shared path between this
+/// round's rename and its failure is not recorded as ours — the failing
+/// round's cleanup must leave that manifest alone. The
+/// `AfterManifestRename` seam lands the concurrent rename exactly in the
+/// window the old post-rename stat occupied (Codex P0-2).
+#[test]
+fn failing_round_keeps_manifest_renamed_over_by_concurrent_round() {
+    let run = Scratch::new();
+    let snapshot_root = run.0.join("snapshots");
+    let workspace = run.0.join("ws");
+    fs::create_dir_all(&workspace).expect("#293 create the workspace");
+    fs::write(workspace.join("a.txt"), b"a\n").expect("#293 seed the workspace");
+    let partition = snapshot_root
+        .join("workspaces/w/sessions/s/snapshots")
+        .join(sha256_hex(b"s\0t\0pre_user"));
+    let manifest_path = partition.join("manifest.json");
+    let foreign = run.0.join("foreign.json");
+    fs::write(&foreign, b"R1-manifest\n").expect("#293 seed the concurrent round's manifest");
+    let hooked_path = manifest_path.clone();
+    let hooked_partition = partition.clone();
+    let seam_hit = Arc::new(AtomicBool::new(false));
+    let hit = seam_hit.clone();
+    let hook: SnapshotRoundHook = Arc::new(move |stage| {
+        if stage == SnapshotRoundStage::AfterManifestRename {
+            // The concurrent round publishes over the shared path while this
+            // round sits between its rename and its failure.
+            fs::rename(&foreign, &hooked_path)
+                .expect("#293 the concurrent round renames over the manifest path");
+            // The committed marker target becomes a directory only now, after
+            // the round's early-exit marker check: the marker rename fails
+            // deterministically and the round enters failure cleanup.
+            fs::create_dir_all(hooked_partition.join("_COMMITTED"))
+                .expect("#293 block the committed marker with a directory");
+            hit.store(true, Ordering::SeqCst);
+        }
+    });
+    let input = WorkspaceSnapshotInput {
+        workspace_id: "w".into(),
+        session_id: "s".into(),
+        turn_id: "t".into(),
+        run_id: "run-r2".into(),
+        workspace_dir: workspace.to_string_lossy().into_owned(),
+        workspace_stable: None,
+        failure_kind: None,
+        failure_reason: None,
+    };
+    let recorder = ContentAddressedWorkspaceSnapshotRecorder::new_with_hook(
+        WorkspaceSnapshotConfig {
+            root: run.0.to_string_lossy().into_owned(),
+            snapshot_root: snapshot_root.to_string_lossy().into_owned(),
+        },
+        hook,
+    );
+    let result = recorder
+        .capture_pre_user(&input)
+        .expect("#293 the failing round still returns a result, not a hard error");
+    assert_eq!(result.state, SnapshotState::Failed, "#293 the round fails");
+    assert!(
+        seam_hit.load(Ordering::SeqCst),
+        "#293 the AfterManifestRename seam ran"
+    );
+    assert_eq!(
+        fs::read(&manifest_path).expect("#293 the concurrent round's manifest is readable"),
+        b"R1-manifest\n",
+        "#293 a manifest renamed over by a concurrent round survives the failing round's cleanup"
+    );
+}
+
+/// #293 fix-r1 (A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R1): the delete goes
+/// through this round's private graveyard name, so a concurrent publish that
+/// lands in the old check-then-unlink window (identity verified, unlink not
+/// yet executed) cannot lose its file: the shared path is already empty when
+/// the window opens (Codex P0-3).
+#[test]
+fn owned_delete_window_cannot_hit_a_concurrent_publish() {
+    let run = Scratch::new();
+    let snapshot_root = run.0.join("snapshots");
+    let workspace = run.0.join("ws");
+    fs::create_dir_all(&workspace).expect("#293 create the workspace");
+    fs::write(workspace.join("a.txt"), b"a\n").expect("#293 seed the workspace");
+    let partition = snapshot_root
+        .join("workspaces/w/sessions/s/snapshots")
+        .join(sha256_hex(b"s\0t\0pre_user"));
+    let manifest_path = partition.join("manifest.json");
+    let foreign = run.0.join("foreign.json");
+    fs::write(&foreign, b"R1-manifest\n").expect("#293 seed the concurrent round's manifest");
+    let hooked_path = manifest_path.clone();
+    let hooked_partition = partition.clone();
+    let seam_hit = Arc::new(AtomicBool::new(false));
+    let hit = seam_hit.clone();
+    let hook: SnapshotRoundHook = Arc::new(move |stage| {
+        match stage {
+            SnapshotRoundStage::AfterManifestRename => {
+                // The committed marker target becomes a directory only after
+                // the round's early-exit marker check: the marker rename
+                // fails deterministically and the round enters failure
+                // cleanup holding its own manifest identity.
+                fs::create_dir_all(hooked_partition.join("_COMMITTED"))
+                    .expect("#293 block the committed marker with a directory");
+            }
+            SnapshotRoundStage::BeforeOwnedUnlink => {
+                // The concurrent round publishes while this round is between
+                // the identity check and the delete of its own file.
+                fs::rename(&foreign, &hooked_path)
+                    .expect("#293 the concurrent round publishes into the delete window");
+                hit.store(true, Ordering::SeqCst);
+            }
+            _ => {}
+        }
+    });
+    let input = WorkspaceSnapshotInput {
+        workspace_id: "w".into(),
+        session_id: "s".into(),
+        turn_id: "t".into(),
+        run_id: "run-r2".into(),
+        workspace_dir: workspace.to_string_lossy().into_owned(),
+        workspace_stable: None,
+        failure_kind: None,
+        failure_reason: None,
+    };
+    let recorder = ContentAddressedWorkspaceSnapshotRecorder::new_with_hook(
+        WorkspaceSnapshotConfig {
+            root: run.0.to_string_lossy().into_owned(),
+            snapshot_root: snapshot_root.to_string_lossy().into_owned(),
+        },
+        hook,
+    );
+    let result = recorder
+        .capture_pre_user(&input)
+        .expect("#293 the failing round still returns a result, not a hard error");
+    assert_eq!(result.state, SnapshotState::Failed, "#293 the round fails");
+    assert!(
+        seam_hit.load(Ordering::SeqCst),
+        "#293 the BeforeOwnedUnlink seam ran"
+    );
+    assert_eq!(
+        fs::read(&manifest_path).expect("#293 the concurrent round's manifest is readable"),
+        b"R1-manifest\n",
+        "#293 a publish inside the old delete window survives the cleanup"
+    );
+}
+
+/// #293 fix-r1 (A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R1): the committed
+/// marker's ownership is captured from its temporary file before the
+/// publishing rename, so a concurrent round renaming over `_COMMITTED`
+/// before this round's later failure is not deleted. The failure point after
+/// the committed marker is the temporary-directory removal, made to fail by
+/// a read-only temporary directory (root euid cannot trigger it).
+#[test]
+fn committed_marker_ownership_survives_concurrent_overwrite() {
+    if rustix::process::geteuid().as_raw() == 0 {
+        eprintln!("committed_marker_ownership_survives_concurrent_overwrite: skipped as root");
+        return;
+    }
+    let run = Scratch::new();
+    let snapshot_root = run.0.join("snapshots");
+    let workspace = run.0.join("ws");
+    fs::create_dir_all(&workspace).expect("#293 create the workspace");
+    fs::write(workspace.join("a.txt"), b"a\n").expect("#293 seed the workspace");
+    let partition = snapshot_root
+        .join("workspaces/w/sessions/s/snapshots")
+        .join(sha256_hex(b"s\0t\0pre_user"));
+    let committed_path = partition.join("_COMMITTED");
+    let foreign = run.0.join("foreign-committed");
+    fs::write(&foreign, b"R1-committed\n").expect("#293 seed the concurrent round's marker");
+    let hooked_committed = committed_path.clone();
+    let hooked_partition = partition.clone();
+    // The temporary directory is uuid-private and created inside the
+    // capture; the seam registers it so the guard can restore its mode on
+    // every exit path.
+    let restricted = Arc::new(std::sync::Mutex::new(Vec::<PathBuf>::new()));
+    let registered = restricted.clone();
+    let seam_hit = Arc::new(AtomicBool::new(false));
+    let hit = seam_hit.clone();
+    let hook: SnapshotRoundHook = Arc::new(move |stage| {
+        if stage == SnapshotRoundStage::AfterCommittedMarker {
+            // Fail the last commit step: the temporary directory holds a file
+            // and is read-only, so its removal fails with EACCES.
+            let temporary = fs::read_dir(&hooked_partition)
+                .expect("#293 list the partition for the temporary directory")
+                .flatten()
+                .find(|entry| entry.file_name().to_string_lossy().starts_with(".tmp-"))
+                .expect("#293 the round's temporary directory exists at the seam")
+                .path();
+            fs::write(temporary.join("blocked.txt"), b"x")
+                .expect("#293 seed the temporary directory");
+            let mut mode = fs::metadata(&temporary)
+                .expect("#293 stat the temporary directory")
+                .permissions();
+            mode.set_mode(0o500);
+            fs::set_permissions(&temporary, mode)
+                .expect("#293 make the temporary directory read-only");
+            registered
+                .lock()
+                .expect("#293 the seam's registry mutex")
+                .push(temporary);
+            // The concurrent round publishes over the committed marker.
+            fs::rename(&foreign, &hooked_committed)
+                .expect("#293 the concurrent round renames over the committed marker");
+            hit.store(true, Ordering::SeqCst);
+        }
+    });
+    let input = WorkspaceSnapshotInput {
+        workspace_id: "w".into(),
+        session_id: "s".into(),
+        turn_id: "t".into(),
+        run_id: "run-r2".into(),
+        workspace_dir: workspace.to_string_lossy().into_owned(),
+        workspace_stable: None,
+        failure_kind: None,
+        failure_reason: None,
+    };
+    let recorder = ContentAddressedWorkspaceSnapshotRecorder::new_with_hook(
+        WorkspaceSnapshotConfig {
+            root: run.0.to_string_lossy().into_owned(),
+            snapshot_root: snapshot_root.to_string_lossy().into_owned(),
+        },
+        hook,
+    );
+    let result = recorder
+        .capture_pre_user(&input)
+        .expect("#293 the failing round still returns a result, not a hard error");
+    assert_eq!(result.state, SnapshotState::Failed, "#293 the round fails");
+    assert!(
+        seam_hit.load(Ordering::SeqCst),
+        "#293 the AfterCommittedMarker seam ran"
+    );
+    // Restore the restricted directory before Scratch tries to remove it.
+    for path in restricted.lock().expect("#293 read the registry").iter() {
+        let mut mode = fs::metadata(path)
+            .expect("#293 stat the restricted temporary directory")
+            .permissions();
+        mode.set_mode(0o700);
+        fs::set_permissions(path, mode).expect("#293 restore the restricted temporary directory");
+    }
+    assert_eq!(
+        fs::read(&committed_path).expect("#293 the concurrent round's marker is readable"),
+        b"R1-committed\n",
+        "#293 a committed marker renamed over by a concurrent round survives the cleanup"
+    );
+    assert!(
+        !partition.join("manifest.json").exists(),
+        "#293 the round's own manifest is still removed"
     );
 }
 
