@@ -165,26 +165,29 @@ class Connection {
     }
     if (opcode === 0xa) return true; // unsolicited pong: ignore
     if (opcode !== 0x1) throw new Error('binary frames are not the gateway contract');
-    let frame;
+    // Named `parsed`, never `frame`: a local `let frame` shadows the module-level
+    // frame() encoder across the whole function scope, so the ping branch above
+    // would hit the TDZ and close the connection (#933 review P1).
+    let parsed;
     try {
-      frame = JSON.parse(payload.toString('utf8'));
+      parsed = JSON.parse(payload.toString('utf8'));
     } catch {
       sendClose(this.socket, 4002, 'invalid_frame');
       this.destroy();
       return false;
     }
     if (!this.authed) {
-      if (frame?.type !== 'hello') {
+      if (parsed?.type !== 'hello') {
         sendClose(this.socket, 4001, 'hello_required');
         this.destroy();
         return false;
       }
-      if (frame.protocolVersion !== PROTOCOL_VERSION) {
+      if (parsed.protocolVersion !== PROTOCOL_VERSION) {
         sendClose(this.socket, 4001, 'protocol_mismatch');
         this.destroy();
         return false;
       }
-      if (frame.token !== token) {
+      if (parsed.token !== token) {
         sendClose(this.socket, 4003, 'auth_failed');
         this.destroy();
         return false;
@@ -195,18 +198,18 @@ class Connection {
       }));
       return true;
     }
-    if (frame?.type !== 'request' || typeof frame.id !== 'string') {
+    if (parsed?.type !== 'request' || typeof parsed.id !== 'string') {
       sendClose(this.socket, 4002, 'invalid_frame');
       this.destroy();
       return false;
     }
-    if (frame.method === 'list_sessions') {
+    if (parsed.method === 'list_sessions') {
       sendText(this.socket, JSON.stringify({
-        type: 'response', id: frame.id, ok: true, result: { sessions: SESSIONS },
+        type: 'response', id: parsed.id, ok: true, result: { sessions: SESSIONS },
       }));
     } else {
       sendText(this.socket, JSON.stringify({
-        type: 'response', id: frame.id, ok: false, error: { code: 'method_not_found', message: `Unknown method: ${frame.method}` },
+        type: 'response', id: parsed.id, ok: false, error: { code: 'method_not_found', message: `Unknown method: ${parsed.method}` },
       }));
     }
     return true;

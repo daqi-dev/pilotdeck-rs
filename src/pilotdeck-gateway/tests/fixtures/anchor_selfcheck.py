@@ -63,6 +63,8 @@ UNSUPPORTED = {
     'test_negative_suite.py': 'unit tests of the shared mutation suite runner',
     'failure-guard/verdict.py': 'failure-guard verdict helper, no source replacement table',
     'failure-guard/test_verdict.py': 'unit tests of the failure-guard verdict helper',
+    'cli-parity-mock-gateway/test_negative_controls.py':
+        'kill-judge unit tests on synthetic unittest logs, no product mutation table',
     'session-domain-cleanup/check_cleanup.py': 'runtime process-census/probe monkeypatch controls; snapshots is an iterator of PID sets, not source bytes; no source replacement anchors',
     'session-domain-cleanup/launcher.py': 'process-group behavior fixture with bounded children, no source mutation definitions',
     'edgeclaw-llm/test_controls.py': 'unit tests of the shared process/source guard',

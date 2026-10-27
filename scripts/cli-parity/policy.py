@@ -2,13 +2,14 @@
 import json
 from pathlib import Path
 
-from common import SCRIPT
+from common import MOCK_PORT, SCRIPT
 
 # #933 mock-gateway scenarios append exactly this rule after (deny network*):
 # the apparatus-owned loopback port is the only network surface they get. The
 # host literal must be "localhost" ("127.0.0.1" makes sandbox-exec reject the
-# profile: host must be * or localhost; verified by the D0-pr2 probe).
-MOCK_GATEWAY_ALLOW = '(allow network-outbound (remote ip "localhost:28999"))'
+# profile: host must be * or localhost; verified by the D0-pr2 probe). The port
+# is derived from MOCK_PORT so the rule cannot drift away from environment().
+MOCK_GATEWAY_ALLOW = f'(allow network-outbound (remote ip "localhost:{MOCK_PORT}"))'
 
 
 def sandbox_profile(runtime, baseline, binary, side, mock_gateway=False):

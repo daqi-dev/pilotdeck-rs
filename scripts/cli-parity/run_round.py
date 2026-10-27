@@ -316,98 +316,97 @@ def preflight(output, runtime, profile, node):
     return evidence
 
 
-def ensure_loopback_free(port):
-    """The mock must own its port exclusively before any round starts (#933:
-    an occupied port blocks the whole run; there is no fallback port)."""
-    probe = socket.socket()
-    try:
-        probe.bind(('127.0.0.1', port))
-    except OSError as error:
-        raise Blocked(f'mock gateway port {port} is occupied; refusing to run: {error}') from error
-    finally:
-        probe.close()
-
-
 def mock_gateway_preflight(output, runtime, node, profile):
     """Start the #933 mock gateway outside the sandbox, then prove the relaxed
     profile still denies every network surface except 127.0.0.1:28999.
 
+    The port is owned by the mock's own bind, never by a check-then-use
+    preflight: readiness is the mock's own ``listening`` stdout line (Node only
+    prints it from the listen callback, i.e. after the kernel committed the
+    bind), so a competitor that grabbed 28999 makes the owned mock exit and the
+    whole round refuse. Every step after spawn() is cleanup-protected: any
+    exception or signal in that window stops the registered mock before
+    propagating, so a dead or half-started mock can never back a later round.
+
     Returns (proc, evidence); the caller stops the registered process inside
-    the parity lock. Any failure stops the mock before propagating, so a dead
-    or half-started mock can never back a later round."""
-    ensure_loopback_free(MOCK_PORT)
+    the parity lock."""
     logs = output / 'mock-gateway'
     logs.mkdir()
-    stdout_log = (logs / 'stdout.log').open('wb')
-    stderr_log = (logs / 'stderr.log').open('wb')
-    proc = spawn([node, str(SCRIPT / 'mock_gateway.mjs'), str(MOCK_PORT)],
-                 env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C', 'PILOTDECK_MOCK_TOKEN': TOKEN},
-                 stdin=subprocess.DEVNULL, stdout=stdout_log, stderr=stderr_log,
-                 start_new_session=True, umask=0o077)
-    evidence = {'status': 'BLOCKED', 'errors': [], 'profilePath': str(profile),
-                'profileText': profile.read_text(), 'profileSha256': digest(profile),
-                'probeProfileSha256': digest(profile), 'mockProcess': {
-                    'pid': proc.pid, 'argv': [node, str(SCRIPT / 'mock_gateway.mjs'), str(MOCK_PORT)],
-                    'token': {'redacted': True, 'length': len(TOKEN),
-                              'sha256': hashlib.sha256(TOKEN.encode()).hexdigest()}}}
-    try:
-        deadline = time.monotonic() + 10
-        while True:
-            if proc.poll() is not None:
-                raise Blocked(f'mock gateway exited before readiness: code {proc.returncode}')
-            try:
-                with socket.create_connection(('127.0.0.1', MOCK_PORT), timeout=0.25):
-                    break
-            except OSError:
-                if time.monotonic() >= deadline:
-                    raise Blocked('mock gateway did not accept connections within 10s')
-                time.sleep(0.05)
-        # The probe script itself must be readable under the relaxed profile;
-        # only runtime paths are, so run the copy inside the runtime fixture.
-        probe_script = runtime / 'gateway-isolation-probe.mjs'
-        shutil.copyfile(SCRIPT / 'gateway_isolation_probe.mjs', probe_script)
-        # Keep the path short: macOS sun_path is 104 bytes.
-        unix_path = runtime / 'tmp' / 'gw-probe.sock'
-        listener = socket.socket(socket.AF_UNIX)
-        listener.bind(str(unix_path))
-        listener.listen(4)
+    # Node writes stdout to a file synchronously on POSIX, so this line is
+    # observable in the log as soon as the listen callback fires.
+    listening = f'mock-gateway listening on 127.0.0.1:{MOCK_PORT}'
+    proc = None
+    with (logs / 'stdout.log').open('wb') as stdout_log, (logs / 'stderr.log').open('wb') as stderr_log:
         try:
-            record, streams, _ = capture(['/usr/bin/sandbox-exec', '-f', str(profile), node,
-                                          str(probe_script), str(MOCK_PORT), '18789', '29000', str(unix_path)],
-                                         environment(runtime, SCENARIOS[0]), runtime / 'project', b'', 10)
-        finally:
-            listener.close()
-            unix_path.unlink(missing_ok=True)
-        evidence['exitCode'] = record['exitCode']
-        evidence['audit'] = record['audit']
-        evidence['probeCleanup'] = {'unixSocketRemoved': not unix_path.exists()}
-        if not record['audit']['allStopped']:
-            evidence['errors'].append('gateway isolation probe cleanup failed')
-        if record['status'] != 'DONE' or record['exitCode'] != 0:
-            evidence['errors'].append('gateway isolation probe failed: '
-                                      + streams['stderr'].decode(errors='replace')[:1000])
-        else:
+            proc = spawn([node, str(SCRIPT / 'mock_gateway.mjs'), str(MOCK_PORT)],
+                         env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C', 'PILOTDECK_MOCK_TOKEN': TOKEN},
+                         stdin=subprocess.DEVNULL, stdout=stdout_log, stderr=stderr_log,
+                         start_new_session=True, umask=0o077)
+            # Everything past spawn() is inside the guard: a profile read
+            # failure or a delivered signal must still stop the mock.
+            evidence = {'status': 'BLOCKED', 'errors': [], 'profilePath': str(profile),
+                        'profileText': profile.read_text(), 'profileSha256': digest(profile),
+                        'probeProfileSha256': digest(profile), 'mockProcess': {
+                            'pid': proc.pid, 'argv': [node, str(SCRIPT / 'mock_gateway.mjs'), str(MOCK_PORT)],
+                            'token': {'redacted': True, 'length': len(TOKEN),
+                                      'sha256': hashlib.sha256(TOKEN.encode()).hexdigest()}}}
+            deadline = time.monotonic() + 10
+            while listening not in (logs / 'stdout.log').read_text(errors='replace'):
+                if proc.poll() is not None:
+                    raise Blocked('mock gateway exited before listening: code '
+                                 + str(proc.returncode) + '; stderr: '
+                                 + (logs / 'stderr.log').read_text(errors='replace')[:200])
+                if time.monotonic() >= deadline:
+                    raise Blocked('mock gateway did not confirm listening within 10s')
+                time.sleep(0.05)
+            # The probe script itself must be readable under the relaxed profile;
+            # only runtime paths are, so run the copy inside the runtime fixture.
+            probe_script = runtime / 'gateway-isolation-probe.mjs'
+            shutil.copyfile(SCRIPT / 'gateway_isolation_probe.mjs', probe_script)
+            # Keep the path short: macOS sun_path is 104 bytes.
+            unix_path = runtime / 'tmp' / 'gw-probe.sock'
+            listener = socket.socket(socket.AF_UNIX)
+            listener.bind(str(unix_path))
+            listener.listen(4)
             try:
-                evidence['gatewayProbe'] = json.loads(streams['stdout'])
-            except ValueError:
-                evidence['errors'].append('gateway isolation probe emitted no JSON report')
-        if not evidence['errors']:
-            evidence['status'] = 'PASS'
-        save(output / 'mock-gateway.json', evidence)
-        if not record['audit']['allStopped']:
-            raise CleanupBlocked('gateway isolation probe cleanup failed; retaining shared lock')
-        if evidence['status'] != 'PASS':
-            raise Blocked('; '.join(evidence['errors']))
-        return proc, evidence
-    except BaseException:
-        # The mock is never left running for a later round on any failure path.
-        audit = stop_group(proc)
-        if not audit['allStopped']:
-            raise CleanupBlocked('mock gateway cleanup failed; retaining shared lock')
-        raise
-    finally:
-        stdout_log.close()
-        stderr_log.close()
+                record, streams, _ = capture(['/usr/bin/sandbox-exec', '-f', str(profile), node,
+                                              str(probe_script), str(MOCK_PORT), '18789', '29000', str(unix_path)],
+                                             environment(runtime, SCENARIOS[0]), runtime / 'project', b'', 10)
+            finally:
+                listener.close()
+                unix_path.unlink(missing_ok=True)
+            # The probe reached the port; the live listener must still be the
+            # owned mock, not a replacement that grabbed a died mock's port.
+            if proc.poll() is not None:
+                raise Blocked(f'mock gateway exited after readiness: code {proc.returncode}')
+            evidence['exitCode'] = record['exitCode']
+            evidence['audit'] = record['audit']
+            evidence['probeCleanup'] = {'unixSocketRemoved': not unix_path.exists()}
+            if not record['audit']['allStopped']:
+                evidence['errors'].append('gateway isolation probe cleanup failed')
+            if record['status'] != 'DONE' or record['exitCode'] != 0:
+                evidence['errors'].append('gateway isolation probe failed: '
+                                          + streams['stderr'].decode(errors='replace')[:1000])
+            else:
+                try:
+                    evidence['gatewayProbe'] = json.loads(streams['stdout'])
+                except ValueError:
+                    evidence['errors'].append('gateway isolation probe emitted no JSON report')
+            if not evidence['errors']:
+                evidence['status'] = 'PASS'
+            save(output / 'mock-gateway.json', evidence)
+            if not record['audit']['allStopped']:
+                raise CleanupBlocked('gateway isolation probe cleanup failed; retaining shared lock')
+            if evidence['status'] != 'PASS':
+                raise Blocked('; '.join(evidence['errors']))
+            return proc, evidence
+        except BaseException:
+            # The mock is never left running for a later round on any failure path.
+            if proc is not None:
+                audit = stop_group(proc)
+                if not audit['allStopped']:
+                    raise CleanupBlocked('mock gateway cleanup failed; retaining shared lock')
+            raise
 
 
 def _denied_node_exec(record, streams):
