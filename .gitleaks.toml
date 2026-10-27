@@ -71,3 +71,14 @@ regexes = ['''MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDE9f7T40zuxF4f\\
 description = "#411 provider-http-boundaries 夹具 tls.json：一次性生成、仅给 127.0.0.1 本地 TLS 对拍的测试叶子私钥（CA 私钥已丢弃，证书不受任何系统信任），不是凭据；例外只限这把私钥的正文前缀，其他私钥仍会命中"
 regexTarget = "match"
 regexes = ['''MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg75Tbl\+vlDCYAgiJM''']
+
+[[allowlists]]
+description = "#280 metadata-from-env 夹具 sourceSha256：固定基线 cc7c4e6 公开源文件 ApiServerChannel.ts / api-server-render.ts / DiscordChannel.ts / DiscordSessionMapper.ts / discord-render.ts 的 SHA-256（路径含 Api / Discord 触发 generic-api-key、discord-api-token），可用 git show cc7c4e6:<path> | shasum -a 256 复算，不是凭据"
+regexTarget = "match"
+regexes = [
+  '''b24f2fcdab8c34c5d3382f72df3842f4eb4b55f26600c73c691e39d2bb0231a0''',
+  '''77fcaf9ce303019a61779a90657bc7a41cd084af1f057b85fdbfc03a6617bb7e''',
+  '''b556f9ea35db4489c087bed79844bcd01798a21d665ee02fe86eccc87fda25b1''',
+  '''3b260a848c48c218442735d0cf05ee5acc1570a1d0d75f468b7edd98e64a28a5''',
+  '''2b1a02ef3c67a4b45df532c169e2812d1dd9214fcfd95c5b32eaed5a282114de''',
+]
