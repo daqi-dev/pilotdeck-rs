@@ -1,0 +1,70 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/session/createAgentSession.ts": "39734d0e453044962e354764c121f866151c0c2b44268ab5112cf535dc537e52",
+    "src/agent/session/AgentSession.ts": "1d1f929fb6f08a5f0957b900cd0a1bfb65ae14080d7f26e971c141d2c5f1d789",
+    "src/agent/session/AgentSessionEventRecorder.ts": "4d8311f564a5d45bdbacaf7953f8a9d6fbae366c086ecf96162bdad027667ada",
+    "src/agent/turn/TurnRunner.ts": "8bf4dab4c8e40bba78781e6ad7352dda79e3fc52adf99b9504f1213e0157a5ac",
+    "src/agent/loop/AgentLoop.ts": "d9949a78b6396e58060f5b19d32d51ba15139bc9900de8bf9fe1c1231621aff2",
+    "src/agent/modules/transport/agentLoopSidecarClient.ts": "0897981fa636cdec2e1ac9f6f5b0b974d8cb49d6bcf154d5a74577a0f863eb11",
+    "src/agent/modules/transport/stdioAgentLoopSidecarConnection.ts": "2ec674ccf767533e0cd7c592d16bc0157a1c441c3c43d35e6288276300dc7e2f"
+  },
+  "cases": [
+    {
+      "name": "reject",
+      "held": null,
+      "cancelledWhileHeld": null,
+      "counts": {
+        "connect": 0,
+        "model": 0
+      },
+      "projection": [],
+      "terminal": null,
+      "error": "injected start failure"
+    },
+    {
+      "name": "cancel",
+      "held": {
+        "pending": true,
+        "connect": 0,
+        "model": 0
+      },
+      "cancelledWhileHeld": {
+        "pending": true,
+        "connect": 0,
+        "model": 0
+      },
+      "counts": {
+        "connect": 0,
+        "model": 0
+      },
+      "projection": [
+        "turn_started",
+        "input_accepted"
+      ],
+      "terminal": null,
+      "error": null
+    },
+    {
+      "name": "open",
+      "held": {
+        "pending": true,
+        "connect": 0,
+        "model": 0
+      },
+      "cancelledWhileHeld": null,
+      "counts": {
+        "connect": 1,
+        "model": 1
+      },
+      "projection": [
+        "turn_started",
+        "input_accepted",
+        "model_request_started",
+        "turn_completed"
+      ],
+      "terminal": "success",
+      "error": null
+    }
+  ]
+}

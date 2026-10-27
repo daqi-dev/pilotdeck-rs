@@ -22,7 +22,7 @@ fn case(name: &str) -> Vec<JsValue> {
 
 fn identity() -> ExecutionIdentity {
     parse_execute_request(&input(), &options(), vec![])
-        .unwrap()
+        .expect("#741i/#855: host pump identity/open setup must succeed")
         .0
         .identity
 }
@@ -46,8 +46,9 @@ async fn opened(
     let (inner, handler, mut rx) = buffered_handler(capacity);
     deliver(&handler, &host_event("model_request_started"), false)
         .await
-        .unwrap();
-    rx.try_recv().unwrap();
+        .expect("#741i/#855: host pump identity/open setup must succeed");
+    rx.try_recv()
+        .expect("#741i/#855: host pump identity/open setup must succeed");
     (inner, handler, rx)
 }
 
