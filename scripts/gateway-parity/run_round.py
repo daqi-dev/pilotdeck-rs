@@ -71,6 +71,133 @@ compare_module = _load('compare', common.SCRIPT / 'compare.py')
 TOKEN = 'gateway-parity-isolated-token'
 
 
+def start_owned(processes, log, entry, argv, **kwargs):
+    # Defer delivery until both in-memory ownership records exist. The child
+    # must undo the inherited mask before exec, so TERM still works normally.
+    with common.deferred_signals():
+        try:
+            proc = subprocess.Popen(argv, start_new_session=True,
+                                    preexec_fn=common.unblock_child_signals, **kwargs)
+        except BaseException:
+            log.close()
+            raise
+        common.LIVE_GROUPS.add(proc.pid)
+        entry.update(pid=proc.pid, processGroup=proc.pid)
+        processes.append((proc, log, entry))
+    return proc
+
+
+def wait_owned(proc, timeout):
+    """Observe completion without reaping: reserve the PID through cleanup.
+
+    Popen.wait/poll would release the leader PID before the last killpg. WNOWAIT
+    keeps it ours even after exit; lack of this capability fails closed.
+    """
+    if not all(hasattr(os, name) for name in ('waitid', 'WNOWAIT', 'WEXITED', 'WNOHANG')):
+        raise OSError('WNOWAIT is required to retain process-group ownership')
+    deadline = time.monotonic() + timeout
+    while True:
+        result = os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        if result is not None:
+            return result.si_status if result.si_code == os.CLD_EXITED else -result.si_status
+        if time.monotonic() >= deadline:
+            raise subprocess.TimeoutExpired(str(proc.pid), timeout)
+        time.sleep(.02)
+
+
+def stop_owned(proc):
+    """Attempt every cleanup step; failure keeps ownership and the shared lock."""
+    if proc.pid not in common.LIVE_GROUPS:
+        common.LIVE_GROUPS.add(proc.pid)
+        return {'allStopped': False, 'remaining': True, 'errors': ['process missing ownership registration']}
+    errors, zombie_denials = [], []
+    with common.deferred_signals():
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            leader_exited = False
+            try:
+                wait_owned(proc, 0)  # exited but unreaped is still held
+                leader_exited = True
+            except subprocess.TimeoutExpired:
+                pass  # running direct child is also held
+            except OSError as error:
+                errors.append(str(error))
+                break  # identity lost: never signal a reusable bare PGID
+            try:
+                os.killpg(proc.pid, sig)
+            except ProcessLookupError:
+                pass
+            except PermissionError as error:
+                # Darwin denies signals to an unreaped zombie-only group.
+                # EPERM itself proves nothing: defer only this known-held,
+                # already-exited case until reap + final ESRCH can prove absence.
+                (zombie_denials if leader_exited else errors).append(str(error))
+            except OSError as error:
+                errors.append(str(error))
+            try:
+                wait_owned(proc, 3)
+            except subprocess.TimeoutExpired:
+                pass
+            except OSError as error:
+                errors.append(str(error))
+        try:
+            wait_owned(proc, 0)
+            proc.wait(timeout=3)  # no more signals after reaping the held leader
+        except (OSError, subprocess.TimeoutExpired) as error:
+            errors.append(str(error))
+        deadline = time.monotonic() + 2
+        while True:
+            try:
+                os.killpg(proc.pid, 0)
+            except ProcessLookupError:
+                remaining = False
+                break
+            except OSError as error:
+                errors.append(str(error))
+                remaining = True
+                break
+            if time.monotonic() >= deadline:
+                remaining = True
+                break
+            time.sleep(.02)
+        if remaining or proc.returncode is None:
+            errors.extend(zombie_denials)
+        stopped = not remaining and not errors and proc.returncode is not None
+        if stopped:
+            common.LIVE_GROUPS.discard(proc.pid)
+    return {'allStopped': stopped, 'remaining': remaining, 'errors': errors,
+            'unreapedLeaderSignalDenials': zombie_denials}
+
+
+def cleanup_owned(processes):
+    errors, remaining = [], []
+    # One deferral around the whole batch: a pending signal must not interrupt
+    # between two owned groups or between cleanup and its audit publication.
+    with common.deferred_signals():
+        for proc, log, entry in reversed(processes):
+            try:
+                audit = stop_owned(proc)
+                errors.extend(audit['errors'])
+                if not audit['allStopped']:
+                    remaining.append(proc.pid)
+                entry['exitCode'] = proc.returncode
+                entry['stopped'] = audit['allStopped']
+                entry['cleanupAudit'] = audit
+            except OSError as error:
+                errors.append(str(error))
+                remaining.append(proc.pid)
+            finally:
+                try:
+                    log.close()
+                except OSError as error:
+                    errors.append(str(error))
+        if errors:
+            # Even an unexpected cleanup/log failure is fail-closed at release.
+            common.LIVE_GROUPS.update(proc.pid for proc, _, _ in processes)
+        remaining = sorted(set(remaining) | common.LIVE_GROUPS)
+        return {'ownedGroupsRemaining': remaining, 'cleanupErrors': errors,
+                'allStopped': not remaining and not errors}
+
+
 def run_round(side, label, output=DEFAULT_OUT, baseline=None, ports=(28791, 28792, 28793, 28794), timeout=180):
     # 显式参数 > PDRS_BASELINE > 本 checkout 的 resources/PilotDeck；不再回落到主仓绝对路径（#187）
     baseline = Path(baseline or os.environ.get('PDRS_BASELINE') or ROOT / 'resources/PilotDeck').resolve()
@@ -153,7 +280,6 @@ webui:
                GP_MOCK_URL=f'http://127.0.0.1:{mock_port}', GP_MODEL_LOG=str(cur / 'model.jsonl'))
     processes = []
     listeners = []
-    errors = []
     start_time = time.monotonic()
     run = {'side': side, 'label': label, 'status': 'RUNNING', 'apparatusSha256': apparatus_hashes(), 'scenarios': {},
            'runtime': {'pilotHome': str(home), 'cwd': str(project), 'tmpdir': str(cur / 'tmp')},
@@ -164,35 +290,21 @@ webui:
 
     def start(name, argv, port=None, cwd=project, child_env=env):
         log = (cur / f'{name}.log').open('w')
-        try:
-            proc = subprocess.Popen([str(x) for x in argv], cwd=cwd, env=child_env, stdout=log,
-                                    stderr=subprocess.STDOUT, start_new_session=True)
-        except BaseException:
-            log.close()
-            raise
-        entry = {'name': name, 'pid': proc.pid, 'processGroup': proc.pid, 'port': port, 'argv': [str(x) for x in argv]}
-        processes.append((proc, log, entry))
+        entry = {'name': name, 'port': port, 'argv': [str(x) for x in argv]}
+        proc = start_owned(processes, log, entry, entry['argv'], cwd=cwd,
+                           env=child_env, stdout=log, stderr=subprocess.STDOUT)
         save(cur / 'processes.json', [row[2] for row in processes])
         return proc
-
-    def stop(proc):
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.killpg(proc.pid, sig)
-            except ProcessLookupError:
-                pass
-            except OSError as error:
-                errors.append(str(error))
-            try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                pass
 
     def ready(port, proc):
         deadline = min(start_time + timeout, time.monotonic() + 45)
         while time.monotonic() < deadline:
-            if proc.poll() is not None:
-                raise RuntimeError(f'{port}: owned process exited {proc.returncode}')
+            try:
+                code = wait_owned(proc, 0)
+            except subprocess.TimeoutExpired:
+                pass
+            else:
+                raise RuntimeError(f'{port}: owned process exited {code}')
             try:
                 with urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=.5) as response:
                     if response.status == 200:
@@ -238,10 +350,13 @@ webui:
                           SCRIPT / 'driver.mts', '--url', f'ws://127.0.0.1:{entry_port}/ws', '--token', TOKEN,
                           '--scenario', scenario, '--out', cur / 'scenarios' / scenario])
             try:
-                code = driver.wait(timeout=max(.1, min(45, start_time + timeout - time.monotonic())))
+                code = wait_owned(driver, max(.1, min(45, start_time + timeout - time.monotonic())))
             except subprocess.TimeoutExpired:
-                stop(driver)
-                code = -1
+                run['scenarios'][scenario] = {'exitCode': -1}
+                save(cur / 'run.json', run)
+                # The failed scenario already invalidates the round. Stop it
+                # once, together with every other owned group in finally.
+                raise TimeoutError(f'{scenario}: driver deadline exceeded')
             run['scenarios'][scenario] = {'exitCode': code}
             save(cur / 'run.json', run)
             if time.monotonic() >= start_time + timeout:
@@ -255,28 +370,18 @@ webui:
         run['status'] = 'ERROR'
         run['error'] = str(error)
     finally:
-        for proc, log, entry in reversed(processes):
-            stop(proc)
-            entry['exitCode'] = proc.returncode
-            entry['stopped'] = proc.poll() is not None
-            log.close()
-        remaining = []
-        for proc, _, _ in processes:
-            try:
-                os.killpg(proc.pid, 0)
-                remaining.append(proc.pid)
-            except ProcessLookupError:
-                pass
-            except OSError as error:
-                errors.append(str(error))
-        run['audit'] = {'ownedGroupsRemaining': remaining, 'cleanupErrors': errors,
-                        'listeners': listeners, 'allStopped': not remaining and not errors}
-        run['elapsedSeconds'] = time.monotonic() - start_time
-        save(cur / 'processes.json', [row[2] for row in processes])
-        # Raw full disk tree survives in home/project. Comparator reads it again,
-        # so controls that alter actual bytes cannot evade a cached projection.
-        save(cur / 'run.json', run)
-        cur.rename(archive)
+        with common.deferred_signals():
+            run['audit'] = cleanup_owned(processes)
+            run['audit']['listeners'] = listeners
+            if not run['audit']['allStopped']:
+                run['status'] = 'ERROR'
+                run['error'] = 'owned process-group cleanup unverified; shared lock retained'
+            run['elapsedSeconds'] = time.monotonic() - start_time
+            save(cur / 'processes.json', [row[2] for row in processes])
+            save(cur / 'run.json', run)
+            cur.rename(archive)
+    if not run['audit']['allStopped']:
+        raise RuntimeError(run['error'])
     print(json.dumps({'side': side, 'label': label, 'status': run['status'], 'scenarios': run['scenarios'], 'error': run.get('error')}, ensure_ascii=False), flush=True)
     return archive
 

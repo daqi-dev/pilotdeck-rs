@@ -12,6 +12,8 @@ import threading
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 # >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
 # Load apparatus modules by explicit path, never sys.path: a same-named package
@@ -76,11 +78,11 @@ Decoder = observer_module.Decoder
 
 BOOTSTRAP_START = '# >>> apparatus bootstrap'
 BOOTSTRAP_END = '# <<< apparatus bootstrap'
-# Derived from the registered-entry table, never hand-maintained: a new A2
+# Derived from both registered-entry tables, never hand-maintained: a new A2/A3
 # module (run_all, build_proxy, ...) is covered by the sys.path-import checks
 # without a second edit.
 APPARATUS_MODULES = tuple(sorted({
-    Path(name).stem for name in common.A2_SCRIPTS if name.endswith('.py')
+    Path(name).stem for name in common.A2_SCRIPTS + common.A3_SCRIPTS if name.endswith('.py')
 }))
 # ``import common`` and ``import os, common`` are both bare-name imports that
 # would resolve through sys.path; match the whole import list, not just the
@@ -105,6 +107,249 @@ class Safety(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.lock = self.root / 'lock'
+
+    def test_cleanup_pending_retains_lock_and_cannot_be_taken_over(self):
+        with patch.object(common, 'LIVE_GROUPS', {424242}):
+            with parity_lock(lock=self.lock):
+                pass
+        self.assertTrue(self.lock.exists(), '#209 unverified cleanup must retain lock')
+        retained = owner(self.lock)
+        self.assertEqual(retained.get('cleanupPending'), [424242], '#209 retained groups are explicit')
+        with patch.object(common, 'alive', return_value=False):
+            with self.assertRaises(TimeoutError, msg='#209 retained lock cannot be stolen as dead owner'):
+                with parity_lock(.01, lock=self.lock):
+                    self.fail('#209 cleanup-pending owner was stolen')
+        self.assertEqual(owner(self.lock), retained, '#209 failed takeover preserves owner')
+
+    def test_acquisition_interrupt_releases_empty_owned_lock(self):
+        real_save = common.save
+
+        def interrupt_after_save(path, value):
+            real_save(path, value)
+            os.kill(os.getpid(), common.signal.SIGINT)
+
+        with patch.object(common, 'LIVE_GROUPS', set()), patch.object(common, 'save', interrupt_after_save):
+            with self.assertRaises(KeyboardInterrupt, msg='#209 acquisition interrupt delivered'):
+                with parity_lock(lock=self.lock):
+                    self.fail('#209 acquisition signal was lost')
+        self.assertFalse(self.lock.exists(), '#209 cancelled acquisition must release empty lock')
+
+    def test_release_guard_interrupt_publishes_pending_before_delivery(self):
+        real_guard = common.guard
+        calls = []
+
+        @common.contextmanager
+        def interrupt_at_release(lock):
+            calls.append(lock)
+            if len(calls) == 2:
+                os.kill(os.getpid(), common.signal.SIGINT)
+            with real_guard(lock):
+                yield
+
+        with patch.object(common, 'LIVE_GROUPS', {424242}), \
+                patch.object(common, 'guard', interrupt_at_release):
+            with self.assertRaises(KeyboardInterrupt, msg='#209 release interrupt delivered after publication'):
+                with parity_lock(lock=self.lock):
+                    pass
+        self.assertEqual(owner(self.lock).get('cleanupPending'), [424242],
+                         '#209 release entry interrupt must publish pending groups')
+        with patch.object(common, 'alive', return_value=False):
+            with self.assertRaises(TimeoutError, msg='#209 cancelled release retains lock'):
+                with parity_lock(.01, lock=self.lock):
+                    self.fail('#209 cancelled release lock was stolen')
+
+    def test_cleanup_record_write_failure_keeps_preexisting_marker(self):
+        real_save = common.save
+
+        def fail_cleanup_write(path, value):
+            if isinstance(value.get('cleanupPending'), list):
+                raise OSError('#209 save denied')
+            real_save(path, value)
+
+        with patch.object(common, 'LIVE_GROUPS', {424242}), \
+                patch.object(common, 'save', fail_cleanup_write):
+            with self.assertRaises(OSError, msg='#209 cleanup record write failure remains visible'):
+                with parity_lock(lock=self.lock):
+                    acquisition_marker = owner(self.lock).get('cleanupPending')
+        self.assertIs(acquisition_marker, True, '#209 lock must be marked before spawning')
+        self.assertIs(owner(self.lock).get('cleanupPending'), True,
+                      '#209 failed cleanup write must preserve acquisition marker')
+        with patch.object(common, 'alive', return_value=False):
+            with self.assertRaises(TimeoutError, msg='#209 failed write retains dead-owner lock'):
+                with parity_lock(.01, lock=self.lock):
+                    self.fail('#209 failed-write lock was stolen')
+
+    def test_damaged_published_owner_is_not_stale_unpublished_lock(self):
+        self.lock.mkdir()
+        (self.lock / 'owner.json').write_text('{partial')
+        stamp = time.time() - MAX_AGE - 1
+        os.utime(self.lock, (stamp, stamp))
+        with self.assertRaises(TimeoutError, msg='#209 damaged owner requires inspection'):
+            with parity_lock(.01, lock=self.lock):
+                self.fail('#209 damaged published owner was stolen')
+        self.assertEqual((self.lock / 'owner.json').read_text(), '{partial', '#209 damaged owner preserved')
+
+    def test_missing_or_extra_registration_fails_closed(self):
+        runner = _load('run_round', common.SCRIPT / 'run_round.py')
+        child = SimpleNamespace(pid=424242, returncode=None)
+        with patch.object(common, 'LIVE_GROUPS', set()), patch.object(runner.os, 'killpg') as killpg:
+            audit = runner.stop_owned(child)
+            self.assertFalse(audit['allStopped'], '#209 unregistered process is not proven stopped')
+            self.assertIn(child.pid, common.LIVE_GROUPS, '#209 unregistered process retains lock')
+            self.assertEqual(killpg.call_count, 0, '#209 unregistered process receives no signal')
+        with patch.object(common, 'LIVE_GROUPS', {424243}):
+            audit = runner.cleanup_owned([])
+            self.assertEqual(audit['ownedGroupsRemaining'], [424243], '#209 extra registration is reported')
+            self.assertFalse(audit['allStopped'], '#209 extra registration blocks success')
+
+    def test_real_held_leaders_cleanup_after_exit_and_term(self):
+        runner = _load('run_round', common.SCRIPT / 'run_round.py')
+        for body in ('pass', 'import time; time.sleep(30)'):
+            with self.subTest(body=body), patch.object(common, 'LIVE_GROUPS', set()):
+                entries = []
+                log = (self.root / ('exited.log' if body == 'pass' else 'running.log')).open('w')
+                child = runner.start_owned(entries, log, {}, [sys.executable, '-I', '-c', body],
+                                           stdout=log, stderr=log)
+                try:
+                    if body == 'pass':
+                        self.assertEqual(runner.wait_owned(child, 5), 0, '#209 real held exit observed')
+                        self.assertIsNone(child.returncode, '#209 real leader still unreaped')
+                    audit = runner.cleanup_owned(entries)
+                    self.assertTrue(audit['allStopped'], f'#209 real cleanup must prove absence: {audit}')
+                    self.assertFalse(common.LIVE_GROUPS, '#209 real clean groups release ownership')
+                finally:
+                    # Only this direct child; no signal after it has been reaped.
+                    if child.returncode is None:
+                        child.kill()
+                        child.wait(timeout=5)
+                    log.close()
+
+    def test_zombie_denial_requires_final_esrch(self):
+        runner = _load('run_round', common.SCRIPT / 'run_round.py')
+        for gone in (True, False):
+            with self.subTest(gone=gone):
+                child = unittest.mock.Mock(pid=424242, returncode=0)
+
+                def denied(_pid, sig):
+                    if sig == 0 and gone:
+                        raise ProcessLookupError()
+                    raise PermissionError('#209 group signal denied')
+
+                with patch.object(common, 'LIVE_GROUPS', {child.pid}), \
+                        patch.object(runner, 'wait_owned', return_value=0), \
+                        patch.object(runner.os, 'killpg', denied):
+                    audit = runner.stop_owned(child)
+                    self.assertEqual(audit['allStopped'], gone,
+                                     '#209 zombie-only EPERM may clear only after final ESRCH')
+                    self.assertEqual(child.pid in common.LIVE_GROUPS, not gone,
+                                     '#209 denied live group retains ownership')
+                    self.assertEqual(len(audit['unreapedLeaderSignalDenials']), 2,
+                                     '#209 zombie signal denials remain in raw audit')
+
+    def test_owned_wait_holds_identity_and_stop_never_signals_reaped_child(self):
+        runner = _load('run_round', common.SCRIPT / 'run_round.py')
+        child = SimpleNamespace(pid=424242, returncode=None)
+        status = SimpleNamespace(si_status=7, si_code=os.CLD_EXITED)
+        with patch.object(runner.os, 'waitid', return_value=status) as waitid:
+            self.assertEqual(runner.wait_owned(child, 0), 7, '#209 held wait reports exit without reap')
+            self.assertTrue(waitid.call_args.args[2] & os.WNOWAIT, '#209 wait must reserve leader identity')
+        with patch.object(common, 'LIVE_GROUPS', {child.pid}), \
+                patch.object(runner.os, 'waitid', side_effect=ChildProcessError('#209 identity lost')), \
+                patch.object(runner.os, 'killpg', side_effect=ProcessLookupError()) as killpg:
+            result = runner.stop_owned(child)
+            self.assertFalse(result['allStopped'], '#209 lost ownership cannot certify cleanup')
+            self.assertTrue(all(call.args[1] == 0 for call in killpg.call_args_list),
+                            '#209 never send TERM/KILL to a reaped leader')
+            self.assertIn(child.pid, common.LIVE_GROUPS, '#209 lost identity keeps lock ownership')
+
+    def test_start_registers_before_pending_signal_and_unblocks_child(self):
+        runner = _load('run_round', common.SCRIPT / 'run_round.py')
+        entries = []
+        log = unittest.mock.Mock()
+        child = SimpleNamespace(pid=424242)
+
+        def popen(*_args, **kwargs):
+            blocked = common.signal.pthread_sigmask(common.signal.SIG_BLOCK, set())
+            self.assertTrue(common.DEFERRED_SIGNALS <= blocked, '#209 spawn-registration signal window')
+            self.assertIs(kwargs['preexec_fn'], common.unblock_child_signals, '#209 child mask restored')
+            os.kill(os.getpid(), common.signal.SIGINT)
+            return child
+
+        with patch.object(common, 'LIVE_GROUPS', set()), patch.object(runner.subprocess, 'Popen', popen):
+            with self.assertRaises(KeyboardInterrupt, msg='#209 pending interrupt must be delivered'):
+                runner.start_owned(entries, log, {}, ['fixture'])
+            self.assertEqual(common.LIVE_GROUPS, {child.pid}, '#209 register before signal delivery')
+            self.assertEqual([row[0] for row in entries], [child], '#209 cleanup list published before signal')
+        with patch.object(common.signal, 'pthread_sigmask') as mask:
+            common.unblock_child_signals()
+            mask.assert_called_once_with(common.signal.SIG_UNBLOCK, common.DEFERRED_SIGNALS)
+
+    def test_spawn_failure_closes_log_without_registering(self):
+        runner = _load('run_round', common.SCRIPT / 'run_round.py')
+        log, entries = unittest.mock.Mock(), []
+        with patch.object(common, 'LIVE_GROUPS', set()), \
+                patch.object(runner.subprocess, 'Popen', side_effect=OSError('#209 spawn failed')):
+            with self.assertRaisesRegex(OSError, '#209 spawn failed'):
+                runner.start_owned(entries, log, {}, ['fixture'])
+            self.assertFalse(common.LIVE_GROUPS, '#209 failed spawn has no owned group')
+            self.assertFalse(entries, '#209 failed spawn has no process entry')
+        log.close.assert_called_once()
+
+    def test_cleanup_continues_after_oserror_and_defers_whole_batch(self):
+        runner = _load('run_round', common.SCRIPT / 'run_round.py')
+        entries = [(SimpleNamespace(pid=pid, returncode=0), unittest.mock.Mock(), {})
+                   for pid in (424241, 424242)]
+        calls = []
+
+        def stop(proc):
+            calls.append(proc.pid)
+            if len(calls) == 1:
+                os.kill(os.getpid(), common.signal.SIGINT)
+                raise OSError('#209 cleanup failed')
+            return {'allStopped': True, 'errors': []}
+
+        with patch.object(common, 'LIVE_GROUPS', {row[0].pid for row in entries}), \
+                patch.object(runner, 'stop_owned', stop):
+            with self.assertRaises(KeyboardInterrupt, msg='#209 deferred cleanup interrupt delivered'):
+                runner.cleanup_owned(entries)
+            self.assertEqual(calls, [424242, 424241], '#209 cleanup must reach every group before interrupt')
+            self.assertIn(424242, common.LIVE_GROUPS, '#209 failed group remains owned')
+        for _, log, _ in entries:
+            log.close.assert_called_once()
+
+    def test_stop_owned_proves_absence_and_keeps_all_failure_shapes(self):
+        runner = _load('run_round', common.SCRIPT / 'run_round.py')
+        # No real foreign PID is signalled: killpg/wait/time are deterministic hooks.
+        for kind in ('clean', 'kill-error', 'wait-error', 'probe-error', 'never-exits'):
+            with self.subTest(kind=kind):
+                child = unittest.mock.Mock(pid=424242, returncode=0 if kind != 'never-exits' else None)
+                if kind == 'wait-error':
+                    child.wait.side_effect = OSError('#209 wait denied')
+                if kind == 'never-exits':
+                    child.wait.side_effect = subprocess.TimeoutExpired('fixture', 3)
+                calls = []
+
+                def killpg(_pid, sig):
+                    calls.append(sig)
+                    if sig == 0:
+                        if kind == 'probe-error':
+                            raise PermissionError('#209 probe denied')
+                        if kind != 'never-exits':
+                            raise ProcessLookupError()
+                    elif kind == 'kill-error':
+                        raise OSError('#209 kill failed')
+
+                with patch.object(common, 'LIVE_GROUPS', {child.pid}), \
+                        patch.object(runner, 'wait_owned', return_value=0), \
+                        patch.object(runner.os, 'killpg', killpg), \
+                        patch.object(runner.time, 'monotonic', side_effect=(0, 3)):
+                    audit = runner.stop_owned(child)
+                    self.assertEqual(audit['allStopped'], kind == 'clean', '#209 only proven cleanup passes')
+                    self.assertEqual(child.pid in common.LIVE_GROUPS, kind != 'clean',
+                                     '#209 failed cleanup remains registered')
+                self.assertEqual(calls[:2], [common.signal.SIGTERM, common.signal.SIGKILL],
+                                 '#209 kill/wait errors cannot skip the KILL attempt')
+                self.assertEqual(child.wait.call_count, 1, '#209 reap only after all signals')
 
     def test_live_owner_times_out_without_removal(self):
         self.lock.mkdir()
@@ -274,6 +519,33 @@ class Safety(unittest.TestCase):
 class ApparatusInputs(unittest.TestCase):
     """#52 / #85: unregistered files, installed deps and cargo configs are inputs."""
 
+    def test_deadline_not_run_has_dedicated_exit_code(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-166-deadline-') as folder:
+            output = Path(folder) / 'deadline'
+            proc = subprocess.run([sys.executable, '-I', str(common.SCRIPT / 'session_domain.py'),
+                                   '--suite', 'deadline', '--output', str(output)],
+                                  text=True, capture_output=True, timeout=30)
+            self.assertEqual(proc.returncode, 3, '#166 NOT_RUN must exit 3: ' + proc.stdout + proc.stderr)
+            report = json.loads((output / 'report.json').read_text())
+            for key in ('status', 'executionStatus', 'acceptanceStatus'):
+                self.assertEqual(report[key], 'NOT_RUN', f'#166 {key} must disclose no execution')
+            self.assertEqual(report['structureStatus'], 'PASS', '#166 structure validation remains separate')
+            self.assertEqual(len(report['cells']), 4, '#166 all four unexecuted cells remain')
+            for cell in report['cells']:
+                self.assertEqual(cell['executedCases'], [], '#166 no execution is fabricated')
+            missing = subprocess.run([sys.executable, '-I', str(common.SCRIPT / 'session_domain.py'),
+                                      '--suite', 'calibrate', '--baseline', str(Path(folder) / 'missing'),
+                                      '--output', str(Path(folder) / 'blocked')],
+                                     text=True, capture_output=True, timeout=30)
+            self.assertEqual(missing.returncode, 2, '#166 BLOCKED remains distinct from NOT_RUN')
+        for status, code in [('PASS', 0), ('FAIL', 1), ('PASS_WITH_SKIPS', 1),
+                             ('BLOCKED', 2), ('NOT_RUN', 3)]:
+            self.assertEqual(common.aggregate_status(status), (status, code), '#166 shared exit contract')
+        for verdict, expected in [('KILLED', ('PASS', 0)), ('SURVIVED', ('FAIL', 1)),
+                                  ('INVALID', ('BLOCKED', 2))]:
+            self.assertEqual(common.aggregate_status(common.MUTATION_STATUS[verdict]), expected,
+                             '#166 source control verdict mapping')
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='pdrs-apparatus-inputs-')
         self.addCleanup(self.tmp.cleanup)
@@ -380,8 +652,16 @@ class ApparatusInputs(unittest.TestCase):
         # A hand-maintained tuple can silently miss an A2 module; the
         # derivation and the comma form of ``import a, b`` both need a machine
         # check, otherwise this guard stops covering the omitted module.
-        self.assertIn('observer', APPARATUS_MODULES)
-        self.assertIn('run_all', APPARATUS_MODULES)
+        self.assertIn('observer', APPARATUS_MODULES, '#701 A2 observer must be guarded')
+        self.assertIn('run_all', APPARATUS_MODULES, '#701 A2 run_all must be guarded')
+        self.assertIn('check_schema', APPARATUS_MODULES, '#701 A3 module must be guarded')
+        for name in common.A2_SCRIPTS + common.A3_SCRIPTS:
+            if not name.endswith('.py'):
+                continue
+            stem = Path(name).stem
+            for text in (f'import {stem}\n', f'import os, {stem} as m\n',
+                         f'from {stem} import x\n'):
+                self.assertRegex(text, APPARATUS_IMPORT, f'#701 registered module {stem}')
         for text in ('import common\n', 'import os, common\n',
                      'import os, sys, compare as c\n', 'from common import x\n'):
             self.assertRegex(text, APPARATUS_IMPORT)

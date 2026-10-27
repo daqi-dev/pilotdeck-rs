@@ -844,7 +844,7 @@ def main():
         print(json.dumps({'suite': args.suite, 'status': 'BLOCKED',
                           'error': f'baseline at {args.baseline.resolve()} lacks E1 sources {missing[:3]}; '
                                    'pass --baseline or set PDRS_BASELINE'}, ensure_ascii=False))
-        return 2
+        return common.aggregate_status('BLOCKED')[1]
     output = args.output.resolve()
     # E1 drives the baseline TS source through the baseline runtime; bind the
     # bytes of tsx/ws (and their declared dependencies) so a swapped loader or
@@ -856,7 +856,7 @@ def main():
         except ValueError as error:
             print(json.dumps({'suite': args.suite, 'status': 'BLOCKED', 'error': str(error)},
                              ensure_ascii=False))
-            return 2
+            return common.aggregate_status('BLOCKED')[1]
     output.mkdir(parents=True, exist_ok=False)
     install_shutdown()
     report = {'suite': args.suite, 'scope': 'A5.3 draft apparatus', 'status': 'RUNNING',
@@ -864,10 +864,11 @@ def main():
     if dependencies is not None:
         report['baselineDepsSha256'] = dependencies
     save(output / 'report.json', report)
-    code = 0
+    code = common.aggregate_status('FAIL')[1]
     try:
         if args.suite == 'deadline':
             report.update(deadline_report())
+            _, code = common.aggregate_status(report['status'])
         else:
             takeovers = []
             with parity_lock(timeout=30, takeovers=takeovers):

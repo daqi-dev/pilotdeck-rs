@@ -9,10 +9,8 @@ before writing anything, and refuses otherwise.  The new check/launcher files
 beside this script are not mutated, so their pre-commit absence from HEAD does
 not matter.
 
-For a pre-commit local rehearsal the default ``--baseline HEAD`` can be pointed
-at a tree object of the current worktree (``git stash create``); that creates a
-dangling object only, never a branch commit.  The coordinator's host run uses
-the default after applying the patch.
+Run only after the coordinator commits the patch; never substitute a worktree
+snapshot for HEAD to bypass the pristine-source guard.
 
 Run on the coordinator's host (no cargo is launched):
 
@@ -44,7 +42,7 @@ import tempfile
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-session-cleanup-neg-pyc-')
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned
+from negative_process import mutating_sources, run_owned, wait_for_slot
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'scripts/gateway-parity/session_domain.py'
@@ -52,13 +50,14 @@ CONTROLS_SOURCE = ROOT / 'scripts/gateway-parity/controls/session_domain.py'
 COMMON_SOURCE = ROOT / 'scripts/gateway-parity/common.py'
 CHECK = Path(__file__).resolve().with_name('check_cleanup.py')
 NEGATIVE = Path(__file__).resolve()
+GATEWAY_NEGATIVE = NEGATIVE.parent.parent / 'gateway-batch/negative_controls.py'
 _spec = importlib.util.spec_from_file_location('session_cleanup_common', COMMON_SOURCE)
 common = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(common)
 
 # Batch verdict -> child status for the shared aggregator.  INVALID is an
 # environment/startup failure: BLOCKED, never PASS and never counted as KILLED.
-MUTATION_STATUS = {'KILLED': 'PASS', 'SURVIVED': 'FAIL', 'INVALID': 'BLOCKED'}
+MUTATION_STATUS = common.MUTATION_STATUS
 
 _MISSING = object()
 
@@ -245,6 +244,15 @@ MUTATIONS = [
     ('aggregation-exit-bypassed', CONTROLS_SOURCE,
      "        return common.aggregate_status(report['status'])[1]",
      "        return int(report['status'] != 'PASS')"),
+    ('aggregation-direct-return', CONTROLS_SOURCE,
+     "def main():\n",
+     "def unregistered_892():\n    return {'status': 'PASS'}\n\ndef main():\n"),
+    ('aggregation-branch-exit', CONTROLS_SOURCE,
+     "    return common.aggregate_status(result['status'])[1]",
+     "    return 0 if result['status'] == 'PASS' else 1"),
+    ('gateway-aggregation-bypassed', GATEWAY_NEGATIVE,
+     "    return common.aggregate_status(*(MUTATION_STATUS.get(row['status'], 'FAIL') for row in results))[1]",
+     "    return int(any(row['status'] != 'KILLED' for row in results))"),
     ('restored-skip-accepted', NEGATIVE,
      "        top_status, exit_code = common.aggregate_status(\n"
      "            *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary),\n"
@@ -394,6 +402,28 @@ JUDGES = {
         }),
         False,
         ()),
+    'aggregation-direct-return': (
+        'aggregation-audit',
+        lambda rows: match(rows, 'aggregation-audit', {
+            'firstFailure': '#164-fix-r7 aggregation-audit: unregistered aggregation point '
+                            "scripts/gateway-parity/controls/session_domain.py:unregistered_892 markers=['dict-status']",
+        }), False, ()),
+    'aggregation-branch-exit': (
+        'aggregation-audit',
+        lambda rows: match(rows, 'aggregation-audit', {
+            'firstFailure': '#164-fix-r7 aggregation-audit: '
+                            'scripts/gateway-parity/controls/session_domain.py:main '
+                            'must call common.aggregate_status',
+            'points.controls-main.shared': False,
+        }), False, ()),
+    'gateway-aggregation-bypassed': (
+        'aggregation-audit',
+        lambda rows: match(rows, 'aggregation-audit', {
+            'firstFailure': '#164-fix-r7 aggregation-audit: '
+                            'src/pilotdeck-gateway/tests/fixtures/gateway-batch/negative_controls.py:main '
+                            'must call common.aggregate_status',
+            'points.gateway-negative-main.shared': False,
+        }), False, ()),
     'restored-skip-accepted': (
         'batch-aggregation',
         lambda rows: match(rows, 'batch-aggregation', {
@@ -474,8 +504,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--baseline', default='HEAD',
-                        help='commit/tree to prove the source is pristine against '
-                             '(default HEAD; a "git stash create" tree for a local rehearsal)')
+                        choices=('HEAD',), help='sources must equal committed HEAD')
     parser.add_argument('--only', action='append', default=[],
                         help='mutant name; repeat to select more (still runs the restored positive)')
     args = parser.parse_args()
@@ -504,7 +533,7 @@ def main():
             for name, count in stale:
                 print(json.dumps({'status': 'ANCHOR_EXPIRED', 'mutation': name,
                                   'anchorCount': count}, ensure_ascii=False))
-            return 2
+            return common.aggregate_status('BLOCKED')[1]
         try:
             for mutation in selected:
                 name, source, old, new = mutation
@@ -512,6 +541,7 @@ def main():
                 judge_spec = JUDGES[name]
                 mode = judge_spec[0]
                 changed = contents[source].replace(old, new, 1)
+                compile(changed, str(source), 'exec')
                 case = output / name  # check_cleanup.py owns/creates this directory
                 source.write_text(changed)
                 returncode = None

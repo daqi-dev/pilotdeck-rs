@@ -45,10 +45,10 @@ exit codes, calibrate's `PASS_WITH_SKIPS -> BLOCKED / exit 2` mapping, and the
 source negative-control batch: a restored positive with platform skips must make
 that batch `PASS_WITH_SKIPS` / exit 1, never `PASS` / exit 0.
 `aggregation-audit` statically enumerates every top-level status/exit-code
-computation in the E1 apparatus and fails a registered point that does not call
+computation in the E1 apparatus and the gateway-batch source controls, and fails a registered point that does not call
 `common.aggregate_status()`, an unregistered new point, or a `int(...)` exit
 computation.  The exit mapping is the one registered order:
-`PASS=0`, `PASS_WITH_SKIPS/NOT_RUN/FAIL=1`, `BLOCKED=2`.
+`PASS=0`, `PASS_WITH_SKIPS/FAIL=1`, `BLOCKED=2`, `NOT_RUN=3`.
 Every process mode checks the live process group and the grandchild PID after
 the run.  On non-Darwin the Darwin-only positives (`clean`, `leak`, `ignore`,
 `eperm-live-member`, `runtime-negative`) are recorded as `passed: null` with an
@@ -115,11 +115,14 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_
   --output _tmp/20261026-issue-164/negative/source
 ```
 
-A pre-commit rehearsal can pass `--baseline <tree-ish>`; the default is `HEAD`.
+Run after the coordinator commits the patch. `--baseline` only accepts `HEAD`;
+worktree snapshots and alternate trees must not bypass the pristine-source guard.
 `--only NAME` (repeatable) runs just the named mutants and still runs the
 restored positive. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 22 mutants:
+`JUDGES`, keyed by the same names. The current table has 25 mutants, including
+`aggregation-direct-return`, `aggregation-branch-exit` (#892), and
+`gateway-aggregation-bypassed` (the new source-control batch shared exit), plus:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,

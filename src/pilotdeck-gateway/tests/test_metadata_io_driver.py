@@ -292,6 +292,25 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(runtime_jobs, {'metadata-observer', 'rust', 'a51-coverage', 'gateway-schema-baseline'},
                          '#904 all four Node jobs are checked')
 
+    def test_each_node_job_rejects_missing_late_or_conditional_setup(self):
+        workflow = self.ci_workflow_fixture()
+        cases = []
+        for name, body in self.ci_jobs().items():
+            if name == 'check':
+                continue
+            setups = re.findall(r'      - uses: actions/setup-node@v4\n'
+                                r'(?:        .*\n|          .*\n)*', body)
+            self.assertEqual(len(setups), 1, f'#909 {name} unique setup anchor')
+            setup = setups[0]
+            missing = body.replace(setup, '', 1)
+            for kind, changed in (
+                    ('missing', missing), ('late', missing.rstrip() + '\n' + setup),
+                    ('conditional', body.replace(setup, setup + '        if: false\n', 1))):
+                cases.append((f'#909-{name}-{kind}', workflow.replace(body, changed, 1),
+                              f'#904 {name} setup-node must precede Node commands in its own job'))
+        self.check_ci_mutations(cases,
+                               'test_each_npm_job_sets_up_its_own_node_before_installing', '#909')
+
     def ci_workflow_fixture(self):
         return (Path(__file__).resolve().parents[3]/'.github/workflows/ci.yml').read_text()
 
