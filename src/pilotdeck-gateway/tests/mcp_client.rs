@@ -570,8 +570,7 @@ fn generator_reproduces_the_committed_oracle_twice() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mcp-client/generate.mts");
     for run in 0..2 {
         let scratch = Scratch::new("mcp-client-generate");
-        let status = std::process::Command::new("node")
-            .env("LANG", "en_US.UTF-8")
+        let status = baseline::node_command()
             .arg("--import")
             .arg(format!("{baseline}/node_modules/tsx/dist/loader.mjs"))
             .arg(&generator)

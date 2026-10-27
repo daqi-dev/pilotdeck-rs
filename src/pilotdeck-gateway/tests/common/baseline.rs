@@ -99,6 +99,17 @@ fn git(baseline: &Path, args: &[&str]) -> Vec<u8> {
     output.stdout
 }
 
+/// Node generators share one environment contract, even on LC_* hosts.
+#[allow(dead_code)]
+pub(crate) fn node_command() -> Command {
+    let mut command = Command::new("node");
+    command
+        .env("LANG", "en_US.UTF-8")
+        .env_remove("LC_ALL")
+        .env_remove("LC_MESSAGES");
+    command
+}
+
 /// Re-runs `tests/fixtures/<fixture>/generate.mts` against the real TS
 /// baseline (`PDRS_BASELINE`) into a fresh directory and requires a
 /// byte-identical `oracle.json`. Callers are `#[ignore]` tests.
@@ -113,16 +124,13 @@ pub(crate) fn regenerates_identically(fixture: &str) {
     // Every invocation gets its own directory; nothing outside it is removed.
     let scratch = std::env::temp_dir().join(format!("pdrs-{fixture}-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&scratch).unwrap();
-    let output = Command::new("node")
+    let output = node_command()
         .arg("--disable-warning=ExperimentalWarning")
         .arg("--import")
         .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
         .arg(fixtures.join("generate.mts"))
         .arg(&scratch)
         .env("PDRS_BASELINE", &baseline)
-        // Generators that pin ICU's default locale (hooks-runtime) need it.
-        .env("LANG", "en_US.UTF-8")
-        .env_remove("LC_ALL")
         .output()
         .unwrap();
     assert!(

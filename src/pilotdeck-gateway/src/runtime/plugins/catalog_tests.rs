@@ -2,7 +2,6 @@ use super::*;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 const MESSAGE: &str = "#887 commands catalog oracle";
-const LOCALE_MESSAGE: &str = "#887 commands catalog oracle requires en-US; set LANG=en_US.UTF-8 and unset LC_ALL/LC_MESSAGES";
 pub(super) fn fixture() -> Value {
     let raw = include_str!("../../../tests/fixtures/commands-catalog/oracle.json");
     std::panic::catch_unwind(|| crate::test_baseline::oracle(raw)).expect(MESSAGE);
@@ -48,11 +47,7 @@ fn normalize(value: &mut Value, root: &str) {
     }
 }
 async fn replay(id: &str) {
-    assert_eq!(
-        node_locale(|key| std::env::var(key).ok()).to_string(),
-        "en-US",
-        "{LOCALE_MESSAGE}"
-    );
+    crate::test_oracle_locale::require_en_us();
     let oracle = fixture();
     let case = oracle["cases"]
         .as_array()
@@ -232,50 +227,41 @@ case!(catalog_validation, "validation");
 case!(catalog_read_errors, "read-errors");
 #[tokio::test]
 async fn catalog_locale_contract() {
-    const MSG: &str = "#887 catalog locale contract";
-    // Empty pages have no locale-sensitive ordering: bypassing the entry guard
-    // must be caught even when the page happens to match the en-US oracle.
-    const CHILD: &str = "runtime::plugins::catalog::tests::catalog_empty";
-    for (locale, success) in [("en_US.UTF-8", true), ("zh_CN.UTF-8", false)] {
-        let mut child = tokio::process::Command::new(std::env::current_exe().expect(MSG));
-        child
-            .args([CHILD, "--exact", "--nocapture", "--format", "pretty"])
-            .env("LANG", locale)
-            .env_remove("LC_ALL")
-            .env_remove("LC_MESSAGES")
-            .kill_on_drop(true);
-        // Completion is child exit; a stuck child is killed after 30 seconds.
-        let output = tokio::time::timeout(std::time::Duration::from_secs(30), child.output())
-            .await
-            .expect(MSG)
-            .expect(MSG);
-        let log = format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(log.contains("running 1 test"), "{MSG}: {locale}: {log}");
-        if success {
-            assert!(output.status.success(), "{MSG}: {locale}: {log}");
-            assert!(log.contains("1 passed; 0 failed"), "{MSG}: {locale}: {log}");
-        } else {
-            if output.status.success() {
-                assert!(
-                    log.contains("1 passed; 0 failed") && log.contains(&format!("{CHILD} ... ok")),
-                    "{MSG}: malformed child success: {log}"
-                );
-                panic!("#887 catalog locale guard bypassed: zh_CN.UTF-8");
-            }
-            assert_eq!(output.status.code(), Some(101), "{MSG}: {locale}: {log}");
-            assert!(
-                log.contains(LOCALE_MESSAGE) && log.contains(&format!("{CHILD} ... FAILED")),
-                "{MSG}: {locale}: {log}"
-            );
-        }
-    }
+    crate::test_oracle_locale::replay_locale_contract(
+        "runtime::plugins::catalog::tests::catalog_empty",
+        "catalog",
+    )
+    .await;
 }
+
 #[test]
 #[ignore = "requires Node v22.22.0 and PDRS_BASELINE"]
 fn catalog_regenerates_identically() {
     crate::test_baseline::regenerates_identically("commands-catalog");
+}
+
+#[test]
+#[ignore = "requires Node v22.22.0; run with polluted LC_ALL/LC_MESSAGES/LANG"]
+fn catalog_generator_locale_contract() {
+    const MSG: &str = "#887 generator locale contract";
+    let output = crate::test_baseline::node_command()
+        .args(["-e", "console.log(JSON.stringify({node:process.version,locale:new Intl.Collator().resolvedOptions().locale,LANG:process.env.LANG,LC_ALL:process.env.LC_ALL,LC_MESSAGES:process.env.LC_MESSAGES}))"])
+        .output().expect(MSG);
+    assert!(output.status.success(), "{MSG}: {:?}", output);
+    let actual: Value = serde_json::from_slice(&output.stdout).expect(MSG);
+    println!("{MSG}: {actual}");
+    assert_eq!(actual["node"], "v22.22.0", "{MSG}");
+    assert_eq!(
+        actual["LANG"], "en_US.UTF-8",
+        "#887 generator LANG isolation"
+    );
+    assert!(
+        actual.get("LC_ALL").is_none(),
+        "#887 generator LC_ALL isolation"
+    );
+    assert!(
+        actual.get("LC_MESSAGES").is_none(),
+        "#887 generator LC_MESSAGES isolation"
+    );
+    assert_eq!(actual["locale"], "en-US", "{MSG}");
 }

@@ -13,6 +13,7 @@ mod model_catalog;
 pub mod model_cost;
 mod native_archive;
 mod node_io;
+mod node_locale;
 mod pairing;
 mod process_group;
 #[cfg(all(test, unix))]
@@ -25,6 +26,9 @@ pub mod storage;
 #[cfg(test)]
 #[path = "../tests/common/baseline.rs"]
 mod test_baseline;
+#[cfg(test)]
+#[path = "../tests/common/oracle_locale.rs"]
+mod test_oracle_locale;
 #[cfg(test)]
 mod test_process;
 #[cfg(test)]

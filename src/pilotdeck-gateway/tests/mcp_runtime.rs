@@ -2012,8 +2012,7 @@ fn generator_reproduces_the_committed_oracle_twice() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mcp-runtime/generate.mts");
     for run in 0..2 {
         let scratch = Scratch::new("mcp-runtime-generate");
-        let status = std::process::Command::new("node")
-            .env("LANG", "en_US.UTF-8")
+        let status = baseline::node_command()
             .arg("--import")
             .arg(format!("{baseline}/node_modules/tsx/dist/loader.mjs"))
             .arg(&generator)
@@ -2039,10 +2038,8 @@ fn output_schema_generator_reproduces_the_committed_oracle_twice() {
     let committed = include_str!("fixtures/output-schema/ajv-oracle.json");
     for run in 0..2 {
         let scratch = Scratch::new("output-schema-generate");
-        let status = std::process::Command::new("node")
+        let status = baseline::node_command()
             .env("PDRS_BASELINE", &baseline)
-            .env("LANG", "en_US.UTF-8")
-            .env_remove("LC_ALL")
             .arg(&generator)
             .arg(scratch.path())
             .status()

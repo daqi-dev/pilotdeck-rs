@@ -1355,3 +1355,34 @@ fn rimraf_descends_on_every_nonempty_report() {
     assert!(descends(libc::EPERM));
     assert!(!descends(libc::EACCES));
 }
+
+#[test]
+fn node_locale_contract() {
+    const MSG: &str = "#887 Node locale contract";
+    let data: Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/node-locale/oracle.json"))
+            .expect(MSG);
+    let mut mismatches = vec![];
+    for case in data["localeProbe"].as_array().expect(MSG) {
+        let locale = node_locale(|key| case["env"][key].as_str().map(str::to_owned));
+        let collator = node_collator(&locale).expect(MSG);
+        let mut names = vec!["z", "ä", "Z", "a", "A", "你好", "文件", "😀", "_x"];
+        names.sort_by(|a, b| collator.compare(a, b));
+        println!(
+            "#887 Rust locale {} env={} locale={} order={:?}",
+            case["id"], case["env"], locale, names
+        );
+        if locale.to_string() != case["locale"].as_str().expect(MSG)
+            || serde_json::to_value(names).expect(MSG) != case["order"]
+        {
+            mismatches.push(case["id"].clone());
+        }
+    }
+    assert!(mismatches.is_empty(), "{MSG}: mismatches={mismatches:?}");
+}
+
+#[test]
+#[ignore = "requires Node v22.22.0 and PDRS_BASELINE"]
+fn node_locale_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("node-locale");
+}
