@@ -1,0 +1,3322 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/context/memory/edgeclaw-memory-core/src/core/file-memory.ts": "c64b368fa7fa329cbecb475b22972860bbc133444606017132c6edbf27ed3ad6",
+    "src/context/memory/edgeclaw-memory-core/src/core/general-projects.ts": "3a5512939027cc32efde9cd218e4bb400300a28fda6f9ac07391d75b56244e40",
+    "src/context/memory/edgeclaw-memory-core/src/core/index.ts": "d28d2bf10cf36e76b5abc0ba2e53c5c6fcbf00733cd01941da12749cfdd4f47b",
+    "src/context/memory/edgeclaw-memory-core/src/core/pipeline/heartbeat.ts": "c4f1247e983948bc47a83c1308cd2a158bce097335c41f4b42d9de6babd125fc",
+    "src/context/memory/edgeclaw-memory-core/src/core/retrieval/reasoning-loop.ts": "26d38e3c96b877e038a9cf4d15f9d9174f3b64ea23117ed5ca8d56db811ba6a7",
+    "src/context/memory/edgeclaw-memory-core/src/core/review/dream-review.ts": "ddc7d016152096f0dfb9ce63bc661b34f683a7cea3491d9cfd1c1365c8d3d1b7",
+    "src/context/memory/edgeclaw-memory-core/src/core/skills/llm-extraction.ts": "6cde29bc33b1d2fccfcfa5ee507941b2280c6960254da28794ac18845224372e",
+    "src/context/memory/edgeclaw-memory-core/src/core/storage/sqlite.ts": "92ee83f07aaefc070850a6ac366fbc75924b2efdaa45f9f9999ed0d3d25e5093",
+    "src/context/memory/edgeclaw-memory-core/src/core/trace-i18n.ts": "2d4a4e6d1d86539ff294b5d016e51ef3a131575e2d5be4da14aeca24b8dc4f0c",
+    "src/context/memory/edgeclaw-memory-core/src/core/types.ts": "abc773ea38e2ba98d83aa7bad1d4672fac3d2f01fb5ad992e8d0382912ee7f99",
+    "src/context/memory/edgeclaw-memory-core/src/core/utils/id.ts": "5d8f83f1a5d56b696829ffe8a26dff2505b6bb6317acd4e4ca9772219e0bd1f9",
+    "src/context/memory/edgeclaw-memory-core/src/core/utils/text.ts": "c582cc42b3acae4bc5b8502f2ad6abd6577e2eb03e7ae41b966e0cceba5f654e",
+    "src/context/memory/edgeclaw-memory-core/src/message-utils.ts": "690f6093a97d81c69676260c86c88dddc6ca7146d2425de2cf91578e8c782244",
+    "src/context/memory/edgeclaw-memory-core/src/service.ts": "a76c5a266d392faa92d19805e4df3f0a56d2324ba50e189fac1d436addb8698f"
+  },
+  "nodeVersion": "v22.22.0",
+  "entry": "src/context/memory/edgeclaw-memory-core/src/service.ts",
+  "randomValues": [
+    0.25,
+    0.5,
+    0.75,
+    0.125,
+    0.875,
+    0.375,
+    0.625,
+    0.0625
+  ],
+  "randomTokens": [
+    "9",
+    "i",
+    "r",
+    "4i",
+    "vi",
+    "di",
+    "mi",
+    "29"
+  ],
+  "scenarios": [
+    {
+      "name": "paths-defaults",
+      "options": null,
+      "seeds": [
+        {
+          "store": "workspace",
+          "method": "upsertProjectMeta",
+          "input": {
+            "projectName": "Alpha",
+            "description": "a",
+            "status": "in_progress"
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "getSettings"
+        },
+        {
+          "op": "getWorkspaceMode"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "inputPaths": {
+        "workspace": "workspace"
+      },
+      "paths": {
+        "workspace": "$ROOT/paths-defaults/workspace",
+        "rootDir": null,
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory"
+      },
+      "steps": [
+        {
+          "op": "getSettings",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": 30,
+            "autoDreamIntervalMinutes": 60
+          }
+        },
+        {
+          "op": "getWorkspaceMode",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": "single"
+        },
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        }
+      ],
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/paths-defaults/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": []
+      },
+      "files": {
+        "memory": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Alpha](project.meta.md) — a\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Alpha\ndescription: a\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\na\n"
+          }
+        ],
+        "global": []
+      }
+    },
+    {
+      "name": "paths-db-override",
+      "options": null,
+      "seeds": [],
+      "ops": [
+        {
+          "op": "getSettings"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "inputPaths": {
+        "workspace": "workspace",
+        "rootDir": "root",
+        "dbPath": "custom/db/control.sqlite"
+      },
+      "paths": {
+        "workspace": "$ROOT/paths-db-override/workspace",
+        "rootDir": "$ROOT/paths-db-override/root",
+        "dataDir": "$ROOT/paths-db-override/custom/db",
+        "dbPath": "$ROOT/paths-db-override/custom/db/control.sqlite",
+        "memoryDir": "$ROOT/paths-db-override/custom/db/memory"
+      },
+      "steps": [
+        {
+          "op": "getSettings",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": 30,
+            "autoDreamIntervalMinutes": 60
+          }
+        },
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        }
+      ],
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/paths-db-override/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": []
+      },
+      "files": {
+        "memory": [],
+        "global": []
+      }
+    },
+    {
+      "name": "paths-memory-override",
+      "options": null,
+      "seeds": [],
+      "ops": [
+        {
+          "op": "getSettings"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "inputPaths": {
+        "workspace": "workspace",
+        "rootDir": "root",
+        "memoryDir": "custom/memory"
+      },
+      "paths": {
+        "workspace": "$ROOT/paths-memory-override/workspace",
+        "rootDir": "$ROOT/paths-memory-override/root",
+        "dataDir": "$ROOT/paths-memory-override/custom",
+        "dbPath": "$ROOT/paths-memory-override/custom/control.sqlite",
+        "memoryDir": "$ROOT/paths-memory-override/custom/memory"
+      },
+      "steps": [
+        {
+          "op": "getSettings",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": 30,
+            "autoDreamIntervalMinutes": 60
+          }
+        },
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        }
+      ],
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/paths-memory-override/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": []
+      },
+      "files": {
+        "memory": [],
+        "global": []
+      }
+    },
+    {
+      "name": "capture-normalization",
+      "options": {
+        "includeAssistant": false,
+        "maxMessageChars": 5,
+        "captureStrategy": "full_session"
+      },
+      "seeds": [],
+      "ops": [
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "s1",
+              "timestamp": "2026-10-22T00:00:01.000Z"
+            }
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "assistant",
+                "content": "only assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "s1"
+            }
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "tool"
+              }
+            ],
+            "input": {
+              "sessionKey": "s1"
+            }
+          }
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "inputPaths": {
+        "workspace": "workspace",
+        "rootDir": "root"
+      },
+      "paths": {
+        "workspace": "$ROOT/capture-normalization/workspace",
+        "rootDir": "$ROOT/capture-normalization/root",
+        "dataDir": "$ROOT/capture-normalization/root/workspaces/$HASH",
+        "dbPath": "$ROOT/capture-normalization/root/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/capture-normalization/root/workspaces/$HASH/memory"
+      },
+      "steps": [
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "s1",
+              "timestamp": "2026-10-22T00:00:01.000Z"
+            }
+          },
+          "ok": true,
+          "value": {
+            "captured": true,
+            "normalizedMessages": [
+              {
+                "role": "user",
+                "content": "alpha..."
+              }
+            ],
+            "sessionKey": "s1"
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "assistant",
+                "content": "only assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "s1"
+            }
+          },
+          "ok": true,
+          "value": {
+            "captured": false,
+            "normalizedMessages": [],
+            "sessionKey": "s1"
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "tool"
+              }
+            ],
+            "input": {
+              "sessionKey": "s1"
+            }
+          },
+          "ok": true,
+          "value": {
+            "captured": false,
+            "normalizedMessages": [],
+            "sessionKey": "s1"
+          }
+        },
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        }
+      ],
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/capture-normalization/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": [
+          {
+            "l0_index_id": "s1_7c4a4a0d87_raw",
+            "session_key": "s1",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha...\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          }
+        ]
+      },
+      "files": {
+        "memory": [],
+        "global": []
+      }
+    },
+    {
+      "name": "facade-sequence",
+      "options": {
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 2
+        }
+      },
+      "seeds": [
+        {
+          "store": "workspace",
+          "method": "upsertProjectMeta",
+          "input": {
+            "projectName": "Alpha",
+            "description": "alpha description",
+            "status": "in_progress"
+          }
+        },
+        {
+          "store": "workspace",
+          "method": "upsertCandidate",
+          "input": {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha note",
+            "description": "Alpha note description",
+            "summary": "Alpha note summary",
+            "profile": "Alpha note profile",
+            "capturedAt": "2026-10-22T00:00:00.000Z",
+            "sourceSessionKey": "seed-session"
+          }
+        },
+        {
+          "store": "workspace",
+          "method": "upsertCandidate",
+          "input": {
+            "type": "feedback",
+            "scope": "project",
+            "name": "Beta feedback",
+            "description": "Beta feedback description",
+            "summary": "Beta feedback summary",
+            "profile": "Beta feedback profile",
+            "capturedAt": "2026-10-22T00:00:00.000Z",
+            "sourceSessionKey": "seed-session"
+          }
+        },
+        {
+          "store": "global",
+          "method": "upsertCandidate",
+          "input": {
+            "type": "user",
+            "scope": "global",
+            "name": "User one",
+            "description": "User one description",
+            "summary": "User one summary",
+            "profile": "User one profile",
+            "capturedAt": "2026-10-22T00:00:00.000Z",
+            "sourceSessionKey": "seed-session"
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "getSettings"
+        },
+        {
+          "op": "saveSettings",
+          "args": {
+            "partial": {
+              "autoIndexIntervalMinutes": 5,
+              "autoDreamIntervalMinutes": 0
+            }
+          }
+        },
+        {
+          "op": "getSettings"
+        },
+        {
+          "op": "overview"
+        },
+        {
+          "op": "snapshot"
+        },
+        {
+          "op": "snapshot",
+          "args": {
+            "limit": 1
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "s1",
+              "timestamp": "2026-10-22T00:00:01.000Z"
+            }
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "tool"
+              }
+            ],
+            "input": {
+              "sessionKey": "s1"
+            }
+          }
+        },
+        {
+          "op": "list"
+        },
+        {
+          "op": "list",
+          "args": {
+            "options": {
+              "kinds": [
+                "project"
+              ],
+              "query": "Alpha"
+            }
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": 10
+          }
+        },
+        {
+          "op": "getUserSummary"
+        },
+        {
+          "op": "getProjectMeta"
+        },
+        {
+          "op": "getWorkspaceMode"
+        },
+        {
+          "op": "listReadableProjectCatalog"
+        },
+        {
+          "op": "getReadableProject",
+          "args": {
+            "id": "current_project"
+          }
+        },
+        {
+          "op": "listReadableProjectEntries",
+          "args": {
+            "id": "current_project",
+            "options": {}
+          }
+        },
+        {
+          "op": "updateProjectMeta",
+          "args": {
+            "input": {
+              "projectName": "Alpha renamed",
+              "description": "renamed",
+              "status": "done"
+            }
+          }
+        },
+        {
+          "op": "getSnapshotVersion"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "inputPaths": {
+        "workspace": "workspace",
+        "rootDir": "root",
+        "dbPath": "data/control.sqlite",
+        "memoryDir": "data/memory"
+      },
+      "paths": {
+        "workspace": "$ROOT/facade-sequence/workspace",
+        "rootDir": "$ROOT/facade-sequence/root",
+        "dataDir": "$ROOT/facade-sequence/data",
+        "dbPath": "$ROOT/facade-sequence/data/control.sqlite",
+        "memoryDir": "$ROOT/facade-sequence/data/memory"
+      },
+      "steps": [
+        {
+          "op": "getSettings",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": 2,
+            "autoDreamIntervalMinutes": 60
+          }
+        },
+        {
+          "op": "saveSettings",
+          "args": {
+            "partial": {
+              "autoIndexIntervalMinutes": 5,
+              "autoDreamIntervalMinutes": 0
+            }
+          },
+          "ok": true,
+          "value": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": 5,
+            "autoDreamIntervalMinutes": 0
+          }
+        },
+        {
+          "op": "getSettings",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": 5,
+            "autoDreamIntervalMinutes": 0
+          }
+        },
+        {
+          "op": "overview",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "pendingSessions": 0,
+            "workspaceMode": "single",
+            "currentProjectCount": 1,
+            "projectMetaPresent": true,
+            "projectMemoryCount": 1,
+            "feedbackMemoryCount": 1,
+            "userProfileCount": 0,
+            "recentRecallTraceCount": 0,
+            "recentIndexTraceCount": 0,
+            "recentDreamTraceCount": 0
+          }
+        },
+        {
+          "op": "snapshot",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "overview": {
+              "pendingSessions": 0,
+              "workspaceMode": "single",
+              "currentProjectCount": 1,
+              "projectMetaPresent": true,
+              "projectMemoryCount": 1,
+              "feedbackMemoryCount": 1,
+              "userProfileCount": 0,
+              "recentRecallTraceCount": 0,
+              "recentIndexTraceCount": 0,
+              "recentDreamTraceCount": 0
+            },
+            "settings": {
+              "reasoningMode": "answer_first",
+              "autoIndexIntervalMinutes": 5,
+              "autoDreamIntervalMinutes": 0
+            },
+            "recentMemoryFiles": [
+              {
+                "name": "Beta feedback",
+                "description": "Beta feedback description",
+                "type": "feedback",
+                "scope": "project",
+                "projectId": "current_project",
+                "updatedAt": "2026-10-22T00:00:00.000Z",
+                "capturedAt": "2026-10-22T00:00:00.000Z",
+                "sourceSessionKey": "seed-session",
+                "file": "beta-feedback-0a130119fe.md",
+                "relativePath": "Feedback/beta-feedback-0a130119fe.md",
+                "absolutePath": "$ROOT/facade-sequence/data/memory/Feedback/beta-feedback-0a130119fe.md"
+              },
+              {
+                "name": "User one",
+                "description": "User one description",
+                "type": "user",
+                "scope": "global",
+                "updatedAt": "2026-10-22T00:00:00.000Z",
+                "capturedAt": "2026-10-22T00:00:00.000Z",
+                "sourceSessionKey": "seed-session",
+                "file": "user-one-03ad7595ce.md",
+                "relativePath": "global/UserIdentityNotes/user-one-03ad7595ce.md",
+                "absolutePath": "$ROOT/facade-sequence/root/global/UserIdentityNotes/user-one-03ad7595ce.md"
+              },
+              {
+                "name": "Alpha note",
+                "description": "Alpha note description",
+                "type": "project",
+                "scope": "project",
+                "projectId": "current_project",
+                "updatedAt": "2026-10-22T00:00:00.000Z",
+                "capturedAt": "2026-10-22T00:00:00.000Z",
+                "sourceSessionKey": "seed-session",
+                "file": "alpha-note-c8acc71a5e.md",
+                "relativePath": "Project/alpha-note-c8acc71a5e.md",
+                "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md"
+              }
+            ]
+          }
+        },
+        {
+          "op": "snapshot",
+          "args": {
+            "limit": 1
+          },
+          "ok": true,
+          "value": {
+            "overview": {
+              "pendingSessions": 0,
+              "workspaceMode": "single",
+              "currentProjectCount": 1,
+              "projectMetaPresent": true,
+              "projectMemoryCount": 1,
+              "feedbackMemoryCount": 1,
+              "userProfileCount": 0,
+              "recentRecallTraceCount": 0,
+              "recentIndexTraceCount": 0,
+              "recentDreamTraceCount": 0
+            },
+            "settings": {
+              "reasoningMode": "answer_first",
+              "autoIndexIntervalMinutes": 5,
+              "autoDreamIntervalMinutes": 0
+            },
+            "recentMemoryFiles": [
+              {
+                "name": "Beta feedback",
+                "description": "Beta feedback description",
+                "type": "feedback",
+                "scope": "project",
+                "projectId": "current_project",
+                "updatedAt": "2026-10-22T00:00:00.000Z",
+                "capturedAt": "2026-10-22T00:00:00.000Z",
+                "sourceSessionKey": "seed-session",
+                "file": "beta-feedback-0a130119fe.md",
+                "relativePath": "Feedback/beta-feedback-0a130119fe.md",
+                "absolutePath": "$ROOT/facade-sequence/data/memory/Feedback/beta-feedback-0a130119fe.md"
+              }
+            ]
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "s1",
+              "timestamp": "2026-10-22T00:00:01.000Z"
+            }
+          },
+          "ok": true,
+          "value": {
+            "captured": true,
+            "normalizedMessages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "sessionKey": "s1"
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "tool"
+              }
+            ],
+            "input": {
+              "sessionKey": "s1"
+            }
+          },
+          "ok": true,
+          "value": {
+            "captured": false,
+            "normalizedMessages": [],
+            "sessionKey": "s1"
+          }
+        },
+        {
+          "op": "list",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Beta feedback",
+              "description": "Beta feedback description",
+              "type": "feedback",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "beta-feedback-0a130119fe.md",
+              "relativePath": "Feedback/beta-feedback-0a130119fe.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Feedback/beta-feedback-0a130119fe.md"
+            },
+            {
+              "name": "User one",
+              "description": "User one description",
+              "type": "user",
+              "scope": "global",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "user-one-03ad7595ce.md",
+              "relativePath": "global/UserIdentityNotes/user-one-03ad7595ce.md",
+              "absolutePath": "$ROOT/facade-sequence/root/global/UserIdentityNotes/user-one-03ad7595ce.md"
+            },
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md"
+            }
+          ]
+        },
+        {
+          "op": "list",
+          "args": {
+            "options": {
+              "kinds": [
+                "project"
+              ],
+              "query": "Alpha"
+            }
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md"
+            }
+          ]
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": 10
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md",
+              "content": "## Summary\nAlpha note summary",
+              "preview": "Summary Alpha note summary"
+            }
+          ]
+        },
+        {
+          "op": "getUserSummary",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "identityBackground": [],
+            "files": []
+          }
+        },
+        {
+          "op": "getProjectMeta",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "projectId": "current_project",
+            "projectName": "Alpha",
+            "description": "alpha description",
+            "status": "in_progress",
+            "createdAt": "2026-10-22T00:00:00.000Z",
+            "updatedAt": "2026-10-22T00:00:00.000Z",
+            "relativePath": "project.meta.md",
+            "absolutePath": "$ROOT/facade-sequence/data/memory/project.meta.md"
+          }
+        },
+        {
+          "op": "getWorkspaceMode",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": "single"
+        },
+        {
+          "op": "listReadableProjectCatalog",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": [
+            {
+              "projectId": "current_project",
+              "projectName": "Alpha",
+              "description": "alpha description",
+              "status": "in_progress",
+              "createdAt": "2026-10-22T00:00:00.000Z",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "relativePath": "project.meta.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/project.meta.md",
+              "workspaceMode": "single",
+              "workspacePath": "$ROOT/facade-sequence/workspace",
+              "workspaceName": "workspace",
+              "sourceType": "general_local",
+              "logicalProjectId": "current_project",
+              "readOnly": false,
+              "hasLocalMirror": false,
+              "summary": {
+                "totalEntries": 2,
+                "projectEntries": 1,
+                "feedbackEntries": 1,
+                "latestMemoryAt": "2026-10-22T00:00:00.000Z"
+              }
+            }
+          ]
+        },
+        {
+          "op": "getReadableProject",
+          "args": {
+            "id": "current_project"
+          },
+          "ok": true,
+          "value": {
+            "projectId": "current_project",
+            "projectName": "Alpha",
+            "description": "alpha description",
+            "status": "in_progress",
+            "createdAt": "2026-10-22T00:00:00.000Z",
+            "updatedAt": "2026-10-22T00:00:00.000Z",
+            "relativePath": "project.meta.md",
+            "absolutePath": "$ROOT/facade-sequence/data/memory/project.meta.md",
+            "workspaceMode": "single",
+            "workspacePath": "$ROOT/facade-sequence/workspace",
+            "workspaceName": "workspace",
+            "sourceType": "general_local",
+            "logicalProjectId": "current_project",
+            "readOnly": false,
+            "hasLocalMirror": false,
+            "summary": {
+              "totalEntries": 2,
+              "projectEntries": 1,
+              "feedbackEntries": 1,
+              "latestMemoryAt": "2026-10-22T00:00:00.000Z"
+            }
+          }
+        },
+        {
+          "op": "listReadableProjectEntries",
+          "args": {
+            "id": "current_project",
+            "options": {}
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Beta feedback",
+              "description": "Beta feedback description",
+              "type": "feedback",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "beta-feedback-0a130119fe.md",
+              "relativePath": "Feedback/beta-feedback-0a130119fe.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Feedback/beta-feedback-0a130119fe.md"
+            },
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md"
+            }
+          ]
+        },
+        {
+          "op": "updateProjectMeta",
+          "args": {
+            "input": {
+              "projectName": "Alpha renamed",
+              "description": "renamed",
+              "status": "done"
+            }
+          },
+          "ok": true,
+          "value": {
+            "projectId": "current_project",
+            "projectName": "Alpha renamed",
+            "description": "renamed",
+            "status": "done",
+            "createdAt": "2026-10-22T00:00:00.000Z",
+            "updatedAt": "2026-10-22T00:00:00.000Z",
+            "relativePath": "project.meta.md",
+            "absolutePath": "$ROOT/facade-sequence/data/memory/project.meta.md"
+          }
+        },
+        {
+          "op": "getSnapshotVersion",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": "e1b7ec58d3"
+        },
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        }
+      ],
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "indexingSettings",
+            "state_json": "{\"reasoningMode\":\"answer_first\",\"autoIndexIntervalMinutes\":5,\"autoDreamIntervalMinutes\":0}",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/facade-sequence/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": [
+          {
+            "l0_index_id": "s1_b85f5ecc02_raw",
+            "session_key": "s1",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          }
+        ]
+      },
+      "files": {
+        "memory": [
+          {
+            "relativePath": "Feedback/beta-feedback-0a130119fe.md",
+            "content": "---\nname: Beta feedback\ndescription: Beta feedback description\ntype: feedback\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: seed-session\n---\n## Rule\nBeta feedback description\n"
+          },
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Alpha renamed](project.meta.md) — renamed\n\n## Project Memory\n- [Alpha note](Project/alpha-note-c8acc71a5e.md) — Alpha note description\n\n## Feedback Memory\n- [Beta feedback](Feedback/beta-feedback-0a130119fe.md) — Beta feedback description\n\n## User Memory\n- [User one](../../root/global/UserIdentityNotes/user-one-03ad7595ce.md) — User one description\n"
+          },
+          {
+            "relativePath": "Project/alpha-note-c8acc71a5e.md",
+            "content": "---\nname: Alpha note\ndescription: Alpha note description\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: seed-session\n---\n## Summary\nAlpha note summary\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Alpha renamed\ndescription: renamed\nstatus: done\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nrenamed\n"
+          }
+        ],
+        "global": [
+          {
+            "relativePath": "UserIdentityNotes/user-one-03ad7595ce.md",
+            "content": "---\nname: User one\ndescription: User one description\ntype: user\nscope: global\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: seed-session\n---\n## 身份背景\n- User one profile\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "traces",
+      "options": null,
+      "seeds": [
+        {
+          "store": "workspace",
+          "method": "upsertProjectMeta",
+          "input": {
+            "projectName": "Alpha",
+            "description": "alpha description",
+            "status": "in_progress"
+          }
+        },
+        {
+          "method": "indexTrace",
+          "input": {
+            "indexTraceId": "idx-1",
+            "startedAt": "2026-10-22T00:00:00.000Z",
+            "status": "error"
+          }
+        },
+        {
+          "method": "dreamTrace",
+          "input": {
+            "dreamTraceId": "dream-1",
+            "startedAt": "2026-10-22T00:00:00.000Z",
+            "status": "error"
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "saveCaseTrace",
+          "args": {
+            "record": {
+              "caseId": "  case-explicit  ",
+              "sessionKey": "s1",
+              "query": "q1",
+              "startedAt": "2026-10-22T00:00:03.000Z",
+              "finishedAt": "2026-10-22T00:00:04.000Z",
+              "status": "ok",
+              "retrieval": {
+                "contextPreview": "### [user]\nname\n### [project]\nbody"
+              },
+              "toolEvents": [],
+              "assistantReply": "reply"
+            }
+          }
+        },
+        {
+          "op": "saveCaseTrace",
+          "args": {
+            "record": {
+              "sessionKey": "s1",
+              "query": "q2",
+              "status": "ok"
+            }
+          }
+        },
+        {
+          "op": "saveCaseTrace",
+          "args": {
+            "record": {
+              "caseId": "   ",
+              "sessionKey": "s2",
+              "query": "q3",
+              "status": "ok",
+              "retrieval": {
+                "contextPreview": "plain preview"
+              }
+            }
+          }
+        },
+        {
+          "op": "listCaseTraces"
+        },
+        {
+          "op": "listCaseTraces",
+          "args": {
+            "limit": 1
+          }
+        },
+        {
+          "op": "getCaseTrace",
+          "args": {
+            "caseId": "case-explicit"
+          }
+        },
+        {
+          "op": "getCaseTrace",
+          "args": {
+            "caseId": "missing"
+          }
+        },
+        {
+          "op": "listIndexTraces"
+        },
+        {
+          "op": "getIndexTrace",
+          "args": {
+            "id": "idx-1"
+          }
+        },
+        {
+          "op": "listDreamTraces"
+        },
+        {
+          "op": "getDreamTrace",
+          "args": {
+            "id": "dream-1"
+          }
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "inputPaths": {
+        "workspace": "workspace",
+        "rootDir": "root"
+      },
+      "paths": {
+        "workspace": "$ROOT/traces/workspace",
+        "rootDir": "$ROOT/traces/root",
+        "dataDir": "$ROOT/traces/root/workspaces/$HASH",
+        "dbPath": "$ROOT/traces/root/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/traces/root/workspaces/$HASH/memory"
+      },
+      "steps": [
+        {
+          "op": "saveCaseTrace",
+          "args": {
+            "record": {
+              "caseId": "  case-explicit  ",
+              "sessionKey": "s1",
+              "query": "q1",
+              "startedAt": "2026-10-22T00:00:03.000Z",
+              "finishedAt": "2026-10-22T00:00:04.000Z",
+              "status": "ok",
+              "retrieval": {
+                "contextPreview": "### [user]\nname\n### [project]\nbody"
+              },
+              "toolEvents": [],
+              "assistantReply": "reply"
+            }
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        },
+        {
+          "op": "saveCaseTrace",
+          "args": {
+            "record": {
+              "sessionKey": "s1",
+              "query": "q2",
+              "status": "ok"
+            }
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        },
+        {
+          "op": "saveCaseTrace",
+          "args": {
+            "record": {
+              "caseId": "   ",
+              "sessionKey": "s2",
+              "query": "q3",
+              "status": "ok",
+              "retrieval": {
+                "contextPreview": "plain preview"
+              }
+            }
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        },
+        {
+          "op": "listCaseTraces",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": [
+            {
+              "caseId": "case-explicit",
+              "sessionKey": "s1",
+              "query": "q1",
+              "startedAt": "2026-10-22T00:00:03.000Z",
+              "finishedAt": "2026-10-22T00:00:04.000Z",
+              "status": "ok",
+              "retrieval": {
+                "contextPreview": "## ClawXMemory Recall\n\nThese are retrieved long-term memory references for the current turn.\n\nSome content may be relevant while some may not be directly useful.\n\nUse only the parts that are relevant to the current question.\n\nIf retrieved memory conflicts with explicit new user instructions in the current turn, follow the current-turn user instructions.\n\n## User Profile\n\nname\n\n## Project Memory\n\nbody"
+              },
+              "toolEvents": [],
+              "assistantReply": "reply"
+            },
+            {
+              "caseId": "case_trace_90e9308ccb",
+              "sessionKey": "s2",
+              "query": "q3",
+              "startedAt": "2026-10-22T00:00:00.000Z",
+              "status": "ok",
+              "retrieval": {
+                "contextPreview": "plain preview"
+              }
+            },
+            {
+              "caseId": "case_trace_133f7f0f0c",
+              "sessionKey": "s1",
+              "query": "q2",
+              "startedAt": "2026-10-22T00:00:00.000Z",
+              "status": "ok"
+            }
+          ]
+        },
+        {
+          "op": "listCaseTraces",
+          "args": {
+            "limit": 1
+          },
+          "ok": true,
+          "value": [
+            {
+              "caseId": "case-explicit",
+              "sessionKey": "s1",
+              "query": "q1",
+              "startedAt": "2026-10-22T00:00:03.000Z",
+              "finishedAt": "2026-10-22T00:00:04.000Z",
+              "status": "ok",
+              "retrieval": {
+                "contextPreview": "## ClawXMemory Recall\n\nThese are retrieved long-term memory references for the current turn.\n\nSome content may be relevant while some may not be directly useful.\n\nUse only the parts that are relevant to the current question.\n\nIf retrieved memory conflicts with explicit new user instructions in the current turn, follow the current-turn user instructions.\n\n## User Profile\n\nname\n\n## Project Memory\n\nbody"
+              },
+              "toolEvents": [],
+              "assistantReply": "reply"
+            }
+          ]
+        },
+        {
+          "op": "getCaseTrace",
+          "args": {
+            "caseId": "case-explicit"
+          },
+          "ok": true,
+          "value": {
+            "caseId": "case-explicit",
+            "sessionKey": "s1",
+            "query": "q1",
+            "startedAt": "2026-10-22T00:00:03.000Z",
+            "finishedAt": "2026-10-22T00:00:04.000Z",
+            "status": "ok",
+            "retrieval": {
+              "contextPreview": "## ClawXMemory Recall\n\nThese are retrieved long-term memory references for the current turn.\n\nSome content may be relevant while some may not be directly useful.\n\nUse only the parts that are relevant to the current question.\n\nIf retrieved memory conflicts with explicit new user instructions in the current turn, follow the current-turn user instructions.\n\n## User Profile\n\nname\n\n## Project Memory\n\nbody"
+            },
+            "toolEvents": [],
+            "assistantReply": "reply"
+          }
+        },
+        {
+          "op": "getCaseTrace",
+          "args": {
+            "caseId": "missing"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        },
+        {
+          "op": "listIndexTraces",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": [
+            {
+              "indexTraceId": "idx-1",
+              "startedAt": "2026-10-22T00:00:00.000Z",
+              "status": "error",
+              "isNoOp": false,
+              "displayStatus": "Error"
+            }
+          ]
+        },
+        {
+          "op": "getIndexTrace",
+          "args": {
+            "id": "idx-1"
+          },
+          "ok": true,
+          "value": {
+            "indexTraceId": "idx-1",
+            "startedAt": "2026-10-22T00:00:00.000Z",
+            "status": "error",
+            "isNoOp": false,
+            "displayStatus": "Error"
+          }
+        },
+        {
+          "op": "listDreamTraces",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": [
+            {
+              "dreamTraceId": "dream-1",
+              "startedAt": "2026-10-22T00:00:00.000Z",
+              "status": "error",
+              "isNoOp": false,
+              "displayStatus": "Error"
+            }
+          ]
+        },
+        {
+          "op": "getDreamTrace",
+          "args": {
+            "id": "dream-1"
+          },
+          "ok": true,
+          "value": {
+            "dreamTraceId": "dream-1",
+            "startedAt": "2026-10-22T00:00:00.000Z",
+            "status": "error",
+            "isNoOp": false,
+            "displayStatus": "Error"
+          }
+        },
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        }
+      ],
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "recentCaseTraces",
+            "state_json": "[{\"caseId\":\"case-explicit\",\"sessionKey\":\"s1\",\"query\":\"q1\",\"startedAt\":\"2026-10-22T00:00:03.000Z\",\"finishedAt\":\"2026-10-22T00:00:04.000Z\",\"status\":\"ok\",\"retrieval\":{\"contextPreview\":\"### [user]\\nname\\n### [project]\\nbody\"},\"toolEvents\":[],\"assistantReply\":\"reply\"},{\"caseId\":\"case_trace_90e9308ccb\",\"sessionKey\":\"s2\",\"query\":\"q3\",\"startedAt\":\"2026-10-22T00:00:00.000Z\",\"status\":\"ok\",\"retrieval\":{\"contextPreview\":\"plain preview\"}},{\"caseId\":\"case_trace_133f7f0f0c\",\"sessionKey\":\"s1\",\"query\":\"q2\",\"startedAt\":\"2026-10-22T00:00:00.000Z\",\"status\":\"ok\"}]",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "state_key": "recentDreamTraces",
+            "state_json": "[{\"dreamTraceId\":\"dream-1\",\"startedAt\":\"2026-10-22T00:00:00.000Z\",\"status\":\"error\",\"isNoOp\":false,\"displayStatus\":\"Error\"}]",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "state_key": "recentIndexTraces",
+            "state_json": "[{\"indexTraceId\":\"idx-1\",\"startedAt\":\"2026-10-22T00:00:00.000Z\",\"status\":\"error\",\"isNoOp\":false,\"displayStatus\":\"Error\"}]",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/traces/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": []
+      },
+      "files": {
+        "memory": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Alpha](project.meta.md) — alpha description\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Alpha\ndescription: alpha description\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nalpha description\n"
+          }
+        ],
+        "global": []
+      }
+    },
+    {
+      "name": "export-import",
+      "options": null,
+      "seeds": [
+        {
+          "store": "workspace",
+          "method": "upsertProjectMeta",
+          "input": {
+            "projectName": "Alpha",
+            "description": "alpha description",
+            "status": "in_progress"
+          }
+        },
+        {
+          "store": "workspace",
+          "method": "upsertCandidate",
+          "input": {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha note",
+            "description": "Alpha note description",
+            "summary": "Alpha note summary",
+            "profile": "Alpha note profile",
+            "capturedAt": "2026-10-22T00:00:00.000Z",
+            "sourceSessionKey": "seed-session"
+          }
+        },
+        {
+          "store": "global",
+          "method": "upsertCandidate",
+          "input": {
+            "type": "user",
+            "scope": "global",
+            "name": "User one",
+            "description": "User one description",
+            "summary": "User one summary",
+            "profile": "User one profile",
+            "capturedAt": "2026-10-22T00:00:00.000Z",
+            "sourceSessionKey": "seed-session"
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "export"
+        },
+        {
+          "op": "importLastExport"
+        },
+        {
+          "op": "list"
+        },
+        {
+          "op": "getUserSummary"
+        },
+        {
+          "op": "export"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "inputPaths": {
+        "workspace": "workspace",
+        "rootDir": "root"
+      },
+      "paths": {
+        "workspace": "$ROOT/export-import/workspace",
+        "rootDir": "$ROOT/export-import/root",
+        "dataDir": "$ROOT/export-import/root/workspaces/$HASH",
+        "dbPath": "$ROOT/export-import/root/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/export-import/root/workspaces/$HASH/memory"
+      },
+      "steps": [
+        {
+          "op": "export",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "formatVersion": "clawxmemory-memory-snapshot.v4",
+            "scope": "current_project",
+            "exportedAt": "2026-10-22T00:00:00.000Z",
+            "files": [
+              {
+                "relativePath": "project.meta.md",
+                "content": "---\nproject_id: current_project\nproject_name: Alpha\ndescription: alpha description\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nalpha description\n"
+              },
+              {
+                "relativePath": "Project/alpha-note-c8acc71a5e.md",
+                "content": "---\nname: Alpha note\ndescription: Alpha note description\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: seed-session\n---\n## Summary\nAlpha note summary\n"
+              }
+            ]
+          }
+        },
+        {
+          "op": "importLastExport",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "formatVersion": "clawxmemory-memory-snapshot.v4",
+            "scope": "current_project",
+            "imported": {
+              "managedFiles": 3,
+              "memoryFiles": 1,
+              "project": 1,
+              "feedback": 0,
+              "user": 0,
+              "tmp": 0,
+              "projectMetas": 1
+            },
+            "importedAt": "2026-10-22T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "list",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "User one",
+              "description": "User one description",
+              "type": "user",
+              "scope": "global",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "user-one-03ad7595ce.md",
+              "relativePath": "global/UserIdentityNotes/user-one-03ad7595ce.md",
+              "absolutePath": "$ROOT/export-import/root/global/UserIdentityNotes/user-one-03ad7595ce.md"
+            },
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/export-import/root/workspaces/$HASH/memory/Project/alpha-note-c8acc71a5e.md"
+            }
+          ]
+        },
+        {
+          "op": "getUserSummary",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "identityBackground": [],
+            "files": []
+          }
+        },
+        {
+          "op": "export",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "formatVersion": "clawxmemory-memory-snapshot.v4",
+            "scope": "current_project",
+            "exportedAt": "2026-10-22T00:00:00.000Z",
+            "files": [
+              {
+                "relativePath": "project.meta.md",
+                "content": "---\nproject_id: current_project\nproject_name: Alpha\ndescription: alpha description\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nalpha description\n"
+              },
+              {
+                "relativePath": "Project/alpha-note-c8acc71a5e.md",
+                "content": "---\nname: Alpha note\ndescription: Alpha note description\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: seed-session\n---\n## Summary\nAlpha note summary\n"
+              }
+            ]
+          }
+        },
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        }
+      ],
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/export-import/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": []
+      },
+      "files": {
+        "memory": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Alpha](project.meta.md) — alpha description\n\n## Project Memory\n- [Alpha note](Project/alpha-note-c8acc71a5e.md) — Alpha note description\n\n## User Memory\n- [User one](../../../global/UserIdentityNotes/user-one-03ad7595ce.md) — User one description\n"
+          },
+          {
+            "relativePath": "Project/alpha-note-c8acc71a5e.md",
+            "content": "---\nname: Alpha note\ndescription: Alpha note description\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: seed-session\n---\n## Summary\nAlpha note summary\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Alpha\ndescription: alpha description\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nalpha description\n"
+          }
+        ],
+        "global": [
+          {
+            "relativePath": "UserIdentityNotes/user-one-03ad7595ce.md",
+            "content": "---\nname: User one\ndescription: User one description\ntype: user\nscope: global\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: seed-session\n---\n## 身份背景\n- User one profile\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "clear",
+      "options": null,
+      "seeds": [
+        {
+          "store": "workspace",
+          "method": "upsertProjectMeta",
+          "input": {
+            "projectName": "Alpha",
+            "description": "alpha description",
+            "status": "in_progress"
+          }
+        },
+        {
+          "store": "workspace",
+          "method": "upsertCandidate",
+          "input": {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha note",
+            "description": "Alpha note description",
+            "summary": "Alpha note summary",
+            "profile": "Alpha note profile",
+            "capturedAt": "2026-10-22T00:00:00.000Z",
+            "sourceSessionKey": "seed-session"
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "session-one",
+              "timestamp": "2026-10-22T00:00:01.000Z"
+            }
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "session-two",
+              "timestamp": "2026-10-22T00:00:02.000Z"
+            }
+          }
+        },
+        {
+          "op": "clearSession",
+          "args": {
+            "sessionKey": "session-one"
+          }
+        },
+        {
+          "op": "overview"
+        },
+        {
+          "op": "clear",
+          "args": {
+            "scope": "current_project"
+          }
+        },
+        {
+          "op": "overview"
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "session-three",
+              "timestamp": "2026-10-22T00:00:03.000Z"
+            }
+          }
+        },
+        {
+          "op": "clear",
+          "args": {
+            "scope": "all_memory"
+          }
+        },
+        {
+          "op": "overview"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "inputPaths": {
+        "workspace": "workspace",
+        "rootDir": "root"
+      },
+      "paths": {
+        "workspace": "$ROOT/clear/workspace",
+        "rootDir": "$ROOT/clear/root",
+        "dataDir": "$ROOT/clear/root/workspaces/$HASH",
+        "dbPath": "$ROOT/clear/root/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/clear/root/workspaces/$HASH/memory"
+      },
+      "steps": [
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "session-one",
+              "timestamp": "2026-10-22T00:00:01.000Z"
+            }
+          },
+          "ok": true,
+          "value": {
+            "captured": true,
+            "normalizedMessages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "sessionKey": "session-one"
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "session-two",
+              "timestamp": "2026-10-22T00:00:02.000Z"
+            }
+          },
+          "ok": true,
+          "value": {
+            "captured": true,
+            "normalizedMessages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "sessionKey": "session-two"
+          }
+        },
+        {
+          "op": "clearSession",
+          "args": {
+            "sessionKey": "session-one"
+          },
+          "ok": true,
+          "value": {
+            "scope": "session",
+            "cleared": {
+              "l0Sessions": 1,
+              "pipelineState": 0,
+              "memoryFiles": 0,
+              "projectMetas": 0
+            },
+            "clearedAt": "2026-10-22T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "overview",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "pendingSessions": 1,
+            "workspaceMode": "single",
+            "currentProjectCount": 1,
+            "projectMetaPresent": true,
+            "projectMemoryCount": 1,
+            "feedbackMemoryCount": 0,
+            "userProfileCount": 0,
+            "recentRecallTraceCount": 0,
+            "recentIndexTraceCount": 0,
+            "recentDreamTraceCount": 0
+          }
+        },
+        {
+          "op": "clear",
+          "args": {
+            "scope": "current_project"
+          },
+          "ok": true,
+          "value": {
+            "scope": "current_project",
+            "cleared": {
+              "l0Sessions": 1,
+              "pipelineState": 1,
+              "memoryFiles": 1,
+              "projectMetas": 1
+            },
+            "clearedAt": "2026-10-22T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "overview",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "pendingSessions": 0,
+            "workspaceMode": "single",
+            "currentProjectCount": 0,
+            "projectMetaPresent": false,
+            "projectMemoryCount": 0,
+            "feedbackMemoryCount": 0,
+            "userProfileCount": 0,
+            "recentRecallTraceCount": 0,
+            "recentIndexTraceCount": 0,
+            "recentDreamTraceCount": 0
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "session-three",
+              "timestamp": "2026-10-22T00:00:03.000Z"
+            }
+          },
+          "ok": true,
+          "value": {
+            "captured": true,
+            "normalizedMessages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "sessionKey": "session-three"
+          }
+        },
+        {
+          "op": "clear",
+          "args": {
+            "scope": "all_memory"
+          },
+          "ok": true,
+          "value": {
+            "scope": "all_memory",
+            "cleared": {
+              "l0Sessions": 1,
+              "pipelineState": 1,
+              "memoryFiles": 0,
+              "projectMetas": 0
+            },
+            "clearedAt": "2026-10-22T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "overview",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "pendingSessions": 0,
+            "workspaceMode": "single",
+            "currentProjectCount": 0,
+            "projectMetaPresent": false,
+            "projectMemoryCount": 0,
+            "feedbackMemoryCount": 0,
+            "userProfileCount": 0,
+            "recentRecallTraceCount": 0,
+            "recentIndexTraceCount": 0,
+            "recentDreamTraceCount": 0
+          }
+        },
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        }
+      ],
+      "sqlite": {
+        "pipeline": [],
+        "l0": []
+      },
+      "files": {
+        "memory": [],
+        "global": []
+      }
+    },
+    {
+      "name": "act",
+      "options": null,
+      "seeds": [
+        {
+          "store": "workspace",
+          "method": "upsertProjectMeta",
+          "input": {
+            "projectName": "Alpha",
+            "description": "alpha description",
+            "status": "in_progress"
+          }
+        },
+        {
+          "store": "workspace",
+          "method": "upsertCandidate",
+          "input": {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha note",
+            "description": "Alpha note description",
+            "summary": "Alpha note summary",
+            "profile": "Alpha note profile",
+            "capturedAt": "2026-10-22T00:00:00.000Z",
+            "sourceSessionKey": "seed-session"
+          }
+        },
+        {
+          "store": "workspace",
+          "method": "upsertCandidate",
+          "input": {
+            "type": "feedback",
+            "scope": "project",
+            "name": "Beta feedback",
+            "description": "Beta feedback description",
+            "summary": "Beta feedback summary",
+            "profile": "Beta feedback profile",
+            "capturedAt": "2026-10-22T00:00:00.000Z",
+            "sourceSessionKey": "seed-session"
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "act",
+          "args": {
+            "input": {
+              "action": "edit_project_meta",
+              "projectName": "Alpha renamed",
+              "description": "renamed",
+              "status": "done"
+            }
+          }
+        },
+        {
+          "op": "act",
+          "args": {
+            "input": {
+              "action": "edit_entry",
+              "id": "Project/alpha-note-c8acc71a5e.md",
+              "name": "Alpha note renamed",
+              "description": "edited description"
+            }
+          }
+        },
+        {
+          "op": "act",
+          "args": {
+            "input": {
+              "action": "deprecate_entries",
+              "ids": [
+                "Feedback/beta-feedback-0a130119fe.md"
+              ]
+            }
+          }
+        },
+        {
+          "op": "list",
+          "args": {
+            "options": {
+              "includeDeprecated": true
+            }
+          }
+        },
+        {
+          "op": "act",
+          "args": {
+            "input": {
+              "action": "restore_entries",
+              "ids": [
+                "Feedback/beta-feedback-0a130119fe.md"
+              ]
+            }
+          }
+        },
+        {
+          "op": "act",
+          "args": {
+            "input": {
+              "action": "delete_entries",
+              "ids": [
+                "Project/alpha-note-c8acc71a5e.md",
+                "Feedback/beta-feedback-0a130119fe.md"
+              ]
+            }
+          }
+        },
+        {
+          "op": "act",
+          "args": {
+            "input": {
+              "action": "unknown_action"
+            }
+          }
+        },
+        {
+          "op": "list"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "inputPaths": {
+        "workspace": "workspace",
+        "rootDir": "root"
+      },
+      "paths": {
+        "workspace": "$ROOT/act/workspace",
+        "rootDir": "$ROOT/act/root",
+        "dataDir": "$ROOT/act/root/workspaces/$HASH",
+        "dbPath": "$ROOT/act/root/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/act/root/workspaces/$HASH/memory"
+      },
+      "steps": [
+        {
+          "op": "act",
+          "args": {
+            "input": {
+              "action": "edit_project_meta",
+              "projectName": "Alpha renamed",
+              "description": "renamed",
+              "status": "done"
+            }
+          },
+          "ok": true,
+          "value": {
+            "ok": true,
+            "action": "edit_project_meta",
+            "updatedOverview": {
+              "pendingSessions": 0,
+              "workspaceMode": "single",
+              "currentProjectCount": 1,
+              "projectMetaPresent": true,
+              "projectMemoryCount": 1,
+              "feedbackMemoryCount": 1,
+              "userProfileCount": 0,
+              "recentRecallTraceCount": 0,
+              "recentIndexTraceCount": 0,
+              "recentDreamTraceCount": 0
+            },
+            "mutatedIds": [
+              "project.meta.md"
+            ],
+            "deletedProjectIds": [],
+            "messages": [
+              "Updated current project metadata for Alpha renamed."
+            ]
+          }
+        },
+        {
+          "op": "act",
+          "args": {
+            "input": {
+              "action": "edit_entry",
+              "id": "Project/alpha-note-c8acc71a5e.md",
+              "name": "Alpha note renamed",
+              "description": "edited description"
+            }
+          },
+          "ok": true,
+          "value": {
+            "ok": true,
+            "action": "edit_entry",
+            "updatedOverview": {
+              "pendingSessions": 0,
+              "workspaceMode": "single",
+              "currentProjectCount": 1,
+              "projectMetaPresent": true,
+              "projectMemoryCount": 1,
+              "feedbackMemoryCount": 1,
+              "userProfileCount": 0,
+              "recentRecallTraceCount": 0,
+              "recentIndexTraceCount": 0,
+              "recentDreamTraceCount": 0
+            },
+            "mutatedIds": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "deletedProjectIds": [],
+            "messages": [
+              "Updated memory entry Alpha note renamed."
+            ]
+          }
+        },
+        {
+          "op": "act",
+          "args": {
+            "input": {
+              "action": "deprecate_entries",
+              "ids": [
+                "Feedback/beta-feedback-0a130119fe.md"
+              ]
+            }
+          },
+          "ok": true,
+          "value": {
+            "ok": true,
+            "action": "deprecate_entries",
+            "updatedOverview": {
+              "pendingSessions": 0,
+              "workspaceMode": "single",
+              "currentProjectCount": 1,
+              "projectMetaPresent": true,
+              "projectMemoryCount": 1,
+              "feedbackMemoryCount": 0,
+              "userProfileCount": 0,
+              "recentRecallTraceCount": 0,
+              "recentIndexTraceCount": 0,
+              "recentDreamTraceCount": 0
+            },
+            "mutatedIds": [
+              "Feedback/beta-feedback-0a130119fe.md"
+            ],
+            "deletedProjectIds": [],
+            "messages": [
+              "Deprecated 1 memory file."
+            ]
+          }
+        },
+        {
+          "op": "list",
+          "args": {
+            "options": {
+              "includeDeprecated": true
+            }
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Beta feedback",
+              "description": "Beta feedback description",
+              "type": "feedback",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "deprecated": true,
+              "file": "beta-feedback-0a130119fe.md",
+              "relativePath": "Feedback/beta-feedback-0a130119fe.md",
+              "absolutePath": "$ROOT/act/root/workspaces/$HASH/memory/Feedback/beta-feedback-0a130119fe.md"
+            },
+            {
+              "name": "Alpha note renamed",
+              "description": "edited description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/act/root/workspaces/$HASH/memory/Project/alpha-note-c8acc71a5e.md"
+            }
+          ]
+        },
+        {
+          "op": "act",
+          "args": {
+            "input": {
+              "action": "restore_entries",
+              "ids": [
+                "Feedback/beta-feedback-0a130119fe.md"
+              ]
+            }
+          },
+          "ok": true,
+          "value": {
+            "ok": true,
+            "action": "restore_entries",
+            "updatedOverview": {
+              "pendingSessions": 0,
+              "workspaceMode": "single",
+              "currentProjectCount": 1,
+              "projectMetaPresent": true,
+              "projectMemoryCount": 1,
+              "feedbackMemoryCount": 1,
+              "userProfileCount": 0,
+              "recentRecallTraceCount": 0,
+              "recentIndexTraceCount": 0,
+              "recentDreamTraceCount": 0
+            },
+            "mutatedIds": [
+              "Feedback/beta-feedback-0a130119fe.md"
+            ],
+            "deletedProjectIds": [],
+            "messages": [
+              "Restored 1 memory file."
+            ]
+          }
+        },
+        {
+          "op": "act",
+          "args": {
+            "input": {
+              "action": "delete_entries",
+              "ids": [
+                "Project/alpha-note-c8acc71a5e.md",
+                "Feedback/beta-feedback-0a130119fe.md"
+              ]
+            }
+          },
+          "ok": true,
+          "value": {
+            "ok": true,
+            "action": "delete_entries",
+            "updatedOverview": {
+              "pendingSessions": 0,
+              "workspaceMode": "single",
+              "currentProjectCount": 1,
+              "projectMetaPresent": true,
+              "projectMemoryCount": 0,
+              "feedbackMemoryCount": 0,
+              "userProfileCount": 0,
+              "recentRecallTraceCount": 0,
+              "recentIndexTraceCount": 0,
+              "recentDreamTraceCount": 0
+            },
+            "mutatedIds": [
+              "Project/alpha-note-c8acc71a5e.md",
+              "Feedback/beta-feedback-0a130119fe.md"
+            ],
+            "deletedProjectIds": [],
+            "messages": [
+              "Deleted 2 memory files."
+            ]
+          }
+        },
+        {
+          "op": "act",
+          "args": {
+            "input": {
+              "action": "unknown_action"
+            }
+          },
+          "ok": true,
+          "value": {
+            "ok": true,
+            "action": "unknown_action",
+            "updatedOverview": {
+              "pendingSessions": 0,
+              "workspaceMode": "single",
+              "currentProjectCount": 1,
+              "projectMetaPresent": true,
+              "projectMemoryCount": 0,
+              "feedbackMemoryCount": 0,
+              "userProfileCount": 0,
+              "recentRecallTraceCount": 0,
+              "recentIndexTraceCount": 0,
+              "recentDreamTraceCount": 0
+            },
+            "mutatedIds": [],
+            "deletedProjectIds": [],
+            "messages": []
+          }
+        },
+        {
+          "op": "list",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": []
+        },
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        }
+      ],
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/act/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": []
+      },
+      "files": {
+        "memory": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Alpha renamed](project.meta.md) — renamed\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Alpha renamed\ndescription: renamed\nstatus: done\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nrenamed\n"
+          }
+        ],
+        "global": []
+      }
+    },
+    {
+      "name": "closed-matrix",
+      "options": null,
+      "seeds": [
+        {
+          "store": "workspace",
+          "method": "upsertProjectMeta",
+          "input": {
+            "projectName": "Alpha",
+            "description": "alpha description",
+            "status": "in_progress"
+          }
+        },
+        {
+          "store": "workspace",
+          "method": "upsertCandidate",
+          "input": {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha note",
+            "description": "Alpha note description",
+            "summary": "Alpha note summary",
+            "profile": "Alpha note profile",
+            "capturedAt": "2026-10-22T00:00:00.000Z",
+            "sourceSessionKey": "seed-session"
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "s1",
+              "timestamp": "2026-10-22T00:00:01.000Z"
+            }
+          }
+        },
+        {
+          "op": "saveCaseTrace",
+          "args": {
+            "record": {
+              "caseId": "closed-case",
+              "sessionKey": "s1",
+              "query": "q",
+              "startedAt": "2026-10-22T00:00:00.000Z",
+              "status": "ok"
+            }
+          }
+        },
+        {
+          "op": "export"
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "getSettings"
+        },
+        {
+          "op": "saveSettings",
+          "args": {
+            "partial": {
+              "autoIndexIntervalMinutes": 5
+            }
+          }
+        },
+        {
+          "op": "overview"
+        },
+        {
+          "op": "snapshot"
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "s2"
+            }
+          }
+        },
+        {
+          "op": "list"
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": 80
+          }
+        },
+        {
+          "op": "getUserSummary"
+        },
+        {
+          "op": "getProjectMeta"
+        },
+        {
+          "op": "getWorkspaceMode"
+        },
+        {
+          "op": "listReadableProjectCatalog"
+        },
+        {
+          "op": "getReadableProject",
+          "args": {
+            "id": "current_project"
+          }
+        },
+        {
+          "op": "listReadableProjectEntries",
+          "args": {
+            "id": "current_project",
+            "options": {}
+          }
+        },
+        {
+          "op": "updateProjectMeta",
+          "args": {
+            "input": {
+              "projectName": "After close",
+              "description": "d",
+              "status": "s"
+            }
+          }
+        },
+        {
+          "op": "getSnapshotVersion"
+        },
+        {
+          "op": "listCaseTraces"
+        },
+        {
+          "op": "saveCaseTrace",
+          "args": {
+            "record": {
+              "sessionKey": "s1",
+              "query": "q2",
+              "status": "ok"
+            }
+          }
+        },
+        {
+          "op": "getCaseTrace",
+          "args": {
+            "caseId": "closed-case"
+          }
+        },
+        {
+          "op": "listIndexTraces"
+        },
+        {
+          "op": "getIndexTrace",
+          "args": {
+            "id": "none"
+          }
+        },
+        {
+          "op": "listDreamTraces"
+        },
+        {
+          "op": "getDreamTrace",
+          "args": {
+            "id": "none"
+          }
+        },
+        {
+          "op": "export"
+        },
+        {
+          "op": "importLastExport"
+        },
+        {
+          "op": "clear"
+        },
+        {
+          "op": "clearSession",
+          "args": {
+            "sessionKey": "s1"
+          }
+        },
+        {
+          "op": "act",
+          "args": {
+            "input": {
+              "action": "edit_project_meta",
+              "projectName": "P",
+              "description": "d",
+              "status": "s"
+            }
+          }
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "inputPaths": {
+        "workspace": "workspace",
+        "rootDir": "root"
+      },
+      "paths": {
+        "workspace": "$ROOT/closed-matrix/workspace",
+        "rootDir": "$ROOT/closed-matrix/root",
+        "dataDir": "$ROOT/closed-matrix/root/workspaces/$HASH",
+        "dbPath": "$ROOT/closed-matrix/root/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/closed-matrix/root/workspaces/$HASH/memory"
+      },
+      "steps": [
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "s1",
+              "timestamp": "2026-10-22T00:00:01.000Z"
+            }
+          },
+          "ok": true,
+          "value": {
+            "captured": true,
+            "normalizedMessages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "sessionKey": "s1"
+          }
+        },
+        {
+          "op": "saveCaseTrace",
+          "args": {
+            "record": {
+              "caseId": "closed-case",
+              "sessionKey": "s1",
+              "query": "q",
+              "startedAt": "2026-10-22T00:00:00.000Z",
+              "status": "ok"
+            }
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        },
+        {
+          "op": "export",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "formatVersion": "clawxmemory-memory-snapshot.v4",
+            "scope": "current_project",
+            "exportedAt": "2026-10-22T00:00:00.000Z",
+            "recentCaseTraces": [
+              {
+                "caseId": "closed-case",
+                "sessionKey": "s1",
+                "query": "q",
+                "startedAt": "2026-10-22T00:00:00.000Z",
+                "status": "ok"
+              }
+            ],
+            "files": [
+              {
+                "relativePath": "project.meta.md",
+                "content": "---\nproject_id: current_project\nproject_name: Alpha\ndescription: alpha description\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nalpha description\n"
+              },
+              {
+                "relativePath": "Project/alpha-note-c8acc71a5e.md",
+                "content": "---\nname: Alpha note\ndescription: Alpha note description\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: seed-session\n---\n## Summary\nAlpha note summary\n"
+              }
+            ]
+          }
+        },
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        },
+        {
+          "op": "getSettings",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "saveSettings",
+          "args": {
+            "partial": {
+              "autoIndexIntervalMinutes": 5
+            }
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "overview",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "snapshot",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "alpha user"
+              },
+              {
+                "role": "assistant",
+                "content": "alpha assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "s2"
+            }
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "list",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/closed-matrix/root/workspaces/$HASH/memory/Project/alpha-note-c8acc71a5e.md"
+            }
+          ]
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": 80
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/closed-matrix/root/workspaces/$HASH/memory/Project/alpha-note-c8acc71a5e.md",
+              "content": "## Summary\nAlpha note summary",
+              "preview": "Summary Alpha note summary"
+            }
+          ]
+        },
+        {
+          "op": "getUserSummary",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "identityBackground": [],
+            "files": []
+          }
+        },
+        {
+          "op": "getProjectMeta",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "projectId": "current_project",
+            "projectName": "Alpha",
+            "description": "alpha description",
+            "status": "in_progress",
+            "createdAt": "2026-10-22T00:00:00.000Z",
+            "updatedAt": "2026-10-22T00:00:00.000Z",
+            "relativePath": "project.meta.md",
+            "absolutePath": "$ROOT/closed-matrix/root/workspaces/$HASH/memory/project.meta.md"
+          }
+        },
+        {
+          "op": "getWorkspaceMode",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": "single"
+        },
+        {
+          "op": "listReadableProjectCatalog",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "getReadableProject",
+          "args": {
+            "id": "current_project"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "listReadableProjectEntries",
+          "args": {
+            "id": "current_project",
+            "options": {}
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "updateProjectMeta",
+          "args": {
+            "input": {
+              "projectName": "After close",
+              "description": "d",
+              "status": "s"
+            }
+          },
+          "ok": true,
+          "value": {
+            "projectId": "current_project",
+            "projectName": "After close",
+            "description": "d",
+            "status": "s",
+            "createdAt": "2026-10-22T00:00:00.000Z",
+            "updatedAt": "2026-10-22T00:00:00.000Z",
+            "relativePath": "project.meta.md",
+            "absolutePath": "$ROOT/closed-matrix/root/workspaces/$HASH/memory/project.meta.md"
+          }
+        },
+        {
+          "op": "getSnapshotVersion",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "listCaseTraces",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "saveCaseTrace",
+          "args": {
+            "record": {
+              "sessionKey": "s1",
+              "query": "q2",
+              "status": "ok"
+            }
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "getCaseTrace",
+          "args": {
+            "caseId": "closed-case"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "listIndexTraces",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "getIndexTrace",
+          "args": {
+            "id": "none"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "listDreamTraces",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "getDreamTrace",
+          "args": {
+            "id": "none"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "export",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "importLastExport",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "clear",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "clearSession",
+          "args": {
+            "sessionKey": "s1"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "act",
+          "args": {
+            "input": {
+              "action": "edit_project_meta",
+              "projectName": "P",
+              "description": "d",
+              "status": "s"
+            }
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        },
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        }
+      ],
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "recentCaseTraces",
+            "state_json": "[{\"caseId\":\"closed-case\",\"sessionKey\":\"s1\",\"query\":\"q\",\"startedAt\":\"2026-10-22T00:00:00.000Z\",\"status\":\"ok\"}]",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/closed-matrix/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": [
+          {
+            "l0_index_id": "s1_b85f5ecc02_raw",
+            "session_key": "s1",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          }
+        ]
+      },
+      "files": {
+        "memory": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [P](project.meta.md) — d\n\n## Project Memory\n- [Alpha note](Project/alpha-note-c8acc71a5e.md) — Alpha note description\n"
+          },
+          {
+            "relativePath": "Project/alpha-note-c8acc71a5e.md",
+            "content": "---\nname: Alpha note\ndescription: Alpha note description\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: seed-session\n---\n## Summary\nAlpha note summary\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: P\ndescription: d\nstatus: s\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nd\n"
+          }
+        ],
+        "global": []
+      }
+    }
+  ]
+}

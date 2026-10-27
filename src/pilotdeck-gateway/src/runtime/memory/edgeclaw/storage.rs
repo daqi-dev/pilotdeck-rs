@@ -155,7 +155,7 @@ pub struct IndexingSettings {
     pub auto_dream_interval_minutes: i64,
 }
 impl IndexingSettings {
-    fn to_js(&self) -> JsValue {
+    pub fn to_js(&self) -> JsValue {
         let mut object = JsObject::new();
         object.insert(
             "reasoningMode".into(),

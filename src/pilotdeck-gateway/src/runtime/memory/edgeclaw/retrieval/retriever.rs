@@ -1451,7 +1451,7 @@ fn collator() -> &'static icu_collator::CollatorBorrowed<'static> {
     })
 }
 
-fn default_random_token() -> JsString {
+pub(crate) fn default_random_token() -> JsString {
     // V8 `Math.random().toString(36).slice(2, 10)`: eight base-36 characters.
     // The fragment only seeds a unique trace id; the fixture injects the exact
     // TS token so the golden trace bytes stay deterministic.

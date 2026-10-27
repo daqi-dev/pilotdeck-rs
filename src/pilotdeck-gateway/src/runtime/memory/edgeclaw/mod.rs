@@ -25,6 +25,7 @@ mod node_fs;
 pub mod retrieval;
 #[path = "retrieval/retriever.rs"]
 pub mod retriever;
+pub mod service;
 pub mod storage;
 pub mod text;
 
