@@ -1,12 +1,11 @@
 // Run from repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
-import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, symlink, writeFile } from 'node:fs/promises';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { installFixedClock, bindBaseline, assertInside, removeOwned } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.equal(process.versions.node.split('.')[0], '22', 'oracle is calibrated on Node 22');
@@ -14,38 +13,10 @@ assert.ok(process.argv[2], 'provide the fixture directory or Rust snapshot root'
 const BASELINE_COMMIT = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-// Fixed clock: the only run-varying oracle field is `createdAt`, which the TS
-// recorder reads from `new Date().toISOString()`. Pinning the process clock
-// keeps oracle.json byte-identical between generator runs without masking any
-// field; `tick` advances the fake clock instead of waiting for the wall clock,
-// so "newest createdAt first" stays strictly ordered.
-const RealDate = Date;
-let clockMs = RealDate.UTC(2026, 0, 1);
-class FixedDate extends RealDate {
-  constructor(...args: any[]) {
-    super(...((args.length === 0 ? [clockMs] : args) as []));
-  }
-  static now(): number {
-    return clockMs;
-  }
-}
-globalThis.Date = FixedDate as unknown as DateConstructor;
-// #280's shared provenance guard: an explicit absolute Git executable (never a
-// workspace-local shim), the pinned HEAD, a fully clean tracked tree, and every
-// tracked `src` byte compared against the Git blob at the pinned commit. This
-// also catches assume-unchanged/skip-worktree edits that `status` alone misses.
-const gitExecutable = realpathSync(
-  process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim(),
-);
-const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
-const git = (...args: string[]) =>
-  execFileSync(gitExecutable, ['--no-replace-objects', '-C', baseline, ...args], {
-    env: gitEnv,
-    maxBuffer: 32 * 1024 * 1024,
-  });
-const sourceCommit = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable).ref;
-const trackedChanges = git('status', '--porcelain', '--untracked-files=no').toString();
-assert.equal(trackedChanges, '', `baseline has uncommitted changes to tracked files:\n${trackedChanges}`);
+// Shared prologue (#322-4): pinned clock, Git provenance binding and the
+// ownership-checked recursive delete, identical to snapshot-projection.
+const clock = installFixedClock();
+const { git, gitExecutable, sourceCommit } = bindBaseline({ baseline, commit: BASELINE_COMMIT });
 
 // Every source reachable from workspaceSnapshot.ts through relative imports is
 // part of the calibrating implementation, so `sourceSha256` covers the closure
@@ -56,46 +27,6 @@ const sourceSha256: Record<string, string> = sourceClosureSha256(baseline, BASEL
 
 type RemoveImpl = (path: string | Buffer, options: { recursive: boolean; force: boolean }) => Promise<void>;
 
-/**
- * Deletes are confined to the run's own mkdtemp tree. The old fixed-path P0
- * removed /tmp/pdrs-r9-* while every sentinel lived under <scratch>, so those
- * sentinels could not observe that regression (round-4 P1). Every `rm` below
- * goes through removeOwned: an out-of-tree target is refused before the
- * filesystem is touched, independent of where a sentinel lives.
- */
-function assertInside(root: string, path: string, action: string): string {
-  const rel = relative(root, path);
-  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new Error(`${action} refused: ${path} is outside the run directory ${root}`);
-  }
-  return path;
-}
-async function removeOwned(
-  root: string,
-  value: string | Buffer,
-  options: { recursive?: boolean } = {},
-  remove: RemoveImpl = rm,
-): Promise<void> {
-  let path: string | Buffer;
-  if (typeof value === 'string') {
-    path = assertInside(root, resolve(root, value.split('<dir>').join(root)), 'remove');
-  } else {
-    // The non-UTF-8 probe path is byte-exact, so compare the run-root prefix as
-    // bytes instead of decoding a name that is deliberately not UTF-8.
-    const prefix = Buffer.from(root.endsWith(sep) ? root : `${root}${sep}`);
-    if (!value.subarray(0, prefix.length).equals(prefix)) {
-      throw new Error(`remove refused: ${value.toString('hex')} is outside the run directory ${root}`);
-    }
-    // The byte-prefix check alone accepts `<root>/../outside`. Path segments
-    // are ASCII, so the deliberately non-UTF-8 name can be inspected as latin1.
-    const rest: string[] = value.subarray(prefix.length).toString('latin1').split(sep);
-    if (rest.includes('..')) {
-      throw new Error(`remove refused: ${value.toString('hex')} escapes the run directory ${root}`);
-    }
-    path = value;
-  }
-  await remove(path, { recursive: !!options.recursive, force: true });
-}
 const { ContentAddressedWorkspaceSnapshotRecorder, createWorkspaceSnapshotProvider, resolveWorkspaceSnapshotConfig } =
   await import(pathToFileURL(join(baseline, source)).href);
 
@@ -130,7 +61,7 @@ if (process.argv[3] === '--verify-rust') {
 }
 
 const tick = async () => {
-  clockMs += 1;
+  clock.tick();
 };
 
 // Only the `createdAt` field of a recorder-written manifest/marker is
@@ -1595,7 +1526,7 @@ try {
   const oracle = { sourceCommit, sourceSha256, node: process.version, configCases, scenarios, hostBoundaryCases, cross };
   const json = JSON.stringify(oracle, null, 2);
   for (const leak of [scratch, output, baseline, process.cwd()]) assert.ok(!json.includes(leak), 'oracle.json leaks a generation path');
-  await writeFile(join(output, 'oracle.json'), `${json}\n`);
+  await writeFile(join(output, 'oracle.json'), `${json}\n`, { flag: 'wx' });
   console.log(`oracle.json: ${scenarios.length} scenarios, ${crossFiles.length} cross files`);
 } finally {
   // Same cleanup as ../run-registry/generate.mts: without it every run

@@ -182,8 +182,10 @@ pub enum WorkspaceSnapshotError {
         code: Option<&'static str>,
         message: String,
     },
-    /// `Snapshot <id> was not found.` (workspaceSnapshot.ts:114).
-    NotFound(String),
+    /// `Snapshot <id> was not found.` (workspaceSnapshot.ts:114). The id is a
+    /// raw JS string: a lone surrogate must not become U+FFFD in the message
+    /// (the same identity rule `get_units`/`find_units` use).
+    NotFound(JsString),
     /// workspaceSnapshot.ts:120.
     UnsafePath,
     /// workspaceSnapshot.ts:123.
@@ -211,12 +213,13 @@ impl fmt::Display for WorkspaceSnapshotError {
         match self {
             Self::Invalid(message)
             | Self::Syntax(message)
-            | Self::NotFound(message)
             | Self::HostRequired(message)
             | Self::Io { message, .. } => f.write_str(message),
             // Display cannot carry a lone surrogate; callers that serialize an
-            // error to JSON use `TypeError`'s raw `JsString` instead.
-            Self::TypeError(message) => f.write_str(&String::from_utf16_lossy(message.units())),
+            // error to JSON use the raw `JsString` instead.
+            Self::NotFound(message) | Self::TypeError(message) => {
+                f.write_str(&String::from_utf16_lossy(message.units()))
+            }
             Self::UnsafePath => f.write_str("Snapshot contains an unsafe relative path."),
             Self::Escape => f.write_str("Snapshot path escapes target workspace."),
         }
@@ -274,6 +277,7 @@ pub struct RestoredSnapshot {
 /// yields it, validates descriptor fields, and sorts by `createdAt`
 /// descending with the pinned Node/ICU collation (`localeCompare`, stable
 /// like `Array#sort`).
+#[derive(Clone)]
 pub struct WorkspaceSnapshotProvider {
     config: WorkspaceSnapshotConfig,
 }
@@ -366,9 +370,11 @@ impl WorkspaceSnapshotProvider {
         target_root: &str,
     ) -> Result<RestoredSnapshot> {
         let Some((_, manifest)) = self.find_units(snapshot_id)? else {
-            return Err(WorkspaceSnapshotError::NotFound(format!(
-                "Snapshot {} was not found.",
-                String::from_utf16_lossy(snapshot_id)
+            let mut units = "Snapshot ".encode_utf16().collect::<Vec<_>>();
+            units.extend_from_slice(snapshot_id);
+            units.extend(" was not found.".encode_utf16());
+            return Err(WorkspaceSnapshotError::NotFound(JsString::from_utf16(
+                units,
             )));
         };
         // workspaceSnapshot.ts:115: `Array.isArray(...) ? ... : []`. A
@@ -1524,4 +1530,34 @@ mod tests {
         });
         assert!(matches!(recorder.begin(key), CaptureEntry::Leader(_)));
     }
+}
+
+/// #322 sibling: the provider's own `Snapshot <id> was not found.` must
+/// keep raw UTF-16 like `runtime::snapshot::snapshot_not_found`; the old
+/// `from_utf16_lossy` turned `"\ud800"` into U+FFFD for direct callers.
+#[test]
+fn provider_not_found_keeps_raw_snapshot_units() {
+    let scratch = crate::test_scratch::Scratch::new("snapshot-not-found");
+    let root = scratch.path().to_string_lossy().into_owned();
+    let provider = create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
+        root: root.clone(),
+        snapshot_root: root,
+    });
+    let id = [0xD800u16];
+    let error = provider
+        .restore_units(&id, &scratch.path().join("target").to_string_lossy())
+        .expect_err("#888 an absent snapshot must be NotFound");
+    let WorkspaceSnapshotError::NotFound(message) = error else {
+        panic!("#888 expected NotFound, got {error:?}");
+    };
+    let expected = "Snapshot "
+        .encode_utf16()
+        .chain([0xD800])
+        .chain(" was not found.".encode_utf16())
+        .collect::<Vec<_>>();
+    assert_eq!(message.units(), expected, "#888 raw units survive");
+    assert!(
+        !message.units().contains(&0xFFFD),
+        "#888 no replacement decoding"
+    );
 }

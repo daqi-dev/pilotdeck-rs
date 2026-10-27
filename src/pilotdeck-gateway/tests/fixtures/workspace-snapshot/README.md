@@ -5,12 +5,14 @@
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck
 export PDRS_GIT="$(command -v git)"   # 可选；默认同 `which git`，必须是绝对路径
+out="$(mktemp -d)"                     # 生成器用 flag:'wx'，输出目录必须是空的
 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   src/pilotdeck-gateway/tests/fixtures/workspace-snapshot/generate.mts \
-  src/pilotdeck-gateway/tests/fixtures/workspace-snapshot
+  "$out"
+cmp "$out/oracle.json" src/pilotdeck-gateway/tests/fixtures/workspace-snapshot/oracle.json
 ```
 
-生成器先接 #280 的共享溯源守卫：`tests/baseline_source_guard.mjs` 的 `bindSourceTree` 用显式绝对路径 Git 断言 HEAD==`cc7c4e6`、已跟踪文件干净，并把基线 `src/` 每个已跟踪文件逐字节对照该提交的 blob（同时发现 `assume-unchanged`/`skip-worktree` 改动）；生成器再断言 `git status --porcelain --untracked-files=no` 为空。`sourceSha256` 覆盖从 `workspaceSnapshot.ts` 出发的相对 import 传递闭包（每个文件同时对照 `git show cc7c4e6:<path>` 的字节），不是只哈希入口文件。随后对每个场景的关键结果做自检（提交/失败状态、缓存命中、marker 早退、排序、manifest 字节等于 `JSON.stringify(, 2)`、树内容），防止步骤引用写错导致断言全部落空。`mkdtemp` 根目录预放 `pdrs-r9-linkout`/`pdrs-r9-path`/`pdrs-r9-target`/`ws-snapshot-scenario` 四个哨兵文件，全部场景跑完后断言仍在。删除的主负控是**路径归属检查**：生成器的 `removeOwned` 与 Rust 的 `remove_owned` 都在调用 `rm` 前要求目标位于本次运行独占目录内，越界立即抛错，与哨兵放在哪里无关。生成器每次运行用录制桩注入旧的固定路径 `/tmp/pdrs-r9-linkout` 和一个真实越界哨兵，断言两者都被拒绝、桩零调用、哨兵仍在；Rust 侧由 `out_of_bounds_removal_is_refused_and_sentinel_survives` 覆盖同样两条。`PDRS_INJECT_LEGACY_DELETE=<path>` 可显式重放注入，正确实现会在 guard 处中止（见第十一轮证据）。写 `oracle.json` 前断言其中不含本次临时目录、输出目录与基线路径；Rust 读取时断言不含固定的 `/tmp/pdrs-*` 路径。生成器把进程时钟固定在 `2026-01-01T00:00:00Z`（`tick` 每次把假时钟推进 1 ms），因此唯一由真实时钟决定的 `createdAt` 也不再随运行变化，连跑两次 `oracle.json` 逐字节一致；Rust 回放仍用真实时钟，所以比较时继续对 `createdAt` 做 `<ts>` 掩码。临时目录保持 20 字符（`/tmp/pdrs-r10-` + 6），使含 NUL 的 `ERR_INVALID_ARG_VALUE` 引文落在 Node 的 128 UTF-16 单元 inspect 上限内；`nul-capture-root` 用 `dirName: '.'` 直接占用该 20 字符根目录。
+生成器先接 #280 的共享溯源守卫：`tests/baseline_source_guard.mjs` 的 `bindSourceTree` 用显式绝对路径 Git 断言 HEAD==`cc7c4e6`、已跟踪文件干净，并把基线 `src/` 每个已跟踪文件逐字节对照该提交的 blob（同时发现 `assume-unchanged`/`skip-worktree` 改动）；生成器再断言 `git status --porcelain --untracked-files=no` 为空。`sourceSha256` 覆盖从 `workspaceSnapshot.ts` 出发的相对 import 传递闭包（每个文件同时对照 `git show cc7c4e6:<path>` 的字节），不是只哈希入口文件。随后对每个场景的关键结果做自检（提交/失败状态、缓存命中、marker 早退、排序、manifest 字节等于 `JSON.stringify(, 2)`、树内容），防止步骤引用写错导致断言全部落空。`mkdtemp` 根目录预放 `pdrs-r9-linkout`/`pdrs-r9-path`/`pdrs-r9-target`/`ws-snapshot-scenario` 四个哨兵文件，全部场景跑完后断言仍在。删除的主负控是**路径归属检查**：生成器的 `removeOwned` 与 Rust 的 `remove_owned` 都在调用 `rm` 前要求目标位于本次运行独占目录内，越界立即抛错，与哨兵放在哪里无关。生成器每次运行用录制桩注入旧的固定路径 `/tmp/pdrs-r9-linkout` 和一个真实越界哨兵，断言两者都被拒绝、桩零调用、哨兵仍在；Rust 侧由 `out_of_bounds_removal_is_refused_and_sentinel_survives` 覆盖同样两条。`PDRS_INJECT_LEGACY_DELETE=<path>` 可显式重放注入，正确实现会在 guard 处中止（见第十一轮证据）。写 `oracle.json` 前断言其中不含本次临时目录、输出目录与基线路径；Rust 读取时断言不含固定的 `/tmp/pdrs-*` 路径。生成器把进程时钟固定在 `2026-01-01T00:00:00Z`（`tick` 每次把假时钟推进 1 ms），因此唯一由真实时钟决定的 `createdAt` 也不再随运行变化，连跑两次 `oracle.json` 逐字节一致；Rust 回放仍用真实时钟，所以比较时继续对 `createdAt` 做 `<ts>` 掩码。临时目录保持 20 字符（`/tmp/pdrs-r10-` + 6），使含 NUL 的 `ERR_INVALID_ARG_VALUE` 引文落在 Node 的 128 UTF-16 单元 inspect 上限内；`nul-capture-root` 用 `dirName: '.'` 直接占用该 20 字符根目录。 #322-4 起固定时钟、Git 溯源前导与 `removeOwned`/`assertInside` 来自共享 `tests/fixtures/_shared/generator_guard.mjs`，与 `snapshot-projection/generate.mts` 同一实现；改共享文件后两个生成器都必须重跑，oracle 应逐字节不变。 #322-3 起 Rust 回放精确钉住 27 个场景名、每场景 steps/tree 行数、7 个 config case 与 cross 的 41 目录/20 文件，`scenarios: []` 或缩水 oracle 不再零迭代通过。
 
 `oracle.json`：
 

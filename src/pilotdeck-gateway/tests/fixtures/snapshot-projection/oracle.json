@@ -2084,6 +2084,1174 @@
           ]
         }
       ]
+    },
+    {
+      "name": "gateway-native",
+      "tree": [
+        {
+          "path": "snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/objects",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/objects/a",
+          "kind": "file",
+          "b64": "aGkK"
+        },
+        {
+          "path": "snapshots/workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general/sessions/s",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general/sessions/s/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general/sessions/s/snapshots/snap-general",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-general/sessions/s/snapshots/snap-general/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogInNuYXAtZ2VuZXJhbCIsCiAgIndvcmtzcGFjZUlkIjogInAtZ2VuZXJhbCIsCiAgInNlc3Npb25JZCI6ICJzIiwKICAidHVybklkIjogInQiLAogICJydW5JZCI6ICJyIiwKICAicGhhc2UiOiAicHJlX3VzZXIiLAogICJjcmVhdGVkQXQiOiAiMjAyNi0wMS0wMVQwMDowMDowMC4wMDBaIiwKICAiZW50cmllcyI6IFsKICAgIHsKICAgICAgInBhdGgiOiAiZy50eHQiLAogICAgICAiZW50cnlUeXBlIjogImZpbGUiLAogICAgICAib2JqZWN0S2V5IjogIm9iamVjdHMvYSIsCiAgICAgICJzaXplIjogMywKICAgICAgImRpZ2VzdCI6ICI5OGVhNmU0ZjIxNmYyZmI0YjY5ZmZmOWIzYTQ0ODQyYzM4Njg2Y2E2ODVmM2Y1NWRjNDhjNWQzZmIxMTA3YmU0IgogICAgfQogIF0KfQ=="
+        },
+        {
+          "path": "snapshots/workspaces/p-main",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/s",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/s/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/s/snapshots/snap-main",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/s/snapshots/snap-main/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogInNuYXAtbWFpbiIsCiAgIndvcmtzcGFjZUlkIjogInAtbWFpbiIsCiAgInNlc3Npb25JZCI6ICJzIiwKICAidHVybklkIjogInQiLAogICJydW5JZCI6ICJyIiwKICAicGhhc2UiOiAicHJlX3VzZXIiLAogICJjcmVhdGVkQXQiOiAiMjAyNi0wMS0wMVQwMDowMDowMy4wMDBaIiwKICAiZW50cmllcyI6IFsKICAgIHsKICAgICAgInBhdGgiOiAiYS50eHQiLAogICAgICAiZW50cnlUeXBlIjogImZpbGUiLAogICAgICAib2JqZWN0S2V5IjogIm9iamVjdHMvYSIsCiAgICAgICJzaXplIjogMywKICAgICAgImRpZ2VzdCI6ICI5OGVhNmU0ZjIxNmYyZmI0YjY5ZmZmOWIzYTQ0ODQyYzM4Njg2Y2E2ODVmM2Y1NWRjNDhjNWQzZmIxMTA3YmU0IgogICAgfQogIF0KfQ=="
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/s/snapshots/snap-unsafe",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/s/snapshots/snap-unsafe/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogInNuYXAtdW5zYWZlIiwKICAid29ya3NwYWNlSWQiOiAicC1tYWluIiwKICAic2Vzc2lvbklkIjogInMiLAogICJ0dXJuSWQiOiAidCIsCiAgInJ1bklkIjogInIiLAogICJwaGFzZSI6ICJwcmVfdXNlciIsCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAyLjAwMFoiLAogICJlbnRyaWVzIjogWwogICAgewogICAgICAicGF0aCI6ICIuLi9lc2NhcGUudHh0IiwKICAgICAgImVudHJ5VHlwZSI6ICJmaWxlIiwKICAgICAgIm9iamVjdEtleSI6ICJvYmplY3RzL2EiLAogICAgICAic2l6ZSI6IDMsCiAgICAgICJkaWdlc3QiOiAiOThlYTZlNGYyMTZmMmZiNGI2OWZmZjliM2E0NDg0MmMzODY4NmNhNjg1ZjNmNTVkYzQ4YzVkM2ZiMTEwN2JlNCIKICAgIH0KICBdCn0="
+        },
+        {
+          "path": "snapshots/workspaces/p-other",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-other/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-other/sessions/s",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-other/sessions/s/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-other/sessions/s/snapshots/snap-other",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-other/sessions/s/snapshots/snap-other/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogInNuYXAtb3RoZXIiLAogICJ3b3Jrc3BhY2VJZCI6ICJwLW90aGVyIiwKICAic2Vzc2lvbklkIjogInMiLAogICJ0dXJuSWQiOiAidCIsCiAgInJ1bklkIjogInIiLAogICJwaGFzZSI6ICJwcmVfdXNlciIsCiAgImNyZWF0ZWRBdCI6ICIyMDI1LTEyLTMxVDIzOjU5OjU5LjAwMFoiLAogICJlbnRyaWVzIjogWwogICAgewogICAgICAicGF0aCI6ICJvLnR4dCIsCiAgICAgICJlbnRyeVR5cGUiOiAiZmlsZSIsCiAgICAgICJvYmplY3RLZXkiOiAib2JqZWN0cy9hIiwKICAgICAgInNpemUiOiAzLAogICAgICAiZGlnZXN0IjogIjk4ZWE2ZTRmMjE2ZjJmYjRiNjlmZmY5YjNhNDQ4NDJjMzg2ODZjYTY4NWYzZjU1ZGM0OGM1ZDNmYjExMDdiZTQiCiAgICB9CiAgXQp9"
+        },
+        {
+          "path": "snapshots/workspaces/p-target",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-target/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-target/sessions/s",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-target/sessions/s/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-target/sessions/s/snapshots/snap-target",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-target/sessions/s/snapshots/snap-target/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogInNuYXAtdGFyZ2V0IiwKICAid29ya3NwYWNlSWQiOiAicC10YXJnZXQiLAogICJzZXNzaW9uSWQiOiAicyIsCiAgInR1cm5JZCI6ICJ0IiwKICAicnVuSWQiOiAiciIsCiAgInBoYXNlIjogInByZV91c2VyIiwKICAiY3JlYXRlZEF0IjogIjIwMjYtMDEtMDFUMDA6MDA6MDEuMDAwWiIsCiAgImVudHJpZXMiOiBbCiAgICB7CiAgICAgICJwYXRoIjogInQudHh0IiwKICAgICAgImVudHJ5VHlwZSI6ICJmaWxlIiwKICAgICAgIm9iamVjdEtleSI6ICJvYmplY3RzL2EiLAogICAgICAic2l6ZSI6IDMsCiAgICAgICJkaWdlc3QiOiAiOThlYTZlNGYyMTZmMmZiNGI2OWZmZjliM2E0NDg0MmMzODY4NmNhNjg1ZjNmNTVkYzQ4YzVkM2ZiMTEwN2JlNCIKICAgIH0KICBdCn0="
+        }
+      ],
+      "snapshotRoot": "<dir>/storage/snapshots",
+      "absoluteFile": null,
+      "projects": [
+        {
+          "key": "<dir>/project",
+          "workspaceId": "p-main"
+        },
+        {
+          "key": "<dir>/target-project",
+          "workspaceId": "p-target"
+        },
+        {
+          "key": "<dir>/pilot-home",
+          "workspaceId": "p-general"
+        }
+      ],
+      "fallbackProjectRoot": "<dir>/project",
+      "gateway": true,
+      "native": {
+        "pilotHome": "<dir>/pilot-home",
+        "cwd": "<dir>",
+        "projects": [
+          {
+            "id": "p-main",
+            "marker": "<dir>/project"
+          },
+          {
+            "id": "p-target",
+            "marker": "<dir>/target-project"
+          },
+          {
+            "id": "p-general",
+            "marker": "<dir>/pilot-home"
+          },
+          {
+            "id": "p-file",
+            "marker": "<dir>/not-a-dir"
+          },
+          {
+            "id": "p-gone",
+            "marker": "<dir>/gone-project"
+          }
+        ],
+        "files": [
+          {
+            "path": "<dir>/not-a-dir",
+            "content": "x"
+          }
+        ]
+      },
+      "operations": [
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": 1
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "snap-main",
+                  "workspaceId": "p-main",
+                  "sessionId": "s",
+                  "turnId": "t",
+                  "runId": "r",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:03.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/s/snapshots/snap-main/manifest.json"
+                }
+              ],
+              "nextCursor": "snap-main"
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": 2
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "snap-main",
+                  "workspaceId": "p-main",
+                  "sessionId": "s",
+                  "turnId": "t",
+                  "runId": "r",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:03.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/s/snapshots/snap-main/manifest.json"
+                },
+                {
+                  "snapshotId": "snap-unsafe",
+                  "workspaceId": "p-main",
+                  "sessionId": "s",
+                  "turnId": "t",
+                  "runId": "r",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:02.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/s/snapshots/snap-unsafe/manifest.json"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "cursor": "snap-main"
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "snap-unsafe",
+                  "workspaceId": "p-main",
+                  "sessionId": "s",
+                  "turnId": "t",
+                  "runId": "r",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:02.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/s/snapshots/snap-unsafe/manifest.json"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "cursor": null
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_CURSOR",
+              "message": "snapshot cursor does not belong to this project."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": null
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "snap-main",
+                  "workspaceId": "p-main",
+                  "sessionId": "s",
+                  "turnId": "t",
+                  "runId": "r",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:03.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/s/snapshots/snap-main/manifest.json"
+                },
+                {
+                  "snapshotId": "snap-unsafe",
+                  "workspaceId": "p-main",
+                  "sessionId": "s",
+                  "turnId": "t",
+                  "runId": "r",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:02.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/s/snapshots/snap-unsafe/manifest.json"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": 0
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_LIMIT",
+              "message": "limit must be an integer between 1 and 500."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": 501
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_LIMIT",
+              "message": "limit must be an integer between 1 and 500."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "sessionKey": ""
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SESSION_KEY",
+              "message": "sessionKey must be non-empty when provided."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "sessionKey": 42
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SESSION_KEY",
+              "message": "sessionKey must be non-empty when provided."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "snap-target",
+                  "workspaceId": "p-target",
+                  "sessionId": "s",
+                  "turnId": "t",
+                  "runId": "r",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:01.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-target/sessions/s/snapshots/snap-target/manifest.json"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/pilot-home"
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "snap-general",
+                  "workspaceId": "p-general",
+                  "sessionId": "s",
+                  "turnId": "t",
+                  "runId": "r",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-general/sessions/s/snapshots/snap-general/manifest.json"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/outside"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "Unknown projectKey: <dir>/outside"
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project/../target-project"
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "snap-target",
+                  "workspaceId": "p-target",
+                  "sessionId": "s",
+                  "turnId": "t",
+                  "runId": "r",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:01.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-target/sessions/s/snapshots/snap-target/manifest.json"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project/"
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "snap-main",
+                  "workspaceId": "p-main",
+                  "sessionId": "s",
+                  "turnId": "t",
+                  "runId": "r",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:03.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/s/snapshots/snap-main/manifest.json"
+                },
+                {
+                  "snapshotId": "snap-unsafe",
+                  "workspaceId": "p-main",
+                  "sessionId": "s",
+                  "turnId": "t",
+                  "runId": "r",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:02.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/s/snapshots/snap-unsafe/manifest.json"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project/missing"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "Unknown projectKey: <dir>/project/missing"
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/not-a-dir"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "Unknown projectKey: <dir>/not-a-dir"
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {},
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "projectKey is required."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": null
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "projectKey is required."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": 42
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "projectKey is required."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": {}
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "projectKey is required."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": ""
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "projectKey is required."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "   "
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "projectKey is required."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": {}
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_LIMIT",
+              "message": "limit must be an integer between 1 and 500."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "sessionKey": null
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SESSION_KEY",
+              "message": "sessionKey must be non-empty when provided."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "sessionKey": "   "
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SESSION_KEY",
+              "message": "sessionKey must be non-empty when provided."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "params": "undefined",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'projectKey')"
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "params": "null",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'projectKey')"
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/gone-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "Unknown projectKey: <dir>/gone-project"
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "relative-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "Unknown projectKey: relative-project"
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "snap-main"
+          },
+          "outcome": {
+            "ok": {
+              "snapshot": {
+                "snapshotId": "snap-main",
+                "workspaceId": "p-main",
+                "sessionId": "s",
+                "turnId": "t",
+                "runId": "r",
+                "phase": "pre_user",
+                "createdAt": "2026-01-01T00:00:03.000Z",
+                "entries": [
+                  {
+                    "path": "a.txt",
+                    "entryType": "file",
+                    "objectKey": "objects/a",
+                    "size": 3,
+                    "digest": "98ea6e4f216f2fb4b69fff9b3a44842c38686ca685f3f55dc48c5d3fb1107be4"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "snap-target"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "SNAPSHOT_NOT_FOUND",
+              "message": "Snapshot snap-target was not found."
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "nope"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "SNAPSHOT_NOT_FOUND",
+              "message": "Snapshot nope was not found."
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_MANAGEMENT_IDENTIFIER",
+              "message": "snapshotId is required."
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": null
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_MANAGEMENT_IDENTIFIER",
+              "message": "snapshotId is required."
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": 42
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_MANAGEMENT_IDENTIFIER",
+              "message": "snapshotId is required."
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": ""
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_MANAGEMENT_IDENTIFIER",
+              "message": "snapshotId is required."
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "   "
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_MANAGEMENT_IDENTIFIER",
+              "message": "snapshotId is required."
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/outside",
+            "snapshotId": "snap-main"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "Unknown projectKey: <dir>/outside"
+            }
+          }
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "snap-main",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "ok": {
+              "restored": true,
+              "workspaceKey": "<restore>"
+            }
+          },
+          "targetTree": [
+            {
+              "path": "a.txt",
+              "kind": "file",
+              "b64": "aGkK"
+            }
+          ],
+          "restoreDir": true
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "snap-main"
+          },
+          "outcome": {
+            "ok": {
+              "restored": true,
+              "workspaceKey": "<restore>"
+            }
+          },
+          "targetTree": [
+            {
+              "path": "a.txt",
+              "kind": "file",
+              "b64": "aGkK"
+            }
+          ],
+          "restoreDir": true
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "snap-main",
+            "targetProjectKey": "<dir>/project/../target-project"
+          },
+          "outcome": {
+            "ok": {
+              "restored": true,
+              "workspaceKey": "<restore>"
+            }
+          },
+          "targetTree": [
+            {
+              "path": "a.txt",
+              "kind": "file",
+              "b64": "aGkK"
+            }
+          ],
+          "restoreDir": true
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "snap-main",
+            "targetProjectKey": "<dir>/pilot-home"
+          },
+          "outcome": {
+            "ok": {
+              "restored": true,
+              "workspaceKey": "<restore>"
+            }
+          },
+          "targetTree": [
+            {
+              "path": "a.txt",
+              "kind": "file",
+              "b64": "aGkK"
+            }
+          ],
+          "restoreDir": true
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "snap-main",
+            "targetProjectKey": "<dir>/outside"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "Unknown projectKey: <dir>/outside"
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "snap-main",
+            "targetProjectKey": "<dir>/not-a-dir"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "Unknown projectKey: <dir>/not-a-dir"
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "snap-main",
+            "targetProjectKey": null
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "projectKey is required."
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "snap-main",
+            "targetProjectKey": ""
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "projectKey is required."
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "snap-main",
+            "targetProjectKey": 42
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "projectKey is required."
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "snap-main",
+            "targetProjectKey": "   "
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "projectKey is required."
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_MANAGEMENT_IDENTIFIER",
+              "message": "snapshotId is required."
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": null,
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_MANAGEMENT_IDENTIFIER",
+              "message": "snapshotId is required."
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_MANAGEMENT_IDENTIFIER",
+              "message": "snapshotId is required."
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "   ",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_MANAGEMENT_IDENTIFIER",
+              "message": "snapshotId is required."
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "snap-unsafe",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "message": "Snapshot contains an unsafe relative path."
+            }
+          },
+          "restoreDir": true,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/target-project",
+            "snapshotId": "snap-main",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "SNAPSHOT_NOT_FOUND",
+              "message": "Snapshot snap-main was not found."
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "nope",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "SNAPSHOT_NOT_FOUND",
+              "message": "Snapshot nope was not found."
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/outside",
+            "snapshotId": "snap-main",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "Unknown projectKey: <dir>/outside"
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "params": "undefined",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'projectKey')"
+            }
+          }
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "snap-main",
+            "targetProjectKey": "<dir>/gone-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "Unknown projectKey: <dir>/gone-project"
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        }
+      ]
     }
   ]
 }

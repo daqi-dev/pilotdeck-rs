@@ -486,6 +486,70 @@ impl<F: Files> Metadata<F> {
         }
         None
     }
+    /// `createDialogProjectRegistry.resolveProjectKey` (projectRegistry.ts:42-
+    /// 59) over the real `listProjects` catalog: the virtual General workspace
+    /// is `resolve(pilotHome)`, every other key must be the registered path of
+    /// a project directory. Raw UTF-16 is resolved lexically before the UTF-8
+    /// conversion, so a lone surrogate folded away by `.`/`..` still resolves
+    /// while one that survives cannot equal a disk-derived key.
+    pub(crate) fn resolve_dialog_project(&self, value: &JsString) -> Option<String> {
+        let requested = resolve_units(&self.cwd.to_string_lossy(), value);
+        let general = resolve(&self.cwd, &self.home.to_string_lossy());
+        let general_units = general.to_string_lossy().encode_utf16().collect::<Vec<_>>();
+        if requested.units() == general_units {
+            return Some(general.to_string_lossy().into_owned());
+        }
+        // A surviving unpaired surrogate names no registered (valid UTF-8)
+        // path; the caller still keeps its units for the wire message.
+        let requested = PathBuf::from(requested.to_utf8().ok()?);
+        let projects = self.home.join("projects");
+        for (id, _) in self.files.entries(&projects).unwrap_or_default() {
+            let dir = projects.join(&id);
+            if !self.files.stat(&dir).is_ok_and(|stat| stat.directory) {
+                continue;
+            }
+            let Some(root) = self.registered_path(&id) else {
+                continue;
+            };
+            if resolve(&self.cwd, &root) == requested {
+                return Some(root);
+            }
+        }
+        None
+    }
+
+    /// `resolveProjectStorageId(projectRoot, pilotHome)` (paths.ts:85-87 +
+    /// 157-178): the first project directory whose valid `.cwd` marker
+    /// resolves to the project root wins; otherwise the legacy path slug.
+    pub(crate) fn project_storage_id(&self, project_root: &str) -> String {
+        let target = resolve(&self.cwd, project_root);
+        let projects = self.home.join("projects");
+        for (id, is_directory) in self.files.entries(&projects).unwrap_or_default() {
+            // `readdirSync(..., {withFileTypes:true})` uses the directory
+            // entry itself (a symlink is not a directory), like NativeFiles.
+            if !is_directory {
+                continue;
+            }
+            let dir = projects.join(&id);
+            let Some(marker) = self.marker(&dir) else {
+                continue;
+            };
+            if marker.is_empty() {
+                continue;
+            }
+            let marker_path = resolve(&self.cwd, &marker);
+            if marker_path == target
+                && self
+                    .files
+                    .stat(&marker_path)
+                    .is_ok_and(|stat| stat.directory)
+            {
+                return id;
+            }
+        }
+        project_id(&target)
+    }
+
     /// Registration membership without reading unrelated chat summaries. Archive
     /// containment must be checked before any transcript content can be opened.
     pub(crate) fn has_registered_project(&self, requested: &Path) -> bool {
