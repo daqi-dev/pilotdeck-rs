@@ -413,3 +413,11 @@ mod array_index_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod negctl_922 {
+    #[test]
+    fn negctl_922_deliberately_fails() {
+        assert_eq!(1 + 1, 3, "#922 negative control: nextest must turn this red");
+    }
+}
