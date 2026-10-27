@@ -697,6 +697,51 @@ fn replay_operation(
         .first()
         .zip(target_project.as_deref())
         .map(|(name, target)| lexical_join(target, name));
+    // #293 registered divergence A6.6-SNAPSHOT-OBJECTKEY-001: the oracle's
+    // "escape" snapshot pins TS restoring objectKeys outside the snapshot
+    // root (`../outside.txt`, absolute paths; Node v22.22.0 probe
+    // `_tmp/20261026-issue-293/probe-a-objectkey.out`). Rust refuses the
+    // restore instead of copying root-external content into the target
+    // workspace, so this operation's oracle outcome is replaced by the
+    // divergence assertion below. The dedicated branch runs before the
+    // generic comparison so a negative control sees this message.
+    if name == "projection"
+        && op == "snapshotRestore"
+        && field(&raw_input, "snapshotId")
+            .as_string()
+            .is_some_and(|id| id.equals_str("escape"))
+    {
+        let error = actual.err().unwrap_or_else(|| {
+            panic!("#293 {name} op #{index} ({op}): objectKey escape restore must be refused")
+        });
+        let value = error.as_json();
+        assert_eq!(
+            text(field(&value, "name")),
+            "Error",
+            "#293 {name} op #{index} ({op}): objectKey escape refusal name"
+        );
+        assert_eq!(
+            text(field(&value, "message")),
+            "Snapshot object key escapes the snapshot root.",
+            "#293 {name} op #{index} ({op}): objectKey escape refusal message"
+        );
+        assert!(
+            field(&value, "code").is_undefined(),
+            "#293 {name} op #{index} ({op}): objectKey escape refusal carries no code"
+        );
+        if let Some(dir) = restore_dir.as_deref() {
+            assert_eq!(
+                mode(dir),
+                0o700,
+                "#293 {name} op #{index}: refused restore keeps the 0700 mkdtemp directory"
+            );
+            assert!(
+                record_tree(Path::new(dir)).is_empty(),
+                "#293 {name} op #{index}: refused restore writes nothing into the target"
+            );
+        }
+        return;
+    }
 
     // A successful restore must return the directory this call just created,
     // not a directory observed from an earlier operation. Node's `path.join`
