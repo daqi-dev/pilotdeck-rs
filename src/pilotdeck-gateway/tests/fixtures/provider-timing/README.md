@@ -13,4 +13,10 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" probe.mts
 
 所有定时器均为 Node 原生 timer；busy wait 令双方 overdue，精确同刻必须核对实际 deadline 与注册顺序。跨 tick 的候选丢弃后重跑。OpenAI chat / Google 的 count 格实际不发 provider 请求，保留 `reachable: false` 与本地估算原值。
 
+非同刻也按实际 deadline 验证方向：续体先要求 parent deadline 大于 completion，
+父先要求小于；不能只比较请求的 delay。负载可能让两次注册跨越 5ms 间隔，
+错位候选丢弃，最多尝试 10 次，耗尽报 `#280 ... exhausted actual-deadline candidates`。
+重生成比较器同时核对这 168 个可达格的期限和注册顺序、所有 timer 起点非递减，绝对 start 的掩码不能
+掩盖输入时序变化；24 个不可达 count 格和 4 个同步取消格保留原义。
+
 `observable.name` 对抛出错误记录其类型；错误事件记录规范错误类型（自定义 stream error 的 own name 也保留）。Error 原型上的非枚举 name 另存 `rawErrorName`，不把 JSON 中的 `{}` 推断成丢失的异常类型。count 入口吞掉异常后仅暴露 estimatorError，故 name 为 null。`http_timing_tests.rs` 一张表逐格核对 name、message、交付形式和 RetryProgress 数；count 还核对 source / tokens。

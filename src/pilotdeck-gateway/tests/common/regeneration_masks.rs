@@ -228,5 +228,65 @@ pub(crate) fn compare(
             "#280 {fixture}/{file} differs from committed bytes outside the exact masks"
         ));
     }
+    // Absolute starts are volatile, but their deadline ordering defines the
+    // timing input. A masked start must not silently change that input.
+    if fixture == "provider-timing" && file == "oracle.json" {
+        validate_provider_timing(actual)?;
+        validate_provider_timing(expected)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_provider_timing(bytes: &[u8]) -> Result<(), String> {
+    let error = |id: &str| format!("#280 provider-timing actual deadline order: {id}");
+    let oracle: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| error("invalid JSON"))?;
+    let rows = oracle["cases"]
+        .as_array()
+        .ok_or_else(|| error("missing cases"))?;
+    for row in rows {
+        let id = row["id"].as_str().ok_or_else(|| error("missing id"))?;
+        let order = row["order"].as_str().ok_or_else(|| error(id))?;
+        if order == "synchronous" || row["reachable"] == false {
+            continue;
+        }
+        let timers = row["timers"].as_array().ok_or_else(|| error(id))?;
+        let mut previous_start = 0;
+        for timer in timers {
+            let start = timer["start"].as_u64().ok_or_else(|| error(id))?;
+            if start < previous_start {
+                return Err(error(id));
+            }
+            previous_start = start;
+        }
+        let target = if row["event"] != "idle" {
+            "completion"
+        } else if row["phase"] == "response_text" && row["protocol"] != "google" {
+            "body-timeout"
+        } else {
+            "watchdog"
+        };
+        let timer = |kind: &str| {
+            let mut found = timers.iter().enumerate().filter(|(_, t)| t["kind"] == kind);
+            let (index, value) = found.next().ok_or_else(|| error(id))?;
+            if found.next().is_some() {
+                return Err(error(id));
+            }
+            let start = value["start"].as_u64().ok_or_else(|| error(id))?;
+            let delay = value["delay"].as_u64().ok_or_else(|| error(id))?;
+            Ok((index, start.checked_add(delay).ok_or_else(|| error(id))?))
+        };
+        let (parent_index, parent_deadline) = timer("parent")?;
+        let (target_index, target_deadline) = timer(target)?;
+        let ordered = match order {
+            "continuation-first" => parent_deadline > target_deadline,
+            "parent-first" => parent_deadline < target_deadline,
+            "tie-parent-first" | "tie-parent-last" => parent_deadline == target_deadline,
+            _ => false,
+        };
+        if !ordered || (parent_index < target_index) != (order != "tie-parent-last") {
+            return Err(error(id));
+        }
+    }
     Ok(())
 }

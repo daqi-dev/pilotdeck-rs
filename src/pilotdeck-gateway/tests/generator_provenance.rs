@@ -3,6 +3,102 @@
 #[path = "common/baseline.rs"]
 mod baseline;
 
+#[test]
+fn builtin_tools_glob_transport_keeps_exit_and_error_paths() {
+    let output = baseline::node_command()
+        .arg("--test")
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/_shared/ripgrep-subprocess.test.mjs"
+        ))
+        .output()
+        .expect("#280 run glob subprocess contract");
+    assert!(
+        output.status.success(),
+        "#280 glob subprocess contract failed:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn provider_timing_deadlines_reject_wrong_order() {
+    use baseline::regeneration_masks::validate_provider_timing;
+    use serde_json::{Value, json};
+    let bytes = include_bytes!("fixtures/provider-timing/oracle.json");
+    validate_provider_timing(bytes).expect("#280 all 196 committed timing cells are valid");
+    let original: Value = serde_json::from_slice(bytes).expect("#280 parse timing matrix");
+    let rows = original["cases"]
+        .as_array()
+        .expect("#280 timing cases array");
+    let mut checked = 0;
+    for (index, row) in rows.iter().enumerate() {
+        if row["order"] == "synchronous" || row["reachable"] == false {
+            continue;
+        }
+        let timers = row["timers"].as_array().expect("#280 reachable timers");
+        let target = if row["event"] != "idle" {
+            "completion"
+        } else if row["phase"] == "response_text" && row["protocol"] != "google" {
+            "body-timeout"
+        } else {
+            "watchdog"
+        };
+        let p = timers
+            .iter()
+            .position(|t| t["kind"] == "parent")
+            .expect("#280 parent timer");
+        let t = timers
+            .iter()
+            .position(|t| t["kind"] == target)
+            .expect("#280 target timer");
+        let target_deadline = timers[t]["start"].as_u64().expect("#280 target start")
+            + timers[t]["delay"].as_u64().expect("#280 target delay");
+        let parent_delay = timers[p]["delay"].as_u64().expect("#280 parent delay");
+        // Each reachable matrix cell rejects both wrong directions (or a tie).
+        let offsets: &[i64] = match row["order"].as_str().expect("#280 timing order") {
+            "continuation-first" => &[0, -1],
+            "parent-first" => &[0, 1],
+            _ => &[-1, 1],
+        };
+        for offset in offsets {
+            let mut changed = original.clone();
+            changed["cases"][index]["timers"][p]["start"] =
+                json!((target_deadline - parent_delay) as i64 + offset);
+            let encoded = serde_json::to_vec(&changed).expect("#280 encode wrong deadline");
+            let error = validate_provider_timing(&encoded)
+                .expect_err("#280 wrong actual deadline must be rejected");
+            assert!(
+                error.contains("#280 provider-timing actual deadline order:"),
+                "#280 deadline failure diagnostic: {error}"
+            );
+        }
+        let mut changed = original.clone();
+        changed["cases"][index]["timers"]
+            .as_array_mut()
+            .expect("#280 mutable timer order")
+            .swap(p, t);
+        assert!(
+            validate_provider_timing(
+                &serde_json::to_vec(&changed).expect("#280 encode wrong registration order")
+            )
+            .is_err(),
+            "#280 wrong actual registration order must be rejected"
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 168, "#280 all reachable timer cells checked");
+    let mut changed = original.clone();
+    changed["cases"][0]["timers"][1]["start"] = json!(0);
+    assert!(
+        validate_provider_timing(
+            &serde_json::to_vec(&changed).expect("#280 encode backwards watchdog")
+        )
+        .is_err(),
+        "#280 other timer cannot start before its predecessor"
+    );
+}
+
 macro_rules! regeneration {
     ($name:ident, $fixture:literal) => {
         #[test]

@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { bindBaseline } from '../_shared/generator_guard.mjs';
+import { executeFile } from '../_shared/ripgrep-subprocess.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide an output parent directory; each run writes into its own mkdtemp child');
@@ -130,7 +131,7 @@ const execute = async (tool: string, input: any, extra: any = {}, now = fixed) =
   const cwd = current.cwd ? join(scratch, current.cwd) : scratch;
   current.context ??= contextFor({ now: () => new Date(current.now) }, cwd);
   Object.assign(current.context, extra);
-  const definition = tool === 'read_file' ? createReadFileTool() : tool === 'glob' ? createGlobTool() : createGetCurrentTimeTool();
+  const definition = tool === 'read_file' ? createReadFileTool() : tool === 'glob' ? createGlobTool({ subprocess: { executeFile } }) : createGetCurrentTimeTool();
   let validation: any = null;
   let validationFailed = false;
   try {

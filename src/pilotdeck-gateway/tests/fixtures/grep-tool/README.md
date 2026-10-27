@@ -81,3 +81,5 @@ ripgrep 二进制。
   `HOME`/`PILOT_HOME`。
 - **rg 版本**：参数与输出格式以 15.0/15.2 实测为准；更老或未来版本若有格式变化，
   需要重新录制 oracle。
+
+#280：与 builtin-tools 共用 `../_shared/ripgrep-subprocess.mjs`，通过既有 subprocess 注入口同步执行真实 bundled rg，关闭从未使用的 stdin 管道。退出码/输出原样保留，启动错误和超时抛出；金样不变。该修复只用于 grep 文件夹具，grep-session 仍直接观察 TS 的异步子进程会话语义。
