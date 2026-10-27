@@ -58,7 +58,7 @@ python3 -I scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gat
 每项 5 次，复用原观察规则和负控，保留六格原件。这是 TS 进程内受控校准；
 没有启动 sidecar 或 HTTP gateway，不声称覆盖原八组在线回归。
 
-`--suite deadline` 输出四格 `NOT_RUN`，结构自检 exit 0。实际原生执行、exec/egress
+`--suite deadline` 输出四格 `NOT_RUN`，结构自检通过仍 exit 3（未运行专用码）。实际原生执行、exec/egress
 采集器接入和产品比较仍需 A7。`audit_native` 提供缺证据即拒绝的审计契约；
 合成拓扑夹具仅证明规则能拒绝变异，不能证明原生宿主已运行。旧 A2 代理驱动不改称原生驱动。
 
@@ -68,7 +68,7 @@ python3 -I scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gat
 每条负控须 exit 1 且首因正确。**批次汇总只允许一个共享函数**
 `common.aggregate_status(*children) -> (status, exit_code)`：全序
 `PASS < PASS_WITH_SKIPS < NOT_RUN < BLOCKED < FAIL`（未知状态直接判 `FAIL`），
-返回最悲观状态及其登记退出码（`PASS=0`、`PASS_WITH_SKIPS/NOT_RUN/FAIL=1`、
+返回最悲观状态及其登记退出码（`PASS=0`、`PASS_WITH_SKIPS/FAIL=1`、`NOT_RUN=3`、
 `BLOCKED=2`）。`controls/session_domain.py`、`session_domain.py` calibrate、
 fixture 的 `check_cleanup.py` 与源码负控 `negative_controls.py` 的顶层状态/退出码
 都调用它，不再各自写 `== 'PASS'` / `all(passed)` 分支。只有所有 case 与 cleanup
@@ -79,8 +79,7 @@ fixture 的 `check_cleanup.py` 与源码负控 `negative_controls.py` 的顶层�
 状态与退出码、calibrate 对 `e1Controls=PASS_WITH_SKIPS` 的映射，以及源码负控
 「恢复正控含平台跳过 → 批次非 PASS/非零」的最终汇总点。
 `check_cleanup.py --mode aggregation-audit` 静态枚举装置内所有顶层状态/退出码
-计算点：每个登记点必须调用共享函数，新增未登记点或登记点改用 `int(...)` 直接
-算退出码即失败；`negative_controls.py` 的 `restored-skip-accepted` 与
+计算点（含直接返回或任意变量构造的 `status` 字典）：每个登记点的每条返回与返回变量的全部赋值均须来自共享函数；嵌套函数或其他分支的共享调用不能替独立出口背书；未登记点或独立退出码计算即失败；`negative_controls.py` 的 `restored-skip-accepted` 与
 `aggregation-exit-bypassed` 分别钉这两条。
 
 报告区分实测成功与验收状态：冻结哈希不符时，即使测量成功，校准总判也为
@@ -144,3 +143,9 @@ CI/shell 调用方也不会把它当通过。
 转红）。`aggregation-exit-bypassed` 删掉 controls `main()` 的共享退出码调用，
 必须让 `aggregation-audit` 报出登记点未走共享函数的专属失败。
 A5.3 的白名单变更须由协调者完成双评审、哈希登记后再合并。
+
+#209 A2 锁加固：锁获取时先发布 `cleanupPending: true`，成功退出才删除锁；因此 SIGKILL/OOM 或后续清理记录写入失败也不留下可自动接管的空标记。启动到登记、整批清理和进入释放 guard 之前挂起 SIGINT/SIGTERM，子进程 exec 前解除继承掩码。只有本次登记的进程组全部有界清理并证实消失，才释放本 owner 的共享锁；kill/wait/probe 失败保留登记并把 `cleanupPending` 更新成组列表，gateway 不自动接管该记录，须协调者核实后回收。每组等待上限为 TERM 3s + KILL 3s + reap 3s + 最终探测 2s，整批串行；SIGKILL 不能被屏蔽，只有遗留锁标记，不承诺当场清理。进程登记保护覆盖 A2 run_round/check_ruler；E1 `session_domain.run_fixture` 仍用自身 held-group 清理且未接入 `LIVE_GROUPS`，异常退出的共享锁门控与 A1/cli/ui 等姊妹接管规则都须 #209 续办，前置于下一次全量对拍/定标。锁协议保留既有 `.guard` 的 flock + owner 目录，未单边改成与姊妹装置不兼容的锁。
+
+#909：CI 的 Node 前置条件由实际运行的 `test_metadata_io_driver.EnvironmentControls` 逐 job 检查；冻结 prerequisites 不再用跨 job 的首个 setup/npm 文本索引冒充证明。四个 Node job 各有删除、后移和条件 setup 的配对负控。
+
+预置标记的可用性代价：即使获取锁后尚未 spawn，只要未正常退出，gateway 也不按 dead_pid/expired 自动回收；MAX_AGE 不覆盖这个保护。等待方有锁等待超时，不能据超时判断遗留组已消失。人工回收先保留 owner.json 与对应轮次原始日志，核实原 owner 已停止、所有本轮进程组均已停止且没有其他装置持锁，再由协调者处理该锁；证据不足则保留，继续独立工作。

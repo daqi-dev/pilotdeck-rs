@@ -23,6 +23,23 @@ READ_METHODS = ['native_archive_manifest', 'native_archive_entries', 'native_arc
                 'session_model_get', 'supported_agents', 'list_projects', 'describe_project']
 LOCK = Path('/tmp/pdrs-parity.lock')
 MAX_AGE = 2400
+# A2 groups remain registered until their bounded cleanup proves absence.
+# A failed cleanup keeps the shared lock, even when the caller is interrupted.
+LIVE_GROUPS = set()
+DEFERRED_SIGNALS = {signal.SIGINT, signal.SIGTERM}
+
+
+@contextmanager
+def deferred_signals():
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, DEFERRED_SIGNALS)
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
+def unblock_child_signals():
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, DEFERRED_SIGNALS)
 
 # The one top-level summary function for the E1 apparatus.  README registers
 # this total order: PASS < PASS_WITH_SKIPS < NOT_RUN < BLOCKED < FAIL; lower is
@@ -31,8 +48,10 @@ MAX_AGE = 2400
 # batch status or its exit code anywhere else: check_cleanup.py's
 # aggregation-audit enumerates every registered call site and fails a new one.
 BATCH_STATUS_ORDER = ('PASS', 'PASS_WITH_SKIPS', 'NOT_RUN', 'BLOCKED', 'FAIL')
-BATCH_EXIT_CODES = {'PASS': 0, 'PASS_WITH_SKIPS': 1, 'NOT_RUN': 1,
+BATCH_EXIT_CODES = {'PASS': 0, 'PASS_WITH_SKIPS': 1, 'NOT_RUN': 3,
                     'BLOCKED': 2, 'FAIL': 1}
+# Source-control verdicts are children of the same batch in both fixtures.
+MUTATION_STATUS = {'KILLED': 'PASS', 'SURVIVED': 'FAIL', 'INVALID': 'BLOCKED'}
 
 
 def aggregate_status(*children):
@@ -579,46 +598,59 @@ def parity_lock(timeout=600, takeovers=None, lock=LOCK):
     """
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError('lock timeout must be positive and finite')
-    mine = {'pid': os.getpid(), 'timestamp': time.time(), 'token': uuid.uuid4().hex}
+    # Publish the fail-closed marker before any caller can spawn a child.
+    # Even SIGKILL or a later failed cleanup-record write must leave a lock
+    # that another gateway cannot mistake for a safe dead-owner takeover.
+    mine = {'pid': os.getpid(), 'timestamp': time.time(), 'token': uuid.uuid4().hex,
+            'cleanupPending': True}
     deadline = time.monotonic() + timeout
     announced = False
-    while True:
-        with guard(lock):
-            if lock.exists():
-                previous = owner(lock)
-                stamp = previous['timestamp'] if previous else lock.stat().st_mtime
-                reason = ('dead_pid' if previous and not alive(previous['pid']) else
-                          'expired' if time.time() - stamp > MAX_AGE else None)
-                if reason:
-                    event = {'reason': reason, 'previous_owner': previous, 'timestamp': time.time()}
-                    shutil.rmtree(lock)
-                    if takeovers is not None:
-                        takeovers.append(event)
-            if not lock.exists():
-                lock.mkdir()
-                # Lease age begins at acquisition, not before a long wait.
-                mine['timestamp'] = time.time()
-                try:
-                    save(lock / 'owner.json', mine)
-                except BaseException:
-                    shutil.rmtree(lock)
-                    raise
-                break
-        if time.monotonic() >= deadline:
-            raise TimeoutError(f'parity lock wait exceeded {timeout}s')
-        if not announced:
-            print(f'waiting for {lock}', file=sys.stderr, flush=True)
-            announced = True
-        # Other suites may release and immediately launch their next round.
-        # Keep the polling window shorter than that gap to avoid starvation;
-        # ownership, lease and guard rules remain identical to the C lock.
-        time.sleep(.1)
     try:
+        while True:
+            with guard(lock), deferred_signals():
+                if lock.exists():
+                    previous = owner(lock)
+                    stamp = previous['timestamp'] if previous else lock.stat().st_mtime
+                    reason = ('dead_pid' if previous and not alive(previous['pid']) else
+                              'expired' if time.time() - stamp > MAX_AGE else None)
+                    # A malformed published owner can be an interrupted
+                    # cleanupPending write. Only a never-published stale lock
+                    # may use mtime recovery; a damaged owner needs inspection.
+                    damaged = previous is None and (lock / 'owner.json').exists()
+                    if reason and not damaged and not (previous and previous.get('cleanupPending')):
+                        event = {'reason': reason, 'previous_owner': previous, 'timestamp': time.time()}
+                        shutil.rmtree(lock)
+                        if takeovers is not None:
+                            takeovers.append(event)
+                if not lock.exists():
+                    lock.mkdir()
+                    # Lease age begins at acquisition, not before a long wait.
+                    mine['timestamp'] = time.time()
+                    try:
+                        save(lock / 'owner.json', mine)
+                    except BaseException:
+                        shutil.rmtree(lock)
+                        raise
+                    break
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f'parity lock wait exceeded {timeout}s')
+            if not announced:
+                print(f'waiting for {lock}', file=sys.stderr, flush=True)
+                announced = True
+            # Other suites may release and immediately launch their next round.
+            # Keep the polling window shorter than that gap to avoid starvation;
+            # ownership, lease and guard rules remain identical to the C lock.
+            time.sleep(.1)
         yield
     finally:
-        with guard(lock):
+        # Acquisition may be cancelled while waiting for the guard; release
+        # may not: publish the remaining groups before delivering cancellation.
+        with deferred_signals(), guard(lock):
             if owner(lock) == mine:
-                shutil.rmtree(lock)
+                if LIVE_GROUPS:
+                    save(lock / 'owner.json', dict(mine, cleanupPending=sorted(LIVE_GROUPS)))
+                else:
+                    shutil.rmtree(lock)
 
 
 def install_shutdown():

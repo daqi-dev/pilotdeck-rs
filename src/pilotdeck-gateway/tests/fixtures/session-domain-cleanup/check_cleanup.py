@@ -846,6 +846,8 @@ AGGREGATION_POINTS = {
      'main'): 'fixture-main',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_controls.py',
      'main'): 'negative-main',
+    ('src/pilotdeck-gateway/tests/fixtures/gateway-batch/negative_controls.py',
+     'main'): 'gateway-negative-main',
 }
 NON_AGGREGATION_POINTS = {
     ('scripts/gateway-parity/common.py', 'aggregate_status'):
@@ -863,7 +865,7 @@ NON_AGGREGATION_POINTS = {
     ('scripts/gateway-parity/session_domain.py', 'run_fixture'):
         'launcher audit status DONE/FAIL for one run, not a batch',
     ('scripts/gateway-parity/session_domain.py', 'deadline_report'):
-        'four-cell NOT_RUN structural self-check; exit 0 is the documented structure contract, not a child batch',
+        'four-cell NOT_RUN structure only; main maps NOT_RUN to exit 3 (#166)',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
      'batch_aggregation_control'):
         'test-only; calls the shared function to assert the order',
@@ -871,6 +873,29 @@ NON_AGGREGATION_POINTS = {
      'aggregation_audit'):
         'the audit itself; test-only',
 }
+
+# #892: leaf observations and test inputs also construct status dictionaries.
+# Classify each explicitly; never exempt a whole file from the inventory.
+NON_AGGREGATION_POINTS.update({
+    ('src/pilotdeck-gateway/tests/fixtures/gateway-batch/negative_controls.py',
+     'record'): 'one mutation verdict record, not a batch exit',
+    ('scripts/gateway-parity/test_safety.py', 'test_deadline_not_run_has_dedicated_exit_code'):
+        'test-only shared exit mapping and real CLI contract, not a batch',
+    ('scripts/gateway-parity/build_proxy.py', 'main'): 'single build precondition, no batch',
+    ('scripts/gateway-parity/compare.py', 'projection'): 'single evidence projection',
+    ('scripts/gateway-parity/compare.py', 'compare'): 'A2 pair comparison, own frozen verdict',
+    ('scripts/gateway-parity/controls/session_domain.py', 'native_fixture'): 'synthetic leaf observations',
+    ('scripts/gateway-parity/run_round.py', 'run_round'): 'single A2 round audit',
+    ('scripts/gateway-parity/session_domain.py', 'process_tree'): 'single process census',
+    ('scripts/gateway-parity/session_domain.py', 'validate_calibration'): 'calibration observations, not batch exit',
+    **{('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py', name):
+       'test-only leaf input or replay, no production batch exit'
+       for name in ('wiring_control', 'census_snapshot_race_control',
+                    'census_enumeration_failure_control', 'negative_restored_replays',
+                    'bypass_probe', 'fake_run', 'replay')},
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_controls.py',
+     'wiring_relaxed'): 'mutation verdict predicate, not batch exit',
+})
 
 
 STATUS_WORDS = frozenset(('PASS', 'PASS_WITH_SKIPS', 'NOT_RUN', 'BLOCKED', 'FAIL',
@@ -907,11 +932,114 @@ def _is_report_status(target, value):
                     for key in value.keys))
 
 
+def own_nodes(function):
+    """Nested function bodies must not certify an enclosing exit path."""
+    def descend(node):
+        yield node
+        for child in ast.iter_child_nodes(node):
+            if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                      ast.ClassDef, ast.Lambda)):
+                yield from descend(child)
+    return list(descend(function))
+
+
+def shared_call(value):
+    return (isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
+            and value.func.attr == 'aggregate_status'
+            and ast.unparse(value.func.value) in ('common', 'md.common'))
+
+
+def shared_projection(value, index):
+    return (isinstance(value, ast.Subscript) and shared_call(value.value)
+            and isinstance(value.slice, ast.Constant)
+            and type(value.slice.value) is int and value.slice.value == index)
+
+
+def shared_value(nodes, value, index):
+    if shared_projection(value, index):
+        return True
+    if not isinstance(value, ast.Name):
+        return False
+    stores = {id(n) for n in nodes if isinstance(n, ast.Name)
+              and isinstance(n.ctx, ast.Store) and n.id == value.id}
+    accepted = set()
+    for node in nodes:
+        if isinstance(node, ast.Assign):
+            targets, expression = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets, expression = [node.target], node.value
+        else:
+            continue
+        for target in targets:
+            if (isinstance(target, ast.Name) and target.id == value.id
+                    and shared_projection(expression, index)):
+                accepted.add(id(target))
+            if (isinstance(target, (ast.Tuple, ast.List)) and len(target.elts) == 2
+                    and shared_call(expression)):
+                part = target.elts[index]
+                if isinstance(part, ast.Name) and part.id == value.id:
+                    accepted.add(id(part))
+    return bool(stores) and stores == accepted
+
+
+def shared_returns(function, kind):
+    """Conservative syntax contract: every branch and every store is checked.
+
+    No arbitrary data-flow claims: unsupported aliases/updates fail closed.
+    main functions return only shared exit projections; batch reports contain
+    only shared status projections; summarize_results returns (status, skips).
+    """
+    nodes = own_nodes(function)
+    returns = [node.value for node in nodes if isinstance(node, ast.Return)]
+    if kind == 'exit':
+        return bool(returns) and all(shared_value(nodes, value, 1) for value in returns)
+    if kind == 'status-tuple':
+        return bool(returns) and all(isinstance(value, ast.Tuple) and len(value.elts) == 2
+                                    and shared_value(nodes, value.elts[0], 0) for value in returns)
+    # The two production report builders use one local report dictionary.
+    if not returns or not all(isinstance(value, ast.Name) and value.id == 'report'
+                              for value in returns):
+        return False
+    reports = [node for node in nodes if isinstance(node, ast.Name)
+               and node.id == 'report' and isinstance(node.ctx, ast.Store)]
+    definitions = [node for node in nodes if isinstance(node, ast.Assign)
+                   and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                   and node.targets[0].id == 'report' and isinstance(node.value, ast.Dict)]
+    if not reports or len(reports) != len(definitions):
+        return False
+    for definition in definitions:
+        statuses = [value for key, value in zip(definition.value.keys, definition.value.values)
+                    if isinstance(key, ast.Constant) and key.value == 'status']
+        if len(statuses) != 1 or not shared_value(nodes, statuses[0], 0):
+            return False
+        if any(key is None for key in definition.value.keys):
+            return False
+    for node in nodes:
+        if (isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
+                and isinstance(node.value, ast.Name) and node.value.id == 'report'):
+            return False  # an alias could mutate status outside these checks
+        if (isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del))
+                and isinstance(node.value, ast.Name) and node.value.id == 'report'):
+            if not isinstance(node.slice, ast.Constant) or node.slice.value == 'status':
+                return False
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == 'report'):
+            return False  # update/setdefault/pop/... can replace the status
+    return True
+
+
 def aggregation_markers(function):
     """Markers that make *function* a top-level status/exit computation."""
     markers = set()
-    for node in ast.walk(function):
-        if isinstance(node, ast.Assign):
+    for node in own_nodes(function):
+        if (isinstance(node, ast.Dict)
+                and any(isinstance(key, ast.Constant) and key.value == 'status'
+                        for key in node.keys)):
+            markers.add('dict-status')
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+              and node.func.id == 'dict' and any(k.arg == 'status' for k in node.keywords)):
+            markers.add('dict-status')
+        elif isinstance(node, ast.Assign):
             for target in node.targets:
                 if _is_status_target(target) and (
                         _status_literals(node.value)
@@ -936,15 +1064,13 @@ def aggregation_markers(function):
               and node.exc.args and (_status_literals(node.exc.args[0])
                                      or _has_passed_aggregate(node.exc.args[0]))):
             markers.add('raise-exit-status')
-        elif isinstance(node, ast.Call) and 'aggregate_status' in ast.unparse(node.func):
+        elif shared_call(node):
             markers.add('calls-aggregate')
     return markers
 
 
 def calls_shared(function):
-    return any(isinstance(node, ast.Call)
-               and 'aggregate_status' in ast.unparse(node.func)
-               for node in ast.walk(function))
+    return any(shared_call(node) for node in own_nodes(function))
 
 
 def scan_aggregation_tree(tree, rel):
@@ -966,7 +1092,8 @@ def aggregation_audit():
     """
     files = [path for path in (
         sorted((ROOT / 'scripts/gateway-parity').rglob('*.py'))
-        + sorted(Path(__file__).resolve().parent.glob('*.py')))
+        + sorted(Path(__file__).resolve().parent.glob('*.py'))
+        + sorted((Path(__file__).resolve().parent.parent / 'gateway-batch').glob('*.py')))
         if 'node_modules' not in path.parts and '__pycache__' not in path.parts]
     found = {}
     failures = []
@@ -990,7 +1117,9 @@ def aggregation_audit():
                             f'{rel}:{name}')
             continue
         markers, function = found[key]
-        shared = calls_shared(function) and 'return-int-status' not in markers
+        kind = ('exit' if name == 'main' else 'status-tuple'
+                if name == 'summarize_results' else 'report')
+        shared = calls_shared(function) and shared_returns(function, kind)
         points[point_id] = {'file': rel, 'function': name, 'shared': shared,
                             'markers': sorted(markers)}
         if not shared:
@@ -1025,7 +1154,43 @@ def aggregation_audit():
     if not shared or not calls_shared(shared[1]):
         failures.append('#164-fix-r7 aggregation-audit: detector self-test did not '
                         'recognize a shared call')
+    # #892 paired, compilable AST negatives. Exercise the actual detector,
+    # including a shared call in a different branch (the original loophole).
+    probes = [
+        ('direct-dict', "return {'status': 'PASS'}", 'marker', True),
+        ('arbitrary-dict', "anything = {'status': result}\nreturn anything", 'marker', True),
+        ('dict-call', "return dict(status='PASS')", 'marker', True),
+        ('shared-code', "return common.aggregate_status('PASS')[1]", 'exit', True),
+        ('shared-binding', "_, code = common.aggregate_status('PASS')\nreturn code", 'exit', True),
+        ('branch-exit', "if rows:\n    return common.aggregate_status('PASS')[1]\n"
+                        "return 0 if all(rows) else 1", 'exit', False),
+        ('branch-store', "_, code = common.aggregate_status('PASS')\n"
+                         "if rows:\n    code = 0\nreturn code", 'exit', False),
+        ('augmented-store', "_, code = common.aggregate_status('PASS')\ncode += 1\nreturn code", 'exit', False),
+        ('nested-call', "def nested():\n    return common.aggregate_status('PASS')[1]\nreturn 0", 'exit', False),
+        ('fake-call', "return common.fake_aggregate_status('PASS')[1]", 'exit', False),
+        ('shared-report', "status, _ = common.aggregate_status('PASS')\n"
+                          "report = {'status': status}\nreturn report", 'report', True),
+        ('report-overwrite', "status, _ = common.aggregate_status('PASS')\n"
+                             "report = {'status': status}\nreport['status'] = 'PASS'\nreturn report", 'report', False),
+        ('report-update', "status, _ = common.aggregate_status('PASS')\n"
+                          "report = {'status': status}\nreport.update(status='PASS')\nreturn report", 'report', False),
+        ('report-alias', "status, _ = common.aggregate_status('FAIL')\n"
+                         "report = {'status': status}\nalias = report\nalias['status'] = 'PASS'\nreturn report", 'report', False),
+    ]
+    probe_results = []
+    for name, body, kind, expected in probes:
+        source = 'def probe(rows, result):\n' + '\n'.join('    ' + line for line in body.splitlines()) + '\n'
+        compile(source, f'<#892-{name}>', 'exec')
+        function = ast.parse(source).body[0]
+        actual = (bool(aggregation_markers(function)) if kind == 'marker'
+                  else calls_shared(function) and shared_returns(function, kind))
+        passed = actual == expected
+        probe_results.append({'name': name, 'expected': expected, 'actual': actual, 'passed': passed})
+        if not passed:
+            failures.append(f'#892 aggregation-audit: {name} expected={expected}, got={actual}')
     return {'mode': 'aggregation-audit', 'points': points,
+            'probes': probe_results,
             'nonPoints': sorted(f'{rel}:{name}' for rel, name in NON_AGGREGATION_POINTS),
             'unclassified': unclassified, 'failures': failures,
             'failureCount': len(failures),

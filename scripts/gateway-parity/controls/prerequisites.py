@@ -441,9 +441,9 @@ def run_prerequisites(output, code_root=ROOT):
     lock = json.loads((scripts / 'package-lock.json').read_text())
     record('ajv-pinned', package['dependencies']['ajv'] == '8.20.0'
            and lock['packages']['']['dependencies']['ajv'] == '8.20.0', 'manifest and lock root must pin ajv')
-    ci = (code_root / '.github/workflows/ci.yml').read_text().split('  gateway-schema-baseline:')[0]
-    record('ci-check-node', 'actions/setup-node@v4' in ci and ci.index('actions/setup-node@v4') < ci.index('npm ci'),
-           'required check job sets Node before npm')
+    # #909: CI runtime ordering belongs to the per-job EnvironmentControls
+    # guard, which CI executes in metadata-observer. A cross-job text prefix
+    # cannot prove that each npm invocation has its own setup-node step.
     text = (code_root / 'specs/gateway-parity/normalization.md').read_text()
     record('normalization-contract', all(term in text for term in
            ('含 id/name', '键须唯一', '任意字符串中的已锚定 UUID', '词边界', 'stopReason/usage/turns', 'toolName/content')),
