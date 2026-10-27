@@ -1,0 +1,2062 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/context/memory/edgeclaw-memory-core/src/core/file-memory.ts": "c64b368fa7fa329cbecb475b22972860bbc133444606017132c6edbf27ed3ad6",
+    "src/context/memory/edgeclaw-memory-core/src/core/general-projects.ts": "3a5512939027cc32efde9cd218e4bb400300a28fda6f9ac07391d75b56244e40",
+    "src/context/memory/edgeclaw-memory-core/src/core/pipeline/heartbeat.ts": "c4f1247e983948bc47a83c1308cd2a158bce097335c41f4b42d9de6babd125fc",
+    "src/context/memory/edgeclaw-memory-core/src/core/review/dream-review.ts": "ddc7d016152096f0dfb9ce63bc661b34f683a7cea3491d9cfd1c1365c8d3d1b7",
+    "src/context/memory/edgeclaw-memory-core/src/core/skills/llm-extraction.ts": "6cde29bc33b1d2fccfcfa5ee507941b2280c6960254da28794ac18845224372e",
+    "src/context/memory/edgeclaw-memory-core/src/core/storage/sqlite.ts": "92ee83f07aaefc070850a6ac366fbc75924b2efdaa45f9f9999ed0d3d25e5093",
+    "src/context/memory/edgeclaw-memory-core/src/core/trace-i18n.ts": "2d4a4e6d1d86539ff294b5d016e51ef3a131575e2d5be4da14aeca24b8dc4f0c",
+    "src/context/memory/edgeclaw-memory-core/src/core/types.ts": "abc773ea38e2ba98d83aa7bad1d4672fac3d2f01fb5ad992e8d0382912ee7f99",
+    "src/context/memory/edgeclaw-memory-core/src/core/utils/id.ts": "5d8f83f1a5d56b696829ffe8a26dff2505b6bb6317acd4e4ca9772219e0bd1f9",
+    "src/context/memory/edgeclaw-memory-core/src/core/utils/text.ts": "c582cc42b3acae4bc5b8502f2ad6abd6577e2eb03e7ae41b966e0cceba5f654e"
+  },
+  "nodeVersion": "v22.22.0",
+  "cases": [
+    {
+      "name": "planDreamClusters#0",
+      "fn": "planDreamClusters",
+      "input": {
+        "kind": "project",
+        "headers": [
+          {
+            "relativePath": "Project/a.md",
+            "name": "  Alpha   Project  ",
+            "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx tail",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "relativePath": "Project/b.md",
+            "name": "Beta",
+            "description": "  one\n two  ",
+            "updatedAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "relativePath": "Project/c.md",
+            "name": "Gamma",
+            "description": "short",
+            "updatedAt": "2026-01-03T00:00:00.000Z"
+          },
+          {
+            "relativePath": "Project/d.md",
+            "name": "Delta",
+            "description": "d",
+            "updatedAt": "2026-01-04T00:00:00.000Z"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"summary\\\":\\\"  Plan   summary  ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss\\\",\\\"clusters\\\":[{\\\"member_relative_paths\\\":[\\\" Project/a.md \\\",\\\"Project/b.md\\\",\\\"Project/a.md\\\",\\\"Unknown.md\\\",5],\\\"reason\\\":\\\"  Overlap    facts  rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\\\"},{\\\"member_relative_paths\\\":[\\\"Project/b.md\\\",\\\"Project/c.md\\\"],\\\"reason\\\":\\\"same project\\\"},{\\\"member_relative_paths\\\":[\\\"Project/c.md\\\",\\\"Project/d.md\\\"],\\\"reason\\\":\\\"duplicate\\\"},{\\\"member_relative_paths\\\":\\\"Project/a.md\\\"},null]}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "summary": "Plan summary sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+          "clusters": [
+            {
+              "memberRelativePaths": [
+                "Project/a.md",
+                "Project/b.md"
+              ],
+              "reason": "Overlap facts rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+            },
+            {
+              "memberRelativePaths": [
+                "Project/b.md",
+                "Project/c.md"
+              ],
+              "reason": "same project"
+            },
+            {
+              "memberRelativePaths": [
+                "Project/c.md",
+                "Project/d.md"
+              ],
+              "reason": "duplicate"
+            }
+          ]
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream project cluster plan",
+            "systemPrompt": "You are the Project Dream cluster planner for a file-memory system.\n\nYour job is to inspect lightweight header information only and decide which files should be refined together.\n\nRules:\n- Use only the supplied header metadata as evidence.\n- Do not assume full file contents beyond what the header says.\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\n- Return mutually exclusive candidate clusters only.\n- A file may appear in at most one cluster.\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\n- If files are distinct and should remain separate, leave them out of clusters.\n- Files belonging to the same current project is not, by itself, a merge reason.\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\n- Keep reasons concise and specific.\n- Natural-language output should follow the dominant language already visible in the supplied headers.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short planning summary\",\n  \"clusters\": [\n    {\n      \"member_relative_paths\": [\"Project/a.md\", \"Project/b.md\"],\n      \"reason\": \"why these files should be refined together\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"category\": \"project\",\n  \"headers\": [\n    {\n      \"relative_path\": \"Project/a.md\",\n      \"name\": \"Alpha Project\",\n      \"description\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\"\n    },\n    {\n      \"relative_path\": \"Project/b.md\",\n      \"name\": \"Beta\",\n      \"description\": \"one two\",\n      \"updated_at\": \"2026-01-02T00:00:00.000Z\"\n    },\n    {\n      \"relative_path\": \"Project/c.md\",\n      \"name\": \"Gamma\",\n      \"description\": \"short\",\n      \"updated_at\": \"2026-01-03T00:00:00.000Z\"\n    },\n    {\n      \"relative_path\": \"Project/d.md\",\n      \"name\": \"Delta\",\n      \"description\": \"d\",\n      \"updated_at\": \"2026-01-04T00:00:00.000Z\"\n    }\n  ]\n}",
+            "rawResponse": "{\"summary\":\"  Plan   summary  ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss\",\"clusters\":[{\"member_relative_paths\":[\" Project/a.md \",\"Project/b.md\",\"Project/a.md\",\"Unknown.md\",5],\"reason\":\"  Overlap    facts  rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\"},{\"member_relative_paths\":[\"Project/b.md\",\"Project/c.md\"],\"reason\":\"same project\"},{\"member_relative_paths\":[\"Project/c.md\",\"Project/d.md\"],\"reason\":\"duplicate\"},{\"member_relative_paths\":\"Project/a.md\"},null]}",
+            "parsedResult": {
+              "summary": "  Plan   summary  ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+              "clusters": [
+                {
+                  "member_relative_paths": [
+                    " Project/a.md ",
+                    "Project/b.md",
+                    "Project/a.md",
+                    "Unknown.md",
+                    5
+                  ],
+                  "reason": "  Overlap    facts  rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+                },
+                {
+                  "member_relative_paths": [
+                    "Project/b.md",
+                    "Project/c.md"
+                  ],
+                  "reason": "same project"
+                },
+                {
+                  "member_relative_paths": [
+                    "Project/c.md",
+                    "Project/d.md"
+                  ],
+                  "reason": "duplicate"
+                },
+                {
+                  "member_relative_paths": "Project/a.md"
+                },
+                null
+              ]
+            }
+          }
+        ],
+        "validation": {
+          "kind": "clusters",
+          "result": {
+            "clusters": [
+              {
+                "memberRelativePaths": [
+                  "Project/a.md",
+                  "Project/b.md"
+                ],
+                "reason": "Overlap facts rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+              },
+              {
+                "memberRelativePaths": [
+                  "Project/c.md",
+                  "Project/d.md"
+                ],
+                "reason": "duplicate"
+              }
+            ],
+            "droppedWarnings": [
+              "Dropped overlapping cluster: Project/b.md, Project/c.md"
+            ]
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2726",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Project Dream cluster planner for a file-memory system.\\n\\nYour job is to inspect lightweight header information only and decide which files should be refined together.\\n\\nRules:\\n- Use only the supplied header metadata as evidence.\\n- Do not assume full file contents beyond what the header says.\\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\\n- Return mutually exclusive candidate clusters only.\\n- A file may appear in at most one cluster.\\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\\n- If files are distinct and should remain separate, leave them out of clusters.\\n- Files belonging to the same current project is not, by itself, a merge reason.\\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\\n- Keep reasons concise and specific.\\n- Natural-language output should follow the dominant language already visible in the supplied headers.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short planning summary\\\",\\n  \\\"clusters\\\": [\\n    {\\n      \\\"member_relative_paths\\\": [\\\"Project/a.md\\\", \\\"Project/b.md\\\"],\\n      \\\"reason\\\": \\\"why these files should be refined together\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"category\\\": \\\"project\\\",\\n  \\\"headers\\\": [\\n    {\\n      \\\"relative_path\\\": \\\"Project/a.md\\\",\\n      \\\"name\\\": \\\"Alpha Project\\\",\\n      \\\"description\\\": \\\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\\",\\n      \\\"updated_at\\\": \\\"2026-01-01T00:00:00.000Z\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/b.md\\\",\\n      \\\"name\\\": \\\"Beta\\\",\\n      \\\"description\\\": \\\"one two\\\",\\n      \\\"updated_at\\\": \\\"2026-01-02T00:00:00.000Z\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/c.md\\\",\\n      \\\"name\\\": \\\"Gamma\\\",\\n      \\\"description\\\": \\\"short\\\",\\n      \\\"updated_at\\\": \\\"2026-01-03T00:00:00.000Z\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/d.md\\\",\\n      \\\"name\\\": \\\"Delta\\\",\\n      \\\"description\\\": \\\"d\\\",\\n      \\\"updated_at\\\": \\\"2026-01-04T00:00:00.000Z\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "planDreamClusters#1",
+      "fn": "planDreamClusters",
+      "input": {
+        "kind": "feedback",
+        "headers": [
+          {
+            "relativePath": "Feedback/a.md",
+            "name": "A",
+            "description": "aa",
+            "updatedAt": "U1"
+          },
+          {
+            "relativePath": "Feedback/b.md",
+            "name": "B",
+            "description": "bb",
+            "updatedAt": "U2"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"clusters\\\":\\\"not an array\\\"}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "summary": "Dream feedback cluster plan completed.",
+          "clusters": []
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream feedback cluster plan",
+            "systemPrompt": "You are the Feedback Dream cluster planner for a file-memory system.\n\nYour job is to inspect lightweight header information only and decide which files should be refined together.\n\nRules:\n- Use only the supplied header metadata as evidence.\n- Do not assume full file contents beyond what the header says.\n- Feedback memory files capture durable collaboration rules, delivery rules, style rules, title/body template rules, and confirmed output constraints.\n- Return mutually exclusive candidate clusters only.\n- A file may appear in at most one cluster.\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\n- If files are distinct and should remain separate, leave them out of clusters.\n- Files belonging to the same current project is not, by itself, a merge reason.\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\n- Keep reasons concise and specific.\n- Natural-language output should follow the dominant language already visible in the supplied headers.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short planning summary\",\n  \"clusters\": [\n    {\n      \"member_relative_paths\": [\"Project/a.md\", \"Project/b.md\"],\n      \"reason\": \"why these files should be refined together\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"category\": \"feedback\",\n  \"headers\": [\n    {\n      \"relative_path\": \"Feedback/a.md\",\n      \"name\": \"A\",\n      \"description\": \"aa\",\n      \"updated_at\": \"U1\"\n    },\n    {\n      \"relative_path\": \"Feedback/b.md\",\n      \"name\": \"B\",\n      \"description\": \"bb\",\n      \"updated_at\": \"U2\"\n    }\n  ]\n}",
+            "rawResponse": "{\"clusters\":\"not an array\"}",
+            "parsedResult": {
+              "clusters": "not an array"
+            }
+          }
+        ],
+        "validation": {
+          "kind": "clusters",
+          "result": {
+            "clusters": [],
+            "droppedWarnings": []
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2119",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Feedback Dream cluster planner for a file-memory system.\\n\\nYour job is to inspect lightweight header information only and decide which files should be refined together.\\n\\nRules:\\n- Use only the supplied header metadata as evidence.\\n- Do not assume full file contents beyond what the header says.\\n- Feedback memory files capture durable collaboration rules, delivery rules, style rules, title/body template rules, and confirmed output constraints.\\n- Return mutually exclusive candidate clusters only.\\n- A file may appear in at most one cluster.\\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\\n- If files are distinct and should remain separate, leave them out of clusters.\\n- Files belonging to the same current project is not, by itself, a merge reason.\\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\\n- Keep reasons concise and specific.\\n- Natural-language output should follow the dominant language already visible in the supplied headers.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short planning summary\\\",\\n  \\\"clusters\\\": [\\n    {\\n      \\\"member_relative_paths\\\": [\\\"Project/a.md\\\", \\\"Project/b.md\\\"],\\n      \\\"reason\\\": \\\"why these files should be refined together\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"category\\\": \\\"feedback\\\",\\n  \\\"headers\\\": [\\n    {\\n      \\\"relative_path\\\": \\\"Feedback/a.md\\\",\\n      \\\"name\\\": \\\"A\\\",\\n      \\\"description\\\": \\\"aa\\\",\\n      \\\"updated_at\\\": \\\"U1\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Feedback/b.md\\\",\\n      \\\"name\\\": \\\"B\\\",\\n      \\\"description\\\": \\\"bb\\\",\\n      \\\"updated_at\\\": \\\"U2\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "planDreamClusters#2",
+      "fn": "planDreamClusters",
+      "input": {
+        "kind": "project",
+        "headers": [
+          {
+            "relativePath": "Project/only.md",
+            "name": "Only",
+            "description": "one",
+            "updatedAt": "U"
+          }
+        ]
+      },
+      "steps": [],
+      "expected": {
+        "result": {
+          "summary": "Not enough project files to form Dream clusters.",
+          "clusters": []
+        },
+        "debug": [],
+        "validation": {
+          "kind": "clusters",
+          "result": {
+            "clusters": [],
+            "droppedWarnings": []
+          }
+        },
+        "requests": []
+      }
+    },
+    {
+      "name": "planDreamClusters#3",
+      "fn": "planDreamClusters",
+      "input": {
+        "kind": "project",
+        "headers": [
+          {
+            "relativePath": "Project/a.md",
+            "name": "A",
+            "description": "a",
+            "updatedAt": "U1"
+          },
+          {
+            "relativePath": "Project/b.md",
+            "name": "B",
+            "description": "b",
+            "updatedAt": "U2"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"not json at all\"}}]}"
+        }
+      ],
+      "expected": {
+        "error": {
+          "name": "Error",
+          "message": "No JSON object found in extraction response"
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream project cluster plan",
+            "systemPrompt": "You are the Project Dream cluster planner for a file-memory system.\n\nYour job is to inspect lightweight header information only and decide which files should be refined together.\n\nRules:\n- Use only the supplied header metadata as evidence.\n- Do not assume full file contents beyond what the header says.\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\n- Return mutually exclusive candidate clusters only.\n- A file may appear in at most one cluster.\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\n- If files are distinct and should remain separate, leave them out of clusters.\n- Files belonging to the same current project is not, by itself, a merge reason.\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\n- Keep reasons concise and specific.\n- Natural-language output should follow the dominant language already visible in the supplied headers.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short planning summary\",\n  \"clusters\": [\n    {\n      \"member_relative_paths\": [\"Project/a.md\", \"Project/b.md\"],\n      \"reason\": \"why these files should be refined together\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"category\": \"project\",\n  \"headers\": [\n    {\n      \"relative_path\": \"Project/a.md\",\n      \"name\": \"A\",\n      \"description\": \"a\",\n      \"updated_at\": \"U1\"\n    },\n    {\n      \"relative_path\": \"Project/b.md\",\n      \"name\": \"B\",\n      \"description\": \"b\",\n      \"updated_at\": \"U2\"\n    }\n  ]\n}",
+            "rawResponse": "not json at all",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "No JSON object found in extraction response"
+          }
+        ],
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2098",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Project Dream cluster planner for a file-memory system.\\n\\nYour job is to inspect lightweight header information only and decide which files should be refined together.\\n\\nRules:\\n- Use only the supplied header metadata as evidence.\\n- Do not assume full file contents beyond what the header says.\\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\\n- Return mutually exclusive candidate clusters only.\\n- A file may appear in at most one cluster.\\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\\n- If files are distinct and should remain separate, leave them out of clusters.\\n- Files belonging to the same current project is not, by itself, a merge reason.\\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\\n- Keep reasons concise and specific.\\n- Natural-language output should follow the dominant language already visible in the supplied headers.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short planning summary\\\",\\n  \\\"clusters\\\": [\\n    {\\n      \\\"member_relative_paths\\\": [\\\"Project/a.md\\\", \\\"Project/b.md\\\"],\\n      \\\"reason\\\": \\\"why these files should be refined together\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"category\\\": \\\"project\\\",\\n  \\\"headers\\\": [\\n    {\\n      \\\"relative_path\\\": \\\"Project/a.md\\\",\\n      \\\"name\\\": \\\"A\\\",\\n      \\\"description\\\": \\\"a\\\",\\n      \\\"updated_at\\\": \\\"U1\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/b.md\\\",\\n      \\\"name\\\": \\\"B\\\",\\n      \\\"description\\\": \\\"b\\\",\\n      \\\"updated_at\\\": \\\"U2\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "refineDreamCluster#0",
+      "fn": "refineDreamCluster",
+      "input": {
+        "kind": "project",
+        "records": [
+          {
+            "entryId": "Project/a.md",
+            "relativePath": "Project/a.md",
+            "type": "project",
+            "scope": "project",
+            "isTmp": false,
+            "name": " Alpha ",
+            "description": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "updatedAt": "2026-01-01",
+            "content": "## Current Stage\nBuild\n",
+            "capturedAt": "2026-01-01",
+            "sourceSessionKey": "s"
+          },
+          {
+            "entryId": "Project/b.md",
+            "relativePath": "Project/b.md",
+            "type": "project",
+            "scope": "project",
+            "isTmp": false,
+            "name": "Beta",
+            "description": "  beta\ndesc  ",
+            "updatedAt": "2026-01-02",
+            "content": "## Notes\n- n\n",
+            "capturedAt": null,
+            "sourceSessionKey": null
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"summary\\\":\\\"  Refine   summary rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\\\",\\\"name\\\":\\\"  Refined    Name  nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\\\",\\\"description\\\":\\\"  Refined   description eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\\\",\\\"markdown\\\":\\\"\\\\n\\\\n  ## Summary\\\\nbody\\\\n\\\\n\\\"}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "summary": "Refine summary rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "file": {
+            "name": "Refined Name nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+            "description": "Refined description eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "markdown": "## Summary\nbody"
+          }
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream project cluster refine",
+            "systemPrompt": "You are the Project Dream refine engine for a file-memory system.\n\nYour job is to merge one cluster of existing memory files into exactly one cleaner memory file.\n\nRules:\n- Use only the supplied full file contents as evidence.\n- Resolve overlap, deduplicate repeated details, and keep the most useful durable facts.\n- Do not invent new facts.\n- Output exactly one refined file.\n- The visible output language must follow the dominant language already present in the supplied files. If the supplied files are mixed, prefer the dominant language of the cluster.\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\n- Produce exactly one project memory file.\n- Keep durable project facts only: what the project is, stable scope, goals, important progress, blockers, risks, and important decisions.\n- Do not reduce the file to a vague status line.\n- Prefer readable markdown headings such as ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes when useful.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short refine summary\",\n  \"name\": \"refined file title\",\n  \"description\": \"one-line description\",\n  \"markdown\": \"full markdown body\"\n}",
+            "userPrompt": "{\n  \"category\": \"project\",\n  \"records\": [\n    {\n      \"entry_id\": \"Project/a.md\",\n      \"relative_path\": \"Project/a.md\",\n      \"type\": \"project\",\n      \"name\": \" Alpha \",\n      \"description\": \"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\n      \"updated_at\": \"2026-01-01\",\n      \"captured_at\": \"2026-01-01\",\n      \"source_session_key\": \"s\",\n      \"content\": \"## Current Stage\\nBuild\\n\"\n    },\n    {\n      \"entry_id\": \"Project/b.md\",\n      \"relative_path\": \"Project/b.md\",\n      \"type\": \"project\",\n      \"name\": \"Beta\",\n      \"description\": \"beta desc\",\n      \"updated_at\": \"2026-01-02\",\n      \"captured_at\": \"\",\n      \"source_session_key\": \"\",\n      \"content\": \"## Notes\\n- n\\n\"\n    }\n  ]\n}",
+            "rawResponse": "{\"summary\":\"  Refine   summary rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\",\"name\":\"  Refined    Name  nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\",\"description\":\"  Refined   description eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"markdown\":\"\\n\\n  ## Summary\\nbody\\n\\n\"}",
+            "parsedResult": {
+              "summary": "  Refine   summary rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+              "name": "  Refined    Name  nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+              "description": "  Refined   description eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              "markdown": "\n\n  ## Summary\nbody\n\n"
+            }
+          }
+        ],
+        "validation": null,
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2416",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Project Dream refine engine for a file-memory system.\\n\\nYour job is to merge one cluster of existing memory files into exactly one cleaner memory file.\\n\\nRules:\\n- Use only the supplied full file contents as evidence.\\n- Resolve overlap, deduplicate repeated details, and keep the most useful durable facts.\\n- Do not invent new facts.\\n- Output exactly one refined file.\\n- The visible output language must follow the dominant language already present in the supplied files. If the supplied files are mixed, prefer the dominant language of the cluster.\\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\\n- Produce exactly one project memory file.\\n- Keep durable project facts only: what the project is, stable scope, goals, important progress, blockers, risks, and important decisions.\\n- Do not reduce the file to a vague status line.\\n- Prefer readable markdown headings such as ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes when useful.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short refine summary\\\",\\n  \\\"name\\\": \\\"refined file title\\\",\\n  \\\"description\\\": \\\"one-line description\\\",\\n  \\\"markdown\\\": \\\"full markdown body\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"category\\\": \\\"project\\\",\\n  \\\"records\\\": [\\n    {\\n      \\\"entry_id\\\": \\\"Project/a.md\\\",\\n      \\\"relative_path\\\": \\\"Project/a.md\\\",\\n      \\\"type\\\": \\\"project\\\",\\n      \\\"name\\\": \\\" Alpha \\\",\\n      \\\"description\\\": \\\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\\\",\\n      \\\"updated_at\\\": \\\"2026-01-01\\\",\\n      \\\"captured_at\\\": \\\"2026-01-01\\\",\\n      \\\"source_session_key\\\": \\\"s\\\",\\n      \\\"content\\\": \\\"## Current Stage\\\\nBuild\\\\n\\\"\\n    },\\n    {\\n      \\\"entry_id\\\": \\\"Project/b.md\\\",\\n      \\\"relative_path\\\": \\\"Project/b.md\\\",\\n      \\\"type\\\": \\\"project\\\",\\n      \\\"name\\\": \\\"Beta\\\",\\n      \\\"description\\\": \\\"beta desc\\\",\\n      \\\"updated_at\\\": \\\"2026-01-02\\\",\\n      \\\"captured_at\\\": \\\"\\\",\\n      \\\"source_session_key\\\": \\\"\\\",\\n      \\\"content\\\": \\\"## Notes\\\\n- n\\\\n\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "refineDreamCluster#1",
+      "fn": "refineDreamCluster",
+      "input": {
+        "kind": "feedback",
+        "records": [
+          {
+            "entryId": "Feedback/a.md",
+            "relativePath": "Feedback/a.md",
+            "type": "feedback",
+            "scope": "project",
+            "isTmp": false,
+            "name": "A",
+            "description": "aa",
+            "updatedAt": "U",
+            "content": "body",
+            "rule": "r"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"name\\\":\\\"N\\\",\\\"description\\\":\\\"D\\\",\\\"markdown\\\":\\\"   \\\"}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "summary": "Dream feedback cluster refine completed.",
+          "file": null
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream feedback cluster refine",
+            "systemPrompt": "You are the Feedback Dream refine engine for a file-memory system.\n\nYour job is to merge one cluster of existing memory files into exactly one cleaner memory file.\n\nRules:\n- Use only the supplied full file contents as evidence.\n- Resolve overlap, deduplicate repeated details, and keep the most useful durable facts.\n- Do not invent new facts.\n- Output exactly one refined file.\n- The visible output language must follow the dominant language already present in the supplied files. If the supplied files are mixed, prefer the dominant language of the cluster.\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\n- Produce exactly one feedback memory file.\n- Keep durable collaboration rules only: delivery order, output structure, style constraints, title/body template guidance, and confirmed review preferences.\n- Prefer readable markdown headings such as ## Rule, ## Why, ## How To Apply, ## Notes when useful.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short refine summary\",\n  \"name\": \"refined file title\",\n  \"description\": \"one-line description\",\n  \"markdown\": \"full markdown body\"\n}",
+            "userPrompt": "{\n  \"category\": \"feedback\",\n  \"records\": [\n    {\n      \"entry_id\": \"Feedback/a.md\",\n      \"relative_path\": \"Feedback/a.md\",\n      \"type\": \"feedback\",\n      \"name\": \"A\",\n      \"description\": \"aa\",\n      \"updated_at\": \"U\",\n      \"captured_at\": \"\",\n      \"source_session_key\": \"\",\n      \"content\": \"body\"\n    }\n  ]\n}",
+            "rawResponse": "{\"name\":\"N\",\"description\":\"D\",\"markdown\":\"   \"}",
+            "parsedResult": {
+              "name": "N",
+              "description": "D",
+              "markdown": "   "
+            }
+          }
+        ],
+        "validation": null,
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "1729",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Feedback Dream refine engine for a file-memory system.\\n\\nYour job is to merge one cluster of existing memory files into exactly one cleaner memory file.\\n\\nRules:\\n- Use only the supplied full file contents as evidence.\\n- Resolve overlap, deduplicate repeated details, and keep the most useful durable facts.\\n- Do not invent new facts.\\n- Output exactly one refined file.\\n- The visible output language must follow the dominant language already present in the supplied files. If the supplied files are mixed, prefer the dominant language of the cluster.\\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\\n- Produce exactly one feedback memory file.\\n- Keep durable collaboration rules only: delivery order, output structure, style constraints, title/body template guidance, and confirmed review preferences.\\n- Prefer readable markdown headings such as ## Rule, ## Why, ## How To Apply, ## Notes when useful.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short refine summary\\\",\\n  \\\"name\\\": \\\"refined file title\\\",\\n  \\\"description\\\": \\\"one-line description\\\",\\n  \\\"markdown\\\": \\\"full markdown body\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"category\\\": \\\"feedback\\\",\\n  \\\"records\\\": [\\n    {\\n      \\\"entry_id\\\": \\\"Feedback/a.md\\\",\\n      \\\"relative_path\\\": \\\"Feedback/a.md\\\",\\n      \\\"type\\\": \\\"feedback\\\",\\n      \\\"name\\\": \\\"A\\\",\\n      \\\"description\\\": \\\"aa\\\",\\n      \\\"updated_at\\\": \\\"U\\\",\\n      \\\"captured_at\\\": \\\"\\\",\\n      \\\"source_session_key\\\": \\\"\\\",\\n      \\\"content\\\": \\\"body\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "refineDreamCluster#2",
+      "fn": "refineDreamCluster",
+      "input": {
+        "kind": "feedback",
+        "records": []
+      },
+      "steps": [],
+      "expected": {
+        "result": {
+          "summary": "No feedback files were supplied for Dream refine.",
+          "file": null
+        },
+        "debug": [],
+        "validation": null,
+        "requests": []
+      }
+    },
+    {
+      "name": "planGeneralProjectMetaMerges#0",
+      "fn": "planGeneralProjectMetaMerges",
+      "input": {
+        "projectMetas": [
+          {
+            "projectId": "p1",
+            "projectName": "P One",
+            "description": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "status": "active",
+            "updatedAt": "U1",
+            "dreamUpdatedAt": "D1",
+            "sourceKind": "general_local",
+            "sourceWorkspacePath": "/ws",
+            "sourceProjectId": "sp"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "P Two",
+            "description": "desc two",
+            "status": "done",
+            "updatedAt": "U2",
+            "dreamUpdatedAt": "",
+            "sourceKind": "",
+            "sourceWorkspacePath": null
+          },
+          {
+            "projectId": "p3",
+            "projectName": "P Three",
+            "description": "desc three",
+            "status": "planned",
+            "updatedAt": "U3",
+            "sourceProjectId": false
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"summary\\\":\\\" merge  mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm\\\",\\\"merge_groups\\\":[{\\\"keeper_project_id\\\":\\\" p1 \\\",\\\"duplicate_project_ids\\\":[\\\" p2 \\\",\\\"p2\\\",\\\"  \\\",\\\"p3\\\"],\\\"reason\\\":\\\"  same  \\\"},{\\\"keeper_project_id\\\":\\\"\\\",\\\"duplicate_project_ids\\\":[\\\"p1\\\"],\\\"reason\\\":\\\"bad keeper\\\"},{\\\"keeper_project_id\\\":\\\"p9\\\",\\\"duplicate_project_ids\\\":[\\\"p1\\\"]},{\\\"keeper_project_id\\\":\\\"p1\\\",\\\"duplicate_project_ids\\\":[\\\"p4\\\"]},null]}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "summary": "merge mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm",
+          "mergeGroups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": [
+                "p2",
+                "p3"
+              ],
+              "reason": "same"
+            },
+            {
+              "keeperProjectId": "p9",
+              "duplicateProjectIds": [
+                "p1"
+              ],
+              "reason": ""
+            },
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": [
+                "p4"
+              ],
+              "reason": ""
+            }
+          ]
+        },
+        "debug": [
+          {
+            "requestLabel": "General project meta merge plan",
+            "systemPrompt": "You are the General Dream project-meta merge planner for a file-memory system.\n\nYour job is to inspect all General project metadata records and decide which project nodes clearly describe the same real project.\n\nRules:\n- Use only the supplied project metadata records as evidence.\n- Be conservative. If there is any meaningful uncertainty, do not merge.\n- Merge only when multiple project metas clearly refer to the same real project, same ongoing workstream, same external mirrored project identity, or an obvious alias/rename of the same project.\n- Do not merge merely because projects share a domain, platform, customer type, content format, date, model, workflow, or broad business category.\n- Do not merge separate named workstreams with different goals or deliverables.\n- Example: \"GBX-A 20260423 HoneydewPulse\" and \"GBX-B 20260423 ClinicFlow\" must remain separate because they name different projects with different targets.\n- For external mirrors, matching source_workspace_path plus source_project_id is strong evidence for merging.\n- keeper_project_id and every duplicate_project_id must be one of the supplied project ids.\n- A project id may appear in at most one merge group.\n- The keeper must not appear in duplicate_project_ids.\n- Return an empty merge_groups array when no merge is clearly justified.\n- Natural-language output fields should follow the dominant language already present in the supplied project metas.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short merge planning summary\",\n  \"merge_groups\": [\n    {\n      \"keeper_project_id\": \"project id to keep\",\n      \"duplicate_project_ids\": [\"project id to merge into keeper\"],\n      \"reason\": \"specific evidence that these metas are the same real project\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"governance_scope\": {\n    \"mode\": \"general_project_meta_merge_plan\",\n    \"primary_truth\": \"supplied_general_project_meta_only\",\n    \"writable_targets\": [\n      \"GeneralProjects/*.md\"\n    ],\n    \"forbidden_outputs\": [\n      \"new project meta\",\n      \"project memory rewrite\",\n      \"feedback memory rewrite\",\n      \"user profile rewrite\"\n    ]\n  },\n  \"project_metas\": [\n    {\n      \"project_id\": \"p1\",\n      \"project_name\": \"P One\",\n      \"description\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"status\": \"active\",\n      \"updated_at\": \"U1\",\n      \"dream_updated_at\": \"D1\",\n      \"source_kind\": \"general_local\",\n      \"source_workspace_path\": \"/ws\",\n      \"source_project_id\": \"sp\"\n    },\n    {\n      \"project_id\": \"p2\",\n      \"project_name\": \"P Two\",\n      \"description\": \"desc two\",\n      \"status\": \"done\",\n      \"updated_at\": \"U2\",\n      \"dream_updated_at\": \"\",\n      \"source_kind\": \"\",\n      \"source_workspace_path\": \"\",\n      \"source_project_id\": \"\"\n    },\n    {\n      \"project_id\": \"p3\",\n      \"project_name\": \"P Three\",\n      \"description\": \"desc three\",\n      \"status\": \"planned\",\n      \"updated_at\": \"U3\",\n      \"dream_updated_at\": \"\",\n      \"source_kind\": \"\",\n      \"source_workspace_path\": \"\",\n      \"source_project_id\": false\n    }\n  ]\n}",
+            "rawResponse": "{\"summary\":\" merge  mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm\",\"merge_groups\":[{\"keeper_project_id\":\" p1 \",\"duplicate_project_ids\":[\" p2 \",\"p2\",\"  \",\"p3\"],\"reason\":\"  same  \"},{\"keeper_project_id\":\"\",\"duplicate_project_ids\":[\"p1\"],\"reason\":\"bad keeper\"},{\"keeper_project_id\":\"p9\",\"duplicate_project_ids\":[\"p1\"]},{\"keeper_project_id\":\"p1\",\"duplicate_project_ids\":[\"p4\"]},null]}",
+            "parsedResult": {
+              "summary": " merge  mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm",
+              "merge_groups": [
+                {
+                  "keeper_project_id": " p1 ",
+                  "duplicate_project_ids": [
+                    " p2 ",
+                    "p2",
+                    "  ",
+                    "p3"
+                  ],
+                  "reason": "  same  "
+                },
+                {
+                  "keeper_project_id": "",
+                  "duplicate_project_ids": [
+                    "p1"
+                  ],
+                  "reason": "bad keeper"
+                },
+                {
+                  "keeper_project_id": "p9",
+                  "duplicate_project_ids": [
+                    "p1"
+                  ]
+                },
+                {
+                  "keeper_project_id": "p1",
+                  "duplicate_project_ids": [
+                    "p4"
+                  ]
+                },
+                null
+              ]
+            }
+          }
+        ],
+        "validation": {
+          "kind": "merge",
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "P One",
+              "description": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "status": "active",
+              "updatedAt": "U1",
+              "dreamUpdatedAt": "D1",
+              "sourceKind": "general_local",
+              "sourceWorkspacePath": "/ws",
+              "sourceProjectId": "sp"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "P Two",
+              "description": "desc two",
+              "status": "done",
+              "updatedAt": "U2",
+              "dreamUpdatedAt": "",
+              "sourceKind": "",
+              "sourceWorkspacePath": null
+            },
+            {
+              "projectId": "p3",
+              "projectName": "P Three",
+              "description": "desc three",
+              "status": "planned",
+              "updatedAt": "U3",
+              "sourceProjectId": false
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": [
+                "p2",
+                "p3"
+              ],
+              "reason": "same"
+            },
+            {
+              "keeperProjectId": "p9",
+              "duplicateProjectIds": [
+                "p1"
+              ],
+              "reason": ""
+            },
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": [
+                "p4"
+              ],
+              "reason": ""
+            }
+          ],
+          "result": {
+            "acceptedGroups": [
+              {
+                "keeperProjectId": "p1",
+                "duplicateProjectIds": [
+                  "p2",
+                  "p3"
+                ],
+                "reason": "same"
+              }
+            ],
+            "droppedWarnings": [
+              "Dropped group 2: unknown keeper project id p9.",
+              "Dropped group 3: unknown duplicate project id p4."
+            ]
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "3620",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the General Dream project-meta merge planner for a file-memory system.\\n\\nYour job is to inspect all General project metadata records and decide which project nodes clearly describe the same real project.\\n\\nRules:\\n- Use only the supplied project metadata records as evidence.\\n- Be conservative. If there is any meaningful uncertainty, do not merge.\\n- Merge only when multiple project metas clearly refer to the same real project, same ongoing workstream, same external mirrored project identity, or an obvious alias/rename of the same project.\\n- Do not merge merely because projects share a domain, platform, customer type, content format, date, model, workflow, or broad business category.\\n- Do not merge separate named workstreams with different goals or deliverables.\\n- Example: \\\"GBX-A 20260423 HoneydewPulse\\\" and \\\"GBX-B 20260423 ClinicFlow\\\" must remain separate because they name different projects with different targets.\\n- For external mirrors, matching source_workspace_path plus source_project_id is strong evidence for merging.\\n- keeper_project_id and every duplicate_project_id must be one of the supplied project ids.\\n- A project id may appear in at most one merge group.\\n- The keeper must not appear in duplicate_project_ids.\\n- Return an empty merge_groups array when no merge is clearly justified.\\n- Natural-language output fields should follow the dominant language already present in the supplied project metas.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short merge planning summary\\\",\\n  \\\"merge_groups\\\": [\\n    {\\n      \\\"keeper_project_id\\\": \\\"project id to keep\\\",\\n      \\\"duplicate_project_ids\\\": [\\\"project id to merge into keeper\\\"],\\n      \\\"reason\\\": \\\"specific evidence that these metas are the same real project\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"governance_scope\\\": {\\n    \\\"mode\\\": \\\"general_project_meta_merge_plan\\\",\\n    \\\"primary_truth\\\": \\\"supplied_general_project_meta_only\\\",\\n    \\\"writable_targets\\\": [\\n      \\\"GeneralProjects/*.md\\\"\\n    ],\\n    \\\"forbidden_outputs\\\": [\\n      \\\"new project meta\\\",\\n      \\\"project memory rewrite\\\",\\n      \\\"feedback memory rewrite\\\",\\n      \\\"user profile rewrite\\\"\\n    ]\\n  },\\n  \\\"project_metas\\\": [\\n    {\\n      \\\"project_id\\\": \\\"p1\\\",\\n      \\\"project_name\\\": \\\"P One\\\",\\n      \\\"description\\\": \\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"updated_at\\\": \\\"U1\\\",\\n      \\\"dream_updated_at\\\": \\\"D1\\\",\\n      \\\"source_kind\\\": \\\"general_local\\\",\\n      \\\"source_workspace_path\\\": \\\"/ws\\\",\\n      \\\"source_project_id\\\": \\\"sp\\\"\\n    },\\n    {\\n      \\\"project_id\\\": \\\"p2\\\",\\n      \\\"project_name\\\": \\\"P Two\\\",\\n      \\\"description\\\": \\\"desc two\\\",\\n      \\\"status\\\": \\\"done\\\",\\n      \\\"updated_at\\\": \\\"U2\\\",\\n      \\\"dream_updated_at\\\": \\\"\\\",\\n      \\\"source_kind\\\": \\\"\\\",\\n      \\\"source_workspace_path\\\": \\\"\\\",\\n      \\\"source_project_id\\\": \\\"\\\"\\n    },\\n    {\\n      \\\"project_id\\\": \\\"p3\\\",\\n      \\\"project_name\\\": \\\"P Three\\\",\\n      \\\"description\\\": \\\"desc three\\\",\\n      \\\"status\\\": \\\"planned\\\",\\n      \\\"updated_at\\\": \\\"U3\\\",\\n      \\\"dream_updated_at\\\": \\\"\\\",\\n      \\\"source_kind\\\": \\\"\\\",\\n      \\\"source_workspace_path\\\": \\\"\\\",\\n      \\\"source_project_id\\\": false\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "planGeneralProjectMetaMerges#1",
+      "fn": "planGeneralProjectMetaMerges",
+      "input": {
+        "projectMetas": [
+          {
+            "projectId": "p1",
+            "projectName": "P",
+            "description": "d",
+            "status": "active",
+            "updatedAt": "U"
+          }
+        ]
+      },
+      "steps": [],
+      "expected": {
+        "result": {
+          "summary": "Fewer than two General project metadata records were available for merge planning.",
+          "mergeGroups": []
+        },
+        "debug": [],
+        "validation": {
+          "kind": "merge",
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "P",
+              "description": "d",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [],
+          "result": {
+            "acceptedGroups": [],
+            "droppedWarnings": []
+          }
+        },
+        "requests": []
+      }
+    },
+    {
+      "name": "planGeneralProjectMetaMerges#2",
+      "fn": "planGeneralProjectMetaMerges",
+      "input": {
+        "projectMetas": [
+          {
+            "projectId": "p1",
+            "projectName": "P1",
+            "description": "d1",
+            "status": "active",
+            "updatedAt": "U1"
+          },
+          {
+            "projectId": "p2",
+            "projectName": "P2",
+            "description": "d2",
+            "status": "done",
+            "updatedAt": "U2"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"merge_groups\\\":[{\\\"keeper_project_id\\\":\\\"p1\\\",\\\"duplicate_project_ids\\\":\\\" p2 \\\"},{\\\"keeper_project_id\\\":null,\\\"duplicate_project_ids\\\":[]},7]}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "summary": "General project meta merge planning completed.",
+          "mergeGroups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": [
+                "p2"
+              ],
+              "reason": ""
+            }
+          ]
+        },
+        "debug": [
+          {
+            "requestLabel": "General project meta merge plan",
+            "systemPrompt": "You are the General Dream project-meta merge planner for a file-memory system.\n\nYour job is to inspect all General project metadata records and decide which project nodes clearly describe the same real project.\n\nRules:\n- Use only the supplied project metadata records as evidence.\n- Be conservative. If there is any meaningful uncertainty, do not merge.\n- Merge only when multiple project metas clearly refer to the same real project, same ongoing workstream, same external mirrored project identity, or an obvious alias/rename of the same project.\n- Do not merge merely because projects share a domain, platform, customer type, content format, date, model, workflow, or broad business category.\n- Do not merge separate named workstreams with different goals or deliverables.\n- Example: \"GBX-A 20260423 HoneydewPulse\" and \"GBX-B 20260423 ClinicFlow\" must remain separate because they name different projects with different targets.\n- For external mirrors, matching source_workspace_path plus source_project_id is strong evidence for merging.\n- keeper_project_id and every duplicate_project_id must be one of the supplied project ids.\n- A project id may appear in at most one merge group.\n- The keeper must not appear in duplicate_project_ids.\n- Return an empty merge_groups array when no merge is clearly justified.\n- Natural-language output fields should follow the dominant language already present in the supplied project metas.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short merge planning summary\",\n  \"merge_groups\": [\n    {\n      \"keeper_project_id\": \"project id to keep\",\n      \"duplicate_project_ids\": [\"project id to merge into keeper\"],\n      \"reason\": \"specific evidence that these metas are the same real project\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"governance_scope\": {\n    \"mode\": \"general_project_meta_merge_plan\",\n    \"primary_truth\": \"supplied_general_project_meta_only\",\n    \"writable_targets\": [\n      \"GeneralProjects/*.md\"\n    ],\n    \"forbidden_outputs\": [\n      \"new project meta\",\n      \"project memory rewrite\",\n      \"feedback memory rewrite\",\n      \"user profile rewrite\"\n    ]\n  },\n  \"project_metas\": [\n    {\n      \"project_id\": \"p1\",\n      \"project_name\": \"P1\",\n      \"description\": \"d1\",\n      \"status\": \"active\",\n      \"updated_at\": \"U1\",\n      \"dream_updated_at\": \"\",\n      \"source_kind\": \"\",\n      \"source_workspace_path\": \"\",\n      \"source_project_id\": \"\"\n    },\n    {\n      \"project_id\": \"p2\",\n      \"project_name\": \"P2\",\n      \"description\": \"d2\",\n      \"status\": \"done\",\n      \"updated_at\": \"U2\",\n      \"dream_updated_at\": \"\",\n      \"source_kind\": \"\",\n      \"source_workspace_path\": \"\",\n      \"source_project_id\": \"\"\n    }\n  ]\n}",
+            "rawResponse": "{\"merge_groups\":[{\"keeper_project_id\":\"p1\",\"duplicate_project_ids\":\" p2 \"},{\"keeper_project_id\":null,\"duplicate_project_ids\":[]},7]}",
+            "parsedResult": {
+              "merge_groups": [
+                {
+                  "keeper_project_id": "p1",
+                  "duplicate_project_ids": " p2 "
+                },
+                {
+                  "keeper_project_id": null,
+                  "duplicate_project_ids": []
+                },
+                7
+              ]
+            }
+          }
+        ],
+        "validation": {
+          "kind": "merge",
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "P1",
+              "description": "d1",
+              "status": "active",
+              "updatedAt": "U1"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "P2",
+              "description": "d2",
+              "status": "done",
+              "updatedAt": "U2"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": [
+                "p2"
+              ],
+              "reason": ""
+            }
+          ],
+          "result": {
+            "acceptedGroups": [
+              {
+                "keeperProjectId": "p1",
+                "duplicateProjectIds": [
+                  "p2"
+                ],
+                "reason": "Model identified these project metas as duplicates."
+              }
+            ],
+            "droppedWarnings": []
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "3002",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the General Dream project-meta merge planner for a file-memory system.\\n\\nYour job is to inspect all General project metadata records and decide which project nodes clearly describe the same real project.\\n\\nRules:\\n- Use only the supplied project metadata records as evidence.\\n- Be conservative. If there is any meaningful uncertainty, do not merge.\\n- Merge only when multiple project metas clearly refer to the same real project, same ongoing workstream, same external mirrored project identity, or an obvious alias/rename of the same project.\\n- Do not merge merely because projects share a domain, platform, customer type, content format, date, model, workflow, or broad business category.\\n- Do not merge separate named workstreams with different goals or deliverables.\\n- Example: \\\"GBX-A 20260423 HoneydewPulse\\\" and \\\"GBX-B 20260423 ClinicFlow\\\" must remain separate because they name different projects with different targets.\\n- For external mirrors, matching source_workspace_path plus source_project_id is strong evidence for merging.\\n- keeper_project_id and every duplicate_project_id must be one of the supplied project ids.\\n- A project id may appear in at most one merge group.\\n- The keeper must not appear in duplicate_project_ids.\\n- Return an empty merge_groups array when no merge is clearly justified.\\n- Natural-language output fields should follow the dominant language already present in the supplied project metas.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short merge planning summary\\\",\\n  \\\"merge_groups\\\": [\\n    {\\n      \\\"keeper_project_id\\\": \\\"project id to keep\\\",\\n      \\\"duplicate_project_ids\\\": [\\\"project id to merge into keeper\\\"],\\n      \\\"reason\\\": \\\"specific evidence that these metas are the same real project\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"governance_scope\\\": {\\n    \\\"mode\\\": \\\"general_project_meta_merge_plan\\\",\\n    \\\"primary_truth\\\": \\\"supplied_general_project_meta_only\\\",\\n    \\\"writable_targets\\\": [\\n      \\\"GeneralProjects/*.md\\\"\\n    ],\\n    \\\"forbidden_outputs\\\": [\\n      \\\"new project meta\\\",\\n      \\\"project memory rewrite\\\",\\n      \\\"feedback memory rewrite\\\",\\n      \\\"user profile rewrite\\\"\\n    ]\\n  },\\n  \\\"project_metas\\\": [\\n    {\\n      \\\"project_id\\\": \\\"p1\\\",\\n      \\\"project_name\\\": \\\"P1\\\",\\n      \\\"description\\\": \\\"d1\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"updated_at\\\": \\\"U1\\\",\\n      \\\"dream_updated_at\\\": \\\"\\\",\\n      \\\"source_kind\\\": \\\"\\\",\\n      \\\"source_workspace_path\\\": \\\"\\\",\\n      \\\"source_project_id\\\": \\\"\\\"\\n    },\\n    {\\n      \\\"project_id\\\": \\\"p2\\\",\\n      \\\"project_name\\\": \\\"P2\\\",\\n      \\\"description\\\": \\\"d2\\\",\\n      \\\"status\\\": \\\"done\\\",\\n      \\\"updated_at\\\": \\\"U2\\\",\\n      \\\"dream_updated_at\\\": \\\"\\\",\\n      \\\"source_kind\\\": \\\"\\\",\\n      \\\"source_workspace_path\\\": \\\"\\\",\\n      \\\"source_project_id\\\": \\\"\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "reviewDreamProjectMeta#0",
+      "fn": "reviewDreamProjectMeta",
+      "input": {
+        "currentMeta": {
+          "projectId": "p",
+          "projectName": "  Fallback Name  ",
+          "description": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "status": "",
+          "updatedAt": "U",
+          "dreamUpdatedAt": "D"
+        },
+        "recentProjectRecords": [
+          {
+            "entryId": "Project/a.md",
+            "relativePath": "Project/a.md",
+            "type": "project",
+            "scope": "project",
+            "isTmp": false,
+            "name": "A",
+            "description": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "updatedAt": "U",
+            "content": "body"
+          }
+        ],
+        "recentFeedbackRecords": [
+          {
+            "entryId": "Feedback/a.md",
+            "relativePath": "Feedback/a.md",
+            "type": "feedback",
+            "scope": "project",
+            "isTmp": false,
+            "name": "F",
+            "description": "desc",
+            "updatedAt": "U",
+            "content": "body"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"should_update\\\":\\\" TRUE \\\",\\\"reason\\\":\\\"  reason rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\\\",\\\"project_name\\\":\\\"   \\\",\\\"description\\\":\\\"  dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd  \\\",\\\"status\\\":\\\"   \\\"}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "shouldUpdate": true,
+          "reason": "reason rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "projectMeta": {
+            "projectName": "  Fallback Name  ",
+            "description": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "status": "active"
+          }
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream project meta review",
+            "systemPrompt": "You are the Dream project metadata reviewer for a file-memory system.\n\nYour job is to decide whether the current project metadata is clearly incorrect or outdated after project/feedback refinement.\n\nRules:\n- Use only the supplied current metadata and the recent project/feedback files as evidence.\n- Be conservative. Keep the current metadata unless the supplied evidence clearly supports a change.\n- You may update only:\n  - project_name\n  - description\n  - status\n- Do not rewrite metadata just to paraphrase it.\n- Natural-language output fields must follow the dominant language already present in the supplied project/feedback files.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"should_update\": false,\n  \"reason\": \"why metadata should or should not change\",\n  \"project_name\": \"final project name\",\n  \"description\": \"final description\",\n  \"status\": \"in_progress\"\n}",
+            "userPrompt": "{\n  \"current_project_meta\": {\n    \"project_id\": \"p\",\n    \"project_name\": \"  Fallback Name  \",\n    \"description\": \"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\n    \"status\": \"\",\n    \"updated_at\": \"U\",\n    \"dream_updated_at\": \"D\"\n  },\n  \"recent_project_files\": [\n    {\n      \"relative_path\": \"Project/a.md\",\n      \"name\": \"A\",\n      \"description\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"updated_at\": \"U\",\n      \"content\": \"body\"\n    }\n  ],\n  \"recent_feedback_files\": [\n    {\n      \"relative_path\": \"Feedback/a.md\",\n      \"name\": \"F\",\n      \"description\": \"desc\",\n      \"updated_at\": \"U\",\n      \"content\": \"body\"\n    }\n  ]\n}",
+            "rawResponse": "{\"should_update\":\" TRUE \",\"reason\":\"  reason rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\",\"project_name\":\"   \",\"description\":\"  dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd  \",\"status\":\"   \"}",
+            "parsedResult": {
+              "should_update": " TRUE ",
+              "reason": "  reason rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+              "project_name": "   ",
+              "description": "  dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd  ",
+              "status": "   "
+            }
+          }
+        ],
+        "validation": null,
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2151",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Dream project metadata reviewer for a file-memory system.\\n\\nYour job is to decide whether the current project metadata is clearly incorrect or outdated after project/feedback refinement.\\n\\nRules:\\n- Use only the supplied current metadata and the recent project/feedback files as evidence.\\n- Be conservative. Keep the current metadata unless the supplied evidence clearly supports a change.\\n- You may update only:\\n  - project_name\\n  - description\\n  - status\\n- Do not rewrite metadata just to paraphrase it.\\n- Natural-language output fields must follow the dominant language already present in the supplied project/feedback files.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"should_update\\\": false,\\n  \\\"reason\\\": \\\"why metadata should or should not change\\\",\\n  \\\"project_name\\\": \\\"final project name\\\",\\n  \\\"description\\\": \\\"final description\\\",\\n  \\\"status\\\": \\\"in_progress\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"current_project_meta\\\": {\\n    \\\"project_id\\\": \\\"p\\\",\\n    \\\"project_name\\\": \\\"  Fallback Name  \\\",\\n    \\\"description\\\": \\\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\\\",\\n    \\\"status\\\": \\\"\\\",\\n    \\\"updated_at\\\": \\\"U\\\",\\n    \\\"dream_updated_at\\\": \\\"D\\\"\\n  },\\n  \\\"recent_project_files\\\": [\\n    {\\n      \\\"relative_path\\\": \\\"Project/a.md\\\",\\n      \\\"name\\\": \\\"A\\\",\\n      \\\"description\\\": \\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\n      \\\"updated_at\\\": \\\"U\\\",\\n      \\\"content\\\": \\\"body\\\"\\n    }\\n  ],\\n  \\\"recent_feedback_files\\\": [\\n    {\\n      \\\"relative_path\\\": \\\"Feedback/a.md\\\",\\n      \\\"name\\\": \\\"F\\\",\\n      \\\"description\\\": \\\"desc\\\",\\n      \\\"updated_at\\\": \\\"U\\\",\\n      \\\"content\\\": \\\"body\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "reviewDreamProjectMeta#1",
+      "fn": "reviewDreamProjectMeta",
+      "input": {
+        "currentMeta": {
+          "projectId": "p",
+          "projectName": "Fallback",
+          "description": "fallback desc",
+          "status": "paused",
+          "updatedAt": "U"
+        },
+        "recentProjectRecords": [],
+        "recentFeedbackRecords": []
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"should_update\\\":\\\"yes\\\",\\\"status\\\":null}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "shouldUpdate": false,
+          "reason": "",
+          "projectMeta": {
+            "projectName": "Fallback",
+            "description": "fallback desc",
+            "status": "paused"
+          }
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream project meta review",
+            "systemPrompt": "You are the Dream project metadata reviewer for a file-memory system.\n\nYour job is to decide whether the current project metadata is clearly incorrect or outdated after project/feedback refinement.\n\nRules:\n- Use only the supplied current metadata and the recent project/feedback files as evidence.\n- Be conservative. Keep the current metadata unless the supplied evidence clearly supports a change.\n- You may update only:\n  - project_name\n  - description\n  - status\n- Do not rewrite metadata just to paraphrase it.\n- Natural-language output fields must follow the dominant language already present in the supplied project/feedback files.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"should_update\": false,\n  \"reason\": \"why metadata should or should not change\",\n  \"project_name\": \"final project name\",\n  \"description\": \"final description\",\n  \"status\": \"in_progress\"\n}",
+            "userPrompt": "{\n  \"current_project_meta\": {\n    \"project_id\": \"p\",\n    \"project_name\": \"Fallback\",\n    \"description\": \"fallback desc\",\n    \"status\": \"paused\",\n    \"updated_at\": \"U\",\n    \"dream_updated_at\": \"\"\n  },\n  \"recent_project_files\": [],\n  \"recent_feedback_files\": []\n}",
+            "rawResponse": "{\"should_update\":\"yes\",\"status\":null}",
+            "parsedResult": {
+              "should_update": "yes",
+              "status": null
+            }
+          }
+        ],
+        "validation": null,
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "1365",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Dream project metadata reviewer for a file-memory system.\\n\\nYour job is to decide whether the current project metadata is clearly incorrect or outdated after project/feedback refinement.\\n\\nRules:\\n- Use only the supplied current metadata and the recent project/feedback files as evidence.\\n- Be conservative. Keep the current metadata unless the supplied evidence clearly supports a change.\\n- You may update only:\\n  - project_name\\n  - description\\n  - status\\n- Do not rewrite metadata just to paraphrase it.\\n- Natural-language output fields must follow the dominant language already present in the supplied project/feedback files.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"should_update\\\": false,\\n  \\\"reason\\\": \\\"why metadata should or should not change\\\",\\n  \\\"project_name\\\": \\\"final project name\\\",\\n  \\\"description\\\": \\\"final description\\\",\\n  \\\"status\\\": \\\"in_progress\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"current_project_meta\\\": {\\n    \\\"project_id\\\": \\\"p\\\",\\n    \\\"project_name\\\": \\\"Fallback\\\",\\n    \\\"description\\\": \\\"fallback desc\\\",\\n    \\\"status\\\": \\\"paused\\\",\\n    \\\"updated_at\\\": \\\"U\\\",\\n    \\\"dream_updated_at\\\": \\\"\\\"\\n  },\\n  \\\"recent_project_files\\\": [],\\n  \\\"recent_feedback_files\\\": []\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "rewriteUserProfile#0",
+      "fn": "rewriteUserProfile",
+      "input": {
+        "existingProfile": {
+          "files": [
+            {
+              "content": "## 身份背景\n- old fact\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          ]
+        },
+        "candidates": [
+          {
+            "type": "project",
+            "body": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "description": "  proj   desc  ",
+            "capturedAt": "2026",
+            "sourceSessionKey": "s1"
+          },
+          {
+            "type": "user",
+            "description": "  user   one  ",
+            "body": "",
+            "profile": "Profile note",
+            "summary": "",
+            "capturedAt": "",
+            "sourceSessionKey": "s2"
+          },
+          {
+            "type": "user",
+            "description": "second",
+            "summary": "Summary note",
+            "capturedAt": "2026-02",
+            "sourceSessionKey": "s3"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"identity_background_markdown\\\":\\\"```markdown\\\\n## 身份背景\\\\n- Uses Rust, ;\\\\n- 长 fact\\\\n```\\\"}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "type": "user",
+          "scope": "global",
+          "name": "user-profile",
+          "description": "身份背景 Uses Rust",
+          "capturedAt": "2026-02",
+          "sourceSessionKey": "s3",
+          "body": "## 身份背景\n- Uses Rust, ;\n- 长 fact\n",
+          "profile": "身份背景 Uses Rust；长 fact",
+          "relationships": [
+            "身份背景 Uses Rust",
+            "长 fact"
+          ]
+        },
+        "debug": [
+          {
+            "requestLabel": "User profile rewrite",
+            "systemPrompt": "You rewrite the single \"身份背景\" section of a global user profile for a conversational memory system.\n\nRules:\n- Return JSON only.\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\n- Keep only durable personal identity/background information that should persist across future sessions.\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\n- Keep the language aligned with the user's language in the incoming content.\n- \"identity_background_markdown\" must contain only the markdown content that belongs under the \"## 身份背景\" heading.\n- Do not include the heading itself.\n- Prefer concise bullet-list markdown when possible.\n\nUse this exact JSON shape:\n{\n  \"identity_background_markdown\": \"- ...\"\n}",
+            "userPrompt": "{\n  \"existing_profile_markdown\": \"## 身份背景\\n- old fact\\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\n  \"incoming_user_notes\": [\n    {\n      \"description\": \"proj desc\",\n      \"note_markdown\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n      \"captured_at\": \"2026\",\n      \"source_session_key\": \"s1\"\n    },\n    {\n      \"description\": \"user one\",\n      \"note_markdown\": \"Profile note\",\n      \"captured_at\": \"\",\n      \"source_session_key\": \"s2\"\n    },\n    {\n      \"description\": \"second\",\n      \"note_markdown\": \"Summary note\",\n      \"captured_at\": \"2026-02\",\n      \"source_session_key\": \"s3\"\n    }\n  ]\n}",
+            "rawResponse": "{\"identity_background_markdown\":\"```markdown\\n## 身份背景\\n- Uses Rust, ;\\n- 长 fact\\n```\"}",
+            "parsedResult": {
+              "identity_background_markdown": "```markdown\n## 身份背景\n- Uses Rust, ;\n- 长 fact\n```"
+            }
+          }
+        ],
+        "validation": null,
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "6666",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You rewrite the single \\\"身份背景\\\" section of a global user profile for a conversational memory system.\\n\\nRules:\\n- Return JSON only.\\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\\n- Keep only durable personal identity/background information that should persist across future sessions.\\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\\n- Keep the language aligned with the user's language in the incoming content.\\n- \\\"identity_background_markdown\\\" must contain only the markdown content that belongs under the \\\"## 身份背景\\\" heading.\\n- Do not include the heading itself.\\n- Prefer concise bullet-list markdown when possible.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"identity_background_markdown\\\": \\\"- ...\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"existing_profile_markdown\\\": \\\"## 身份背景\\\\n- old fact\\\\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\\",\\n  \\\"incoming_user_notes\\\": [\\n    {\\n      \\\"description\\\": \\\"proj desc\\\",\\n      \\\"note_markdown\\\": \\\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\\\",\\n      \\\"captured_at\\\": \\\"2026\\\",\\n      \\\"source_session_key\\\": \\\"s1\\\"\\n    },\\n    {\\n      \\\"description\\\": \\\"user one\\\",\\n      \\\"note_markdown\\\": \\\"Profile note\\\",\\n      \\\"captured_at\\\": \\\"\\\",\\n      \\\"source_session_key\\\": \\\"s2\\\"\\n    },\\n    {\\n      \\\"description\\\": \\\"second\\\",\\n      \\\"note_markdown\\\": \\\"Summary note\\\",\\n      \\\"captured_at\\\": \\\"2026-02\\\",\\n      \\\"source_session_key\\\": \\\"s3\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "rewriteUserProfile#1",
+      "fn": "rewriteUserProfile",
+      "input": {
+        "existingProfile": null,
+        "candidates": [
+          {
+            "type": "user",
+            "description": "only",
+            "body": "",
+            "profile": "",
+            "summary": "",
+            "capturedAt": "",
+            "sourceSessionKey": ""
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"identity_background\\\":[\\\"  -  A  fact  \\\",\\\"**B**\\\",\\\"a  fact\\\",\\\"  \\\",5]}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "type": "user",
+          "scope": "global",
+          "name": "user-profile",
+          "description": "身份背景 A fact B* a fact",
+          "body": "## 身份背景\n- A fact\n- B*\n- a fact\n",
+          "profile": "身份背景 A fact B* a fact",
+          "relationships": [
+            "身份背景 A fact B* a fact"
+          ]
+        },
+        "debug": [
+          {
+            "requestLabel": "User profile rewrite",
+            "systemPrompt": "You rewrite the single \"身份背景\" section of a global user profile for a conversational memory system.\n\nRules:\n- Return JSON only.\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\n- Keep only durable personal identity/background information that should persist across future sessions.\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\n- Keep the language aligned with the user's language in the incoming content.\n- \"identity_background_markdown\" must contain only the markdown content that belongs under the \"## 身份背景\" heading.\n- Do not include the heading itself.\n- Prefer concise bullet-list markdown when possible.\n\nUse this exact JSON shape:\n{\n  \"identity_background_markdown\": \"- ...\"\n}",
+            "userPrompt": "{\n  \"existing_profile_markdown\": null,\n  \"incoming_user_notes\": [\n    {\n      \"description\": \"only\",\n      \"note_markdown\": \"only\",\n      \"captured_at\": \"\",\n      \"source_session_key\": \"\"\n    }\n  ]\n}",
+            "rawResponse": "{\"identity_background\":[\"  -  A  fact  \",\"**B**\",\"a  fact\",\"  \",5]}",
+            "parsedResult": {
+              "identity_background": [
+                "  -  A  fact  ",
+                "**B**",
+                "a  fact",
+                "  ",
+                5
+              ]
+            }
+          }
+        ],
+        "validation": null,
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "1712",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You rewrite the single \\\"身份背景\\\" section of a global user profile for a conversational memory system.\\n\\nRules:\\n- Return JSON only.\\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\\n- Keep only durable personal identity/background information that should persist across future sessions.\\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\\n- Keep the language aligned with the user's language in the incoming content.\\n- \\\"identity_background_markdown\\\" must contain only the markdown content that belongs under the \\\"## 身份背景\\\" heading.\\n- Do not include the heading itself.\\n- Prefer concise bullet-list markdown when possible.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"identity_background_markdown\\\": \\\"- ...\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"existing_profile_markdown\\\": null,\\n  \\\"incoming_user_notes\\\": [\\n    {\\n      \\\"description\\\": \\\"only\\\",\\n      \\\"note_markdown\\\": \\\"only\\\",\\n      \\\"captured_at\\\": \\\"\\\",\\n      \\\"source_session_key\\\": \\\"\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "rewriteUserProfile#2",
+      "fn": "rewriteUserProfile",
+      "input": {
+        "existingProfile": null,
+        "candidates": [
+          {
+            "type": "project",
+            "description": "not a user",
+            "body": "body",
+            "capturedAt": "C",
+            "sourceSessionKey": "S"
+          }
+        ]
+      },
+      "steps": [],
+      "expected": {
+        "result": null,
+        "debug": [],
+        "validation": null,
+        "requests": []
+      }
+    },
+    {
+      "name": "rewriteUserProfile#3",
+      "fn": "rewriteUserProfile",
+      "input": {
+        "existingProfile": null,
+        "candidates": [
+          {
+            "type": "user",
+            "description": "x",
+            "body": "y",
+            "capturedAt": "C",
+            "sourceSessionKey": "S"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"not json at all\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": null,
+        "debug": [
+          {
+            "requestLabel": "User profile rewrite",
+            "systemPrompt": "You rewrite the single \"身份背景\" section of a global user profile for a conversational memory system.\n\nRules:\n- Return JSON only.\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\n- Keep only durable personal identity/background information that should persist across future sessions.\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\n- Keep the language aligned with the user's language in the incoming content.\n- \"identity_background_markdown\" must contain only the markdown content that belongs under the \"## 身份背景\" heading.\n- Do not include the heading itself.\n- Prefer concise bullet-list markdown when possible.\n\nUse this exact JSON shape:\n{\n  \"identity_background_markdown\": \"- ...\"\n}",
+            "userPrompt": "{\n  \"existing_profile_markdown\": null,\n  \"incoming_user_notes\": [\n    {\n      \"description\": \"x\",\n      \"note_markdown\": \"y\",\n      \"captured_at\": \"C\",\n      \"source_session_key\": \"S\"\n    }\n  ]\n}",
+            "rawResponse": "not json at all",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "No JSON object found in extraction response"
+          }
+        ],
+        "validation": null,
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "1708",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You rewrite the single \\\"身份背景\\\" section of a global user profile for a conversational memory system.\\n\\nRules:\\n- Return JSON only.\\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\\n- Keep only durable personal identity/background information that should persist across future sessions.\\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\\n- Keep the language aligned with the user's language in the incoming content.\\n- \\\"identity_background_markdown\\\" must contain only the markdown content that belongs under the \\\"## 身份背景\\\" heading.\\n- Do not include the heading itself.\\n- Prefer concise bullet-list markdown when possible.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"identity_background_markdown\\\": \\\"- ...\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"existing_profile_markdown\\\": null,\\n  \\\"incoming_user_notes\\\": [\\n    {\\n      \\\"description\\\": \\\"x\\\",\\n      \\\"note_markdown\\\": \\\"y\\\",\\n      \\\"captured_at\\\": \\\"C\\\",\\n      \\\"source_session_key\\\": \\\"S\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "rewriteUserProfile#4",
+      "fn": "rewriteUserProfile",
+      "input": {
+        "existingProfile": null,
+        "candidates": [
+          {
+            "type": "user",
+            "description": "x",
+            "body": "y",
+            "capturedAt": "C",
+            "sourceSessionKey": "S"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"identity_background_markdown\\\":null,\\\"identity_background\\\":\\\"\\\"}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": null,
+        "debug": [
+          {
+            "requestLabel": "User profile rewrite",
+            "systemPrompt": "You rewrite the single \"身份背景\" section of a global user profile for a conversational memory system.\n\nRules:\n- Return JSON only.\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\n- Keep only durable personal identity/background information that should persist across future sessions.\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\n- Keep the language aligned with the user's language in the incoming content.\n- \"identity_background_markdown\" must contain only the markdown content that belongs under the \"## 身份背景\" heading.\n- Do not include the heading itself.\n- Prefer concise bullet-list markdown when possible.\n\nUse this exact JSON shape:\n{\n  \"identity_background_markdown\": \"- ...\"\n}",
+            "userPrompt": "{\n  \"existing_profile_markdown\": null,\n  \"incoming_user_notes\": [\n    {\n      \"description\": \"x\",\n      \"note_markdown\": \"y\",\n      \"captured_at\": \"C\",\n      \"source_session_key\": \"S\"\n    }\n  ]\n}",
+            "rawResponse": "{\"identity_background_markdown\":null,\"identity_background\":\"\"}",
+            "parsedResult": {
+              "identity_background_markdown": null,
+              "identity_background": ""
+            }
+          }
+        ],
+        "validation": null,
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "1708",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You rewrite the single \\\"身份背景\\\" section of a global user profile for a conversational memory system.\\n\\nRules:\\n- Return JSON only.\\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\\n- Keep only durable personal identity/background information that should persist across future sessions.\\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\\n- Keep the language aligned with the user's language in the incoming content.\\n- \\\"identity_background_markdown\\\" must contain only the markdown content that belongs under the \\\"## 身份背景\\\" heading.\\n- Do not include the heading itself.\\n- Prefer concise bullet-list markdown when possible.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"identity_background_markdown\\\": \\\"- ...\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"existing_profile_markdown\\\": null,\\n  \\\"incoming_user_notes\\\": [\\n    {\\n      \\\"description\\\": \\\"x\\\",\\n      \\\"note_markdown\\\": \\\"y\\\",\\n      \\\"captured_at\\\": \\\"C\\\",\\n      \\\"source_session_key\\\": \\\"S\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "rewriteUserProfile#5",
+      "fn": "rewriteUserProfile",
+      "input": {
+        "existingProfile": null,
+        "candidates": [
+          {
+            "type": "user",
+            "description": "x",
+            "body": "y",
+            "capturedAt": "C",
+            "sourceSessionKey": "S"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"identity_background_markdown\\\":42}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": null,
+        "debug": [
+          {
+            "requestLabel": "User profile rewrite",
+            "systemPrompt": "You rewrite the single \"身份背景\" section of a global user profile for a conversational memory system.\n\nRules:\n- Return JSON only.\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\n- Keep only durable personal identity/background information that should persist across future sessions.\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\n- Keep the language aligned with the user's language in the incoming content.\n- \"identity_background_markdown\" must contain only the markdown content that belongs under the \"## 身份背景\" heading.\n- Do not include the heading itself.\n- Prefer concise bullet-list markdown when possible.\n\nUse this exact JSON shape:\n{\n  \"identity_background_markdown\": \"- ...\"\n}",
+            "userPrompt": "{\n  \"existing_profile_markdown\": null,\n  \"incoming_user_notes\": [\n    {\n      \"description\": \"x\",\n      \"note_markdown\": \"y\",\n      \"captured_at\": \"C\",\n      \"source_session_key\": \"S\"\n    }\n  ]\n}",
+            "rawResponse": "{\"identity_background_markdown\":42}",
+            "parsedResult": {
+              "identity_background_markdown": 42
+            }
+          }
+        ],
+        "validation": null,
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "1708",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You rewrite the single \\\"身份背景\\\" section of a global user profile for a conversational memory system.\\n\\nRules:\\n- Return JSON only.\\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\\n- Keep only durable personal identity/background information that should persist across future sessions.\\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\\n- Keep the language aligned with the user's language in the incoming content.\\n- \\\"identity_background_markdown\\\" must contain only the markdown content that belongs under the \\\"## 身份背景\\\" heading.\\n- Do not include the heading itself.\\n- Prefer concise bullet-list markdown when possible.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"identity_background_markdown\\\": \\\"- ...\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"existing_profile_markdown\\\": null,\\n  \\\"incoming_user_notes\\\": [\\n    {\\n      \\\"description\\\": \\\"x\\\",\\n      \\\"note_markdown\\\": \\\"y\\\",\\n      \\\"captured_at\\\": \\\"C\\\",\\n      \\\"source_session_key\\\": \\\"S\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "rewriteUserProfile#6",
+      "fn": "rewriteUserProfile",
+      "input": {
+        "existingProfile": null,
+        "candidates": [
+          {
+            "type": "user",
+            "description": "  edge   case  ",
+            "body": "## 身份背景\r\n\r\n- **Rust** and *Go* are `tools`.\r\n- Rust，Go；Rust。\r\n- x\r\n",
+            "capturedAt": "",
+            "sourceSessionKey": ""
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"identity_background_markdown\\\":\\\"```MARKDOWN\\\\n###   身份背景   \\\\r\\\\n- **Rust** and *Go* are `tools`.\\\\r\\\\n- Rust，Go；Rust。\\\\r\\\\n- x\\\\r\\\\n```\\\"}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "type": "user",
+          "scope": "global",
+          "name": "user-profile",
+          "description": "身份背景 Rust and Go are tools",
+          "body": "## 身份背景\n- **Rust** and *Go* are `tools`.\n\n- Rust，Go；Rust。\n\n- x\n",
+          "profile": "身份背景 Rust and Go are tools；Rust；Go",
+          "relationships": [
+            "身份背景 Rust and Go are tools",
+            "Rust",
+            "Go"
+          ]
+        },
+        "debug": [
+          {
+            "requestLabel": "User profile rewrite",
+            "systemPrompt": "You rewrite the single \"身份背景\" section of a global user profile for a conversational memory system.\n\nRules:\n- Return JSON only.\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\n- Keep only durable personal identity/background information that should persist across future sessions.\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\n- Keep the language aligned with the user's language in the incoming content.\n- \"identity_background_markdown\" must contain only the markdown content that belongs under the \"## 身份背景\" heading.\n- Do not include the heading itself.\n- Prefer concise bullet-list markdown when possible.\n\nUse this exact JSON shape:\n{\n  \"identity_background_markdown\": \"- ...\"\n}",
+            "userPrompt": "{\n  \"existing_profile_markdown\": null,\n  \"incoming_user_notes\": [\n    {\n      \"description\": \"edge case\",\n      \"note_markdown\": \"## 身份背景\\r\\n\\r\\n- **Rust** and *Go* are `tools`.\\r\\n- Rust，Go；Rust。\\r\\n- x\\r\\n\",\n      \"captured_at\": \"\",\n      \"source_session_key\": \"\"\n    }\n  ]\n}",
+            "rawResponse": "{\"identity_background_markdown\":\"```MARKDOWN\\n###   身份背景   \\r\\n- **Rust** and *Go* are `tools`.\\r\\n- Rust，Go；Rust。\\r\\n- x\\r\\n```\"}",
+            "parsedResult": {
+              "identity_background_markdown": "```MARKDOWN\n###   身份背景   \r\n- **Rust** and *Go* are `tools`.\r\n- Rust，Go；Rust。\r\n- x\r\n```"
+            }
+          }
+        ],
+        "validation": null,
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "1814",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You rewrite the single \\\"身份背景\\\" section of a global user profile for a conversational memory system.\\n\\nRules:\\n- Return JSON only.\\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\\n- Keep only durable personal identity/background information that should persist across future sessions.\\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\\n- Keep the language aligned with the user's language in the incoming content.\\n- \\\"identity_background_markdown\\\" must contain only the markdown content that belongs under the \\\"## 身份背景\\\" heading.\\n- Do not include the heading itself.\\n- Prefer concise bullet-list markdown when possible.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"identity_background_markdown\\\": \\\"- ...\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"existing_profile_markdown\\\": null,\\n  \\\"incoming_user_notes\\\": [\\n    {\\n      \\\"description\\\": \\\"edge case\\\",\\n      \\\"note_markdown\\\": \\\"## 身份背景\\\\r\\\\n\\\\r\\\\n- **Rust** and *Go* are `tools`.\\\\r\\\\n- Rust，Go；Rust。\\\\r\\\\n- x\\\\r\\\\n\\\",\\n      \\\"captured_at\\\": \\\"\\\",\\n      \\\"source_session_key\\\": \\\"\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "planDreamClusters#4",
+      "fn": "planDreamClusters",
+      "input": {
+        "kind": "project",
+        "headers": [
+          {
+            "relativePath": "Project/f0.md",
+            "name": "F0",
+            "description": "d0",
+            "updatedAt": "U0"
+          },
+          {
+            "relativePath": "Project/f1.md",
+            "name": "F1",
+            "description": "d1",
+            "updatedAt": "U1"
+          },
+          {
+            "relativePath": "Project/f2.md",
+            "name": "F2",
+            "description": "d2",
+            "updatedAt": "U2"
+          },
+          {
+            "relativePath": "Project/f3.md",
+            "name": "F3",
+            "description": "d3",
+            "updatedAt": "U3"
+          },
+          {
+            "relativePath": "Project/f4.md",
+            "name": "F4",
+            "description": "d4",
+            "updatedAt": "U4"
+          },
+          {
+            "relativePath": "Project/f5.md",
+            "name": "F5",
+            "description": "d5",
+            "updatedAt": "U5"
+          },
+          {
+            "relativePath": "Project/f6.md",
+            "name": "F6",
+            "description": "d6",
+            "updatedAt": "U6"
+          },
+          {
+            "relativePath": "Project/f7.md",
+            "name": "F7",
+            "description": "d7",
+            "updatedAt": "U7"
+          },
+          {
+            "relativePath": "Project/f8.md",
+            "name": "F8",
+            "description": "d8",
+            "updatedAt": "U8"
+          },
+          {
+            "relativePath": "Project/f9.md",
+            "name": "F9",
+            "description": "d9",
+            "updatedAt": "U9"
+          },
+          {
+            "relativePath": "Project/f10.md",
+            "name": "F10",
+            "description": "d10",
+            "updatedAt": "U10"
+          },
+          {
+            "relativePath": "Project/f11.md",
+            "name": "F11",
+            "description": "d11",
+            "updatedAt": "U11"
+          },
+          {
+            "relativePath": "Project/f12.md",
+            "name": "F12",
+            "description": "d12",
+            "updatedAt": "U12"
+          },
+          {
+            "relativePath": "Project/f13.md",
+            "name": "F13",
+            "description": "d13",
+            "updatedAt": "U13"
+          },
+          {
+            "relativePath": "Project/f14.md",
+            "name": "F14",
+            "description": "d14",
+            "updatedAt": "U14"
+          },
+          {
+            "relativePath": "Project/f15.md",
+            "name": "F15",
+            "description": "d15",
+            "updatedAt": "U15"
+          },
+          {
+            "relativePath": "Project/f16.md",
+            "name": "F16",
+            "description": "d16",
+            "updatedAt": "U16"
+          },
+          {
+            "relativePath": "Project/f17.md",
+            "name": "F17",
+            "description": "d17",
+            "updatedAt": "U17"
+          },
+          {
+            "relativePath": "Project/f18.md",
+            "name": "F18",
+            "description": "d18",
+            "updatedAt": "U18"
+          },
+          {
+            "relativePath": "Project/f19.md",
+            "name": "F19",
+            "description": "d19",
+            "updatedAt": "U19"
+          },
+          {
+            "relativePath": "Project/f20.md",
+            "name": "F20",
+            "description": "d20",
+            "updatedAt": "U20"
+          },
+          {
+            "relativePath": "Project/f21.md",
+            "name": "F21",
+            "description": "d21",
+            "updatedAt": "U21"
+          },
+          {
+            "relativePath": "Project/f22.md",
+            "name": "F22",
+            "description": "d22",
+            "updatedAt": "U22"
+          },
+          {
+            "relativePath": "Project/f23.md",
+            "name": "F23",
+            "description": "d23",
+            "updatedAt": "U23"
+          },
+          {
+            "relativePath": "Project/f24.md",
+            "name": "F24",
+            "description": "d24",
+            "updatedAt": "U24"
+          },
+          {
+            "relativePath": "Project/f25.md",
+            "name": "F25",
+            "description": "d25",
+            "updatedAt": "U25"
+          },
+          {
+            "relativePath": "Project/f26.md",
+            "name": "F26",
+            "description": "d26",
+            "updatedAt": "U26"
+          },
+          {
+            "relativePath": "Project/f27.md",
+            "name": "F27",
+            "description": "d27",
+            "updatedAt": "U27"
+          },
+          {
+            "relativePath": "Project/f28.md",
+            "name": "F28",
+            "description": "d28",
+            "updatedAt": "U28"
+          },
+          {
+            "relativePath": "Project/f29.md",
+            "name": "F29",
+            "description": "d29",
+            "updatedAt": "U29"
+          },
+          {
+            "relativePath": "Project/f30.md",
+            "name": "F30",
+            "description": "d30",
+            "updatedAt": "U30"
+          },
+          {
+            "relativePath": "Project/f31.md",
+            "name": "F31",
+            "description": "d31",
+            "updatedAt": "U31"
+          },
+          {
+            "relativePath": "Project/f32.md",
+            "name": "F32",
+            "description": "d32",
+            "updatedAt": "U32"
+          },
+          {
+            "relativePath": "Project/f33.md",
+            "name": "F33",
+            "description": "d33",
+            "updatedAt": "U33"
+          },
+          {
+            "relativePath": "Project/f34.md",
+            "name": "F34",
+            "description": "d34",
+            "updatedAt": "U34"
+          },
+          {
+            "relativePath": "Project/f35.md",
+            "name": "F35",
+            "description": "d35",
+            "updatedAt": "U35"
+          },
+          {
+            "relativePath": "Project/f36.md",
+            "name": "F36",
+            "description": "d36",
+            "updatedAt": "U36"
+          },
+          {
+            "relativePath": "Project/f37.md",
+            "name": "F37",
+            "description": "d37",
+            "updatedAt": "U37"
+          },
+          {
+            "relativePath": "Project/f38.md",
+            "name": "F38",
+            "description": "d38",
+            "updatedAt": "U38"
+          },
+          {
+            "relativePath": "Project/f39.md",
+            "name": "F39",
+            "description": "d39",
+            "updatedAt": "U39"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"summary\\\":\\\"cap\\\",\\\"clusters\\\":[{\\\"member_relative_paths\\\":[\\\"Project/f0.md\\\",\\\"Project/f1.md\\\",\\\"Project/f2.md\\\",\\\"Project/f3.md\\\",\\\"Project/f4.md\\\",\\\"Project/f5.md\\\",\\\"Project/f6.md\\\",\\\"Project/f7.md\\\",\\\"Project/f8.md\\\",\\\"Project/f9.md\\\",\\\"Project/f10.md\\\",\\\"Project/f11.md\\\",\\\"Project/f12.md\\\",\\\"Project/f13.md\\\",\\\"Project/f14.md\\\",\\\"Project/f15.md\\\",\\\"Project/f16.md\\\",\\\"Project/f17.md\\\",\\\"Project/f18.md\\\",\\\"Project/f19.md\\\",\\\"Project/f20.md\\\",\\\"Project/f21.md\\\",\\\"Project/f22.md\\\",\\\"Project/f23.md\\\",\\\"Project/f24.md\\\",\\\"Project/f25.md\\\",\\\"Project/f26.md\\\",\\\"Project/f27.md\\\",\\\"Project/f28.md\\\",\\\"Project/f29.md\\\",\\\"Project/f30.md\\\",\\\"Project/f31.md\\\",\\\"Project/f32.md\\\",\\\"Project/f33.md\\\",\\\"Project/f34.md\\\",\\\"Project/f35.md\\\",\\\"Project/f36.md\\\",\\\"Project/f37.md\\\",\\\"Project/f38.md\\\",\\\"Project/f39.md\\\",\\\"Project/f0.md\\\",\\\"Unknown.md\\\"],\\\"reason\\\":\\\"duplicate\\\"}]}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "summary": "cap",
+          "clusters": [
+            {
+              "memberRelativePaths": [
+                "Project/f0.md",
+                "Project/f1.md",
+                "Project/f2.md",
+                "Project/f3.md",
+                "Project/f4.md",
+                "Project/f5.md",
+                "Project/f6.md",
+                "Project/f7.md",
+                "Project/f8.md",
+                "Project/f9.md",
+                "Project/f10.md",
+                "Project/f11.md",
+                "Project/f12.md",
+                "Project/f13.md",
+                "Project/f14.md",
+                "Project/f15.md",
+                "Project/f16.md",
+                "Project/f17.md",
+                "Project/f18.md",
+                "Project/f19.md",
+                "Project/f20.md",
+                "Project/f21.md",
+                "Project/f22.md",
+                "Project/f23.md",
+                "Project/f24.md",
+                "Project/f25.md",
+                "Project/f26.md",
+                "Project/f27.md",
+                "Project/f28.md",
+                "Project/f29.md",
+                "Project/f30.md",
+                "Project/f31.md"
+              ],
+              "reason": "duplicate"
+            }
+          ]
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream project cluster plan",
+            "systemPrompt": "You are the Project Dream cluster planner for a file-memory system.\n\nYour job is to inspect lightweight header information only and decide which files should be refined together.\n\nRules:\n- Use only the supplied header metadata as evidence.\n- Do not assume full file contents beyond what the header says.\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\n- Return mutually exclusive candidate clusters only.\n- A file may appear in at most one cluster.\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\n- If files are distinct and should remain separate, leave them out of clusters.\n- Files belonging to the same current project is not, by itself, a merge reason.\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\n- Keep reasons concise and specific.\n- Natural-language output should follow the dominant language already visible in the supplied headers.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short planning summary\",\n  \"clusters\": [\n    {\n      \"member_relative_paths\": [\"Project/a.md\", \"Project/b.md\"],\n      \"reason\": \"why these files should be refined together\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"category\": \"project\",\n  \"headers\": [\n    {\n      \"relative_path\": \"Project/f0.md\",\n      \"name\": \"F0\",\n      \"description\": \"d0\",\n      \"updated_at\": \"U0\"\n    },\n    {\n      \"relative_path\": \"Project/f1.md\",\n      \"name\": \"F1\",\n      \"description\": \"d1\",\n      \"updated_at\": \"U1\"\n    },\n    {\n      \"relative_path\": \"Project/f2.md\",\n      \"name\": \"F2\",\n      \"description\": \"d2\",\n      \"updated_at\": \"U2\"\n    },\n    {\n      \"relative_path\": \"Project/f3.md\",\n      \"name\": \"F3\",\n      \"description\": \"d3\",\n      \"updated_at\": \"U3\"\n    },\n    {\n      \"relative_path\": \"Project/f4.md\",\n      \"name\": \"F4\",\n      \"description\": \"d4\",\n      \"updated_at\": \"U4\"\n    },\n    {\n      \"relative_path\": \"Project/f5.md\",\n      \"name\": \"F5\",\n      \"description\": \"d5\",\n      \"updated_at\": \"U5\"\n    },\n    {\n      \"relative_path\": \"Project/f6.md\",\n      \"name\": \"F6\",\n      \"description\": \"d6\",\n      \"updated_at\": \"U6\"\n    },\n    {\n      \"relative_path\": \"Project/f7.md\",\n      \"name\": \"F7\",\n      \"description\": \"d7\",\n      \"updated_at\": \"U7\"\n    },\n    {\n      \"relative_path\": \"Project/f8.md\",\n      \"name\": \"F8\",\n      \"description\": \"d8\",\n      \"updated_at\": \"U8\"\n    },\n    {\n      \"relative_path\": \"Project/f9.md\",\n      \"name\": \"F9\",\n      \"description\": \"d9\",\n      \"updated_at\": \"U9\"\n    },\n    {\n      \"relative_path\": \"Project/f10.md\",\n      \"name\": \"F10\",\n      \"description\": \"d10\",\n      \"updated_at\": \"U10\"\n    },\n    {\n      \"relative_path\": \"Project/f11.md\",\n      \"name\": \"F11\",\n      \"description\": \"d11\",\n      \"updated_at\": \"U11\"\n    },\n    {\n      \"relative_path\": \"Project/f12.md\",\n      \"name\": \"F12\",\n      \"description\": \"d12\",\n      \"updated_at\": \"U12\"\n    },\n    {\n      \"relative_path\": \"Project/f13.md\",\n      \"name\": \"F13\",\n      \"description\": \"d13\",\n      \"updated_at\": \"U13\"\n    },\n    {\n      \"relative_path\": \"Project/f14.md\",\n      \"name\": \"F14\",\n      \"description\": \"d14\",\n      \"updated_at\": \"U14\"\n    },\n    {\n      \"relative_path\": \"Project/f15.md\",\n      \"name\": \"F15\",\n      \"description\": \"d15\",\n      \"updated_at\": \"U15\"\n    },\n    {\n      \"relative_path\": \"Project/f16.md\",\n      \"name\": \"F16\",\n      \"description\": \"d16\",\n      \"updated_at\": \"U16\"\n    },\n    {\n      \"relative_path\": \"Project/f17.md\",\n      \"name\": \"F17\",\n      \"description\": \"d17\",\n      \"updated_at\": \"U17\"\n    },\n    {\n      \"relative_path\": \"Project/f18.md\",\n      \"name\": \"F18\",\n      \"description\": \"d18\",\n      \"updated_at\": \"U18\"\n    },\n    {\n      \"relative_path\": \"Project/f19.md\",\n      \"name\": \"F19\",\n      \"description\": \"d19\",\n      \"updated_at\": \"U19\"\n    },\n    {\n      \"relative_path\": \"Project/f20.md\",\n      \"name\": \"F20\",\n      \"description\": \"d20\",\n      \"updated_at\": \"U20\"\n    },\n    {\n      \"relative_path\": \"Project/f21.md\",\n      \"name\": \"F21\",\n      \"description\": \"d21\",\n      \"updated_at\": \"U21\"\n    },\n    {\n      \"relative_path\": \"Project/f22.md\",\n      \"name\": \"F22\",\n      \"description\": \"d22\",\n      \"updated_at\": \"U22\"\n    },\n    {\n      \"relative_path\": \"Project/f23.md\",\n      \"name\": \"F23\",\n      \"description\": \"d23\",\n      \"updated_at\": \"U23\"\n    },\n    {\n      \"relative_path\": \"Project/f24.md\",\n      \"name\": \"F24\",\n      \"description\": \"d24\",\n      \"updated_at\": \"U24\"\n    },\n    {\n      \"relative_path\": \"Project/f25.md\",\n      \"name\": \"F25\",\n      \"description\": \"d25\",\n      \"updated_at\": \"U25\"\n    },\n    {\n      \"relative_path\": \"Project/f26.md\",\n      \"name\": \"F26\",\n      \"description\": \"d26\",\n      \"updated_at\": \"U26\"\n    },\n    {\n      \"relative_path\": \"Project/f27.md\",\n      \"name\": \"F27\",\n      \"description\": \"d27\",\n      \"updated_at\": \"U27\"\n    },\n    {\n      \"relative_path\": \"Project/f28.md\",\n      \"name\": \"F28\",\n      \"description\": \"d28\",\n      \"updated_at\": \"U28\"\n    },\n    {\n      \"relative_path\": \"Project/f29.md\",\n      \"name\": \"F29\",\n      \"description\": \"d29\",\n      \"updated_at\": \"U29\"\n    },\n    {\n      \"relative_path\": \"Project/f30.md\",\n      \"name\": \"F30\",\n      \"description\": \"d30\",\n      \"updated_at\": \"U30\"\n    },\n    {\n      \"relative_path\": \"Project/f31.md\",\n      \"name\": \"F31\",\n      \"description\": \"d31\",\n      \"updated_at\": \"U31\"\n    },\n    {\n      \"relative_path\": \"Project/f32.md\",\n      \"name\": \"F32\",\n      \"description\": \"d32\",\n      \"updated_at\": \"U32\"\n    },\n    {\n      \"relative_path\": \"Project/f33.md\",\n      \"name\": \"F33\",\n      \"description\": \"d33\",\n      \"updated_at\": \"U33\"\n    },\n    {\n      \"relative_path\": \"Project/f34.md\",\n      \"name\": \"F34\",\n      \"description\": \"d34\",\n      \"updated_at\": \"U34\"\n    },\n    {\n      \"relative_path\": \"Project/f35.md\",\n      \"name\": \"F35\",\n      \"description\": \"d35\",\n      \"updated_at\": \"U35\"\n    },\n    {\n      \"relative_path\": \"Project/f36.md\",\n      \"name\": \"F36\",\n      \"description\": \"d36\",\n      \"updated_at\": \"U36\"\n    },\n    {\n      \"relative_path\": \"Project/f37.md\",\n      \"name\": \"F37\",\n      \"description\": \"d37\",\n      \"updated_at\": \"U37\"\n    },\n    {\n      \"relative_path\": \"Project/f38.md\",\n      \"name\": \"F38\",\n      \"description\": \"d38\",\n      \"updated_at\": \"U38\"\n    },\n    {\n      \"relative_path\": \"Project/f39.md\",\n      \"name\": \"F39\",\n      \"description\": \"d39\",\n      \"updated_at\": \"U39\"\n    }\n  ]\n}",
+            "rawResponse": "{\"summary\":\"cap\",\"clusters\":[{\"member_relative_paths\":[\"Project/f0.md\",\"Project/f1.md\",\"Project/f2.md\",\"Project/f3.md\",\"Project/f4.md\",\"Project/f5.md\",\"Project/f6.md\",\"Project/f7.md\",\"Project/f8.md\",\"Project/f9.md\",\"Project/f10.md\",\"Project/f11.md\",\"Project/f12.md\",\"Project/f13.md\",\"Project/f14.md\",\"Project/f15.md\",\"Project/f16.md\",\"Project/f17.md\",\"Project/f18.md\",\"Project/f19.md\",\"Project/f20.md\",\"Project/f21.md\",\"Project/f22.md\",\"Project/f23.md\",\"Project/f24.md\",\"Project/f25.md\",\"Project/f26.md\",\"Project/f27.md\",\"Project/f28.md\",\"Project/f29.md\",\"Project/f30.md\",\"Project/f31.md\",\"Project/f32.md\",\"Project/f33.md\",\"Project/f34.md\",\"Project/f35.md\",\"Project/f36.md\",\"Project/f37.md\",\"Project/f38.md\",\"Project/f39.md\",\"Project/f0.md\",\"Unknown.md\"],\"reason\":\"duplicate\"}]}",
+            "parsedResult": {
+              "summary": "cap",
+              "clusters": [
+                {
+                  "member_relative_paths": [
+                    "Project/f0.md",
+                    "Project/f1.md",
+                    "Project/f2.md",
+                    "Project/f3.md",
+                    "Project/f4.md",
+                    "Project/f5.md",
+                    "Project/f6.md",
+                    "Project/f7.md",
+                    "Project/f8.md",
+                    "Project/f9.md",
+                    "Project/f10.md",
+                    "Project/f11.md",
+                    "Project/f12.md",
+                    "Project/f13.md",
+                    "Project/f14.md",
+                    "Project/f15.md",
+                    "Project/f16.md",
+                    "Project/f17.md",
+                    "Project/f18.md",
+                    "Project/f19.md",
+                    "Project/f20.md",
+                    "Project/f21.md",
+                    "Project/f22.md",
+                    "Project/f23.md",
+                    "Project/f24.md",
+                    "Project/f25.md",
+                    "Project/f26.md",
+                    "Project/f27.md",
+                    "Project/f28.md",
+                    "Project/f29.md",
+                    "Project/f30.md",
+                    "Project/f31.md",
+                    "Project/f32.md",
+                    "Project/f33.md",
+                    "Project/f34.md",
+                    "Project/f35.md",
+                    "Project/f36.md",
+                    "Project/f37.md",
+                    "Project/f38.md",
+                    "Project/f39.md",
+                    "Project/f0.md",
+                    "Unknown.md"
+                  ],
+                  "reason": "duplicate"
+                }
+              ]
+            }
+          }
+        ],
+        "validation": {
+          "kind": "clusters",
+          "result": {
+            "clusters": [],
+            "droppedWarnings": [
+              "Dropped cluster because it exceeded the 4-file limit: Project/f0.md, Project/f1.md, Project/f2.md, Project/f3.md, Project/f4.md, Project/f5.md, Project/f6.md, Project/f7.md, Project/f8.md, Project/f9.md, Project/f10.md, Project/f11.md, Project/f12.md, Project/f13.md, Project/f14.md, Project/f15.md, Project/f16.md, Project/f17.md, Project/f18.md, Project/f19.md, Project/f20.md, Project/f21.md, Project/f22.md, Project/f23.md, Project/f24.md, Project/f25.md, Project/f26.md, Project/f27.md, Project/f28.md, Project/f29.md, Project/f30.md, Project/f31.md"
+            ]
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "7810",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Project Dream cluster planner for a file-memory system.\\n\\nYour job is to inspect lightweight header information only and decide which files should be refined together.\\n\\nRules:\\n- Use only the supplied header metadata as evidence.\\n- Do not assume full file contents beyond what the header says.\\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\\n- Return mutually exclusive candidate clusters only.\\n- A file may appear in at most one cluster.\\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\\n- If files are distinct and should remain separate, leave them out of clusters.\\n- Files belonging to the same current project is not, by itself, a merge reason.\\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\\n- Keep reasons concise and specific.\\n- Natural-language output should follow the dominant language already visible in the supplied headers.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short planning summary\\\",\\n  \\\"clusters\\\": [\\n    {\\n      \\\"member_relative_paths\\\": [\\\"Project/a.md\\\", \\\"Project/b.md\\\"],\\n      \\\"reason\\\": \\\"why these files should be refined together\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"category\\\": \\\"project\\\",\\n  \\\"headers\\\": [\\n    {\\n      \\\"relative_path\\\": \\\"Project/f0.md\\\",\\n      \\\"name\\\": \\\"F0\\\",\\n      \\\"description\\\": \\\"d0\\\",\\n      \\\"updated_at\\\": \\\"U0\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f1.md\\\",\\n      \\\"name\\\": \\\"F1\\\",\\n      \\\"description\\\": \\\"d1\\\",\\n      \\\"updated_at\\\": \\\"U1\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f2.md\\\",\\n      \\\"name\\\": \\\"F2\\\",\\n      \\\"description\\\": \\\"d2\\\",\\n      \\\"updated_at\\\": \\\"U2\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f3.md\\\",\\n      \\\"name\\\": \\\"F3\\\",\\n      \\\"description\\\": \\\"d3\\\",\\n      \\\"updated_at\\\": \\\"U3\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f4.md\\\",\\n      \\\"name\\\": \\\"F4\\\",\\n      \\\"description\\\": \\\"d4\\\",\\n      \\\"updated_at\\\": \\\"U4\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f5.md\\\",\\n      \\\"name\\\": \\\"F5\\\",\\n      \\\"description\\\": \\\"d5\\\",\\n      \\\"updated_at\\\": \\\"U5\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f6.md\\\",\\n      \\\"name\\\": \\\"F6\\\",\\n      \\\"description\\\": \\\"d6\\\",\\n      \\\"updated_at\\\": \\\"U6\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f7.md\\\",\\n      \\\"name\\\": \\\"F7\\\",\\n      \\\"description\\\": \\\"d7\\\",\\n      \\\"updated_at\\\": \\\"U7\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f8.md\\\",\\n      \\\"name\\\": \\\"F8\\\",\\n      \\\"description\\\": \\\"d8\\\",\\n      \\\"updated_at\\\": \\\"U8\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f9.md\\\",\\n      \\\"name\\\": \\\"F9\\\",\\n      \\\"description\\\": \\\"d9\\\",\\n      \\\"updated_at\\\": \\\"U9\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f10.md\\\",\\n      \\\"name\\\": \\\"F10\\\",\\n      \\\"description\\\": \\\"d10\\\",\\n      \\\"updated_at\\\": \\\"U10\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f11.md\\\",\\n      \\\"name\\\": \\\"F11\\\",\\n      \\\"description\\\": \\\"d11\\\",\\n      \\\"updated_at\\\": \\\"U11\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f12.md\\\",\\n      \\\"name\\\": \\\"F12\\\",\\n      \\\"description\\\": \\\"d12\\\",\\n      \\\"updated_at\\\": \\\"U12\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f13.md\\\",\\n      \\\"name\\\": \\\"F13\\\",\\n      \\\"description\\\": \\\"d13\\\",\\n      \\\"updated_at\\\": \\\"U13\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f14.md\\\",\\n      \\\"name\\\": \\\"F14\\\",\\n      \\\"description\\\": \\\"d14\\\",\\n      \\\"updated_at\\\": \\\"U14\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f15.md\\\",\\n      \\\"name\\\": \\\"F15\\\",\\n      \\\"description\\\": \\\"d15\\\",\\n      \\\"updated_at\\\": \\\"U15\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f16.md\\\",\\n      \\\"name\\\": \\\"F16\\\",\\n      \\\"description\\\": \\\"d16\\\",\\n      \\\"updated_at\\\": \\\"U16\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f17.md\\\",\\n      \\\"name\\\": \\\"F17\\\",\\n      \\\"description\\\": \\\"d17\\\",\\n      \\\"updated_at\\\": \\\"U17\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f18.md\\\",\\n      \\\"name\\\": \\\"F18\\\",\\n      \\\"description\\\": \\\"d18\\\",\\n      \\\"updated_at\\\": \\\"U18\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f19.md\\\",\\n      \\\"name\\\": \\\"F19\\\",\\n      \\\"description\\\": \\\"d19\\\",\\n      \\\"updated_at\\\": \\\"U19\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f20.md\\\",\\n      \\\"name\\\": \\\"F20\\\",\\n      \\\"description\\\": \\\"d20\\\",\\n      \\\"updated_at\\\": \\\"U20\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f21.md\\\",\\n      \\\"name\\\": \\\"F21\\\",\\n      \\\"description\\\": \\\"d21\\\",\\n      \\\"updated_at\\\": \\\"U21\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f22.md\\\",\\n      \\\"name\\\": \\\"F22\\\",\\n      \\\"description\\\": \\\"d22\\\",\\n      \\\"updated_at\\\": \\\"U22\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f23.md\\\",\\n      \\\"name\\\": \\\"F23\\\",\\n      \\\"description\\\": \\\"d23\\\",\\n      \\\"updated_at\\\": \\\"U23\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f24.md\\\",\\n      \\\"name\\\": \\\"F24\\\",\\n      \\\"description\\\": \\\"d24\\\",\\n      \\\"updated_at\\\": \\\"U24\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f25.md\\\",\\n      \\\"name\\\": \\\"F25\\\",\\n      \\\"description\\\": \\\"d25\\\",\\n      \\\"updated_at\\\": \\\"U25\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f26.md\\\",\\n      \\\"name\\\": \\\"F26\\\",\\n      \\\"description\\\": \\\"d26\\\",\\n      \\\"updated_at\\\": \\\"U26\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f27.md\\\",\\n      \\\"name\\\": \\\"F27\\\",\\n      \\\"description\\\": \\\"d27\\\",\\n      \\\"updated_at\\\": \\\"U27\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f28.md\\\",\\n      \\\"name\\\": \\\"F28\\\",\\n      \\\"description\\\": \\\"d28\\\",\\n      \\\"updated_at\\\": \\\"U28\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f29.md\\\",\\n      \\\"name\\\": \\\"F29\\\",\\n      \\\"description\\\": \\\"d29\\\",\\n      \\\"updated_at\\\": \\\"U29\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f30.md\\\",\\n      \\\"name\\\": \\\"F30\\\",\\n      \\\"description\\\": \\\"d30\\\",\\n      \\\"updated_at\\\": \\\"U30\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f31.md\\\",\\n      \\\"name\\\": \\\"F31\\\",\\n      \\\"description\\\": \\\"d31\\\",\\n      \\\"updated_at\\\": \\\"U31\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f32.md\\\",\\n      \\\"name\\\": \\\"F32\\\",\\n      \\\"description\\\": \\\"d32\\\",\\n      \\\"updated_at\\\": \\\"U32\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f33.md\\\",\\n      \\\"name\\\": \\\"F33\\\",\\n      \\\"description\\\": \\\"d33\\\",\\n      \\\"updated_at\\\": \\\"U33\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f34.md\\\",\\n      \\\"name\\\": \\\"F34\\\",\\n      \\\"description\\\": \\\"d34\\\",\\n      \\\"updated_at\\\": \\\"U34\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f35.md\\\",\\n      \\\"name\\\": \\\"F35\\\",\\n      \\\"description\\\": \\\"d35\\\",\\n      \\\"updated_at\\\": \\\"U35\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f36.md\\\",\\n      \\\"name\\\": \\\"F36\\\",\\n      \\\"description\\\": \\\"d36\\\",\\n      \\\"updated_at\\\": \\\"U36\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f37.md\\\",\\n      \\\"name\\\": \\\"F37\\\",\\n      \\\"description\\\": \\\"d37\\\",\\n      \\\"updated_at\\\": \\\"U37\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f38.md\\\",\\n      \\\"name\\\": \\\"F38\\\",\\n      \\\"description\\\": \\\"d38\\\",\\n      \\\"updated_at\\\": \\\"U38\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/f39.md\\\",\\n      \\\"name\\\": \\\"F39\\\",\\n      \\\"description\\\": \\\"d39\\\",\\n      \\\"updated_at\\\": \\\"U39\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "reviewDreamProjectMeta#2",
+      "fn": "reviewDreamProjectMeta",
+      "input": {
+        "currentMeta": {
+          "projectId": "p",
+          "projectName": "Fallback",
+          "description": "fallback desc",
+          "status": "active",
+          "updatedAt": "U"
+        },
+        "recentProjectRecords": [],
+        "recentFeedbackRecords": []
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"should_update\\\":0,\\\"reason\\\":123,\\\"project_name\\\":0,\\\"description\\\":null,\\\"status\\\":0}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "shouldUpdate": false,
+          "reason": "",
+          "projectMeta": {
+            "projectName": "Fallback",
+            "description": "fallback desc",
+            "status": "active"
+          }
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream project meta review",
+            "systemPrompt": "You are the Dream project metadata reviewer for a file-memory system.\n\nYour job is to decide whether the current project metadata is clearly incorrect or outdated after project/feedback refinement.\n\nRules:\n- Use only the supplied current metadata and the recent project/feedback files as evidence.\n- Be conservative. Keep the current metadata unless the supplied evidence clearly supports a change.\n- You may update only:\n  - project_name\n  - description\n  - status\n- Do not rewrite metadata just to paraphrase it.\n- Natural-language output fields must follow the dominant language already present in the supplied project/feedback files.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"should_update\": false,\n  \"reason\": \"why metadata should or should not change\",\n  \"project_name\": \"final project name\",\n  \"description\": \"final description\",\n  \"status\": \"in_progress\"\n}",
+            "userPrompt": "{\n  \"current_project_meta\": {\n    \"project_id\": \"p\",\n    \"project_name\": \"Fallback\",\n    \"description\": \"fallback desc\",\n    \"status\": \"active\",\n    \"updated_at\": \"U\",\n    \"dream_updated_at\": \"\"\n  },\n  \"recent_project_files\": [],\n  \"recent_feedback_files\": []\n}",
+            "rawResponse": "{\"should_update\":0,\"reason\":123,\"project_name\":0,\"description\":null,\"status\":0}",
+            "parsedResult": {
+              "should_update": 0,
+              "reason": 123,
+              "project_name": 0,
+              "description": null,
+              "status": 0
+            }
+          }
+        ],
+        "validation": null,
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "1365",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Dream project metadata reviewer for a file-memory system.\\n\\nYour job is to decide whether the current project metadata is clearly incorrect or outdated after project/feedback refinement.\\n\\nRules:\\n- Use only the supplied current metadata and the recent project/feedback files as evidence.\\n- Be conservative. Keep the current metadata unless the supplied evidence clearly supports a change.\\n- You may update only:\\n  - project_name\\n  - description\\n  - status\\n- Do not rewrite metadata just to paraphrase it.\\n- Natural-language output fields must follow the dominant language already present in the supplied project/feedback files.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"should_update\\\": false,\\n  \\\"reason\\\": \\\"why metadata should or should not change\\\",\\n  \\\"project_name\\\": \\\"final project name\\\",\\n  \\\"description\\\": \\\"final description\\\",\\n  \\\"status\\\": \\\"in_progress\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"current_project_meta\\\": {\\n    \\\"project_id\\\": \\\"p\\\",\\n    \\\"project_name\\\": \\\"Fallback\\\",\\n    \\\"description\\\": \\\"fallback desc\\\",\\n    \\\"status\\\": \\\"active\\\",\\n    \\\"updated_at\\\": \\\"U\\\",\\n    \\\"dream_updated_at\\\": \\\"\\\"\\n  },\\n  \\\"recent_project_files\\\": [],\\n  \\\"recent_feedback_files\\\": []\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "refineDreamCluster#3",
+      "fn": "refineDreamCluster",
+      "input": {
+        "kind": "project",
+        "records": [
+          {
+            "entryId": "Project/a.md",
+            "relativePath": "Project/a.md",
+            "type": "project",
+            "scope": "project",
+            "isTmp": false,
+            "name": "A",
+            "description": "aa",
+            "updatedAt": "U",
+            "content": "body"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"summary\\\":123,\\\"name\\\":1,\\\"description\\\":null,\\\"markdown\\\":false}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "summary": "Dream project cluster refine completed.",
+          "file": null
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream project cluster refine",
+            "systemPrompt": "You are the Project Dream refine engine for a file-memory system.\n\nYour job is to merge one cluster of existing memory files into exactly one cleaner memory file.\n\nRules:\n- Use only the supplied full file contents as evidence.\n- Resolve overlap, deduplicate repeated details, and keep the most useful durable facts.\n- Do not invent new facts.\n- Output exactly one refined file.\n- The visible output language must follow the dominant language already present in the supplied files. If the supplied files are mixed, prefer the dominant language of the cluster.\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\n- Produce exactly one project memory file.\n- Keep durable project facts only: what the project is, stable scope, goals, important progress, blockers, risks, and important decisions.\n- Do not reduce the file to a vague status line.\n- Prefer readable markdown headings such as ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes when useful.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short refine summary\",\n  \"name\": \"refined file title\",\n  \"description\": \"one-line description\",\n  \"markdown\": \"full markdown body\"\n}",
+            "userPrompt": "{\n  \"category\": \"project\",\n  \"records\": [\n    {\n      \"entry_id\": \"Project/a.md\",\n      \"relative_path\": \"Project/a.md\",\n      \"type\": \"project\",\n      \"name\": \"A\",\n      \"description\": \"aa\",\n      \"updated_at\": \"U\",\n      \"captured_at\": \"\",\n      \"source_session_key\": \"\",\n      \"content\": \"body\"\n    }\n  ]\n}",
+            "rawResponse": "{\"summary\":123,\"name\":1,\"description\":null,\"markdown\":false}",
+            "parsedResult": {
+              "summary": 123,
+              "name": 1,
+              "description": null,
+              "markdown": false
+            }
+          }
+        ],
+        "validation": null,
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "1807",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Project Dream refine engine for a file-memory system.\\n\\nYour job is to merge one cluster of existing memory files into exactly one cleaner memory file.\\n\\nRules:\\n- Use only the supplied full file contents as evidence.\\n- Resolve overlap, deduplicate repeated details, and keep the most useful durable facts.\\n- Do not invent new facts.\\n- Output exactly one refined file.\\n- The visible output language must follow the dominant language already present in the supplied files. If the supplied files are mixed, prefer the dominant language of the cluster.\\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\\n- Produce exactly one project memory file.\\n- Keep durable project facts only: what the project is, stable scope, goals, important progress, blockers, risks, and important decisions.\\n- Do not reduce the file to a vague status line.\\n- Prefer readable markdown headings such as ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes when useful.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short refine summary\\\",\\n  \\\"name\\\": \\\"refined file title\\\",\\n  \\\"description\\\": \\\"one-line description\\\",\\n  \\\"markdown\\\": \\\"full markdown body\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"category\\\": \\\"project\\\",\\n  \\\"records\\\": [\\n    {\\n      \\\"entry_id\\\": \\\"Project/a.md\\\",\\n      \\\"relative_path\\\": \\\"Project/a.md\\\",\\n      \\\"type\\\": \\\"project\\\",\\n      \\\"name\\\": \\\"A\\\",\\n      \\\"description\\\": \\\"aa\\\",\\n      \\\"updated_at\\\": \\\"U\\\",\\n      \\\"captured_at\\\": \\\"\\\",\\n      \\\"source_session_key\\\": \\\"\\\",\\n      \\\"content\\\": \\\"body\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "planDreamClusters#5",
+      "fn": "planDreamClusters",
+      "input": {
+        "headers": [
+          {
+            "relativePath": "Project/a.md",
+            "name": "A",
+            "description": "a",
+            "updatedAt": "U1"
+          },
+          {
+            "relativePath": "Project/b.md",
+            "name": "B",
+            "description": "b",
+            "updatedAt": "U2"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"clusters\\\":[]}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "summary": "Dream undefined cluster plan completed.",
+          "clusters": []
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream feedback cluster plan",
+            "systemPrompt": "You are the Feedback Dream cluster planner for a file-memory system.\n\nYour job is to inspect lightweight header information only and decide which files should be refined together.\n\nRules:\n- Use only the supplied header metadata as evidence.\n- Do not assume full file contents beyond what the header says.\n- Feedback memory files capture durable collaboration rules, delivery rules, style rules, title/body template rules, and confirmed output constraints.\n- Return mutually exclusive candidate clusters only.\n- A file may appear in at most one cluster.\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\n- If files are distinct and should remain separate, leave them out of clusters.\n- Files belonging to the same current project is not, by itself, a merge reason.\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\n- Keep reasons concise and specific.\n- Natural-language output should follow the dominant language already visible in the supplied headers.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short planning summary\",\n  \"clusters\": [\n    {\n      \"member_relative_paths\": [\"Project/a.md\", \"Project/b.md\"],\n      \"reason\": \"why these files should be refined together\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"headers\": [\n    {\n      \"relative_path\": \"Project/a.md\",\n      \"name\": \"A\",\n      \"description\": \"a\",\n      \"updated_at\": \"U1\"\n    },\n    {\n      \"relative_path\": \"Project/b.md\",\n      \"name\": \"B\",\n      \"description\": \"b\",\n      \"updated_at\": \"U2\"\n    }\n  ]\n}",
+            "rawResponse": "{\"clusters\":[]}",
+            "parsedResult": {
+              "clusters": []
+            }
+          }
+        ],
+        "validation": {
+          "kind": "clusters",
+          "result": {
+            "clusters": [],
+            "droppedWarnings": []
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2084",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Feedback Dream cluster planner for a file-memory system.\\n\\nYour job is to inspect lightweight header information only and decide which files should be refined together.\\n\\nRules:\\n- Use only the supplied header metadata as evidence.\\n- Do not assume full file contents beyond what the header says.\\n- Feedback memory files capture durable collaboration rules, delivery rules, style rules, title/body template rules, and confirmed output constraints.\\n- Return mutually exclusive candidate clusters only.\\n- A file may appear in at most one cluster.\\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\\n- If files are distinct and should remain separate, leave them out of clusters.\\n- Files belonging to the same current project is not, by itself, a merge reason.\\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\\n- Keep reasons concise and specific.\\n- Natural-language output should follow the dominant language already visible in the supplied headers.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short planning summary\\\",\\n  \\\"clusters\\\": [\\n    {\\n      \\\"member_relative_paths\\\": [\\\"Project/a.md\\\", \\\"Project/b.md\\\"],\\n      \\\"reason\\\": \\\"why these files should be refined together\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"headers\\\": [\\n    {\\n      \\\"relative_path\\\": \\\"Project/a.md\\\",\\n      \\\"name\\\": \\\"A\\\",\\n      \\\"description\\\": \\\"a\\\",\\n      \\\"updated_at\\\": \\\"U1\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/b.md\\\",\\n      \\\"name\\\": \\\"B\\\",\\n      \\\"description\\\": \\\"b\\\",\\n      \\\"updated_at\\\": \\\"U2\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    }
+  ]
+}
