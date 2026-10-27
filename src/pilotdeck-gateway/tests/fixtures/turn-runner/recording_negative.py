@@ -24,7 +24,7 @@ command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
 # Whole-file source occurrences; text-value remains function-scoped.
 ANCHOR_COUNTS = {'blocks-shape': 2}
 mutations = [
-    ('pending-owned', source, '.as_mut()', '.take()'),
+    ('pending-owned', source, '.pending\n            .as_mut()', '.pending\n            .take()'),
     ('pending-cleared', source, 'self.pending = None;', ''),
     ('runner-restored', source, 'self.runner = Some(runner);', 'drop(runner);'),
     ('events-returned', source, 'Ok(events)', 'Ok(vec![])'),
