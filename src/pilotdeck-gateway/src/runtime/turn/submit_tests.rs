@@ -788,7 +788,10 @@ async fn replay_case(case: &Value) {
                 "{name}: no native submit"
             );
         } else if !order_only {
-            assert_eq!(actual, expected, "{name}: step {index} {step}");
+            assert_eq!(
+                actual, expected,
+                "#813 {name}: step {index} {step}: submit scenario must match"
+            );
         }
     }
     consumer.await.unwrap();
@@ -1005,7 +1008,7 @@ async fn unavailable_capabilities_are_explicitly_refused() {
     }
     assert!(
         selected > 0,
-        "submit capability filter must match at least one scenario"
+        "#813 submit capability filter: must match at least one scenario"
     );
 }
 

@@ -157,16 +157,61 @@ def panic_evidence(raw, used_test):
     return '\n'.join(block for block in blocks if block)
 
 
-def marker_kills_named_test(raw, used_test, marker):
+# #813 fix-r8: a watchdog/timeout payload means the test hung; it is not an
+# assertion failure. The prefixes are fixed so the judge can reject the payload
+# without knowing which scenario stalled. Never begin such a message with a
+# scenario name: prefix markers would otherwise match it.
+HANG_PREFIXES = ('#813 gateway watchdog:', '#813 timeout:')
+
+# #813 fix-r8: markers that identify no assertion. `assertion` and the bare
+# assert_eq diagnostic accept any assertion in the same test; `"<case>": `
+# accepts any failure of that scenario, including a different step or a hang.
+_CASE_ONLY_MARKER = re.compile(r'^"[^"]+": $')
+
+
+def marker_is_scoped(marker):
+    """Whether ``marker`` names one assertion instead of a class of failures.
+
+    A bare scenario prefix is not evidence that the *target* assertion failed.
+    Callers that know the target also pass ``target=`` to
+    ``marker_kills_named_test``; this check is the fallback for every other
+    consumer (#813 fix-r8).
+    """
+    if not isinstance(marker, str) or not marker.strip():
+        return False
+    if marker == 'assertion' or marker.startswith('assertion `left == right`'):
+        return False
+    if _CASE_ONLY_MARKER.match(marker):
+        return False
+    if marker.startswith(HANG_PREFIXES):
+        return False
+    return True
+
+
+def marker_kills_named_test(raw, used_test, marker, target=None):
     """Require the marker inside a full test's own panic block.
 
     ``used_test`` is one full name or an explicit iterable of full names.
     ``marker`` may be a string or an iterable of alternative strings; an
     iterable is accepted so callers keep their existing ``a|b`` fixtures without
     weakening the scope.
+
+    ``target`` (string) pins the marker to the one assertion the mutant is
+    meant to break: the marker must equal the target's complete message and be
+    a ``#813`` assertion message. A payload containing a watchdog/timeout prefix
+    is never evidence, even if the marker text appears in it (#813 fix-r8).
     """
     evidence = panic_evidence(raw, used_test)
+    if any(prefix in evidence for prefix in HANG_PREFIXES):
+        return False
     markers = [marker] if isinstance(marker, str) else marker
+    if target is not None:
+        if not isinstance(marker, str) or marker != target:
+            return False
+        if not target.startswith('#813 '):
+            return False
+    if not all(marker_is_scoped(candidate) for candidate in markers):
+        return False
     return any(candidate in evidence for candidate in markers)
 
 
@@ -187,12 +232,14 @@ def named_test_failed(raw, used_test):
     return False
 
 
-def named_test_killed(raw, used_test, marker):
+def named_test_killed(raw, used_test, marker, target=None):
     """Strict #813 criterion: a full test failed and marker is in its panic block.
 
     With an explicit list, the marker must belong to one of the listed tests
     that actually failed; a passing list member cannot lend its block.
+    ``target`` pins the marker to the mutant's target assertion (#813 fix-r8);
+    watchdog/timeout payloads are always rejected.
     """
     names = _full_test_names(used_test)
     failed = [name for name in names if named_test_failed(raw, name)]
-    return bool(failed) and marker_kills_named_test(raw, failed, marker)
+    return bool(failed) and marker_kills_named_test(raw, failed, marker, target)

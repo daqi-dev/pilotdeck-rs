@@ -1,5 +1,5 @@
 use super::*;
-fn assert_bytes(actual: &JsValue, expected: &JsValue) {
+fn assert_bytes(actual: &JsValue, expected: &JsValue, message: &str) {
     assert_eq!(
         pilotdeck_protocol::stringify_json(actual)
             .unwrap()
@@ -9,7 +9,7 @@ fn assert_bytes(actual: &JsValue, expected: &JsValue) {
             .unwrap()
             .unwrap()
             .as_bytes(),
-        "failure guard JSON bytes"
+        "{message}"
     );
 }
 const ORACLE: &str = include_str!("../../../tests/fixtures/failure-guard/oracle.json");
@@ -23,6 +23,7 @@ fn array(value: &JsValue) -> &[JsValue] {
 fn real_ts_failure_guard_and_classify() {
     let oracle = crate::test_baseline::oracle(ORACLE);
     for case in array(field(&oracle, "cases")) {
+        let case_name = field(case, "name").as_string().unwrap().to_utf8().unwrap();
         let mut guard = FailureGuard::new(field(case, "config").clone());
         for (index, (action, expected)) in array(field(case, "actions"))
             .iter()
@@ -49,6 +50,9 @@ fn real_ts_failure_guard_and_classify() {
                     .map(GuardTrip::as_value)
                     .unwrap_or(JsValue::Null),
                 field(expected, "trip"),
+                &format!(
+                    "#813 failure guard trip: {case_name} action {index}: trip result bytes must match"
+                ),
             );
             assert_eq!(
                 trip.as_ref()
@@ -61,7 +65,7 @@ fn real_ts_failure_guard_and_classify() {
             assert_eq!(
                 JsValue::Bool(guard.is_tripped()),
                 *field(expected, "isTripped"),
-                "failure guard latch"
+                "#813 failure guard latch: trip latch must stay set until reset"
             );
             if let Some(trip) = trip {
                 let models = [
@@ -76,11 +80,17 @@ fn real_ts_failure_guard_and_classify() {
                     )])),
                 ];
                 for (model, message) in models.iter().zip(array(field(expected, "messages"))) {
-                    assert_bytes(&build_guard_trip_message(&trip, model.as_ref()), message);
+                    assert_bytes(
+                        &build_guard_trip_message(&trip, model.as_ref()),
+                        message,
+                        &format!(
+                            "#813 failure guard message: {case_name} action {index}: trip message bytes must match"
+                        ),
+                    );
                     assert_eq!(
                         build_guard_trip_message(&trip, model.as_ref()),
                         *message,
-                        "failure guard message"
+                        "#813 failure guard message: trip message value must match"
                     );
                 }
             }
@@ -97,18 +107,22 @@ fn real_ts_failure_guard_and_classify() {
                 ])
             })
             .unwrap_or(JsValue::Null);
-        assert_eq!(resolved, *field(case, "resolved"), "failure guard classify");
+        assert_eq!(
+            resolved,
+            *field(case, "resolved"),
+            "#813 failure guard classify: resolved unit and limit must match"
+        );
         assert_eq!(
             JsValue::String(tool_label(name, field(config, "toolLabels"))),
             *field(case, "label"),
-            "failure guard label"
+            "#813 failure guard label: tool label must match"
         );
     }
     for case in array(field(&oracle, "counted")) {
         assert_eq!(
             JsValue::Bool(is_counted_tool_failure(field(case, "result"))),
             *field(case, "counted"),
-            "failure guard counted code"
+            "#813 failure guard counted: counted failure code must match"
         );
     }
 }

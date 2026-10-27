@@ -17,4 +17,11 @@
 
 `test_negative_panic.py` 用 `turn-gateway/negative.py` 里登记的 marker 重放这些
 日志，要求全部判 KILLED。日志只把本机绝对路径替换为 `<repo>`，并剔除本沙箱
-`cargo-slots.sh` 的 `/bin/ps` 拒绝提示行；其余字节保持宿主原始输出。
+`cargo-slots.sh` 的 `/bin/ps` 拒绝提示行。
+
+fix-r8 只做了一次**断言消息迁移**，没有重录：产品测试把旧文案
+`A7.2-...: emit returned ... (concurrent-N)`、`clock advance ...`、
+`replacement timer fires once` 改成 `#813 ...` 完整消息；这四个日志的对应
+panic 行按同一文案替换（emit 的 `(concurrent-N)` 拆成
+`#813 emit event: concurrent-N` 第二行），其余字节不变。完整宿主重跑由协调者
+在宿主执行。

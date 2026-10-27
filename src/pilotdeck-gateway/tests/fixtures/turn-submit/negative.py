@@ -57,7 +57,14 @@ def marker_kills_named_test(raw, used_test, marker):
     panic evidence. ``marker in raw`` let a marker that only another test's
     panic (or plain stdout) mentioned satisfy the anchor, judging a surviving
     mutant killed."""
-    return marker in panic_evidence(raw, used_test)
+    evidence = panic_evidence(raw, used_test)
+    # #813 fix-r8: a watchdog/timeout payload means the test hung, not that the
+    # target assertion failed.
+    if any(prefix in evidence for prefix in ('#813 gateway watchdog:', '#813 timeout:')):
+        return False
+    if not marker or marker == 'assertion' or marker.startswith('assertion `left == right`'):
+        return False
+    return marker in evidence
 
 
 def unwrap_site(anchor_source, before, original):
@@ -261,6 +268,12 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
         'lease-acquisition-skipped': lease_order,
         'always-acquire-lease': lease_order,
     })
+    # #813 fix-r8 P3: every non-location mutant must carry a scenario/assertion
+    # marker; a generic diagnostic may not re-enter this table silently.
+    for name, _, _, _, marker, _ in mutants:
+        if marker is not None:
+            assert marker != 'assertion' and not marker.startswith('assertion `left == right`'), \
+                (name, 'generic assertion diagnostic is not evidence')
     # Anchor kinds: `message` is a key substring of the assertion/panic message
     # for the named test; `location` is the exact panic file:line:column of
     # the reverted `unwrap()` itself, derived by ``unwrap_site`` from the

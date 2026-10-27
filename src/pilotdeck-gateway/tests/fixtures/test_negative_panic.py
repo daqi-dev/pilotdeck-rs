@@ -14,8 +14,16 @@ the fix-r2 expiry re-record: a named test FAILED and the marker is either in an
 ``<unnamed>`` thread spawned by it (emit cases) or in the named test's own
 block (expiry cases). They are replayed here so the shared judge cannot
 regress.
+
+fix-r8 closes the two remaining false-KILLED channels: a watchdog/timeout
+payload is a hang, not an assertion, and a scenario prefix or a marker for a
+different assertion is not the mutant's target. ``turn_gateway_markers`` and
+``failure_guard_markers`` also fail closed on a missing or non-literal marker
+and count every registration, so a deleted marker cannot hide behind the old
+``>= 30`` slack.
 """
 import ast
+import json
 from pathlib import Path
 import re
 import unittest
@@ -40,19 +48,149 @@ RECORDED_CASES = (
 )
 
 
+def _module_constants(tree):
+    values = {}
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)):
+            try:
+                values.setdefault(node.targets[0].id, ast.literal_eval(node.value))
+            except (ValueError, TypeError):
+                pass
+    return values
+
+
+def _marker_value(node, constants):
+    """Evaluate a marker registration that is a literal or a named builder.
+
+    #813 fix-r8: a non-literal marker used to fall through every shape check
+    (``ast.unparse`` produced neither a quote nor ``f'``). Fail closed instead:
+    only constants and the three explicit builder calls are accepted.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, int)):
+        return node.value
+    if isinstance(node, ast.Name) and node.id in constants:
+        return constants[node.id]
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        args = [_marker_value(arg, constants) for arg in node.args]
+        if node.func.id == 'replay_marker':
+            return f'#813 {args[0]}: step "{args[1]}": {args[2]}'
+        if node.func.id == 'timer_marker':
+            return f'#813 serial timer: {args[0]}'
+        if node.func.id == 'submit_marker':
+            return f'#813 {args[0]}: step {args[1]} "{args[2]}": submit scenario must match'
+        if node.func.id == 'guard_trip_marker':
+            return (f'#813 failure guard trip: {args[0]} action {args[1]}: '
+                    'trip result bytes must match')
+        if node.func.id == 'guard_message_marker':
+            return (f'#813 failure guard message: {args[0]} action {args[1]}: '
+                    'trip message bytes must match')
+    raise AssertionError(f'marker must be a literal or named builder: {ast.unparse(node)}')
+
+
+def _mutation_markers(path):
+    tree = ast.parse(path.read_text())
+    constants = _module_constants(tree)
+    entries = []
+    calls = 0
+    dict_rows = 0
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            continue
+        if node.func.id == 'mutation':
+            calls += 1
+            values = {keyword.arg: keyword.value for keyword in node.keywords}
+            marker = values.get('marker')
+            if marker is None and len(node.args) >= 6:
+                marker = node.args[5]
+            if marker is None:
+                raise AssertionError(f'mutation {ast.unparse(node.args[0])} has no marker')
+            try:
+                name = ast.literal_eval(node.args[0])
+            except ValueError:
+                name = ast.unparse(node.args[0])
+            entries.append((name, _marker_value(marker, constants)))
+        elif node.func.id == 'dict':
+            values = {keyword.arg: keyword.value for keyword in node.keywords}
+            name = values.get('name')
+            if isinstance(name, ast.Constant) and name.value == 'notification-after-event':
+                dict_rows += 1
+                entries.append((name.value, _marker_value(values['marker'], constants)))
+    if len(entries) != calls + dict_rows:
+        raise AssertionError(f'{len(entries)} markers for {calls} mutation() calls '
+                             f'+ {dict_rows} dict rows')
+    return entries
+
+
 def recorded_anchor(name):
     """Read the marker the live runner registers for ``name``.
 
     The four recorded logs must be judged with the same marker the runner
     uses; reading it here keeps the two from drifting apart silently.
     """
-    runner = (HERE / 'turn-gateway' / 'negative.py').read_text()
-    line = next(line for line in runner.splitlines()
-                if line.startswith(f"    mutation('{name}'"))
-    match = re.search(r", '([^']*)', test=", line)
-    if match is None:
-        raise AssertionError(f'cannot read the registered marker for {name}')
-    return match.group(1)
+    for entry_name, marker in _mutation_markers(HERE / 'turn-gateway' / 'negative.py'):
+        if entry_name == name:
+            return marker
+    raise AssertionError(f'cannot read the registered marker for {name}')
+
+
+def turn_gateway_markers():
+    """Read every turn-gateway mutant marker without executing the runner."""
+    return [marker for _name, marker in
+            _mutation_markers(HERE / 'turn-gateway' / 'negative.py')]
+
+
+def failure_guard_markers():
+    """Read every failure-guard mutant marker without executing the runner."""
+    return [marker for _name, marker in
+            _mutation_markers(HERE / 'failure-guard' / 'negative.py')]
+
+
+def fence_markers():
+    """Read the turn-gateway abort-fence marker registrations."""
+    text = (HERE / 'turn-gateway' / 'negative-fence.py').read_text()
+    markers = [f'#813 abort fence: {case}: results must match'
+               for case in re.findall(r"fence_marker\('([^']+)'\)", text)]
+    for literal in (
+        '#813 abort-after-busy: step "abort": gateway frames, active and ended must match',
+        '#813 transport observation: must wait for delivery before the receive completes',
+    ):
+        if literal in text:
+            markers.append(literal)
+    return markers
+
+
+def turn_submit_markers():
+    """Read every turn-submit mutant marker without executing the runner."""
+    tree = ast.parse((HERE / 'turn-submit' / 'negative.py').read_text())
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == 'mutants'
+                and isinstance(node.value, ast.List)):
+            continue
+        markers = []
+        for row in node.value.elts:
+            if not (isinstance(row, ast.Tuple) and len(row.elts) >= 5):
+                continue
+            marker = row.elts[4]
+            if isinstance(marker, ast.Constant) and marker.value is None:
+                continue
+            if not (isinstance(marker, ast.Constant) and isinstance(marker.value, str)):
+                raise AssertionError(f'non-literal turn-submit marker: {ast.unparse(marker)}')
+            markers.append(marker.value)
+        return markers
+    raise AssertionError('turn-submit mutants table not found')
+
+
+def panic_log(used_test, message):
+    """A libtest-shaped log whose named test failed with ``message``."""
+    return (
+        f"running 1 test\ntest {used_test} ... FAILED\n\n"
+        f"thread '{used_test}' (1) panicked at src/tests.rs:1:1:\n"
+        f"{message}\n"
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n"
+    )
 
 
 def child_thread_log(running):
@@ -126,38 +264,6 @@ def plugin_stranded_markers():
                for target in node.targets):
             return ast.literal_eval(node.value)
     raise AssertionError('STRANDED_MARKERS not found')
-
-
-def turn_gateway_markers():
-    """Read every turn-gateway mutant marker without executing the runner.
-
-    Constants are returned as strings; the generated abort-argument rows build
-    their marker with an f-string, so those come back unparsed and the caller
-    checks the ``{case}`` field.
-    """
-    tree = ast.parse((HERE / 'turn-gateway' / 'negative.py').read_text())
-    markers = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id == 'mutation':
-                marker = node.args[5] if len(node.args) >= 6 else None
-                for keyword in node.keywords:
-                    if keyword.arg == 'marker':
-                        marker = keyword.value
-                if marker is None:
-                    continue
-                if isinstance(marker, ast.Constant):
-                    markers.append(marker.value)
-                else:
-                    markers.append(ast.unparse(marker))
-            elif isinstance(node.func, ast.Name) and node.func.id == 'dict':
-                # notification-after-event is registered through a dict(...)
-                # call, not the mutation() helper.
-                values = {keyword.arg: keyword.value for keyword in node.keywords}
-                name = values.get('name')
-                if isinstance(name, ast.Constant) and name.value == 'notification-after-event':
-                    markers.append(ast.literal_eval(values['marker']))
-    return markers
 
 
 class PanicBlockCriterion(unittest.TestCase):
@@ -285,48 +391,130 @@ class PanicBlockCriterion(unittest.TestCase):
         for marker in markers:
             self.assertIn(marker, tests_source)
         self.assertFalse(named_test_killed(raw, used_test, markers))
-        # The old generic marker accepted this very panic; the new one does not.
-        self.assertTrue(named_test_killed(raw, used_test,
-                                          'assertion `left == right` failed'))
+        # #813 fix-r8: the generic diagnostic is rejected outright even when it
+        # is exactly the payload; it names no assertion.
+        self.assertIn('assertion `left == right` failed', raw)
+        self.assertFalse(named_test_killed(raw, used_test,
+                                           'assertion `left == right` failed'))
 
-    def test_turn_gateway_markers_are_scenario_assertions(self):
-        # #813 fix-r7: the replay runner used to default every mutant to the
-        # generic `assertion` marker, so any assert_eq! in the named test could
-        # kill a surviving mutant. Every mutant must now register the assertion
-        # message its selected oracle scenario prints.
-        markers = turn_gateway_markers()
-        self.assertGreaterEqual(len(markers), 30)
+    def test_turn_gateway_markers_are_complete_target_assertions(self):
+        # #813 fix-r8: a scenario prefix (`"<case>": `) accepted any step, any
+        # other assertion, and the deadlock watchdog. Every mutant must now
+        # register the complete message of the one assertion it must trip.
+        entries = _mutation_markers(HERE / 'turn-gateway' / 'negative.py')
+        self.assertEqual(len(entries), 33)
+        tests_source = (HERE.parents[1] / 'src/runtime/turn/gateway_tests.rs').read_text()
+        oracle = json.loads((HERE / 'turn-gateway' / 'oracle.json').read_text())
+        steps = {case['name']: case['steps'] for case in oracle['cases']}
+        markers = []
+        for name, marker in entries:
+            with self.subTest(mutant=name, marker=marker):
+                self.assertTrue(marker.startswith('#813 '), marker)
+                self.assertNotEqual(marker, '#813 assertion')
+                self.assertNotRegex(marker, r'^"[^"]+": ')
+                match = re.match(r'^#813 ([^:]+): step "([^"]+)": (.+)$', marker)
+                if match:
+                    case, step, meaning = match.groups()
+                    self.assertIn(case, steps)
+                    self.assertIn(step, steps[case])
+                    self.assertIn(meaning, tests_source)
+                else:
+                    self.assertIn(marker.rsplit(': ', 1)[-1], tests_source)
+                markers.append(marker)
+        self.assertIn(
+            '#813 permission-before-event-and-final: step "permission": '
+            'gateway frames, active and ended must match', markers)
+        # No marker is a strict prefix of another: a prefix is exactly how the
+        # old scenario marker matched a different step or assertion.
+        for short in markers:
+            for longer in markers:
+                if short != longer:
+                    self.assertFalse(longer.startswith(short), (short, longer))
+
+    def test_case_prefix_marker_is_not_killed(self):
+        replay = GATEWAY + 'real_ts_gateway_frames_registry_replay_and_concurrency'
+        # Old-style prefix payload: the marker is a literal substring, so only
+        # the scoped-marker check can reject it (#813 fix-r8).
+        target = ('"permission-before-event-and-final": step "observe": '
+                  'gateway frames, active and ended must match')
+        raw = panic_log(replay, target)
+        marker = '"permission-before-event-and-final": '
+        self.assertIn(marker, raw)
+        self.assertFalse(named_test_killed(raw, replay, marker))
+        self.assertFalse(named_test_killed(
+            raw, replay, marker,
+            '#813 permission-before-event-and-final: step "observe": '
+            'gateway frames, active and ended must match'))
+
+    def test_other_assertion_marker_is_not_killed(self):
+        replay = GATEWAY + 'real_ts_gateway_frames_registry_replay_and_concurrency'
+        target = ('#813 permission-before-event-and-final: step "end": '
+                  'gateway frames, active and ended must match')
+        other = ('#813 permission-before-event-and-final: step "observe": '
+                 'transport observation did not arrive')
+        raw = panic_log(replay, target)
+        self.assertFalse(named_test_killed(raw, replay, other, other))
+        # A prefix of the target message is not the complete target message.
+        self.assertFalse(named_test_killed(
+            raw, replay,
+            '#813 permission-before-event-and-final: step "end"', target))
+        self.assertTrue(named_test_killed(raw, replay, target, target))
+
+    def test_watchdog_panic_is_not_killed(self):
+        replay = GATEWAY + 'real_ts_gateway_frames_registry_replay_and_concurrency'
+        marker = 'scenario permission-before-event-and-final did not finish'
+        raw = panic_log(replay, '#813 gateway watchdog: ' + marker)
+        self.assertIn(marker, panic_evidence(raw, replay))
+        # The marker text is in the payload, but a watchdog is a hang, not an
+        # assertion failure (#813 fix-r8).
+        self.assertFalse(named_test_killed(raw, replay, marker))
+        self.assertFalse(named_test_killed(
+            raw, replay, '#813 gateway watchdog:', '#813 gateway watchdog:'))
+
+    def test_failure_guard_markers_are_complete_target_assertions(self):
+        entries = _mutation_markers(HERE / 'failure-guard' / 'negative.py')
+        self.assertEqual(len(entries), 22)
+        source = (HERE.parents[1] / 'src/runtime/turn/failure_guard_tests.rs').read_text()
+        submit = (HERE.parents[1] / 'src/runtime/turn/submit_tests.rs').read_text()
+        for name, marker in entries:
+            with self.subTest(mutant=name, marker=marker):
+                self.assertTrue(marker.startswith('#813 '), marker)
+                self.assertNotIn(marker, ('#813 failure guard', '#813 assertion'))
+                self.assertNotRegex(marker, r'^#813 failure guard: $')
+                self.assertIn(marker.rsplit(': ', 1)[-1], source + submit)
+        pure = 'runtime::turn::failure_guard::tests::real_ts_failure_guard_and_classify'
+        marker = ('#813 failure guard trip: accumulate-success-does-not-reset-and-trip-latches '
+                  'action 4: trip result bytes must match')
+        other = '#813 failure guard classify: resolved unit and limit must match'
+        self.assertFalse(named_test_killed(panic_log(pure, other), pure, marker, marker))
+        self.assertTrue(named_test_killed(panic_log(pure, marker), pure, marker, marker))
+
+    def test_fence_markers_are_scenario_assertions(self):
+        oracle = json.loads((HERE / 'turn-gateway' / 'oracle.json').read_text())
+        cases = {case['name'] for case in oracle['abortFenceCases']}
+        source = (HERE.parents[1] / 'src/runtime/turn/gateway_tests.rs').read_text()
+        markers = fence_markers()
+        self.assertGreaterEqual(len(markers), 11)
+        for marker in markers:
+            with self.subTest(marker=marker):
+                self.assertTrue(marker.startswith('#813 '), marker)
+                self.assertNotEqual(marker, '#813 assertion')
+                self.assertIn(marker.rsplit(': ', 1)[-1], source)
+                match = re.match(r'^#813 abort fence: ([^:]+): results must match$', marker)
+                if match:
+                    self.assertIn(match.group(1), cases)
+
+    def test_turn_submit_markers_are_scenario_bound(self):
+        oracle = json.loads((HERE / 'turn-submit' / 'oracle.json').read_text())
+        cases = {case['name'] for case in oracle['cases']}
+        markers = turn_submit_markers()
+        self.assertGreaterEqual(len(markers), 50)
         for marker in markers:
             with self.subTest(marker=marker):
                 self.assertNotEqual(marker, 'assertion')
                 self.assertFalse(marker.startswith('assertion `left == right`'))
-                if marker.startswith("f'"):
-                    # Generated abort-argument rows: f'"{case}": '.
-                    self.assertIn('{case}', marker)
-                    self.assertIn('": ', marker)
-                elif marker.startswith('"'):
-                    self.assertRegex(marker, r'^"[^"]+": ')
-        self.assertIn('"permission-before-event-and-final": step "permission"', markers)
-
-        # Behaviour: the permission scenario's prefix is evidence only for a
-        # permission-scenario assertion, not for another scenario's failure.
-        replay = GATEWAY + 'real_ts_gateway_frames_registry_replay_and_concurrency'
-
-        def replay_log(message):
-            return (
-                f"running 1 test\ntest {replay} ... FAILED\n\n"
-                f"thread '{replay}' (1) panicked at src/tests.rs:1:1:\n"
-                f"assertion `left == right` failed: {message}\n"
-                "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n"
-            )
-
-        permission_marker = '"permission-before-event-and-final": '
-        self.assertTrue(named_test_killed(
-            replay_log('"permission-before-event-and-final": step "permission"'),
-            replay, permission_marker))
-        self.assertFalse(named_test_killed(
-            replay_log('"error-before-success": step "end"'),
-            replay, permission_marker))
+                if marker.endswith(': step'):
+                    self.assertIn(marker[:-len(': step')], cases)
 
     def test_recorded_host_logs_are_killed(self):
         for name, used_test in RECORDED_CASES:

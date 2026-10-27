@@ -63,7 +63,7 @@ impl LiveSession for Arc<Session> {
         assert_eq!(
             std::thread::current().id(),
             self.thread,
-            "session abort must run on the gateway host thread"
+            "#813 session abort: must run on the gateway host thread"
         );
         self.aborts.fetch_add(1, Ordering::SeqCst);
         self.accepted.open();
@@ -78,7 +78,7 @@ impl LiveSession for Arc<Session> {
         assert_eq!(
             std::thread::current().id(),
             self.thread,
-            "session submit must run on the gateway host thread"
+            "#813 session submit: must run on the gateway host thread"
         );
         Ok(Box::new(Stream {
             session: self.clone(),
@@ -353,7 +353,7 @@ fn transport_observation_waits_for_delivery_and_receive_completion() {
     let mut context = std::task::Context::from_waker(std::task::Waker::noop());
     assert!(
         observation.as_mut().poll(&mut context).is_pending(),
-        "observation must wait for delivery before the receive completes"
+        "#813 transport observation: must wait for delivery before the receive completes"
     );
     text.send_text(r#"{"type":"event"}"#.into());
     assert!(
@@ -391,6 +391,7 @@ fn request(id: &str, input: &Value) -> String {
     json!({"type":"request", "id":id, "method":"submit_turn", "params":input}).to_string()
 }
 async fn replay_case(case: &Value) {
+    let case_name = case["name"].as_str().unwrap();
     let root = std::env::temp_dir().join(format!("pdrs-turn-gateway-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&root).unwrap();
     let path = root.join("registry.json");
@@ -490,8 +491,8 @@ async fn replay_case(case: &Value) {
         .await;
         assert!(
             ready.is_ok(),
-            "{}: step {step}: transport observation did not arrive",
-            case["name"]
+            "#813 {}: step {step}: transport observation did not arrive",
+            case_name
         );
         settle(&host, &registry).await;
         let gateway = host.gateway.clone();
@@ -526,8 +527,8 @@ async fn replay_case(case: &Value) {
             json!({"frames":frames, "active":active, "ended":ended.load(Ordering::SeqCst)});
         assert_eq!(
             actual, case["results"][index],
-            "{}: step {step}",
-            case["name"]
+            "#813 {}: step {step}: gateway frames, active and ended must match",
+            case_name
         );
     }
     consumer.await.unwrap();
@@ -560,8 +561,8 @@ async fn replay_case(case: &Value) {
             .unwrap())
             .collect::<Vec<_>>(),
         case["registryEvents"].as_array().unwrap().clone(),
-        "{}: registry seq",
-        case["name"]
+        "#813 {}: registry seq: persisted event sequence must match",
+        case_name
     );
     let gateway = host.gateway.clone();
     let snapshot = host
@@ -584,19 +585,19 @@ async fn replay_case(case: &Value) {
         )
         .unwrap(),
         case["replay"],
-        "{}: replay",
-        case["name"]
+        "#813 {}: replay: active-turn snapshot must match",
+        case_name
     );
-    if case["name"].as_str().unwrap().starts_with("close-")
-        && case["name"] != "close-after-end"
-        && case["name"] != "close-preserves-pending"
-        && case["name"] != "close-after-busy"
+    if case_name.starts_with("close-")
+        && case_name != "close-after-end"
+        && case_name != "close-preserves-pending"
+        && case_name != "close-after-busy"
     {
         assert_eq!(
             session.aborts.load(Ordering::SeqCst),
             1,
-            "{}: aborts after close",
-            case["name"]
+            "#813 {}: aborts after close: session must abort exactly once",
+            case_name
         );
     }
     drop(connection);
@@ -617,13 +618,16 @@ async fn real_ts_gateway_frames_registry_replay_and_concurrency() {
             continue;
         }
         selected += 1;
+        let case_name = case["name"].as_str().unwrap();
         tokio::time::timeout(Duration::from_secs(15), replay_case(case))
             .await
-            .unwrap_or_else(|_| panic!("{}: gateway case deadlock", case["name"]));
+            .unwrap_or_else(|_| {
+                panic!("#813 gateway watchdog: scenario {case_name} did not finish")
+            });
     }
     assert!(
         selected > 0,
-        "gateway case filter must match at least one scenario"
+        "#813 gateway case filter: must match at least one scenario"
     );
 }
 #[test]
@@ -839,7 +843,7 @@ async fn serial_timer_cancels_queued_callbacks_and_replacements() {
     assert_eq!(
         fired.load(Ordering::SeqCst),
         0,
-        "serial timer must respect deadline"
+        "#813 serial timer: must respect deadline"
     );
     clock.advance(1);
     // #813 fix-r2: the clock callback only enqueues. Running it inside
@@ -850,7 +854,7 @@ async fn serial_timer_cancels_queued_callbacks_and_replacements() {
     assert_eq!(
         fired.load(Ordering::SeqCst),
         0,
-        "clock advance only enqueues the serial expiry"
+        "#813 serial timer: clock advance only enqueues the serial expiry"
     );
     timer.cancel(&key); // Cancel a callback already detached from the clock.
     for _ in 0..8 {
@@ -859,7 +863,7 @@ async fn serial_timer_cancels_queued_callbacks_and_replacements() {
     assert_eq!(
         fired.load(Ordering::SeqCst),
         0,
-        "cancel queued serial timer"
+        "#813 serial timer: cancel queued serial timer"
     );
     timer.set(&key, Duration::from_millis(5), callback.clone());
     clock.advance(5);
@@ -870,7 +874,7 @@ async fn serial_timer_cancels_queued_callbacks_and_replacements() {
     assert_eq!(
         fired.load(Ordering::SeqCst),
         0,
-        "replacement invalidates detached serial timer"
+        "#813 serial timer: replacement invalidates detached serial timer"
     );
     clock.advance(5);
     for _ in 0..8 {
@@ -879,7 +883,7 @@ async fn serial_timer_cancels_queued_callbacks_and_replacements() {
     assert_eq!(
         fired.load(Ordering::SeqCst),
         1,
-        "replacement timer fires once"
+        "#813 serial timer: replacement timer fires once"
     );
     timer.set(&key, Duration::from_millis(5), callback.clone());
     clock.advance(5);
@@ -890,7 +894,7 @@ async fn serial_timer_cancels_queued_callbacks_and_replacements() {
     assert_eq!(
         fired.load(Ordering::SeqCst),
         1,
-        "dispose cancels queued serial timers"
+        "#813 serial timer: dispose cancels queued serial timers"
     );
     timer.set(&key, Duration::from_millis(5), callback);
     clock.advance(5);
@@ -901,7 +905,7 @@ async fn serial_timer_cancels_queued_callbacks_and_replacements() {
     assert_eq!(
         fired.load(Ordering::SeqCst),
         1,
-        "drop cancels queued serial timers"
+        "#813 serial timer: drop cancels queued serial timers"
     );
 }
 
@@ -985,7 +989,7 @@ async fn concurrent_external_emits_are_serialized_on_the_serial_host() {
                     .any(|(delivered, _)| delivered == &text);
                 assert!(
                     delivered_before_return,
-                    "A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink ({text})"
+                    "#813 emit: returned before its own event reached the sink\n#813 emit event: {text}"
                 );
                 accepted
             })
@@ -997,11 +1001,11 @@ async fn concurrent_external_emits_are_serialized_on_the_serial_host() {
         .collect::<Vec<_>>();
     assert!(
         accepted.iter().all(|accepted| *accepted),
-        "A7.2-COORDINATOR-DELIVERY-001-R1: every concurrent external emit must be accepted"
+        "#813 emit: every concurrent external emit must be accepted"
     );
     assert!(
         !overlap.load(Ordering::SeqCst),
-        "A7.2-COORDINATOR-DELIVERY-001-R1: sink calls must not overlap"
+        "#813 emit: sink calls must not overlap"
     );
     let deliveries = deliveries.lock().unwrap();
     let mut counts = std::collections::HashMap::new();
@@ -1013,17 +1017,17 @@ async fn concurrent_external_emits_are_serialized_on_the_serial_host() {
         assert_eq!(
             counts.get(text.as_str()).copied().unwrap_or(0),
             1,
-            "A7.2-COORDINATOR-DELIVERY-001-R1: event {text} must reach the sink exactly once"
+            "#813 emit: every event must reach the sink exactly once\n#813 emit event: {text}"
         );
     }
     assert_eq!(
         deliveries.len(),
         CALLERS,
-        "A7.2-COORDINATOR-DELIVERY-001-R1: every accepted event must reach the sink exactly once"
+        "#813 emit: every accepted event must reach the sink exactly once"
     );
     assert!(
         deliveries.iter().all(|(_, thread)| *thread == host_thread),
-        "A7.2-COORDINATOR-DELIVERY-001-R1: the sink must run on the serial host thread, not on callers"
+        "#813 emit: the sink must run on the serial host thread, not on callers"
     );
     drop(registration);
 }
@@ -1108,7 +1112,7 @@ async fn hosted_connection_notify_enters_the_serial_host() {
         .expect("notification frame");
     assert_eq!(
         *thread, host_thread,
-        "A7.2-COORDINATOR-DELIVERY-001-R1: HostedConnection::notify must run on the serial host thread, not on callers"
+        "#813 HostedConnection::notify: must run on the serial host thread, not on callers"
     );
 }
 
@@ -1133,6 +1137,7 @@ async fn replay_abort_fences(only: Option<&str>) {
             continue;
         }
         selected += 1;
+        let case_name = case["name"].as_str().unwrap();
         let host = empty_gateway_with_clock(30_000, Arc::new(Clock::default()));
         let gateway = host.gateway.clone();
         let steps = case["steps"].as_array().unwrap().clone();
@@ -1224,9 +1229,12 @@ async fn replay_abort_fences(only: Option<&str>) {
         assert_eq!(
             json!(results),
             case["results"],
-            "abort fence: {}",
-            case["name"]
+            "#813 abort fence: {}: results must match",
+            case_name
         );
     }
-    assert!(selected > 0, "abort fence selection matched no scenario");
+    assert!(
+        selected > 0,
+        "#813 abort fence filter: must match at least one scenario"
+    );
 }
