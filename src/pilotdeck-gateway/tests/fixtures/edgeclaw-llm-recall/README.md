@@ -60,9 +60,13 @@ PDRS_BASELINE="$PDRS_BASELINE" cargo test --manifest-path src/Cargo.toml \
 
 ## 负控
 
-`negative.py` 有 23 个变异体，使用 `(name, path, before, after, test)` 表供
+`negative.py` 有 24 个变异体，使用 `(name, path, before, after, test)` 表供
 `anchor_selfcheck.py` 静态检查；每个变异都要求编译成功，并命中绑定测试里的
-专属消息（`#765 ...`），否则记 INVALID。执行器逐项跑完再汇总
+专属消息（`#765 ...`），否则记 INVALID。`sort-exact-order` /
+`sort-total-cmp` / `sort-nan-order` 绑定 `js_fallback_sort_matches_ts` 的可达域
+断言（exact 方向、±0 相等、完整并列稳定）；`sort-nan-order` 的名字保留历史，
+变异本身已不再是 NaN 域（NaN 的定点样本由 `replay_matrix` 的真实 TS 金样
+覆盖）。执行器逐项跑完再汇总
 `KILLED / SURVIVED / INVALID`，任一非 KILLED 退出 1；stale anchor 退出 2。
 按名称单跑（如 `negative.py OUT_DIR source-priority`）只对选中的 `cases` 做
 stale-anchor 扫描，不会访问未建立快照的其他文件。
@@ -70,9 +74,8 @@ stale-anchor 扫描，不会访问未建立快照的其他文件。
 `wait_for_slot`，`CARGO_TARGET_DIR` 必须由调用方传入。`recall.rs` 与
 `transport.rs` 都在变异路径内。
 
-这两个文件在本次提交前不在 HEAD（`recall.rs` 新增、`transport.rs` 修改），
-`mutating_sources` 会按设计拒绝运行；本树只跑 `--check-anchors` 与逐变异
-编译检查。提交后由协调者在宿主执行全量 22 个变异体：
+`recall.rs` 与 `transport.rs` 已在 HEAD，`mutating_sources` 可直接在本树运行。
+全量 24 个变异体：
 
 ```sh
 CARGO_TARGET_DIR="$CARGO_TARGET_DIR" python3 \
