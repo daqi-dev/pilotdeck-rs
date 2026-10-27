@@ -1,6 +1,7 @@
 //! External skills port contract tests. The golden oracle is generated from
 //! the real TS `createSkillManagementPort` against a local module host
 //! (`tests/fixtures/skills-external/generate.mts`).
+use super::external::ManifestWaitGate;
 use super::*;
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use std::{
@@ -744,13 +745,14 @@ async fn facade_replays_the_ts_list_success_case() {
     let _ = std::fs::remove_dir_all(&scratch);
 }
 
-/// Local module host for the two real-transport body cases: a valid manifest
-/// GET, then a 2xx call response whose body either stalls forever or ends
-/// before its declared `Content-Length`.
+/// Local module host for the real-transport body cases: a valid manifest
+/// GET, then a 2xx call response whose body stalls forever, ends before its
+/// declared `Content-Length`, or sends an over-limit prefix before stalling.
 #[derive(Clone, Copy)]
 enum BodyHostMode {
     Stall,
     Truncate,
+    Oversize,
 }
 
 async fn spawn_body_host(mode: BodyHostMode) -> (String, tokio::task::JoinHandle<()>) {
@@ -781,16 +783,94 @@ async fn spawn_body_host(mode: BodyHostMode) -> (String, tokio::task::JoinHandle
                     );
                     let _ = stream.write_all(response.as_bytes()).await;
                 } else {
-                    // Head is complete, body is not: 100 declared bytes, a
-                    // 9-byte prefix, then either a stall or an early EOF.
-                    let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"kind\":";
-                    let _ = stream.write_all(response.as_bytes()).await;
                     match mode {
-                        BodyHostMode::Stall => tokio::time::sleep(Duration::from_secs(30)).await,
-                        BodyHostMode::Truncate => {
-                            let _ = stream.shutdown().await;
+                        BodyHostMode::Stall | BodyHostMode::Truncate => {
+                            // Head is complete, body is not: 100 declared
+                            // bytes, a 9-byte prefix, then either a stall or
+                            // an early EOF.
+                            let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"kind\":";
+                            let _ = stream.write_all(response.as_bytes()).await;
+                            match mode {
+                                BodyHostMode::Stall => {
+                                    tokio::time::sleep(Duration::from_secs(30)).await
+                                }
+                                BodyHostMode::Truncate => {
+                                    let _ = stream.shutdown().await;
+                                }
+                                BodyHostMode::Oversize => unreachable!(),
+                            }
+                        }
+                        BodyHostMode::Oversize => {
+                            // 300 bytes arrive in one frame, but 400 are
+                            // declared, so the body stays open. A 256-byte test
+                            // limit (above the 139-byte manifest) makes this
+                            // an over-limit prefix followed by a stall.
+                            let head = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 400\r\n\r\n";
+                            let _ = stream.write_all(head.as_bytes()).await;
+                            let _ = stream.write_all(&[b' '; 300]).await;
+                            tokio::time::sleep(Duration::from_secs(30)).await
                         }
                     }
+                }
+            });
+        }
+    });
+    (endpoint, server)
+}
+
+/// Two 80 ms redirect hops, then a 2xx head whose 150 ms-late body would be
+/// valid JSON. Each leg is well under a 250 ms `timeoutMs`; only a shared
+/// deadline can classify the exchange as `MODULE_TIMEOUT`.
+async fn spawn_slow_redirect_host() -> (String, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("#929 redirect host bind");
+    let endpoint = format!(
+        "http://{}",
+        listener.local_addr().expect("#929 redirect host addr")
+    );
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut buffer = [0u8; 4096];
+                let read = stream.read(&mut buffer).await.unwrap_or(0);
+                let head = String::from_utf8_lossy(&buffer[..read]);
+                let path = head.split_whitespace().nth(1).unwrap_or_default();
+                if path == "/module-manifest" {
+                    let body = r#"{"protocolVersion":"2.0","implementationId":"test.skills","contract":"pilotdeck.skills/v1","transport":"module-http-v2","methods":["list"]}"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                } else if path == "/v2/module/call" || path == "/hop1" {
+                    tokio::time::sleep(Duration::from_millis(80)).await;
+                    let next = if path == "/v2/module/call" {
+                        "/hop1"
+                    } else {
+                        "/hop2"
+                    };
+                    let response = format!(
+                        "HTTP/1.1 307 Temporary Redirect\r\nLocation: {next}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                } else {
+                    // The call's first and only messageId/requestId are
+                    // deterministic after the manifest GET.
+                    let body = r#"{"kind":"response","messageId":"module-http-1","inReplyTo":"module-http-1","requestId":"skills-management-list-1","ok":true,"payload":{"result":{"operation":"list"}}}"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    tokio::time::sleep(Duration::from_millis(150)).await;
+                    let _ = stream.write_all(body.as_bytes()).await;
                 }
             });
         }
@@ -879,6 +959,86 @@ async fn truncated_success_body_is_a_protocol_error() {
         error.outcome(),
         None,
         "#929 a 2xx body decode failure is not a transport outcome"
+    );
+    server.abort();
+}
+
+/// Node v22.22.0 probe (`_tmp/20261026-issue-929/fix-r2/ts-probe-overlimit.out`):
+/// an over-limit prefix that leaves the connection open still ends in
+/// `MODULE_TIMEOUT`; the string-length error only decides after EOF. The
+/// transport therefore must not stop reading at the first over-limit frame.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn over_limit_body_keeps_the_timeout_priority() {
+    let (endpoint, server) = spawn_body_host(BodyHostMode::Oversize).await;
+    let port = ExternalSkillsPort::new(
+        runtime_binding(&endpoint, 250.0),
+        Arc::new(HyperModuleTransport::with_body_limit(256)),
+    );
+    let started = std::time::Instant::now();
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(3),
+        port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#)),
+    )
+    .await;
+    assert!(
+        outcome.is_ok(),
+        "#929 over-limit body must stay bounded by the request deadline instead of waiting forever"
+    );
+    let error = outcome
+        .expect("#929 over-limit body outer deadline")
+        .expect_err("#929 over-limit body must reach the shared deadline and MODULE_TIMEOUT, not an early protocol error");
+    assert!(
+        error.code.equals_str("MODULE_TIMEOUT"),
+        "#929 over-limit body keeps the timeout priority, got {:?} message {:?} after {:?}",
+        error.code,
+        error.message,
+        started.elapsed()
+    );
+    assert!(
+        started.elapsed() >= Duration::from_millis(200),
+        "#929 over-limit body must be drained until the shared deadline, not stopped at the first over-limit frame"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "#929 over-limit body must still fail at the configured deadline"
+    );
+    server.abort();
+}
+
+/// Two 80 ms redirect hops plus a 150 ms body: every leg is under `timeoutMs`
+/// but the total is over it, so the single `setTimeout` deadline must fire.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn redirects_and_body_share_one_deadline() {
+    let (endpoint, server) = spawn_slow_redirect_host().await;
+    let port = ExternalSkillsPort::new(
+        runtime_binding(&endpoint, 250.0),
+        Arc::new(HyperModuleTransport::new()),
+    );
+    let started = std::time::Instant::now();
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(3),
+        port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#)),
+    )
+    .await;
+    assert!(
+        outcome.is_ok(),
+        "#929 redirects plus body must be bounded by the one request deadline"
+    );
+    let error = outcome
+        .expect("#929 redirects plus body outer deadline")
+        .expect_err("#929 redirects plus body must return MODULE_TIMEOUT, not restart the deadline for the body");
+    assert!(
+        error.code.equals_str("MODULE_TIMEOUT"),
+        "#929 redirects plus body keep MODULE_TIMEOUT, got {:?}",
+        error.code
+    );
+    assert!(
+        started.elapsed() >= Duration::from_millis(200),
+        "#929 the shared deadline must cover both redirect hops and the body"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "#929 redirects plus body must still fail at the configured deadline"
     );
     server.abort();
 }
@@ -1195,6 +1355,8 @@ struct CancelTransport {
     manifest_calls: std::sync::atomic::AtomicUsize,
     post_calls: std::sync::atomic::AtomicUsize,
     started: tokio::sync::Notify,
+    panic_release: tokio::sync::Notify,
+    panic_first: bool,
     seen: Mutex<Vec<ModuleHttpRequest>>,
 }
 impl ModuleHttpTransport for CancelTransport {
@@ -1207,6 +1369,12 @@ impl ModuleHttpTransport for CancelTransport {
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if call == 0 {
                     self.started.notify_one();
+                    if self.panic_first {
+                        // Panic only after the waiter has parked in the
+                        // pre-notification window.
+                        self.panic_release.notified().await;
+                        panic!("#929 test owner panics before settling its manifest flight");
+                    }
                     // The first owner never completes; aborting the call must
                     // release its flight.
                     std::future::pending::<()>().await;
@@ -1240,14 +1408,20 @@ impl ModuleHttpTransport for CancelTransport {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn cancelled_manifest_owner_releases_its_waiters() {
-    let transport = Arc::new(CancelTransport {
+fn cancel_transport(panic_first: bool) -> Arc<CancelTransport> {
+    Arc::new(CancelTransport {
         manifest_calls: std::sync::atomic::AtomicUsize::new(0),
         post_calls: std::sync::atomic::AtomicUsize::new(0),
         started: tokio::sync::Notify::new(),
+        panic_release: tokio::sync::Notify::new(),
+        panic_first,
         seen: Mutex::new(Vec::new()),
-    });
+    })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_manifest_owner_releases_its_waiters() {
+    let transport = cancel_transport(false);
     let port = Arc::new(ExternalSkillsPort::new(
         ExternalSkillBinding::from_value(&external_binding("test.skills", "", &["list"]))
             .expect("#929 cancel binding"),
@@ -1297,5 +1471,142 @@ async fn cancelled_manifest_owner_releases_its_waiters() {
             .load(std::sync::atomic::Ordering::SeqCst),
         1,
         "#929 the surviving waiter reaches its POST"
+    );
+}
+
+/// P0-1 deterministic interleaving: the waiter has cloned the pending flight
+/// and released the manifest lock, but has not created its `Notified` yet.
+/// The owner is aborted in exactly that window; the old `Drop` notified with
+/// no registered waiter and left no terminal state, so the waiter parked
+/// forever. The waiter must now observe `Abandoned`, re-enter the cache and
+/// become the replacement owner within the outer 2 s bound.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_owner_before_waiter_notification_is_recovered() {
+    let transport = cancel_transport(false);
+    let port = Arc::new(ExternalSkillsPort::new(
+        ExternalSkillBinding::from_value(&external_binding("test.skills", "", &["list"]))
+            .expect("#929 P0 cancel-window binding"),
+        transport.clone(),
+    ));
+    let gate = Arc::new(ManifestWaitGate::new());
+    port.install_manifest_wait_gate(gate.clone());
+    let first = {
+        let port = port.clone();
+        tokio::spawn(async move {
+            port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+                .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(2), transport.started.notified())
+        .await
+        .expect("#929 P0 first manifest GET must start");
+    let second = {
+        let port = port.clone();
+        tokio::spawn(async move {
+            port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+                .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(2), gate.reached.notified())
+        .await
+        .expect("#929 P0 waiter must stop after cloning the flight and before creating Notified");
+    first.abort();
+    let first_join = first.await;
+    assert!(
+        first_join.is_err(),
+        "#929 P0 the owner task must be cancelled before it settles the flight"
+    );
+    gate.release.notify_one();
+    let joined = tokio::time::timeout(Duration::from_secs(2), second)
+        .await
+        .expect("#929 P0 a waiter that cloned the flight before owner cancellation must return within 2s");
+    joined
+        .expect("#929 P0 waiter task must not panic")
+        .expect("#929 P0 waiter must load the manifest after the owner is cancelled");
+    assert_eq!(
+        transport
+            .manifest_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "#929 P0 the recovered waiter owns the replacement manifest GET"
+    );
+    assert_eq!(
+        transport
+            .post_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "#929 P0 the recovered waiter reaches its POST"
+    );
+    assert_eq!(
+        port.manifest_waiters(),
+        0,
+        "#929 P0 the waiter counter must return to zero after recovery"
+    );
+}
+
+/// P0-1 panic path: the owner unwinds while the waiter sits in the same
+/// pre-notification window. Unwinding runs `FlightOwner::drop`, so it must
+/// publish `Abandoned` too; the waiter must recover within the outer bound.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn panicked_owner_before_waiter_notification_is_recovered() {
+    let transport = cancel_transport(true);
+    let port = Arc::new(ExternalSkillsPort::new(
+        ExternalSkillBinding::from_value(&external_binding("test.skills", "", &["list"]))
+            .expect("#929 P0 panic-window binding"),
+        transport.clone(),
+    ));
+    let gate = Arc::new(ManifestWaitGate::new());
+    port.install_manifest_wait_gate(gate.clone());
+    let first = {
+        let port = port.clone();
+        tokio::spawn(async move {
+            port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+                .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(2), transport.started.notified())
+        .await
+        .expect("#929 P0 panicking first manifest GET must start");
+    let second = {
+        let port = port.clone();
+        tokio::spawn(async move {
+            port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+                .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(2), gate.reached.notified())
+        .await
+        .expect("#929 P0 waiter must stop after cloning the flight and before creating Notified");
+    transport.panic_release.notify_one();
+    let first_join = first.await;
+    assert!(
+        first_join.is_err(),
+        "#929 P0 the owner task must have panicked before settling the flight"
+    );
+    gate.release.notify_one();
+    let joined = tokio::time::timeout(Duration::from_secs(2), second)
+        .await
+        .expect("#929 P0 a waiter that cloned the flight before owner panic must return within 2s");
+    joined
+        .expect("#929 P0 waiter task must not panic")
+        .expect("#929 P0 waiter must load the manifest after the owner panicked");
+    assert_eq!(
+        transport
+            .manifest_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "#929 P0 the recovered waiter owns the replacement manifest GET after a panic"
+    );
+    assert_eq!(
+        transport
+            .post_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "#929 P0 the recovered waiter reaches its POST after a panic"
+    );
+    assert_eq!(
+        port.manifest_waiters(),
+        0,
+        "#929 P0 the waiter counter must return to zero after a panic"
     );
 }

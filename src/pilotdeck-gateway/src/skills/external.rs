@@ -161,13 +161,37 @@ impl ModuleEnvironment for ProcessEnvironment {
 #[derive(Clone)]
 pub struct HyperModuleTransport {
     inner: crate::runtime::model::http::HyperModelTransport,
+    /// Test-only shrunken body cap; production always uses
+    /// [`crate::fetch_redirect::MAX_STRING_LENGTH`]. Tests reach the
+    /// over-limit branch without allocating a 512 MiB body, the same seam as
+    /// `user_dialog::HyperHttpStoreTransport::with_max_body_bytes`.
+    #[cfg(test)]
+    body_limit: Option<usize>,
 }
 
 impl HyperModuleTransport {
     pub fn new() -> Self {
         Self {
             inner: crate::runtime::model::http::HyperModelTransport::new(),
+            #[cfg(test)]
+            body_limit: None,
         }
+    }
+
+    #[cfg(test)]
+    pub fn with_body_limit(limit: usize) -> Self {
+        Self {
+            inner: crate::runtime::model::http::HyperModelTransport::new(),
+            body_limit: Some(limit),
+        }
+    }
+
+    fn body_limit(&self) -> usize {
+        #[cfg(test)]
+        if let Some(limit) = self.body_limit {
+            return limit;
+        }
+        crate::fetch_redirect::MAX_STRING_LENGTH
     }
 }
 
@@ -222,14 +246,17 @@ impl ModuleHttpTransport for HyperModuleTransport {
             };
             let status = response.status().as_u16();
             // After the head TS does `response.json().catch(() => undefined)`:
-            // a truncated/oversized body is not a transport error, so hand the
-            // caller empty bytes and let the status/JSON decision below
-            // classify it. Only the shared deadline is a timer event.
+            // an oversized body is not rejected until the stream ends (Node
+            // v22.22.0 real probe: an over-limit prefix that keeps the
+            // connection open still ends in MODULE_TIMEOUT), so drain it to
+            // EOF/failure under the same deadline instead of stopping at the
+            // first over-limit frame. A completed over-limit body still maps
+            // to empty bytes, exactly like the caught `ERR_STRING_TOO_LONG`.
             let body = match tokio::time::timeout_at(
                 deadline,
-                crate::fetch_redirect::read_body(
+                crate::fetch_redirect::read_text_body(
                     response.into_body(),
-                    crate::fetch_redirect::MAX_STRING_LENGTH,
+                    self.body_limit(),
                     None,
                 ),
             )
@@ -244,19 +271,41 @@ impl ModuleHttpTransport for HyperModuleTransport {
     }
 }
 
-/// One in-flight `loadManifest()` promise. TS shares this promise with every
-/// caller that arrives while it is pending and broadcasts its rejection; only
-/// a call after it settles starts a new round.
+/// Terminal state of one manifest flight. TS always settles the shared
+/// promise (resolve or reject). Rust also has to settle it when the owner
+/// future itself is dropped before `loadManifest()` returns (caller timeout,
+/// abort, or panic unwind); otherwise a waiter that cloned the flight would
+/// await a notification nobody will ever send.
+#[derive(Clone)]
+enum ManifestOutcome {
+    Done(Result<()>),
+    Abandoned,
+}
+
 struct ManifestFlight {
     done: Notify,
-    result: std::sync::Mutex<Option<Result<()>>>,
+    outcome: std::sync::Mutex<Option<ManifestOutcome>>,
 }
 impl Default for ManifestFlight {
     fn default() -> Self {
         Self {
             done: Notify::new(),
-            result: std::sync::Mutex::new(None),
+            outcome: std::sync::Mutex::new(None),
         }
+    }
+}
+impl ManifestFlight {
+    fn outcome(&self) -> Option<ManifestOutcome> {
+        self.outcome
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+    fn settle(&self, outcome: ManifestOutcome) {
+        *self
+            .outcome
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(outcome);
     }
 }
 
@@ -272,9 +321,10 @@ enum ManifestStep {
 }
 
 /// Clears the flight if its owner future is dropped mid-flight (caller
-/// cancellation, timeout at a higher layer). Waiters are woken without a
-/// result and re-enter the cache, so the next caller becomes the new owner
-/// instead of parking forever on a dead flight.
+/// cancellation, timeout at a higher layer, or panic unwind) and publishes
+/// the `Abandoned` terminal state before waking waiters. Waiters that enabled
+/// their `Notified` before this drop therefore observe a terminal state and
+/// re-enter the cache instead of parking forever on a dead flight.
 struct FlightOwner<'a> {
     state: &'a std::sync::Mutex<ManifestState>,
     flight: &'a Arc<ManifestFlight>,
@@ -285,6 +335,9 @@ impl Drop for FlightOwner<'_> {
         if self.settled {
             return;
         }
+        // Publish before notify: `enable()` registers before the waiter's
+        // state check, so any later settle is guaranteed to wake it.
+        self.flight.settle(ManifestOutcome::Abandoned);
         let mut state = self
             .state
             .lock()
@@ -298,6 +351,43 @@ impl Drop for FlightOwner<'_> {
         }
         drop(state);
         self.flight.done.notify_waiters();
+    }
+}
+
+/// Test-only deterministic interleaving for the owner-drop window: the waiter
+/// stops after cloning the flight but before creating its `Notified`.
+#[cfg(test)]
+pub(super) struct ManifestWaitGate {
+    armed: std::sync::atomic::AtomicBool,
+    pub(super) reached: Notify,
+    pub(super) release: Notify,
+}
+#[cfg(test)]
+impl ManifestWaitGate {
+    pub(super) fn new() -> Self {
+        Self {
+            armed: std::sync::atomic::AtomicBool::new(true),
+            reached: Notify::new(),
+            release: Notify::new(),
+        }
+    }
+}
+
+/// Test-only RAII counter so a cancelled waiter never leaves
+/// `manifest_waiters` permanently high.
+#[cfg(test)]
+struct WaiterGuard<'a>(&'a AtomicUsize);
+#[cfg(test)]
+impl<'a> WaiterGuard<'a> {
+    fn new(counter: &'a AtomicUsize) -> Self {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Self(counter)
+    }
+}
+#[cfg(test)]
+impl Drop for WaiterGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -315,6 +405,10 @@ pub struct ExternalSkillsPort<T> {
     /// manifest flight. Never read by production code.
     #[cfg(test)]
     manifest_waiters: AtomicUsize,
+    /// Deterministic test hook: parks one waiter between cloning a flight and
+    /// creating its `Notified` so the owner-drop window is reproducible.
+    #[cfg(test)]
+    manifest_wait_gate: std::sync::OnceLock<Arc<ManifestWaitGate>>,
 }
 
 impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
@@ -339,6 +433,8 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
             }),
             #[cfg(test)]
             manifest_waiters: AtomicUsize::new(0),
+            #[cfg(test)]
+            manifest_wait_gate: std::sync::OnceLock::new(),
         }
     }
 
@@ -454,55 +550,34 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
         // that arrive while the GET is pending share one flight and therefore
         // one outcome (success *or* failure). A failure clears the flight, so
         // the next call starts a new round.
-        #[cfg(test)]
-        let mut counted = false;
         loop {
             match self.manifest_step() {
-                ManifestStep::Loaded => {
-                    #[cfg(test)]
-                    if counted {
-                        self.manifest_waiters.fetch_sub(1, Ordering::SeqCst);
-                    }
-                    return Ok(());
-                }
+                ManifestStep::Loaded => return Ok(()),
                 ManifestStep::Wait(flight) => {
                     #[cfg(test)]
-                    if !counted {
-                        self.manifest_waiters.fetch_add(1, Ordering::SeqCst);
-                        counted = true;
-                    }
+                    let _waiter = WaiterGuard::new(&self.manifest_waiters);
+                    #[cfg(test)]
+                    self.pass_manifest_wait_gate().await;
                     let notified = flight.done.notified();
                     tokio::pin!(notified);
-                    // Register before observing the result so a settle between
-                    // the check and the await cannot be lost.
+                    // Register before observing the outcome so a settle between
+                    // the check and the await cannot be lost. This also covers
+                    // an owner that was dropped before this waiter registered:
+                    // `FlightOwner::drop` publishes `Abandoned` first.
                     notified.as_mut().enable();
-                    if let Some(result) = flight
-                        .result
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .clone()
-                    {
-                        #[cfg(test)]
-                        if counted {
-                            self.manifest_waiters.fetch_sub(1, Ordering::SeqCst);
-                        }
-                        return result;
+                    match flight.outcome() {
+                        Some(ManifestOutcome::Done(result)) => return result,
+                        Some(ManifestOutcome::Abandoned) => continue,
+                        None => {}
                     }
                     notified.await;
-                    if let Some(result) = flight
-                        .result
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .clone()
-                    {
-                        #[cfg(test)]
-                        if counted {
-                            self.manifest_waiters.fetch_sub(1, Ordering::SeqCst);
-                        }
-                        return result;
+                    match flight.outcome() {
+                        Some(ManifestOutcome::Done(result)) => return result,
+                        // Abandoned, or still pending: re-enter the cache so
+                        // this caller becomes (or joins) the replacement
+                        // flight instead of parking on a dead one.
+                        _ => continue,
                     }
-                    // The owner was cancelled without a result; retry (or join
-                    // the flight a competing waiter just installed).
                 }
                 ManifestStep::Own(flight) => {
                     let mut owner = FlightOwner {
@@ -512,10 +587,7 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
                     };
                     let result = self.load_manifest().await;
                     owner.settled = true;
-                    *flight
-                        .result
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(result.clone());
+                    flight.settle(ManifestOutcome::Done(result.clone()));
                     {
                         let mut state = self.manifest_state();
                         if state
@@ -530,13 +602,25 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
                         }
                     }
                     flight.done.notify_waiters();
-                    #[cfg(test)]
-                    if counted {
-                        self.manifest_waiters.fetch_sub(1, Ordering::SeqCst);
-                    }
                     return result;
                 }
             }
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn install_manifest_wait_gate(&self, gate: Arc<ManifestWaitGate>) {
+        let _ = self.manifest_wait_gate.set(gate);
+    }
+
+    #[cfg(test)]
+    async fn pass_manifest_wait_gate(&self) {
+        let Some(gate) = self.manifest_wait_gate.get() else {
+            return;
+        };
+        if gate.armed.swap(false, Ordering::SeqCst) {
+            gate.reached.notify_one();
+            gate.release.notified().await;
         }
     }
 
