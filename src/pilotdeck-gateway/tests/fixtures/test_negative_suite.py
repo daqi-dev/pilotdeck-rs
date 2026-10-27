@@ -175,5 +175,37 @@ class SuiteTests(unittest.TestCase):
                                  'positive needs exact test and one pass')
 
 
+class AnchorPreflightTests(unittest.TestCase):
+    def test_scope_drift_and_duplicate_fail_without_skipping_successor(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent / 'turn-runner'))
+        from _negative_common import check_mutations
+        # Mirror the #741k failure: a clone changes one anchor and a new
+        # select duplicates another. Neither may be accepted or hide later rows.
+        original = ("    fn factory() { recorder.clone(); biased; biased; }\n"
+                    "    fn client() { recorder.clone(); }\n")
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'fixture.rs'
+            source.write_text(original)
+            rows = [
+                ('stale', source, 'factory', [('recorder;', 'bad;')]),
+                ('duplicate', source, 'factory', [('biased;', 'bad;')]),
+                ('noop', source, 'factory', [('recorder.clone();', 'recorder.clone();')]),
+                ('successor', source, 'factory', [('recorder.clone();', 'bad;')]),
+            ]
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                code = check_mutations(rows)
+            summary = json.loads(output.getvalue())
+            self.assertEqual(code, 1, '#741k drift must fail preflight')
+            self.assertEqual([row['status'] for row in summary['controls']],
+                             ['INVALID', 'INVALID', 'INVALID', 'CHECKED'],
+                             '#741k invalid anchors must not skip the successor')
+            self.assertEqual(source.read_text(), original, '#741k preflight is read-only')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(check_mutations(rows[-1:]), 0,
+                                 '#741k function-scoped unique anchor must pass')
+                self.assertEqual(check_mutations([]), 1, '#741k empty preflight must fail')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

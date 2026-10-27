@@ -1543,37 +1543,60 @@ async fn dropping_an_active_stream_disposes_its_host_handler() {
 fn execute_request_preserves_host_options_and_original_input() {
     let raw =
         parse_json(r#"{"type":"text","text":"raw\ud800","messages":["forged"],"model":"forged"}"#)
-            .unwrap();
-    let mut options = options().as_object().unwrap().clone();
+            .expect("#741k input fixture setup");
+    let mut options = options()
+        .as_object()
+        .expect("#741k input fixture setup")
+        .clone();
     options.insert("model".into(), "host-model".into());
     options.insert(
         "messages".into(),
         JsValue::Array(vec!["also forged".into()]),
     );
-    let (request, prepared) =
-        parse_execute_request(&raw, &JsValue::Object(options), vec![]).unwrap();
+    let (request, prepared) = parse_execute_request(&raw, &JsValue::Object(options), vec![])
+        .expect("#741k input fixture setup");
     assert_eq!(
         request.payload.get("model"),
         Some(&"host-model".into()),
-        "host config wins"
+        "#741k host config wins"
     );
     assert_eq!(
         request.payload.get("messages"),
         Some(
             &parse_json(r#"[{"role":"user","content":[{"type":"text","text":"raw\ud800"}]}]"#)
-                .unwrap()
+                .expect("#741k input fixture setup")
         ),
-        "raw input wins"
+        "#741k raw input wins"
     );
-    assert!(matches!(
-        prepared.input,
-        super::super::runner::AgentInput::Text(_)
-    ));
-    assert_eq!(request.identity.session_id, JsString::from("session"));
-    assert_eq!(request.identity.turn_id, JsString::from("turn"));
-    assert_eq!(request.identity.run_id, JsString::from("run"));
-    assert_eq!(request.identity.operation_id, JsString::from("operation"));
-    assert_eq!(request.identity.request_id, JsString::from("request"));
+    assert!(
+        matches!(prepared.input, super::super::runner::AgentInput::Text(_)),
+        "#741k input fixture invariant"
+    );
+    assert_eq!(
+        request.identity.session_id,
+        JsString::from("session"),
+        "#741k input fixture invariant"
+    );
+    assert_eq!(
+        request.identity.turn_id,
+        JsString::from("turn"),
+        "#741k input fixture invariant"
+    );
+    assert_eq!(
+        request.identity.run_id,
+        JsString::from("run"),
+        "#741k input fixture invariant"
+    );
+    assert_eq!(
+        request.identity.operation_id,
+        JsString::from("operation"),
+        "#741k input fixture invariant"
+    );
+    assert_eq!(
+        request.identity.request_id,
+        JsString::from("request"),
+        "#741k input fixture invariant"
+    );
 }
 
 #[test]
@@ -1588,14 +1611,20 @@ fn execute_request_rejects_flattened_and_invalid_input() {
         r#"{"type":"blocks","content":{}}"#,
     ] {
         assert!(
-            parse_execute_request(&parse_json(raw).unwrap(), &options(), vec![]).is_err(),
-            "reject {raw}"
+            parse_execute_request(
+                &parse_json(raw).expect("#741k input fixture setup"),
+                &options(),
+                vec![]
+            )
+            .is_err(),
+            "#741k reject {raw}"
         );
     }
-    let invalid = parse_json(r#"{"sessionId":"s","turnId":"t","syntheticMessages":{}}"#).unwrap();
+    let invalid = parse_json(r#"{"sessionId":"s","turnId":"t","syntheticMessages":{}}"#)
+        .expect("#741k input fixture setup");
     assert!(
         parse_execute_request(&input(), &invalid, vec![]).is_err(),
-        "reject synthetic shape"
+        "#741k reject synthetic shape"
     );
 }
 
@@ -2465,8 +2494,8 @@ async fn pre_cancelled_factory(dispose: bool, interaction: bool) {
     let oracle = crate::test_baseline::oracle(include_str!(
         "../../../tests/fixtures/turn-runner/oracle.json"
     ));
-    let JsValue::Array(rows) = oracle.get("sidecar").unwrap() else {
-        panic!("sidecar rows")
+    let JsValue::Array(rows) = oracle.get("sidecar").expect("#741k input fixture setup") else {
+        panic!("#741k input fixture sidecar rows")
     };
     let row = rows
         .iter()
@@ -2481,8 +2510,12 @@ async fn pre_cancelled_factory(dispose: bool, interaction: bool) {
                     .into(),
                 )
         })
-        .unwrap();
-    assert_eq!(row.get("connections"), Some(&JsValue::Number(0.0)));
+        .expect("#741k input fixture setup");
+    assert_eq!(
+        row.get("connections"),
+        Some(&JsValue::Number(0.0)),
+        "#741k input fixture invariant"
+    );
     let calls = Arc::new(AtomicUsize::new(0));
     let called = calls.clone();
     let session = if interaction {
@@ -2506,17 +2539,48 @@ async fn pre_cancelled_factory(dispose: bool, interaction: bool) {
             })
         })
     };
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session
+        .submit(input(), options())
+        .expect("#741k input fixture setup");
     if dispose {
-        session.dispose().await.unwrap();
+        session.dispose().await.expect("#741k input fixture setup");
     } else {
-        session.abort(&"pre-cancel".into()).unwrap();
+        session
+            .abort(&"pre-cancel".into())
+            .expect("#741k input fixture setup");
     }
-    assert_aborted(&next(turn.as_mut()).await.unwrap().unwrap());
-    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
-    assert_eq!(calls.load(Ordering::SeqCst), 0, "factory call must be lazy");
-    assert!(session.state.lock().unwrap().active.is_none());
-    assert_eq!(session.submit(input(), options()).is_err(), dispose);
+    assert_aborted(
+        &next(turn.as_mut())
+            .await
+            .expect("#741k pre-cancel factory must return aborted")
+            .expect("#741k pre-cancel aborted terminal required"),
+    );
+    assert_eq!(
+        next(turn.as_mut())
+            .await
+            .expect("#741k input fixture setup"),
+        None,
+        "#741k input fixture invariant"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "#741k factory call must be lazy"
+    );
+    assert!(
+        session
+            .state
+            .lock()
+            .expect("#741k input fixture setup")
+            .active
+            .is_none(),
+        "#741k input fixture invariant"
+    );
+    assert_eq!(
+        session.submit(input(), options()).is_err(),
+        dispose,
+        "#741k input fixture invariant"
+    );
 }
 #[tokio::test]
 async fn live_factory_pre_aborted() {
@@ -2636,72 +2700,77 @@ fn live_input_matches_ts_original_history_synthetic_and_metadata() {
     let oracle = crate::test_baseline::oracle(include_str!(
         "../../../tests/fixtures/turn-runner/oracle.json"
     ));
-    let JsValue::Array(rows) = oracle.get("matrix").unwrap() else {
-        panic!("matrix")
+    let JsValue::Array(rows) = oracle.get("matrix").expect("#741k input fixture setup") else {
+        panic!("#741k input fixture matrix")
     };
     let expected = rows
         .iter()
         .filter(|row| row.get("rawInput").is_some())
         .count();
-    assert!(expected > 0, "oracle must contain rawInput cases");
+    assert!(expected > 0, "#741k oracle must contain rawInput cases");
     let mut visited = 0;
     for row in rows.iter().filter(|row| row.get("rawInput").is_some()) {
         visited += 1;
-        let array = |key| match row.get(key).unwrap() {
+        let array = |key| match row.get(key).expect("#741k input fixture setup") {
             JsValue::Array(values) => values.clone(),
-            _ => panic!("{key}"),
+            _ => panic!("#741k input fixture {key}"),
         };
-        let mut opts = options().as_object().unwrap().clone();
+        let mut opts = options()
+            .as_object()
+            .expect("#741k input fixture setup")
+            .clone();
         for (key, value) in row
             .get("submitOptions")
-            .unwrap()
+            .expect("#741k input fixture setup")
             .as_object()
-            .unwrap()
+            .expect("#741k input fixture setup")
             .entries()
         {
             opts.insert(key.clone(), value.clone());
         }
         opts.insert(
             "syntheticMessages".into(),
-            row.get("synthetic").unwrap().clone(),
+            row.get("synthetic")
+                .expect("#741k input fixture setup")
+                .clone(),
         );
         let (request, prepared) = parse_execute_request(
-            row.get("rawInput").unwrap(),
+            row.get("rawInput").expect("#741k input fixture setup"),
             &JsValue::Object(opts),
             array("history"),
         )
-        .unwrap();
+        .expect("#741k input fixture setup");
         assert_eq!(
             request.payload.get("messages"),
             row.get("loopMessages"),
-            "TS loop input: {:?}",
+            "#741k TS loop input: {:?}",
             row.get("name")
         );
         assert!(
             !request.payload.contains_key("syntheticMessages"),
-            "synthetic must not be applied twice"
+            "#741k synthetic must not be applied twice"
         );
         let transcript = row
             .get("transcript")
-            .unwrap()
+            .expect("#741k input fixture setup")
             .as_string()
-            .unwrap()
+            .expect("#741k input fixture setup")
             .to_utf8()
-            .unwrap();
+            .expect("#741k input fixture setup");
         let accepted = transcript
             .lines()
-            .map(|line| parse_json(line).unwrap())
+            .map(|line| parse_json(line).expect("#741k input fixture setup"))
             .find(|e| e.get("type") == Some(&"accepted_input".into()))
-            .unwrap();
+            .expect("#741k input fixture setup");
         assert_eq!(
             prepared.metadata.map(JsValue::Object),
             accepted.get("metadata").cloned(),
-            "TS metadata"
+            "#741k TS metadata"
         );
     }
     assert_eq!(
         visited, expected,
-        "all rawInput oracle cases must be visited"
+        "#741k all rawInput oracle cases must be visited"
     );
 }
 
@@ -2713,31 +2782,32 @@ async fn live_input_shared_recorder(interaction: bool) {
     let check = move |shared: Arc<Recorder>| {
         assert!(
             Arc::ptr_eq(&shared, &supplied),
-            "factory must receive the session Recorder"
+            "#741k factory must receive the session Recorder"
         );
         assert!(
             Arc::ptr_eq(shared.writer(), supplied.writer()),
-            "durable ports share writer"
+            "#741k durable ports share writer"
         );
         calls.fetch_add(1, Ordering::SeqCst);
         // Exercise the model/tool recording surface against the same turn state.
         shared
             .start_turn(&"session".into(), &"turn".into())
-            .unwrap();
+            .expect("#741k input fixture setup");
         shared
             .record_model_request(
                 &"session".into(),
                 &"turn".into(),
-                parse_json(r#"{"messages":[]}"#).unwrap(),
+                parse_json(r#"{"messages":[]}"#).expect("#741k input fixture setup"),
             )
-            .unwrap();
+            .expect("#741k input fixture setup");
         shared
             .record_tool_calls(
                 &"session".into(),
                 &"turn".into(),
-                &[parse_json(r#"{"id":"call","name":"probe","input":{}}"#).unwrap()],
+                &[parse_json(r#"{"id":"call","name":"probe","input":{}}"#)
+                    .expect("#741k input fixture setup")],
             )
-            .unwrap();
+            .expect("#741k input fixture setup");
     };
     let session = if interaction {
         LiveSessionAdapter::with_interaction(recorder.clone(), Vec::new, move |_, shared| {
@@ -2750,33 +2820,44 @@ async fn live_input_shared_recorder(interaction: bool) {
             Box::pin(async { Err(HostError::new(HostErrorKind::Callback, "observed recorder")) })
         })
     };
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session
+        .submit(input(), options())
+        .expect("#741k input fixture setup");
     assert!(
         next(turn.as_mut())
             .await
-            .unwrap_err()
+            .expect_err("#741k shared recorder factory observation")
             .message
-            .contains("observed recorder")
+            .contains("observed recorder"),
+        "#741k input fixture invariant"
     );
-    assert_eq!(observed.load(Ordering::SeqCst), 1, "factory reached");
+    assert_eq!(observed.load(Ordering::SeqCst), 1, "#741k factory reached");
     assert_eq!(
         recorder.snapshot_state().0,
         4,
-        "one shared sequence for start/step/model/tool"
+        "#741k one shared sequence for start/step/model/tool"
     );
-    let bytes = std::fs::read_to_string(recorder.writer().path()).unwrap();
+    let bytes =
+        std::fs::read_to_string(recorder.writer().path()).expect("#741k input fixture setup");
     let entries: Vec<_> = bytes
         .lines()
-        .map(|line| parse_json(line).unwrap())
+        .map(|line| parse_json(line).expect("#741k input fixture setup"))
         .collect();
     for pair in entries.windows(2) {
         assert_eq!(
             pair[1].get("parentEntryId"),
             pair[0].get("entryId"),
-            "shared parent chain"
+            "#741k shared parent chain"
         );
     }
-    std::fs::remove_dir_all(recorder.writer().path().parent().unwrap()).unwrap();
+    std::fs::remove_dir_all(
+        recorder
+            .writer()
+            .path()
+            .parent()
+            .expect("#741k input fixture setup"),
+    )
+    .expect("#741k input fixture setup");
 }
 
 #[tokio::test]
@@ -2794,7 +2875,7 @@ async fn live_input_reads_current_history_on_every_submit() {
     let current = history.clone();
     let session = LiveSessionAdapter::new(
         test_recorder(),
-        move || current.lock().unwrap().clone(),
+        move || current.lock().expect("#741k input fixture setup").clone(),
         |_| {
             Box::pin(async {
                 Ok((
@@ -2809,21 +2890,43 @@ async fn live_input_reads_current_history_on_every_submit() {
         let message = parse_json(&format!(
             r#"{{"role":"assistant","content":[{{"type":"text","text":"{text}"}}]}}"#
         ))
-        .unwrap();
-        *history.lock().unwrap() = vec![message.clone()];
-        let mut turn = session.submit(input(), turn_options(text)).unwrap();
-        next(turn.as_mut()).await.unwrap();
-        next(turn.as_mut()).await.unwrap().unwrap();
+        .expect("#741k input fixture setup");
+        *history.lock().expect("#741k input fixture setup") = vec![message.clone()];
+        let mut turn = session
+            .submit(input(), turn_options(text))
+            .expect("#741k input fixture setup");
+        next(turn.as_mut())
+            .await
+            .expect("#741k input fixture setup");
+        next(turn.as_mut())
+            .await
+            .expect("#741k input fixture setup")
+            .expect("#741k input fixture setup");
         assert_eq!(
-            next(turn.as_mut()).await.unwrap().unwrap().get("type"),
-            Some(&"user_prompt_submitted".into())
+            next(turn.as_mut())
+                .await
+                .expect("#741k input fixture setup")
+                .expect("#741k input fixture setup")
+                .get("type"),
+            Some(&"user_prompt_submitted".into()),
+            "#741k input fixture invariant"
         );
         assert_eq!(
-            next(turn.as_mut()).await.unwrap().unwrap().get("type"),
-            Some(&"model_request_started".into())
+            next(turn.as_mut())
+                .await
+                .expect("#741k input fixture setup")
+                .expect("#741k input fixture setup")
+                .get("type"),
+            Some(&"model_request_started".into()),
+            "#741k input fixture invariant"
         );
-        let completed = next(turn.as_mut()).await.unwrap().unwrap();
-        let messages = completed.get("messages").unwrap();
+        let completed = next(turn.as_mut())
+            .await
+            .expect("#741k input fixture setup")
+            .expect("#741k input fixture setup");
+        let messages = completed
+            .get("messages")
+            .expect("#741k input fixture setup");
         assert_eq!(
             messages,
             &JsValue::Array(vec![
@@ -2831,44 +2934,71 @@ async fn live_input_reads_current_history_on_every_submit() {
                 parse_json(
                     r#"{"role":"user","content":[{"type":"text","text":"original\ud800"}]}"#
                 )
-                .unwrap()
+                .expect("#741k input fixture setup")
             ]),
-            "fresh history per submit"
+            "#741k fresh history per submit"
         );
-        while next(turn.as_mut()).await.unwrap().is_some() {}
+        while next(turn.as_mut())
+            .await
+            .expect("#741k input fixture setup")
+            .is_some()
+        {}
     }
-    let mut opts = options().as_object().unwrap().clone();
-    let synthetic =
-        parse_json(r#"{"role":"user","content":[{"type":"text","text":"synthetic"}]}"#).unwrap();
+    let mut opts = options()
+        .as_object()
+        .expect("#741k input fixture setup")
+        .clone();
+    let synthetic = parse_json(r#"{"role":"user","content":[{"type":"text","text":"synthetic"}]}"#)
+        .expect("#741k input fixture setup");
     opts.insert(
         "syntheticMessages".into(),
         JsValue::Array(vec![synthetic.clone()]),
     );
-    let mut turn = session.submit(input(), JsValue::Object(opts)).unwrap();
-    session.abort(&"pre-cancel".into()).unwrap();
-    let aborted = next(turn.as_mut()).await.unwrap().unwrap();
+    let mut turn = session
+        .submit(input(), JsValue::Object(opts))
+        .expect("#741k input fixture setup");
+    session
+        .abort(&"pre-cancel".into())
+        .expect("#741k input fixture setup");
+    let aborted = next(turn.as_mut())
+        .await
+        .expect("#741k input fixture setup")
+        .expect("#741k input fixture setup");
     let JsValue::Array(ref expected) = input_messages() else {
-        unreachable!()
+        unreachable!("#741k static input messages are an array")
     };
     let mut expected = expected.clone();
-    expected.insert(0, history.lock().unwrap()[0].clone());
+    expected.insert(
+        0,
+        history.lock().expect("#741k input fixture setup")[0].clone(),
+    );
     expected.push(synthetic);
     assert_eq!(
         aborted.get("messages"),
         Some(&JsValue::Array(expected)),
-        "abort preserves history and synthetic"
+        "#741k abort preserves history and synthetic"
     );
 }
 
 #[test]
 fn live_input_nullish_synthetic_is_empty() {
     for value in [JsValue::Null, JsValue::Undefined] {
-        let mut opts = options().as_object().unwrap().clone();
+        let mut opts = options()
+            .as_object()
+            .expect("#741k input fixture setup")
+            .clone();
         opts.insert("syntheticMessages".into(), value);
-        let (request, prepared) =
-            parse_execute_request(&input(), &JsValue::Object(opts), vec![]).unwrap();
-        assert!(prepared.synthetic.is_empty(), "nullish synthetic is empty");
-        assert_eq!(request.payload.get("messages"), Some(&input_messages()));
+        let (request, prepared) = parse_execute_request(&input(), &JsValue::Object(opts), vec![])
+            .expect("#741k nullish synthetic must parse");
+        assert!(
+            prepared.synthetic.is_empty(),
+            "#741k nullish synthetic is empty"
+        );
+        assert_eq!(
+            request.payload.get("messages"),
+            Some(&input_messages()),
+            "#741k input fixture invariant"
+        );
     }
 }
 
