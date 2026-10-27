@@ -18,26 +18,41 @@ jobs:
       - name: metadata observer generation 正负控（自有文件）
         run: node src/pilotdeck-gateway/tests/test_metadata_observer.mjs
 
-  # job 名 = 分支保护里的必需状态检查名，改这里要同步改保护规则
+  # 保留必需检查名；三个并行 job 任一非 success（含取消/跳过）都拒绝合并。
   check:
-    needs: metadata-observer
+    needs: [metadata-observer, rust, a51-coverage]
     if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require metadata observer success
+        if: ${{ always() && needs.metadata-observer.result != 'success' }}
+        working-directory: .
+        run: exit 1
+      - name: Require Rust success
+        if: ${{ always() && needs.rust.result != 'success' }}
+        run: exit 1
+      - name: Require A5.1 coverage success
+        if: ${{ always() && needs.a51-coverage.result != 'success' }}
+        run: exit 1
+
+  rust:
     runs-on: ubuntu-latest
     defaults:
       run:
         # workspace 在 src/ 不在仓库根（demo/04 §4.6）
         working-directory: src
     steps:
-      - name: Require metadata observer success
-        if: ${{ always() && needs.metadata-observer.result != 'success' }}
-        working-directory: .
-        run: exit 1
       - uses: actions/checkout@v4
         with:
           # --base needs merge-base history for PRs and merge queue commits.
           fetch-depth: 0
       # rustup 读仓库根的 rust-toolchain.toml，装锁定的版本与 fmt/clippy
       - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: src -> target
+          # rg 沿用下方独立缓存，避免重复缓存 ~/.cargo/bin。
+          cache-bin: false
       - name: 格式
         run: cargo fmt --all --check
       - name: lint
@@ -103,9 +118,21 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-fund
           node validate_fixtures.mjs
-      # A5.1 · 覆盖账本/清单校验器：默认命令即跑内存负例（含 bool/float 类型负控）。
-      # CI 没有 resources/ 基线；按冻结 commit 浅克隆，并复用上一步
-      # scripts/gateway-parity 内同版本（5.9.3）的 TypeScript 解析器。
+
+  # A5.1 只依赖 Python、Node 与只读基线，不依赖 Rust 或其他 job 的产物。
+  a51-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      # 校验器只读当前检出文件，不读取 Git 历史，默认浅检出即可。
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: 安装 A5.1 钉死依赖
+        working-directory: scripts/gateway-parity
+        run: npm ci --ignore-scripts --no-fund
+      # CI 没有 resources/ 基线；按冻结 commit 浅克隆，并使用上一步
+      # 安装的 TypeScript 5.9.3。三条原命令保留默认内存/磁盘负例。
       - name: 浅克隆 A5.1 只读基线
         working-directory: .
         env:
