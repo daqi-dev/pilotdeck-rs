@@ -13,6 +13,9 @@ use std::sync::Arc;
 #[path = "runner_recording.rs"]
 mod recording;
 pub use recording::{Recording, RecordingAction};
+#[path = "runner_prompt.rs"]
+mod prompt;
+pub(crate) use prompt::PromptHooks;
 
 #[derive(Clone)]
 pub enum AgentInput {
@@ -38,7 +41,7 @@ enum Phase {
     Completed,
 }
 
-/// Owns recorder transitions, not hooks, stream integrity, or the active slot.
+/// Owns recorder transitions and prompt hooks, not stream integrity or the active slot.
 /// The caller must retain the returned runner until completion or consumer drop.
 pub struct TurnRunner {
     recorder: Arc<Recorder>,
@@ -51,6 +54,9 @@ pub struct TurnRunner {
     messages: Vec<JsValue>,
     failure_status: bool,
     callback_error: Option<String>,
+    prompt_hooks: Option<PromptHooks>,
+    prompt_submitted: bool,
+    prompt_blocked: bool,
     interaction_events: Option<crate::runtime::project::interaction_events::TurnEvents>,
 }
 pub type Transition = RecorderResult<(TurnRunner, Vec<JsValue>)>;
@@ -73,6 +79,9 @@ impl TurnRunner {
             messages: vec![],
             failure_status: false,
             callback_error: None,
+            prompt_hooks: None,
+            prompt_submitted: false,
+            prompt_blocked: false,
             interaction_events: None,
         }
     }

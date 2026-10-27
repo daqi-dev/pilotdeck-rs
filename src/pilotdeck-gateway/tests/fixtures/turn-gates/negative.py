@@ -32,7 +32,7 @@ mutants = [
     ('prepared-close-timeout', source, 'TurnScope::new(inner.clone(), close_timeout)', 'TurnScope::new(inner.clone(), { let _ = close_timeout; std::time::Duration::from_secs(5) })', 'live_prepared_cleanup_uses_close_timeout'),
     ('consumer-exists', consumer, '"test": "runner_success"', '"test": "runner_nonexistent_consumer"', 'oracle_consumers_exist'),
     ('skip-start', runner, 'self.io(|r, s, t| r.start_turn(s, t)).await?;', 'let _ = self.io(|r, s, t| r.start_turn(s, t)).await;', 'gates_start_failure'),
-    ('eager-connect', source, 'if execute_wait.await.is_err() {', 'let client = client.await;\n                let client: HostFuture<HostClient> = Box::pin(async move { client });\n                if execute_wait.await.is_err() {', 'gates_accept_failure'),
+    ('eager-connect', source, 'let Ok(messages) = execute_wait.await else {', 'let client = client.await;\n                let client: HostFuture<HostClient> = Box::pin(async move { client });\n                let Ok(messages) = execute_wait.await else {', 'gates_accept_failure'),
     ('skip-accept', runner, 'r.writer()\n                    .record_accepted_input(s, t, written, input.metadata)?', '{ let _ = (r, s, t, written, input.metadata); }', 'gates_accept_failure'),
     ('skip-complete', runner, 'self.io(move |r, s, t| r.complete_turn(s, t, written)).await', 'self.io(move |_, _, _| { drop(written); Ok(()) }).await', 'gates_cancel_ok'),
     ('skip-failure-complete', runner, 'self.io(move |r, s, t| r.complete_turn(s, t, written))\n            .await?;', 'self.io(move |_, _, _| { drop(written); Ok(()) })\n            .await?;', 'gates_error_ok'),

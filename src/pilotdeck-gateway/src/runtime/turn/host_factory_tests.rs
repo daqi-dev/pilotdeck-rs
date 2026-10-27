@@ -834,6 +834,10 @@ async fn reload_mid_turn_holds_old_lease_until_turn_drops() {
         Some(&"turn_started".into())
     );
     bounded(turn.next()).await.unwrap().unwrap(); // host accepted
+    assert_eq!(
+        turn.next().await.unwrap().unwrap().get("type"),
+        Some(&"user_prompt_submitted".into())
+    );
     drive_to_peer(turn.as_mut(), &pid_file, true).await;
     assert_eq!(old.lease_count(), 1);
     bounded(registry.reload()).await.unwrap();
@@ -870,6 +874,10 @@ async fn retire_does_not_dispose_while_lease_outstanding() {
         Some(&"turn_started".into())
     );
     bounded(turn.next()).await.unwrap().unwrap(); // host accepted
+    assert_eq!(
+        turn.next().await.unwrap().unwrap().get("type"),
+        Some(&"user_prompt_submitted".into())
+    );
     drive_to_peer(turn.as_mut(), &pid_file, true).await;
     assert_eq!(runtime.lease_count(), 1);
     bounded(registry.reload()).await.unwrap();
@@ -1011,6 +1019,10 @@ async fn dispose_cancels_pending_host_creation_and_releases_lease() {
         .unwrap();
     bounded(turn.next()).await.unwrap().unwrap(); // host started
     bounded(turn.next()).await.unwrap().unwrap(); // host accepted
+    assert_eq!(
+        turn.next().await.unwrap().unwrap().get("type"),
+        Some(&"user_prompt_submitted".into())
+    );
     drive_to_peer(turn.as_mut(), &pid_file, false).await;
     let mut pending = Box::pin(turn.next());
     session.dispose().await.unwrap();
@@ -1093,6 +1105,10 @@ impl PausedHostCleanup {
             Some(&"turn_started".into())
         );
         bounded(turn.next()).await.unwrap().unwrap(); // host accepted
+        assert_eq!(
+            turn.next().await.unwrap().unwrap().get("type"),
+            Some(&"user_prompt_submitted".into())
+        );
         drive_to_peer(turn.as_mut(), &pid_file, true).await;
         session.dispose().await.unwrap();
         drop(turn);

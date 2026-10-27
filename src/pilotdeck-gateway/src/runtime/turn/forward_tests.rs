@@ -328,12 +328,7 @@ async fn matrix(name: &str) {
     {
         actual.push(event);
     }
-    let mut expected = values(row.get("events").expect("#741h forward fixture invariant"));
-    assert_eq!(
-        expected.remove(2).get("type"),
-        Some(&"user_prompt_submitted".into()),
-        "#741h forward assertion"
-    );
+    let expected = values(row.get("events").expect("#741h forward fixture invariant"));
     let mut actual = JsValue::Array(actual);
     let mut expected = JsValue::Array(expected);
     clean(&mut actual);
@@ -528,10 +523,16 @@ async fn status_pending(drop_owner: bool) {
         .gate
         .lock()
         .expect("#741h forward fixture invariant") = Some((entered, wait));
-    for _ in 0..2 {
-        next(&mut f.turn)
-            .await
-            .expect("#741h forward fixture invariant");
+    for expected in ["turn_started", "input_accepted", "user_prompt_submitted"] {
+        assert_eq!(
+            next(&mut f.turn)
+                .await
+                .expect("#741h forward fixture invariant")
+                .expect("#741h forward fixture invariant")
+                .get("type"),
+            Some(&expected.into()),
+            "#741h forward assertion"
+        );
     }
     let mut pending = f.turn.next();
     timeout(Duration::from_secs(5), async {
@@ -907,6 +908,7 @@ async fn forward_real_status_write_error() {
         [
             "turn_started",
             "input_accepted",
+            "user_prompt_submitted",
             "model_event",
             "agent_status",
             "turn_failed",
@@ -916,7 +918,7 @@ async fn forward_real_status_write_error() {
         "#741h real status failure cuts off status and successors"
     );
     assert_eq!(
-        events[4]
+        events[5]
             .get("error")
             .expect("#741h forward fixture invariant")
             .get("message"),

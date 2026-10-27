@@ -209,7 +209,11 @@ async fn persisted_failure(turn: &mut dyn LiveTurn) -> String {
             .unwrap()
             .as_str()
         {
-            "turn_started" | "input_accepted" | "agent_status" | "model_request_started" => {}
+            "turn_started"
+            | "input_accepted"
+            | "user_prompt_submitted"
+            | "agent_status"
+            | "model_request_started" => {}
             "turn_failed" => {
                 message = event
                     .get("error")
@@ -705,6 +709,7 @@ async fn host_normal_lifecycle_streams_events_and_projects_authoritative_final_o
     let expected = [
         "turn_started",
         "input_accepted",
+        "user_prompt_submitted",
         "model_event",
         "agent_status",
         "tool_progress",
@@ -744,6 +749,7 @@ async fn host_early_failure_completes_after_host_input_accepted() {
     for event_type in [
         "turn_started",
         "input_accepted",
+        "user_prompt_submitted",
         "agent_status",
         "turn_failed",
     ] {
@@ -777,6 +783,7 @@ async fn host_second_turn_failed_from_finalization_failure_is_accepted() {
     for event_type in [
         "turn_started",
         "input_accepted",
+        "user_prompt_submitted",
         "agent_status",
         "turn_failed",
         "turn_failed",
@@ -806,7 +813,12 @@ async fn host_max_turns_terminal_completes_without_turn_failed() {
     let handler = Arc::new(Handler::default());
     let session = session("live-max-turns", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
-    for event_type in ["turn_started", "input_accepted", "agent_status"] {
+    for event_type in [
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "agent_status",
+    ] {
         let event = next(turn.as_mut()).await.unwrap().unwrap();
         assert_eq!(event.get("type"), Some(&event_type.into()), "{event_type}");
     }
@@ -1000,10 +1012,15 @@ async fn slow_consumer_does_not_spend_the_cancel_exit_grace() {
     assert_eq!(delivered[0].get("type"), Some(&"turn_started".into()));
     delivered.push(next(turn.as_mut()).await.unwrap().unwrap());
     assert_eq!(delivered[1].get("type"), Some(&"input_accepted".into()));
+    delivered.push(next(turn.as_mut()).await.unwrap().unwrap());
+    assert_eq!(
+        delivered[2].get("type"),
+        Some(&"user_prompt_submitted".into())
+    );
     // This next() is the first poll that observes the abort, so it arms the
     // cancel deadline; it delivers model_event and then the consumer stalls.
     delivered.push(next(turn.as_mut()).await.unwrap().unwrap());
-    assert_eq!(delivered[2].get("type"), Some(&"model_event".into()));
+    assert_eq!(delivered[3].get("type"), Some(&"model_event".into()));
     // Sync point before the stall: the peer has written every frame and the
     // host has read the success final into its application queue. Without it,
     // a slow CI peer could still be in the pipe, the unpolled receive path
@@ -1029,6 +1046,7 @@ async fn slow_consumer_does_not_spend_the_cancel_exit_grace() {
         [
             "turn_started",
             "input_accepted",
+            "user_prompt_submitted",
             "model_event",
             "model_request_started",
             "turn_completed"
@@ -1060,10 +1078,15 @@ async fn slow_consumer_still_receives_a_ready_error_terminal() {
     assert_eq!(delivered[0].get("type"), Some(&"turn_started".into()));
     delivered.push(next(turn.as_mut()).await.unwrap().unwrap());
     assert_eq!(delivered[1].get("type"), Some(&"input_accepted".into()));
+    delivered.push(next(turn.as_mut()).await.unwrap().unwrap());
+    assert_eq!(
+        delivered[2].get("type"),
+        Some(&"user_prompt_submitted".into())
+    );
     // As in the success pairing, this next() arms the cancel deadline and
     // delivers model_event before the consumer stalls.
     delivered.push(next(turn.as_mut()).await.unwrap().unwrap());
-    assert_eq!(delivered[2].get("type"), Some(&"model_event".into()));
+    assert_eq!(delivered[3].get("type"), Some(&"model_event".into()));
     // Sync point before the stall: the turn_failed and the error final are in
     // the host's application queue before the consumer stops pulling.
     session.abort(&"user-stop".into()).unwrap();
@@ -1084,6 +1107,7 @@ async fn slow_consumer_still_receives_a_ready_error_terminal() {
         [
             "turn_started",
             "input_accepted",
+            "user_prompt_submitted",
             "model_event",
             "agent_status",
             "turn_failed",
@@ -1123,6 +1147,10 @@ async fn slow_consumer_with_a_blocked_callback_still_exits_bounded() {
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"input_accepted".into())
+    );
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+        Some(&"user_prompt_submitted".into())
     );
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
@@ -1210,6 +1238,7 @@ async fn success_after_observed_turn_failed_is_rejected_even_with_cancel() {
     for event_type in [
         "turn_started",
         "input_accepted",
+        "user_prompt_submitted",
         "agent_status",
         "turn_failed",
     ] {
@@ -1240,6 +1269,7 @@ async fn max_turns_after_observed_turn_failed_is_rejected_even_with_cancel() {
     for event_type in [
         "turn_started",
         "input_accepted",
+        "user_prompt_submitted",
         "agent_status",
         "turn_failed",
     ] {
@@ -1392,7 +1422,12 @@ async fn incomplete_compaction_final_yields_original_messages_then_none() {
     let handler = Arc::new(Handler::default());
     let session = session("live-cancel-compaction", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
-    for event_type in ["turn_started", "input_accepted", "model_event"] {
+    for event_type in [
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "model_event",
+    ] {
         let event = next(turn.as_mut()).await.unwrap().unwrap();
         assert_eq!(event.get("type"), Some(&event_type.into()), "{event_type}");
     }
@@ -1418,7 +1453,12 @@ async fn cancel_with_a_full_aborted_result_projects_the_peer_terminal_once() {
     let (session, children) =
         session_tracking_children("live-cancel-full-aborted", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
-    for event_type in ["turn_started", "input_accepted", "model_event"] {
+    for event_type in [
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "model_event",
+    ] {
         let event = next(turn.as_mut()).await.unwrap().unwrap();
         assert_eq!(event.get("type"), Some(&event_type.into()), "{event_type}");
     }
@@ -1599,6 +1639,10 @@ async fn sequential_turns_create_fresh_hosts_and_send_each_payload() {
         assert_eq!(received.get("turnId"), Some(&turn_id));
         assert_eq!(
             next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+            Some(&"user_prompt_submitted".into())
+        );
+        assert_eq!(
+            next(turn.as_mut()).await.unwrap().unwrap().get("type"),
             Some(&"model_request_started".into())
         );
         let completed = next(turn.as_mut()).await.unwrap().unwrap();
@@ -1660,7 +1704,12 @@ async fn abort_is_per_turn_and_dispose_rejects_future_turns() {
     let handler = Arc::new(Handler::default());
     let session = session("live-cancel-compaction", handler.clone()).await;
     let mut first = session.submit(input(), options()).unwrap();
-    for event_type in ["turn_started", "input_accepted", "model_event"] {
+    for event_type in [
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "model_event",
+    ] {
         assert_eq!(
             next(first.as_mut()).await.unwrap().unwrap().get("type"),
             Some(&event_type.into()),
@@ -1674,7 +1723,12 @@ async fn abort_is_per_turn_and_dispose_rejects_future_turns() {
     assert_eq!(next(first.as_mut()).await.unwrap(), None);
     let mut second = session.submit(input(), turn_options("second")).unwrap();
     // A new turn must reach the sidecar instead of inheriting the old abort.
-    for event_type in ["turn_started", "input_accepted", "model_event"] {
+    for event_type in [
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "model_event",
+    ] {
         assert_eq!(
             next(second.as_mut()).await.unwrap().unwrap().get("type"),
             Some(&event_type.into()),
@@ -2762,6 +2816,10 @@ async fn live_input_reads_current_history_on_every_submit() {
         next(turn.as_mut()).await.unwrap().unwrap();
         assert_eq!(
             next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+            Some(&"user_prompt_submitted".into())
+        );
+        assert_eq!(
+            next(turn.as_mut()).await.unwrap().unwrap().get("type"),
             Some(&"model_request_started".into())
         );
         let completed = next(turn.as_mut()).await.unwrap().unwrap();
@@ -2943,6 +3001,10 @@ async fn live_recording_matrix(phase: usize, action: &str) {
         next(turn.as_mut()).await.unwrap().unwrap();
     }
     if phase == 2 {
+        assert_eq!(
+            next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+            Some(&"user_prompt_submitted".into())
+        );
         assert_eq!(
             next(turn.as_mut()).await.unwrap().unwrap().get("type"),
             Some(&"model_request_started".into())
@@ -3624,12 +3686,18 @@ async fn real_sidecar_case(mode: &str) {
             Some(&"model_request_started".into()),
             "real sidecar begins with loop event"
         );
-        let JsValue::Array(expected) = row.get("hostEvents").unwrap() else {
+        let JsValue::Array(expected) = row.get("events").unwrap() else {
             panic!("host events")
         };
         let expected: Vec<_> = expected
             .iter()
             .map(|v| v.as_string().unwrap().to_utf8().unwrap())
+            .filter(|kind| {
+                !matches!(
+                    kind.as_str(),
+                    "session_started" | "setup_completed" | "session_ended" | "instructions_loaded"
+                )
+            })
             .collect();
         assert_eq!(types, expected, "real sidecar full host sequence");
         assert_eq!(

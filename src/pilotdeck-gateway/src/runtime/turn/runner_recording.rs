@@ -115,6 +115,7 @@ fn own_properties(value: &JsValue) -> JsObject {
 pub enum RecordingAction {
     Start,
     Accept(TurnInput),
+    SubmitPrompt(super::AgentInput, crate::host::Cancellation),
     LoopFailed(JsValue),
     Status(JsValue),
     Complete(JsValue),
@@ -163,6 +164,9 @@ impl Recording {
             match action {
                 RecordingAction::Start => runner.start().await,
                 RecordingAction::Accept(input) => runner.accept(input).await,
+                RecordingAction::SubmitPrompt(input, cancel) => {
+                    runner.submit_prompt(input, cancel).await
+                }
                 RecordingAction::LoopFailed(error) => runner.loop_failed(error).await,
                 RecordingAction::Status(event) => runner.loop_status(event).await,
                 RecordingAction::Complete(result) => runner.complete(result).await,
