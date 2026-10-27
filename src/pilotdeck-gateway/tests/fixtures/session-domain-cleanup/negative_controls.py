@@ -44,6 +44,7 @@ from negative_process import mutating_sources, run_owned
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'scripts/gateway-parity/session_domain.py'
+CONTROLS_SOURCE = ROOT / 'scripts/gateway-parity/controls/session_domain.py'
 CHECK = Path(__file__).resolve().with_name('check_cleanup.py')
 
 _MISSING = object()
@@ -186,6 +187,50 @@ MUTATIONS = [
     ('linux-visible-census-trusted', SOURCE,
      "    if sys.platform != 'darwin':\n",
      "    if False:  # mutant: trust the platform's visible process set\n"),
+    ('batch-status-relaxed', CONTROLS_SOURCE,
+     "    cleanup = cleanup_controls(output)\n"
+     "    report = {'status': aggregate_status(\n"
+     "                  'PASS' if all(r['passed'] for r in results) else 'FAIL',\n"
+     "                  'PASS_WITH_SKIPS' if not_run else None,\n"
+     "                  cleanup['status']),\n"
+     "              'scope': 'apparatus mutation tests only', 'cases': results,\n"
+     "              'notRun': [{'case': case, 'reason': 'requires real calibration --source'} for case in not_run]}\n"
+     "    report['cleanup'] = cleanup\n"
+     "    report['cleanupSkipped'] = cleanup.get('skipped', [])",
+     "    cleanup = cleanup_controls(output)\n"
+     "    report = {'status': 'PASS' if all(r['passed'] for r in results) else 'FAIL',\n"
+     "              'scope': 'apparatus mutation tests only', 'cases': results,\n"
+     "              'notRun': [{'case': case, 'reason': 'requires real calibration --source'} for case in not_run]}\n"
+     "    report['cleanup'] = cleanup\n"
+     "    report['cleanupSkipped'] = cleanup.get('skipped', [])\n"
+     "    if cleanup['status'] == 'FAIL':\n"
+     "        report['status'] = 'FAIL'"),
+    ('fixture-summary-relaxed', CHECK,
+     "    executed = [row for row in results if row.get('passed') is not None]\n"
+     "    skipped = [row for row in results\n"
+     "               if row.get('passed') is None and row.get('skipped')]\n"
+     "    malformed = [row for row in results\n"
+     "                 if row.get('passed') is None and not row.get('skipped')]\n"
+     "    if (malformed or not executed\n"
+     "            or any(row.get('passed') is False for row in executed)):\n"
+     "        return 'FAIL', skipped\n"
+     "    return ('PASS_WITH_SKIPS' if skipped else 'PASS'), skipped",
+     "    if not results or not all(row.get('passed') for row in results):\n"
+     "        return 'FAIL', []\n"
+     "    return 'PASS', []"),
+    ('calibrate-controls-skip-accepted', SOURCE,
+     "                if controls_status == 'PASS_WITH_SKIPS':\n"
+     "                    # A skipped positive control is not proof of the batch.\n"
+     "                    # Keep the skipped names visible and never report PASS:\n"
+     "                    # BLOCKED / exit 2 is the apparatus' non-PASS convention.\n"
+     "                    report['controlsSkipped'] = (\n"
+     "                        report['e1Controls'].get('cleanupSkipped', [])\n"
+     "                        + [row['case'] for row in report['e1Controls'].get('notRun', [])])\n"
+     "                    report['failure'] = {\n"
+     "                        'rule': 'CONTROLS_SKIPPED',\n"
+     "                        'detail': 'E1 controls skipped platform-specific positives; not PASS'}\n"
+     "                    overall = 'BLOCKED'",
+     "                # mutant: accept a skipped controls batch as PASS"),
 ]
 
 JUDGES = {
@@ -290,6 +335,35 @@ JUDGES = {
         }),
         False,
         ()),
+    'batch-status-relaxed': (
+        'batch-aggregation',
+        lambda rows: match(rows, 'batch-aggregation', {
+            'withSkips.status': 'PASS',
+            'withSkips.returncode': 0,
+            'blocked.status': 'PASS',
+            'blocked.returncode': 0,
+            'notRun.status': 'PASS',
+            'notRun.returncode': 0,
+        }),
+        False,
+        ()),
+    'fixture-summary-relaxed': (
+        'batch-aggregation',
+        lambda rows: match(rows, 'batch-aggregation', {
+            'summaries.withSkip': 'FAIL',
+            'summaries.allSkipped': 'FAIL',
+        }),
+        False,
+        ()),
+    'calibrate-controls-skip-accepted': (
+        'batch-aggregation',
+        lambda rows: match(rows, 'batch-aggregation', {
+            'calibrateSkipped.status': 'PASS',
+            'calibrateSkipped.failureRule': None,
+            'calibrateSkipped.returncode': 0,
+        }),
+        False,
+        ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
@@ -378,12 +452,14 @@ def main():
     summary = []
     invalid = []
     survived = []
-    with mutating_sources(ROOT, [SOURCE], baseline=args.baseline) as snapshots:
-        original = snapshots[SOURCE]
-        before = hashlib.sha256(original).hexdigest()
-        content = original.decode()
-        stale = [(item[0], content.count(item[2])) for item in selected
-                 if content.count(item[2]) != 1]
+    sources = sorted({Path(row[1]) for row in MUTATIONS}, key=str)
+    with mutating_sources(ROOT, sources, baseline=args.baseline) as snapshots:
+        originals = {source: snapshots[source] for source in sources}
+        digests = {source: hashlib.sha256(originals[source]).hexdigest()
+                   for source in sources}
+        contents = {source: originals[source].decode() for source in sources}
+        stale = [(item[0], contents[Path(item[1])].count(item[2])) for item in selected
+                 if contents[Path(item[1])].count(item[2]) != 1]
         if stale:
             (output / 'summary.json').write_text(json.dumps({
                 'status': 'ANCHOR_EXPIRED', 'anchors': stale}, ensure_ascii=False, indent=2) + '\n')
@@ -393,12 +469,13 @@ def main():
             return 2
         try:
             for mutation in selected:
-                name, _source, old, new = mutation
+                name, source, old, new = mutation
+                source = Path(source)
                 judge_spec = JUDGES[name]
                 mode = judge_spec[0]
-                changed = content.replace(old, new, 1)
+                changed = contents[source].replace(old, new, 1)
                 case = output / name  # check_cleanup.py owns/creates this directory
-                SOURCE.write_text(changed)
+                source.write_text(changed)
                 returncode = None
                 try:
                     try:
@@ -411,11 +488,12 @@ def main():
                         (output / f'{name}.log').write_text(f'{type(error).__name__}: {error}\n')
                         verdict, detail = classify(name, judge_spec, error, case)
                 finally:
-                    SOURCE.write_bytes(original)
-                    if hashlib.sha256(SOURCE.read_bytes()).hexdigest() != before:
-                        raise RuntimeError('source restore hash mismatch')
+                    source.write_bytes(originals[source])
+                    if hashlib.sha256(source.read_bytes()).hexdigest() != digests[source]:
+                        raise RuntimeError(f'source restore hash mismatch: {source.name}')
                 entry = {'mutation': name, 'mode': mode, 'verdict': verdict,
-                         'detail': detail, 'returncode': returncode}
+                         'detail': detail, 'returncode': returncode,
+                         'source': source.relative_to(ROOT).as_posix()}
                 summary.append(entry)
                 if verdict == 'INVALID':
                     invalid.append(entry)
@@ -423,7 +501,8 @@ def main():
                     survived.append(entry)
                 print(f'{name}: {verdict} {detail}'.rstrip(), flush=True)
         finally:
-            SOURCE.write_bytes(original)
+            for source in sources:
+                source.write_bytes(originals[source])
         restored_case = output / 'restored-positive'  # must not pre-exist
         restored_error = None
         try:
@@ -434,12 +513,20 @@ def main():
             restored = None
             restored_summary = None
             restored_error = f'{type(error).__name__}: {error}'
+        expected_status = 'PASS' if sys.platform == 'darwin' else 'PASS_WITH_SKIPS'
+        expected_code = 0 if expected_status == 'PASS' else 1
         restored_ok = False
         if restored_summary is not None:
             rows = restored_summary.get('results') or []
             wiring = [row for row in rows if row.get('mode') == 'wiring']
-            restored_ok = (restored.returncode == 0 and restored_summary.get('status') == 'PASS'
-                           and bool(rows) and all(row.get('passed') is True for row in rows)
+            if expected_status == 'PASS':
+                rows_ok = all(row.get('passed') is True for row in rows)
+            else:
+                rows_ok = (all(row.get('passed') in (True, None) for row in rows)
+                           and any(row.get('passed') is None for row in rows))
+            restored_ok = (restored.returncode == expected_code
+                           and restored_summary.get('status') == expected_status
+                           and bool(rows) and rows_ok
                            and bool(wiring) and wiring[0].get('status')
                            == 'PASS_WITH_CLEANUP_UNVERIFIED')
             if not restored_ok:
@@ -448,7 +535,10 @@ def main():
         (output / 'pgrep-after.txt').write_text(pgrep_launcher())
         status = ('INVALID' if invalid else 'SURVIVED' if survived
                   else 'PASS' if restored_ok else 'FAIL')
-        report = {'status': status, 'sourceSha256': before, 'baseline': args.baseline,
+        report = {'status': status, 'sourceSha256': digests[SOURCE],
+                  'sourceSha256All': {source.relative_to(ROOT).as_posix(): digests[source]
+                                      for source in sources},
+                  'baseline': args.baseline,
                   'selected': [row[0] for row in selected],
                   'mutations': summary, 'restoredPass': restored_ok,
                   'restoredError': restored_error,

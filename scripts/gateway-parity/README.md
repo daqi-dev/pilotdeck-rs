@@ -64,8 +64,16 @@ python3 -I scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gat
 
 `python3 -I scripts/gateway-parity/controls/session_domain.py --case all --output <新目录>`
 执行 10 类必需负控及 7 项补充回归。加 `--source <校准输出>/six-cells` 可变异真实 TS
-观察；不加时使用明确标记的合成观察。每条负控须 exit 1 且首因正确，批次仅在健康前例与
-所有预期拒绝均满足时 exit 0。逐条命令和输出落在 `controls/results.json` 及各子目录。
+观察；不加时使用明确标记的合成观察，并把 7 项 calibration case 记入 `notRun`。
+每条负控须 exit 1 且首因正确。**批次汇总取所有子报告的最悲观状态**（全序
+`PASS < PASS_WITH_SKIPS < NOT_RUN < BLOCKED < FAIL`；未知状态直接判 `FAIL`）：
+只有所有 case 与 cleanup 都 `PASS` 才是顶层 `PASS` / exit 0；cleanup 在非 Darwin
+跳过 3 项正控得到 `PASS_WITH_SKIPS`，缺 `--source` 的 `notRun` 也计入
+`PASS_WITH_SKIPS`，两者都必须 exit 1，绝不能汇总成 `PASS`（人定 A：装置顶层不得
+比任一子核验乐观）。`main()` 只在顶层 `PASS` 时返回 0。逐条命令和输出落在
+`controls/results.json` 及各子目录；`cleanupSkipped` 单列跳过的 cleanup 正控。
+`check_cleanup.py --mode batch-aggregation` 钉住该全序、`run_all()`/`main()` 的
+状态与退出码，以及 calibrate 对 `e1Controls=PASS_WITH_SKIPS` 的映射。
 
 报告区分实测成功与验收状态：冻结哈希不符时，即使测量成功，校准总判也为
 `BLOCKED` / exit 2。进程树读取受阻在 `launch.json:psCensus` 明确记录为 `BLOCKED`，
@@ -111,8 +119,14 @@ CI/shell 调用方也不会把它当通过。
 `cleanup-census-unstable`、`cleanup-census-truncated`、`cleanup-census-enumeration-failure`、
 `cleanup-pid-blocked`、`cleanup-linux-filtered-proc`、`cleanup-signal-entry-reaped`、
 `cleanup-signal-entry-held` 等行为控制，cleanup 结果计入
-`results.json:cleanup`，任一失败即整批 FAIL。行为 fixture
+`results.json:cleanup`。cleanup 子报告 `FAIL` 或任一 `case` 失败 → 整批 `FAIL`；
+非 Darwin 跳过的 Darwin-only 正控记 `passed:null`+`skipped`，cleanup 子报告为
+`PASS_WITH_SKIPS`，整批只能到 `PASS_WITH_SKIPS` / exit 1，不计为通过。行为 fixture
 `src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/` 的 `ignore` 孙进程先装好
-`SIG_IGN` 并写就绪标记，launcher 有界等待后才退出；源码变异负控按变异绑定期望字段，
-未声明的 `signalError`/`probeError` 判 INVALID（环境/启动失败也一样）且全部跑完再汇总。
+`SIG_IGN` 并写就绪标记，launcher 有界等待后才退出；同一 fixture 在非 Darwin 把
+`clean/leak/ignore/eperm-live-member/runtime-negative` 记 `passed:null`+`skipped`，
+汇总同样是 `PASS_WITH_SKIPS`（exit 1），不把平台未证明的正控报成 FAIL 或 PASS。源码
+变异负控按变异绑定期望字段，未声明的 `signalError`/`probeError` 判 INVALID
+（环境/启动失败也一样）且全部跑完再汇总；`batch-status-relaxed` 只回退汇总逻辑，
+必须让 `batch-aggregation` 控制转红。
 A5.3 的白名单变更须由协调者完成双评审、哈希登记后再合并。
