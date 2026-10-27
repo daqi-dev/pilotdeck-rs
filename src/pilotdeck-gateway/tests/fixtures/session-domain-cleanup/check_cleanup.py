@@ -850,8 +850,6 @@ AGGREGATION_POINTS = {
 NON_AGGREGATION_POINTS = {
     ('scripts/gateway-parity/test_safety.py', 'test_deadline_not_run_has_dedicated_exit_code'):
         'test-only shared exit mapping and real CLI contract, not a batch',
-    ('scripts/gateway-parity/test_safety.py', 'test_empty_aggregation_fails_closed'):
-        'test-only empty batch contract, not a batch',
     ('scripts/gateway-parity/common.py', 'aggregate_status'):
         'the single shared implementation (definition, not a call site)',
     ('scripts/gateway-parity/check_frozen.py', 'main'):

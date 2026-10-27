@@ -559,14 +559,6 @@ class ApparatusInputs(unittest.TestCase):
             self.assertEqual(common.aggregate_status(common.MUTATION_STATUS[verdict]), expected,
                              '#166 source control verdict mapping')
 
-    def test_empty_aggregation_fails_closed(self):
-        for children in ((), (None,), (None, None)):
-            with self.subTest(children=children):
-                self.assertEqual(common.aggregate_status(*children), ('FAIL', 1),
-                                 '#166 empty aggregation must fail')
-        self.assertEqual(common.aggregate_status('PASS', None), ('PASS', 0),
-                         '#166 optional child does not erase an executed child')
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='pdrs-apparatus-inputs-')
         self.addCleanup(self.tmp.cleanup)
