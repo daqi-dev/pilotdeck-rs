@@ -6,4 +6,5 @@
 pub mod config;
 pub mod envelope;
 
+pub mod recall;
 pub mod transport;
