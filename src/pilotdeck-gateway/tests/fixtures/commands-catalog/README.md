@@ -15,7 +15,7 @@ bash scripts/cargo-slots.sh
 cargo test -q --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib runtime::plugins::catalog::
 ```
 
-`catalog_locale_contract` 与 `plugin_runtime_locale_contract` 共用守卫及契约助手，按 `../node-locale/oracle.json` 的每格在独立子进程中验证：en-US 通过，其余 resolved locale 明确拒绝；不修改并行测试进程的全局环境。每个子进程退出即完成，30 秒仍未退出则杀死并报错。
+`catalog_locale_contract` 与 `plugin_runtime_locale_contract` 共用守卫及契约助手，按 `../node-locale/oracle.json` 的每格在独立子进程中验证：en-US 通过，其余 resolved locale 明确拒绝；不修改并行测试进程的全局环境。子进程使用 `--exact` 只运行对应单测；收齐 stdout/stderr 并取得退出状态后完成。#926 将 30 秒总时限改为 30 秒无输出时限：任一路字节（含无换行片段）均续期，EOF 不续期；已就绪输出和退出优先于计时器。无进展仍失败并杀死、回收子进程，取消监督时由 `kill_on_drop` 清理。初次无输出超过 30 秒仍会失败；高负载验收需记录实际运行条件。
 
 ## 重生成
 
