@@ -23,7 +23,9 @@ mutations = [
     ('oracle-cardinality', tests, 'let results = case["results"].as_array().expect(MESSAGE);', 'let results = &case["results"].as_array().expect(MESSAGE)[..requests.len() - 1];', 'catalog_empty'),
     ('selected-cycle', source, '.to_js_value()\n                .map_err(|e| PluginRuntimeError::new(e.message.to_utf8().unwrap_or_default()))?', '.to_js_value().unwrap_or_else(|_| object([]))', 'catalog_selected_cycle_boundary'),
     ('metadata-projection', source, 'set(item, "metadata", value);', 'set(item, "metadata", object([])); let _ = value;', 'catalog_metadata'),
-    ('path-normalization', source, 'super::loader::join_directory(Path::new(&input.project_key), ".pilotdeck")', 'Path::new(&input.project_key).join(".pilotdeck")', 'catalog_normalized_paths'),
+    # Skipping this join's normalization is equivalent: commands/skills normalize
+    # again. Instead corrupt ParentDir before that later join can recover it.
+    ('path-normalization', source, 'super::loader::join_directory(Path::new(&input.project_key), ".pilotdeck")', 'super::loader::join_directory(Path::new(&input.project_key.replace("/../", "/")), ".pilotdeck")', 'catalog_normalized_paths'),
     ('yaml-collections', source, '*node = pilotdeck_yaml::value::Container::Object(vec![]);', '*node = pilotdeck_yaml::value::Container::Array(vec![]);', 'catalog_metadata'),
     ('sort-rank', source, '"project" => 1,', '"project" => 3,', 'catalog_sorting'),
     ('sort-key', source, '&text(a, "name"), &text(b, "name")', '&text(b, "name"), &text(a, "name")', 'catalog_sorting'),
@@ -70,6 +72,8 @@ def main():
         test = f'runtime::plugins::catalog::{module}::{short_test}'
         command = ['cargo', 'test', '-q', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--lib', test]
         marker = '#887 catalog lease finally' if short_test == 'catalog_lease_finally' else '#887 commands catalog oracle'
+        if short_test == 'catalog_normalized_paths':
+            marker = '#887 commands catalog oracle: normalized-paths'
         def run(label, args):
             slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=180)
             (out / f'{name}.{label}.slots.log').write_text(slot.stdout + slot.stderr)
