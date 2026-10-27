@@ -883,8 +883,21 @@ def main():
                 controls = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(controls)
                 report['e1Controls'] = controls.run_all(output / 'controls', output / 'six-cells')
-                require(report['e1Controls']['status'] == 'PASS', 'CONTROLS', 'E1 mutation control failed')
+                controls_status = report['e1Controls']['status']
+                require(controls_status in ('PASS', 'PASS_WITH_SKIPS'),
+                        'CONTROLS', 'E1 mutation control failed')
                 overall = cleanup_status(audit)
+                if controls_status == 'PASS_WITH_SKIPS':
+                    # A skipped positive control is not proof of the batch.
+                    # Keep the skipped names visible and never report PASS:
+                    # BLOCKED / exit 2 is the apparatus' non-PASS convention.
+                    report['controlsSkipped'] = (
+                        report['e1Controls'].get('cleanupSkipped', [])
+                        + [row['case'] for row in report['e1Controls'].get('notRun', [])])
+                    report['failure'] = {
+                        'rule': 'CONTROLS_SKIPPED',
+                        'detail': 'E1 controls skipped platform-specific positives; not PASS'}
+                    overall = 'BLOCKED'
                 report['status'] = overall
                 report['executionStatus'] = overall
                 report['cleanupStatus'] = audit['processTreeCleanup']

@@ -31,7 +31,15 @@ Modes:
   runtime-negative - replace probe at runtime with VERIFIED; the leaky fixture must
                      then look accepted (old behavior), and the real probe must
                      still report GROUP_NOT_EMPTY afterwards
+  batch-aggregation - batch status order and exit codes: PASS_WITH_SKIPS /
+                     BLOCKED / NOT_RUN can never become top PASS or exit 0;
+                     calibrate maps a skipped controls batch to BLOCKED/exit 2
   all    - every mode above (default)
+
+Darwin-only positives (clean, leak, ignore, eperm-live-member, runtime-negative)
+are recorded as ``passed: null`` + ``skipped`` on other platforms: the non-Darwin
+probe is BLOCKED before any census, so their positive expectation is unprovable
+there.  Skips are never counted as passes; the summary is PASS_WITH_SKIPS.
 """
 import argparse
 import contextlib
@@ -58,6 +66,7 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[5]
 LAUNCHER = Path(__file__).resolve().with_name('launcher.py')
 SESSION_DOMAIN = ROOT / 'scripts/gateway-parity/session_domain.py'
+CONTROLS = ROOT / 'scripts/gateway-parity/controls/session_domain.py'
 md = None
 
 
@@ -67,6 +76,43 @@ def load_session_domain():
     sys.modules['session_domain'] = module
     spec.loader.exec_module(module)
     return module
+
+
+def load_controls():
+    spec = importlib.util.spec_from_file_location('session_cleanup_controls', CONTROLS)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def platform_skip(mode):
+    """Reason a Darwin-only positive cannot be proven on this platform."""
+    if sys.platform == 'darwin':
+        return None
+    return (f'{mode} requires complete Darwin group enumeration; '
+            'the non-darwin probe is BLOCKED before any census')
+
+
+def skipped_result(mode, reason):
+    return {'mode': mode, 'skipped': reason, 'detail': reason, 'passed': None}
+
+
+def summarize_results(results):
+    """Pessimistic fixture summary: a skip is never a pass.
+
+    A row with ``passed=None`` must carry the explicit ``skipped`` marker;
+    otherwise the missing result is malformed and fails closed.
+    """
+    executed = [row for row in results if row.get('passed') is not None]
+    skipped = [row for row in results
+               if row.get('passed') is None and row.get('skipped')]
+    malformed = [row for row in results
+                 if row.get('passed') is None and not row.get('skipped')]
+    if (malformed or not executed
+            or any(row.get('passed') is False for row in executed)):
+        return 'FAIL', skipped
+    return ('PASS_WITH_SKIPS' if skipped else 'PASS'), skipped
 
 
 def pid_state(pid):
@@ -107,6 +153,9 @@ def wait_group_empty(pgid, timeout=5):
 
 
 def run_fixture(md, output, mode):
+    reason = platform_skip(mode)
+    if reason:
+        return skipped_result(mode, reason)
     folder = output / mode
     folder.mkdir(parents=True, exist_ok=False)
     pid_file = folder / 'grandchild.pid'
@@ -221,6 +270,9 @@ def runtime_negative(md, output):
     bounded by the fixture itself, so an unkilled leak cannot linger forever and
     is never signalled after the leader was reaped.
     """
+    reason = platform_skip('runtime-negative')
+    if reason:
+        return skipped_result('runtime-negative', reason)
     bypass = output / 'runtime-negative-bypass'
     bypass.mkdir(parents=True, exist_ok=False)
     old_probe = md.probe_process_group
@@ -308,6 +360,9 @@ def eperm_live_member_control(md, output):
     the top level is non-PASS, never VERIFIED.  Cleanup is observation-only: the
     fixture's grandchild is short-lived, so nothing is signalled after reaping.
     """
+    reason = platform_skip('eperm-live-member')
+    if reason:
+        return skipped_result('eperm-live-member', reason)
     folder = output / 'eperm-live-member'
     folder.mkdir(parents=True, exist_ok=False)
     marker = folder / 'grandchild.pid'
@@ -769,6 +824,138 @@ def status_controls(md):
     return results
 
 
+def batch_aggregation_control(md, output):
+    """Pin the batch status order, exit codes, and the calibrate mapping.
+
+    The controls module is exercised through its real ``main()`` with only the
+    per-case subprocess and the cleanup helper replaced in memory, so a revert
+    to "only FAIL propagates" makes this row red.  The calibrate half drives
+    ``session_domain.main()``'s real tail with a controls batch that reports
+    PASS_WITH_SKIPS and requires BLOCKED / exit 2, never PASS.
+    """
+    controls = load_controls()
+
+    def fake_run(command, **_kwargs):
+        name = command[command.index('--case') + 1]
+        accept = name == 'healthy' or name in controls.LABEL_KNOWN_ACCEPT
+        return SimpleNamespace(
+            returncode=0 if accept else 1, stderr='',
+            stdout=json.dumps({'rule': controls.CASES.get(name),
+                               'status': 'PASS' if accept else 'FAIL'}))
+
+    def replay(tag, cleanup_status, source=True):
+        case = output / ('batch-aggregation-' + tag)
+        argv = ['session_domain.py', '--case', 'all', '--output', str(case)]
+        if source:
+            argv += ['--source', str(case / 'source')]
+        stdout = io.StringIO()
+        with patch.object(controls.subprocess, 'run', side_effect=fake_run), \
+                patch.object(controls, 'cleanup_controls',
+                             return_value={'status': cleanup_status,
+                                           'skipped': (['cleanup-empty-group']
+                                                       if cleanup_status == 'PASS_WITH_SKIPS'
+                                                       else [])}), \
+                patch.object(sys, 'argv', argv), contextlib.redirect_stdout(stdout):
+            code = controls.main()
+        report = json.loads(stdout.getvalue())
+        return {'status': report['status'], 'returncode': code,
+                'cleanup': report['cleanup']['status'],
+                'notRun': len(report['notRun'])}
+
+    order = {
+        'pass': controls.aggregate_status('PASS', None),
+        'skip': controls.aggregate_status('PASS', 'PASS_WITH_SKIPS'),
+        'blocked': controls.aggregate_status('PASS', 'BLOCKED'),
+        'notRun': controls.aggregate_status('PASS', 'NOT_RUN'),
+        'fail': controls.aggregate_status('PASS', 'FAIL'),
+        'unknown': controls.aggregate_status('PASS', 'NOT_A_STATUS'),
+    }
+    observed = {
+        'withSkips': replay('with-skips', 'PASS_WITH_SKIPS'),
+        'blocked': replay('blocked', 'BLOCKED'),
+        'notRun': replay('not-run', 'PASS', source=False),
+        'allPass': replay('all-pass', 'PASS'),
+        'order': order,
+        'summaries': {
+            'allPass': summarize_results([{'passed': True}, {'passed': True}])[0],
+            'withSkip': summarize_results([{'passed': True},
+                                           {'passed': None, 'skipped': 'platform'}])[0],
+            'failure': summarize_results([{'passed': True}, {'passed': False}])[0],
+            'malformed': summarize_results([{'passed': True}, {'passed': None}])[0],
+            'allSkipped': summarize_results([{'passed': None, 'skipped': 'platform'}])[0],
+        },
+    }
+
+    # Calibrate tail: controls PASS_WITH_SKIPS must not satisfy require(PASS).
+    script = output / 'batch-aggregation-calibrate-apparatus'
+    (script / 'controls').mkdir(parents=True, exist_ok=False)
+    (script / 'controls/session_domain.py').write_text(
+        "def run_all(*_args, **_kwargs):\n"
+        "    return {'status': 'PASS_WITH_SKIPS', "
+        "'cleanupSkipped': ['cleanup-empty-group']}\n")
+    folder = output / 'batch-aggregation-calibrate-run'
+    audit = {'exitCode': 0, 'launcherAndFixtureReaped': True,
+             'processTreeCleanup': md.CLEANUP_VERIFIED, 'pid': 1, 'pgid': 1}
+    patched = {
+        'SCRIPT': script,
+        'E1_SOURCES': (),
+        'run_fixture': lambda *_a, **_k: copy.deepcopy(audit),
+        'validate_calibration': lambda *_a, **_k: {},
+        'hashes': lambda: {'batch': 'fixed'},
+        'frozen_check': lambda: {'exitCode': 0, 'stdout': '', 'stderr': ''},
+        'baseline_dependency_hashes': lambda _baseline: {},
+        'install_shutdown': lambda: None,
+        'parity_lock': lambda **_kwargs: contextlib.nullcontext(),
+    }
+    saved = {name: getattr(md, name) for name in patched}
+    captured = io.StringIO()
+    try:
+        for name, value in patched.items():
+            setattr(md, name, value)
+        with patch.object(sys, 'argv', [
+                'session_domain.py', '--suite', 'calibrate',
+                '--output', str(folder), '--baseline', str(folder / 'baseline')]), \
+                contextlib.redirect_stdout(captured):
+            calibrate_code = md.main()
+        calibrate_report = json.loads((folder / 'report.json').read_text())
+    finally:
+        for name, value in saved.items():
+            setattr(md, name, value)
+    observed['calibrateSkipped'] = {
+        'status': calibrate_report.get('status'),
+        'executionStatus': calibrate_report.get('executionStatus'),
+        'cleanupStatus': calibrate_report.get('cleanupStatus'),
+        'controlsSkipped': calibrate_report.get('controlsSkipped'),
+        'failureRule': (calibrate_report.get('failure') or {}).get('rule'),
+        'returncode': calibrate_code,
+    }
+    expected = {
+        'withSkips': {'status': 'PASS_WITH_SKIPS', 'returncode': 1},
+        'blocked': {'status': 'BLOCKED', 'returncode': 1},
+        'notRun': {'status': 'PASS_WITH_SKIPS', 'returncode': 1},
+        'allPass': {'status': 'PASS', 'returncode': 0},
+        'order': {'pass': 'PASS', 'skip': 'PASS_WITH_SKIPS',
+                  'blocked': 'BLOCKED', 'notRun': 'NOT_RUN',
+                  'fail': 'FAIL', 'unknown': 'FAIL'},
+        'summaries': {'allPass': 'PASS', 'withSkip': 'PASS_WITH_SKIPS',
+                      'failure': 'FAIL', 'malformed': 'FAIL',
+                      'allSkipped': 'FAIL'},
+        'calibrateSkipped': {'status': 'BLOCKED', 'executionStatus': 'BLOCKED',
+                             'cleanupStatus': md.CLEANUP_VERIFIED,
+                             'controlsSkipped': ['cleanup-empty-group'],
+                             'failureRule': 'CONTROLS_SKIPPED',
+                             'returncode': 2},
+    }
+    passed = True
+    for name, want in expected.items():
+        got = observed.get(name) or {}
+        for key, value in want.items():
+            if got.get(key) != value:
+                passed = False
+    return {'mode': 'batch-aggregation', **observed,
+            'expected': expected, 'passed': bool(passed)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
@@ -778,7 +965,7 @@ def main():
                                            'census-truncated', 'census-enumeration',
                                            'pid-blocked', 'linux-filtered-proc',
                                            'signal-entry', 'reap-state', 'wiring',
-                                           'runtime-negative', 'all'),
+                                           'runtime-negative', 'batch-aggregation', 'all'),
                         default='all')
     args = parser.parse_args()
     output = args.output.resolve()
@@ -788,6 +975,7 @@ def main():
     results = []
     modes = ('clean', 'leak', 'ignore') if args.mode == 'all' else (
         () if args.mode in ('status', 'runtime-negative', 'blocked', 'wiring',
+                            'batch-aggregation',
                             'eperm-live-member', 'identity-lost', 'census-unavailable',
                             'census-snapshot', 'census-descendant', 'census-unstable',
                             'census-truncated', 'census-enumeration', 'pid-blocked',
@@ -861,10 +1049,16 @@ def main():
         result = wiring_control(md, output)
         results.append(result)
         print(json.dumps(result, ensure_ascii=False), flush=True)
-    status = 'PASS' if all(result['passed'] for result in results) else 'FAIL'
-    summary = {'status': status, 'output': str(output), 'results': results}
+    if args.mode in ('batch-aggregation', 'all'):
+        result = batch_aggregation_control(md, output)
+        results.append(result)
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+    status, skipped = summarize_results(results)
+    summary = {'status': status, 'output': str(output),
+               'skipped': [row.get('mode') for row in skipped], 'results': results}
     (output / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
-    print(json.dumps({'status': status, 'summary': str(output / 'summary.json')}, ensure_ascii=False))
+    print(json.dumps({'status': status, 'skipped': summary['skipped'],
+                      'summary': str(output / 'summary.json')}, ensure_ascii=False))
     return int(status != 'PASS')
 
 

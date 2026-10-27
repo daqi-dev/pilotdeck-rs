@@ -39,9 +39,17 @@ and shows the leaky fixture would then look accepted, while the real probe still
 reports `GROUP_NOT_EMPTY`; `status` pins `VERIFIED -> PASS` and
 `GROUP_NOT_EMPTY/BLOCKED/NOT_VERIFIED -> PASS_WITH_CLEANUP_UNVERIFIED`;
 `wiring` drives `session_domain.main()`'s real cleanup tail with an unverified
-group and pins `status` / `executionStatus` / `freezeStatus` and exit 2.
+group and pins `status` / `executionStatus` / `freezeStatus` and exit 2;
+`batch-aggregation` pins the batch status order, `run_all()`/`main()` status and
+exit codes, and calibrate's `PASS_WITH_SKIPS -> BLOCKED / exit 2` mapping.
 Every process mode checks the live process group and the grandchild PID after
-the run.
+the run.  On non-Darwin the Darwin-only positives (`clean`, `leak`, `ignore`,
+`eperm-live-member`, `runtime-negative`) are recorded as `passed: null` with an
+explicit `skipped` reason instead of a false FAIL: the non-Darwin probe is
+`BLOCKED` before any census, so their positive expectation is unprovable there.
+The fixture summary is pessimistic: any executed failure or malformed result is
+`FAIL`; all executed pass with any skip is `PASS_WITH_SKIPS` (exit 1); only no
+skips and all executed pass is `PASS` (exit 0).  A skip is never a pass.
 
 The probe waits for the launcher with `waitid(WNOWAIT)` and only reaps after the
 group probe and any signals, so a bare pgid is never used after it could be
@@ -76,8 +84,9 @@ not claim to detect that escape.
 ## Run after commit (source mutation controls)
 
 `negative_controls.py` uses `negative_process.mutating_sources`, so it refuses
-to run until the #164 change is committed and the named source is byte-identical
-to HEAD. It mutates `session_domain.py` one anchor at a time, requires the
+to run until the #164 change is committed and the named sources are byte-identical
+to HEAD. It mutates the named source one anchor at a time (`session_domain.py`,
+`controls/session_domain.py` or this `check_cleanup.py`), requires the
 behavior check to fail **for that mutation's own expected fields**, restores the
 bytes, and finally requires the restored source to pass. A stale anchor exits 2
 (`ANCHOR_EXPIRED`), never `SURVIVED`. Environment/startup failures are `INVALID`
@@ -95,14 +104,19 @@ A pre-commit rehearsal can pass `--baseline <tree-ish>`; the default is `HEAD`.
 `--only NAME` (repeatable) runs just the named mutants and still runs the
 restored positive. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 17 mutants:
+`JUDGES`, keyed by the same names. The current table has 20 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
 `eperm-census-ignored`, `unavailable-census-as-empty`, `reap-guard-removed`,
 `snapshot-race-accepted`, `unstable-census-accepted`, `truncation-accepted`,
 `enumeration-failure-empty`, `signal-gate-removed`, `pid-blocked-as-gone`,
-`linux-visible-census-trusted`.
+`linux-visible-census-trusted`, `batch-status-relaxed`,
+`fixture-summary-relaxed`, `calibrate-controls-skip-accepted`.  The last three
+revert the pessimistic batch aggregation, the fixture skip summary, and the
+calibrate skipped-controls mapping respectively; all bind
+`check_cleanup.py --mode batch-aggregation` and its specific fields, not an
+unrelated panic/timeout.
 
 `pgrep-before.txt` / `pgrep-after.txt` are collected around the mutations using
 the unique `session-domain-cleanup/launcher.py` pattern (bounded `timeout=5`);
