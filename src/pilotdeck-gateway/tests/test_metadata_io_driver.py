@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +14,10 @@ spec.loader.exec_module(driver)
 
 
 class EnvironmentControls(unittest.TestCase):
+    nextest_command = ('cargo nextest run --workspace --no-fail-fast --profile ci '
+                       '--config-file ../.config/nextest.toml')
+    doctest_command = 'cargo test --workspace --doc'
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -166,45 +171,90 @@ class EnvironmentControls(unittest.TestCase):
     def ci_steps(self, name, body, issue='#904'):
         self.assertEqual(len(re.findall(r'^    steps:$', body, re.M)), 1,
                          f'{issue} {name} has one steps sequence')
-        return re.split(r'^      - ', re.split(r'^    steps:\n', body, flags=re.M)[1], flags=re.M)[1:]
+        sequence = body.split('    steps:\n', 1)[1]
+        items = list(re.finditer(r'^      - +(.*)$', sequence, re.M))
+        self.assertTrue(items, '#919 steps must be an explicit block sequence')
+        self.assertTrue(all(not line.strip() or line.lstrip().startswith('#')
+                            for line in sequence[:items[0].start()].splitlines()),
+                        '#919 unsupported step declaration')
+        steps = []
+        for index, item in enumerate(items):
+            end = items[index + 1].start() if index + 1 < len(items) else len(sequence)
+            # YAML permits any positive number of spaces after "-". Canonicalize
+            # that item's key column so every sibling guard sees the same fields.
+            extra = item.start(1) - item.start() - 8
+            lines = [item[1]]
+            for line in sequence[item.end():end].removeprefix('\n').splitlines():
+                if not line.strip() or line.lstrip().startswith('#'):
+                    lines.append(line)
+                    continue
+                self.assertTrue(line.startswith(' ' * (8 + extra)),
+                                '#919 unsupported step indentation')
+                lines.append(line[extra:])
+            step = '\n'.join(lines) + '\n'
+            self.ci_step_fields(step, issue)  # Reject every unparsed key, not just run lookalikes.
+            canonical = []
+            for line in step.splitlines():
+                if line.strip() and not line.lstrip().startswith('#') and (
+                        not line.startswith(' ') or len(line) - len(line.lstrip(' ')) == 8):
+                    key, value = line.split(':', 1)
+                    line = key.strip().strip("\"'") + ':' + value
+                    if canonical:
+                        line = '        ' + line
+                canonical.append(line)
+            steps.append('\n'.join(canonical) + '\n')
+        return steps
 
-    def ci_run_commands(self, step, issue='#904'):
-        lines, commands, runs = step.splitlines(), [], 0
+    def ci_step_fields(self, step, issue='#904'):
+        fields = {}
+        lines = step.splitlines()
         i = 0
+        allowed = {'name', 'id', 'if', 'uses', 'run', 'env', 'with', 'working-directory',
+                   'shell', 'continue-on-error', 'timeout-minutes'}
         while i < len(lines):
-            run = re.fullmatch(r'(        |)run:(.*)', lines[i])
+            line = lines[i]
             i += 1
-            if not run:
+            if not line.strip() or line.lstrip().startswith('#'):
                 continue
-            runs += 1
-            self.assertEqual(runs, 1, f'{issue} step has at most one run field')
-            value = run[2].strip()
-            # ci_steps removes the first line's "      - "; its key still has indent 8.
-            parent_indent = len(run[1]) if run[1] else 8
+            key = re.fullmatch(r"""(?:        |)([a-z][a-z-]*|'[a-z][a-z-]*'|"[a-z][a-z-]*") *:(.*)""", line)
+            self.assertIsNotNone(key, '#919 unsupported step key syntax')
+            name = key[1].strip("\"'")
+            self.assertIn(name, allowed, '#919 unsupported step key')
+            self.assertNotIn(name, fields, f'{issue} step has at most one run field' if name == 'run'
+                             else '#919 duplicate step key')
             block = []
             while i < len(lines):
                 line = lines[i]
-                if line.strip() and len(line) - len(line.lstrip(' ')) <= parent_indent:
+                if line.strip() and len(line) - len(line.lstrip(' ')) <= 8:
                     break
                 if line.strip():
                     block.append(line.strip())
                 i += 1
-            if re.fullmatch(r'[|>][0-9]*[+-]?\s*(#.*)?', value):
-                self.assertTrue(block, f'{issue} run block must not be empty')
-                commands.extend(block)
-            else:
-                self.assertTrue(value and value[0] not in '|>[]{}&*!%@#'
-                                and not value.startswith('${{'), f'{issue} unsupported run scalar')
-                self.assertFalse(block, f'{issue} single-line run cannot have a continuation')
-                commands.append(value)
-        return commands
+            fields[name] = (key[2].strip(), block)
+        return fields
+
+    def ci_run_commands(self, step, issue='#904'):
+        run = self.ci_step_fields(step, issue).get('run')
+        if run is None:
+            return []
+        value, block = run
+        if re.fullmatch(r'[|>][0-9]*[+-]?\s*(#.*)?', value):
+            self.assertTrue(block, f'{issue} run block must not be empty')
+            return block
+        self.assertTrue(value and value[0] not in '|>[]{}&*!%@#'
+                        and not value.startswith('${{')
+                        and not (value.startswith('"') and '\\' in value),
+                        f'{issue} unsupported run scalar')
+        self.assertFalse(block, f'{issue} single-line run cannot have a continuation')
+        return [value]
 
     def test_required_check_gates_observer_failure_instead_of_skipping(self):
         jobs = self.ci_jobs()
         required = ('metadata-observer', 'rust', 'a51-coverage')
         for name in jobs:
             self.assertIn(name, jobs, f'#904 required job {name} exists')
-            self.assertNotIn('continue-on-error:', jobs[name], f'#904 {name} cannot ignore failure')
+            self.assertNotRegex(jobs[name], r'''(?m)^\s*(?:continue-on-error|'continue-on-error'|"continue-on-error")\s*:''',
+                                f'#904 {name} cannot ignore failure')
         check = jobs['check']
         self.assertEqual(re.findall(r'^    needs: (.*)$', check, re.M),
                          ['[' + ', '.join(required) + ']'], '#904 exact required needs')
@@ -244,6 +294,154 @@ class EnvironmentControls(unittest.TestCase):
 
     def ci_workflow_fixture(self):
         return (Path(__file__).resolve().parents[3]/'.github/workflows/ci.yml').read_text()
+
+    def test_nextest_keeps_workspace_doctests_and_failure_semantics(self):
+        jobs = self.ci_jobs(issue='#922')
+        steps = {job: self.ci_steps(job, body, issue='#922') for job, body in jobs.items()}
+        expected = {
+            'cargo-nextest（cargo install 源码编译）': [
+                '"$HOME/.cargo/bin/cargo-nextest" --version 2>/dev/null | '
+                "grep -qx 'cargo-nextest 0.9.148' \\",
+                '|| cargo install cargo-nextest --locked --version 0.9.148 --force',
+                'echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"',
+                '"$HOME/.cargo/bin/cargo-nextest" --version',
+            ],
+            '测试': [self.nextest_command],
+            '文档测试': [self.doctest_command],
+        }
+        positions = []
+        for title, commands in expected.items():
+            found = [(job, i, step) for job, items in steps.items() for i, step in enumerate(items)
+                     if self.ci_step_fields(step).get('name') == (title, [])]
+            self.assertEqual([job for job, _, _ in found], ['rust'],
+                             f'#922 {title} occurs once in rust')
+            _, index, step = found[0]
+            positions.append(index)
+            self.assertEqual(set(self.ci_step_fields(step)), {'name', 'run'},
+                             f'#922 {title} cannot override execution or ignore failure')
+            self.assertEqual(self.ci_run_commands(step), commands,
+                             f'#922 {title} preserves exact commands')
+        self.assertEqual(positions, sorted(positions), '#922 install precedes nextest and doctests')
+        # Catch duplicate invocations even when a step has a different name or job.
+        executions = [(job, i) for job, items in steps.items() for i, step in enumerate(items)
+                      for command in self.ci_run_commands(step)
+                      if re.search(r'\bcargo (?:nextest run|test)\b', command)]
+        self.assertEqual(executions, [('rust', i) for i in positions[1:]],
+                         '#922 workspace test invocations are unique and complete')
+        caches = [(i, self.ci_step_fields(step)) for i, step in enumerate(steps['rust'])
+                  if 'cargo-nextest-' in step and self.ci_step_fields(step).get('uses')
+                  == ('actions/cache@v4', [])]
+        self.assertEqual(len(caches), 1, '#922 one nextest binary cache')
+        index, cache = caches[0]
+        self.assertEqual(cache, {
+            'uses': ('actions/cache@v4', []),
+            'with': ('', ['path: ~/.cargo/bin/cargo-nextest',
+                          'key: cargo-nextest-0.9.148-${{ runner.os }}-${{ runner.arch }}']),
+        }, '#922 cache is pinned to nextest version and platform')
+        self.assertLess(index, positions[0], '#922 cache restore precedes source install')
+        rust_structure = '\n'.join(line for line in jobs['rust'].splitlines()
+                                   if line.strip() and not line.lstrip().startswith('#')) + '\n'
+        self.assertEqual(re.findall(r'^    defaults:\n((?:      [^\n]*\n)+)', rust_structure, re.M),
+                         ['      run:\n        working-directory: src\n'], '#922 Rust commands run in src')
+        self.test_required_check_gates_observer_failure_instead_of_skipping()
+        self.test_b2_and_smoke_keep_commands_in_their_own_jobs()
+
+    def test_nextest_ci_profile_has_no_retries_filters_or_kill_timeout(self):
+        path = Path(__file__).resolve().parents[3]/'.config/nextest.toml'
+        try:
+            config = tomllib.loads(path.read_bytes().decode())
+        except (OSError, ValueError) as error:
+            self.fail(f'#922 nextest config must parse: {error}')
+        self.assertEqual(config, {'profile': {'ci': {
+            'retries': 0, 'slow-timeout': {'period': '60s'},
+        }}}, '#922 ci profile preserves all tests, default threads, zero retries and no termination')
+
+    def test_ci_rejects_nextest_execution_drift(self):
+        workflow = self.ci_workflow_fixture()
+        cases = []
+
+        def change(label, old, new, message):
+            self.assertEqual(workflow.count(old), 1, f'#922 unique mutation anchor: {label}')
+            cases.append((label, workflow.replace(old, new, 1), message))
+
+        for title, command in (('测试', self.nextest_command), ('文档测试', self.doctest_command)):
+            raw = f'      - name: {title}\n        run: {command}\n'
+            change(f'{title}-missing', raw, '', f'#922 {title} occurs once in rust')
+            change(f'{title}-duplicate', raw, raw + raw, f'#922 {title} occurs once in rust')
+            for field in ('if: false', "'if': false", '"continue-on-error": true',
+                          'shell: bash {0}', 'timeout-minutes: 1', 'env: {NEXTEST_RETRIES: 2}',
+                          'working-directory: .'):
+                change(f'{title}-{field}', raw, raw + f'        {field}\n',
+                       f'#922 {title} cannot override execution or ignore failure')
+            change(f'{title}-extra-run', raw, raw + f'      - run: {command}\n',
+                   '#922 workspace test invocations are unique and complete')
+        for flag in (' --workspace', ' --no-fail-fast', ' --profile ci',
+                     ' --config-file ../.config/nextest.toml'):
+            change(f'nextest-without-{flag}', self.nextest_command,
+                   self.nextest_command.replace(flag, '', 1), '#922 测试 preserves exact commands')
+        for command in ('cargo test --all', self.nextest_command + ' --retries 1',
+                        self.nextest_command + ' || true', self.nextest_command + ' -E all()'):
+            change(command, self.nextest_command, command, '#922 测试 preserves exact commands')
+        for command in ('cargo test --doc', 'cargo test --workspace', 'true'):
+            change(command, self.doctest_command, command, '#922 文档测试 preserves exact commands')
+        install = 'cargo install cargo-nextest --locked --version 0.9.148 --force'
+        for command in (install.replace('--locked ', ''), install.replace('0.9.148', '0.9.147'),
+                        'curl -Ls https://get.nexte.st/latest | tar xz'):
+            change(command, install, command, '#922 cargo-nextest（cargo install 源码编译） preserves exact commands')
+        for old, new in (('path: ~/.cargo/bin/cargo-nextest', 'path: ~/.cargo/bin'),
+                         ('key: cargo-nextest-0.9.148-', 'key: cargo-nextest-latest-'),
+                         ('-${{ runner.arch }}', ''),
+                         ('        working-directory: src\n', '        working-directory: .\n')):
+            message = '#922 Rust commands run in src' if 'working-directory' in old else '#922 cache is pinned'
+            change(old, old, new, message)
+        cache = ('      - uses: actions/cache@v4\n        with:\n'
+                 '          path: ~/.cargo/bin/cargo-nextest\n'
+                 '          key: cargo-nextest-0.9.148-${{ runner.os }}-${{ runner.arch }}\n')
+        change('missing-cache', cache, '', '#922 one nextest binary cache')
+        # Exact ordering and cross-job ownership also need negative controls.
+        first = f'      - name: 测试\n        run: {self.nextest_command}\n'
+        doc = f'      - name: 文档测试\n        run: {self.doctest_command}\n'
+        self.assertEqual(workflow.count(doc), 1, '#922 unique doctest relocation anchor')
+        installer = [step for step in self.ci_steps('rust', self.ci_jobs()['rust'])
+                     if step.startswith('name: cargo-nextest（cargo install 源码编译）\n')]
+        self.assertEqual(len(installer), 1, '#922 unique install relocation anchor')
+        raw_install = '      - ' + installer[0]
+        change('missing-install', raw_install, '', '#922 cargo-nextest（cargo install 源码编译） occurs once in rust')
+        change('conditional-install', raw_install, raw_install + '        if: false\n',
+               '#922 cargo-nextest（cargo install 源码编译） cannot override execution or ignore failure')
+        cases.append(('install-after-nextest', workflow.replace(raw_install, '', 1).replace(first, first + raw_install, 1),
+                      '#922 install precedes nextest and doctests'))
+        cases.append(('cache-after-install', workflow.replace(cache, '', 1).replace(first, cache + first, 1),
+                      '#922 cache restore precedes source install'))
+        cases.append(('doctest-before-nextest', workflow.replace(doc, '', 1).replace(first, doc + first, 1),
+                      '#922 install precedes nextest and doctests'))
+        cases.append(('doctest-in-other-job', workflow.replace(doc, '', 1).replace('    steps:\n', '    steps:\n' + doc, 1),
+                      '#922 文档测试 occurs once in rust'))
+        for old, new, message in (
+                ('needs: [metadata-observer, rust, a51-coverage]', 'needs: [metadata-observer, a51-coverage]',
+                 '#904 exact required needs'),
+                ("needs.rust.result != 'success'", "needs.rust.result == 'failure'", '#904 rust rejects every non-success')):
+            change(old, old, new, message)
+        self.check_ci_mutations(cases, 'test_nextest_keeps_workspace_doctests_and_failure_semantics', '#922')
+
+    def test_ci_rejects_nextest_profile_drift(self):
+        path = Path(__file__).resolve().parents[3]/'.config/nextest.toml'
+        config = path.read_bytes()
+        cases = []
+        for label, old, new in (
+                ('retries', b'retries = 0', b'retries = 1'),
+                ('missing-retries', b'retries = 0', b''),
+                ('missing-slow-timeout', b'slow-timeout = { period = "60s" }', b''),
+                ('kill-timeout', b'period = "60s"', b'period = "60s", terminate-after = 1'),
+                ('threads', b'retries = 0', b'retries = 0\ntest-threads = 1'),
+                ('filter', b'retries = 0', b'retries = 0\ndefault-filter = "test(none)"'),
+                ('missing-profile', b'[profile.ci]', b'[profile.other]'),
+                ('default-override', b'[profile.ci]', b'[profile.default]\nretries = 1\n[profile.ci]')):
+            self.assertEqual(config.count(old), 1, f'#922 unique profile mutation anchor: {label}')
+            cases.append((label, config.replace(old, new, 1), '#922 ci profile preserves'))
+        cases.append(('invalid-toml', b'[', '#922 nextest config must parse'))
+        self.check_ci_mutations(cases, 'test_nextest_ci_profile_has_no_retries_filters_or_kill_timeout',
+                                '#922 profile', reader='read_bytes')
 
     def test_rust_job_uses_line_tables_only_debug(self):
         rust = self.ci_jobs()['rust']
@@ -376,12 +574,12 @@ class EnvironmentControls(unittest.TestCase):
                 self.assertEqual(index, 1, '#918 B2 immediately follows checkout before npm and clone')
             else:
                 prior = commands[owner][:index]
-                prerequisites = ['rustup show active-toolchain', 'cargo test --all']
+                prerequisites = ['rustup show active-toolchain', self.nextest_command, self.doctest_command]
                 positions = [[i for i, block in enumerate(prior) if block == [command]]
                              for command in prerequisites]
                 self.assertTrue(all(len(found) == 1 for found in positions),
                                 '#918 smoke follows Rust toolchain and workspace tests')
-                self.assertLess(positions[0][0], positions[1][0],
+                self.assertEqual([found[0] for found in positions], sorted(found[0] for found in positions),
                                 '#918 smoke Rust prerequisites keep their order')
 
     def ci_b2_smoke_mutations(self):
@@ -439,7 +637,7 @@ class EnvironmentControls(unittest.TestCase):
                 change('smoke-extra-command', owner, raw,
                        raw.replace('        run: ', '        run: |\n          ', 1) + '          echo extra\n',
                        command_message)
-                for command in ('rustup show active-toolchain', 'cargo test --all'):
+                for command in ('rustup show active-toolchain', self.nextest_command, self.doctest_command):
                     # Relocate the actual smoke step before each prerequisite.
                     removed = jobs[owner].replace(raw, '', 1)
                     prerequisites = [item for item in steps
@@ -449,7 +647,7 @@ class EnvironmentControls(unittest.TestCase):
                     changed = removed.replace(prerequisite, raw + prerequisite, 1)
                     cases.append((f'smoke-before-{command}', workflow.replace(jobs[owner], changed, 1),
                                   '#918 smoke follows Rust toolchain and workspace tests'))
-                first, second = 'run: rustup show active-toolchain', 'run: cargo test --all'
+                first, second = 'run: rustup show active-toolchain', 'run: ' + self.nextest_command
                 swapped = jobs[owner].replace(first, 'run: SWAP', 1).replace(second, first, 1).replace('run: SWAP', second, 1)
                 cases.append(('smoke-swapped-prerequisites', workflow.replace(jobs[owner], swapped, 1),
                               '#918 smoke Rust prerequisites keep their order'))
@@ -506,18 +704,21 @@ class EnvironmentControls(unittest.TestCase):
         return cases
 
     def test_ci_rejects_b2_and_smoke_placement_drift(self):
-        target = 'test_b2_and_smoke_keep_commands_in_their_own_jobs'
+        self.check_ci_mutations(self.ci_b2_smoke_mutations(),
+                                'test_b2_and_smoke_keep_commands_in_their_own_jobs', '#918')
+
+    def check_ci_mutations(self, cases, target, issue, reader='read_text'):
         full_name = f'{__name__}.EnvironmentControls.{target}'
         results = []
         # The shared negative_suite runs Rust source mutations; these are only in-memory YAML.
         # Run and classify every case, then fail once, including unexpected exceptions as INVALID.
-        for name, workflow, message in self.ci_b2_smoke_mutations():
+        for name, workflow, message in cases:
             status, reason = 'INVALID', 'positive control did not complete'
             positive = restored = False
             try:
                 getattr(self, target)()
                 positive = True
-                with patch.object(Path, 'read_text', return_value=workflow):
+                with patch.object(Path, reader, return_value=workflow):
                     try:
                         getattr(self, target)()
                     except AssertionError as error:
@@ -534,9 +735,9 @@ class EnvironmentControls(unittest.TestCase):
                   f'{full_name}: {message}: {reason}', flush=True)
         counts = {status: sum(result == status for _, result in results)
                   for status in ('KILLED', 'SURVIVED', 'INVALID')}
-        print(f'#918 negative summary: {counts}', flush=True)
+        print(f'{issue} negative summary: {counts}', flush=True)
         self.assertTrue(results and all(status == 'KILLED' for _, status in results),
-                        f'#918 every mutation must fail its bound assertion: {results}')
+                        f'{issue} every mutation must fail its bound assertion: {results}')
 
     def assert_ci_rejects(self, workflow, test_name, message):
         # Invoke the real CI check on an in-memory workflow mutation, never edit ci.yml.
@@ -589,7 +790,8 @@ class EnvironmentControls(unittest.TestCase):
         target = 'test_each_npm_job_sets_up_its_own_node_before_installing'
         self.assertEqual(workflow.count(anchor), 1, '#904 invalid run control has one rust step anchor')
         for value in ('', '# comment', '|bad', '>-2', '[]', '{command: npm test}',
-                      '*commands', '&commands npm test', '!!str npm test', '${{ inputs.command }}'):
+                      '*commands', '&commands npm test', '!!str npm test', '${{ inputs.command }}',
+                      '"n\\u0070m test"'):
             with self.subTest(value=value):
                 self.assert_ci_rejects(workflow.replace(anchor, f'      - run: {value}\n', 1),
                                        target, '#904 unsupported run scalar')
@@ -601,6 +803,54 @@ class EnvironmentControls(unittest.TestCase):
                                target, '#904 single-line run cannot have a continuation')
         self.assert_ci_rejects(workflow.replace(anchor, anchor + '        run: npm test\n', 1),
                                target, '#904 step has at most one run field')
+
+    def test_ci_quoted_run_keys_and_sequence_spacing_cannot_hide_node(self):
+        workflow = self.ci_workflow_fixture()
+        target = 'test_each_npm_job_sets_up_its_own_node_before_installing'
+        anchor = '      - run: rustup show active-toolchain\n'
+        self.assertEqual(workflow.count(anchor), 1, '#919 unique run key mutation anchor')
+        cases = []
+        for spaces in (1, 2, 4):
+            indent = ' ' * (7 + spaces)
+            for key in ('run', "'run'", '"run"'):
+                for inline in (True, False):
+                    for value in ('npm test\n', '|\n' + indent + '  npm test\n'):
+                        step = '      -' + ' ' * spaces
+                        step += (key + ': ' if inline else 'name: node\n' + indent + key + ': ') + value
+                        changed = workflow.replace(anchor, step, 1)
+                        cases.append((f'{spaces}-{key}-{inline}-{value!r}', changed,
+                                      '#904 rust setup-node must precede Node commands in its own job'))
+                        # The exact same key/indentation is allowed with a prior unconditional setup.
+                        positive = changed.replace(step, '      - "uses": actions/setup-node@v4\n' + step, 1)
+                        with patch.object(Path, 'read_text', return_value=positive):
+                            getattr(self, target)()
+        for key in ('if', "'if'", '"if"'):
+            step = f'      - uses: actions/setup-node@v4\n        {key}: false\n      - run: npm test\n'
+            cases.append((f'conditional-setup-{key}', workflow.replace(anchor, step, 1),
+                          '#904 rust setup-node must precede Node commands in its own job'))
+        self.check_ci_mutations(cases, target, '#919 recognized keys')
+
+    def test_ci_unknown_step_key_shapes_fail_closed(self):
+        workflow = self.ci_workflow_fixture()
+        anchor = '      - run: rustup show active-toolchain\n'
+        self.assertEqual(workflow.count(anchor), 1, '#919 unique unknown key mutation anchor')
+        cases = []
+        for body in ('"r\\u0075n": npm test', '? run\n        : npm test',
+                     '{run: npm test}', '*step', '&step run: npm test',
+                     '!!str run: npm test', '"run: npm test', 'run', '1: npm test',
+                     'name: hidden\n        <<: *step', 'name: hidden\n       run: npm test'):
+            cases.append((body, workflow.replace(anchor, '      - ' + body + '\n', 1),
+                          '#919 unsupported step'))
+        cases.append(('unknown-key', workflow.replace(anchor, '      - runs: npm test\n', 1),
+                      '#919 unsupported step key'))
+        cases.append(('flow-sequence', workflow.replace('    steps:\n', '    steps: [{run: npm test}]\n', 1),
+                      '#904 metadata-observer has one steps sequence'))
+        cases.append(('quoted-duplicate', workflow.replace(anchor, anchor + '        "run": npm test\n', 1),
+                      '#904 step has at most one run field'))
+        cases.append(('duplicate-uses', workflow.replace(anchor,
+                     '      - uses: actions/setup-node@v4\n        "uses": some/action@v1\n', 1),
+                      '#919 duplicate step key'))
+        self.check_ci_mutations(cases, 'test_each_npm_job_sets_up_its_own_node_before_installing', '#919 unknown keys')
 
     def test_ci_node_command_family_requires_setup_for_every_invocation(self):
         workflow = self.ci_workflow_fixture()
@@ -622,11 +872,12 @@ class EnvironmentControls(unittest.TestCase):
     def test_ci_every_required_job_rejects_continue_on_error(self):
         workflow = self.ci_workflow_fixture()
         for name in self.ci_jobs():
-            with self.subTest(job=name):
-                self.assert_ci_rejects(workflow.replace(f'  {name}:\n',
-                    f'  {name}:\n    continue-on-error: true\n', 1),
-                    'test_required_check_gates_observer_failure_instead_of_skipping',
-                    f'#904 {name} cannot ignore failure')
+            for key in ('continue-on-error', "'continue-on-error'", '"continue-on-error"', 'continue-on-error '):
+                with self.subTest(job=name, key=key):
+                    self.assert_ci_rejects(workflow.replace(f'  {name}:\n',
+                        f'  {name}:\n    {key}: true\n', 1),
+                        'test_required_check_gates_observer_failure_instead_of_skipping',
+                        f'#904 {name} cannot ignore failure')
 
     def test_target_output_overlap_file_and_nonempty_target_are_rejected_without_writes(self):
         target = self.root/'new-target'
