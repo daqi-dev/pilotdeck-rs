@@ -273,7 +273,7 @@ def main():
                         f"anchor appears {occurrences} times, expected exactly once",
                     )
                     continue
-                if not passed(run(f"{mutant['name']}-positive")):
+                if not passed(run(f"{mutant['name']}-positive"), TEST):
                     record(mutant, 'INVALID', 'positive control did not pass the bound test')
                     continue
                 mutated = original.replace(mutant['old'], mutant['new'], 1)
@@ -291,7 +291,7 @@ def main():
                     time.sleep(1.1)
                     if path.read_text() != original:
                         raise RuntimeError(f'byte restoration failed: {path}')
-                if not passed(run(f"{mutant['name']}-restored")):
+                if not passed(run(f"{mutant['name']}-restored"), TEST):
                     status, reason = 'INVALID', reason + '; restored test did not pass'
                 record(mutant, status, reason)
     except SourceBaselineError as error:
