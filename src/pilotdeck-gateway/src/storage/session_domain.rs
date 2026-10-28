@@ -723,22 +723,22 @@ mod tests {
     #[test]
     fn real_ts_domain_logs_and_events_match_bytes() {
         let text = match std::env::var_os("PDRS_SESSION_DOMAIN_ORACLE") {
-            Some(path) => std::fs::read_to_string(path).unwrap(),
+            Some(path) => std::fs::read_to_string(path).expect("#743 domain fixture prerequisite"),
             None => include_str!("../../tests/fixtures/session-domain/oracle.json").to_owned(),
         };
         let oracle = crate::test_baseline::oracle(&text);
         let JsValue::Array(cases) = field(&oracle, "scenarios") else {
-            panic!("cases")
+            panic!("#743 domain cases")
         };
         // Keep in sync with session-domain/generate.mts and its README.
         assert_eq!(cases.len(), 304, "domain oracle scenario count");
         for case in cases {
             let name = field(case, "name");
             let JsValue::Array(entries) = field(case, "entries") else {
-                panic!("entries")
+                panic!("#743 domain entries")
             };
             let JsValue::Array(expected) = field(case, "outcomes") else {
-                panic!("outcomes")
+                panic!("#743 domain outcomes")
             };
             assert_eq!(entries.len(), expected.len(), "{name:?}: outcome count");
             let mut state = DomainState::default();
@@ -748,18 +748,18 @@ mod tests {
                     state = next.clone();
                 }
                 assert_eq!(
-                    stringify_json(&outcome(next)).unwrap(),
-                    stringify_json(expected).unwrap(),
-                    "{name:?}: {entry:?}"
+                    stringify_json(&outcome(next)).expect("#743 domain fixture prerequisite"),
+                    stringify_json(expected).expect("#743 domain fixture prerequisite"),
+                    "#743 domain transition outcome {name:?}: {entry:?}"
                 );
             }
             let log = entries
                 .iter()
                 .try_fold(DomainState::default(), |state, e| state.next(e));
             assert_eq!(
-                stringify_json(&outcome(log)).unwrap(),
-                stringify_json(field(case, "log")).unwrap(),
-                "{name:?}: log"
+                stringify_json(&outcome(log)).expect("#743 domain fixture prerequisite"),
+                stringify_json(field(case, "log")).expect("#743 domain fixture prerequisite"),
+                "#743 domain log outcome {name:?}"
             );
         }
     }

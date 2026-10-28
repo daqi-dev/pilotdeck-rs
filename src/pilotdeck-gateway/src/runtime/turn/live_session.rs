@@ -17,7 +17,7 @@ use crate::{
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, admission::ExecutionIdentity};
 use std::sync::{Arc, Mutex};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum SessionStatus {
@@ -157,13 +157,23 @@ impl SessionLifecycle {
         Box::pin(async move { future.await.map(|_| ()) })
     }
     fn close(mut self) -> HostFuture<()> {
-        let task = self.spawn_close();
-        Box::pin(async move { task.await.map_err(|e| ModuleError::new(e.to_string()))? })
+        let mut done = self.spawn_close();
+        Box::pin(async move {
+            loop {
+                if let Some(result) = done.borrow_and_update().clone() {
+                    return result;
+                }
+                done.changed()
+                    .await
+                    .map_err(|_| ModuleError::new("Session cleanup stopped before completion."))?;
+            }
+        })
     }
-    fn spawn_close(&mut self) -> tokio::task::JoinHandle<Result<(), HostError>> {
+    fn spawn_close(&mut self) -> watch::Receiver<Option<Result<(), HostError>>> {
         let owned = self.owned.take();
         let port = self.port.clone();
-        self.executor.spawn(async move {
+        let (done, completion) = watch::channel(None);
+        let cleanup = async move {
             let mut errors = Vec::new();
             if let Err(e) = port.dispose().await {
                 errors.push(e.to_string());
@@ -201,7 +211,11 @@ impl SessionLifecycle {
             } else {
                 Err(ModuleError::new(errors.join("; ")).into())
             }
-        })
+        };
+        // Keep the same guarded completion contract as the turn-owned cleanup:
+        // a stopped executor can discard this future without ever polling it.
+        crate::runtime::cleanup_task::spawn_after(&self.executor, done, || {}, cleanup);
+        completion
     }
 }
 impl Drop for SessionLifecycle {

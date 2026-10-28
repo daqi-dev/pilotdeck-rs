@@ -3,22 +3,23 @@
 import json, os, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_suite import Case, run_cases
+from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import Case, run_cases, matrix_main
 root = Path(__file__).resolve().parents[5]
 live = root / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 runner = live.with_name('runner.rs'); driver = live.with_name('runner_recording.rs'); interaction = live.with_name('interaction.rs')
 controls = [
  ('disposed-admission', live, 'if state.disposed {', 'if false {', 'live_recording_start_dispose', 'disposed session stays closed'),
  ('active-admission', live, 'if state.active.is_some() {', 'if false {', 'live_recording_start_resubmit', 'pending write blocks resubmit'),
- ('start-error-propagates', runner, 'self.io(|r, s, t| r.start_turn(s, t)).await?;', 'let _ = self.io(|r, s, t| r.start_turn(s, t)).await;', 'live_recording_start_failure', 'called `Result::unwrap_err()` on an `Ok` value'),
+ ('start-error-propagates', runner, 'self.io(|r, s, t| r.start_turn(s, t)).await?;', 'let _ = self.io(|r, s, t| r.start_turn(s, t)).await;', 'live_recording_start_failure', '#743 recording expected failure'),
  ('shared-lease-exclusive-only', interaction, 'if let Ok(mut lease) = Arc::try_unwrap(owned.lease)', 'if Arc::strong_count(&owned.lease) > 1 { return Err(ModuleError::new("shared recorder lease incorrectly blocks handler cleanup").into()); }\n                if let Ok(mut lease) = Arc::try_unwrap(owned.lease)', 'recording_shared_lease_outlives_handler_cleanup', 'shared recorder lease incorrectly blocks handler cleanup'),
- ('accept-failure-not-success', runner, '("type", "error".into()),', '("type", "success".into()),', 'live_recording_accept_failure', 'assertion `left == right` failed'),
- ('complete-failure-not-success', runner, '("type", "error".into()),', '("type", "success".into()),', 'live_recording_complete_failure', 'assertion `left == right` failed'),
+ ('accept-failure-not-success', runner, '("type", "error".into()),', '("type", "success".into()),', 'live_recording_accept_failure', 'integrity failure terminal must be error'),
+ ('complete-failure-not-success', runner, '("type", "error".into()),', '("type", "success".into()),', 'live_recording_complete_failure', 'integrity failure terminal must be error'),
  ('real-slot', live, 'Recording::new(runner, owner)', 'Recording::new(runner, { drop(owner); Arc::new(()) })', 'live_recording_start_drop', 'worker owns active slot'),
  ('worker-slot', runner, 'let owner = self.owner.clone();', 'let owner: Option<Arc<dyn Send + Sync>> = None;', 'live_recording_accept_drop', 'worker owns active slot'),
  ('worker-lease', runner, 'let result = write(&recorder, &session, &turn);\n            drop(owner);\n            drop(lease);', 'drop(lease);\n            let result = write(&recorder, &session, &turn);\n            drop(owner);', 'live_recording_complete_dispose', 'worker retains lease'),
  ('waiter-takes-transition', driver, 'self\n            .pending\n            .as_mut()', 'self\n            .pending\n            .take()', 'live_recording_accept_cancel', 'pending predecessor'),
- ('pending-payload', live, 'self.pending_event = Some((event, terminal, receipt));', 'self.pending_event = Some((if terminal { crate::metadata::object([("type", "turn_completed".into())]) } else { event }, terminal, receipt));', 'live_recording_complete_cancel', 'original payload survives cancelled next'),
+ ('pending-payload', live, 'self.pending_event = Some((event, terminal, receipt));', 'self.pending_event = Some((if terminal { { let mut fields = event.as_object().expect("#743 payload mutant object").clone(); fields.insert("sessionId".into(), JsValue::Null); JsValue::Object(fields) } } else { event }, terminal, receipt));', 'live_recording_complete_cancel', 'original payload survives cancelled next'),
  ('terminal-releases-runner', live, '        self.recording.take();', '        // mutant retains recording', 'live_recording_complete_cancel', 'EOF stream releases slot'),
  ('accepted-marker', live, 'self.accepted = true;', 'self.accepted = false;', 'live_recording_complete_cancel', 'recording gate must precede delivery'),
  ('complete-dispatch', live, '_ if terminal && self.accepted =>', '_ if terminal && !self.accepted =>', 'live_recording_complete_cancel', 'recording gate must precede delivery'),
@@ -50,15 +51,23 @@ def audit():
 
 if sys.argv[1:]==['--audit']:
  print(json.dumps(audit(),indent=2));raise SystemExit()
+compile_only = '--compile-only' in sys.argv[1:]
+sys.argv = [arg for arg in sys.argv if arg != '--compile-only']
 env=os.environ.copy()
 if not env.get('CARGO_TARGET_DIR'): raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
 env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',CARGO_PROFILE_TEST_DEBUG='line-tables-only',CARGO_TERM_QUIET='false')
-out=Path(sys.argv[1]).resolve();out.mkdir(parents=True,exist_ok=False)
+out=Path(sys.argv[1]).resolve()
+if not compile_only: out.mkdir(parents=True,exist_ok=False)
 if sys.argv[2:]:
  selected=set(sys.argv[2:])
  unknown=selected-{c[0] for c in controls}
  if unknown: raise SystemExit(f'unknown controls: {sorted(unknown)}')
  controls=[c for c in controls if c[0] in selected]
+if compile_only:
+ rows=[(n,p,old,new,full_test(test),anchor) for n,p,old,new,test,anchor in controls]
+ raise SystemExit(matrix_main(root,__file__,'',rows,passed_count=1,child_count=0,
+  paths=[live,runner,driver,interaction,live.with_name('live_stream_tests.rs')],exact=True,
+  args=['--compile-only',str(out)]))
 raise SystemExit(run_cases(root,
  [Case(n,p,old,new,full_test(test),anchor) for n,p,old,new,test,anchor in controls],
  out,env,mutate,baseline=env.get('PDRS_NEGATIVE_BASELINE','HEAD')))

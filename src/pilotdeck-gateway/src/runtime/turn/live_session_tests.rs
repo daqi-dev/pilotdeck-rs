@@ -524,6 +524,18 @@ async fn dispose_running_signals_then_closes_writer() {
         Some(&"session_started".into()),
         "#743 dispose first event"
     );
+    let mut invalid = JsObject::new();
+    invalid.insert("type".into(), "step_started".into());
+    let open_error = recorder
+        .writer()
+        .record_session_event(&"session".into(), &"turn".into(), invalid.clone())
+        .expect_err("#743 open writer must reject step outside turn");
+    assert!(
+        open_error
+            .to_string()
+            .contains("step_started requires an active turn turn."),
+        "#743 open writer must reach domain validation: {open_error}"
+    );
     bounded(session.dispose())
         .await
         .expect("#743 dispose running");
@@ -536,12 +548,12 @@ async fn dispose_running_signals_then_closes_writer() {
         "aborted",
         "#743 dispose status"
     );
-    // TS closed writer acknowledges even an otherwise invalid append, without
-    // validating or writing it. Removing session's close must make this fail.
+    // The same input was rejected by domain validation before close. This
+    // distinguishes a closed writer from an open one without relying on I/O.
     crate::test_negative_receipt::expect_ok(
         recorder
             .writer()
-            .record_session_event(&"session".into(), &"turn".into(), JsObject::new()),
+            .record_session_event(&"session".into(), &"turn".into(), invalid),
         "#743 dispose closes writer",
     );
     let mut kinds = vec![];
@@ -591,6 +603,175 @@ async fn lifecycle_drop_off_runtime_uses_captured_executor() {
     bounded(registry.dispose())
         .await
         .expect("#743 off-runtime registry drain");
+}
+
+fn shutdown_runtime(multi_thread: bool) -> tokio::runtime::Runtime {
+    let mut builder = if multi_thread {
+        let mut builder = tokio::runtime::Builder::new_multi_thread();
+        builder.worker_threads(1);
+        builder
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+    };
+    builder
+        .enable_all()
+        .build()
+        .expect("#743 shutdown runtime builds")
+}
+
+fn shutdown_stream() -> (SessionStream, Arc<crate::runtime::project::ProjectRuntime>) {
+    let (_, mut stream, _, _) = harness("");
+    let registry = crate::runtime::project::ProjectRuntimeRegistry::new(
+        std::env::temp_dir(),
+        Arc::new(|_: &std::path::Path, _: &mut crate::runtime::project::ResourceBundle| Ok(())),
+    );
+    let lease = Arc::new(registry.acquire(None).expect("#743 shutdown lease"));
+    let project = lease.runtime().clone();
+    stream
+        .lifecycle
+        .as_mut()
+        .expect("#743 shutdown lifecycle")
+        .owned = Some(SessionOwnership {
+        lease,
+        contribution: None,
+        turn: None,
+    });
+    (stream, project)
+}
+
+#[test]
+fn lifecycle_shutdown_drop_settles_without_unwind() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    for multi_thread in [false, true] {
+        // Runtime shutdown cannot poll the new cleanup task. Both the stream's
+        // Drop path and explicit close must release ownership synchronously.
+        let runtime = shutdown_runtime(multi_thread);
+        let ((stream, project), lifecycle) = runtime.block_on(async {
+            let (mut closing, _) = shutdown_stream();
+            (
+                shutdown_stream(),
+                closing.lifecycle.take().expect("#743 shutdown close owner"),
+            )
+        });
+        drop(runtime);
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| drop(stream))).is_ok(),
+            "#743 shutdown SessionStream drop cannot unwind"
+        );
+        assert_eq!(
+            project.lease_count(),
+            0,
+            "#743 shutdown drops unpolled lease"
+        );
+        let close = catch_unwind(AssertUnwindSafe(|| lifecycle.close()))
+            .expect("#743 shutdown close cannot unwind");
+        let observer = shutdown_runtime(false);
+        let error = observer
+            .block_on(bounded(close))
+            .expect_err("#743 shutdown cleanup must report cancellation");
+        crate::negative_assert_eq!(
+            error.message,
+            "Interaction cleanup task was dropped or panicked before completion.",
+            "#743 shutdown completion guard settles unpolled cleanup"
+        );
+
+        // The predecessor deliberately never completes. The entered signal
+        // proves the runtime owns the stream before shutdown cancels that task.
+        let runtime = shutdown_runtime(multi_thread);
+        let (task, project) = runtime.block_on(async {
+            let (stream, project) = shutdown_stream();
+            let (entered, ready) = oneshot::channel();
+            let task = tokio::spawn(async move {
+                let _stream = stream;
+                entered.send(()).expect("#743 shutdown entered receiver");
+                std::future::pending::<()>().await;
+            });
+            bounded(ready).await.expect("#743 shutdown task entered");
+            (task, project)
+        });
+        assert_eq!(
+            project.lease_count(),
+            1,
+            "#743 shutdown pending owner retains lease"
+        );
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| drop(runtime))).is_ok(),
+            "#743 shutdown cancellation cannot unwind"
+        );
+        assert!(task.is_finished(), "#743 shutdown cancels pending owner");
+        assert_eq!(
+            project.lease_count(),
+            0,
+            "#743 shutdown cancelled owner lease"
+        );
+        let error = observer
+            .block_on(bounded(task))
+            .expect_err("#743 shutdown pending owner must not complete");
+        assert!(
+            error.is_cancelled(),
+            "#743 shutdown owner cancelled, not panicked"
+        );
+    }
+}
+
+#[test]
+fn lifecycle_close_completion_covers_error_panic_and_cancellation() {
+    struct Closing {
+        mode: &'static str,
+        entered: Cancellation,
+    }
+    impl LifecyclePort for Closing {
+        fn dispatch(&self, _: LifecycleDispatchInput) -> HostFuture<LifecycleDispatchResult> {
+            Box::pin(async { Ok(LifecycleDispatchResult::default()) })
+        }
+        fn dispose(&self) -> HostFuture<()> {
+            let mode = self.mode;
+            let entered = self.entered.clone();
+            Box::pin(async move {
+                entered.cancel();
+                match mode {
+                    "error" => Err(ModuleError::new("#743 disposer rejected").into()),
+                    "panic" => panic!("#743 injected disposer panic"),
+                    "pending" => std::future::pending().await,
+                    _ => Ok(()),
+                }
+            })
+        }
+    }
+    for mode in ["success", "error", "panic", "pending"] {
+        let runtime = shutdown_runtime(false);
+        let entered = Cancellation::new();
+        let close = {
+            let _entered_runtime = runtime.enter();
+            SessionLifecycle::test(Arc::new(Closing {
+                mode,
+                entered: entered.clone(),
+            }))
+            .close()
+        };
+        runtime.block_on(bounded(entered.cancelled()));
+        // The pending disposer has actually been polled. Shutdown, rather than
+        // a time delay, cancels it; observing completion uses a live executor.
+        drop(runtime);
+        let result = shutdown_runtime(false).block_on(bounded(close));
+        match mode {
+            "success" => result.expect("#743 completion preserves success"),
+            "error" => crate::negative_assert_eq!(
+                result
+                    .expect_err("#743 completion preserves rejection")
+                    .message,
+                "Callback (accepted=false, stream_id=None, last_applied_sequence=None): #743 disposer rejected",
+                "#743 completion preserves disposer error"
+            ),
+            _ => crate::negative_assert_eq!(
+                result
+                    .expect_err("#743 completion reports task loss")
+                    .message,
+                "Interaction cleanup task was dropped or panicked before completion.",
+                "#743 completion reports panicked or cancelled cleanup"
+            ),
+        }
+    }
 }
 
 #[tokio::test]
