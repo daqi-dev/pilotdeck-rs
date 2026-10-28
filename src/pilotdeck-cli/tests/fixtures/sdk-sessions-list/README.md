@@ -1,0 +1,25 @@
+# #983 sessions 默认 / list
+
+`oracle.json` 由 `generate.mjs` 从协调者 Node v22.22.0 实录机械提取，不执行 TS、mock 或 sandbox-exec。来源根默认为 `/Users/da/ws/pilotdeck-rs/_tmp/20261028-issue-123-d1/plan/`，可由 `PDRS_D1_PLAN` 指定归档副本；原始批次见该目录 `HOST-RESULTS.md`。收录 `sessions-default--*`、`sessions-list--*` 共 76 格，另有 `sessions-unknown--argv`。
+
+每格记录输入、原件相对路径、文件 SHA-256、原始 stderr、比较视图、退出/信号、原始顺序的 WS 帧、初始完整文件树。仅按 `specs/cli-parity/normalization.md` §6 去掉 TS stderr 开头一次完整 SQLite 两行；不调整 Rust 输出。请求 UUID 仅在 mock 重放数据中替换为 `<request>`，实际 CLI stdout/stderr 不改。
+
+`tests/sdk_sessions_list_exit.rs` 启动真实 Rust CLI 和独占 `127.0.0.1:28999` 的 WebSocket mock；与 D0 共用 `/tmp/pdrs-parity.lock`，不回收他人锁、不换端口。信号由收到请求事件触发；子进程均带终止上限、失败清理及 wait，服务端消费到 EOF。测试不连接 18789；本测试不替代 D0 的内核隔离验收。
+
+矩阵比较 stdout、stderr、exit/signal、完整落盘及 hello/RPC。补充的 15 个 transport 边界格属于读码推断，不作为新增 TS 金样；鉴权 close 的 Rust 应答 reason 为 `auth_failed`，TS mock 原件为 `""`，CLI 四面相同。此内部 WS 帧差异尚未批准为对拍豁免。
+
+重生成守卫（先按项目要求设置 Cargo 环境及检查 slots）：
+
+```sh
+cargo test -p pilotdeck-cli --test sdk_sessions_list_exit \
+  sessions_list_oracle_regenerates_identically -- --exact --ignored
+```
+
+`NODE22` 可指定本机已存在的 Node v22.22.0；未指定使用协调者现有绝对路径。输出目录递归创建、文件以 `wx` 独占写入，原件缺失/内容变化均失败。
+
+28 个负控定义在 `src/pilotdeck-gateway/tests/fixtures/sdk-sessions-list/negative_controls.py`，复用该目录现有 `negative_process` 与 `negative_suite`，以便 main 的锚点检查器发现。每项先编译，使用当前 nonce + 精确测试名 + 格 ID 判杀；恢复后重跑正控，全项汇总。必须提供 `CARGO_TARGET_DIR`，全部源码/执行器等于 HEAD 才可运行；新文件未提交时拒跑。提交后协调者执行：
+
+```sh
+python3 src/pilotdeck-gateway/tests/fixtures/sdk-sessions-list/negative_controls.py \
+  _tmp/20261026-issue-983/negative-host
+```

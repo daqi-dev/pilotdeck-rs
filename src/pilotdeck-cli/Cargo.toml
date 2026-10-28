@@ -23,12 +23,15 @@ pilotdeck-transport = { path = "../pilotdeck-transport" }
 libc = "=0.2.190"
 icu_collator = "=2.1.1"
 icu_locale_core = "=2.3.0"
+tokio = { version = "=1.48.0", features = ["rt", "net", "time", "sync"] }
+tokio-tungstenite = { version = "=0.28.0", features = ["rustls-tls-webpki-roots"] }
+futures-util = { version = "=0.3.31", default-features = false, features = ["sink", "std"] }
+uuid = { version = "=1.27.0", features = ["v4"] }
 
 [dev-dependencies]
 serde_json.workspace = true
-# Only the write-stage child test: `ensure_sigxfsz_ignored` registers through
-# tokio's safe signal API and needs a runtime with the signal driver.
-tokio = { version = "=1.48.0", features = ["rt", "signal"] }
+# Write-stage signal registration and the real WebSocket CLI replay tests.
+tokio = { version = "=1.48.0", features = ["rt", "signal", "macros"] }
 
 [lints]
 workspace = true
