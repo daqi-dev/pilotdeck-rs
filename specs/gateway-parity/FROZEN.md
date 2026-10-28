@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-28 #991 重登记候选（独立单，待两家非作者终审与人复核）**：把 10 个 A2 入口各自复制的 HEAD 自举 / 显式路径加载 / 来源校验 / 退出码分类收成唯一 `_guard.py`；入口 `__main__` 仅 `run_entry(main)`，`test_safety` 新增 AST 机检（`__main__` 恰为该调用、无私有 `except` 分类、入口不再定义 `_load` / `_verify_cli_imports` / `_has_git_checkout`）与 `-I` 先于其它标准库 import 的 AST 检查；`observer.py` 同收编。仅重登记 13 件 A2 哈希并新增 `_guard.py` 一行；不改判分语义、阈值、分母、归一化、差异账本。真实存档复算与提交后负控见 `_tmp/20261026-issue-991/RESULT.md`；未提交树入口按设计 BLOCKED，不冒充已提交 CLI 通过。
+
 > **2026-10-28 #166 fix-r11 重登记候选（本轮明确授权，待两家非作者终审与人复核）**：恢复无 git 检出静态 CLI/库校验：仅无 `.git`（含祖先目录）且未设 GIT_DIR 时不读 HEAD，原哈希/账本检查继续；检出、worktree 文件、损坏元数据及显式 pinned HEAD 仍严格验证，真实采集租约继续硬要求 HEAD。十份相同 bootstrap 与 common 库入口同步，新增真实 ledger 回归、来源边界矩阵及成对变异。未改判分语义、阈值或历史账本。原始验证、真实存档复算及提交后全量负控交接见 `_tmp/20261026-issue-166/fix-r11/RESULT.md`；本记录不宣称终审或阶段完成。
 
 > **2026-10-28 #166 fix-r10 重登记候选（本轮明确授权，待两家非作者终审与人复核）**：工作阶段 SIGINT/SIGTERM（KeyboardInterrupt）统一 BLOCKED/2/EVIDENCE，普通证据异常 FAIL/1/EVIDENCE；PermissionError/TimeoutError 沿 session 分类为 BLOCKED/2。cargo 配置拒绝在采集前返回 BLOCKED/2/CARGO_CONFIG。独立 A2 controls 的迟验证专用错误在 CLI 边界返回 BLOCKED/2/APPARATUS_IMPORTS，普通工作异常不提升为装置错误。新增五个时机 × 两个真实信号、预检、standalone 双路径矩阵，原六门测试加共享返回值哨兵，补 session 取消及对应负控。仅重登记 check_ruler.py、controls/run_all.py、test_safety.py 三件；不改判分、阈值、分母、共享状态映射、旧差异账本、租约或等待协议。真实旧存档复算、session-domain-cleanup 样本恢复正控、原始信号输出和提交后全量负控步骤见 `_tmp/20261026-issue-166/fix-r10/RESULT.md`。新候选不冒充已完成独立终审、全量重采或人签字；run_round 的同源历史 BLOCKED/1 边界仅列出，未扩改其冻结件。
@@ -168,22 +170,23 @@
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
 3e641ee353effae94c3751b198cb08f1728bf225bc9963356befea1d722df49b  accepted-diffs.md
-4b2238917edca8611136613eac269d2fb3c1fe06f6f3e9deb3e22e9e149dc390  ../../scripts/gateway-parity/build_proxy.py
-64a4ba7db00b03577bb1fbda94282ba7e6b80475a6208c5cd5e8cc9eab977b8b  ../../scripts/gateway-parity/check_frozen.py
-2014fadfe73e679475c72b75f4127f17b84016397b0aaef149c20fe4ffcd9941  ../../scripts/gateway-parity/check_ruler.py
-015dd739f6effc1905c1428696bf473f19dbe6955d983f2b6a97f17c35efae5d  ../../scripts/gateway-parity/common.py
-c1f10e3f029f5553553058b6cff688bdd3f0e01c0fc74512e2d9c62084350f52  ../../scripts/gateway-parity/compare.py
-bba0b2ea51a1b1f7ccaf8864eb8f5745631a50b7d64f2228a14dd561bec7bf26  ../../scripts/gateway-parity/controls/prerequisites.py
-c5038f443a8cc65377420a6fc7e43f15f27b2c803fb4039b17e4dee58d499482  ../../scripts/gateway-parity/controls/run_all.py
+5157f972759bc56a37fa44d73b58a67e6d6ce3906dc1206d1e1fb68fda20bda2  ../../scripts/gateway-parity/_guard.py
+c53e40e9185b9cad5b510ca2297051155c1a4ab12cf691faf1c4544fbca2197e  ../../scripts/gateway-parity/build_proxy.py
+9b663806b5bb9326efb36e8f15a4ef14e5e8c3af72625fe12734fd2d7bd0173f  ../../scripts/gateway-parity/check_frozen.py
+3d8fc564c94cd5788def7b2eb2ede30660f11c5eec55a42e0bf857175436c4ab  ../../scripts/gateway-parity/check_ruler.py
+eb48c34dbc6c245fa10421bf5a4015acc95a341df0d96b6f336dbafbded0ec5c  ../../scripts/gateway-parity/common.py
+35513cb24f24ea5540ffb2ef2c2643704746081a0ba0a8f11d29c0cc2f6bd860  ../../scripts/gateway-parity/compare.py
+9379b9e401e8a47537e933b2cdbfcff44aa16d6cef8138d7857349d87de2240a  ../../scripts/gateway-parity/controls/prerequisites.py
+09c786086c3afbfc5886244cc1daef885db22dd68ea18bef967c421594672455  ../../scripts/gateway-parity/controls/run_all.py
 5f8e906fa532a58b994dff4f5e6438b07e31f14195b8142b75b398b6778e9e63  ../../scripts/gateway-parity/driver.mts
 95fe265a7b7512f1969f19b7ee2d14133ce56916fb25c0953a84b5ec05568f74  ../../scripts/gateway-parity/mock.mjs
-3a758aa57cbb5d8129c2e9b73c0baa04028a87aa7bae5dba6d8519f713869692  ../../scripts/gateway-parity/observer.py
-a15190a05adecf6ae25cf0a032766d87673652a0e837c3e6622e658bf6b06dea  ../../scripts/gateway-parity/run_round.py
-8b0b17b395f60bb5da594f40e5ba1a70b1f7380cbc1eb201945eceb622406485  ../../scripts/gateway-parity/test_safety.py
+d00cf0d2759ff0984b2138d7eeaa07dfb791e972fb42d6200974c8f804a71768  ../../scripts/gateway-parity/observer.py
+978760c9dd18d945bcdc5f23b181e13a3c0f1908971b1e217cef23a892d0109d  ../../scripts/gateway-parity/run_round.py
+e188afc67c5a53ae0188b798d8bb301944465c8ed9aee9bdcf77907318871fd7  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
-20d36745a65f66de1c44f7aec96a0168796c0715568e6df8753a812a5b2cd539  ../../scripts/gateway-parity/session_domain.py
+8ad48b71678dc99de870571e6d8d9d1eb338268d78ed5ea8e72e34b0ec916227  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
-39f534bea58ec4afc98819add5596fcdbdf9ad00cff731fef26cc5bad5f04957  ../../scripts/gateway-parity/controls/session_domain.py
+bfcb54e9e7011839e0a5d4c044f4aa1cd04b7d94beb6c274a2e65fcb0c503228  ../../scripts/gateway-parity/controls/session_domain.py
 41b1313fc047e8334a1655b69e277c4bcc451edaf15b79efd37e403e7005dab2  ../../scripts/gateway-parity/fixtures/session-calibration.json
 8ea02eadd41cc6bbf75c1e67c22152f37f6b729007ad1e3a34a190c9ab60188c  ../../scripts/a5-19/observation_rules.mjs
 0248507e617648bd8e81e1a54ae8b448cd7b7a2f14f1542424adc3a83b398c84  ../../scripts/a5-19/run.py

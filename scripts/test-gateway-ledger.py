@@ -35,6 +35,7 @@ class Ledger(unittest.TestCase):
         self.diffs = self.folder / 'diffs'
         self.diffs.mkdir(parents=True)
         registered = ['acceptance.md', 'normalization.md', 'accepted-diffs.md',
+                      '../../scripts/gateway-parity/_guard.py',
                       '../../scripts/gateway-parity/check_frozen.py',
                       '../../scripts/gateway-parity/common.py']
         lines = []
