@@ -129,7 +129,7 @@ fn setup() -> (
 async fn live_tail_progress_and_drop() {
     bounded(async{
         let (session,tail,gate,entered,root)=setup();let path=root.join("session.jsonl");
-        let mut turn=session.submit(input(),options("turn")).expect("#742 live tail submit");
+        let mut turn=session.submit_turn_for_test(input(),options("turn")).expect("#742 live tail submit");
         for name in ["turn_started","input_accepted","user_prompt_submitted","tool_result","file_artifacts"]{kind(&event(turn.as_mut()).await,name);}
         assert!(!disk(&path).contains("\"type\":\"turn_result\""),"#742 live tail artifact boundary");
         {
@@ -146,10 +146,10 @@ async fn live_tail_progress_and_drop() {
         // A second write differs, so this turn also yields an artifact before
         // completion. Drop the stream at that yield, then admit a successor.
         fs::write(root.join("workspace/report.txt"),"old").expect("#742 live tail change baseline");
-        let mut turn=session.submit(input(),options("turn-2")).expect("#742 live tail second submit");
+        let mut turn=session.submit_turn_for_test(input(),options("turn-2")).expect("#742 live tail second submit");
         for name in ["turn_started","input_accepted","user_prompt_submitted","tool_result","file_artifacts"]{kind(&event(turn.as_mut()).await,name);}
         drop(turn);
-        let turn=session.submit(input(),options("turn-3")).expect("#742 live tail dropped progress releases slot");drop(turn);
+        let turn=session.submit_turn_for_test(input(),options("turn-3")).expect("#742 live tail dropped progress releases slot");drop(turn);
         bounded(session.dispose()).await.expect("#742 live tail dispose");drop(tail);fs::remove_dir_all(root).expect("#742 live tail cleanup");
     }).await;
 }

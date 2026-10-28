@@ -100,7 +100,7 @@ async fn matrix(name: &str) {
             })
         }
     });
-    let mut turn = Some(session.submit(input(), options()).unwrap());
+    let mut turn = Some(session.submit_turn_for_test(input(), options()).unwrap());
     let mut events = Vec::new();
     let mut error = false;
     let mut gated = false;
@@ -126,7 +126,7 @@ async fn matrix(name: &str) {
                 assert!(session.state.lock().unwrap().active.is_some());
                 assert!(
                     session
-                        .submit(input(), turn_options("replacement"))
+                        .submit_turn_for_test(input(), turn_options("replacement"))
                         .is_err(),
                     "pending write blocks admission"
                 );
@@ -289,7 +289,7 @@ async fn matrix(name: &str) {
         "durable terminal count"
     );
     let replacement = session
-        .submit(input(), turn_options("replacement"))
+        .submit_turn_for_test(input(), turn_options("replacement"))
         .unwrap();
     drop(replacement);
     registry.dispose().await.unwrap();
@@ -409,7 +409,7 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
     });
     let mut projection = Vec::new();
     let mut turn = session
-        .submit(input(), options())
+        .submit_turn_for_test(input(), options())
         .expect("#855: pump gate setup/read/cleanup must succeed");
     if case == "reject" {
         let error = next(turn.as_mut())
@@ -696,7 +696,7 @@ async fn gates_factory_ready_cancel() {
         let wait = wait.lock().unwrap().take().unwrap();
         Box::pin(async move { Ok(wait.await.unwrap()) })
     });
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     {
         let mut pending = turn.next();
         assert_recording_pending(pending.as_mut(), "factory waits for prepared resources");

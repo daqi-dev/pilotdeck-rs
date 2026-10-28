@@ -24,7 +24,10 @@ use std::{
     fmt, fs,
     io::{self, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
@@ -512,7 +515,6 @@ struct WriterInner {
     sequence: u64,
     last_entry_id: Option<JsString>,
     entry_ids: HashSet<JsString>,
-    closed: bool,
     recorder_domain: DomainState,
 }
 /// TS JsonlTranscriptWriter + SessionRuntime with an external append sink.
@@ -523,6 +525,7 @@ pub struct TranscriptWriter {
     path: PathBuf,
     layout: SubagentLayout,
     inner: Mutex<WriterInner>,
+    closed: AtomicBool,
     #[cfg(test)]
     pub(crate) test_sources: Mutex<Option<(RecorderClock, RecorderUuid)>>,
 }
@@ -539,11 +542,11 @@ impl TranscriptWriter {
             layout,
             #[cfg(test)]
             test_sources: Mutex::new(None),
+            closed: AtomicBool::new(false),
             inner: Mutex::new(WriterInner {
                 sequence: 0,
                 last_entry_id: None,
                 entry_ids: HashSet::new(),
-                closed: false,
                 recorder_domain: DomainState::default(),
             }),
         }
@@ -677,9 +680,15 @@ impl TranscriptWriter {
         }
         Ok(())
     }
-    /// JsonlTranscriptWriter.close: later appends resolve without writing.
+    /// Fence new appends synchronously, before awaiting the in-flight writer.
+    pub fn begin_close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+    }
+    /// JsonlTranscriptWriter.close: later appends resolve without writing,
+    /// and close waits for any append that already acquired the commit lock.
     pub fn close(&self) {
-        self.lock().closed = true;
+        self.begin_close();
+        drop(self.lock());
     }
     pub fn record_session_event(
         &self,
@@ -748,8 +757,11 @@ impl TranscriptWriter {
     /// TS recordEntry → SessionRuntime.appendRecorded: the caller's envelope is
     /// kept and validated against the current state.
     pub fn record_entry(&self, entry: &JsValue) -> AdapterResult<()> {
+        if self.closed.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         let mut inner = self.lock();
-        if inner.closed {
+        if self.closed.load(Ordering::SeqCst) {
             return Ok(());
         }
         let entry = materialize(entry)?;
@@ -788,8 +800,11 @@ impl TranscriptWriter {
         sources: impl FnOnce() -> Result<(String, String), E>,
         validate: impl FnOnce(&DomainState, &JsValue) -> Result<DomainState, E>,
     ) -> Result<(), E> {
+        if self.closed.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         let mut inner = self.lock();
-        if inner.closed {
+        if self.closed.load(Ordering::SeqCst) {
             return Ok(());
         }
         // JsValue has a Drop impl, so the object is filled in place, not moved out.
