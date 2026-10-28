@@ -305,6 +305,26 @@ try {
     { name: 'whitespace-title', includeInternal: false, files: [
       file('space.jsonl', metadataLine({ title: ' ' }, 9), 1_700_000_000_000),
     ] },
+    // #970-3: the fast (head/tail textual) path keeps a whitespace-only title
+    // while the full metadata fallback rejects it (`!summary?.trim()`), so the
+    // same blank title hides a session only when its record sits outside both
+    // 64 KiB windows, and a blank later record never overrides the fast answer.
+    { name: 'whitespace-title-midfile', includeInternal: false, files: [
+      file('mid-space.jsonl',
+        otherPadLine + metadataLine({ title: ' ' }, 9) + otherPadLine,
+        1_700_000_000_000),
+    ] },
+    { name: 'whitespace-title-reset-midfile', includeInternal: false, files: [
+      file('reset.jsonl',
+        metadataLine({ title: 'abc' }, 1) + otherPadLine
+          + metadataLine({ title: ' ' }, 9) + otherPadLine,
+        1_700_000_000_000),
+    ] },
+    { name: 'whitespace-tail-snapshot', includeInternal: false, files: [
+      file('tail-space.jsonl',
+        otherPadLine + metadataLine({ title: ' ', isSnapshot: true }, 9),
+        1_700_000_000_000),
+    ] },
     { name: 'metadata-only-order', includeInternal: false, files: [
       file('meta-only.jsonl',
         '{"type":"other","createdAt":"2023-01-01T00:00:00Z"}\n'

@@ -1040,3 +1040,45 @@ fn path_argument_preserves_lone_surrogate_units() {
         "#934 skills path argument must keep the Node wording"
     );
 }
+
+/// #970 r4 P1-1: a `projectKey` whose Node description phase throws (measured
+/// TS: `list({projectKey:{constructor:5}})` rejects with a raw
+/// `TypeError: Cannot use 'in' operator to search for 'name' in 5`, no code)
+/// has no raw-JS passthrough in this shape, so the call must be handed to the
+/// host (`requires_host`), exactly like the config and session_model branches.
+#[test]
+fn throws_description_project_key_requires_the_host() {
+    let scratch = Scratch::new();
+    let m = manager(&scratch.root(), &json("{}"));
+    for input in [
+        r#"{"projectKey":{"constructor":5}}"#,
+        r#"{"projectKey":{"constructor":true}}"#,
+        r#"{"projectKey":{"constructor":"abc"}}"#,
+        r#"{"projectKey":{"constructor":{"name":{"toString":"x"}}}}"#,
+    ] {
+        let error = call(&m, "list", &json(input))
+            .expect_err("#970 a throwing description-phase projectKey must fail the skills call");
+        assert!(
+            error.requires_host,
+            "#970 a throwing description-phase projectKey must require the host: {input}"
+        );
+        assert_eq!(
+            error.name, "Error",
+            "#970 the host boundary keeps the Error name: {input}"
+        );
+        assert!(
+            error.code.equals_str("JS_HOST_REQUIRED"),
+            "#970 the host boundary keeps the JS_HOST_REQUIRED code: {input}"
+        );
+        assert!(
+            error.message.is_empty(),
+            "#970 the host boundary keeps an empty message: {input}"
+        );
+    }
+    let listed = call(&m, "list", &json(r#"{"projectKey":"/no/such/project"}"#))
+        .expect("#970 a plain string projectKey still lists skills");
+    assert!(
+        matches!(listed.get("items"), Some(JsValue::Array(_))),
+        "#970 a plain string projectKey keeps the native list shape"
+    );
+}

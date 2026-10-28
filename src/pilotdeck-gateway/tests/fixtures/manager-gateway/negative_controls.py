@@ -294,6 +294,31 @@ cases = [
                     ),''', None,
      prefix + 'manager_sessions_matches_real_ts_projection',
      '#934 manager gateway oracle replay differs at sessions-projectKey-name-surrogate'),
+    ('skills-throws-host-flag-dropped', skills_path,
+     '            crate::metadata::ArgumentReceived::Throws { .. } => Err(SkillError::host_required())',
+     '''            crate::metadata::ArgumentReceived::Throws { .. } => {
+                Err(SkillError::host_failure("JS_HOST_REQUIRED", ""))
+            }''', None,
+     'skills::tests::throws_description_project_key_requires_the_host',
+     '#970 skills list description-phase Throws must set the host flag'),
+    ('metadata-full-title-untrimmed', file_catalog,
+     '''    if js_trim_units(summary.units()).is_empty() {
+        return Ok(None);
+    }''',
+     '''    if summary.is_empty() {
+        return Ok(None);
+    }''', None,
+     prefix + 'manager_catalog_blank_title_paths_match_real_ts',
+     '#970 full-path whitespace title must stay hidden like real TS'),
+    ('shared-metadata-full-title-untrimmed', metadata_path,
+     '''        .and_then(summary_string)
+        .is_some_and(|text| !js_trim_units(text.units()).is_empty())
+}''',
+     '''        .and_then(summary_string)
+        .is_some_and(|text| !text.is_empty())
+}''', None,
+     'metadata::tests::blank_title_full_scan_keeps_the_ts_trim_rule',
+     '#970 shared metadata whitespace title must not count as a summary'),
 ]
 
 def main():
