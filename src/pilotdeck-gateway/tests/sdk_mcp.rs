@@ -1318,7 +1318,10 @@ async fn set_and_toggle_do_not_lose_updates() {
 /// runs entirely after it. Matrix cell 3 in
 /// `_tmp/20261026-issue-347/fix-r1/plan.md`; TS is synchronous across the
 /// whole clear (`probe/clear-set-atomicity.out`), so no mixed state exists
-/// there to begin with.
+/// there to begin with. #347 fix-r2 (review P1, same pattern as the cell-4
+/// test): the window outcome is consumed and the delete gate is only opened
+/// after the in-window completion is confirmed, so the two writes' order is
+/// pinned by the gates instead of thread wakeup order.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn clear_and_set_commits_share_one_critical_section() {
     let projects = Arc::new(GatedProjects::default());
@@ -1345,24 +1348,40 @@ async fn clear_and_set_commits_share_one_critical_section() {
             .set_mcp_servers(&set_input("s", &[("b", stdio_config("node"))]))
             .await
     });
-    // A commit that did not share the critical section would finish its
-    // shared-table write in this window (its set gate is open); the fixed
-    // shape parks at the servers guard instead. The timeout is tolerated
-    // either way: only the final state is asserted.
+    // Open the set's gate and hand the commit a bounded window: while the
+    // clear is parked at its gated delete it holds the servers guard (the
+    // fixed shape), so the commit cannot even acquire it and the window must
+    // elapse; only a clear that already dropped the guard (the mutation under
+    // test) lets the commit finish inside the window (#347 fix-r2: the
+    // outcome is consumed, so the observed interleaving — not thread wakeup
+    // order — picks the branch).
     release_gate(&projects.set_gate);
-    let outcome = tokio::time::timeout(Duration::from_secs(1), &mut set_task).await;
-    release_gate(&projects.delete_gate);
-    // A commit that finished inside the window is already joined by the
-    // timeout; re-polling a completed JoinHandle would panic, and the final
-    // state — not the join itself — is what this test asserts.
-    let set_result = match outcome {
-        Ok(result) => result,
-        Err(_elapsed) => set_task.await,
-    };
-    set_result
-        .expect("#347 fix-r1 the set task must join")
-        .expect("#347 fix-r1 setMcpServersForSdk must succeed after the clear");
-    clear.await.expect("#347 fix-r1 the clear task must join");
+    let outcome = tokio::time::timeout(Duration::from_secs(2), &mut set_task).await;
+    match outcome {
+        // The commit finished while the clear was still parked: its
+        // shared-table write has landed before the clear's delete even starts
+        // (the gate is still closed), so the delete now wipes the entry the
+        // server table keeps — exactly the half-cleared state the shared
+        // critical section exists to prevent.
+        Ok(result) => {
+            release_gate(&projects.delete_gate);
+            clear.await.expect("#347 fix-r2 the clear task must join");
+            result
+                .expect("#347 fix-r2 the set task must join")
+                .expect("#347 fix-r2 setMcpServersForSdk must succeed after the clear");
+        }
+        // The commit spent the whole window blocked at the servers guard (the
+        // fixed shape): the clear finishes its drops — releasing the guard —
+        // and only then does the commit run in full, after the clear.
+        Err(_elapsed) => {
+            release_gate(&projects.delete_gate);
+            set_task
+                .await
+                .expect("#347 fix-r2 the set task must join")
+                .expect("#347 fix-r2 setMcpServersForSdk must succeed after the clear");
+            clear.await.expect("#347 fix-r2 the clear task must join");
+        }
+    }
     let names: Vec<String> = config
         .session_mcp_servers(&JsValue::String("s".into()))
         .iter()
@@ -1384,7 +1403,10 @@ async fn clear_and_set_commits_share_one_critical_section() {
 /// set's commit is in flight cannot see the server table without the
 /// shared-table write — the set's commit (including `projects.set`) holds
 /// the servers guard until both writes are done, so the clear runs entirely
-/// after it. Matrix cell 4 in `fix-r1/plan.md`.
+/// after it. Matrix cell 4 in `fix-r1/plan.md`. #347 fix-r2 (review P1):
+/// the window outcome is consumed and the other gate is only opened after
+/// the in-window completion is confirmed, so the two writes' order is pinned
+/// by the gates instead of thread wakeup order.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn set_commit_cannot_outlive_the_shared_table_write() {
     let projects = Arc::new(GatedProjects::default());
@@ -1406,26 +1428,48 @@ async fn set_commit_cannot_outlive_the_shared_table_write() {
     let clear_key = JsValue::String("s".into());
     let mut clear =
         tokio::task::spawn_blocking(move || clear_config.clear_sdk_session_state(&clear_key));
-    // The clear must not complete inside the set's commit window (it parks
-    // at the servers guard — or, in the unfixed shape, at the gated delete).
-    let _ = tokio::time::timeout(Duration::from_secs(1), &mut clear).await;
+    // Open the delete gate and hand the clear a bounded window: while the set
+    // is parked at its gated write the servers guard stays held (the fixed
+    // shape), so the clear cannot even acquire it and the window must elapse;
+    // only a commit that already dropped the guard before its shared-table
+    // write (the mutation under test) lets the clear run to completion inside
+    // the window.
     release_gate(&projects.delete_gate);
+    let outcome = tokio::time::timeout(Duration::from_secs(2), &mut clear).await;
     release_gate(&projects.set_gate);
-    clear.await.expect("#347 fix-r1 the clear task must join");
-    set_task
-        .await
-        .expect("#347 fix-r1 the set task must join")
-        .expect("#347 fix-r1 setMcpServersForSdk must succeed");
+    match outcome {
+        // The clear finished while the set was still parked: its shared-table
+        // delete has returned before the set's write even starts (the gate
+        // was still closed), so the write landing now is exactly the stale
+        // entry the shared critical section exists to prevent.
+        Ok(joined) => {
+            joined.expect("#347 fix-r2 the in-window clear must join");
+            set_task
+                .await
+                .expect("#347 fix-r2 the set task must join")
+                .expect("#347 fix-r2 setMcpServersForSdk must succeed");
+        }
+        // The clear spent the whole window blocked at the servers guard (the
+        // fixed shape): the set's shared-table write lands inside the guard,
+        // and only once it is done does the clear take the guard and delete.
+        Err(_elapsed) => {
+            set_task
+                .await
+                .expect("#347 fix-r2 the set task must join")
+                .expect("#347 fix-r2 setMcpServersForSdk must succeed");
+            clear.await.expect("#347 fix-r2 the clear task must join");
+        }
+    }
     assert!(
         config
             .session_mcp_servers(&JsValue::String("s".into()))
             .is_empty(),
-        "#347 fix-r1 the clear drops the in-flight commit's server table"
+        "#347 fix-r2 the clear drops the in-flight commit's server table"
     );
     assert_eq!(
         projects.project(&JsValue::String("s".into())),
         None,
-        "#347 fix-r1 the clear must not leave the commit's shared-table entry behind"
+        "#347 fix-r2 the clear must not leave the commit's shared-table entry behind"
     );
 }
 

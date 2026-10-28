@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#347/#401 (MCP P2 batch 1 + fix-r1) negative controls.
+"""#347/#401 (MCP P2 batch 1 + fix-r1/fix-r2) negative controls.
 
 Temporary product mutations over the fixes for #347 (the `projectKey`
 TypeError, `clearSdkSessionState`'s MCP fields, the one shared
@@ -14,6 +14,12 @@ whose test stays green is SURVIVED, and a stale anchor (count != 1) aborts
 the run. Every mutant is compile-verified (`cargo check --tests`) before
 its test runs. The executor runs ALL mutations, restoring each source
 byte-for-byte, then summarizes; any non-KILLED result exits nonzero.
+
+The two boundary mutants (`clear-commit-boundary` / `set-commit-boundary`)
+are killed by matrix-cell tests that consume the bounded-window outcome and
+confirm the in-window completion before opening the other gate, so the two
+writes' order is pinned by the gates instead of thread wakeup order
+(#347 fix-r2, review P1).
 
 Run post-commit from a clean tree (the mutation guard requires the gateway
 product sources to equal HEAD):
