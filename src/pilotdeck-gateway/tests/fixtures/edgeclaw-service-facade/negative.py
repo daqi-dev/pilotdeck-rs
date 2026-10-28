@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import types
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (
@@ -33,6 +34,7 @@ from negative_process import (
 ROOT = Path(__file__).resolve().parents[5]
 SERVICE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/service/mod.rs'
 STORAGE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage.rs'
+FILE_MEMORY = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/file_memory.rs'
 CONFIG = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/config.rs'
 OBSERVE = ROOT / 'src/pilotdeck-gateway/tests/fixtures/edgeclaw-service-facade/observe.mts'
 TEST_SOURCE = ROOT / 'src/pilotdeck-gateway/tests/edgeclaw_service_facade.rs'
@@ -74,12 +76,19 @@ ANCHORS = {
     # fix-r5 P1: the new `maxLines: -0` argument is the first finite `-0` the
     # service oracle encodes. Removing the TS branch makes the fresh real-TS
     # run differ from the committed `$type:number:"-0"` envelope.
-    'observe-negative-zero-encode': '#775 verify.mts failed',
+    'observe-negative-zero-encode': '#775 negative-zero encoding mismatch at',
     # fix-r5 P1 (Rust side): the same oracle argument must keep its `-0`
     # envelope when the Rust driver re-encodes it.
     'encode-negative-zero': '#775 facade steps for scenario 4 facade-sequence',
     # fix-r5 P2-1: `null` must stay distinct from the `undefined` default 80.
     'get-null-maxlines': '#775 facade steps for scenario 4 facade-sequence',
+    # fix-r6 P1: the TS default only covers `undefined`; every other value is
+    # coerced by `trimContentLines`' relational comparisons. Restoring the old
+    # `as_number().unwrap_or(80)` makes `false` keep the full body.
+    'get-nonnumber-maxlines': '#775 facade steps for scenario 4 facade-sequence',
+    # fix-r6 P1 sibling: the TS-shaped FileMemoryStore adapter has the same rule.
+    'file-memory-nonnumber-maxlines':
+        '#775 file-memory getMemoryRecordsByIds maxLines false must follow TS ToNumber',
     # fix-r5 P2-2: the facade must reuse the indexer's UTF-16 message, not the
     # old lossy `Display` copy.
     'heartbeat-message-not-reused': '#775 ServiceError::js_message must reuse HeartbeatError::message (lone surrogate preserved)',
@@ -259,8 +268,26 @@ MUTANTS = [
     mutation(
         'get-null-maxlines',
         SERVICE,
-        '            Some(JsValue::Null) => 0.0,',
-        '            Some(JsValue::Null) => 80.0,',
+        '            Some(value) => super::storage::overview::to_number(value)?,',
+        '            Some(JsValue::Null) => 80.0,\n'
+        '            Some(value) => super::storage::overview::to_number(value)?,',
+    ),
+    # fix-r6 P1: restore the old non-number fallback in `service.get`.
+    mutation(
+        'get-nonnumber-maxlines',
+        SERVICE,
+        '            Some(value) => super::storage::overview::to_number(value)?,',
+        '            Some(value) => value.as_number().unwrap_or(80.0),',
+    ),
+    # fix-r6 P1 sibling: same regression in the FileMemoryStore adapter.
+    mutation(
+        'file-memory-nonnumber-maxlines',
+        FILE_MEMORY,
+        '                    Some(value) => {\n'
+        '                        crate::runtime::memory::edgeclaw::storage::overview::to_number(value)?\n'
+        '                    }',
+        '                    Some(value) => value.as_number().unwrap_or(80.0),',
+        test='file_memory_store_get_records_coerces_non_number_max_lines',
     ),
     # fix-r5 P2-2: restore the old hand-copied Heartbeat arm. `IndexError`
     # `Display` is lossy for a lone surrogate, so the dedicated test fails.
@@ -306,7 +333,71 @@ def classify(result, mutant):
     return 'INVALID', 'missing bound runtime failure (wrong panic or missing test)'
 
 
+def classifier_self_test():
+    """fix-r6 P1: unrelated Node exits must not look like the -0 kill.
+
+    Synthetic libtest/Node logs only: no cargo, no source mutation. The wrapper
+    emits `#775 verify.mts failed` for every non-zero Node exit, so the bound
+    anchor must be the fixture's dedicated `-0` line. A temp-file ENOENT and a
+    source-closure failure share the wrapper text and must stay INVALID.
+    """
+    def failed(stderr_body):
+        return types.SimpleNamespace(
+            stdout='',
+            stderr=(
+                f'test {VERIFY} ... FAILED\n'
+                'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; '
+                '0 filtered out;\n'
+                f'panicked at {TEST_FILE}:1580:5:\n'
+                '#775 verify.mts failed\n'
+                f'stdout:\n\nstderr:\n{stderr_body}\n'
+            ),
+            returncode=101,
+        )
+
+    mutant = {'test': VERIFY, 'anchor': ANCHORS['observe-negative-zero-encode']}
+    checks = [
+        (
+            'temporary-file-error',
+            failed(
+                "Error: ENOENT: no such file or directory, open "
+                "'/tmp/pdrs-edgeclaw-verify/rust-observations.json'"
+            ),
+            'INVALID',
+        ),
+        (
+            'source-verification-error',
+            failed(
+                'AssertionError [ERR_ASSERTION]: baseline source closure '
+                'differs from the oracle'
+            ),
+            'INVALID',
+        ),
+        (
+            'negative-zero-mismatch',
+            failed(
+                'Error: #775 negative-zero encoding mismatch at '
+                '$[4].ops[13].args.maxLines: expected '
+                '{"$type":"number","value":"-0"} actual 0'
+            ),
+            'KILLED',
+        ),
+    ]
+    wrong = []
+    for name, result, expected in checks:
+        status, reason = classify(result, mutant)
+        print(f'classifier {name}: {status}: {reason}', flush=True)
+        if status != expected:
+            wrong.append(f'{name}: expected {expected}, got {status}')
+    if wrong:
+        print(f'classifier self-test failed: {"; ".join(wrong)}', file=sys.stderr)
+        return False
+    return True
+
+
 def main():
+    if sys.argv[1:] == ['--self-test']:
+        return 0 if classifier_self_test() else 2
     output = Path(sys.argv[1]).resolve()
     requested = sys.argv[2:]
     known = {mutant['name'] for mutant in MUTANTS}
@@ -318,6 +409,8 @@ def main():
         mutant for mutant in MUTANTS if not requested or mutant['name'] in requested
     ]
     output.mkdir(parents=True, exist_ok=True)
+    if not classifier_self_test():
+        return 2
     target = os.environ.get('CARGO_TARGET_DIR')
     if not target:
         print('CARGO_TARGET_DIR must be set by the caller', file=sys.stderr)
@@ -366,7 +459,9 @@ def main():
 
     try:
         with mutating_sources(
-            ROOT, [SERVICE, STORAGE, CONFIG, OBSERVE, TEST_SOURCE], baseline='HEAD'
+            ROOT,
+            [SERVICE, STORAGE, FILE_MEMORY, CONFIG, OBSERVE, TEST_SOURCE],
+            baseline='HEAD',
         ) as snapshots:
             for mutant in selected:
                 path = mutant['path']

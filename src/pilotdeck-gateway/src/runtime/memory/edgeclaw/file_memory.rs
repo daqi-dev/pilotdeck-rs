@@ -1720,17 +1720,19 @@ impl Core {
             "listMemoryEntries" => objects(self.list(input)?),
             "countMemoryEntries" => num(self.list(input)?.len()),
             "getMemoryRecordsByIds" => {
+                // Same TS default rule as `service.get`: only `undefined` takes
+                // 80; `trimContentLines` coerces every other value with Number().
+                let max_lines = match input.get("maxLines") {
+                    None | Some(JsValue::Undefined) => 80.0,
+                    Some(value) => {
+                        crate::runtime::memory::edgeclaw::storage::overview::to_number(value)?
+                    }
+                };
                 let mut result = vec![];
                 if let Some(JsValue::Array(ids)) = input.get("ids") {
                     for id in ids.iter().filter_map(JsValue::as_string) {
                         if let Some(mut record) = self
-                            .records(
-                                &[String::from_utf16_lossy(id.units())],
-                                input
-                                    .get("maxLines")
-                                    .and_then(JsValue::as_number)
-                                    .unwrap_or(80.0),
-                            )?
+                            .records(&[String::from_utf16_lossy(id.units())], max_lines)?
                             .into_iter()
                             .next()
                         {

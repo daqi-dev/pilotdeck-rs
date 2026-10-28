@@ -475,14 +475,14 @@ impl EdgeClawMemoryService {
     }
 
     /// `get` (`service.ts:984-986`): the TS default parameter applies only to
-    /// `undefined`. `null` reaches `trimContentLines`, where `null <= 0` is
-    /// true and yields empty content; keep that third state instead of folding
-    /// it into the default 80.
+    /// `undefined`. Every other value reaches `trimContentLines`, whose
+    /// `maxLines <= 0` / `lines.length <= maxLines` are JS relational
+    /// comparisons: `ToPrimitive` then `ToNumber`. Reuse the repository's
+    /// measured Number() port instead of treating non-numbers as the default.
     pub fn get(&self, ids: &JsValue, max_lines: Option<&JsValue>) -> Result<JsValue> {
         let max_lines = match max_lines {
             None | Some(JsValue::Undefined) => 80.0,
-            Some(JsValue::Null) => 0.0,
-            Some(value) => value.as_number().unwrap_or(80.0),
+            Some(value) => super::storage::overview::to_number(value)?,
         };
         Ok(self.repository.get_memory_records_by_ids(ids, max_lines)?)
     }

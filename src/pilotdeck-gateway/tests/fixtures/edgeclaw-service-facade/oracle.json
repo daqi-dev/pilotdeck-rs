@@ -609,6 +609,75 @@
           }
         },
         {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": false
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": true
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": "1"
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": ""
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": "abc"
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": {
+              "$type": "number",
+              "value": "NaN"
+            }
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": {
+              "$type": "number",
+              "value": "Infinity"
+            }
+          }
+        },
+        {
           "op": "getUserSummary"
         },
         {
@@ -1065,6 +1134,201 @@
               "relativePath": "Project/alpha-note-c8acc71a5e.md",
               "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md",
               "content": "",
+              "preview": "Summary Alpha note summary"
+            }
+          ]
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": false
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md",
+              "content": "",
+              "preview": "Summary Alpha note summary"
+            }
+          ]
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": true
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md",
+              "content": "## Summary\n...",
+              "preview": "Summary Alpha note summary"
+            }
+          ]
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": "1"
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md",
+              "content": "## Summary\n...",
+              "preview": "Summary Alpha note summary"
+            }
+          ]
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": ""
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md",
+              "content": "",
+              "preview": "Summary Alpha note summary"
+            }
+          ]
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": "abc"
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md",
+              "content": "\n...",
+              "preview": "Summary Alpha note summary"
+            }
+          ]
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": {
+              "$type": "number",
+              "value": "NaN"
+            }
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md",
+              "content": "\n...",
+              "preview": "Summary Alpha note summary"
+            }
+          ]
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": {
+              "$type": "number",
+              "value": "Infinity"
+            }
+          },
+          "ok": true,
+          "value": [
+            {
+              "name": "Alpha note",
+              "description": "Alpha note description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "capturedAt": "2026-10-22T00:00:00.000Z",
+              "sourceSessionKey": "seed-session",
+              "file": "alpha-note-c8acc71a5e.md",
+              "relativePath": "Project/alpha-note-c8acc71a5e.md",
+              "absolutePath": "$ROOT/facade-sequence/data/memory/Project/alpha-note-c8acc71a5e.md",
+              "content": "## Summary\nAlpha note summary",
               "preview": "Summary Alpha note summary"
             }
           ]

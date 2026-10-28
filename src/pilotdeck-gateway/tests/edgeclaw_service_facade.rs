@@ -15,7 +15,7 @@ mod baseline;
 mod scratch;
 
 use pilotdeck_gateway::runtime::memory::edgeclaw::{
-    file_memory::FileMemoryClock,
+    file_memory::{FileMemoryClock, FileMemoryStore, FileMemoryStoreOptions},
     heartbeat::indexer::HeartbeatError,
     llm::index::IndexError,
     messages::CaptureStrategy,
@@ -1410,6 +1410,71 @@ fn ts_service_facade_scenarios_match() {
     compare(&oracle, &oracle_js);
 }
 
+/// fix-r6 P1: the TS-shaped `FileMemoryStore` adapter must not fold a
+/// non-number `maxLines` into the default. `trimContentLines` uses JS
+/// relational comparison (`ToNumber`), measured on Node v22.22.0 in
+/// `_tmp/20261026-issue-775/fix-r6/probe/ts-maxlines.out`.
+#[test]
+fn file_memory_store_get_records_coerces_non_number_max_lines() {
+    let scratch = Scratch::new("edgeclaw-file-memory-maxlines");
+    let store = FileMemoryStore::new(
+        scratch.path().join("memory"),
+        FileMemoryStoreOptions {
+            enable_manifest: false,
+            ..Default::default()
+        },
+    )
+    .expect("#775 file-memory maxLines store");
+    let mut candidate = JsObject::new();
+    candidate.insert("type".into(), JsValue::from("project"));
+    candidate.insert("scope".into(), JsValue::from("project"));
+    candidate.insert("name".into(), JsValue::from("Max lines note"));
+    candidate.insert("description".into(), JsValue::from("max lines description"));
+    candidate.insert("body".into(), JsValue::from("a\nb\nc"));
+    let entry = store
+        .execute("upsertCandidate", &candidate)
+        .expect("#775 file-memory maxLines upsert");
+    let id = entry
+        .get("relativePath")
+        .and_then(JsValue::as_string)
+        .expect("#775 file-memory maxLines relativePath")
+        .clone();
+    let content = |max_lines: Option<JsValue>| {
+        let mut input = JsObject::new();
+        input.insert(
+            "ids".into(),
+            JsValue::Array(vec![JsValue::String(id.clone())]),
+        );
+        if let Some(value) = max_lines {
+            input.insert("maxLines".into(), value);
+        }
+        let records = store
+            .execute("getMemoryRecordsByIds", &input)
+            .expect("#775 file-memory getMemoryRecordsByIds");
+        js_text_at(&js_array(&records)[0], "content")
+    };
+    assert_eq!(
+        content(Some(JsValue::Bool(false))),
+        "",
+        "#775 file-memory getMemoryRecordsByIds maxLines false must follow TS ToNumber"
+    );
+    assert_eq!(
+        content(Some(JsValue::from("1"))),
+        "a\n...",
+        "#775 file-memory getMemoryRecordsByIds maxLines \"1\" must follow TS ToNumber"
+    );
+    assert_eq!(
+        content(None),
+        "a\nb\nc",
+        "#775 file-memory getMemoryRecordsByIds omitted maxLines keeps the default 80"
+    );
+    assert_eq!(
+        content(Some(JsValue::Number(f64::INFINITY))),
+        "a\nb\nc",
+        "#775 file-memory getMemoryRecordsByIds Infinity maxLines keeps every line"
+    );
+}
+
 /// fix-r5 P2: the facade must reuse the indexer's catch-block message table.
 /// `IndexError` carries raw UTF-16 units; the old hand-copied `Display` path
 /// went through `utf8_lossy` and turned a lone surrogate into U+FFFD.
@@ -1528,7 +1593,7 @@ fn real_ts_reads_rust_service_observations() {
         ),
     )
     .expect("#775 write rust observations");
-    let baseline = std::env::var_os("PDRS_BASELINE").expect("PDRS_BASELINE");
+    let baseline = std::env::var_os("PDRS_BASELINE").expect("#775 PDRS_BASELINE");
     let mut command = baseline::node_command();
     command
         .arg("--disable-warning=ExperimentalWarning")
@@ -1574,10 +1639,17 @@ fn run_node(command: &mut Command, scratch: &Path) {
         }
         std::thread::sleep(Duration::from_millis(25));
     };
+    let stderr_text = fs::read_to_string(stderr).unwrap_or_default();
+    // Keep the fixture's dedicated -0 line in the panic header so the negative
+    // control binds the encoding mismatch, not the generic wrapper failure.
+    let dedicated = stderr_text
+        .lines()
+        .find(|line| line.contains("#775 negative-zero encoding mismatch at"))
+        .map(|line| format!("\n{line}"))
+        .unwrap_or_default();
     assert!(
         status.success(),
-        "#775 verify.mts failed\nstdout:\n{}\nstderr:\n{}",
-        fs::read_to_string(stdout).unwrap_or_default(),
-        fs::read_to_string(stderr).unwrap_or_default()
+        "#775 verify.mts failed{dedicated}\nstdout:\n{}\nstderr:\n{stderr_text}",
+        fs::read_to_string(stdout).unwrap_or_default()
     );
 }

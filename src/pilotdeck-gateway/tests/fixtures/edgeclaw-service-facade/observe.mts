@@ -186,6 +186,16 @@ function specs(): Spec[] {
         {op: 'get', args: {ids: [ids.entry], maxLines: undefined}},
         {op: 'get', args: {ids: [ids.entry], maxLines: null}},
         {op: 'get', args: {ids: [ids.entry], maxLines: -0}},
+        // fix-r6 P1: `maxLines` is a JS parameter, so `trimContentLines` applies
+        // relational comparison (`ToPrimitive` + `ToNumber`) instead of treating
+        // non-numbers as the default. Node v22.22.0 probe: `probe/ts-maxlines.out`.
+        {op: 'get', args: {ids: [ids.entry], maxLines: false}},
+        {op: 'get', args: {ids: [ids.entry], maxLines: true}},
+        {op: 'get', args: {ids: [ids.entry], maxLines: '1'}},
+        {op: 'get', args: {ids: [ids.entry], maxLines: ''}},
+        {op: 'get', args: {ids: [ids.entry], maxLines: 'abc'}},
+        {op: 'get', args: {ids: [ids.entry], maxLines: NaN}},
+        {op: 'get', args: {ids: [ids.entry], maxLines: Infinity}},
         {op: 'getUserSummary'},
         {op: 'getProjectMeta'},
         {op: 'getWorkspaceMode'},

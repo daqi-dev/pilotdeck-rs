@@ -36,7 +36,45 @@ assert.deepEqual(
   'baseline source closure differs from the oracle',
 );
 assert.equal(ENTRY, oracle.entry);
+
+// A generic deepEqual failure reports the whole object and does not say which
+// field carried the `-0` envelope, so the negative control could not tell an
+// encoder regression from a temp-file or provenance error. Walk the two trees
+// and fail with the exact path and both encodings instead.
+function isNegativeZeroEnvelope(value: any): boolean {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).length === 2
+    && value.$type === 'number' && value.value === '-0';
+}
+function negativeZeroMismatch(expected: any, actual: any, path: string): any {
+  if (isNegativeZeroEnvelope(expected) || isNegativeZeroEnvelope(actual)) {
+    const same = isNegativeZeroEnvelope(expected) && isNegativeZeroEnvelope(actual)
+      && expected.$type === actual.$type && expected.value === actual.value;
+    return same ? null : {path, expected, actual};
+  }
+  if (!expected || !actual || typeof expected !== 'object' || typeof actual !== 'object') {
+    return null;
+  }
+  if (Array.isArray(expected) !== Array.isArray(actual)) return null;
+  const keys = new Set([...Object.keys(expected), ...Object.keys(actual)]);
+  for (const key of keys) {
+    const child = Array.isArray(expected) ? `${path}[${key}]` : `${path}.${key}`;
+    const found = negativeZeroMismatch(expected[key], actual[key], child);
+    if (found) return found;
+  }
+  return null;
+}
+function requireSame(actual: any, expected: any, label: string) {
+  const zero = negativeZeroMismatch(expected, actual, '$');
+  if (zero) {
+    throw new Error(
+      `#775 negative-zero encoding mismatch at ${zero.path}: `
+      + `expected ${JSON.stringify(zero.expected)} actual ${JSON.stringify(zero.actual)}`,
+    );
+  }
+  assert.deepEqual(actual, expected, label);
+}
 const fresh = await collect(baseline);
-assert.deepEqual(fresh.scenarios, oracle.scenarios, 'fresh TS run differs from the oracle');
-assert.deepEqual(rust.scenarios, oracle.scenarios, 'Rust observations differ from real TS');
+requireSame(fresh.scenarios, oracle.scenarios, 'fresh TS run differs from the oracle');
+requireSame(rust.scenarios, oracle.scenarios, 'Rust observations differ from real TS');
 console.log(`real TS replayed ${fresh.scenarios.length} service scenarios; Rust matches`);
