@@ -446,7 +446,7 @@ fn manager_sessions_matches_real_ts_projection() {
     };
     assert_eq!(
         operations.len(),
-        27,
+        33,
         "#934 manager gateway fixture operation count is pinned"
     );
     let mut methods = 0;
@@ -517,7 +517,7 @@ fn manager_sessions_matches_real_ts_projection() {
         );
         methods += 1;
     }
-    assert_eq!(methods, 27, "#934 every oracle operation is replayed");
+    assert_eq!(methods, 33, "#934 every oracle operation is replayed");
 }
 
 #[test]
@@ -654,9 +654,10 @@ fn manager_catalog_matrix_matches_real_ts() {
         JsValue::Array(rows) => rows,
         _ => panic!("#934 oracle matrix must be an array"),
     };
-    assert!(
-        matrix.len() >= 21,
-        "#934 catalog/writer matrix covers the P1 fix rows"
+    assert_eq!(
+        matrix.len(),
+        26,
+        "#934 catalog/writer matrix row count is pinned"
     );
     for row in matrix {
         let name = text(item(row, "name"));
@@ -713,6 +714,32 @@ fn manager_catalog_same_mtime_orders_by_name() {
             "#934 same-mtime sessions must keep Node readdir name order"
         );
     }
+}
+
+#[test]
+fn manager_catalog_whitespace_title_is_a_summary() {
+    let oracle = crate::test_baseline::oracle(ORACLE);
+    let row = matrix_row(&oracle, "whitespace-title");
+    let (_scratch, root, result) = run_matrix_row(row);
+    let actual = result.expect("#934 whitespace-title catalog list");
+    assert_eq!(
+        compact_str(&normalize_dir(&JsValue::Array(actual), &root)),
+        compact_str(item(row, "outcome")),
+        "#934 whitespace-only title must stay visible as a summary"
+    );
+}
+
+#[test]
+fn manager_catalog_metadata_only_keeps_ts_field_order() {
+    let oracle = crate::test_baseline::oracle(ORACLE);
+    let row = matrix_row(&oracle, "metadata-only-order");
+    let (_scratch, root, result) = run_matrix_row(row);
+    let actual = result.expect("#934 metadata-only order catalog list");
+    assert_eq!(
+        compact_str(&normalize_dir(&JsValue::Array(actual), &root)),
+        compact_str(item(row, "outcome")),
+        "#934 metadata-only fallback must keep the TS createdAt-before-tag order"
+    );
 }
 
 #[test]
@@ -1334,6 +1361,36 @@ fn manager_sessions_invalid_params_match_ts() {
             Some("ERR_INVALID_ARG_TYPE"),
             "The \"paths[0]\" argument must be of type string. Received type boolean (true)",
         ),
+        (
+            js(r#"{"projectKey":{"constructor":5}}"#),
+            None,
+            "Cannot use 'in' operator to search for 'name' in 5",
+        ),
+        (
+            js(r#"{"projectKey":{"constructor":true}}"#),
+            None,
+            "Cannot use 'in' operator to search for 'name' in true",
+        ),
+        (
+            js(r#"{"projectKey":{"constructor":{"name":{"toString":"x"}}}}"#),
+            None,
+            "Cannot convert object to primitive value",
+        ),
+        (
+            js(r#"{"projectKey":{"constructor":{"name":null}}}"#),
+            Some("ERR_INVALID_ARG_TYPE"),
+            "The \"paths[0]\" argument must be of type string. Received an instance of null",
+        ),
+        (
+            js(r#"{"projectKey":{"constructor":{"name":[]}}}"#),
+            Some("ERR_INVALID_ARG_TYPE"),
+            "The \"paths[0]\" argument must be of type string. Received an instance of ",
+        ),
+        (
+            js(r#"{"projectKey":{"constructor":null}}"#),
+            Some("ERR_INVALID_ARG_TYPE"),
+            "The \"paths[0]\" argument must be of type string. Received [Object]",
+        ),
     ];
     for (params, code, message) in cases {
         let error = gateway
@@ -1377,6 +1434,66 @@ fn manager_sessions_invalid_params_match_ts() {
         catalog_calls.load(Ordering::SeqCst),
         1,
         "#934 exactly one catalog call for the valid manager request"
+    );
+}
+
+/// #934 P0: `projectKey.constructor.name` may be an arbitrarily deep wire
+/// array. The conversion must use the shared iterative `ToString` bound, and a
+/// too-deep join must surface V8's RangeError instead of exhausting this
+/// process's stack (which aborts and takes every in-flight request with it).
+/// The probe runs in a child process so the pre-fix abort is observable as a
+/// child signal rather than killing the whole test harness.
+#[test]
+fn manager_deep_project_key_returns_range_error_without_aborting() {
+    if std::env::var_os("PDRS_934_DEEP_CHILD").is_none() {
+        let output = std::process::Command::new(std::env::current_exe().expect("#934 test binary"))
+            .args([
+                "--exact",
+                "runtime::manager::tests::manager_deep_project_key_returns_range_error_without_aborting",
+                "--nocapture",
+            ])
+            .env("PDRS_934_DEEP_CHILD", "1")
+            .output()
+            .expect("#934 run deep projectKey child");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "#934 deep projectKey child must not abort: status={:?}\nstdout={stdout}\nstderr={stderr}",
+            output.status
+        );
+        assert!(
+            stdout.contains("DEEP=RangeError:Maximum call stack size exceeded"),
+            "#934 deep projectKey must report V8's RangeError: {stdout}\n{stderr}"
+        );
+        return;
+    }
+
+    let mut deep = JsValue::Array(Vec::new());
+    for _ in 0..30_000 {
+        deep = JsValue::Array(vec![deep]);
+    }
+    let mut constructor = JsObject::new();
+    constructor.insert("name".into(), deep);
+    let mut key = JsObject::new();
+    key.insert("constructor".into(), JsValue::Object(constructor));
+    let mut params = JsObject::new();
+    params.insert("projectKey".into(), JsValue::Object(key));
+    let root = PathBuf::from("/project");
+    let gateway = ManagerGateway::from_parts(
+        Some(Arc::new(ReplayCatalog::new(js("{}"))) as Arc<dyn SessionCatalogPort>),
+        None,
+        ReplayResolver { root: root.clone() },
+        root.clone(),
+        root,
+    );
+    let error = gateway
+        .sessions(&JsValue::Object(params))
+        .expect_err("#934 deep projectKey must fail with RangeError, not abort");
+    println!(
+        "DEEP={}:{}",
+        error.name(),
+        String::from_utf16_lossy(error.message().units())
     );
 }
 

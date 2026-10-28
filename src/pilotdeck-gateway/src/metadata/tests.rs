@@ -901,6 +901,104 @@ fn metadata_success_api_recorded_oracle_validation() {
         println!("PDRS_SUCCESS_API_ROW_OK {}", row["id"].as_str().unwrap());
     }
 }
+#[derive(Default)]
+struct MapFiles {
+    entries: HashMap<PathBuf, Vec<(String, bool)>>,
+    bytes: HashMap<PathBuf, Vec<u8>>,
+    stats: HashMap<PathBuf, Stat>,
+}
+impl Files for MapFiles {
+    fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
+        Ok(self.entries.get(path).cloned().unwrap_or_default())
+    }
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.bytes
+            .get(path)
+            .cloned()
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT))
+    }
+    fn stat(&self, path: &Path) -> io::Result<Stat> {
+        self.stats
+            .get(path)
+            .cloned()
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT))
+    }
+}
+
+fn directory_stat() -> Stat {
+    Stat {
+        directory: true,
+        size: 0,
+        birth_ms: 0.0,
+        ctime_ms: 0.0,
+        mtime_ms: 0.0,
+    }
+}
+
+/// #934 P1-2: TS `parseSessionInfoFromLite` accepts a whitespace-only title,
+/// so the shared metadata fast path must keep it visible. Trimming here would
+/// undercount `list_projects`/`describe_project` and drop `lastActivity`.
+#[test]
+fn whitespace_only_title_keeps_shared_metadata_session_count() {
+    let line = "{\"type\":\"session_metadata\",\"metadata\":{\"title\":\" \"}}\n";
+    assert_eq!(
+        session_has_summary(line.as_bytes()),
+        Ok(true),
+        "#934 whitespace-only title must count as a shared metadata summary"
+    );
+
+    let mut files = MapFiles::default();
+    files
+        .entries
+        .insert(PathBuf::from("/home/projects"), vec![("proj".into(), true)]);
+    files.bytes.insert(
+        PathBuf::from("/home/projects/proj/.cwd"),
+        b"/project\n".to_vec(),
+    );
+    files
+        .stats
+        .insert(PathBuf::from("/project"), directory_stat());
+    files.entries.insert(
+        PathBuf::from("/home/projects/proj/chats"),
+        vec![("s.jsonl".into(), false)],
+    );
+    files.bytes.insert(
+        PathBuf::from("/home/projects/proj/chats/s.jsonl"),
+        line.as_bytes().to_vec(),
+    );
+    files.stats.insert(
+        PathBuf::from("/home/projects/proj/chats/s.jsonl"),
+        Stat {
+            directory: false,
+            size: line.len() as u64,
+            birth_ms: 0.0,
+            ctime_ms: 0.0,
+            mtime_ms: 123.0,
+        },
+    );
+    let metadata = Metadata {
+        home: PathBuf::from("/home"),
+        cwd: PathBuf::from("/"),
+        files,
+    };
+    let summary = metadata.summary(
+        "/project",
+        Some("/project"),
+        Some(Path::new("/home/projects/proj")),
+        JsString::from("/project"),
+    );
+    assert_eq!(
+        summary.get("sessionCount").and_then(JsValue::as_number),
+        Some(1.0),
+        "#934 whitespace-only title must stay in the shared session count"
+    );
+    assert_eq!(
+        summary.get("lastActivity").and_then(JsValue::as_number),
+        Some(123.0),
+        "#934 whitespace-only title must keep lastActivity"
+    );
+}
+
 #[test]
 fn static_fixture_anchor_rejects_rust_rewritten_facts_and_response() {
     let original = fixture();

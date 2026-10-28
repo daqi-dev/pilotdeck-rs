@@ -9,6 +9,17 @@ fn failure(message: impl Into<DiagnosticText>) -> Error {
     e.name = "TypeError";
     e
 }
+pub(super) fn invalid_path_argument(received: &pilotdeck_protocol::JsString) -> Error {
+    Error::new(
+        "ERR_INVALID_ARG_TYPE",
+        crate::metadata::invalid_arg_type_message("path", received),
+    )
+}
+fn host_required() -> Error {
+    let mut e = Error::new("JS_HOST_REQUIRED", "");
+    e.requires_host = true;
+    e
+}
 fn property<'a>(v: &'a JsValue, k: &str) -> Result<&'a JsValue, Error> {
     if nullish(v) {
         return Err(failure(format!(
@@ -196,18 +207,11 @@ pub(super) fn apply<F: Files>(
             .as_string()
             .map(|s| String::from_utf16_lossy(s.units()))
         else {
-            let Some(received) = crate::metadata::argument_received(binding_id) else {
-                let mut e = Error::new("JS_HOST_REQUIRED", "");
-                e.requires_host = true;
-                return Err(e);
+            let received = match crate::metadata::argument_received(binding_id) {
+                crate::metadata::ArgumentReceived::Text(received) => received,
+                crate::metadata::ArgumentReceived::Throws { .. } => return Err(host_required()),
             };
-            return Err(Error::new(
-                "ERR_INVALID_ARG_TYPE",
-                format!(
-                    "The \"path\" argument must be of type string. Received {}",
-                    String::from_utf16_lossy(received.units())
-                ),
-            ));
+            return Err(invalid_path_argument(&received));
         };
         // path.join normalizes segments, but does not reset at an absolute later segment.
         let definitions = resolve(

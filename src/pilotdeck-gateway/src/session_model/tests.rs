@@ -477,3 +477,26 @@ fn catalog_unknown_errno_keeps_both_global_fs_boundaries_on_host() {
         }
     }
 }
+
+/// #934 P1-3: the shared argument descriptor keeps lone surrogates as raw
+/// UTF-16 units; this caller must not run them through `from_utf16_lossy`.
+#[test]
+fn path_argument_preserves_lone_surrogate_units() {
+    let value = parse_json(r#"{"constructor":{"name":"\ud800"}}"#).unwrap();
+    let error = super::path_argument(&value);
+    assert_eq!(
+        error.code, "ERR_INVALID_ARG_TYPE",
+        "#934 session_model path argument must keep the Node code"
+    );
+    assert_eq!(
+        error.message.units().last(),
+        Some(&0xd800),
+        "#934 session_model path argument must keep the lone surrogate unit"
+    );
+    assert!(
+        String::from_utf16_lossy(error.message.units()).starts_with(
+            "The \"paths[0]\" argument must be of type string. Received an instance of "
+        ),
+        "#934 session_model path argument must keep the Node wording"
+    );
+}
