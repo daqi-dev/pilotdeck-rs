@@ -6,13 +6,24 @@ folder; original source bytes and hashes are verified after every mutation.
 
 Every row turns off one observable the selftest asserts on (an injection, an
 expectation value, the HOME isolation, a middleman recording/reaping
-property) and names the case whose dedicated ``#969`` assertion must go red,
-so a surviving mutant can never pass for evidence. A failure without the
-bound message (crash, timeout, wrong assertion) is INVALID, never a kill.
+property, the type-strict comparator, the verified:false report contract)
+and names the dedicated ``#969`` message that must go red, so a surviving
+mutant can never pass for evidence. A failure without the bound message
+(crash, wrong assertion) is INVALID, never a kill — and so is any outcome
+that relies on the driver's 60s watchdog instead of a dedicated assertion
+(the cancel row re-proves this: the mock bounds its hang, the turn ends
+without the abort, and the driver's own cancel assertion names the failure).
+
 The baseline row is the positive control: text-passthrough and
 cancel-passthrough must pass with no mutation applied; the cancel mutant
 additionally re-proves its own cell green before the mutation is written,
 because a selected single mutant skips the baseline row.
+
+Three rows run attack_suite.py instead of a selftest case: the comparator
+mutations are unit-level (forged driver results fed to verify_caught), so
+their negative control is the attack suite reporting the matching ESCAPED
+line. Every row that ran the selftest also has its report.json checked:
+each case cell must carry an explicit verified field (README contract).
 
 The mutated sources are tracked files, so ``mutating_sources`` checks them
 against HEAD (the official run). For pre-commit validation,
@@ -50,12 +61,24 @@ TESTS = {
     'expectation-count-weakened': (['text-passthrough'], 'TS terminal must match the README expectation'),
     'expectation-terminal-weakened': (['text-early-final'], 'TS terminal must match the README expectation'),
     'driver-tool-payload-forged': (['tool-passthrough'], 'read tool must return the sandbox file payload'),
-    'driver-abort-never-fires': (['cancel-passthrough'], 'turn did not finish within 60s'),
+    'driver-abort-never-fires': (['cancel-passthrough'],
+                                 'cancel window must fire the client-side abort after the first model event'),
     'driver-home-leaked': (['text-passthrough'], 'driver HOME must be the case sandbox home'),
     'mitm-record-stops-on-close': (['text-passthrough'], 'MITM must keep recording after the host closes the output pipe'),
     'mitm-delivered-lying': (['text-passthrough'], 'frames after the host closed the pipe must be recorded as not delivered'),
     'mitm-eof-reap-disabled': (['text-passthrough'], 'MITM must exit after host stdin EOF even when the child ignores SIGTERM'),
+    'mitm-group-reap-blind': (['text-passthrough'],
+                              'MITM must kill the TERM-ignoring descendant that outlives the leader'),
+    'comparator-type-blind': ([], 'ESCAPED bool-for-int-count'),
+    'comparator-keys-blind': ([], 'ESCAPED extra-terminal-key'),
+    'report-failure-verified-dropped': ([], 'ESCAPED failing-case-carries-verified-false'),
 }
+
+# Rows whose negative control is the attack suite (forged driver results fed
+# to verify_caught) rather than a selftest matrix case: the comparator and
+# the report contract are unit-level properties of the verifier.
+ATTACK_ROWS = ('comparator-type-blind', 'comparator-keys-blind',
+               'report-failure-verified-dropped')
 
 # Each independent mutant is applied to the original, never cumulatively.
 # The baseline row keeps every source untouched: it proves the same runner
@@ -113,6 +136,20 @@ mutations = [
     ('mitm-eof-reap-disabled', 'stdio_mitm.py',
      '        reap_after_host_eof(child)',
      '        pass  # eof reap disabled'),
+    ('mitm-group-reap-blind', 'stdio_mitm.py',
+     '        if process.poll() is not None and not group_alive(process.pid):',
+     '        if process.poll() is not None:'),
+    ('comparator-type-blind', 'selftest.py',
+     '    if type(actual) is not type(expected):',
+     '    if False and type(actual) is not type(expected):'),
+    ('comparator-keys-blind', 'selftest.py',
+     '        for key in sorted(set(expected) | set(actual)):',
+     '        for key in sorted(set(expected) & set(actual)):'),
+    ('report-failure-verified-dropped', 'selftest.py',
+     '    except SelftestError as error:\n'
+     '        return {"case": name, "failed": str(error), "verified": False}',
+     '    except SelftestError as error:\n'
+     '        return {"case": name, "failed": str(error)}'),
 ]
 selected = sys.argv[2:]
 if selected:
@@ -129,25 +166,55 @@ def run_selftest(name, cases):
                      cwd=root, env=env, timeout=300)
 
 
-def abort_evidence_ok():
-    """Structured proof that the cancel window started and hung, not just any exit 1.
+def run_row(name):
+    """Run the row's named check: a selftest case run or the attack suite."""
+    if name in ATTACK_ROWS:
+        return run_owned([sys.executable, str(source / 'attack_suite.py')],
+                         cwd=root, env=env, timeout=120)
+    return run_selftest(name, TESTS[name][0])
 
-    The watchdog's driver-result.json must show ``timeout: true``, a window
-    that had already reached its first ``model_event`` (the cancel trigger),
-    and no terminal: only then does the failure mean "abort never fired".
+
+def abort_evidence_ok():
+    """Structured proof that the cancel trigger failed, not the watchdog.
+
+    The mutated run must have ended its turn without the client abort and
+    without the driver watchdog: the mock's bounded hold let the turn
+    finish, the driver's own cancel assertion named the failure, and the
+    recorded evidence shows no abort and no interruption.
     """
     path = out / 'driver-abort-never-fires-evidence' / 'cancel-passthrough' / 'driver-result.json'
     try:
         result = json.loads(path.read_text())
     except (OSError, ValueError):
         return False, f'missing/unreadable {path.name}'
-    if result.get('timeout') is not True:
-        return False, f'timeout={result.get("timeout")!r}'
-    if 'model_event' not in result.get('events', []):
-        return False, f'events={result.get("events")!r}'
-    if result.get('terminal') is not None:
-        return False, f'terminal={result.get("terminal")!r}'
-    return True, 'timeout:true, model_event seen, no terminal'
+    if result.get('timeout') is True:
+        return False, 'driver watchdog fired (timeout:true)'
+    if result.get('abortAfterEvents') is not None:
+        return False, f'abortAfterEvents={result.get("abortAfterEvents")!r}'
+    if result.get('modelInterrupted') is not False:
+        return False, f'modelInterrupted={result.get("modelInterrupted")!r}'
+    ended = isinstance(result.get('terminal'), dict) or isinstance(result.get('error'), str)
+    if not ended:
+        return False, f'turn did not end (terminal={result.get("terminal")!r}, error={result.get("error")!r})'
+    return True, 'abort never fired; turn ended via the bounded mock hold, named by the driver assertion'
+
+
+def report_contract_ok(name):
+    """Every report case cell carries an explicit verdict (README contract)."""
+    path = out / f'{name}-evidence' / 'report.json'
+    try:
+        report = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False, 'missing/unreadable report.json'
+    entries = report.get('cases')
+    if not isinstance(entries, list) or not entries:
+        return False, f'cases={entries!r}'
+    for entry in entries:
+        if 'verified' not in entry:
+            return False, f'{entry.get("case")!r} has no verified field'
+        if entry['verified'] is not True and not entry.get('failed'):
+            return False, f'{entry.get("case")!r} failed without a message'
+    return True, 'every case cell carries an explicit verdict'
 
 
 summary = []
@@ -166,14 +233,13 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
             (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(
                 content.splitlines(True), changed.splitlines(True),
                 fromfile=filename, tofile=filename)))
-        detail = ''
         status, detail, rc = 'INVALID', 'row did not produce a verdict', None
         try:
-            cases, bound = TESTS[name]
+            bound = TESTS[name][1]
             # The cancel mutant first re-proves its own cell green with the
             # pristine sources: a selected single mutant skips the baseline.
             if name == 'driver-abort-never-fires':
-                precheck = run_selftest(f'{name}-precheck', cases)
+                precheck = run_selftest(f'{name}-precheck', TESTS[name][0])
                 (out / f'{name}-precheck.log').write_text(precheck.stdout + precheck.stderr)
                 if precheck.returncode != 0:
                     raise RuntimeError(
@@ -181,10 +247,10 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
             if changed is not None:
                 path.write_text(changed)
             try:
-                result = run_selftest(name, cases)
+                result = run_row(name)
             except subprocess.TimeoutExpired:
                 result = None
-                status, detail = 'INVALID', 'selftest timed out'
+                status, detail = 'INVALID', 'row timed out'
             if result is not None:
                 rc = result.returncode
                 log = result.stdout + result.stderr
@@ -193,20 +259,31 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
                     # Positive control: the same runner path must pass.
                     status = 'KILLED' if rc == 0 else 'SURVIVED'
                     detail = f'rc={rc}'
+                elif name in ATTACK_ROWS:
+                    if rc == 0:
+                        status, detail = 'SURVIVED', 'attack suite caught nothing with the mutant applied'
+                    elif rc == 1 and bound in log:
+                        status, detail = 'KILLED', 'bound escape line present'
+                    else:
+                        status, detail = 'INVALID', f'rc={rc} without the bound escape line'
                 elif rc == 0:
                     status, detail = 'SURVIVED', 'selftest passed with the mutant applied'
                 elif rc == 1 and bound in log:
                     if name == 'driver-abort-never-fires':
-                        ok, why = abort_evidence_ok()
-                        if ok:
-                            status, detail = 'KILLED', why
+                        if 'turn did not finish within 60s' in log:
+                            status, detail = 'INVALID', 'killed by the driver watchdog, not the cancel assertion'
                         else:
-                            status, detail = 'INVALID', f'missing structured evidence: {why}'
+                            ok, why = abort_evidence_ok()
+                            status, detail = ('KILLED', why) if ok else ('INVALID', f'missing structured evidence: {why}')
                     else:
                         status, detail = 'KILLED', 'bound message present'
                 else:
                     status = 'INVALID'
                     detail = f'rc={rc} without the bound message' if rc == 1 else f'rc={rc}'
+            if result is not None and name not in ATTACK_ROWS:
+                ok, why = report_contract_ok(name)
+                if not ok:
+                    status, detail = 'INVALID', f'failed report contract: {why}'
         except Exception as error:
             # Record and continue: the verdict must come after every row ran.
             status, detail, rc = 'INVALID', f'row error: {error}', None

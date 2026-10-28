@@ -9,16 +9,22 @@ the Python stdio middleman, the real sidecar CLI and the local mock provider:
 
 Every cell is asserted field-for-field against EXPECTED below, the exact
 transcription of the README expectation table, so a wrong event, terminal,
-error or model-call count can never pass as ``verified``. Two additional
+error or model-call count can never pass as ``verified``. The comparison is
+type-strict at every level: Python's ``==`` accepts ``True == 1`` and
+``1 == 1.0``, so a forged driver result with JSON-incompatible types must
+still fail its cell (attack_suite.py feeds exactly those forgeries). Three
 direct apparatus checks exercise the middleman alone (recording after the
-host closes the output pipe; bounded exit after host-side stdin EOF).
+host closes the output pipe; bounded exit after host-side stdin EOF; the
+same bounded exit when a TERM-ignoring descendant outlives the leader).
 
 Every assertion carries a dedicated ``#969`` message: a failing check names
 itself, and the mutation negative controls (negative_controls.py) bind to
-those exact strings. All child processes are process-group owned and reaped
-bounded; the mock never listens on 18789 and every spawned process (driver
-included) runs with HOME inside its own case sandbox, so ~/.pilotdeck is
-never touched.
+those exact strings. Any failure — including a malformed driver result
+(missing key, wrong shape, broken JSON) — becomes one failed case cell with
+an explicit ``verified: false``; the selftest never crashes out of a verdict.
+All child processes are process-group owned and reaped bounded; the mock
+never listens on 18789 and every spawned process (driver included) runs
+with HOME inside its own case sandbox, so ~/.pilotdeck is never touched.
 """
 import argparse
 import json
@@ -189,6 +195,75 @@ def check(condition, message):
         raise SelftestError(message)
 
 
+JSON_TYPE_NAMES = {bool: "boolean", int: "integer", float: "number",
+                   str: "string", type(None): "null"}
+
+
+def json_type(value):
+    return JSON_TYPE_NAMES.get(type(value), type(value).__name__)
+
+
+def strict_mismatch(actual, expected, path):
+    """Type-strict deep comparison of two JSON values; None when equal.
+
+    Python's ``==`` accepts ``True == 1`` and ``1 == 1.0``, so a forged
+    driver result could verify against the expectation table with
+    JSON-incompatible types. Every level must agree on type first, then on
+    value; dicts must carry exactly the same key set.
+    """
+    if type(actual) is not type(expected):
+        return (f"{path}: expected {json_type(expected)} {expected!r}, "
+                f"got {json_type(actual)} {actual!r}")
+    if isinstance(expected, dict):
+        for key in sorted(set(expected) | set(actual)):
+            if key not in expected:
+                return (f"{path}.{key}: unexpected key "
+                        f"(expected exactly {sorted(expected)})")
+            if key not in actual:
+                return (f"{path}.{key}: missing key "
+                        f"(expected exactly {sorted(expected)})")
+            mismatch = strict_mismatch(actual[key], expected[key], f"{path}.{key}")
+            if mismatch:
+                return mismatch
+        return None
+    if isinstance(expected, (list, tuple)):
+        if len(actual) != len(expected):
+            return (f"{path}: expected {len(expected)} items, "
+                    f"got {len(actual)}: {actual!r} vs {expected!r}")
+        for index, (item, wanted) in enumerate(zip(actual, expected)):
+            mismatch = strict_mismatch(item, wanted, f"{path}[{index}]")
+            if mismatch:
+                return mismatch
+        return None
+    if actual != expected:
+        return f"{path}: expected {expected!r}, got {actual!r}"
+    return None
+
+
+def assert_strict(name, what, actual, expected):
+    """Assert one README expectation with a dedicated, type-strict message."""
+    mismatch = strict_mismatch(actual, expected, what)
+    check(mismatch is None,
+          f"#969 {name}: TS {what} must match the README expectation: {mismatch}")
+
+
+def result_field(result, name, key):
+    """Read one driver-result field; a missing key fails its own cell."""
+    if key not in result:
+        raise SelftestError(f"#969 {name}: driver result must carry the {key!r} field")
+    return result[key]
+
+
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
@@ -302,8 +377,10 @@ def mock_entries(mock_log):
 def assert_clean_passthrough(name, frames, scenario):
     """MITM-side passthrough invariants; the TS-side values are in EXPECTED."""
     sequences = delivered_sequences(frames)
-    check(sequences == list(range(len(sequences))),
-          f"#969 {name}: passthrough delivered sequences must be gap-free and duplicate-free: {sequences}")
+    mismatch = strict_mismatch(sequences, list(range(len(sequences))), "delivered sequences")
+    check(mismatch is None,
+          f"#969 {name}: passthrough delivered sequences must be gap-free and "
+          f"duplicate-free: {mismatch}")
     for record in frames:
         check(record["action"] == [],
               f"#969 {name}: passthrough must not rewrite any frame, but frame {record['index']} has {record['action']}")
@@ -365,18 +442,24 @@ def main(argv):
     failures = []
     started = time.monotonic()
     try:
-        # The two direct middleman checks run on every invocation (also when
+        # The three direct middleman checks run on every invocation (also when
         # --cases restricts the matrix): they are part of the ruler.
         mitm_checks = {}
         for check_name, check_fn in (("mitm-pipe-close", verify_mitm_pipe_close),
-                                     ("mitm-eof-reap", verify_mitm_eof_reap)):
+                                     ("mitm-eof-reap", verify_mitm_eof_reap),
+                                     ("mitm-eof-reap-group", verify_mitm_eof_reap_group)):
             try:
                 outcome = check_fn(out_root)
                 mitm_checks[check_name] = "ok" if outcome is None else outcome
-            except SelftestError as error:
-                failures.append(str(error))
-                print(f"FAIL {check_name}: {error}", file=sys.stderr, flush=True)
-                mitm_checks[check_name] = str(error)
+            except Exception as error:
+                # A broken middleman is a failing check with a dedicated
+                # message, never a crash of the whole selftest (attack E3).
+                message = (str(error) if isinstance(error, SelftestError)
+                           else f"#969 {check_name}: check raised "
+                                f"{type(error).__name__}: {error}")
+                failures.append(message)
+                print(f"FAIL {check_name}: {message}", file=sys.stderr, flush=True)
+                mitm_checks[check_name] = message
         for scenario, injection in cells:
             name = f"{scenario}-{injection}"
             mock_port = free_port()
@@ -406,13 +489,11 @@ def main(argv):
                         break
                     check(time.monotonic() < deadline, f"#969 {name}: mock provider did not become ready")
                     time.sleep(0.05)
-                try:
-                    cell = verify_case(name, scenario, injection, mock_port, out_root,
-                                       case_dir, mock_log)
-                except SelftestError as error:
-                    failures.append(str(error))
-                    print(f"FAIL {name}: {error}", file=sys.stderr, flush=True)
-                    cell = {"case": name, "failed": str(error)}
+                cell = verify_caught(name, scenario, injection, mock_port,
+                                     out_root, case_dir, mock_log)
+                if cell.get("verified") is not True:
+                    failures.append(cell["failed"])
+                    print(f"FAIL {name}: {cell['failed']}", file=sys.stderr, flush=True)
                 matrix.append(cell)
             finally:
                 terminate_group(mock)
@@ -434,28 +515,50 @@ def main(argv):
     return 0
 
 
+def verify_caught(name, scenario, injection, mock_port, out_root, case_dir, mock_log):
+    """Run verify_case; any failure becomes one failed cell with verified:false.
+
+    Malformed driver output (missing keys, wrong shapes, broken JSON) is a
+    failed cell with its own ``#969`` message, never a crash of the whole
+    selftest: the README contract is that any mismatch ends in
+    ``verified:false``, and attack_suite.py binds to exactly that.
+    """
+    try:
+        return verify_case(name, scenario, injection, mock_port, out_root,
+                           case_dir, mock_log)
+    except SelftestError as error:
+        return {"case": name, "failed": str(error), "verified": False}
+    except Exception as error:
+        return {"case": name,
+                "failed": f"#969 {name}: case verification raised "
+                          f"{type(error).__name__}: {error}",
+                "verified": False}
+
+
 def verify_case(name, scenario, injection, mock_port, out_root, case_dir, mock_log):
     result, frames, summary, _ = run_case(name, scenario, injection, mock_port, case_dir)
     expected = EXPECTED[name]
-    observed = [(entry["type"], entry.get("modelEventType")) for entry in result["eventDetails"]]
+    details = result_field(result, name, "eventDetails")
+    events = result_field(result, name, "events")
+    observed = [(entry["type"], entry.get("modelEventType")) for entry in details]
     cell = {
         "case": name,
         "scenario": scenario,
         "injection": injection,
-        "terminal": result["terminal"],
-        "error": result["error"],
-        "events": result["events"],
-        "modelCalls": result["modelCalls"],
-        "toolCalls": len(result["toolCalls"]),
+        "terminal": result_field(result, name, "terminal"),
+        "error": result_field(result, name, "error"),
+        "events": events,
+        "modelCalls": result_field(result, name, "modelCalls"),
+        "toolCalls": len(result_field(result, name, "toolCalls")),
         "deliveredSequences": delivered_sequences(frames),
         "frames": len(frames),
     }
 
     # The recorded details and the event list are two views of one stream: a
     # driver that lets them disagree would let a forged list slip through.
-    check([entry["type"] for entry in result["eventDetails"]] == result["events"],
+    check([entry["type"] for entry in details] == events,
           f"#969 {name}: driver event details must agree with the event list: "
-          f"{result['eventDetails']!r} vs {result['events']!r}")
+          f"{details!r} vs {events!r}")
 
     # MITM-side structural evidence first: the mutations that turn an
     # injection off bind to these dedicated messages.
@@ -479,28 +582,23 @@ def verify_case(name, scenario, injection, mock_port, out_root, case_dir, mock_l
         check(frame["payload"]["result"]["stopReason"] == "mitm_premature_final",
               f"#969 {name}: early-final rewrite must carry the marker stopReason")
 
-    # The ruler: every README-registered TS observable, field for field. A
-    # wrong event order, a missing modelEventType, a wrong terminal count, an
-    # unexpected error or model-call count each fail their own cell.
-    check(observed == expected["events"],
-          f"#969 {name}: TS event sequence must match the README expectation: "
-          f"{observed} != {expected['events']}")
-    check(result["terminal"] == expected["terminal"],
-          f"#969 {name}: TS terminal must match the README expectation: "
-          f"{result['terminal']!r} != {expected['terminal']!r}")
-    check(result["error"] == expected["error"],
-          f"#969 {name}: TS run() error must match the README expectation: "
-          f"{result['error']!r} != {expected['error']!r}")
-    check(result["modelCalls"] == expected["modelCalls"],
-          f"#969 {name}: TS model call count must match the README expectation: "
-          f"{result['modelCalls']} != {expected['modelCalls']}")
+    # The ruler: every README-registered TS observable, field for field and
+    # type for type. A wrong event order, a missing modelEventType, a wrong
+    # terminal count, an unexpected error or model-call count each fail their
+    # own cell — and so does a value with the right shape but the wrong JSON
+    # type (True is not 1, and 1 is not 1.0).
+    assert_strict(name, "event sequence", observed, expected["events"])
+    assert_strict(name, "terminal", cell["terminal"], expected["terminal"])
+    assert_strict(name, "run() error", cell["error"], expected["error"])
+    assert_strict(name, "model call count", cell["modelCalls"], expected["modelCalls"])
 
     if injection == "passthrough":
         assert_clean_passthrough(name, frames, scenario)
         if scenario == "tool":
-            check(len(result["toolCalls"]) == 1,
+            check(cell["toolCalls"] == 1,
                   f"#969 {name}: tool window must execute exactly one read call")
-            check(result["toolResults"] and result["toolResults"][0]["text"] == "live-e2e read tool payload\n",
+            tool_results = result_field(result, name, "toolResults")
+            check(tool_results and tool_results[0]["text"] == "live-e2e read tool payload\n",
                   f"#969 {name}: read tool must return the sandbox file payload")
             entries = mock_entries(mock_log)
             check(len(entries) == 2,
@@ -508,7 +606,7 @@ def verify_case(name, scenario, injection, mock_port, out_root, case_dir, mock_l
             check(all(entry["connection"] == "completed" for entry in entries),
                   f"#969 {name}: both mock provider connections must complete")
         if scenario == "cancel":
-            check(result["modelInterrupted"] is True,
+            check(result_field(result, name, "modelInterrupted") is True,
                   f"#969 {name}: cancel window must interrupt the hanging provider connection")
             entries = mock_entries(mock_log)
             check(entries and entries[0]["connection"] == "aborted",
@@ -642,6 +740,92 @@ def verify_mitm_eof_reap(out_root):
         terminate_group(process)
 
 
+def verify_mitm_eof_reap_group(out_root):
+    """A descendant that outlives a TERM-obedient leader must not block the reap.
+
+    The leader emits its frame, spawns a TERM-ignoring descendant that holds
+    the output pipe, and exits on its own: the leader's exit proves nothing
+    about the group. After host-side stdin EOF the middleman must still sweep
+    the whole group (grace, TERM, KILL), so the blocked reader ends, both
+    frames are recorded, and the summary is written — all bounded.
+    """
+    name = "mitm-eof-reap-group"
+    check_dir = out_root / name
+    check_dir.mkdir(parents=True)
+    log = check_dir / "frames.jsonl"
+    summary = check_dir / "mitm-summary.json"
+    pids = check_dir / "pids.json"
+    descendant = check_dir / "descendant.py"
+    script = check_dir / "child.py"
+    descendant.write_text(textwrap.dedent(f"""
+        import json, signal, sys, time
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        sys.stdout.write(json.dumps({{"kind": "event", "sequence": 1, "final": False}}) + "\\n")
+        sys.stdout.flush()
+        time.sleep(300)
+    """))
+    script.write_text(textwrap.dedent(f"""
+        import json, os, subprocess, sys
+        from pathlib import Path
+        sys.stdout.write(json.dumps({{"kind": "event", "sequence": 0, "final": False}}) + "\\n")
+        sys.stdout.flush()
+        child = subprocess.Popen([sys.executable, "-B", {str(descendant)!r}])
+        Path({str(pids)!r}).write_text(
+            json.dumps({{"leader": os.getpid(), "descendant": child.pid}}) + "\\n")
+    """))
+    process = spawn_mitm(log, summary, [sys.executable, str(script)])
+    group = None
+    try:
+        deadline = time.monotonic() + MITM_CHECK_SECONDS
+        # Both frames must be forwarded before the host disappears: the
+        # descendant prints only after installing its TERM handler, so this
+        # also proves the group sweep below fights a TERM-immune process.
+        for expected in (0, 1):
+            forwarded = process.stdout.readline()
+            check(forwarded.strip() and json.loads(forwarded)["sequence"] == expected,
+                  f"#969 {name}: MITM must forward frame {expected} to the host: {forwarded!r}")
+        while not pids.exists():
+            check(time.monotonic() < deadline,
+                  f"#969 {name}: leader must record its descendant before exiting")
+            time.sleep(0.01)
+        identified = json.loads(pids.read_text())
+        # The descendant inherited the leader's process group (the leader was
+        # itself started in its own session by the middleman).
+        group = identified["leader"]
+        started = time.monotonic()
+        process.stdin.close()  # host EOF; the leader is already gone
+        while pid_alive(identified["descendant"]):
+            check(time.monotonic() < deadline,
+                  f"#969 {name}: MITM must kill the TERM-ignoring descendant that "
+                  f"outlives the leader (still alive after {MITM_CHECK_SECONDS}s)")
+            time.sleep(0.05)
+        elapsed = time.monotonic() - started
+        try:
+            process.wait(timeout=MITM_CHECK_SECONDS)
+        except subprocess.TimeoutExpired:
+            raise SelftestError(
+                f"#969 {name}: MITM must exit after sweeping the descendant that "
+                f"outlives the leader (timed out after {MITM_CHECK_SECONDS}s)")
+        check(process.returncode == 0,
+              f"#969 {name}: MITM must exit cleanly after the group reap: "
+              f"rc={process.returncode}: {mitm_stderr(process)}")
+        records = read_frame_log(log)
+        check(len(records) == 2,
+              f"#969 {name}: MITM must record both the leader's and the descendant's "
+              f"frames around the reap: {[record['frame']['sequence'] for record in records]}")
+        check(summary.is_file(), f"#969 {name}: MITM must write its summary on the group reap path")
+        return {"elapsedSeconds": round(elapsed, 1)}
+    finally:
+        # The descendant lives in the leader's group, which a signal to the
+        # middleman's own group can never reach; sweep it directly.
+        if group is not None:
+            try:
+                os.killpg(group, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        terminate_group(process)
+
+
 def terminate_group(process):
     if process.poll() is not None:
         return
@@ -696,6 +880,12 @@ def assert_home_untouched(home_root, run_started_at):
 
 
 def write_report(out_root, matrix, failures, elapsed, home_touched, home_unreadable, mitm_checks):
+    # The README contract: every case cell — passing or failing — states its
+    # verdict explicitly; a failure without verified:false is a broken report.
+    for entry in matrix:
+        check("verified" in entry,
+              f"#969 selftest: report case {entry.get('case')} must carry an "
+              f"explicit verified field")
     report = {
         "cases": matrix,
         "mitmChecks": mitm_checks,

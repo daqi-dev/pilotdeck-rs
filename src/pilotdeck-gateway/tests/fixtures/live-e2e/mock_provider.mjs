@@ -7,8 +7,12 @@
 //   LIVE_E2E_TEXT -> streamed text deltas, then message_end(stop).
 //   LIVE_E2E_TOOL -> first call emits a `read` tool call; once the request
 //                    contains a tool_result, finish with text.
-//   LIVE_E2E_HANG -> one text delta, then the connection stays open forever
-//                    (cancel-window fixture; the aborted socket is recorded).
+//   LIVE_E2E_HANG -> a few events, then the connection is held open for the
+//                    client to interrupt (cancel-window fixture; the aborted
+//                    socket is recorded). The hold is bounded: a client that
+//                    never aborts gets a completed stream, so a broken cancel
+//                    window fails the apparatus expectations instead of
+//                    tripping the driver's 60s watchdog.
 //
 // Env: LIVE_E2E_MOCK_PORT (fixed port; required), LIVE_E2E_MOCK_LOG (jsonl
 // request log path; required). The tool scenario names its read target as the
@@ -60,6 +64,10 @@ function toolTargetFor(request) {
 const provider = 'live-e2e';
 const model = 'mock-model';
 const toolCallId = 'call-live-e2e-read';
+// How long the hang scenario holds the connection before finishing it on
+// its own. Far above the healthy abort latency (milliseconds after the
+// first model event) and far below the driver's 60s watchdog.
+const HANG_HOLD_MS = 20_000;
 
 function textEvents(request, index) {
   return [
@@ -152,7 +160,14 @@ const server = http.createServer(async (req, res) => {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   if (scenario === 'hang') {
-    // Hold the connection open: the client must interrupt it.
+    // Hold the connection open: the client must interrupt it. When nothing
+    // interrupts it within the bound, finish the stream so a cancel window
+    // that never aborts still ends (and fails its expectations) without
+    // waiting for the driver watchdog.
+    await new Promise((resolve) => setTimeout(resolve, HANG_HOLD_MS));
+    if (res.destroyed || res.writableEnded) return;
+    finished = true;
+    res.end(JSON.stringify({ done: true }) + '\n');
     return;
   }
   finished = true;

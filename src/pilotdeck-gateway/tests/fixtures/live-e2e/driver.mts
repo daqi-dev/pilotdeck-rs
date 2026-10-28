@@ -284,5 +284,14 @@ try {
 }
 evidence.elapsedMs = Date.now() - evidence.startedAtMs;
 writeFileSync(join(caseDir, 'driver-result.json'), JSON.stringify(evidence, null, 2) + '\n');
+// The cancel window's contract is a client-side abort at the first model
+// event, and the passthrough cell is the only one where nothing (an
+// injected error or premature final) can preempt it. A missing abort is a
+// driver failure with its own dedicated message, never the 60s watchdog:
+// the mock bounds its hang, so the turn still ends when the abort is gone.
+if (scenario === 'cancel' && injection === 'passthrough' && evidence.abortAfterEvents === null) {
+  console.error('#969 driver: cancel window must fire the client-side abort after the first model event');
+  process.exit(1);
+}
 console.log(`#969 driver: scenario=${scenario} injection=${injection} events=${evidence.events.length} terminal=${evidence.terminal ? 'yes' : 'no'} error=${evidence.error ? 'yes' : 'no'}`);
 process.exit(0);

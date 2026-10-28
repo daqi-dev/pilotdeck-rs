@@ -27,9 +27,12 @@ reaped, with ``delivered`` reflecting only writes that actually went out.
 Child ownership: the sidecar runs in its own process group. On host-side EOF we
 mirror stdin EOF to the child and bound its exit (grace, then TERM, then KILL),
 so a child stuck on module calls to a host that is already gone can never keep
-our stdout reader blocked forever. The TERM->KILL budget stays below the TS
-connection's killTimeoutMs (3s), so the MITM always finishes its own reap and
-writes the summary before an outer escalation could hit it.
+our stdout reader blocked forever. The group, not the leader, decides the
+escalation: a TERM-ignoring descendant that outlives a leader that already
+exited still holds the pipes open, so KILL tracks the whole process group.
+The TERM->KILL budget stays below the TS connection's killTimeoutMs (3s), so
+the MITM always finishes its own reap and writes the summary before an outer
+escalation could hit it.
 """
 import argparse
 import json
@@ -226,20 +229,44 @@ class Mitm:
         return [entry for entry in self.injections if not entry["fired"]]
 
 
+def group_alive(pgid):
+    """Whether any process still lives in the child's process group.
+
+    The leader exiting does not empty the group: descendants inherit it and
+    can ignore TERM while holding the pipes open.
+    """
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # The group exists but is not ours to signal; report it as alive so
+        # callers keep their bounded budget instead of a silent success.
+        return True
+    return True
+
+
 def kill_child_group(process):
+    """TERM the group, then KILL whatever is still in it, leader or not.
+
+    Deciding on the leader alone leaves TERM-ignoring descendants holding
+    the pipes; the escalation tracks the group, and the leader's own exit is
+    reaped by the poll below on the way.
+    """
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except (ProcessLookupError, PermissionError):
-        return
+        pass
     deadline = time.monotonic() + CHILD_TERM_GRACE_SECONDS
     while time.monotonic() < deadline:
-        if process.poll() is not None:
+        if process.poll() is not None and not group_alive(process.pid):
             return
         time.sleep(0.05)
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
+    if group_alive(process.pid):
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
     try:
         process.wait(timeout=CHILD_TERM_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
@@ -247,17 +274,18 @@ def kill_child_group(process):
 
 
 def reap_after_host_eof(process):
-    """Bound the child's exit after the host closed our stdin.
+    """Bound the child group's exit after the host closed our stdin.
 
     A child stuck on module calls to the departed host would otherwise keep the
     main thread blocked on its stdout forever. Give it a grace to finish on its
-    own, then escalate; closing the pipes also ends the blocked reader.
+    own, then escalate; closing the pipes also ends the blocked reader. The
+    leader's own exit does not decide this: descendants that inherited the
+    group can still hold the pipes open, so the group is always swept.
     """
     deadline = time.monotonic() + CHILD_EXIT_GRACE_SECONDS
     while time.monotonic() < deadline and process.poll() is None:
         time.sleep(0.05)
-    if process.poll() is None:
-        kill_child_group(process)
+    kill_child_group(process)
     for stream in (process.stdout, process.stdin):
         try:
             stream.close()
@@ -347,10 +375,10 @@ def main(argv):
             mitm.settle(record, written_to_host > 0)
 
     def terminate(_signum, _frame):
-        # A signal aimed at us must still reap the child group. Returning (not
-        # exiting) lets the pumps finish and the summary be written.
-        if child.poll() is None:
-            kill_child_group(child)
+        # A signal aimed at us must still reap the child group, even when the
+        # leader is already gone and only descendants hold the pipes. Returning
+        # (not exiting) lets the pumps finish and the summary be written.
+        kill_child_group(child)
 
     signal.signal(signal.SIGTERM, terminate)
     signal.signal(signal.SIGINT, terminate)
@@ -366,10 +394,10 @@ def main(argv):
             pass
         child.stdout.close()
     finally:
-        if child.poll() is None:
-            kill_child_group(child)
-        else:
-            child.wait()
+        # Unconditional: the leader may be gone while a TERM-ignoring
+        # descendant still holds the pipes; the sweep itself is a no-op fast
+        # path when the whole group is already dead.
+        kill_child_group(child)
         host_thread.join(timeout=5)
         unfired = mitm.unfired()
         mitm.close_log()
