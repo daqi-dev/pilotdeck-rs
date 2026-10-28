@@ -35,7 +35,7 @@ python3 src/pilotdeck-gateway/tests/fixtures/background-output/negative.py /abs/
 每个变异后在同一 target 上重编并验证原始源码；编译错误、过期锚点、超时、错位 panic 均记 INVALID，逐项继续并最终非零退出。
 `summary.json` 记录所有变异和选择的 KILLED/SURVIVED/INVALID、编译状态及恢复状态；各阶段原始日志与命令/耗时 JSON 同目录保存。
 
-18 个变异覆盖原有范围。判杀绑定完整测试名和该测试 panic 中的目标消息；文件准备、JSON 解析等前置失败有独立 #994 消息，不能充当目标断言。
+18 个变异覆盖原有范围。`x-dispose-no-flush-await` 绑定 `runtime::background::output::dispose_tests::dispose_without_snapshot_waits_for_gated_write`：无 snapshot store、直接 poll dispose_now 到 flush 等待点，防止最终持久化的第二次 flush 掩盖变异；同一变异还独立绑定 `runtime::background::output::dispose_tests::dispose_without_snapshot_waits_for_cancelled_write`，两项都须被专属断言杀死。TS 矩阵及边界正控见 `../background-dispose-flush/README.md`。判杀绑定完整测试名和该测试 panic 中的目标消息；文件准备、JSON 解析等前置失败有独立 #994 消息，不能充当目标断言。
 全套预计超过 20 分钟时仅在开发会话运行 1–2 个名字样本，完整执行交协调者宿主；后台运行使用宿主 `sigint-default.py python3 ...`。
 同树仍遵守既有源码守卫的串行约束；无新增 target 锁，Cargo 自己管理持久 target 的构建锁。
 SIGTERM/INT 和异常会回收自有子进程并清理源码副本；SIGKILL 遗留的副本按日志核所有权后清理，持久 target 不自动删除。

@@ -38,7 +38,9 @@ def selection(name):
         target = ('--test', 'background_output')
         test = 'configured_runtime_preserves_complete_ts_log_after_dispose'
     elif name == 'x-dispose-no-flush-await':
-        test = 'runtime::background::tests::dispose_waits_for_gated_output_write_before_returning'
+        test = 'runtime::background::output::dispose_tests::dispose_without_snapshot_waits_for_gated_write'
+    elif name == 'x-dispose-no-flush-await-cancelled':
+        test = 'runtime::background::output::dispose_tests::dispose_without_snapshot_waits_for_cancelled_write'
     elif name in ('x-begin-close-not-closing', 'closed-accepts-output'):
         test = 'runtime::background::output::tests::begin_close_rejects_append_before_ring_is_released'
     elif name in ('utf8-disk-decoded-before-ring', 'disk-cap-falls-through',
@@ -53,14 +55,15 @@ def passed(result, name):
             and 'test result: ok. 1 passed; 0 failed;' in result.stdout)
 
 
-def classify(name, result, _test):
-    if passed(result, name):
+def classify(name, result, test):
+    bound = test or name
+    if passed(result, bound):
         return 'SURVIVED', 'bound test still passed'
     log = result.stdout + result.stderr
-    test = selection(name)[1][0]
+    test = selection(bound)[1][0]
     marker = {
         'runtime-layout': '#994 background-output expected runtime log',
-        'x-dispose-no-flush-await': 'dispose returned before the gated write completed #994 background-output assertion',
+        'x-dispose-no-flush-await': '#994 dispose-flush must await gated write without snapshot store',
         'x-begin-close-not-closing': 'begin_close must freeze accepted output #994 background-output assertion',
         'closed-accepts-output': 'begin_close must freeze accepted output #994 background-output assertion',
     }.get(name, '#994 background-output oracle comparison')
@@ -79,7 +82,8 @@ def main():
     selected = [row for row in mutations if not requested or row[0] in requested]
     if requested and (len(selected) != len(requested) or len(set(requested)) != len(requested)):
         raise SystemExit('unknown/duplicate mutation')
-    rows = [(*row, [row[0]]) for row in selected]
+    rows = [(*row, [row[0], row[0] + '-cancelled']
+                   if row[0] == 'x-dispose-no-flush-await' else [row[0]]) for row in selected]
     return mutation_suite('background-output', rows, sys.argv[1], selection, passed, classify,
                           guarded=[root / 'src/pilotdeck-gateway/tests/background_output.rs'])
 

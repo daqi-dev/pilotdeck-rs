@@ -129,6 +129,10 @@ regeneration!(
     background_output_regenerates_identically,
     "background-output"
 );
+regeneration!(
+    background_dispose_flush_regenerates_identically,
+    "background-dispose-flush"
+);
 regeneration!(background_panic_regenerates_identically, "background-panic");
 regeneration!(background_tasks_regenerates_identically, "background-tasks");
 regeneration!(bash_session_regenerates_identically, "bash-session");
