@@ -4,8 +4,8 @@
 //! no cross-process lock or transaction in TS; failures can leave a new inverse
 //! snapshot installed before live roots or pipeline state have changed.
 use super::super::file_memory::{
-    EdgeClawFileStores, FileMemoryError, FileMemoryStoreOptions, absolute, io_mkdir, io_write,
-    repository_global_options, repository_workspace_options,
+    EdgeClawFileStores, FileMemoryError, FileMemoryStoreOptions, OperationScope, absolute,
+    io_mkdir, io_write, repository_global_options, repository_workspace_options,
 };
 use crate::{
     metadata::object,
@@ -382,12 +382,26 @@ impl EdgeClawFileStores {
         self.repository.snapshot_io = hook;
     }
     pub(super) fn snapshot_operation<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
+        let _scope = self.snapshot_operation_scope()?;
+        f()
+    }
+
+    /// A holdable [`Self::snapshot_operation`]: composite callers that must
+    /// keep the root operation locks across several repository calls (the
+    /// dream success tail spans install, replace and the state writes in one
+    /// TS-synchronous segment) acquire the guards once here. No LLM await may
+    /// happen while the returned scopes are alive. Same-thread calls below
+    /// reenter the already-held locks, so the guards compose with every
+    /// `snapshot_operation` inside the held region.
+    pub(crate) fn snapshot_operation_scope(
+        &self,
+    ) -> Result<(OperationScope<'_>, OperationScope<'_>)> {
         // The workspace store predeclares the provider's global root and
         // acquires the complete set in root order, even if another repository
         // uses one of these paths in the opposite role.
-        let _workspace = self.workspace_memory.operation_scope()?;
-        let _global = self.global_user_memory.operation_scope()?;
-        f()
+        let workspace = self.workspace_memory.operation_scope()?;
+        let global = self.global_user_memory.operation_scope()?;
+        Ok((workspace, global))
     }
     fn runtime_state(&self) -> Result<JsValue> {
         let mut out = JsObject::new();

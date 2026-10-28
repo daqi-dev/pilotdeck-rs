@@ -714,6 +714,7 @@ fn run_scenario(
         runtime: None,
         logger: None,
         llm_config: Some(JsValue::Object(config)),
+        dream_tail_gate: None,
     };
     let service = EdgeClawMemoryService::with_dependencies(options, dependencies)
         .unwrap_or_else(|error| panic!("#775 construct {name}: {error}"));
@@ -979,6 +980,7 @@ fn service_for_token(
             runtime: None,
             logger,
             llm_config: Some(JsValue::Object(config)),
+            dream_tail_gate: None,
         },
     )
     .expect("#775 construct test service")
@@ -1625,6 +1627,7 @@ fn session_clear_keeps_other_pending_capture() {
             runtime: None,
             logger: None,
             llm_config: Some(JsValue::Object(config)),
+            dream_tail_gate: None,
         },
     )
     .expect("#775 construct session-clear service");

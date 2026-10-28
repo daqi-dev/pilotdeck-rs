@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join, resolve} from 'node:path';
+import {dirname, join, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {DatabaseSync} from 'node:sqlite';
 
@@ -206,6 +206,7 @@ interface Ctx {
   names: () => string[];
   kinds: () => string[];
   cleaned: (value: any) => any;
+  stageTempLeft: () => string[];
 }
 
 interface Cell {
@@ -547,7 +548,7 @@ function cells(): Cell[] {
         out.files = ctx.files();
         out.pipeline = ctx.pipeline(['lastDreamAt', 'lastDreamStatus', 'lastDreamSummary']);
         out.lastDreamTree = ctx.lastDreamTree();
-        out.stageTempLeft = tree(service.memoryDir).map((file) => file.relativePath).filter((p: string) => p.includes('dream-'));
+        out.stageTempLeft = ctx.stageTempLeft();
         return out;
       },
     },
@@ -786,6 +787,24 @@ export async function collect(baseline: string) {
         lastDreamTree: () => tree(join(service.memoryDir, '..', 'last_dream')),
         names: () => service.repository.listMemoryEntries({includeDeprecated: true}).map((entry: any) => entry.name),
         kinds: () => server.requests.map((request) => request.kind),
+        // The dream stage's workspace/global/db temps are SIBLINGS of their
+        // live targets (`.memory.dream-*` / `.control.sqlite.dream-*` next to
+        // the data dir entries, `.global.dream-*` next to the global root),
+        // not inside memoryDir: scan the actual parent directories and report
+        // the leftover paths themselves, so a skipped cleanup fails on
+        // content, not on a counter.
+        stageTempLeft: () => {
+          const globalRoot = service.repository.getGlobalUserStore().getRootDir();
+          const parents = [service.dataDir, dirname(globalRoot)].sort();
+          const left: string[] = [];
+          for (const parent of parents) {
+            if (!statSync(parent, {throwIfNoEntry: false})) continue;
+            for (const name of readdirSync(parent).sort()) {
+              if (name.includes('.dream-')) left.push(join(parent, name));
+            }
+          }
+          return left;
+        },
         cleaned: (value) => clean(encode(value), root, workspaceHash),
       };
       for (const capture of cell.captures ?? []) {

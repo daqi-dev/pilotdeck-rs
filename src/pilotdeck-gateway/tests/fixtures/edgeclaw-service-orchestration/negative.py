@@ -17,6 +17,11 @@ all cases and exits non-zero if any case is not KILLED. Compile errors and
 failures that do not land on the named scenario's `#776 … differs from the
 real TS` assertion are INVALID. Without mutant names it runs the full set;
 names are for debugging one binding.
+
+fix-r1: `dream-tail-scope` is bound to the two-thread tail-race regression
+(`edgeclaw_dream_tail_race.rs`) instead of the oracle replay — its anchor is
+that test's own dedicated panic message. `storage/snapshots.rs` joined the
+guarded source set for the rollback-result mutant.
 """
 import json
 import os
@@ -35,8 +40,17 @@ from negative_process import (
 ROOT = Path(__file__).resolve().parents[5]
 ORCHESTRATION = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/service/orchestration.rs'
 DREAM_RUN = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/dream/run.rs'
+SNAPSHOTS = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/snapshots.rs'
+STORAGE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage.rs'
 TEST = 'rust_matches_ts_oracle'
 TEST_FILE = 'pilotdeck-gateway/tests/edgeclaw_service_orchestration.rs'
+# fix-r1 P1-1: the dream success tail's shared root operation scope is bound to
+# its own two-thread regression, not to the oracle replay.
+TAIL_RACE_TEST = 'dream_tail_cannot_interleave_across_threads'
+TAIL_RACE_FILE = 'pilotdeck-gateway/tests/edgeclaw_dream_tail_race.rs'
+# fix-r1 P1-6: the cross-process same-DB WAL cell's Rust acceptance test.
+WAL_TWO_PROCESS_TEST = 'cross_process_wal_writer_blocks_service_writes_like_ts'
+WAL_TWO_PROCESS_FILE = 'pilotdeck-gateway/tests/edgeclaw_wal_two_process.rs'
 
 
 ANCHORS = {
@@ -71,17 +85,44 @@ ANCHORS = {
     # The scheduled dream reports `trigger: "scheduled"` in `dreamResult`.
     'scheduled-trigger-string':
         '#776 scenario maintenance-dream-due: observed differs from the real TS',
+    # fix-r1 P1-2: the disposed counter alone must not satisfy the residue
+    # check — a stage that is counted but never cleaned up leaves its
+    # `.dream-*` sibling temps behind (`stageTempLeft` in the oracle).
+    'stage-dispose-skip-cleanup':
+        '#776 scenario dream-stage-error: observed differs from the real TS',
+    # fix-r1 P1-4 (D-3 换根丢写): the post-dream root swap must actually run;
+    # skipping it leaves the pre-dream live roots in place.
+    'dream-replace-skip':
+        '#776 scenario dream-stage-act: observed differs from the real TS',
+    # fix-r1 P1-4 (rollback × dream): the rollback result must report the
+    # snapshot's runtime state; inverting the truthiness drops every key.
+    'rollback-result-runtime-state':
+        '#776 scenario dream-stage-rollback-ok: observed differs from the real TS',
+    # fix-r1 P1-4 (flush × flush): the parked first flush's session filter
+    # must reach the heartbeat; widening it to all sessions double-consumes.
+    'flush-concurrent-consumption':
+        '#776 scenario flush-inflight-flush: observed differs from the real TS',
+    # fix-r1 P1-1: the dream success tail must hold one shared root operation
+    # scope across install and replace (two-thread tail-race regression).
+    'dream-tail-scope':
+        '#776 tail race: the second dream installed its last-dream snapshot '
+        'while the first was parked between install and replace',
+    # fix-r1 P1-6: node:sqlite keeps `busy_timeout` at 0, so a cross-process
+    # write-lock failure must be immediate; a 5s wait fails the elapsed bound.
+    'wal-busy-timeout':
+        '#776 wal-two-process: the locked write must fail immediately',
 }
 
 
-def mutation(name, path, before, after):
+def mutation(name, path, before, after, *, test=TEST, test_file=TEST_FILE):
     return dict(
         name=name,
         path=path,
         old=before,
         new=after,
-        test=TEST,
+        test=test,
         anchor=ANCHORS[name],
+        test_file=test_file,
     )
 
 
@@ -169,6 +210,79 @@ MUTANTS = [
         '            Self::Scheduled => "scheduled",',
         '            Self::Scheduled => "scheduled-mutated",',
     ),
+    mutation(
+        'stage-dispose-skip-cleanup',
+        ORCHESTRATION,
+        '            Err(error) => {\n'
+        '                self.dream_stages_disposed.fetch_add(1, Ordering::Relaxed);\n'
+        '                return match stage.dispose() {\n'
+        '                    Ok(()) => Err(error),\n'
+        '                    Err(dispose_error) => Err(dispose_error.into()),\n'
+        '                };\n'
+        '            }',
+        '            Err(error) => {\n'
+        '                self.dream_stages_disposed.fetch_add(1, Ordering::Relaxed);\n'
+        '                drop(stage);\n'
+        '                return Err(error);\n'
+        '            }',
+    ),
+    mutation(
+        'dream-replace-skip',
+        ORCHESTRATION,
+        '                self.repository\n'
+        '                    .replace_live_roots_with_stage(&stage, &stage.snapshot)?;\n'
+        '                Ok(())',
+        '                let _ = self\n'
+        '                    .repository\n'
+        '                    .replace_live_roots_with_stage(&stage, &stage.snapshot);\n'
+        '                Ok(())',
+    ),
+    mutation(
+        'rollback-result-runtime-state',
+        SNAPSHOTS,
+        '            for k in KEYS {\n'
+        '                let v = required(field(before, "runtimeState"), k)?;\n'
+        '                if truthy(v) {\n'
+        '                    out.insert(k.into(), v.clone());\n'
+        '                }\n'
+        '            }',
+        '            for k in KEYS {\n'
+        '                let v = required(field(before, "runtimeState"), k)?;\n'
+        '                if !truthy(v) {\n'
+        '                    out.insert(k.into(), v.clone());\n'
+        '                }\n'
+        '            }',
+    ),
+    mutation(
+        'flush-concurrent-consumption',
+        ORCHESTRATION,
+        '            .run_heartbeat(HeartbeatRunOptions {\n'
+        '                batch_size: options.batch_size,\n'
+        '                session_keys: options.session_keys.clone(),\n'
+        '                reason: options.reason.clone(),\n'
+        '            })',
+        '            .run_heartbeat(HeartbeatRunOptions {\n'
+        '                batch_size: options.batch_size,\n'
+        '                session_keys: None,\n'
+        '                reason: options.reason.clone(),\n'
+        '            })',
+    ),
+    mutation(
+        'dream-tail-scope',
+        ORCHESTRATION,
+        '        let _tail_scope = self.repository.snapshot_operation_scope()?;\n',
+        '        let _tail_scope = ();\n',
+        test=TAIL_RACE_TEST,
+        test_file=TAIL_RACE_FILE,
+    ),
+    mutation(
+        'wal-busy-timeout',
+        STORAGE,
+        '        conn.busy_timeout(Duration::ZERO)?;',
+        '        conn.busy_timeout(Duration::from_secs(5))?;',
+        test=WAL_TWO_PROCESS_TEST,
+        test_file=WAL_TWO_PROCESS_FILE,
+    ),
 ]
 
 
@@ -191,7 +305,7 @@ def classify(result, mutant):
         result.returncode != 0
         and 'test result: FAILED' in log
         and f"test {mutant['test']} ... FAILED" in log
-        and f'panicked at {TEST_FILE}:' in log
+        and f"panicked at {mutant['test_file']}:" in log
         and mutant['anchor'] in log
     ):
         return 'KILLED', 'bound test failed at its named assertion'
@@ -219,15 +333,16 @@ def main():
         return 2
     env = dict(os.environ)
     env['CARGO_TARGET_DIR'] = target
-    command = [
-        'cargo', 'test', '--offline', '--locked',
-        '--manifest-path', str(ROOT / 'src/Cargo.toml'),
-        '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_service_orchestration',
-    ]
     results = []
 
-    def run(label):
-        args = ['--', TEST, '--exact', '--nocapture']
+    def run(label, mutant):
+        command = [
+            'cargo', 'test', '--offline', '--locked',
+            '--manifest-path', str(ROOT / 'src/Cargo.toml'),
+            '-p', 'pilotdeck-gateway',
+            '--test', Path(mutant['test_file']).stem,
+        ]
+        args = ['--', mutant['test'], '--exact', '--nocapture']
         with (output / f'{label}.log').open('w') as log:
             gate = wait_for_slot(ROOT / 'scripts/cargo-slots.sh')
             log.write(gate.stdout + gate.stderr)
@@ -243,6 +358,7 @@ def main():
         results.append(dict(
             name=mutant['name'],
             test=mutant['test'],
+            test_file=mutant['test_file'],
             anchor=mutant['anchor'],
             status=status,
             reason=reason,
@@ -259,7 +375,7 @@ def main():
     try:
         with mutating_sources(
             ROOT,
-            [ORCHESTRATION, DREAM_RUN],
+            [ORCHESTRATION, DREAM_RUN, SNAPSHOTS, STORAGE],
             baseline='HEAD',
         ) as snapshots:
             for mutant in selected:
@@ -273,7 +389,7 @@ def main():
                         f"anchor appears {occurrences} times, expected exactly once",
                     )
                     continue
-                if not passed(run(f"{mutant['name']}-positive"), TEST):
+                if not passed(run(f"{mutant['name']}-positive", mutant), mutant['test']):
                     record(mutant, 'INVALID', 'positive control did not pass the bound test')
                     continue
                 mutated = original.replace(mutant['old'], mutant['new'], 1)
@@ -283,7 +399,7 @@ def main():
                     # Force Cargo to observe the write even on a filesystem
                     # with coarse mtimes; a cached binary would fake SURVIVED.
                     time.sleep(1.1)
-                    status, reason = classify(run(f"{mutant['name']}-negative"), mutant)
+                    status, reason = classify(run(f"{mutant['name']}-negative", mutant), mutant)
                 except Exception as error:  # noqa: BLE001 - summarized as INVALID
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
@@ -291,7 +407,7 @@ def main():
                     time.sleep(1.1)
                     if path.read_text() != original:
                         raise RuntimeError(f'byte restoration failed: {path}')
-                if not passed(run(f"{mutant['name']}-restored"), TEST):
+                if not passed(run(f"{mutant['name']}-restored", mutant), mutant['test']):
                     status, reason = 'INVALID', reason + '; restored test did not pass'
                 record(mutant, status, reason)
     except SourceBaselineError as error:
