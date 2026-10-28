@@ -113,13 +113,53 @@ class LockGateControls(unittest.TestCase):
             returncode = None
 
             def wait(self, timeout=None):
-                raise subprocess.TimeoutExpired(str(self.pid), timeout)
+                return 0
 
-        with patch.object(L['os'], 'killpg', side_effect=PermissionError('injected #209')):
-            audit = L['_stop_group'](FakeProc())
+        def killpg(pid, sig):
+            # The group is already gone (final ESRCH probe succeeds) but the
+            # TERM/KILL delivery itself failed: errors must still deny proof.
+            if sig == 0:
+                raise ProcessLookupError(pid)
+            raise PermissionError('injected #209')
+
+        mine = L['acquire'](self.lock)
+        L['LIVE_GROUPS'].add(424242)
+        with patch.object(L['os'], 'killpg', side_effect=killpg):
+            audit = L['stop_group'](FakeProc())
         self.assertFalse(audit['allStopped'],
                          '#209 kill/wait OSError must leave the group unproven')
         self.assertTrue(audit['errors'], '#209 the cleanup error must be recorded')
+        self.assertFalse(audit['remaining'],
+                         '#209 the final ESRCH probe must prove the group gone')
+        self.assertIn(424242, L['LIVE_GROUPS'],
+                      '#209 unproven cleanup must stay in LIVE_GROUPS')
+        self.assertFalse(L['release'](self.lock, mine),
+                         '#209 an unproven group must retain the lease')
+        self.assertTrue(self.lock.exists(),
+                        '#209 retained lease must still exist')
+        self.assertEqual(L['read_owner'](self.lock).get('cleanupPending'), [424242],
+                         '#209 retained cleanupPending must be explicit in owner.json')
+
+    def test_cleanup_error_returns_blocked_and_retains_lease(self):
+        stub = self.root / 'stub.py'
+        stub.write_text('import sys\nsys.exit(0)\n')
+
+        def killpg(pid, sig):
+            # The leader has exited, so the final ESRCH probe succeeds; the
+            # TERM/KILL delivery fails, which alone must force BLOCKED.
+            if sig == 0:
+                raise ProcessLookupError(pid)
+            raise PermissionError('injected #209')
+
+        with patch.object(L['os'], 'killpg', side_effect=killpg):
+            code = L['run'](stub, [], self.lock)
+        self.assertEqual(code, L['BLOCKED'],
+                         '#209 cleanup OSError must return BLOCKED')
+        self.assertTrue(self.lock.exists(),
+                        '#209 cleanup OSError must retain the lease')
+        retained = L['read_owner'](self.lock)
+        self.assertEqual(len(retained.get('cleanupPending') or []), 1,
+                         '#209 blocked cleanup must publish the residual group')
 
     def test_interrupt_reaps_group_and_releases(self):
         marker = self.root / 'grandchild.pid'
