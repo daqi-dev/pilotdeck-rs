@@ -215,7 +215,7 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
     let old_events = event_resource(&old.resources().get::<ProjectResources>().unwrap().context());
     let session = adapter(registry.clone(), "live-manifest");
     let mut stream = session
-        .submit(
+        .submit_turn_for_test(
             parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
             parse_json(r#"{"sessionId":"session","turnId":"turn","runId":"run","hostModules":{"forged":true}}"#).unwrap(),
         )
@@ -232,7 +232,7 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
     let recorder = test_recorder();
     let second = adapter_with_recorder(registry.clone(), "live-manifest", recorder.clone());
     let mut predecessor = second
-        .submit(
+        .submit_turn_for_test(
             parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
             wire_options(),
         )
@@ -240,7 +240,7 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
     while bounded(predecessor.next()).await.unwrap().is_some() {}
     assert_accepted_once(&recorder, "turn", 1);
     let mut newer = second
-        .submit(
+        .submit_turn_for_test(
             parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
             wire_options_for("reload-next"),
         )
@@ -475,7 +475,7 @@ async fn host_live_stdio_dispatches_all_four_ports_and_delivers_buffered_events(
     let session = adapter_with_recorder(registry.clone(), "live-interaction", recorder.clone());
     for (index, turn_id) in ["turn", "ports-next"].into_iter().enumerate() {
         let mut stream = session
-            .submit(
+            .submit_turn_for_test(
                 parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
                 wire_options_for(turn_id),
             )
@@ -569,7 +569,7 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
             })
         });
     let mut first = session
-        .submit(
+        .submit_turn_for_test(
             parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
             wire_options(),
         )
@@ -600,7 +600,7 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
         runtime.lease_count()
     );
     let mut next = session
-        .submit(
+        .submit_turn_for_test(
             parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
             wire_options_for("next"),
         )
@@ -723,7 +723,7 @@ async fn host_dispose_timeout_resubmit_waits_for_old_recorder() {
         })
     });
     let mut first = session
-        .submit(
+        .submit_turn_for_test(
             parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
             wire_options(),
         )
@@ -740,7 +740,7 @@ async fn host_dispose_timeout_resubmit_waits_for_old_recorder() {
         recorder.rows.lock().unwrap()
     );
     let mut next = session
-        .submit(
+        .submit_turn_for_test(
             parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
             wire_options_for("next"),
         )
@@ -772,7 +772,7 @@ async fn host_dispose_timeout_resubmit_waits_for_old_recorder() {
     drop(next_event);
     drop(next); // cancel the partially assembled replacement, including its lease
     let mut next = session
-        .submit(
+        .submit_turn_for_test(
             parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
             wire_options_for("next"),
         )
@@ -1115,7 +1115,7 @@ async fn live_notice(mode: &str) {
 
     let session = adapter(registry.clone(), "live-normal");
     let mut stream = session
-        .submit(
+        .submit_turn_for_test(
             crate::metadata::object([("type", "text".into()), ("text", "probe".into())]),
             wire_options(),
         )
@@ -1133,7 +1133,7 @@ async fn live_notice(mode: &str) {
     if mode == "drop" {
         drop(stream);
         let mut successor = session
-            .submit(
+            .submit_turn_for_test(
                 crate::metadata::object([("type", "text".into()), ("text", "probe".into())]),
                 wire_options_for("successor"),
             )

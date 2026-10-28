@@ -21,6 +21,7 @@ handle = root / 'src/pilotdeck-gateway/src/runtime/session/handle.rs'
 steer = root / 'src/pilotdeck-gateway/src/runtime/project/interaction_steer.rs'
 writer = root / 'src/pilotdeck-gateway/src/storage/transcript_adapter.rs'
 runner = root / 'src/pilotdeck-gateway/src/runtime/turn/runner.rs'
+cleanup = root / 'src/pilotdeck-gateway/src/runtime/cleanup_task.rs'
 production = 'runtime::turn::host_factory::tests::session_hooks_wrap_real_turn_and_retain_lease_through_end'
 session_tests = 'runtime::turn::live_session::tests::'
 test = 'runtime::turn::live_session::tests::session_matrix_matches_ts'
@@ -47,12 +48,14 @@ cases = [
     ('recompute-end-reason', shell, 'self.phase = Phase::Ended;', 'self.end_reason = if self.state.lock().unwrap().status == SessionStatus::Aborted { "other" } else { "prompt_input_exit" }; self.phase = Phase::Ended;', test, '#743 session matrix abort-end-cooperative'),
     ('drop-needs-current-runtime', shell, 'spawn_after(&self.executor, done, || {}, cleanup);', 'spawn_after(&tokio::runtime::Handle::current(), done, || {}, cleanup);', session_tests+'lifecycle_drop_off_runtime_uses_captured_executor', '#743 off-runtime lifecycle drop cannot panic'),
     ('shutdown-bare-spawn', shell, 'crate::runtime::cleanup_task::spawn_after(&self.executor, done, || {}, cleanup);', 'self.executor.spawn(async move { done.send_replace(Some(cleanup.await)); });', session_tests+'lifecycle_shutdown_drop_settles_without_unwind', '#743 shutdown completion guard settles unpolled cleanup'),
+    ('disposer-error-value-lost', shell, 'errors.push(e.to_string());\n            }\n            if let Some(SessionOwnership', 'errors.push(format!("lost disposer error: {e}"));\n            }\n            if let Some(SessionOwnership', session_tests+'lifecycle_close_completion_covers_error_panic_and_cancellation', '#743 completion preserves disposer error'),
+    ('cleanup-task-loss-value-lost', cleanup, 'ModuleError::new("Interaction cleanup task was dropped or panicked before completion.")', 'ModuleError::new("lost cleanup task error")', session_tests+'lifecycle_close_completion_covers_error_panic_and_cancellation', '#743 completion reports panicked or cancelled cleanup'),
     ('ordinary-hook-error-rejects-session', shell, 'future.await.map(|_| ())', 'future.await.and_then(|result| if result.non_blocking_errors.is_empty() && result.blocking_errors.is_empty() { Ok(()) } else { Err(ModuleError::new("mutated hook error").into()) })', session_tests+'ordinary_hook_results_keep_session_tail', '#743 executor returned errors ignored'),
     ('drop-steer-unapplied', runner, '"steer_unapplied"', '"missing_steer_unapplied"', production, '#743 discarded steer emits unapplied once'),
 ]
 if __name__ == '__main__':
     raise SystemExit(matrix_main(root, __file__, '', cases, passed_count=1,
-        child_count=0, paths=[shell, live, hooks, handle, steer, writer, runner,
+        child_count=0, paths=[shell, live, hooks, handle, steer, writer, runner, cleanup,
         root / 'src/pilotdeck-gateway/src/runtime/turn/host_factory_tests.rs',
         root / 'src/pilotdeck-gateway/src/runtime/turn/interaction.rs',
         root / 'src/pilotdeck-gateway/tests/fixtures/live-session/peer.py',
