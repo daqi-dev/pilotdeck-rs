@@ -588,14 +588,17 @@ impl ArtifactWrites {''',
     (
         "per-call-default-projector",
         "projector.rs",
-        '''        let projector = default_projector();
+        '''        let projector = default_projector()?;
         #[cfg(test)]
         DEFAULT_FACADE_PROJECTOR_ADDR.store(
             std::ptr::from_ref(projector).addr(),
             std::sync::atomic::Ordering::SeqCst,
         );
         projector.project(&input)''',
-        '''        let projector = GatewayAgentEventProjector::new(options);
+        '''        let _ = default_projector()?;
+        let projector = GatewayAgentEventProjector::new(
+            GatewayAgentEventProjectorOptions::default(),
+        )?;
         #[cfg(test)]
         DEFAULT_FACADE_PROJECTOR_ADDR.store(0, std::sync::atomic::Ordering::SeqCst);
         projector.project(&input)''',

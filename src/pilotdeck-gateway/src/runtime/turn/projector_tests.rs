@@ -335,7 +335,8 @@ fn advisory_persist_returns_before_the_write_completes() {
             Ok(())
         }),
         Arc::new(|_path, _bytes| Ok(())),
-    );
+    )
+    .expect("#879 artifact root is an absolute scratch path");
     let input = GatewayToolResultArtifactInput {
         session_id: text("s"),
         turn_id: text("t"),
@@ -369,7 +370,8 @@ fn default_store_resolves_dot_segments_inside_the_root() {
         4,
         Arc::new(|_path| Ok(())),
         Arc::new(|_path, _bytes| Ok(())),
-    );
+    )
+    .expect("#879 artifact root is an absolute scratch path");
     let input = GatewayToolResultArtifactInput {
         session_id: text("."),
         turn_id: text("."),
@@ -399,10 +401,11 @@ fn default_store_tmp_root_follows_node_tmpdir_and_stays_absolute() {
                 .map(|(_, value)| OsString::from(*value))
         }
     };
-    let cwd = std::env::current_dir().unwrap();
+    let cwd = std::env::current_dir().expect("#879 setup worktree cwd");
     // Node's os.tmpdir skips an empty TMPDIR and falls back to TMP, then
     // `path.resolve` keeps the result absolute; it never becomes cwd-relative.
-    let root = default_artifact_root(env(&[("TMPDIR", ""), ("TMP", "/tmp/pdrs-645-fallback")]));
+    let root = default_artifact_root(env(&[("TMPDIR", ""), ("TMP", "/tmp/pdrs-645-fallback")]))
+        .expect("#879 default artifact root");
     assert_eq!(
         root,
         Path::new("/tmp/pdrs-645-fallback").join("pilotdeck-tool-results")
@@ -411,25 +414,28 @@ fn default_store_tmp_root_follows_node_tmpdir_and_stays_absolute() {
     assert_ne!(root, cwd.join("pilotdeck-tool-results"));
     // All tmpdir variables empty: Node falls back to /tmp.
     assert_eq!(
-        default_artifact_root(env(&[("TMPDIR", ""), ("TMP", ""), ("TEMP", "")])),
+        default_artifact_root(env(&[("TMPDIR", ""), ("TMP", ""), ("TEMP", "")]))
+            .expect("#879 default artifact root"),
         Path::new("/tmp").join("pilotdeck-tool-results")
     );
     // A relative TMPDIR is resolved against the working directory (TS
     // `resolve`), with `.`/`..` normalized lexically. A leading `..` must
     // survive absolutization and point at the parent directory.
     assert_eq!(
-        default_artifact_root(env(&[("TMPDIR", "relative/../tmp")])),
+        default_artifact_root(env(&[("TMPDIR", "relative/../tmp")]))
+            .expect("#879 default artifact root"),
         cwd.join("tmp").join("pilotdeck-tool-results")
     );
     assert_eq!(
-        default_artifact_root(env(&[("TMPDIR", "../tmp")])),
+        default_artifact_root(env(&[("TMPDIR", "../tmp")])).expect("#879 default artifact root"),
         cwd.parent()
             .expect("worktree cwd has a parent")
             .join("tmp")
             .join("pilotdeck-tool-results")
     );
     assert_eq!(
-        default_artifact_root(env(&[("TMPDIR", "/tmp/../var/tmp/")])),
+        default_artifact_root(env(&[("TMPDIR", "/tmp/../var/tmp/")]))
+            .expect("#879 default artifact root"),
         Path::new("/var/tmp").join("pilotdeck-tool-results")
     );
 }
@@ -441,7 +447,8 @@ fn default_store_only_persists_above_the_byte_threshold() {
     // writer refuse and turn this into a spurious failure.
     let root = std::env::temp_dir().join(format!("pdrs-projector-store-{}", uuid::Uuid::new_v4()));
     let _ = std::fs::remove_dir_all(&root);
-    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    let store = GatewayToolResultArtifactStore::new(&root, 4)
+        .expect("#879 artifact root is an absolute scratch path");
     let short = GatewayToolResultArtifactInput {
         session_id: text("s"),
         turn_id: text("t"),
@@ -493,7 +500,8 @@ fn sanitize_colliding_tool_call_ids_write_one_truncating_job_path() {
             ));
             Ok(())
         }),
-    );
+    )
+    .expect("#879 artifact root is an absolute scratch path");
     let body_a = format!("BODY-A/{}", "a".repeat(500));
     let body_b = format!("BODY-B/{}", "b".repeat(90));
     let input = |tool_call_id: &str| GatewayToolResultArtifactInput {
@@ -557,7 +565,8 @@ fn sanitize_colliding_tool_call_ids_truncate_overwrite_on_disk() {
     // make the secure writer refuse (same shape as the threshold test above).
     let root = std::env::temp_dir().join(format!("pdrs-projector-640-{}", uuid::Uuid::new_v4()));
     let _ = std::fs::remove_dir_all(&root);
-    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    let store = GatewayToolResultArtifactStore::new(&root, 4)
+        .expect("#879 artifact root is an absolute scratch path");
     let body_a = format!("BODY-A/{}", "a".repeat(500));
     let body_b = format!("BODY-B/{}", "b".repeat(90));
     let input = |tool_call_id: &str, body: String| GatewayToolResultArtifactInput {
@@ -617,7 +626,8 @@ fn sanitize_colliding_tool_call_ids_back_to_back_last_enqueued_wins() {
             uuid::Uuid::new_v4()
         ));
         let _ = std::fs::remove_dir_all(&root);
-        let store = GatewayToolResultArtifactStore::new(&root, 4);
+        let store = GatewayToolResultArtifactStore::new(&root, 4)
+            .expect("#879 artifact root is an absolute scratch path");
         let body_a = format!("BODY-A/{}", "a".repeat(500));
         let body_b = format!("BODY-B/{}", "b".repeat(90));
         let input = |tool_call_id: &str, body: String| GatewayToolResultArtifactInput {
@@ -681,7 +691,8 @@ fn artifact_root_symlink_is_refused_without_touching_its_target() {
     let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
     std::os::unix::fs::symlink(&target, &root).expect("plant root symlink");
 
-    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    let store = GatewayToolResultArtifactStore::new(&root, 4)
+        .expect("#879 artifact root is an absolute scratch path");
     let path = store
         .persist(&long_artifact_input())
         .expect("advisory persist never throws")
@@ -715,7 +726,8 @@ fn artifact_root_parent_symlink_is_refused() {
     std::os::unix::fs::symlink(&target, &anchor).expect("plant anchor symlink");
     let root = anchor.join(TOOL_RESULT_DIR_NAME);
 
-    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    let store = GatewayToolResultArtifactStore::new(&root, 4)
+        .expect("#879 artifact root is an absolute scratch path");
     let path = store
         .persist(&long_artifact_input())
         .expect("advisory persist never throws")
@@ -746,7 +758,8 @@ fn artifact_file_symlink_is_not_followed_or_truncated() {
     let link = root.join("s").join("t").join("c.txt");
     std::os::unix::fs::symlink(&victim, &link).expect("plant file symlink");
 
-    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    let store = GatewayToolResultArtifactStore::new(&root, 4)
+        .expect("#879 artifact root is an absolute scratch path");
     store
         .persist(&long_artifact_input())
         .expect("advisory persist never throws")
@@ -781,7 +794,8 @@ fn artifact_file_hardlink_is_not_truncated() {
     let link = root.join("s").join("t").join("c.txt");
     std::fs::hard_link(&victim, &link).expect("plant hard link");
 
-    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    let store = GatewayToolResultArtifactStore::new(&root, 4)
+        .expect("#879 artifact root is an absolute scratch path");
     store
         .persist(&long_artifact_input())
         .expect("advisory persist never throws")
@@ -846,8 +860,9 @@ fn artifact_owner_check_is_wired_through_the_real_writer() {
     let scratch = Scratch::new("artifact-owner-writer");
     let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
     let euid = rustix::process::geteuid().as_raw();
-    let store =
-        GatewayToolResultArtifactStore::new(&root, 4).with_euid_override(euid.wrapping_add(1));
+    let store = GatewayToolResultArtifactStore::new(&root, 4)
+        .expect("#879 artifact root is an absolute scratch path")
+        .with_euid_override(euid.wrapping_add(1));
     let path = store
         .persist(&long_artifact_input())
         .expect("advisory persist never throws")
@@ -874,7 +889,8 @@ fn artifact_directories_are_0700_and_the_file_is_0600() {
 
     let scratch = Scratch::new("artifact-mode");
     let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
-    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    let store = GatewayToolResultArtifactStore::new(&root, 4)
+        .expect("#879 artifact root is an absolute scratch path");
     let path = store
         .persist(&long_artifact_input())
         .expect("persisted")
@@ -913,7 +929,8 @@ fn artifact_directories_are_0700_and_the_file_is_0600() {
 fn artifact_session_parent_dir_escape_is_refused() {
     let scratch = Scratch::new("artifact-session-escape");
     let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
-    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    let store = GatewayToolResultArtifactStore::new(&root, 4)
+        .expect("#879 artifact root is an absolute scratch path");
     let input = GatewayToolResultArtifactInput {
         session_id: text(".."),
         turn_id: text("t"),
@@ -954,7 +971,10 @@ fn artifact_session_parent_dir_escape_is_refused() {
 fn artifact_session_parent_dir_escape_keeps_projection_without_a_path() {
     let scratch = Scratch::new("artifact-projection-escape");
     let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
-    let store = Arc::new(GatewayToolResultArtifactStore::new(&root, 4));
+    let store = Arc::new(
+        GatewayToolResultArtifactStore::new(&root, 4)
+            .expect("#879 artifact root is an absolute scratch path"),
+    );
     let event = object([
         ("type", text("tool_result")),
         ("sessionId", text("..")),
@@ -1024,7 +1044,8 @@ fn artifact_double_parent_dir_escape_is_refused() {
         .join("a")
         .join("b")
         .join(TOOL_RESULT_DIR_NAME);
-    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    let store = GatewayToolResultArtifactStore::new(&root, 4)
+        .expect("#879 artifact root is an absolute scratch path");
     let input = GatewayToolResultArtifactInput {
         session_id: text(".."),
         turn_id: text(".."),
@@ -1077,7 +1098,8 @@ fn artifact_writer_refuses_a_path_beside_the_root() {
 #[cfg(unix)]
 #[test]
 fn artifact_root_without_a_parent_is_refused() {
-    let store = GatewayToolResultArtifactStore::new(Path::new("/"), 4);
+    let store = GatewayToolResultArtifactStore::new(Path::new("/"), 4)
+        .expect("#879 artifact root is an absolute scratch path");
     assert_eq!(
         store
             .persist(&long_artifact_input())
@@ -1096,7 +1118,8 @@ fn artifact_existing_peer_created_levels_are_reused() {
     let scratch = Scratch::new("artifact-peer-levels");
     let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
     std::fs::create_dir_all(root.join("s").join("t")).expect("peer-created levels");
-    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    let store = GatewayToolResultArtifactStore::new(&root, 4)
+        .expect("#879 artifact root is an absolute scratch path");
     let path = store
         .persist(&long_artifact_input())
         .expect("advisory persist never throws")
@@ -1122,7 +1145,8 @@ fn artifact_concurrent_writers_share_the_same_root() {
                 let root = root.clone();
                 let barrier = barrier.clone();
                 std::thread::spawn(move || {
-                    let store = GatewayToolResultArtifactStore::new(&root, 4);
+                    let store = GatewayToolResultArtifactStore::new(&root, 4)
+                        .expect("#879 artifact root is an absolute scratch path");
                     barrier.wait();
                     let path = store
                         .persist(&GatewayToolResultArtifactInput {
@@ -1159,7 +1183,8 @@ fn default_store_throws_on_non_string_path_part_like_ts() {
         4,
         Arc::new(|_path| Ok(())),
         Arc::new(|_path, _bytes| Ok(())),
-    );
+    )
+    .expect("#879 artifact root is an absolute scratch path");
     let short = GatewayToolResultArtifactInput {
         session_id: number(123.0),
         turn_id: JsValue::Bool(true),
@@ -1257,7 +1282,8 @@ fn map_agent_event_returns_before_a_blocked_artifact_write() {
             let _ = release_rx.lock().unwrap().recv();
             Ok(())
         }),
-    );
+    )
+    .expect("#879 artifact root is an absolute scratch path");
     let options = GatewayAgentEventProjectorOptions {
         tool_result_artifacts: Some(Arc::new(store)),
         forward_subagent_text: false,
@@ -1375,7 +1401,8 @@ fn dropping_the_store_does_not_join_a_blocked_artifact_write() {
                 .recv_timeout(Duration::from_secs(30));
             Ok(())
         }),
-    );
+    )
+    .expect("#879 artifact root is an absolute scratch path");
     let input = GatewayToolResultArtifactInput {
         session_id: text("s"),
         turn_id: text("t"),
@@ -1429,7 +1456,8 @@ fn every_advisory_write_is_eventually_persisted() {
         4,
         Arc::new(|_path| Ok(())),
         write_hook,
-    );
+    )
+    .expect("#879 artifact root is an absolute scratch path");
     // A mutant that performs the write synchronously would otherwise block the
     // persist loop (and this test) forever; force the gate open after a bound.
     {

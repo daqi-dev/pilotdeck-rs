@@ -50,7 +50,17 @@ impl ProjectionError {
         }
     }
 
-    /// The `TypeError: …` / `RangeError: …` text, as `String(error)` yields.
+    /// A non-`TypeError`/`RangeError` throw (e.g. the artifact store
+    /// constructor's `Error: ENOENT ... uv_cwd`), already in `String(error)`
+    /// form (#879).
+    fn error(message: impl Into<String>) -> Self {
+        Self {
+            text: message.into(),
+        }
+    }
+
+    /// The `String(error)` text: `TypeError: …` / `RangeError: …` for
+    /// structurally invalid events, `Error: …` for a failed default store.
     pub fn message(&self) -> &str {
         &self.text
     }
@@ -218,16 +228,45 @@ pub struct GatewayToolResultArtifactStore {
     euid_override: Option<u32>,
 }
 
-impl GatewayToolResultArtifactStore {
-    pub fn new(root_dir: impl Into<PathBuf>, threshold_bytes: usize) -> Self {
-        #[cfg(unix)]
-        let io = ArtifactIo::Secure;
-        #[cfg(not(unix))]
-        let io = ArtifactIo::Hooks {
+/// Unix artifact I/O walks pinned descriptors; other hosts use the plain
+/// private-mode hooks.
+fn default_io() -> ArtifactIo {
+    #[cfg(unix)]
+    {
+        ArtifactIo::Secure
+    }
+    #[cfg(not(unix))]
+    {
+        ArtifactIo::Hooks {
             create_directory: Arc::new(create_directory_private),
             write_text: Arc::new(write_private),
-        };
-        Self::build(root_dir, threshold_bytes, io)
+        }
+    }
+}
+
+impl GatewayToolResultArtifactStore {
+    /// #879: TS's constructor runs `resolve(options.rootDir)` (or the default
+    /// `resolve(tmpdir(), "pilotdeck-tool-results")`). An absolute input never
+    /// reads process cwd; a relative input propagates Node's `uv_cwd`
+    /// diagnostic instead of falling back to `.`.
+    pub fn new(root_dir: impl Into<PathBuf>, threshold_bytes: usize) -> io::Result<Self> {
+        Self::build(root_dir, threshold_bytes, default_io())
+    }
+
+    /// TS `new GatewayToolResultArtifactStore()`: no explicit `rootDir`, so the
+    /// root is `resolve(tmpdir(), "pilotdeck-tool-results")`.
+    pub fn with_default_root() -> io::Result<Self> {
+        Self::with_default_root_from(
+            |key| std::env::var_os(key),
+            DEFAULT_ARTIFACT_THRESHOLD_BYTES,
+        )
+    }
+
+    fn with_default_root_from(
+        var: impl Fn(&str) -> Option<std::ffi::OsString>,
+        threshold_bytes: usize,
+    ) -> io::Result<Self> {
+        Self::build(default_artifact_root(var)?, threshold_bytes, default_io())
     }
 
     /// TS `GatewayToolResultArtifactStoreOptions.createDirectory/writeText`.
@@ -236,7 +275,7 @@ impl GatewayToolResultArtifactStore {
         threshold_bytes: usize,
         create_directory: CreateDirectoryHook,
         write_text: WriteTextHook,
-    ) -> Self {
+    ) -> io::Result<Self> {
         Self::build(
             root_dir,
             threshold_bytes,
@@ -247,23 +286,30 @@ impl GatewayToolResultArtifactStore {
         )
     }
 
-    fn build(root_dir: impl Into<PathBuf>, threshold_bytes: usize, io: ArtifactIo) -> Self {
+    fn build(
+        root_dir: impl Into<PathBuf>,
+        threshold_bytes: usize,
+        io: ArtifactIo,
+    ) -> io::Result<Self> {
         let root_dir = root_dir.into();
         let root_dir = if root_dir.is_absolute() {
             root_dir
         } else {
             std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
+                .map_err(node_cwd_error)?
                 .join(root_dir)
         };
-        Self {
+        // TS wraps both branches in `resolve`, which normalizes `.`/`..` and
+        // duplicate separators before the root is ever used.
+        let root_dir = resolve_lexically(root_dir);
+        Ok(Self {
             root_dir,
             threshold_bytes,
             io,
             writes: Arc::new(ArtifactWrites::default()),
             #[cfg(unix)]
             euid_override: None,
-        }
+        })
     }
 
     /// Test-only injection point for the euid used by the real writer's
@@ -295,43 +341,46 @@ impl GatewayToolResultArtifactStore {
     }
 }
 
-impl Default for GatewayToolResultArtifactStore {
-    fn default() -> Self {
-        Self::new(
-            default_artifact_root(|key| std::env::var_os(key)),
-            DEFAULT_ARTIFACT_THRESHOLD_BYTES,
-        )
-    }
+/// Node/libuv `process.cwd()` failure: `ENOENT: no such file or directory,
+/// uv_cwd` for a deleted cwd, otherwise the native errno with the same syscall.
+fn node_cwd_error(error: io::Error) -> io::Error {
+    let (_, message) = crate::node_io::diagnostic_or_unknown(&error, "uv_cwd", None);
+    io::Error::new(error.kind(), message)
 }
 
 /// TS `resolve(tmpdir(), "pilotdeck-tool-results")`. `node_tmpdir` applies
 /// Node's `os.tmpdir()` fallbacks (TMPDIR -> TMP -> TEMP -> `/tmp`, skipping
 /// empty values), so a blank TMPDIR cannot turn the artifact root into a
 /// cwd-relative path; a relative tmpdir is resolved against the working
-/// directory like `path.resolve`.
-fn node_temp_dir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
+/// directory like `path.resolve`, and a cwd read failure propagates instead of
+/// falling back to `.` (#879).
+fn node_temp_dir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> io::Result<PathBuf> {
     let tmp = PathBuf::from(crate::node_io::node_tmpdir(var));
     // `path.resolve` absolutizes before normalizing, so a leading `..` in a
     // relative TMPDIR must keep referring to the parent of the working
     // directory rather than being dropped.
     if tmp.is_absolute() {
-        tmp
+        Ok(tmp)
     } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(tmp)
+        Ok(std::env::current_dir().map_err(node_cwd_error)?.join(tmp))
     }
 }
 
-fn default_artifact_root(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
-    resolve_lexically(node_temp_dir(var).join(TOOL_RESULT_DIR_NAME))
+fn default_artifact_root(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> io::Result<PathBuf> {
+    Ok(resolve_lexically(
+        node_temp_dir(var)?.join(TOOL_RESULT_DIR_NAME),
+    ))
 }
 
 /// Whether `path` is the OS temp directory itself. macOS ships `/tmp` as a
 /// symlink to `/private/tmp`; the anchor may follow exactly that OS-provided
 /// link, but nothing else.
+///
+/// A failed cwd read can only happen for a relative TMPDIR, in which case the
+/// default root was never built, so `path` cannot be that root's anchor: report
+/// false rather than fabricating a cwd.
 fn is_os_temp_dir(path: &Path) -> bool {
-    resolve_lexically(node_temp_dir(|key| std::env::var_os(key))) == path
+    node_temp_dir(|key| std::env::var_os(key)).is_ok_and(|tmp| resolve_lexically(tmp) == path)
 }
 
 impl GatewayToolResultArtifactStorePort for GatewayToolResultArtifactStore {
@@ -613,12 +662,20 @@ pub struct GatewayAgentEventProjector {
 }
 
 impl GatewayAgentEventProjector {
-    pub fn new(options: GatewayAgentEventProjectorOptions) -> Self {
-        Self {
-            tool_result_artifacts: options
-                .tool_result_artifacts
-                .unwrap_or_else(|| Arc::new(GatewayToolResultArtifactStore::default())),
-        }
+    /// TS's constructor builds the default artifact store when none is
+    /// injected; that constructor can throw `ENOENT ... uv_cwd` (#879), so this
+    /// returns the same thrown-string shape instead of panicking.
+    pub fn new(options: GatewayAgentEventProjectorOptions) -> ProjectionResult<Self> {
+        let tool_result_artifacts = match options.tool_result_artifacts {
+            Some(store) => store,
+            None => Arc::new(
+                GatewayToolResultArtifactStore::with_default_root()
+                    .map_err(|error| ProjectionError::error(format!("Error: {error}")))?,
+            ),
+        };
+        Ok(Self {
+            tool_result_artifacts,
+        })
     }
 
     pub fn project(
@@ -637,20 +694,24 @@ impl GatewayAgentEventProjector {
     }
 }
 
-impl Default for GatewayAgentEventProjector {
-    fn default() -> Self {
-        Self::new(GatewayAgentEventProjectorOptions::default())
-    }
-}
-
 /// TS's `mapAgentEvent` facade projects through one process-level default
 /// projector (`GatewayAgentEventProjector.ts:50`), so default-store advisory
 /// writes all serialize through a single writer thread; only an injected
 /// store builds a per-call projector (`GatewayAgentEventProjector.ts:63`).
-fn default_projector() -> &'static GatewayAgentEventProjector {
-    static DEFAULT_PROJECTOR: std::sync::OnceLock<GatewayAgentEventProjector> =
+///
+/// TS constructs this at module load; Rust builds it on first use. A failed
+/// default root (relative TMPDIR with a deleted cwd) is cached as its
+/// `String(error)` and returned on every call.
+fn default_projector() -> ProjectionResult<&'static GatewayAgentEventProjector> {
+    static DEFAULT_PROJECTOR: std::sync::OnceLock<Result<GatewayAgentEventProjector, String>> =
         std::sync::OnceLock::new();
-    DEFAULT_PROJECTOR.get_or_init(GatewayAgentEventProjector::default)
+    match DEFAULT_PROJECTOR.get_or_init(|| {
+        GatewayAgentEventProjector::new(GatewayAgentEventProjectorOptions::default())
+            .map_err(|error| error.to_string())
+    }) {
+        Ok(projector) => Ok(projector),
+        Err(message) => Err(ProjectionError::error(message.clone())),
+    }
 }
 
 /// `mapAgentEvent` compatibility facade.
@@ -665,9 +726,9 @@ pub fn map_agent_event(
         forward_subagent_text: options.forward_subagent_text,
     };
     if options.tool_result_artifacts.is_some() {
-        GatewayAgentEventProjector::new(options).project(&input)
+        GatewayAgentEventProjector::new(options)?.project(&input)
     } else {
-        let projector = default_projector();
+        let projector = default_projector()?;
         #[cfg(test)]
         DEFAULT_FACADE_PROJECTOR_ADDR.store(
             std::ptr::from_ref(projector).addr(),
@@ -2415,6 +2476,10 @@ fn subagent_tool_result_frames(event: &JsValue) -> ProjectionResult<Vec<JsValue>
         ("detail", JsValue::Object(detail)),
     ])])
 }
+
+#[cfg(all(test, unix))]
+#[path = "../../../tests/fixtures/projector-cwd/regression.rs"]
+mod cwd_tests;
 
 #[cfg(test)]
 #[path = "projector_tests.rs"]

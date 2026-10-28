@@ -760,9 +760,10 @@ async fn replay_full_turn(case: &Value) {
         registry: Some(registry.clone()),
         host: host.clone(),
         workspace_admissions: WorkspaceAdmissions::default(),
-        projector: Arc::new(GatewayAgentEventProjector::new(
-            GatewayAgentEventProjectorOptions::default(),
-        )),
+        projector: Arc::new(
+            GatewayAgentEventProjector::new(GatewayAgentEventProjectorOptions::default())
+                .expect("#879 default projector"),
+        ),
     });
     let mut input = json!({"sessionKey":"s","projectKey":"p","runId":"r","message":"hello","channelKey":"test"});
     if let Some(fields) = setup["input"].as_object() {

@@ -1,0 +1,98 @@
+{
+  "node": "v22.22.0",
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/client/GatewayToolResultArtifactStore.ts": "dcaf1816e61a964f0c13fd8b84d96ae95e2920ffd7b3684c36c8a42fe6f774a9",
+    "src/gateway/client/GatewayToolResultArtifactStorePort.ts": "03673eae8ce9c0a968661ecf8c8c3b499b6092fba66bb3ea824caf87d4119ddf"
+  },
+  "cases": [
+    {
+      "name": "relative-normal",
+      "cwdReads": 1,
+      "outcome": {
+        "ok": true,
+        "rootDir": "<root>/files/artifacts"
+      }
+    },
+    {
+      "name": "relative-deleted",
+      "cwdReads": 1,
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, uv_cwd",
+          "syscall": "uv_cwd"
+        }
+      }
+    },
+    {
+      "name": "relative-warmed-normal",
+      "cwdReads": 1,
+      "outcome": {
+        "ok": true,
+        "rootDir": "<root>/files/artifacts"
+      }
+    },
+    {
+      "name": "relative-warmed-deleted",
+      "cwdReads": 1,
+      "outcome": {
+        "ok": true,
+        "rootDir": "<root>/files/artifacts"
+      }
+    },
+    {
+      "name": "absolute-normal",
+      "cwdReads": 0,
+      "outcome": {
+        "ok": true,
+        "rootDir": "<root>/files/artifacts"
+      }
+    },
+    {
+      "name": "absolute-deleted",
+      "cwdReads": 0,
+      "outcome": {
+        "ok": true,
+        "rootDir": "<root>/files/artifacts"
+      }
+    },
+    {
+      "name": "tmpdir-relative-normal",
+      "cwdReads": 1,
+      "outcome": {
+        "ok": true,
+        "rootDir": "<root>/tmp/pilotdeck-tool-results"
+      }
+    },
+    {
+      "name": "tmpdir-relative-deleted",
+      "cwdReads": 1,
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, uv_cwd",
+          "syscall": "uv_cwd"
+        }
+      }
+    },
+    {
+      "name": "tmpdir-relative-warmed-deleted",
+      "cwdReads": 1,
+      "outcome": {
+        "ok": true,
+        "rootDir": "<root>/tmp/pilotdeck-tool-results"
+      }
+    },
+    {
+      "name": "tmpdir-absolute-deleted",
+      "cwdReads": 0,
+      "outcome": {
+        "ok": true,
+        "rootDir": "<root>/tmpdir/pilotdeck-tool-results"
+      }
+    }
+  ]
+}
