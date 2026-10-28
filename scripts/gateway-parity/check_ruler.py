@@ -57,12 +57,28 @@ def _load(name, path):
 
 
 
+def _has_git_checkout(root):
+    """Missing checkout metadata permits static use; broken metadata does not."""
+    import os
+    if 'GIT_DIR' in os.environ:
+        return True
+    for directory in (root, *root.parents):
+        try:
+            (directory / '.git').lstat()
+        except FileNotFoundError:
+            continue
+        return True
+    return False
+
+
 def _verify_cli_imports():
     # This trust root uses only stdlib + Git, never a helper from disk common:
     # that module's verifier can itself be the active negative-control mutant.
     import subprocess
     from types import ModuleType
     root = _apparatus.parent.parent
+    if not _has_git_checkout(root):
+        return  # Static exports have no HEAD; keep their existing checks.
     head = subprocess.check_output(['git', '-C', str(root), 'rev-parse', '--verify', 'HEAD'],
                                    timeout=30).decode().strip()
     source = subprocess.check_output(['git', '-C', str(root), 'show',

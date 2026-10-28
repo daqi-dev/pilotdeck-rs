@@ -663,6 +663,20 @@ def parity_lock(timeout=600, takeovers=None, lock=LOCK):
                     shutil.rmtree(lock)
 
 
+def _has_git_checkout(root):
+    """Missing checkout metadata permits static use; broken metadata does not."""
+    import os
+    if 'GIT_DIR' in os.environ:
+        return True
+    for directory in (root, *root.parents):
+        try:
+            (directory / '.git').lstat()
+        except FileNotFoundError:
+            continue
+        return True
+    return False
+
+
 def _apparatus_head():
     return subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', '--verify', 'HEAD'],
                                    timeout=30).decode().strip()
@@ -703,6 +717,8 @@ def verify_loaded_apparatus(head=None):
     controls use this fail-closed check without reacquiring their parent's lock.
     Library controls called by a real round already run under its verified lock.
     """
+    if head is None and not _has_git_checkout(ROOT):
+        return None  # Library controls also support static exports.
     head = head or _apparatus_head()
     for module in tuple(sys.modules.values()):
         path = getattr(module, '__file__', None)

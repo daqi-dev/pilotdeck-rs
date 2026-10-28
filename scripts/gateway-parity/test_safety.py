@@ -59,12 +59,28 @@ def _load(name, path):
 
 
 
+def _has_git_checkout(root):
+    """Missing checkout metadata permits static use; broken metadata does not."""
+    import os
+    if 'GIT_DIR' in os.environ:
+        return True
+    for directory in (root, *root.parents):
+        try:
+            (directory / '.git').lstat()
+        except FileNotFoundError:
+            continue
+        return True
+    return False
+
+
 def _verify_cli_imports():
     # This trust root uses only stdlib + Git, never a helper from disk common:
     # that module's verifier can itself be the active negative-control mutant.
     import subprocess
     from types import ModuleType
     root = _apparatus.parent.parent
+    if not _has_git_checkout(root):
+        return  # Static exports have no HEAD; keep their existing checks.
     head = subprocess.check_output(['git', '-C', str(root), 'rev-parse', '--verify', 'HEAD'],
                                    timeout=30).decode().strip()
     source = subprocess.check_output(['git', '-C', str(root), 'show',
@@ -555,6 +571,99 @@ class Safety(unittest.TestCase):
         for data in ('', '81', '817e00', '817f0000', '8182'):
             with self.assertRaises(ValueError):
                 wire_frame({'wireHex': data})
+
+
+class CheckoutProvenance(unittest.TestCase):
+    """Static exports bypass only HEAD provenance, never checkout failures."""
+
+    ENTRIES = ('build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'compare.py',
+               'run_round.py', 'session_domain.py', 'test_safety.py',
+               'controls/run_all.py', 'controls/prerequisites.py',
+               'controls/session_domain.py')
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='pdrs-166-checkout-')
+        self.addCleanup(self.temp.cleanup)
+        self.folder = Path(self.temp.name).resolve()
+
+    def verifiers(self, root):
+        # Use each actual entry's detector, including the controls' library path.
+        for index, name in enumerate(self.ENTRIES):
+            alias = 'checkout_entry_' + str(index)
+            self.addCleanup(sys.modules.pop, alias, None)
+            entry = _load(alias, common.SCRIPT / name)
+            with patch.object(entry, '_apparatus', root / 'scripts/gateway-parity'):
+                yield name, entry._verify_cli_imports
+        with patch.object(common, 'ROOT', root):
+            yield 'common.verify_loaded_apparatus', common.verify_loaded_apparatus
+
+    def test_static_exports_do_not_read_head(self):
+        class HeadRead(Exception):
+            pass
+        for name, verify in self.verifiers(self.folder):
+            with self.subTest(entry=name), patch.dict(os.environ, {}, clear=True), \
+                    patch.object(subprocess, 'check_output', side_effect=HeadRead):
+                read_head = False
+                try:
+                    verify()
+                except HeadRead:
+                    read_head = True
+                self.assertFalse(read_head, '#166 static export must not read HEAD')
+
+    def test_checkout_metadata_never_skips_head(self):
+        class HeadRead(Exception):
+            pass
+        for kind in ('directory', 'worktree-file', 'dangling-symlink', 'ancestor', 'git-dir-env'):
+            root = self.folder / kind / 'tree'
+            root.mkdir(parents=True)
+            marker = (root.parent if kind == 'ancestor' else root) / '.git'
+            if kind in ('directory', 'ancestor'):
+                marker.mkdir()
+            elif kind == 'worktree-file':
+                marker.write_text('gitdir: missing-dir\n')
+            elif kind == 'dangling-symlink':
+                marker.symlink_to(root / 'missing-dir')
+            env = {'GIT_DIR': str(root / 'missing-dir')} if kind == 'git-dir-env' else {}
+            for name, verify in self.verifiers(root):
+                with self.subTest(kind=kind, entry=name), patch.dict(os.environ, env, clear=True), \
+                        patch.object(subprocess, 'check_output', side_effect=HeadRead):
+                    with self.assertRaises(HeadRead, msg='#166 checkout metadata must require HEAD'):
+                        verify()
+
+    def test_unreadable_checkout_metadata_fails_closed(self):
+        lstat = Path.lstat
+        def unreadable(path, *args, **kwargs):
+            if path == self.folder / '.git':
+                raise PermissionError('controlled metadata read denial')
+            return lstat(path, *args, **kwargs)
+        for name, verify in self.verifiers(self.folder):
+            with self.subTest(entry=name), patch.dict(os.environ, {}, clear=True), \
+                    patch.object(Path, 'lstat', unreadable):
+                with self.assertRaises(PermissionError,
+                                       msg='#166 unreadable checkout metadata must fail closed'):
+                    verify()
+
+    def test_explicit_head_is_verified_even_without_checkout_metadata(self):
+        class HeadSourceRead(Exception):
+            pass
+        with patch.dict(os.environ, {}, clear=True), patch.object(common, 'ROOT', self.folder), \
+                patch.object(common, '_head_source', side_effect=HeadSourceRead):
+            with self.assertRaises(HeadSourceRead,
+                                   msg='#166 explicit pinned HEAD must always be verified'):
+                common.verify_loaded_apparatus('explicit-pinned-head')
+
+    def test_cli_and_library_share_checkout_detection(self):
+        import ast
+        def detector(path):
+            tree = ast.parse(path.read_bytes())
+            matches = [node for node in tree.body
+                       if isinstance(node, ast.FunctionDef) and node.name == '_has_git_checkout']
+            self.assertEqual(len(matches), 1, '#166 checkout detector must have one definition')
+            return ast.dump(matches[0], include_attributes=False)
+        expected = detector(common.SCRIPT / 'common.py')
+        for name in self.ENTRIES:
+            self.assertEqual(detector(common.SCRIPT / name), expected,
+                             '#166 CLI and library checkout detectors must match: ' + name)
 
 
 class ImportIsolation(unittest.TestCase):
