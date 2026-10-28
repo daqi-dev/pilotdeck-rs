@@ -642,54 +642,9 @@ fn pretty(value: &JsValue) -> Result<String, Failure> {
     let raw = stringify_json(value)
         .map_err(|e| Failure::Error(e.message))?
         .expect("report is an object");
-    let mut out = String::new();
-    let mut depth = 0;
-    let mut quoted = false;
-    let mut escaped = false;
-    let mut chars = raw.chars().peekable();
-    while let Some(c) = chars.next() {
-        if quoted {
-            out.push(c);
-            if escaped {
-                escaped = false;
-            } else if c == '\\' {
-                escaped = true;
-            } else if c == '"' {
-                quoted = false;
-            }
-            continue;
-        }
-        match c {
-            '"' => {
-                quoted = true;
-                out.push(c);
-            }
-            '{' | '[' => {
-                out.push(c);
-                if chars.peek() == Some(&if c == '{' { '}' } else { ']' }) {
-                    out.push(chars.next().unwrap());
-                } else {
-                    depth += 1;
-                    out.push('\n');
-                    out.push_str(&"  ".repeat(depth));
-                }
-            }
-            '}' | ']' => {
-                depth -= 1;
-                out.push('\n');
-                out.push_str(&"  ".repeat(depth));
-                out.push(c);
-            }
-            ',' => {
-                out.push_str(",\n");
-                out.push_str(&"  ".repeat(depth));
-            }
-            ':' => out.push_str(": "),
-            _ => out.push(c),
-        }
-    }
-    Ok(out)
+    Ok(crate::json_pretty(&raw))
 }
+
 fn text_report(report: &JsValue) -> String {
     let dry = field(report, "mode") == &JsValue::from("dry-run");
     let summary = field(report, "summary");

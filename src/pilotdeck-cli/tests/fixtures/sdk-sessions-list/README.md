@@ -19,7 +19,7 @@ cargo test -p pilotdeck-cli --test sdk_sessions_list_exit \
 
 `NODE22` 优先指定已存在的 Node v22.22.0；未指定时使用 PATH 上的 `node`。守卫先执行所选程序的 `--version`，要求成功退出且报告 `v22.22.0`；不符即带 `#983` 消息失败，不启动生成器、不回落到其他版本。输出目录递归创建、文件以 `wx` 独占写入，原件缺失/内容变化均失败。
 
-45 个负控（原 28 个 CLI/金样变异 + 17 个租约变异）定义在 `src/pilotdeck-gateway/tests/fixtures/sdk-sessions-list/negative_controls.py`，复用该目录现有 `negative_process` 与 `negative_suite`，以便 main 的锚点检查器发现。每项先编译，使用当前 nonce + 精确测试名 + 格 ID 判杀；恢复后重跑正控，全项汇总。必须提供 `CARGO_TARGET_DIR`，全部受保护源码/执行器等于 HEAD 才可运行；有未提交修复或新文件时拒跑。提交后协调者执行：
+50 个负控（原 28 个 CLI/金样变异 + 17 个租约变异 + 5 个 transport 上限/金样变异）定义在 `src/pilotdeck-gateway/tests/fixtures/sdk-sessions-list/negative_controls.py`，复用该目录现有 `negative_process` 与 `negative_suite`，以便 main 的锚点检查器发现。每项先编译，使用当前 nonce + 精确测试名 + 格 ID 判杀；恢复后重跑正控，全项汇总。必须提供 `CARGO_TARGET_DIR`，全部受保护源码/执行器等于 HEAD 才可运行；有未提交修复或新文件时拒跑。提交后协调者执行：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/sdk-sessions-list/negative_controls.py \
@@ -27,3 +27,5 @@ python3 src/pilotdeck-gateway/tests/fixtures/sdk-sessions-list/negative_controls
 ```
 
 同一脚本加 `--node-runtime` 可独立验证解释器选择：PATH 回落、NODE22 优先、错误版本拒绝和版本命令失败拒绝。每格用隔离子进程环境覆盖 Node 启动条件，正常生成仍调用真实 v22.22.0；错误条件必须在生成器启动前触发精确断言。该模式不改源码，可在未提交修复树运行。
+
+fix-r3 的大帧回归与原生 Node/`ws` 对照原件见 `../sdk-transport-limits/`；它不混入上述 77 格旧实录。hello 直接使用协议常量，缩进状态机由 sessions 与 skills migrate 共用；`hello-version` / `pretty-indent` 的锚点已同步。

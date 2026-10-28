@@ -63,53 +63,5 @@ fn pretty_json(value: &JsValue) -> Result<String, Failure> {
     let raw = stringify_json(value)
         .map_err(|e| Failure::Error(e.to_string()))?
         .unwrap_or_else(|| "null".into());
-    let mut chars = raw.chars().peekable();
-    let mut output = String::new();
-    let (mut depth, mut quoted, mut escaped) = (0usize, false, false);
-    let newline = |output: &mut String, depth| {
-        output.push('\n');
-        output.push_str(&"  ".repeat(depth));
-    };
-    while let Some(ch) = chars.next() {
-        if quoted {
-            output.push(ch);
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                quoted = false;
-            }
-            continue;
-        }
-        match ch {
-            '"' => {
-                quoted = true;
-                output.push(ch);
-            }
-            '{' | '[' => {
-                output.push(ch);
-                let close = if ch == '{' { '}' } else { ']' };
-                if chars.peek() == Some(&close) {
-                    output.push(close);
-                    chars.next();
-                } else {
-                    depth += 1;
-                    newline(&mut output, depth);
-                }
-            }
-            '}' | ']' => {
-                depth -= 1;
-                newline(&mut output, depth);
-                output.push(ch);
-            }
-            ',' => {
-                output.push(ch);
-                newline(&mut output, depth);
-            }
-            ':' => output.push_str(": "),
-            _ => output.push(ch),
-        }
-    }
-    Ok(output)
+    Ok(crate::json_pretty(&raw))
 }

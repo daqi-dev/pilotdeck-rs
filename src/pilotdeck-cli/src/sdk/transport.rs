@@ -7,7 +7,10 @@ use pilotdeck_protocol::{JsValue, parse_json};
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::{net::TcpStream, time::timeout};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+use tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream, connect_async_with_config,
+    tungstenite::{Message, protocol::WebSocketConfig},
+};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -23,16 +26,25 @@ pub(super) async fn request(
     method: &str,
     params: Value,
 ) -> Result<JsValue, Failure> {
-    let (mut socket, _) = timeout(CONNECT_TIMEOUT, connect_async(&connection.gateway_url))
-        .await
-        .map_err(|_| error("Gateway connection timed out."))?
-        .map_err(|_| error("Gateway connection failed."))?;
+    // Node v22.22.0 uses the native WebSocket, not the ws package's 100 MiB
+    // maxPayload. The SDK passes only the URL; its native client accepts even
+    // 100 MiB + 1 byte (tests/fixtures/sdk-transport-limits).
+    let config = WebSocketConfig::default()
+        .max_frame_size(None)
+        .max_message_size(None);
+    let (mut socket, _) = timeout(
+        CONNECT_TIMEOUT,
+        connect_async_with_config(&connection.gateway_url, Some(config), false),
+    )
+    .await
+    .map_err(|_| error("Gateway connection timed out."))?
+    .map_err(|_| error("Gateway connection failed."))?;
     let result = async {
         timeout(CONNECT_TIMEOUT, async {
             send(
                 &mut socket,
                 json!({
-                    "type": "hello", "protocolVersion": "1.2", "clientName": "sdk",
+                    "type": "hello", "protocolVersion": pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION, "clientName": "sdk",
                     "clientVersion": "pilotdeck-cli", "token": connection.auth_token,
                 }),
             )

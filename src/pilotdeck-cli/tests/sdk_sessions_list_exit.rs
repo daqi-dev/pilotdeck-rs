@@ -1,5 +1,6 @@
 //! #983: replay coordinator-owned TS captures through a real local WebSocket.
-//! Supplemental transport cases below are explicitly not TS goldens.
+//! The large-frame fixture is a live TS transport capture; other supplemental
+//! transport cases below remain source-inferred expectations.
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -28,6 +29,7 @@ use tokio_tungstenite::{
 };
 
 const ORACLE: &str = include_str!("fixtures/sdk-sessions-list/oracle.json");
+const LIMITS_ORACLE: &str = include_str!("fixtures/sdk-transport-limits/oracle.json");
 const ADDRESS: &str = "127.0.0.1:28999";
 const URL: &str = "ws://127.0.0.1:28999/ws";
 const TOKEN: &str = "d1-fixture-not-a-secret";
@@ -854,14 +856,136 @@ fn regenerates_identically(fixture: &str) {
         String::from_utf8_lossy(&result.stderr)
     );
     verify(
-        fs::read(output.join("oracle.json")).expect("#983 regenerated oracle") == ORACLE.as_bytes(),
-        "#983 identical extraction from original TS records",
+        fs::read(output.join("oracle.json")).expect("#983 regenerated oracle")
+            == fs::read(directory.join("oracle.json")).expect("#983 checked-in oracle"),
+        &format!("#983 identical TS fixture {fixture}"),
     );
 }
 #[test]
 #[ignore = "requires coordinator-owned Node v22.22.0 captures; never reruns TS"]
 fn sessions_list_oracle_regenerates_identically() {
     regenerates_identically("sdk-sessions-list");
+}
+
+#[test]
+#[ignore = "requires Node v22.22.0 and the original TS SDK with installed dependencies"]
+fn sessions_list_transport_limits_regenerates_identically() {
+    regenerates_identically("sdk-transport-limits");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn sessions_list_accepts_ts_large_frames() {
+    let _port = PORT.lock().await;
+    let _lock = ParityLock::acquire().await;
+    let oracle: Value = serde_json::from_str(LIMITS_ORACLE).expect("#983 limits oracle JSON");
+    let cases: Vec<_> = oracle["cases"]
+        .as_array()
+        .expect("#983 limits oracle cells")
+        .iter()
+        .filter(|case| case["implementation"] == "node-native")
+        .collect();
+    verify(
+        cases
+            .iter()
+            .map(|case| case["frameBytes"].as_u64())
+            .eq([Some(16_777_217), Some(104_857_601)]),
+        "#983 native large-frame fixture coverage",
+    );
+    for case in cases {
+        let frame_bytes =
+            usize::try_from(case["frameBytes"].as_u64().expect("#983 TS frame bytes"))
+                .expect("#983 TS frame bytes fit usize");
+        assert!(
+            case["accepted"] == true,
+            "#983 native TS accepts recorded frame"
+        );
+        let runtime = Runtime::new();
+        let input = json!({"argv":["sessions","list"],"env":{"PILOTDECK_SDK_AUTH_TOKEN":TOKEN}});
+        let mut command = runtime.command(&input);
+        let listener = TcpListener::bind(ADDRESS)
+            .await
+            .expect("#983 large-frame mock bind");
+        let child = spawn(&mut command, &input);
+        let mock = async {
+            let (stream, _) = listener.accept().await.expect("#983 large-frame accept");
+            let mut socket = accept_async(stream)
+                .await
+                .expect("#983 large-frame upgrade");
+            let hello = socket
+                .next()
+                .await
+                .expect("#983 large-frame hello exists")
+                .expect("#983 large-frame hello read");
+            let hello: Value =
+                serde_json::from_str(hello.to_text().expect("#983 large-frame hello text"))
+                    .expect("#983 large-frame hello JSON");
+            assert_eq!(
+                hello["protocolVersion"],
+                pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,
+                "#983 large-frame hello uses protocol constant"
+            );
+            socket
+                .send(Message::Text(
+                    json!({"type":"hello_ok","protocolVersion":oracle["protocolVersion"],
+                "serverVersion":"test","serverInfo":{}})
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("#983 large-frame hello response");
+            let request = socket
+                .next()
+                .await
+                .expect("#983 large-frame request exists")
+                .expect("#983 large-frame request read");
+            let request: Value =
+                serde_json::from_str(request.to_text().expect("#983 large-frame request text"))
+                    .expect("#983 large-frame request JSON");
+            assert_eq!(
+                request["method"], "list_sessions",
+                "#983 large-frame ordinary RPC"
+            );
+            let mut raw =
+                json!({"type":"response","id":request["id"],"ok":true,"result":case["result"]})
+                    .to_string();
+            assert!(raw.len() < frame_bytes, "#983 large-frame padding length");
+            raw.push_str(&" ".repeat(frame_bytes - raw.len()));
+            // One Text message is one unfragmented frame. A size-limit mutant
+            // may reset during send; let the CLI's exact output decide the kill.
+            let sent = socket.send(Message::Text(raw.into())).await.is_ok();
+            loop {
+                match socket.next().await {
+                    Some(Ok(Message::Close(_))) => {
+                        let _ = socket.flush().await;
+                    }
+                    None | Some(Err(_)) => break,
+                    _ => panic!("#983 large-frame unexpected client frame"),
+                }
+            }
+            sent
+        };
+        let (sent, output) = tokio::join!(
+            async {
+                timeout(BOUND, mock)
+                    .await
+                    .expect("#983 bounded large-frame mock")
+            },
+            collect(child)
+        );
+        let expected = format!(
+            "{}\n",
+            serde_json::to_string_pretty(&case["result"]["sessions"])
+                .expect("#983 large-frame observed sessions JSON")
+        );
+        verify(
+            output.status.success()
+                && output.stdout == expected.as_bytes()
+                && output.stderr.is_empty(),
+            &format!("#983 TS native accepts {frame_bytes} byte frame"),
+        );
+        assert!(sent, "#983 large-frame response sent completely");
+        println!("#983 TS native accepted {frame_bytes} byte single frame");
+    }
 }
 
 // These are protocol regression expectations inferred from TS source; the

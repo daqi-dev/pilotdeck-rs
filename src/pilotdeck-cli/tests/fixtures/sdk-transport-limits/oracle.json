@@ -1,0 +1,41 @@
+{
+  "nodeVersion": "v22.22.0",
+  "undiciVersion": "6.23.0",
+  "transportSha256": "793e38f0273836621c54a6bf9fb19645e4924343be9e6825d1fd06227136cb7f",
+  "constructorArgCount": 1,
+  "defaultImplementation": "node-native",
+  "wsVersion": "8.21.0",
+  "wsDefaultMaxPayload": 104857600,
+  "protocolVersion": "1.2",
+  "cases": [
+    {
+      "implementation": "node-native",
+      "frameBytes": 16777217,
+      "accepted": true,
+      "result": {
+        "sessions": []
+      }
+    },
+    {
+      "implementation": "node-native",
+      "frameBytes": 104857601,
+      "accepted": true,
+      "result": {
+        "sessions": []
+      }
+    },
+    {
+      "implementation": "ws-default",
+      "frameBytes": 16777217,
+      "accepted": true,
+      "result": {
+        "sessions": []
+      }
+    },
+    {
+      "implementation": "ws-default",
+      "frameBytes": 104857601,
+      "accepted": false
+    }
+  ]
+}
