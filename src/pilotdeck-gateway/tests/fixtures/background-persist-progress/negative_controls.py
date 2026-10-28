@@ -115,7 +115,8 @@ def main():
     def run(label, test, *, compile=False):
         slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=600)
         save(label + '.slots.log', slot.stdout + slot.stderr)
-        command = ['cargo', 'test', '--offline', '--quiet', '-p', 'pilotdeck-gateway',
+        # negative_suite needs libtest's named result lines, including positives.
+        command = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway',
                    '--test', 'background_persist']
         command += ['--no-run'] if compile else [test, '--', '--exact', '--show-output']
         save(label + '.command.json', json.dumps(command) + '\n')
