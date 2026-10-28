@@ -93,7 +93,7 @@ def main():
     selected = sys.argv[1:] or [m[0] for m in MUTANTS]
     results = []
     with mutating_sources(REPO, [SDK]) as snapshot:
-        original = snapshot[SDK].decode()
+        original = snapshot[Path(SDK)].decode()
         for name, before, after, bound in MUTANTS:
             if name not in selected:
                 continue
