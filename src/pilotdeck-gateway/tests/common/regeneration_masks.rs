@@ -14,7 +14,16 @@ pub(crate) fn rules(fixture: &str, file: &str) -> BTreeMap<&'static str, &'stati
             assert_eq!(columns.len(), 4, "#280 mask table has four columns");
             (columns[0] == fixture && columns[1] == file).then_some((columns[2], columns[3]))
         })
-        .collect()
+        .fold(BTreeMap::new(), |mut rules, (pointer, kind)| {
+            // One kind per (fixture, file, pointer): a second row must not
+            // silently relax an existing mask (GLM #280 r5 P1).
+            let previous = rules.insert(pointer, kind);
+            assert!(
+                previous.is_none(),
+                "#280 mask table repeats {fixture} {file} {pointer}"
+            );
+            rules
+        })
 }
 
 pub(crate) fn pid(oracle: &[u8]) -> Result<u32, String> {
