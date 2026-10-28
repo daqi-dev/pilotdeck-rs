@@ -21,6 +21,14 @@ export function bindSourceTree(baseline, ref, gitExecutable) {
   const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('GIT_')));
   const git = (...args) => execFileSync(gitExecutable, ['--no-replace-objects','-C',baseline,...args], {env,maxBuffer:32*1024*1024});
   if (git('rev-parse','HEAD').toString().trim() !== ref) throw Error('baseline HEAD mismatch');
+  const trackedChanges=git('status','--porcelain','--untracked-files=no').toString();
+  if (trackedChanges!=='') throw Error('baseline has uncommitted changes to tracked files:\n'+trackedChanges);
+  // Status deliberately ignores untracked files, but index flags can also hide
+  // tracked modifications (including files outside src). Refuse those flags;
+  // the src walk below independently verifies every source byte against HEAD.
+  const hidden=git('ls-files','-v','-z').toString().split('\0')
+    .filter(row=>row&&(row[0]==='S'||row[0]!==row[0].toUpperCase()));
+  if (hidden.length) throw Error('#303 baseline has skip-worktree/assume-unchanged tracked files');
   const expected = new Map();
   for (const row of git('ls-tree','-rz',ref,'--','src').toString('utf8').split('\0').filter(Boolean)) {
     const at=row.indexOf('\t'), [mode,type,blob]=row.slice(0,at).split(' '), name=row.slice(at+1);

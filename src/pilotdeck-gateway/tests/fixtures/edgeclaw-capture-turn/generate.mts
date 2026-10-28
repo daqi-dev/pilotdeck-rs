@@ -9,7 +9,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 import {
   conversions,
   runConversion,
@@ -27,7 +28,7 @@ const output = resolve(process.argv[2]);
 const git = realpathSync(
   process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim(),
 );
-const provenance = bindSourceTree(baseline, COMMIT, git);
+const provenance = bindBaseline({ baseline: baseline, commit: COMMIT, gitExecutable: git }).provenance;
 const sources = [
   'src/context/memory/MemoryResolver.ts',
   'src/context/DefaultContextRuntime.ts',

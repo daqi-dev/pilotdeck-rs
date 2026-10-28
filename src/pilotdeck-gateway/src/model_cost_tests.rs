@@ -11,7 +11,6 @@ use pilotdeck_protocol::model::{
     MediaType, Message, PdfBlock, Role, TextBlock, ThinkingBlock, ToolCall, ToolResult,
     ToolResultContent, ToolResultItem, ToolResultReference, ToolSchema, Usage,
 };
-use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 const ORACLE: &str = include_str!("../tests/fixtures/model-cost/oracle.json");
@@ -334,37 +333,10 @@ fn oracle_comes_from_the_fixed_baseline() {
 
 /// Regenerates the oracle from the real TS modules and compares bytes.
 #[test]
-#[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules)"]
+#[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules) and Node v22.22.0"]
 fn model_cost_fixtures_regenerate_identically_from_ts() {
-    let baseline = PathBuf::from(
-        std::env::var("PDRS_BASELINE").expect("set PDRS_BASELINE to the PilotDeck checkout"),
-    );
-    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/model-cost");
-    let scratch = std::env::temp_dir().join(format!("pdrs-model-cost-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&scratch).unwrap();
-    let output = std::process::Command::new("node")
-        .arg("--disable-warning=ExperimentalWarning")
-        .arg("--import")
-        .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
-        .arg(fixtures.join("generate.mts"))
-        .arg(&scratch)
-        .env("PDRS_BASELINE", &baseline)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let generated = std::fs::read(scratch.join("oracle.json")).unwrap();
-    let committed = std::fs::read(fixtures.join("oracle.json")).unwrap();
-    assert_eq!(generated, committed, "oracle.json");
-    assert!(
-        !scratch.join("oracle.json.tmp").exists(),
-        "generator left a temporary file behind"
-    );
-    let _ = std::fs::remove_dir_all(&scratch);
+    let _ = crate::test_node_provenance::pin(crate::test_baseline::node_command());
+    crate::test_baseline::regenerates_identically("model-cost");
 }
 
 #[test]

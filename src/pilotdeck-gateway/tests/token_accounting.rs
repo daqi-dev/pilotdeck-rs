@@ -26,6 +26,8 @@ use std::{
 use tokio::net::TcpListener;
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/node_provenance.rs"]
+mod node_provenance;
 
 // serde_json rejects unpaired UTF-16. Keep those strings in a lossless test
 // carrier, then reconstruct JsString before entering production code.
@@ -475,22 +477,23 @@ async fn already_aborted_count_skips_transport() {
 #[ignore = "requires fixed TS checkout, node/tsx, and loopback listen permission"]
 fn regenerate_twice_identically() {
     let baseline = std::env::var_os("PDRS_BASELINE").expect("set PDRS_BASELINE");
-    let baseline = std::path::Path::new(&baseline);
+    let baseline_path = std::path::PathBuf::from(&baseline);
     let directory =
         std::env::temp_dir().join(format!("pdrs-token-accounting-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&directory).unwrap();
+    let mut command = node_provenance::pin(baseline::node_command());
+    command
+        .arg("--import")
+        .arg(baseline_path.join("node_modules/tsx/dist/loader.mjs"))
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/token-accounting/generate.mts"
+        ))
+        .arg(&directory)
+        .env("PDRS_BASELINE", &baseline);
     let mut generated = Vec::new();
     for _ in 0..2 {
-        let result = std::process::Command::new("node")
-            .arg("--import")
-            .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
-            .arg(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/token-accounting/generate.mts"
-            ))
-            .arg(&directory)
-            .output()
-            .unwrap();
+        let result = command.output().unwrap();
         assert!(
             result.status.success(),
             "{}",
@@ -507,6 +510,8 @@ fn regenerate_twice_identically() {
         );
     }
     assert_eq!(generated[0], generated[1]);
+    let generated_text = std::str::from_utf8(&generated[0]).expect("#953 token oracle is UTF-8");
+    let _ = baseline::oracle(generated_text);
     assert_eq!(
         generated[0],
         include_bytes!("fixtures/token-accounting/oracle.json")

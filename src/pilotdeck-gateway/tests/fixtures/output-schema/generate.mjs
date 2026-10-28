@@ -11,7 +11,8 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {execFileSync} from 'node:child_process';
-import {bindSourceTree, sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 import path from 'node:path';
 import os from 'node:os';
 import {createHash} from 'node:crypto';
@@ -51,7 +52,7 @@ assert.equal(hash('node_modules/ajv-formats/dist/formats.js'), 'b61693a26869970a
 
 const BASELINE_COMMIT = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const gitExecutable = fs.realpathSync(process.env.PDRS_GIT || execFileSync('which', ['git'], {encoding: 'utf8'}).trim());
-const sourceCommit = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable).ref;
+const sourceCommit = bindBaseline({ baseline: baseline, commit: BASELINE_COMMIT, gitExecutable: gitExecutable }).provenance.ref;
 const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
 assert.equal(execFileSync(gitExecutable,
   ['--no-replace-objects', '-C', baseline, 'status', '--porcelain', '--untracked-files=no'],

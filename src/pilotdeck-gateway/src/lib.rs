@@ -42,6 +42,9 @@ mod test_exact_receipt;
 #[path = "../tests/common/negative_receipt.rs"]
 mod test_negative_receipt;
 #[cfg(test)]
+#[path = "../tests/common/node_provenance.rs"]
+mod test_node_provenance;
+#[cfg(test)]
 #[path = "../tests/common/oracle_locale.rs"]
 mod test_oracle_locale;
 #[cfg(test)]

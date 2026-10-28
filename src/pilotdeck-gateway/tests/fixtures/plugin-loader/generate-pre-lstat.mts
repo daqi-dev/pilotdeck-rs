@@ -10,7 +10,8 @@ import {link, mkdir, mkdtemp, rename, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {bindSourceTree, sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 const baseline = resolve(process.env.PDRS_BASELINE!);
 const commandPath = 'src/extension/plugins/loading/PluginCommandLoader.ts';
@@ -21,7 +22,7 @@ const loaderPath = 'src/extension/plugins/loading/PluginLoader.ts';
   assert.equal(process.versions.node.split('.')[0], '22', 'generate with Node 22');
   const sourceCommit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
   const git = realpathSync(execFileSync('which', ['git'], {encoding: 'utf8'}).trim());
-  bindSourceTree(baseline, sourceCommit, git);
+  bindBaseline({ baseline: baseline, commit: sourceCommit, gitExecutable: git });
   const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
   assert.equal(execFileSync(git, ['--no-replace-objects', '-C', baseline, 'status', '--porcelain', '--untracked-files=no'], {env: gitEnv}).toString(), '');
   const sourceSha256 = sourceClosureSha256(baseline, sourceCommit, git, [commandPath, loaderPath]);

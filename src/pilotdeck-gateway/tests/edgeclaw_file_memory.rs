@@ -13,6 +13,8 @@ use std::{
 };
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/node_provenance.rs"]
+mod node_provenance;
 const ORACLE: &str = include_str!("fixtures/edgeclaw-file-memory/oracle.json");
 const NOW: &str = "2026-10-22T00:00:00.000Z";
 struct Scratch(PathBuf);
@@ -629,7 +631,7 @@ fn real_ts_reads_rust_written_files() {
         run_scenario(scenario, &scratch.0.join(txt(field(scenario, "name"))));
     }
     let baseline = PathBuf::from(std::env::var_os("PDRS_BASELINE").expect("PDRS_BASELINE"));
-    let mut command = Command::new("node");
+    let mut command = node_provenance::pin(baseline::node_command());
     command
         .arg("--import")
         .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
@@ -642,49 +644,19 @@ fn real_ts_reads_rust_written_files() {
     run_node(&mut command, &scratch.0);
 }
 #[test]
-#[ignore = "requires fixed TS baseline"]
+#[ignore = "requires fixed TS baseline and Node v22.22.0"]
 fn real_ts_generator_is_reproducible() {
-    let baseline = PathBuf::from(std::env::var_os("PDRS_BASELINE").expect("PDRS_BASELINE"));
     let _ = baseline::oracle(ORACLE);
-    let scratch = Scratch::new();
-    let mut command = Command::new("node");
-    command
-        .arg("--import")
-        .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
-        .arg(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/edgeclaw-file-memory/generate.mts"),
-        )
-        .arg(&scratch.0)
-        .env("PDRS_BASELINE", baseline);
-    run_node(&mut command, &scratch.0);
-    assert_eq!(
-        fs::read(scratch.0.join("oracle.json")).unwrap(),
-        ORACLE.as_bytes()
-    );
+    let _ = node_provenance::pin(baseline::node_command());
+    baseline::regenerates_identically("edgeclaw-file-memory");
 }
 #[test]
-#[ignore = "requires fixed TS baseline"]
+#[ignore = "requires fixed TS baseline and Node v22.22.0"]
 fn real_ts_write_fixture_is_reproducible() {
-    let baseline = PathBuf::from(std::env::var_os("PDRS_BASELINE").expect("PDRS_BASELINE"));
     let oracle = include_str!("fixtures/edgeclaw-memory-write/oracle.json");
     let _ = baseline::oracle(oracle);
-    let scratch = Scratch::new();
-    let mut command = Command::new("node");
-    command
-        .arg("--import")
-        .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
-        .arg(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/edgeclaw-memory-write/generate.mts"),
-        )
-        .arg(&scratch.0)
-        .env("PDRS_BASELINE", baseline);
-    run_node(&mut command, &scratch.0);
-    assert_eq!(
-        fs::read(scratch.0.join("oracle.json")).unwrap(),
-        oracle.as_bytes()
-    );
+    let _ = node_provenance::pin(baseline::node_command());
+    baseline::regenerates_identically("edgeclaw-memory-write");
 }
 
 fn run_node(command: &mut Command, scratch: &Path) {

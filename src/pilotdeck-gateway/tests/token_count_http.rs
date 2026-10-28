@@ -11,6 +11,8 @@ use std::{
 mod baseline;
 #[path = "common/token_count_http.rs"]
 mod fixture;
+#[path = "common/node_provenance.rs"]
+mod node_provenance;
 
 struct Guarded(Arc<Mutex<fixture::Exchange>>);
 impl ProviderCountTransport for Guarded {
@@ -64,21 +66,23 @@ async fn real_ts_fetch_redirects_and_json_errors_over_loopback_http() {
 #[ignore = "requires fixed TS checkout, Node 22.22.0/tsx, and loopback listen permission"]
 fn regenerate_http_twice_identically() {
     let baseline = std::env::var_os("PDRS_BASELINE").expect("set PDRS_BASELINE");
+    let baseline_path = std::path::PathBuf::from(&baseline);
     let directory =
         std::env::temp_dir().join(format!("pdrs-token-count-http-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&directory).unwrap();
+    let mut command = node_provenance::pin(baseline::node_command());
+    command
+        .arg("--import")
+        .arg(baseline_path.join("node_modules/tsx/dist/loader.mjs"))
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/token-accounting/generate-http.mts"
+        ))
+        .arg(&directory)
+        .env("PDRS_BASELINE", &baseline);
     let mut generated = Vec::new();
     for _ in 0..2 {
-        let output = std::process::Command::new("node")
-            .arg("--import")
-            .arg(std::path::Path::new(&baseline).join("node_modules/tsx/dist/loader.mjs"))
-            .arg(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/token-accounting/generate-http.mts"
-            ))
-            .arg(&directory)
-            .output()
-            .unwrap();
+        let output = command.output().unwrap();
         assert!(
             output.status.success(),
             "{}",
@@ -98,5 +102,7 @@ fn regenerate_http_twice_identically() {
         );
     }
     assert_eq!(generated[0], generated[1]);
-    assert_eq!(generated[0], fixture::ORACLE.as_bytes());
+    let generated = std::str::from_utf8(&generated[0]).expect("#953 HTTP oracle is UTF-8");
+    let _ = baseline::oracle(generated);
+    assert_eq!(generated.as_bytes(), fixture::ORACLE.as_bytes());
 }

@@ -13,7 +13,8 @@ import {execFileSync} from 'node:child_process';
 import {mkdirSync, realpathSync, writeFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {bindSourceTree, sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 const ENTRY = 'src/context/memory/edgeclaw-memory-core/src/core/skills/llm-extraction.ts';
 const COMMIT = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
@@ -23,7 +24,7 @@ assert.ok(process.argv[2], 'usage: generate.mts OUT_DIR');
 const baseline = resolve(process.env.PDRS_BASELINE!);
 const out = resolve(process.argv[2]!);
 const git = realpathSync(process.env.PDRS_GIT || execFileSync('which', ['git'], {encoding: 'utf8'}).trim());
-bindSourceTree(baseline, COMMIT, git);
+bindBaseline({ baseline: baseline, commit: COMMIT, gitExecutable: git });
 const sourceSha256 = sourceClosureSha256(baseline, COMMIT, git, [ENTRY]);
 
 // Reachable producer domains: `buildProjectShortlist` sets sourceType to

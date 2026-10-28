@@ -13,20 +13,24 @@ function fixture() {
  git('init');fs.mkdirSync(path.join(root,'src'));fs.writeFileSync(path.join(root,'src/main.ts'),'export const value=1;\n');fs.writeFileSync(path.join(root,'.gitignore'),'src/ignored/\n');git('add','.');git('commit','-m','fixture');
  return {root,git,ref:git('rev-parse','HEAD')};
 }
-for (const mutation of ['healthy','dirty','missing','untracked','ignored','symlink','assume-unchanged']) test(mutation,t=>{
+for (const mutation of ['healthy','dirty','dirty-tracked','missing','untracked','ignored','symlink','assume-unchanged','skip-worktree']) test(mutation,t=>{
  const f=fixture();t.after(()=>fs.rmSync(f.root,{recursive:true,force:true}));const file=path.join(f.root,'src/main.ts');
  if(mutation==='dirty')fs.writeFileSync(file,'changed');
+ if(mutation==='dirty-tracked')fs.writeFileSync(path.join(f.root,'.gitignore'),'changed\n');
  if(mutation==='missing')fs.unlinkSync(file);
  if(mutation==='untracked')fs.writeFileSync(path.join(f.root,'src/main.js'),'shadow');
  if(mutation==='ignored'){fs.mkdirSync(path.join(f.root,'src/ignored'));fs.writeFileSync(path.join(f.root,'src/ignored/shadow.ts'),'shadow');}
  if(mutation==='symlink'){fs.renameSync(file,path.join(f.root,'same-bytes'));fs.symlinkSync(path.join(f.root,'same-bytes'),file);}
- if(mutation==='assume-unchanged'){f.git('update-index','--assume-unchanged','src/main.ts');fs.writeFileSync(file,'changed');}
+ if(mutation==='assume-unchanged')f.git('update-index','--assume-unchanged','src/main.ts');
+ if(mutation==='skip-worktree')f.git('update-index','--skip-worktree','src/main.ts');
  if(mutation==='healthy'){
   const got=bindSourceTree(f.root,f.ref,gitExecutable),bytes=fs.readFileSync(file);
   const files={'src/main.ts':{blob:f.git('rev-parse','HEAD:src/main.ts'),sha256:createHash('sha256').update(bytes).digest('hex'),size:bytes.length}};
   assert.equal(got.count,1);assert.equal(got.ref,f.ref);
   assert.equal(got.sha256,createHash('sha256').update(JSON.stringify(files)).digest('hex'));
- }else assert.throws(()=>bindSourceTree(f.root,f.ref,gitExecutable));
+ }else if(mutation==='dirty-tracked')assert.throws(()=>bindSourceTree(f.root,f.ref,gitExecutable),/uncommitted changes to tracked files/);
+ else if(mutation==='assume-unchanged'||mutation==='skip-worktree')assert.throws(()=>bindSourceTree(f.root,f.ref,gitExecutable),/#303.*skip-worktree\/assume-unchanged/);
+ else assert.throws(()=>bindSourceTree(f.root,f.ref,gitExecutable));
 });
 
 test('GIT_DIR shadow repository cannot replace the real source blob',t=>{
@@ -46,7 +50,7 @@ test('GIT_DIR shadow repository cannot replace the real source blob',t=>{
  assert.equal(f.git('show','HEAD:src/main.ts'),shadowSource.trim());
  assert.deepEqual(bindSourceTree(f.root,f.ref,gitExecutable),expected);
  fs.writeFileSync(path.join(f.root,'src/main.ts'),shadowSource);
- assert.throws(()=>bindSourceTree(f.root,f.ref,gitExecutable),/source bytes differ from trusted Git blob/);
+ assert.throws(()=>bindSourceTree(f.root,f.ref,gitExecutable),/uncommitted changes to tracked files|source bytes differ from trusted Git blob/);
  assert.equal(process.env.GIT_DIR,path.join(shadow.root,'.git'));
 });
 

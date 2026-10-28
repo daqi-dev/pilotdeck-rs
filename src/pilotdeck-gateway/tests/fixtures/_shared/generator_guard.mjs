@@ -63,18 +63,9 @@ export function bindBaseline({ baseline, commit, gitExecutable }) {
       maxBuffer: 32 * 1024 * 1024,
     });
   const provenance = bindSourceTree(baseline, commit, executable);
-  const trackedChanges = git('status', '--porcelain', '--untracked-files=no').toString();
-  assert.equal(
-    trackedChanges,
-    '',
-    `baseline has uncommitted changes to tracked files:\n${trackedChanges}`,
-  );
-  // Status deliberately ignores untracked files, but index flags can also hide
-  // tracked modifications (including files outside src). Refuse those flags;
-  // bindSourceTree independently verifies every source byte against HEAD.
-  const hidden = git('ls-files', '-v', '-z').toString().split('\0')
-    .filter(row => row && (row[0] === 'S' || row[0] !== row[0].toUpperCase()));
-  assert.deepEqual(hidden, [], '#303 baseline has skip-worktree/assume-unchanged tracked files');
+  // bindSourceTree itself enforces the tracked-tree status and `ls-files -v`
+  // checks (#953), so old and new callers share one implementation instead of
+  // drifting copies.
   return { git, gitExecutable: executable, sourceCommit: provenance.ref, provenance };
 }
 
