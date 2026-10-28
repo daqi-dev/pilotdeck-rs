@@ -23,7 +23,9 @@ use crate::{
     },
     storage::recorder::Recorder,
 };
-use pilotdeck_protocol::{JsObject, JsString, JsValue, admission::ExecutionIdentity, parse_json};
+#[cfg(test)]
+use pilotdeck_protocol::parse_json;
+use pilotdeck_protocol::{JsObject, JsString, JsValue, admission::ExecutionIdentity};
 use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionClock};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
@@ -44,9 +46,15 @@ type PreparedHost = (
     Option<JsObject>,
     Option<crate::runtime::project::interaction_events::TurnEvents>,
     Option<super::runner::PromptHooks>,
+    Option<super::live_session::SessionLifecycle>,
 );
-type TurnHostFactory =
-    dyn Fn(ExecutionIdentity, Arc<Recorder>) -> HostFuture<PreparedHost> + Send + Sync;
+type TurnHostFactory = dyn Fn(
+        ExecutionIdentity,
+        Arc<Recorder>,
+        crate::runtime::hooks::Cancellation,
+    ) -> HostFuture<PreparedHost>
+    + Send
+    + Sync;
 
 /// Host-acquired authority for one turn. Acquire the project lease with
 /// ProjectRuntimeRegistry::acquire when this factory is invoked, not when the
@@ -70,16 +78,19 @@ pub struct LiveSessionAdapter {
     tail: Option<Arc<super::runner::tail::SessionTail>>,
     recorder: Arc<Recorder>,
     history: Arc<dyn Fn() -> Vec<JsValue> + Send + Sync>,
-    state: Arc<Mutex<SessionState>>,
+    pub(super) state: Arc<Mutex<SessionState>>,
 }
 
 #[derive(Default)]
-struct SessionState {
-    disposed: bool,
-    active: Option<Cancellation>,
+pub(super) struct SessionState {
+    pub(super) disposed: bool,
+    pub(super) active: Option<Cancellation>,
+    pub(super) signal: crate::runtime::hooks::Cancellation,
+    pub(super) status: super::live_session::SessionStatus,
+    pub(super) current_turn_id: Option<JsString>,
 }
 
-struct ActiveTurn(Arc<Mutex<SessionState>>);
+pub(super) struct ActiveTurn(pub(super) Arc<Mutex<SessionState>>);
 
 impl Drop for ActiveTurn {
     fn drop(&mut self) {
@@ -102,11 +113,11 @@ impl LiveSessionAdapter {
             tail: None,
             recorder,
             history: Arc::new(history),
-            host_factory: Arc::new(move |_, recorder| {
+            host_factory: Arc::new(move |_, recorder, _| {
                 let host = host_factory(recorder);
                 Box::pin(async move {
                     let (client, handler, lease) = host.await?;
-                    Ok((client, handler, lease, None, None, None))
+                    Ok((client, handler, lease, None, None, None, None))
                 })
             }),
             state: Arc::default(),
@@ -142,25 +153,38 @@ impl LiveSessionAdapter {
             tail: None,
             recorder,
             history: Arc::new(history),
-            host_factory: Arc::new(move |identity, recorder| {
+            host_factory: Arc::new(move |identity, recorder, signal| {
                 let host = factory(identity.clone(), recorder.clone());
                 Box::pin(async move {
-                    let host = host.await?;
+                    let mut host = host.await?;
                     let cwd = host.input.permission.context.cwd.clone();
-                    let transcript_path = recorder
+                    let transcript_path: JsString = recorder
                         .writer()
                         .path()
                         .to_string_lossy()
                         .into_owned()
                         .into();
                     let lease = Arc::new(host.lease);
-                    let handler = super::interaction::InteractionTurn::bind(
+                    let mut lifecycle = super::live_session::SessionLifecycle::bind(
+                        lease.clone(),
+                        &identity,
+                        &mut host.input,
+                        signal,
+                        cwd.clone(),
+                        transcript_path.clone(),
+                    )?;
+                    let handler = super::interaction::InteractionTurn::bind_owned(
                         lease.clone(),
                         &identity,
                         host.router,
                         host.input,
+                        lifecycle.is_some(),
                     )
                     .await?;
+                    let handler = Arc::new(handler);
+                    if let Some(lifecycle) = &mut lifecycle {
+                        lifecycle.retain_turn(handler.clone());
+                    }
                     let manifest = handler.manifest().clone();
                     let events = handler.ports().events;
                     let prompt_hooks =
@@ -174,11 +198,12 @@ impl LiveSessionAdapter {
                             });
                     Ok((
                         host.client,
-                        Arc::new(handler) as Arc<dyn HostHandler>,
+                        handler as Arc<dyn HostHandler>,
                         lease,
                         Some(manifest),
                         events,
                         prompt_hooks,
+                        lifecycle,
                     ))
                 })
             }),
@@ -192,6 +217,7 @@ impl LiveSession for LiveSessionAdapter {
         // Invalid requests must not occupy the session's active turn slot.
         let (mut request, mut input) = parse_execute_request(&input, &options, vec![])?;
         let cancellation = Cancellation::default();
+        let signal = crate::runtime::hooks::Cancellation::new();
         {
             let mut state = self.state.lock().unwrap();
             if state.disposed {
@@ -203,6 +229,9 @@ impl LiveSession for LiveSessionAdapter {
                 ));
             }
             state.active = Some(cancellation.clone());
+            state.signal = signal.clone();
+            state.status = super::live_session::SessionStatus::Running;
+            state.current_turn_id = Some(request.identity.turn_id.clone());
         }
         let active = Arc::new(ActiveTurn(self.state.clone()));
         // Read the projection only after admission owns the slot. Rejected
@@ -226,18 +255,25 @@ impl LiveSession for LiveSessionAdapter {
         let hook_integrity = integrity.clone();
         // Keep at most one delivered event ahead of the submit consumer.
         let (events, receiver) = mpsc::channel(1);
-        Ok(Box::new(LiveTurnStream {
+        let (session_sender, session_ready) = oneshot::channel();
+        let session_id = identity.session_id.clone();
+        let session_owner = active.clone();
+        let turn = LiveTurnStream {
             callback_cancel: Some(cancellation.clone()),
             execution: Some(Box::pin(async move {
-                let (client, inner, lease, manifest, interaction_events, prompt_hooks) = tokio::select! {
+                let (client, inner, lease, manifest, interaction_events, prompt_hooks, lifecycle) = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => {
                         return Ok(ExecuteResult::Aborted { terminal: None });
                     }
                     // select constructs every branch before polling; keep the
                     // factory call lazy so a pre-cancel never creates resources.
-                    host = async { host_factory(request.identity.clone(), recorder.clone()).await } => host?,
+                    host = async { host_factory(request.identity.clone(), recorder.clone(), signal).await } => host?,
                 };
+                let session_steer = lifecycle
+                    .as_ref()
+                    .and_then(super::live_session::SessionLifecycle::steer);
+                let _ = session_sender.send(lifecycle);
                 let pending_host = crate::host::TurnScope::new(inner.clone(), close_timeout);
                 let mut runner = TurnRunner::new(
                     recorder,
@@ -245,6 +281,7 @@ impl LiveSession for LiveSessionAdapter {
                     request.identity.session_id.clone(),
                     request.identity.turn_id.clone(),
                 )
+                .with_session_steer(session_steer)
                 .with_interaction_events(interaction_events)
                 .with_prompt_hooks(prompt_hooks);
                 if let Some(tail) = tail {
@@ -299,16 +336,35 @@ impl LiveSession for LiveSessionAdapter {
             preflight: 0,
             execute_ready: Some(execute_ready),
             recorded: std::collections::VecDeque::new(),
-        }))
+        };
+        Ok(Box::new(super::live_session::SessionStream::new(
+            turn,
+            session_ready,
+            session_id,
+            self.state.clone(),
+            session_owner,
+        )))
     }
 
     fn snapshot(&self) -> JsValue {
-        // Return minimal snapshot; production sessions track state in transcript
-        parse_json(r#"{"messages":[]}"#).unwrap()
+        let (status, current_turn_id) = {
+            let state = self.state.lock().unwrap();
+            (state.status, state.current_turn_id.clone())
+        };
+        let mut value = JsObject::new();
+        value.insert("messages".into(), JsValue::Array((self.history)()));
+        value.insert("status".into(), status.as_str().into());
+        if let Some(turn) = &current_turn_id {
+            value.insert("currentTurnId".into(), JsValue::String(turn.clone()));
+        }
+        JsValue::Object(value)
     }
 
     fn abort(&self, reason: &JsString) -> RuntimeResult {
-        if let Some(cancellation) = &self.state.lock().unwrap().active {
+        let mut state = self.state.lock().unwrap();
+        state.signal.abort();
+        state.status = super::live_session::SessionStatus::Aborted;
+        if let Some(cancellation) = &state.active {
             cancellation.cancel(Some(reason.clone()));
         }
         Ok(())
@@ -320,11 +376,20 @@ impl LiveSession for LiveSessionAdapter {
         if let Some(tail) = &self.tail {
             tail.dispose();
         }
-        if let Some(cancellation) = &state.active {
-            cancellation.cancel(None);
+        if state.status == super::live_session::SessionStatus::Running {
+            state.status = super::live_session::SessionStatus::Aborted;
+            state.signal.abort();
+            if let Some(cancellation) = &state.active {
+                cancellation.cancel(Some("session_closed".into()));
+            }
         }
+        self.recorder.writer().begin_close();
+        let writer = self.recorder.writer().clone();
         let tail = self.tail.clone();
         Box::pin(async move {
+            tokio::task::spawn_blocking(move || writer.close())
+                .await
+                .map_err(|error| RuntimeError::new(error.to_string()))?;
             if let Some(tail) = tail {
                 tail.close()
                     .await
@@ -336,7 +401,7 @@ impl LiveSession for LiveSessionAdapter {
 }
 
 /// Streaming adapter for one turn execution.
-struct LiveTurnStream {
+pub(super) struct LiveTurnStream {
     // Owned here rather than spawned: dropping the stream drops execute and
     // lets HostClient clean up its child and outstanding callbacks.
     execution: Option<HostFuture<ExecuteResult>>,
@@ -497,6 +562,26 @@ impl LiveTurn for LiveTurnStream {
 }
 
 impl LiveTurnStream {
+    pub(super) async fn prepare_session(
+        &mut self,
+        ready: &mut oneshot::Receiver<Option<super::live_session::SessionLifecycle>>,
+    ) -> Result<Option<super::live_session::SessionLifecycle>, RuntimeError> {
+        let Some(execution) = self.execution.as_mut() else {
+            return Ok(None);
+        };
+        tokio::select! {
+            biased;
+            lifecycle = ready => Ok(lifecycle.unwrap_or(None)),
+            result = execution => {
+                self.execution = None;
+                match result {
+                    Err(error) if error.kind == HostErrorKind::Session => Err(RuntimeError::new(error.message)),
+                    Err(error) => Err(map_host_error(error)),
+                    result => { self.result = Some(result); Ok(None) }
+                }
+            }
+        }
+    }
     fn release(&mut self) {
         self.execute_ready.take();
         self.execution.take();
@@ -1846,3 +1931,30 @@ mod stream_tests;
 #[cfg(test)]
 #[path = "live_tail_tests.rs"]
 mod tail_tests;
+
+impl SessionState {
+    pub(super) fn complete(&mut self, result: &JsValue) -> &'static str {
+        self.status = match result.get("type").and_then(JsValue::as_string) {
+            Some(kind) if kind.equals_str("aborted") => super::live_session::SessionStatus::Aborted,
+            Some(kind) if kind.equals_str("error") => super::live_session::SessionStatus::Failed,
+            _ => super::live_session::SessionStatus::Idle,
+        };
+        self.current_turn_id = None;
+        if self.status == super::live_session::SessionStatus::Aborted {
+            "other"
+        } else {
+            "prompt_input_exit"
+        }
+    }
+    pub(super) fn fail(&mut self) {
+        self.status = if self.signal.is_cancelled() {
+            super::live_session::SessionStatus::Aborted
+        } else {
+            super::live_session::SessionStatus::Failed
+        };
+        self.current_turn_id = None;
+    }
+    pub(super) fn signal(&self) -> crate::runtime::hooks::Cancellation {
+        self.signal.clone()
+    }
+}

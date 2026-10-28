@@ -36,10 +36,11 @@ pub trait LiveSession: Send + Sync {
     /// lease release and its own session disposal. Implementations must make
     /// cancellation idempotent and must not panic, including after session
     /// resources have been disposed.
-    /// The A7.2-pr6 adapter must make an active LiveTurn settle after abort
-    /// (terminal then None, or Err), including session lifecycle hooks. Submit
-    /// preserves the native terminal path; wall-clock timeout is its independent
-    /// escape for a provider that does not settle. Test this contract in pr6.
+    /// Abort signals the active LiveTurn; draining includes SessionEnd and
+    /// session_ended through None (or Err), not just turn_completed. A hook
+    /// that ignores cancellation still owns its await. Submit preserves that
+    /// native path; its independent wall-clock timeout bounds uncooperative
+    /// providers. Cancellation alone must not drop lifecycle tail work.
     /// Only a fully Disposed handle suppresses subsequent external aborts.
     /// This matches TS AgentHandle.ts:176-179,281-287.
     fn abort(&self, reason: &JsString) -> RuntimeResult;
@@ -151,7 +152,7 @@ impl LiveSessionHandle {
         let stream = self.0.session.submit(input, options)?;
         Ok(SessionSubmission {
             stream,
-            _activity: activity,
+            _activity: Some(activity),
         })
     }
 
@@ -256,11 +257,15 @@ impl LiveSessionHandle {
 
 pub struct SessionSubmission {
     stream: Box<dyn LiveTurn>,
-    _activity: HandleActivity,
+    _activity: Option<HandleActivity>,
 }
 impl SessionSubmission {
     pub async fn next(&mut self) -> Result<Option<JsValue>, RuntimeError> {
-        self.stream.next().await
+        let result = self.stream.next().await;
+        if !matches!(result, Ok(Some(_))) {
+            self._activity.take();
+        }
+        result
     }
 }
 

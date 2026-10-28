@@ -60,8 +60,9 @@ pub struct InteractionPorts {
 }
 struct Owned {
     lease: Arc<RuntimeLease>,
-    contribution: Option<PluginSessionContributionLease>,
+    contribution: Option<Arc<PluginSessionContributionLease>>,
     session_steer: Option<SessionSteer>,
+    session_finish_adopted: bool,
 }
 
 /// One execute owns this handler. Cleanup survives HostClient's disposer
@@ -87,8 +88,17 @@ impl InteractionTurn {
     pub async fn bind(
         lease: impl Into<Arc<RuntimeLease>>,
         identity: &ExecutionIdentity,
+        router: ModuleRouter,
+        input: InteractionTurnInput,
+    ) -> Result<Self, HostError> {
+        Self::bind_owned(lease, identity, router, input, false).await
+    }
+    pub(super) async fn bind_owned(
+        lease: impl Into<Arc<RuntimeLease>>,
+        identity: &ExecutionIdentity,
         mut router: ModuleRouter,
         mut input: InteractionTurnInput,
+        session_owned: bool,
     ) -> Result<Self, HostError> {
         let lease = lease.into();
         let executor = Handle::try_current()
@@ -123,8 +133,9 @@ impl InteractionTurn {
             ports: Default::default(),
             owned: Mutex::new(Some(Owned {
                 lease,
-                contribution: input.contribution,
+                contribution: input.contribution.map(Arc::new),
                 session_steer: None,
+                session_finish_adopted: false,
             })),
             executor,
             done: watch::channel(None).0,
@@ -197,12 +208,13 @@ impl InteractionTurn {
             // disposal finishes. Supersede its identity, then wait for all
             // admitted durable writes before starting the replacement mailbox.
             session.wait_ready().await?;
-            turn.ports.steer = Some(session.start_turn(
+            turn.ports.steer = Some(session.start_owned_turn(
                 identity.turn_id.clone(),
                 identity.run_id.clone(),
                 input.messages,
                 input.signal,
                 router,
+                session_owned,
             )?);
         } else {
             router.turn.authorizations = None;
@@ -251,6 +263,18 @@ impl InteractionTurn {
     pub fn manifest(&self) -> &JsObject {
         &self.manifest
     }
+    pub(super) fn adopt_session_finish(&self) {
+        if let Some(owned) = self.owned.lock().unwrap().as_mut() {
+            owned.session_finish_adopted = true;
+        }
+    }
+    pub(super) fn contribution_hold(&self) -> Option<Arc<PluginSessionContributionLease>> {
+        self.owned
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|owned| owned.contribution.clone())
+    }
     pub fn ports(&self) -> InteractionPorts {
         self.ports.clone()
     }
@@ -262,6 +286,9 @@ impl InteractionTurn {
         let router = self.router.clone();
         // Revoke steer synchronously, before any unrelated disposer can stall.
         let steer_close = ports.steer.as_ref().map(TurnSteer::close);
+        let rollback_steer = (!owned.session_finish_adopted)
+            .then(|| ports.steer.clone())
+            .flatten();
         let session_close = owned.session_steer.as_ref().map(SessionSteer::dispose);
         crate::runtime::cleanup_task::spawn_after(
             &self.executor,
@@ -309,8 +336,13 @@ impl InteractionTurn {
                         errors.push(error.to_string());
                     }
                 }
+                // Before publication, failed/cancelled bind still owns finish.
+                if let Some(steer) = rollback_steer {
+                    steer.finish_session();
+                }
                 // A retired project's plugin disposer may wait for this lease.
-                if let Some(contribution) = &mut owned.contribution
+                if let Some(contribution) = owned.contribution.take()
+                    && let Ok(mut contribution) = Arc::try_unwrap(contribution)
                     && let Err(error) = contribution.release().await
                 {
                     errors.push(error.to_string());

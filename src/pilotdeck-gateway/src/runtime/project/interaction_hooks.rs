@@ -52,6 +52,7 @@ struct Run {
     registration: Option<CallbackRegistration>,
     cancelled: Cancellation,
     external: Cancellation,
+    session_signal: Mutex<Option<Cancellation>>,
     closed: AtomicBool,
     releases: AtomicUsize,
     done: watch::Sender<Option<Result<(), HostError>>>,
@@ -76,6 +77,9 @@ impl Run {
                 // These synchronous callbacks can panic too (for example a
                 // poisoned callback registry). They must already own completion.
                 self.cancelled.cancel();
+                if let Some(signal) = &*lock(&self.session_signal) {
+                    signal.cancel();
+                }
                 if let Some(permission) = &self.permission {
                     permission.close();
                 }
@@ -122,11 +126,13 @@ impl Run {
 pub struct InteractionHooks {
     state: Arc<Mutex<State>>,
     permission: InteractionPermission,
+    sessions: Arc<Mutex<State>>,
 }
 impl InteractionHooks {
     pub fn new(permission: InteractionPermission) -> Self {
         Self {
             state: Arc::default(),
+            sessions: Arc::default(),
             permission,
         }
     }
@@ -225,6 +231,7 @@ impl InteractionHooks {
             registration,
             cancelled: Cancellation::new(),
             external: binding.signal.take().unwrap_or_default(),
+            session_signal: Mutex::default(),
             closed: AtomicBool::new(false),
             releases: AtomicUsize::new(0),
             done: watch::channel(None).0,
@@ -281,7 +288,11 @@ impl InteractionHooks {
         Ok(turn)
     }
     pub fn close(&self) {
-        let mut state = lock(&self.state);
+        self.close_state(&self.sessions);
+        self.close_state(&self.state);
+    }
+    fn close_state(&self, state: &Arc<Mutex<State>>) {
+        let mut state = lock(state);
         if state.closed {
             return;
         }
@@ -319,15 +330,18 @@ impl InteractionHooks {
 impl FamilyResource for InteractionHooks {
     fn dispose(&self) -> DisposeFuture<'_> {
         self.close();
-        let runs: Vec<_> = {
-            let state = lock(&self.state);
-            state
-                .turns
-                .values()
-                .chain(state.draining.iter().map(|(_, run)| run))
-                .cloned()
-                .collect()
-        };
+        let runs: Vec<_> = [&self.state, &self.sessions]
+            .into_iter()
+            .flat_map(|state| {
+                let state = lock(state);
+                state
+                    .turns
+                    .values()
+                    .chain(state.draining.iter().map(|(_, run)| run))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .collect();
         Box::pin(async move {
             let mut failures = Vec::new();
             for run in runs {
@@ -513,10 +527,36 @@ impl TurnHooks {
     }
 }
 impl lifecycle::LifecyclePort for TurnHooks {
-    fn dispatch(&self, mut input: LifecycleDispatchInput) -> HostFuture<LifecycleDispatchResult> {
+    fn dispatch(&self, input: LifecycleDispatchInput) -> HostFuture<LifecycleDispatchResult> {
+        self.dispatch_owned(input, false)
+    }
+    fn dispose(&self) -> HostFuture<()> {
+        self.close();
+        let turn = self.clone();
+        Box::pin(async move { turn.wait_closed().await })
+    }
+}
+impl TurnHooks {
+    fn dispatch_owned(
+        &self,
+        mut input: LifecycleDispatchInput,
+        session: bool,
+    ) -> HostFuture<LifecycleDispatchResult> {
         let turn = self.clone();
         Box::pin(async move {
-            turn.wait_barrier().await?;
+            if session {
+                let signal = lock(&turn.run.session_signal).clone().unwrap_or_default();
+                // A ready scope may enter even with an already aborted signal.
+                // Only a blocked predecessor wait is interruptible here.
+                tokio::select! {
+                    biased;
+                    result = turn.wait_barrier() => result?,
+                    _ = signal.cancelled() => return Err(stale()),
+                }
+                input.signal = Some(signal);
+            } else {
+                turn.wait_barrier().await?;
+            }
             {
                 let state = lock(&turn.state);
                 turn.check(&state)?;
@@ -524,7 +564,9 @@ impl lifecycle::LifecyclePort for TurnHooks {
             }
             let job = DispatchJob(turn.run.clone());
             let worker = turn.clone();
-            input.signal = Some(turn.run.cancelled.clone());
+            if !session {
+                input.signal = Some(turn.run.cancelled.clone());
+            }
             // Keep shell TERM/drain alive even if the caller cancels or drops
             // its receive future. close waits for this job before disposal.
             let task = turn.run.executor.spawn(async move {
@@ -548,11 +590,6 @@ impl lifecycle::LifecyclePort for TurnHooks {
             on_drop.0 = None;
             Ok(result)
         })
-    }
-    fn dispose(&self) -> HostFuture<()> {
-        self.close();
-        let turn = self.clone();
-        Box::pin(async move { turn.wait_closed().await })
     }
 }
 
@@ -698,3 +735,6 @@ pub(super) async fn close_resource(resource: Option<Arc<dyn FamilyResource>>) ->
 
 #[cfg(test)]
 mod tests;
+
+mod session;
+pub use session::SessionHooks;

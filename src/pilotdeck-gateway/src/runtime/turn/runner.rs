@@ -67,6 +67,7 @@ pub struct TurnRunner {
     tail_events: Vec<JsValue>,
     prompt_blocked: bool,
     interaction_events: Option<crate::runtime::project::interaction_events::TurnEvents>,
+    session_steer: Option<crate::runtime::project::interaction_steer::TurnSteer>,
 }
 pub type Transition = RecorderResult<(TurnRunner, Vec<JsValue>)>;
 
@@ -95,6 +96,7 @@ impl TurnRunner {
             tail_events: vec![],
             prompt_blocked: false,
             interaction_events: None,
+            session_steer: None,
         }
     }
     pub(crate) fn with_interaction_events(
@@ -103,6 +105,32 @@ impl TurnRunner {
     ) -> Self {
         self.interaction_events = events;
         self
+    }
+    pub(crate) fn with_session_steer(
+        mut self,
+        steer: Option<crate::runtime::project::interaction_steer::TurnSteer>,
+    ) -> Self {
+        self.session_steer = steer;
+        self
+    }
+    async fn close_session_steer(&mut self) -> RecorderResult<()> {
+        if let Some(steer) = self.session_steer.take() {
+            let discarded = steer
+                .close_for_session()
+                .await
+                .map_err(|error| RecorderError::State(error.message))?;
+            for message in discarded {
+                self.emit_tail(self.event(
+                    "steer_unapplied",
+                    [
+                        ("itemId", JsValue::String(message.item_id)),
+                        ("reason", "turn_ended".into()),
+                    ],
+                ))
+                .await;
+            }
+        }
+        Ok(())
     }
     pub fn messages(&self) -> &[JsValue] {
         &self.messages
@@ -332,6 +360,7 @@ impl TurnRunner {
                 ]))
                 .await;
         }
+        self.close_session_steer().await?;
         self.finish_artifacts(&result).await;
         let written = result.clone();
         if let Err(error) = self.io(move |r, s, t| r.complete_turn(s, t, written)).await {
@@ -360,6 +389,7 @@ impl TurnRunner {
                 "Invalid turn recording transition.".into(),
             ));
         }
+        self.close_session_steer().await?;
         let now = (self.now)();
         let mut result = object([
             ("type", "error".into()),

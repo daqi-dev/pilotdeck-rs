@@ -1312,9 +1312,8 @@ fn validate(input: &JsValue) -> Option<JsValue> {
     {
         return Some(check("INVALID_RUN_ID", "runId must be 1-128 characters and contain only letters, numbers, '.', '_', ':', or '-'.".into(), true));
     }
-    if let value = field(input, "trustedContext")
-        && !matches!(value, JsValue::Undefined)
-    {
+    let value = field(input, "trustedContext");
+    if !matches!(value, JsValue::Undefined) {
         let JsValue::Array(values) = value else {
             return Some(check(
                 "INVALID_TRUSTED_CONTEXT",

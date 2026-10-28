@@ -917,3 +917,5 @@ fn regeneration_masks_reject_invalid_numbers_duplicates_and_bad_tail_changes() {
         );
     }
 }
+
+regeneration!(live_session_regenerates_identically, "live-session");

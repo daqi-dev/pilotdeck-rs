@@ -705,7 +705,7 @@ async fn assert_reaped(pid: u32) {
 async fn host_normal_lifecycle_streams_events_and_projects_authoritative_final_once() {
     let handler = Arc::new(Handler::default());
     let session = session("live-normal", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     let expected = [
         "turn_started",
         "input_accepted",
@@ -745,7 +745,7 @@ async fn host_normal_lifecycle_streams_events_and_projects_authoritative_final_o
 async fn host_early_failure_completes_after_host_input_accepted() {
     let handler = Arc::new(Handler::default());
     let session = session("live-early-failure", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     for event_type in [
         "turn_started",
         "input_accepted",
@@ -779,7 +779,7 @@ async fn host_second_turn_failed_from_finalization_failure_is_accepted() {
     // one would drop a legal TS error-final stream.
     let handler = Arc::new(Handler::default());
     let session = session("live-double-failure", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     for event_type in [
         "turn_started",
         "input_accepted",
@@ -812,7 +812,7 @@ async fn host_max_turns_terminal_completes_without_turn_failed() {
     // final only; no turn_failed may be required on this legal terminal.
     let handler = Arc::new(Handler::default());
     let session = session("live-max-turns", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     for event_type in [
         "turn_started",
         "input_accepted",
@@ -840,7 +840,7 @@ async fn inner_validation_rejection_fails_the_stream_before_application() {
         ..Handler::default()
     });
     let session = session("live-payload", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     let error = persisted_failure(turn.as_mut()).await;
     assert!(
         error.contains("inner rejected model_request_started"),
@@ -870,7 +870,7 @@ async fn cancel_exit_success_without_delivered_input_accepted_is_rejected() {
     });
     let (session, final_received) =
         session_with_final("live-cancel-pending", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"turn_started".into())
@@ -895,7 +895,7 @@ async fn queued_turn_failed_dropped_by_the_cancel_exit_is_rejected() {
     });
     let (session, final_received) =
         session_with_final("live-cancel-pending-failure", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"turn_started".into())
@@ -920,7 +920,7 @@ async fn cancel_exit_success_without_input_accepted_rejects_the_relaxed_path() {
     });
     let (session, final_received) =
         session_with_final("live-cancel-blocked-model-event", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"turn_started".into())
@@ -961,7 +961,7 @@ async fn received_turn_failed_dropped_after_delivered_input_accepted_is_rejected
     });
     let (session, final_received) =
         session_with_final("live-cancel-queued-turn-failed", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     for event_type in crate::runtime::turn::runner::HOST_LIFECYCLE_EVENTS {
         assert_eq!(
             next(turn.as_mut()).await.unwrap().unwrap().get("type"),
@@ -1007,7 +1007,7 @@ async fn slow_consumer_does_not_spend_the_cancel_exit_grace() {
     let handler = Arc::new(Handler::default());
     let (session, final_received) =
         session_with_final("live-cancel-slow-consumer", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     let mut delivered = vec![next(turn.as_mut()).await.unwrap().unwrap()];
     assert_eq!(delivered[0].get("type"), Some(&"turn_started".into()));
     delivered.push(next(turn.as_mut()).await.unwrap().unwrap());
@@ -1073,7 +1073,7 @@ async fn slow_consumer_still_receives_a_ready_error_terminal() {
     let handler = Arc::new(Handler::default());
     let (session, final_received) =
         session_with_final("live-cancel-slow-consumer-failure", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     let mut delivered = vec![next(turn.as_mut()).await.unwrap().unwrap()];
     assert_eq!(delivered[0].get("type"), Some(&"turn_started".into()));
     delivered.push(next(turn.as_mut()).await.unwrap().unwrap());
@@ -1139,7 +1139,7 @@ async fn slow_consumer_with_a_blocked_callback_still_exits_bounded() {
     });
     let (session, final_received) =
         session_with_final("live-cancel-slow-consumer", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"turn_started".into())
@@ -1190,7 +1190,7 @@ async fn cancel_request_with_missing_loop_prefix_is_still_rejected() {
     let handler = Arc::new(Handler::default());
     let (session, final_received) =
         session_with_final("live-missing-loop-prefix", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"turn_started".into())
@@ -1212,7 +1212,7 @@ async fn missing_loop_prefix_is_rejected_without_cancellation() {
     // any cancellation request.
     let handler = Arc::new(Handler::default());
     let session = session("live-missing-loop-prefix", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"turn_started".into())
@@ -1234,7 +1234,7 @@ async fn success_after_observed_turn_failed_is_rejected_even_with_cancel() {
     // cancellation flag (fake pass); the strict check rejects it.
     let handler = Arc::new(Handler::default());
     let session = session("live-failed-then-success", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     for event_type in [
         "turn_started",
         "input_accepted",
@@ -1265,7 +1265,7 @@ async fn max_turns_after_observed_turn_failed_is_rejected_even_with_cancel() {
     // received turn_failed contradicts it, cancellation or not.
     let handler = Arc::new(Handler::default());
     let session = session("live-failed-then-max-turns", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     for event_type in [
         "turn_started",
         "input_accepted",
@@ -1362,7 +1362,7 @@ async fn host_stream_rejects_empty_loop_prefix_and_releases_the_host() {
     let handler = Arc::new(Handler::default());
     let (session, children) =
         session_tracking_children("live-missing-loop-prefix", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     // The peer sends a valid module final with no loop prefix; finish must fail closed.
     let error = persisted_failure(turn.as_mut()).await;
     assert!(
@@ -1394,7 +1394,7 @@ async fn host_stream_rejects_empty_loop_prefix_and_releases_the_host() {
         "only the module final may apply before prefix rejection"
     );
     // The active turn slot was released with the violation.
-    let replacement = session.submit(input(), options());
+    let replacement = session.submit_turn_for_test(input(), options());
     assert!(replacement.is_ok());
     drop(replacement);
 }
@@ -1404,7 +1404,7 @@ async fn abort_before_execute_yields_original_messages_then_none() {
     let handler = Arc::new(Handler::default());
     let (session, children) =
         session_tracking_children("cancel-pre-execute", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     session.abort(&"pre-cancel".into()).unwrap();
     assert_aborted(&next(turn.as_mut()).await.unwrap().unwrap());
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
@@ -1421,7 +1421,7 @@ async fn abort_before_execute_yields_original_messages_then_none() {
 async fn incomplete_compaction_final_yields_original_messages_then_none() {
     let handler = Arc::new(Handler::default());
     let session = session("live-cancel-compaction", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     for event_type in [
         "turn_started",
         "input_accepted",
@@ -1452,7 +1452,7 @@ async fn cancel_with_a_full_aborted_result_projects_the_peer_terminal_once() {
     let handler = Arc::new(Handler::default());
     let (session, children) =
         session_tracking_children("live-cancel-full-aborted", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     for event_type in [
         "turn_started",
         "input_accepted",
@@ -1496,7 +1496,7 @@ async fn host_duplicate_lifecycle_event_fails_the_stream_closed() {
     let handler = Arc::new(Handler::default());
     let (session, children) =
         session_tracking_children("live-duplicate-sequence", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     let error = persisted_failure(turn.as_mut()).await;
     assert!(error.contains("sequence mismatch"), "{error}");
     // The peer also streams a legal model_event after the violating one; it
@@ -1517,14 +1517,14 @@ async fn host_duplicate_lifecycle_event_fails_the_stream_closed() {
     let child = *children.lock().unwrap().first().unwrap();
     assert_reaped(child).await;
     // The slot is free again after the violation.
-    assert!(session.submit(input(), options()).is_ok());
+    assert!(session.submit_turn_for_test(input(), options()).is_ok());
 }
 
 #[tokio::test]
 async fn dropping_an_active_stream_disposes_its_host_handler() {
     let handler = Arc::new(Handler::default());
     let session = session("live-normal", handler.clone()).await;
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     assert!(next(turn.as_mut()).await.unwrap().is_some());
     drop(turn);
     timeout(Duration::from_secs(5), async {
@@ -1535,7 +1535,9 @@ async fn dropping_an_active_stream_disposes_its_host_handler() {
     .await
     .expect("dropping execute must dispose its handler");
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
-    let mut second = session.submit(input(), turn_options("second")).unwrap();
+    let mut second = session
+        .submit_turn_for_test(input(), turn_options("second"))
+        .unwrap();
     assert!(next(second.as_mut()).await.unwrap().is_some());
 }
 
@@ -1658,9 +1660,9 @@ async fn sequential_turns_create_fresh_hosts_and_send_each_payload() {
         payload.insert("messages".into(), input_messages());
         let payload = JsValue::Object(payload);
         let mut turn = session
-            .submit(input(), JsValue::Object(turn_options))
+            .submit_turn_for_test(input(), JsValue::Object(turn_options))
             .unwrap();
-        assert!(session.submit(input(), options()).is_err());
+        assert!(session.submit_turn_for_test(input(), options()).is_err());
         let started = next(turn.as_mut()).await.unwrap().unwrap();
         assert_eq!(started.get("type"), Some(&"turn_started".into()));
         let received = next(turn.as_mut()).await.unwrap().unwrap();
@@ -1696,9 +1698,17 @@ async fn sequential_turns_create_fresh_hosts_and_send_each_payload() {
 #[tokio::test]
 async fn invalid_submit_does_not_consume_the_session() {
     let session = session("live-normal", Arc::new(Handler::default())).await;
-    assert!(session.submit(JsValue::Null, options()).is_err());
-    assert!(session.submit(input(), JsValue::Null).is_err());
-    let mut turn = session.submit(input(), options()).unwrap();
+    assert!(
+        session
+            .submit_turn_for_test(JsValue::Null, options())
+            .is_err()
+    );
+    assert!(
+        session
+            .submit_turn_for_test(input(), JsValue::Null)
+            .is_err()
+    );
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     assert!(next(turn.as_mut()).await.unwrap().is_some());
 }
 
@@ -1710,12 +1720,12 @@ async fn unpolled_drop_and_factory_failure_release_the_active_turn() {
         created.fetch_add(1, Ordering::SeqCst);
         Box::pin(async { Err(HostError::new(HostErrorKind::Io, "spawn failed")) })
     });
-    let turn = session.submit(input(), options()).unwrap();
-    assert!(session.submit(input(), options()).is_err());
+    let turn = session.submit_turn_for_test(input(), options()).unwrap();
+    assert!(session.submit_turn_for_test(input(), options()).is_err());
     drop(turn);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     for expected_calls in 1..=2 {
-        let mut turn = session.submit(input(), options()).unwrap();
+        let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
         assert!(
             next(turn.as_mut())
                 .await
@@ -1732,7 +1742,7 @@ async fn unpolled_drop_and_factory_failure_release_the_active_turn() {
 async fn abort_is_per_turn_and_dispose_rejects_future_turns() {
     let handler = Arc::new(Handler::default());
     let session = session("live-cancel-compaction", handler.clone()).await;
-    let mut first = session.submit(input(), options()).unwrap();
+    let mut first = session.submit_turn_for_test(input(), options()).unwrap();
     for event_type in [
         "turn_started",
         "input_accepted",
@@ -1750,7 +1760,9 @@ async fn abort_is_per_turn_and_dispose_rejects_future_turns() {
         .unwrap();
     assert_aborted(&next(first.as_mut()).await.unwrap().unwrap());
     assert_eq!(next(first.as_mut()).await.unwrap(), None);
-    let mut second = session.submit(input(), turn_options("second")).unwrap();
+    let mut second = session
+        .submit_turn_for_test(input(), turn_options("second"))
+        .unwrap();
     // A new turn must reach the sidecar instead of inheriting the old abort.
     for event_type in [
         "turn_started",
@@ -1768,7 +1780,7 @@ async fn abort_is_per_turn_and_dispose_rejects_future_turns() {
         .abort(&"compaction_persistence_failed".into())
         .unwrap();
     session.dispose().await.unwrap();
-    assert!(session.submit(input(), options()).is_err());
+    assert!(session.submit_turn_for_test(input(), options()).is_err());
     assert_aborted_turn(&next(second.as_mut()).await.unwrap().unwrap(), "second");
     assert_eq!(next(second.as_mut()).await.unwrap(), None);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 2);
@@ -1782,7 +1794,7 @@ async fn dispose_cancels_pending_host_creation_and_rejects_future_submits() {
         entered.notify_one();
         Box::pin(std::future::pending())
     });
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     let mut pending = turn.next();
     timeout(Duration::from_secs(5), async {
         tokio::select! {
@@ -1801,7 +1813,7 @@ async fn dispose_cancels_pending_host_creation_and_rejects_future_submits() {
             .unwrap(),
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
-    assert!(session.submit(input(), options()).is_err());
+    assert!(session.submit_turn_for_test(input(), options()).is_err());
 }
 
 fn host_event(kind: &str) -> JsValue {
@@ -2540,7 +2552,7 @@ async fn pre_cancelled_factory(dispose: bool, interaction: bool) {
         })
     };
     let mut turn = session
-        .submit(input(), options())
+        .submit_turn_for_test(input(), options())
         .expect("#741k input fixture setup");
     if dispose {
         session.dispose().await.expect("#741k input fixture setup");
@@ -2577,7 +2589,7 @@ async fn pre_cancelled_factory(dispose: bool, interaction: bool) {
         "#741k input fixture invariant"
     );
     assert_eq!(
-        session.submit(input(), options()).is_err(),
+        session.submit_turn_for_test(input(), options()).is_err(),
         dispose,
         "#741k input fixture invariant"
     );
@@ -2628,7 +2640,7 @@ async fn pending_factory(action: u8) {
             Err(HostError::new(HostErrorKind::Callback, "factory finished"))
         })
     });
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     // No timer resolves this predecessor. Poll each borrowed next once, then
     // cancel that waiter. Both must keep the same owned factory and active slot.
     for _ in 0..2 {
@@ -2642,7 +2654,7 @@ async fn pending_factory(action: u8) {
         drop(waiter);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(finished.load(Ordering::SeqCst), 0);
-        assert!(session.submit(input(), options()).is_err());
+        assert!(session.submit_turn_for_test(input(), options()).is_err());
     }
     match action {
         0 | 1 => {
@@ -2676,7 +2688,10 @@ async fn pending_factory(action: u8) {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(finished.load(Ordering::SeqCst), 1);
     assert!(session.state.lock().unwrap().active.is_none());
-    assert_eq!(session.submit(input(), options()).is_err(), action == 1);
+    assert_eq!(
+        session.submit_turn_for_test(input(), options()).is_err(),
+        action == 1
+    );
 }
 #[tokio::test]
 async fn live_factory_pending_abort() {
@@ -2821,7 +2836,7 @@ async fn live_input_shared_recorder(interaction: bool) {
         })
     };
     let mut turn = session
-        .submit(input(), options())
+        .submit_turn_for_test(input(), options())
         .expect("#741k input fixture setup");
     assert!(
         next(turn.as_mut())
@@ -2893,7 +2908,7 @@ async fn live_input_reads_current_history_on_every_submit() {
         .expect("#741k input fixture setup");
         *history.lock().expect("#741k input fixture setup") = vec![message.clone()];
         let mut turn = session
-            .submit(input(), turn_options(text))
+            .submit_turn_for_test(input(), turn_options(text))
             .expect("#741k input fixture setup");
         next(turn.as_mut())
             .await
@@ -2955,7 +2970,7 @@ async fn live_input_reads_current_history_on_every_submit() {
         JsValue::Array(vec![synthetic.clone()]),
     );
     let mut turn = session
-        .submit(input(), JsValue::Object(opts))
+        .submit_turn_for_test(input(), JsValue::Object(opts))
         .expect("#741k input fixture setup");
     session
         .abort(&"pre-cancel".into())
@@ -3126,7 +3141,7 @@ async fn live_recording_matrix(phase: usize, action: &str) {
             ))
         })
     });
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
     for _ in 0..phase {
         next(turn.as_mut()).await.unwrap().unwrap();
     }
@@ -3159,7 +3174,7 @@ async fn live_recording_matrix(phase: usize, action: &str) {
             .count()
     };
     let active = || session.state.lock().unwrap().active.is_some();
-    let rejected = || session.submit(input(), options()).is_err();
+    let rejected = || session.submit_turn_for_test(input(), options()).is_err();
     assert_eq!(
         row.get("before").unwrap().get("active"),
         Some(&JsValue::Number(f64::from(active())))
@@ -3173,8 +3188,11 @@ async fn live_recording_matrix(phase: usize, action: &str) {
     } // A second cancelled waiter cannot restart or discard the first write.
     assert!(rejected(), "pending write blocks resubmit");
     let mut disposal = Box::pin(registry.dispose());
+    let mut session_disposal = None;
     if action == "dispose" {
-        session.dispose().await.unwrap();
+        let mut closing = session.dispose();
+        assert_recording_pending(closing.as_mut(), "#743 dispose waits for admitted writer");
+        session_disposal = Some(closing);
         assert!(rejected(), "disposed session rejects admission");
         assert_recording_pending(disposal.as_mut(), "factory waits for I/O");
     }
@@ -3243,6 +3261,12 @@ async fn live_recording_matrix(phase: usize, action: &str) {
         }
         drop(turn);
     }
+    if let Some(disposal) = session_disposal {
+        timeout(Duration::from_secs(15), disposal)
+            .await
+            .expect("#743 dispose writer drain timeout")
+            .expect("#743 dispose writer drain");
+    }
     // The worker owns the slot until append returns; explicit release above
     // is the progress condition, timeout only fails the test (never unlocks).
     timeout(Duration::from_secs(15), async {
@@ -3263,12 +3287,16 @@ async fn live_recording_matrix(phase: usize, action: &str) {
     }
     if action == "dispose" {
         assert!(
-            session.submit(input(), turn_options("next")).is_err(),
+            session
+                .submit_turn_for_test(input(), turn_options("next"))
+                .is_err(),
             "disposed session stays closed"
         );
         assert_eq!(row.get("replacementStarted"), Some(&JsValue::Bool(false)));
     } else {
-        let mut replacement = session.submit(input(), turn_options("next")).unwrap();
+        let mut replacement = session
+            .submit_turn_for_test(input(), turn_options("next"))
+            .unwrap();
         let event = next(replacement.as_mut()).await.unwrap().unwrap();
         assert_eq!(
             event.get("type"),
@@ -3389,7 +3417,8 @@ async fn live_history_slot_matrix() {
         },
     ));
     let submitting = session.clone();
-    let first = std::thread::spawn(move || submitting.submit(input(), turn_options("first")));
+    let first =
+        std::thread::spawn(move || submitting.submit_turn_for_test(input(), turn_options("first")));
     entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
     let mut seen = Vec::new();
     let observe = |name: &str| {
@@ -3405,7 +3434,9 @@ async fn live_history_slot_matrix() {
             ),
         ])
     };
-    let rejected = session.submit(input(), turn_options("history-owned")).err();
+    let rejected = session
+        .submit_turn_for_test(input(), turn_options("history-owned"))
+        .err();
     seen.push(observe("history-owned"));
     // Release and join before asserting: a failed negative cannot strand its thread.
     release_tx.send(()).unwrap();
@@ -3432,7 +3463,9 @@ async fn live_history_slot_matrix() {
         if name == "aborted" {
             session.abort(&"cancel".into()).unwrap();
         }
-        let error = session.submit(input(), turn_options(name)).err();
+        let error = session
+            .submit_turn_for_test(input(), turn_options(name))
+            .err();
         assert_eq!(
             error.map(|e| e.message).as_deref(),
             Some("Agent session already has an active turn.")
@@ -3452,7 +3485,7 @@ async fn live_history_slot_matrix() {
     };
     *history.lock().unwrap() = messages.clone();
     let mut replacement = session
-        .submit(input(), turn_options("replacement"))
+        .submit_turn_for_test(input(), turn_options("replacement"))
         .unwrap();
     session.abort(&"cancel before factory".into()).unwrap();
     let active_at_read = usize::from(session.state.lock().unwrap().active.is_some());
@@ -3479,7 +3512,11 @@ async fn live_history_slot_matrix() {
     ]));
     drop(replacement);
     session.dispose().await.unwrap();
-    assert!(session.submit(input(), turn_options("disposed")).is_err());
+    assert!(
+        session
+            .submit_turn_for_test(input(), turn_options("disposed"))
+            .is_err()
+    );
     seen.push(crate::metadata::object([
         ("name", "disposed".into()),
         (
@@ -3576,7 +3613,7 @@ async fn live_prepared_cleanup_uses_close_timeout() {
             })
         })
         .with_close_timeout(budget);
-        let mut turn = session.submit(input(), options()).unwrap();
+        let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
         assert_eq!(
             next(turn.as_mut()).await.unwrap().unwrap().get("type"),
             Some(&"turn_started".into())
@@ -3791,7 +3828,7 @@ async fn real_sidecar_case(mode: &str) {
     for (key,value) in parse_json(r#"{"provider":"test","model":"deterministic","tools":[],"hostModules":{"model":{"methods":["prepare","stream_next","close_stream"]}}}"#).unwrap().as_object().unwrap().entries() {config.insert(key.clone(),value.clone());}
     config.insert("cwd".into(), evidence.to_string_lossy().as_ref().into());
     let mut turn = session
-        .submit(
+        .submit_turn_for_test(
             parse_json(r#"{"type":"text","text":"probe"}"#).unwrap(),
             JsValue::Object(config),
         )
@@ -3908,4 +3945,68 @@ async fn real_ts_sidecar_early_final() {
 #[ignore = "requires fixed PDRS_BASELINE and Node/tsx"]
 fn stream_integrity_regenerates_identically() {
     crate::test_baseline::regenerates_identically("turn-runner");
+}
+
+// These pre-existing oracles describe TurnRunner / HostClient, not AgentSession.
+// Drive and validate the new outer envelope while preserving their turn-only
+// observation boundary. Full session timing/ownership is tested separately in
+// live_session_tests.rs, without this adapter.
+impl LiveSessionAdapter {
+    pub(crate) fn submit_turn_for_test(
+        &self,
+        input: JsValue,
+        options: JsValue,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        Ok(Box::new(TurnOnly {
+            inner: self.submit(input, options)?,
+            terminal: None,
+            prefix: 0,
+            ended: false,
+        }))
+    }
+}
+struct TurnOnly {
+    inner: Box<dyn LiveTurn>,
+    terminal: Option<JsValue>,
+    prefix: u8,
+    ended: bool,
+}
+impl LiveTurn for TurnOnly {
+    fn next(&mut self) -> SessionNext<'_> {
+        Box::pin(async move {
+            loop {
+                let Some(event) = self.inner.next().await? else {
+                    return Ok(self.terminal.take());
+                };
+                let kind = event
+                    .get("type")
+                    .and_then(JsValue::as_string)
+                    .expect("#743 turn-only event type");
+                if kind.equals_str("session_started") {
+                    assert_eq!(self.prefix, 0, "#743 turn-only starts once");
+                    self.prefix = 1;
+                    continue;
+                }
+                if kind.equals_str("setup_completed") {
+                    assert_eq!(self.prefix, 1, "#743 turn-only setup after start");
+                    self.prefix = 2;
+                    continue;
+                }
+                if kind.equals_str("session_ended") {
+                    assert!(
+                        self.terminal.is_some() && !self.ended,
+                        "#743 turn-only End after terminal once"
+                    );
+                    self.ended = true;
+                    continue;
+                }
+                assert_eq!(self.prefix, 2, "#743 turn-only runner after setup");
+                if kind.equals_str("turn_completed") {
+                    self.terminal = Some(event);
+                    continue;
+                }
+                return Ok(Some(event));
+            }
+        })
+    }
 }

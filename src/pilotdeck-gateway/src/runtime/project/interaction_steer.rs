@@ -56,6 +56,7 @@ struct Run {
     executor: Handle,
     closed: AtomicBool,
     delivered: AtomicBool,
+    session_finishes: bool,
     releases: AtomicUsize,
     applying: tokio::sync::Mutex<()>,
     done: watch::Sender<Option<Closed>>,
@@ -72,7 +73,9 @@ impl Run {
             // A dropped consumer cannot abandon an admitted durable write.
             let _applying = run.applying.lock().await;
             let result = run.steers.mailbox.close(run.turn_id.clone()).await;
-            run.steers.mailbox.finish(&run.turn_id);
+            if !run.session_finishes {
+                run.steers.mailbox.finish(&run.turn_id);
+            }
             // Record before `done` resolves: `wait_ready` on the next turn is
             // the barrier that makes the notice visible to that turn.
             if let Ok(discarded) = &result
@@ -115,6 +118,15 @@ impl Run {
 #[derive(Clone, Default)]
 pub struct InteractionSteer(Arc<Mutex<State>>);
 impl InteractionSteer {
+    #[cfg(test)]
+    pub(crate) fn mailbox_for_test(&self, key: &JsString) -> Option<SteerMailbox> {
+        self.0
+            .lock()
+            .unwrap()
+            .sessions
+            .get(key)
+            .map(|session| session.mailbox.clone())
+    }
     /// A recorder belongs to this session's transcript, never to wire input.
     /// Replaces the old identity; wait_ready must succeed before starting a run.
     pub fn bind_session(
@@ -242,6 +254,17 @@ impl SessionSteer {
         signal: Cancellation,
         router: &mut ModuleRouter,
     ) -> Result<TurnSteer, HostError> {
+        self.start_owned_turn(turn_id, run_id, messages, signal, router, false)
+    }
+    pub(crate) fn start_owned_turn(
+        &self,
+        turn_id: JsString,
+        run_id: JsString,
+        messages: Vec<JsValue>,
+        signal: Cancellation,
+        router: &mut ModuleRouter,
+        session_owned: bool,
+    ) -> Result<TurnSteer, HostError> {
         let mut state = self.owner.0.lock().unwrap();
         if state
             .draining
@@ -276,6 +299,7 @@ impl SessionSteer {
             executor: self.executor.clone(),
             closed: AtomicBool::new(false),
             delivered: AtomicBool::new(false),
+            session_finishes: session_owned,
             releases: AtomicUsize::new(0),
             applying: tokio::sync::Mutex::new(()),
             done: watch::channel(None).0,
@@ -485,12 +509,32 @@ impl TurnSteer {
         let run = self.run.clone();
         Box::pin(async move {
             let discarded = run.wait().await?;
+            Ok(
+                if run.session_finishes || run.delivered.swap(true, Ordering::SeqCst) {
+                    vec![]
+                } else {
+                    discarded
+                },
+            )
+        })
+    }
+    /// The session's TurnRunner claims its own discarded messages, before
+    /// durable turn completion. Generic disposers only join the same close.
+    pub(crate) fn close_for_session(&self) -> HostFuture<Vec<SteerMessage>> {
+        let _state = self.session.owner.0.lock().unwrap();
+        self.run.close();
+        let run = self.run.clone();
+        Box::pin(async move {
+            let discarded = run.wait().await?;
             Ok(if run.delivered.swap(true, Ordering::SeqCst) {
                 vec![]
             } else {
                 discarded
             })
         })
+    }
+    pub(crate) fn finish_session(&self) {
+        self.run.steers.mailbox.finish(&self.run.turn_id);
     }
     pub fn release_count(&self) -> usize {
         self.run.releases.load(Ordering::SeqCst)

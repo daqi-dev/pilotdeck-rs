@@ -34,7 +34,7 @@ send(response(hello, **binding))
 capabilities = read()
 assert capabilities["method"] == "capabilities"
 methods = [dict(name="execute", profiles=["streaming"])]
-if mode in ("live-cancel-compaction", "live-cancel-full-aborted"):
+if mode in ("live-cancel-compaction", "live-cancel-full-aborted", "live-session-cancel"):
     methods.append(dict(name="cancel"))
 send(response(capabilities, **binding, payload=dict(
     capabilitiesVersion="v1", methods=methods)))
@@ -245,13 +245,13 @@ elif mode == "live-cancel-compaction":
             break
     send(agent_event(1, dict(compaction="incomplete"), final=True,
                      outcome="cancelled"))
-elif mode == "live-cancel-full-aborted":
+elif mode in ("live-cancel-full-aborted", "live-session-cancel"):
     send_event(0, dict(type="model_event", sessionId=session, turnId=turn,
                       event=dict(type="text_delta", text="hello")))
     while True:
         frame = read()
         if frame.get("method") == "cancel":
-            assert frame["reason"] == "user-stop", frame
+            assert frame["reason"] in (("user-stop", "session_closed") if mode == "live-session-cancel" else ("user-stop",)), frame
             break
     send(agent_event(1, dict(result=dict(
         type="aborted", sessionId=session, turnId=turn,

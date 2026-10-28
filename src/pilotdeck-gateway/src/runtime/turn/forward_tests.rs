@@ -187,6 +187,7 @@ impl Fixture {
         let session = Arc::new(Mutex::new(SessionState {
             disposed: false,
             active: Some(Cancellation::default()),
+            ..Default::default()
         }));
         let active = Arc::new(ActiveTurn(session.clone()));
         let integrity = handler.integrity.clone();
@@ -959,7 +960,7 @@ async fn forward_real_status_write_error() {
         key,
     ));
     let mut turn = session
-        .submit(input(), options())
+        .submit_turn_for_test(input(), options())
         .expect("#741h forward fixture invariant");
     let mut events = vec![];
     while let Some(event) = next(turn.as_mut())

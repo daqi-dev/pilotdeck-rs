@@ -6,6 +6,7 @@ pub mod gateway;
 pub mod host_factory;
 pub mod interaction;
 pub mod live;
+mod live_session;
 pub mod projector;
 pub mod publish;
 pub mod read;

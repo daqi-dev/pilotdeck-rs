@@ -599,7 +599,7 @@ async fn live_session_shares_recorder_and_reads_current_history() {
         .expect("#741k input fixture setup");
         *history.lock().expect("#741k input fixture setup") = vec![previous.clone()];
         let mut turn = session
-            .submit(
+            .submit_turn_for_test(
                 parse_json(r#"{"type":"text","text":"hello"}"#).expect("#741k input fixture setup"),
                 {
                     let mut options = wire()
@@ -757,7 +757,7 @@ async fn session_cwd_environment_worker() {
         move |_, _| ports_with_tool_results_dir(None, PathBuf::from("../spill")),
     )
     .into_live_session(test_recorder(), Vec::new);
-    let mut submitted = session.submit(
+    let mut submitted = session.submit_turn_for_test(
         parse_json(r#"{"type":"text","text":"hello"}"#).expect("#885 input JSON"),
         wire(),
     );
@@ -814,7 +814,7 @@ async fn reload_between_turns_uses_new_generation() {
             bounded(registry.reload()).await.unwrap();
         }
         let mut turn = session
-            .submit(parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(), {
+            .submit_turn_for_test(parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(), {
                 let mut options = wire().as_object().unwrap().clone();
                 options.insert(
                     "turnId".into(),
@@ -856,7 +856,7 @@ async fn reload_mid_turn_holds_old_lease_until_turn_drops() {
     let session = factory(registry.clone(), peer("hold", Some(&pid_file)), None)
         .into_live_session(test_recorder(), Vec::new);
     let mut turn = session
-        .submit(
+        .submit_turn_for_test(
             parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(),
             wire(),
         )
@@ -900,7 +900,7 @@ async fn retire_does_not_dispose_while_lease_outstanding() {
         .into_live_session(test_recorder(), Vec::new);
     let runtime = registry.resolve(None).unwrap();
     let mut turn = session
-        .submit(
+        .submit_turn_for_test(
             parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(),
             wire(),
         )
@@ -1052,7 +1052,7 @@ async fn dispose_cancels_pending_host_creation_and_releases_lease() {
     )
     .into_live_session(test_recorder(), Vec::new);
     let mut turn = session
-        .submit(
+        .submit_turn_for_test(
             parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(),
             wire(),
         )
@@ -1139,7 +1139,7 @@ impl PausedHostCleanup {
             release,
         };
         let mut turn = session
-            .submit(
+            .submit_turn_for_test(
                 parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(),
                 wire(),
             )
@@ -1436,4 +1436,487 @@ async fn router_manifest_matches_ts_full_composition_golden() {
     );
     turn.dispose().await.unwrap();
     bounded(registry.dispose()).await.unwrap();
+}
+
+struct SessionSteerRecorder {
+    held: bool,
+    entered: tokio::sync::Semaphore,
+    release: tokio::sync::Semaphore,
+    mutations: Arc<Mutex<Vec<JsObject>>>,
+}
+impl MutationRecorder for Arc<SessionSteerRecorder> {
+    fn record(&self, _: JsString, mutation: JsObject) -> HostFuture<()> {
+        let recorder = self.clone();
+        Box::pin(async move {
+            if recorder.held && mutation.get("mutation") == Some(&"insert".into()) {
+                recorder.entered.add_permits(1);
+                recorder
+                    .release
+                    .acquire()
+                    .await
+                    .expect("#743 steer insert release")
+                    .forget();
+            }
+            recorder
+                .mutations
+                .lock()
+                .expect("#743 steer mutation lock")
+                .push(mutation);
+            Ok(())
+        })
+    }
+}
+#[tokio::test]
+async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
+    for case in [
+        "success",
+        "start-failure",
+        "abort-turn",
+        "abort-terminal",
+        "abort-start",
+        "abort-end",
+        "dispose-start",
+        "dispose-turn",
+        "error",
+        "reuse",
+        "steer-success",
+        "steer-abort",
+        "steer-insert",
+    ] {
+        let scratch = Scratch::new();
+        let registry = registry(&scratch);
+        let runtime = registry.resolve(None).expect("#743 production runtime");
+        let trace = scratch.0.join("lifecycle.txt");
+        let hook_trace = trace.clone();
+        let factory_registry = registry.clone();
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let recorder = test_recorder();
+        let mutations = Arc::new(Mutex::new(vec![]));
+        let steer_recorder = Arc::new(SessionSteerRecorder {
+            held: case == "steer-insert",
+            entered: tokio::sync::Semaphore::new(0),
+            release: tokio::sync::Semaphore::new(0),
+            mutations: mutations.clone(),
+        });
+        let factory_steer = steer_recorder.clone();
+        let session = LiveSessionAdapter::with_interaction(
+            recorder.clone(), Vec::new,
+            move |identity, recorder| {
+                let round = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mode = if matches!(case, "abort-turn" | "dispose-turn" | "steer-abort" | "steer-insert") || (case == "reuse" && round == 0) {
+                    "live-session-cancel"
+                } else if case == "error" { "live-double-failure" } else { "live-payload" };
+                let mut deployment = peer("success", None);
+                if let Deployment::Stdio { args, .. } = &mut deployment {
+                    *args = vec![format!("{}/tests/fixtures/live-session/peer.py", env!("CARGO_MANIFEST_DIR")), mode.into()];
+                }
+                let factory = TurnHostFactory::new(factory_registry.clone(), deployment,
+                    Limits {close_timeout: Duration::from_millis(20), ..Default::default()},
+                    Some("fixture".into()), |_, _| ports(None));
+                let steer_recorder = factory_steer.clone();
+                let trace = hook_trace.clone();
+                Box::pin(async move {
+                    let mut host = factory.create(&identity, recorder).await?;
+                    host.input.steer_recorder = Some(Arc::new(steer_recorder));
+                    host.input.permission.context.cwd = trace.parent().expect("#743 production cwd").to_string_lossy().as_ref().into();
+                    host.input.hooks = [("SessionStart", 2), ("Setup", 0), ("SessionEnd", 1)]
+                        .into_iter().map(|(name, code)| {
+                            let code = if name == "SessionStart" && case == "start-failure" {1} else {code};
+                            let held = (name == "SessionStart" && matches!(case, "abort-start" | "dispose-start")) || (name == "SessionEnd" && case == "abort-end");
+                            let gate = if held { format!("touch {name}.entered; while test ! -f release; do sleep 0.01; done; touch {name}.completed; ") } else { String::new() };
+                            (name.into(), vec![crate::hooks::protocol::HookMatcher {
+                                hooks: vec![crate::hooks::protocol::HookCommand::Command {
+                                    command: format!("printf '{name}\\n' >> '{}'; {gate}exit {code}", trace.display()).into(),
+                                    shell: None, asynchronous: None, async_rewake: None, common: Default::default(),
+                                }], ..Default::default()
+                            }])
+                        }).collect();
+                    Ok(host)
+                })
+            },
+        ).with_close_timeout(Duration::from_millis(20));
+        for round in 0..if case == "reuse" { 2 } else { 1 } {
+            let input =
+                parse_json(r#"{"type":"text","text":"hello"}"#).expect("#743 production input");
+            let mut options = wire();
+            if round == 1
+                && let JsValue::Object(fields) = &mut options
+            {
+                fields.insert("turnId".into(), "turn-second".into());
+            }
+            let mut stream = session
+                .submit(input.clone(), options.clone())
+                .expect("#743 production submit");
+            let busy = session
+                .submit(input, options)
+                .err()
+                .expect("#743 production direct busy");
+            assert_eq!(
+                busy.message, "Agent session already has an active turn.",
+                "#743 production distinct session busy"
+            );
+            let mut kinds = vec![];
+            let mut terminal = None;
+            let mut ended = false;
+            let gate_name = if matches!(case, "abort-start" | "dispose-start") {
+                Some("SessionStart")
+            } else if case == "abort-end" {
+                Some("SessionEnd")
+            } else {
+                None
+            };
+            let mut acted = false;
+            let mut mailbox = None;
+            let session_id = wire()
+                .get("sessionId")
+                .and_then(JsValue::as_string)
+                .expect("#743 steer session id")
+                .clone();
+            let turn_id = wire()
+                .get("turnId")
+                .and_then(JsValue::as_string)
+                .expect("#743 steer turn id")
+                .clone();
+            loop {
+                let mut next = stream.next();
+                let should_gate = !acted
+                    && gate_name.is_some()
+                    && ((kinds.len() == 1 && gate_name == Some("SessionStart"))
+                        || terminal.is_some());
+                if should_gate {
+                    let name = gate_name.expect("#743 production gate name");
+                    let entered = scratch.0.join(format!("{name}.entered"));
+                    tokio::select! {
+                        _ = async { while !entered.exists() { tokio::time::sleep(Duration::from_millis(5)).await; } } => {},
+                        result = &mut next => panic!("#743 production command must enter: {case}: {result:?}"),
+                        _ = tokio::time::sleep(Duration::from_secs(5)) => panic!("#743 production command entry deadline: {case}"),
+                    }
+                    if case == "dispose-start" {
+                        bounded(session.dispose())
+                            .await
+                            .expect("#743 production dispose start returns while stream held");
+                    } else {
+                        session
+                            .abort(&"user-stop".into())
+                            .expect("#743 production hook abort");
+                    }
+                    acted = true;
+                }
+                let Some(event) = timeout(Duration::from_secs(10), next)
+                    .await
+                    .expect("#743 production bounded stream")
+                    .expect("#743 production next")
+                else {
+                    break;
+                };
+                let kind = event
+                    .get("type")
+                    .and_then(JsValue::as_string)
+                    .expect("#743 production type")
+                    .to_utf8()
+                    .expect("#743 production type utf8");
+                if case.starts_with("steer-")
+                    && matches!(kind.as_str(), "model_event" | "model_request_started")
+                {
+                    use crate::runtime::project::{
+                        ProjectResources, Resource, interaction_steer::InteractionSteer,
+                    };
+                    let context = runtime
+                        .resources()
+                        .get::<ProjectResources>()
+                        .expect("#743 steer project")
+                        .context();
+                    let resource = context
+                        .resource(Resource::InteractionSteer)
+                        .expect("#743 steer resource");
+                    let actual = resource
+                        .as_any()
+                        .downcast_ref::<InteractionSteer>()
+                        .expect("#743 steer type")
+                        .mailbox_for_test(&session_id)
+                        .expect("#743 steer current mailbox");
+                    let mut enqueue = actual.enqueue(
+                        turn_id.clone(),
+                        crate::runtime::steer::SteerMessage {
+                            item_id: "queued".into(),
+                            message: JsValue::Null,
+                            allowed_read_files: None,
+                        },
+                    );
+                    if case == "steer-insert" {
+                        tokio::select! {
+                            permit = steer_recorder.entered.acquire() => permit.expect("#743 steer insert entered").forget(),
+                            result = &mut enqueue => panic!("#743 steer insert must hold {result:?}"),
+                        }
+                        session
+                            .abort(&"user-stop".into())
+                            .expect("#743 steer insert abort");
+                        let mut next = stream.next();
+                        let early = timeout(Duration::from_millis(100), &mut next).await;
+                        let early_result = std::fs::read_to_string(recorder.writer().path())
+                            .expect("#743 steer transcript exists")
+                            .lines()
+                            .any(|line| {
+                                parse_json(line)
+                                    .expect("#743 steer transcript JSON")
+                                    .get("type")
+                                    == Some(&"turn_result".into())
+                            });
+                        steer_recorder.release.add_permits(1);
+                        crate::negative_assert!(
+                            !early_result,
+                            "#743 turn_result waits durable steer close"
+                        );
+                        crate::negative_assert!(
+                            early.is_err(),
+                            "#743 terminal waits durable steer close"
+                        );
+                        drop(next);
+                        let result = bounded(enqueue).await.expect("#743 steer enqueue settles");
+                        assert!(
+                            !result.accepted,
+                            "#743 steer in-flight insert rejected after close"
+                        );
+                    } else {
+                        assert!(
+                            bounded(enqueue).await.expect("#743 steer enqueue").accepted,
+                            "#743 steer pending accepted"
+                        );
+                    }
+                    mailbox = Some(actual);
+                }
+                if kind == "model_event"
+                    && (matches!(
+                        case,
+                        "abort-turn" | "dispose-turn" | "steer-abort" | "steer-insert"
+                    ) || (case == "reuse" && round == 0))
+                {
+                    if case == "dispose-turn" {
+                        bounded(session.dispose())
+                            .await
+                            .expect("#743 production dispose model returns before drain");
+                    } else {
+                        session
+                            .abort(&"user-stop".into())
+                            .expect("#743 production turn abort");
+                    }
+                    acted = true;
+                }
+                if kind == "steer_unapplied" {
+                    assert_eq!(
+                        event.get("itemId"),
+                        Some(&"queued".into()),
+                        "#743 steer unapplied item"
+                    );
+                    assert_eq!(
+                        event.get("reason"),
+                        Some(&"turn_ended".into()),
+                        "#743 steer unapplied reason"
+                    );
+                }
+                if kind == "turn_completed" {
+                    if let Some(mailbox) = &mailbox {
+                        let result = bounded(mailbox.enqueue(
+                            turn_id.clone(),
+                            crate::runtime::steer::SteerMessage {
+                                item_id: "late-terminal".into(),
+                                message: JsValue::Null,
+                                allowed_read_files: None,
+                            },
+                        ))
+                        .await
+                        .expect("#743 steer terminal probe");
+                        crate::negative_assert_eq!(
+                            result.reason,
+                            Some(crate::runtime::steer::SteerReason::TurnClosing),
+                            "#743 finish occurs after terminal yield"
+                        );
+                    }
+                    terminal = event.get("result").and_then(|r| r.get("type")).cloned();
+                    if case == "abort-terminal" {
+                        session
+                            .abort(&"user-stop".into())
+                            .expect("#743 production terminal abort");
+                    }
+                }
+                if kind.starts_with("session_") || kind == "setup_completed" {
+                    assert!(
+                        event.get("turnId").is_none(),
+                        "#743 production session event omits turnId"
+                    );
+                }
+                if kind == "session_ended" {
+                    ended = true;
+                    if let Some(mailbox) = &mailbox {
+                        let result = bounded(mailbox.enqueue(
+                            turn_id.clone(),
+                            crate::runtime::steer::SteerMessage {
+                                item_id: "late-end".into(),
+                                message: JsValue::Null,
+                                allowed_read_files: None,
+                            },
+                        ))
+                        .await
+                        .expect("#743 steer End probe");
+                        crate::negative_assert_eq!(
+                            result.reason,
+                            Some(crate::runtime::steer::SteerReason::NoActiveTurn),
+                            "#743 finish before End"
+                        );
+                        let mutations = mutations.lock().expect("#743 steer committed mutations");
+                        assert_eq!(mutations.len(), 2, "#743 steer insert and discard");
+                        assert_eq!(
+                            mutations[0].get("mutation"),
+                            Some(&"insert".into()),
+                            "#743 steer durable insert first"
+                        );
+                        assert_eq!(
+                            mutations[1].get("mutation"),
+                            Some(&"discard".into()),
+                            "#743 steer durable discard second"
+                        );
+                        assert_eq!(
+                            mutations[1].get("reason"),
+                            Some(
+                                &if case == "steer-insert" {
+                                    "turn_closing"
+                                } else {
+                                    "turn_ended"
+                                }
+                                .into()
+                            ),
+                            "#743 steer exact discard reason"
+                        );
+                    }
+                    crate::negative_assert_eq!(
+                        std::fs::read_to_string(&trace).ok().as_deref(),
+                        Some(
+                            "SessionStart\nSetup\nSessionEnd\n"
+                                .repeat(round + 1)
+                                .as_str()
+                        ),
+                        "#743 production all lifecycle hooks executed"
+                    );
+                    crate::negative_assert!(
+                        runtime.lease_count() > 0,
+                        "#743 production lease held through End yield"
+                    );
+                    let aborted = matches!(
+                        case,
+                        "abort-turn"
+                            | "abort-start"
+                            | "dispose-start"
+                            | "dispose-turn"
+                            | "steer-abort"
+                            | "steer-insert"
+                    ) || (case == "reuse" && round == 0);
+                    assert_eq!(
+                        event.get("reason"),
+                        Some(
+                            &if aborted {
+                                "other"
+                            } else {
+                                "prompt_input_exit"
+                            }
+                            .into()
+                        ),
+                        "#743 production end reason: {case}, terminal={terminal:?}"
+                    );
+                    let status = if aborted || case == "abort-end" {
+                        "aborted"
+                    } else if case == "error" {
+                        "failed"
+                    } else {
+                        "idle"
+                    };
+                    assert_eq!(
+                        session.snapshot().get("status"),
+                        Some(&status.into()),
+                        "#743 production status: {case}"
+                    );
+                    assert!(
+                        session.snapshot().get("currentTurnId").is_none(),
+                        "#743 production current turn cleared: {case}"
+                    );
+                }
+                kinds.push(kind);
+            }
+            assert_eq!(
+                &kinds[..2],
+                ["session_started", "setup_completed"],
+                "#743 production prefix"
+            );
+            crate::negative_assert!(ended, "#743 production session_ended emitted");
+            let result = if matches!(
+                case,
+                "abort-turn"
+                    | "abort-start"
+                    | "dispose-start"
+                    | "dispose-turn"
+                    | "steer-abort"
+                    | "steer-insert"
+            ) || (case == "reuse" && round == 0)
+            {
+                "aborted"
+            } else if case == "error" {
+                "error"
+            } else {
+                "success"
+            };
+            assert_eq!(
+                terminal,
+                Some(result.into()),
+                "#743 production terminal unaffected by hook errors: {case}"
+            );
+            crate::negative_assert_eq!(
+                runtime.lease_count(),
+                0,
+                "#743 production lease released at None"
+            );
+            if let Some(name) = gate_name {
+                crate::negative_assert!(
+                    acted && !scratch.0.join(format!("{name}.completed")).exists(),
+                    "#743 production running command killed before completion"
+                );
+            }
+            if case.starts_with("steer-") {
+                crate::negative_assert_eq!(
+                    kinds
+                        .iter()
+                        .filter(|kind| kind.as_str() == "steer_unapplied")
+                        .count(),
+                    usize::from(case != "steer-insert"),
+                    "#743 discarded steer emits unapplied once"
+                );
+                if case != "steer-insert" {
+                    let unapplied = kinds
+                        .iter()
+                        .position(|kind| kind == "steer_unapplied")
+                        .expect("#743 steer unapplied present");
+                    let terminal = kinds
+                        .iter()
+                        .position(|kind| kind == "turn_completed")
+                        .expect("#743 steer terminal present");
+                    assert!(unapplied < terminal, "#743 steer unapplied before terminal");
+                }
+            }
+            println!(
+                "#743 production {case} round={round}: events={kinds:?}; terminal={terminal:?}; None; lease={}",
+                runtime.lease_count()
+            );
+            if case.starts_with("dispose-") {
+                crate::test_negative_receipt::expect_ok(
+                    recorder.writer().record_session_event(
+                        &"s".into(),
+                        &"t".into(),
+                        JsObject::new(),
+                    ),
+                    "#743 production disposed writer closed",
+                );
+            }
+        }
+        bounded(registry.dispose())
+            .await
+            .expect("#743 production dispose");
+    }
 }
