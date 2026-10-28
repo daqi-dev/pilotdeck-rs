@@ -324,8 +324,7 @@ def main():
         root,
         [Case(name, path, old, new, test, expected, scope)
          for name, path, old, new, scope, test, expected in selected],
-        out, env, mutate, timeout=900,
-        baseline=env.get('PDRS_NEG_BASELINE', 'HEAD'))
+        out, env, mutate, timeout=900, baseline='HEAD')
 
 
 if __name__ == '__main__':
