@@ -6,7 +6,12 @@ isolated /tmp crate and must make the real replay fail with an assertion naming
 the affected case/test. The baseline copy must pass. No source in the worktree
 is modified.
 
-Usage: ``negative.py <evidence-dir> [mutant-id ...]``.
+The copy crate's dependencies must stay in step with `tests/common/baseline.rs`,
+which includes `regeneration_masks` (serde_json, #280/#986). Every selected
+mutant is compiled before it runs; all selected rows are reported, and one
+non-PASS/non-KILLED row makes the whole run exit non-zero.
+
+Usage: ``CARGO_TARGET_DIR=<absolute> negative.py <evidence-dir> [mutant-id ...]``.
 """
 import json
 import os
@@ -34,6 +39,9 @@ originals = {
 oracle = originals["oracle.json"]
 env = dict(os.environ, CARGO_NET_OFFLINE="true")
 assert env.get("CARGO_HOME") and env.get("PDRS_BASELINE")
+if not os.environ.get("CARGO_TARGET_DIR"):
+    raise SystemExit("CARGO_TARGET_DIR must be supplied by the caller")
+env["CARGO_TARGET_DIR"] = str(Path(os.environ["CARGO_TARGET_DIR"]).resolve())
 
 # Projector hash ledger entry; a single hex digit is flipped below.
 PROJECTOR_HASH = "8236f898bec8b263827b8c66f27ac190cdd497baa0ac27723637e34847832225"
@@ -676,15 +684,16 @@ def run_tests(command):
 
 
 # #813 fix-r3: a subset run still proves the unmutated copy passes. `select`
-# keeps `baseline` even when mutant ids are named, validates every id before the
-# scratch crate is built, and lets the baseline-first loop below abort the whole
-# run as INVALID if that proof fails.
+# keeps `baseline` even when mutant ids are named and validates every id before
+# the scratch crate is built. Every selected row is compiled before it runs, and
+# all rows are summarized (#986): a compile failure is INVALID, never a kill,
+# and one non-PASS/non-KILLED row makes the whole run exit non-zero after the
+# complete table so one host run can expose more than the first defect.
 controls = [("baseline", None, None, None, None)] + mutants
 selected = select(controls, sys.argv[2:])
 summary = []
 with tempfile.TemporaryDirectory(prefix="pdrs-aep-negative-", dir="/tmp") as temp:
     scratch = Path(temp)
-    env["CARGO_TARGET_DIR"] = str(scratch / "target")
     (scratch / "src/runtime/turn").mkdir(parents=True)
     (scratch / "tests/fixtures/agent-event-projector").mkdir(parents=True)
     manifest = (
@@ -695,6 +704,10 @@ with tempfile.TemporaryDirectory(prefix="pdrs-aep-negative-", dir="/tmp") as tem
         'uuid={version="=1.27.0",features=["v4"]}\n'
         'libc="=0.2.190"\n'
         'rustix={version="=1.1.5",features=["fs","process"]}\n'
+        # `tests/common/baseline.rs` includes `mod regeneration_masks` (#280),
+        # which reads the mask table with serde_json. Without this the copied
+        # crate fails to compile before any projector assertion runs (#986).
+        'serde_json={version="=1.0.151",features=["float_roundtrip"]}\n'
     )
     (scratch / "Cargo.toml").write_text(manifest)
     # `projector.rs` also uses `crate::node_io::node_tmpdir` and
@@ -832,10 +845,13 @@ fn directory_flags() -> rustix::fs::OFlags {
 """
     )
 
-    for name, filename, before, after, marker in selected:
+    def stage(name, filename, before, after):
+        """Write the copied crate; a stale anchor is INVALID, never a kill."""
         for file, content in originals.items():
             if file == filename:
-                assert content.count(before) == 1, (name, file, content.count(before))
+                count = content.count(before)
+                if count != 1:
+                    return False, f"stale anchor: {file} has {count} matches, expected 1"
                 content = content.replace(before, after)
             destination = (
                 scratch / "tests/fixtures/agent-event-projector/oracle.json"
@@ -843,79 +859,168 @@ fn directory_flags() -> rustix::fs::OFlags {
                 else scratch / "src/runtime/turn" / file
             )
             destination.write_text(content)
-        try:
-            gate = subprocess.run(
-                [
-                    "bash",
-                    "-c",
-                    'until bash "$1"; do sleep 30; done',
-                    "cargo-slots",
-                    str(fixture.parents[4] / "scripts/cargo-slots.sh"),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=1800,
-            )
-        except subprocess.TimeoutExpired:
-            raise SystemExit("cargo-slots gate timed out after 1800s")
-        used_test = None if name == "baseline" else named_test(marker)
-        command = [
+        return True, ""
+
+    def slot_gate():
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'until bash "$1"; do sleep 30; done',
+                "cargo-slots",
+                str(fixture.parents[4] / "scripts/cargo-slots.sh"),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=1800,
+        )
+        return result.stdout + result.stderr
+
+    def cargo_test(extra):
+        return [
             "cargo",
             "test",
             "--offline",
             "--manifest-path",
             str(scratch / "Cargo.toml"),
             "--lib",
-            "projector::tests::" if used_test is None else used_test,
-            "--",
-            "--nocapture",
+            *extra,
         ]
-        if used_test is not None:
-            command.insert(-1, "--exact")
+
+    def run_gated(command, log_name):
+        try:
+            gate_log = slot_gate()
+        except subprocess.TimeoutExpired:
+            text = "TIMEOUT: cargo-slots gate after 1800s\n"
+            (output / log_name).write_text(text)
+            return -9, text
         returncode, raw = run_tests(command)
-        if name == "baseline":
-            passed = returncode == 0 and "test result: ok." in raw and "0 failed" in raw
-        elif isinstance(marker, tuple):
-            # Restoring the old recursion must kill the test process on the
-            # native stack. A native abort cannot print libtest's `FAILED`
-            # line, so that branch requires this named test's overflow report;
-            # if the platform survives, the normal assertion branch applies.
-            overflow = "has overflowed its stack" in raw and used_test in raw
-            passed = (
-                returncode != 0
-                and "could not compile" not in raw
-                and (overflow or named_test_killed(raw, used_test, "should throw"))
-            )
-        else:
-            # #813: the named test must be the one that failed, and the marker
-            # must be inside its own panic block (not stdout or a sibling test).
-            passed = (
-                returncode == 101
-                and "could not compile" not in raw
-                and named_test_killed(raw, used_test, marker)
-            )
-        (output / f"negative-{name}.log").write_text(
-            gate.stdout
-            + gate.stderr
+        (output / log_name).write_text(
+            gate_log
             + "COMMAND "
             + " ".join(command)
             + "\n"
             + raw
             + f"\nexit={returncode}\n"
         )
+        return returncode, raw
+
+    baseline_error = None
+    for name, filename, before, after, marker in selected:
+        status, reason, returncode = "INVALID", "", None
+        try:
+            if name != "baseline" and baseline_error is not None:
+                reason = f"baseline {baseline_error}; mutant not run"
+                (output / f"negative-{name}.log").write_text(reason + "\n")
+            else:
+                staged, reason = stage(name, filename, before, after)
+                if not staged:
+                    (output / f"negative-{name}.log").write_text(reason + "\n")
+                if staged:
+                    build = cargo_test(["--no-run"])
+                    build_code, build_raw = run_gated(
+                        build, f"negative-{name}-build.log"
+                    )
+                    if build_code != 0 or "could not compile" in build_raw:
+                        role = "baseline" if name == "baseline" else "mutant"
+                        reason = f"{role} did not compile (exit={build_code})"
+                        if name == "baseline":
+                            baseline_error = f"INVALID (exit={build_code})"
+                    else:
+                        used_test = None if name == "baseline" else named_test(marker)
+                        args = [
+                            "projector::tests::" if used_test is None else used_test,
+                            "--",
+                            "--nocapture",
+                        ]
+                        if used_test is not None:
+                            args.insert(-1, "--exact")
+                        command = cargo_test(args)
+                        returncode, raw = run_gated(command, f"negative-{name}.log")
+                        if name == "baseline":
+                            if (
+                                returncode == 0
+                                and "test result: ok." in raw
+                                and "0 failed" in raw
+                            ):
+                                status, reason = "PASS", "unmutated copy passed"
+                            else:
+                                baseline_error = f"INVALID (exit={returncode})"
+                                reason = f"baseline failed (exit={returncode})"
+                        elif (
+                            returncode == 0
+                            and "test result: ok." in raw
+                            and "0 failed" in raw
+                        ):
+                            status, reason = "SURVIVED", "bound test still passed"
+                        elif isinstance(marker, tuple):
+                            # Restoring the old recursion must kill the test
+                            # process on the native stack. A native abort cannot
+                            # print libtest's `FAILED` line, so that branch
+                            # requires this named test's overflow report; if the
+                            # platform survives, the normal assertion applies.
+                            overflow = (
+                                "has overflowed its stack" in raw
+                                and used_test in raw
+                            )
+                            killed = (
+                                returncode != 0
+                                and "could not compile" not in raw
+                                and (
+                                    overflow
+                                    or named_test_killed(
+                                        raw, used_test, "should throw"
+                                    )
+                                )
+                            )
+                            status = "KILLED" if killed else "INVALID"
+                            reason = (
+                                "named stack overflow or assertion"
+                                if killed
+                                else "missing named overflow/assertion"
+                            )
+                        else:
+                            # #813: the named test must be the one that failed,
+                            # and the marker must be inside its own panic block
+                            # (not stdout or a sibling test).
+                            killed = (
+                                returncode == 101
+                                and "could not compile" not in raw
+                                and named_test_killed(raw, used_test, marker)
+                            )
+                            status = "KILLED" if killed else "INVALID"
+                            reason = (
+                                "named assertion failed inside the bound test"
+                                if killed
+                                else f"missing named failure for {used_test}"
+                            )
+        except Exception as error:
+            status, reason = "INVALID", f"{type(error).__name__}: {error}"
         summary.append(
             {
                 "name": name,
-                "mutation": None if filename is None else {"file": filename, "before": before, "after": after},
+                "mutation": None
+                if filename is None
+                else {"file": filename, "before": before, "after": after},
                 "expected_case": marker[0] if isinstance(marker, tuple) else marker,
                 "exit": returncode,
-                "passed": passed,
+                "status": status,
+                "passed": status in ("PASS", "KILLED"),
+                "reason": reason,
             }
         )
         (output / "negative-summary.json").write_text(
             json.dumps(summary, ensure_ascii=False, indent=2) + "\n"
         )
-        print(name, "PASS" if passed else "INVALID", flush=True)
-        if not passed:
-            raise SystemExit(1)
+        print(name, status, flush=True)
+    counts = {
+        state: sum(row["status"] == state for row in summary)
+        for state in ("PASS", "KILLED", "SURVIVED", "INVALID")
+    }
+    print(
+        "summary: " + ", ".join(f"{state}={count}" for state, count in counts.items()),
+        flush=True,
+    )
+    if any(not row["passed"] for row in summary):
+        raise SystemExit(1)
 print("all controls rejected; temporary crate removed")
