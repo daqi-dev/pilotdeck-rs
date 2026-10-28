@@ -300,7 +300,7 @@ cases = [
                 Err(SkillError::host_failure("JS_HOST_REQUIRED", ""))
             }''', None,
      'skills::tests::throws_description_project_key_requires_the_host',
-     '#970 skills list description-phase Throws must set the host flag'),
+     '#970 a throwing description-phase projectKey must require the host: {"projectKey":{"constructor":5}}'),
     ('metadata-full-title-untrimmed', file_catalog,
      '''    if js_trim_units(summary.units()).is_empty() {
         return Ok(None);
@@ -309,7 +309,7 @@ cases = [
         return Ok(None);
     }''', None,
      prefix + 'manager_catalog_blank_title_paths_match_real_ts',
-     '#970 full-path whitespace title must stay hidden like real TS'),
+     '#970 a blank title outside both windows must hide the session like TS'),
     ('shared-metadata-full-title-untrimmed', metadata_path,
      '''        .and_then(summary_string)
         .is_some_and(|text| !js_trim_units(text.units()).is_empty())
@@ -318,7 +318,7 @@ cases = [
         .is_some_and(|text| !text.is_empty())
 }''', None,
      'metadata::tests::blank_title_full_scan_keeps_the_ts_trim_rule',
-     '#970 shared metadata whitespace title must not count as a summary'),
+     '#970 a blank title outside both windows must not count as a summary'),
 ]
 
 def main():

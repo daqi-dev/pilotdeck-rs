@@ -1514,6 +1514,7 @@ fn manager_deep_project_key_returns_range_error_without_aborting() {
     key.insert("constructor".into(), JsValue::Object(constructor));
     let mut params = JsObject::new();
     params.insert("projectKey".into(), JsValue::Object(key));
+    let params = JsValue::Object(params);
     let root = PathBuf::from("/project");
     let gateway = ManagerGateway::from_parts(
         Some(Arc::new(ReplayCatalog::new(js("{}"))) as Arc<dyn SessionCatalogPort>),
@@ -1522,24 +1523,25 @@ fn manager_deep_project_key_returns_range_error_without_aborting() {
         root.clone(),
         root,
     );
-    // #970: dropping the 30,000-level nesting recurses one frame per level, so
-    // the whole probe (construction, call, and the eventual Drop) runs on a
-    // dedicated large-stack thread instead of the harness's default stack.
-    let probe = std::thread::Builder::new()
+    // #970: the conversion itself must stay on this default harness stack —
+    // a regressed recursive ToString has to overflow here (the child aborts
+    // and the parent observes the signal), not hide behind the big drop stack.
+    let failure = gateway.sessions(&params).map_err(|error| {
+        (
+            error.name().to_owned(),
+            String::from_utf16_lossy(error.message().units()),
+        )
+    });
+    // #970: dropping the 30,000-level nesting recurses one frame per level,
+    // so only the eventual Drop moves to a dedicated large-stack thread.
+    std::thread::Builder::new()
         .stack_size(256 * 1024 * 1024)
-        .spawn(move || {
-            gateway.sessions(&JsValue::Object(params)).map_err(|error| {
-                (
-                    error.name().to_owned(),
-                    String::from_utf16_lossy(error.message().units()),
-                )
-            })
-        })
-        .expect("#934 spawn the deep projectKey probe thread");
-    let (name, message) = probe
+        .spawn(move || drop(params))
+        .expect("#934 spawn the deep projectKey drop thread")
         .join()
-        .expect("#934 deep projectKey probe thread must not panic")
-        .expect_err("#934 deep projectKey must fail with RangeError, not abort");
+        .expect("#934 deep projectKey drop thread must not panic");
+    let (name, message) =
+        failure.expect_err("#934 deep projectKey must fail with RangeError, not abort");
     println!("DEEP={name}:{message}");
 }
 
