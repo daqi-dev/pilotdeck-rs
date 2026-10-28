@@ -738,7 +738,7 @@ class ImportIsolation(unittest.TestCase):
                 self.assertTrue(reached, '#166 CLI dispatch must verify HEAD imports before main')
 
 
-    def session_dispatch_process(self, body):
+    def session_dispatch_process(self, body, name='session_domain.py'):
         """Run the actual __main__ block in a child; inject only its dependencies.
 
         Candidate bytes cannot pass their own HEAD check until committed. This
@@ -747,7 +747,7 @@ class ImportIsolation(unittest.TestCase):
         replaced by a test stub.
         """
         import ast
-        path = common.SCRIPT / 'session_domain.py'
+        path = common.SCRIPT / name
         source = path.read_bytes().decode()
         tree = ast.parse(source)
         blocks = [node for node in tree.body if isinstance(node, ast.If)
@@ -782,6 +782,59 @@ class ImportIsolation(unittest.TestCase):
                 self.assertIn('"status": "BLOCKED"', result.stdout, message)
                 self.assertNotIn('main reached', result.stdout, message + ': main must not run')
                 self.assertEqual(result.stderr, '', message + ': no traceback')
+
+    def test_tools_cli_preflight_errors_are_blocked(self):
+        message = '#166 every CLI preflight failure must produce BLOCKED JSON/2'
+        for name in ('check_frozen.py', 'compare.py', 'build_proxy.py', 'run_round.py',
+                     'check_ruler.py', 'controls/run_all.py', 'controls/session_domain.py'):
+            for error in ("ValueError('controlled HEAD drift')", "OSError('controlled missing git')",
+                          "subprocess.CalledProcessError(1, ['git'])",
+                          "subprocess.TimeoutExpired(['git'], 30)", "KeyboardInterrupt('controlled cancel')"):
+                with self.subTest(entry=name, error=error):
+                    body = (f"def _verify_cli_imports(): raise {error}\n"
+                            "def main(): raise AssertionError('main reached after preflight refusal')\n")
+                    result = self.session_dispatch_process(body, name)
+                    self.assertEqual(result.returncode, 2, message + ': ' + result.stderr)
+                    try:
+                        report = json.loads(result.stdout)
+                    except ValueError as escaped:
+                        self.fail(message + ': invalid JSON: ' + str(escaped))
+                    self.assertEqual(report.get('status'), 'BLOCKED', message + ': status')
+                    self.assertTrue(report.get('error'), message + ': diagnostic')
+                    self.assertNotIn('main reached', result.stdout, message + ': main must not run')
+                    self.assertEqual(result.stderr, '', message + ': no traceback')
+
+    def test_tools_cli_dispatch_preserves_exit_codes(self):
+        message = '#166 every CLI wrapper must preserve main exit code'
+        for name in ('check_frozen.py', 'compare.py', 'build_proxy.py', 'run_round.py',
+                     'check_ruler.py', 'controls/run_all.py', 'controls/session_domain.py'):
+            for status, code in (('PASS', 0), ('FAIL', 1), ('BLOCKED', 2), ('NOT_RUN', 3)):
+                with self.subTest(entry=name, status=status):
+                    body = ("def _verify_cli_imports(): pass\n"
+                            "def main():\n"
+                            f"    print(json.dumps({{'status': {status!r}}}))\n    return {code}\n")
+                    result = self.session_dispatch_process(body, name)
+                    self.assertEqual(result.returncode, code, message + ': ' + result.stderr)
+                    self.assertEqual(result.stdout.strip(), json.dumps({'status': status}), message + ': JSON')
+                    self.assertEqual(result.stderr, '', message + ': no traceback')
+
+    def test_build_proxy_prerequisites_are_blocked_but_build_failure_is_fail(self):
+        from contextlib import redirect_stdout
+        import io
+        message = '#166 build prerequisites must be BLOCKED/2 while compiler failure stays FAIL/1'
+        entry = _load('build_proxy_status_entry', common.SCRIPT / 'build_proxy.py')
+        for problems, error, expected in ((['unfrozen config'], None, 2),
+                                          ([], OSError('controlled missing cargo'), 2),
+                                          ([], None, 1)):
+            with self.subTest(problems=problems, error=error), \
+                    patch.object(entry, 'cargo_config_problems', return_value=problems), \
+                    patch.object(subprocess, 'call', side_effect=error, return_value=1) as build, \
+                    patch.object(sys, 'argv', ['build_proxy']), redirect_stdout(io.StringIO()) as output:
+                code = entry.main()
+                self.assertEqual(code, expected, message)
+                self.assertEqual(build.call_count, 0 if problems else 1, message + ': build dispatch')
+                if expected == 2:
+                    self.assertIn('"status": "BLOCKED"', output.getvalue(), message + ': JSON')
 
     def test_session_lock_validation_errors_are_blocked(self):
         from contextlib import redirect_stdout
@@ -842,7 +895,7 @@ class ImportIsolation(unittest.TestCase):
             self.assertEqual(entered, [True], message + ': only free request entered')
 
     def test_real_entries_verify_late_controls_before_execution(self):
-        from contextlib import ExitStack, nullcontext, redirect_stdout
+        from contextlib import ExitStack, contextmanager, redirect_stdout
         import io
         message = '#166 late controls must be HEAD-verified before execution'
         sources = {p.relative_to(common.ROOT).as_posix(): p.read_bytes()
@@ -863,19 +916,43 @@ class ImportIsolation(unittest.TestCase):
                     stack.enter_context(patch.dict(sys.modules))
                     sys.modules.pop(alias, None)
                     executed = []
+                    held = False
+                    events = []
+                    lease_states = []
+                    lease_message = '#166 late controls load and verification must hold the lease'
+                    @contextmanager
+                    def recorded_lock(*args, **kwargs):
+                        nonlocal held
+                        held = True
+                        events.append('acquired')
+                        try:
+                            yield
+                        finally:
+                            held = False
+                            events.append('released')
                     def work(*args, **kwargs):
+                        lease_states.append(('work', held))
                         executed.append(True)
+                        events.append('work')
                         raise WorkReached
                     load = entry._load
+                    verify = entry._verify_cli_imports
                     def late_load(module_name, path):
+                        lease_states.append(('load', held))
+                        events.append('load')
                         module = load(module_name, path)
                         module.run_all = module.run_controls = work
                         return module
+                    def late_verify():
+                        lease_states.append(('verify', held))
+                        events.append('verify')
+                        return verify()
                     stack.enter_context(patch.object(entry, '_load', side_effect=late_load))
                     changed = original + b'\n# controlled passive late-import mutant\n' if mutant else original
                     stack.enter_context(patch.object(Path, 'read_bytes', lambda path: changed if path.resolve() == target else read(path)))
                     stack.enter_context(patch.object(subprocess, 'check_output', side_effect=git_read))
-                    stack.enter_context(patch.object(entry, 'parity_lock', return_value=nullcontext()))
+                    stack.enter_context(patch.object(entry, 'parity_lock', recorded_lock))
+                    stack.enter_context(patch.object(entry, '_verify_cli_imports', side_effect=late_verify))
                     stack.enter_context(patch.object(entry, 'baseline_dependency_hashes', return_value={}))
                     output_path = self.folder / (name + str(mutant))
                     args = ['--output', str(output_path)]
@@ -894,6 +971,7 @@ class ImportIsolation(unittest.TestCase):
                     stack.enter_context(patch.object(sys, 'argv', [name, *args]))
                     output = stack.enter_context(redirect_stdout(io.StringIO()))
                     rejected = False
+                    code = None
                     try:
                         code = entry.main()
                         rejected = code != 0 and '#166 loaded apparatus differs from HEAD' in output.getvalue()
@@ -901,7 +979,74 @@ class ImportIsolation(unittest.TestCase):
                         rejected = '#166 loaded apparatus differs from HEAD' in str(error)
                     except WorkReached:
                         pass
-                    self.assertEqual((rejected, executed), (True, []) if mutant else (False, [True]), message)
+                    self.assertTrue(lease_states and all(state for _, state in lease_states),
+                                    lease_message + ': ' + repr(lease_states))
+                    self.assertEqual((rejected, executed), (True, []) if mutant else (False, [True]),
+                                     message + ': ' + output.getvalue())
+                    self.assertEqual(events, ['acquired', 'load', 'verify'] + ([] if mutant else ['work']) + ['released'],
+                                     lease_message + ': ' + output.getvalue())
+                    self.assertFalse(held, lease_message + ': released on either outcome')
+                    if name == 'session_domain.py' and mutant:
+                        blocked_message = '#166 late verification failure must be BLOCKED/2, not parity FAIL'
+                        self.assertEqual(code, 2, blocked_message + ': ' + output.getvalue())
+                        try:
+                            report = json.loads((output_path / 'report.json').read_text())
+                            summary = json.loads(output.getvalue())
+                        except (OSError, ValueError) as error:
+                            self.fail(blocked_message + ': invalid report: ' + str(error))
+                        self.assertEqual((report.get('status'), summary.get('status')), ('BLOCKED', 'BLOCKED'), blocked_message)
+                        self.assertEqual(report.get('failure', {}).get('rule'), 'APPARATUS_IMPORTS', blocked_message)
+
+    def test_session_late_validation_errors_are_distinct_from_evidence_failures(self):
+        from contextlib import ExitStack, contextmanager, redirect_stdout
+        import io
+        message = '#166 late validation errors are BLOCKED/2 and ordinary evidence errors remain FAIL/1'
+        entry = _load('late_error_entry', common.SCRIPT / 'session_domain.py')
+        for stage in ('load', 'verify', 'work'):
+            for error_type in (ValueError, OSError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt):
+                # The ordinary evidence boundary has never caught generic RuntimeError.
+                if stage == 'work' and error_type not in (ValueError, OSError):
+                    continue
+                with self.subTest(stage=stage, error=error_type.__name__), ExitStack() as stack:
+                    held = False
+                    def refuse(*args, **kwargs):
+                        self.assertTrue(held, message + ': error injection holds lease')
+                        raise error_type('controlled ' + stage + ' failure')
+                    @contextmanager
+                    def recorded_lock(*args, **kwargs):
+                        nonlocal held
+                        held = True
+                        try:
+                            yield
+                        finally:
+                            held = False
+                    controls = SimpleNamespace(run_all=refuse)
+                    stack.enter_context(patch.object(entry, 'parity_lock', recorded_lock))
+                    stack.enter_context(patch.object(entry, '_load', side_effect=refuse if stage == 'load' else None,
+                                                    return_value=controls))
+                    stack.enter_context(patch.object(entry, '_verify_cli_imports',
+                                                    side_effect=refuse if stage == 'verify' else None))
+                    for attr, value in [('E1_SOURCES', ()), ('hashes', lambda: {}),
+                                        ('baseline_dependency_hashes', lambda *a: {}),
+                                        ('frozen_check', lambda: {'exitCode': 0}),
+                                        ('run_fixture', lambda *a: {'exitCode': 0, 'launcherAndFixtureReaped': True}),
+                                        ('validate_calibration', lambda *a: {})]:
+                        stack.enter_context(patch.object(entry, attr, value))
+                    path = self.folder / (stage + error_type.__name__)
+                    stack.enter_context(patch.object(sys, 'argv', ['session_domain', '--suite', 'calibrate', '--output', str(path)]))
+                    output = stack.enter_context(redirect_stdout(io.StringIO()))
+                    try:
+                        code = entry.main()
+                        report = json.loads((path / 'report.json').read_text())
+                        summary = json.loads(output.getvalue())
+                    except (Exception, KeyboardInterrupt) as error:
+                        self.fail(message + ': escaped ' + repr(error))
+                    expected = ('FAIL', 1) if stage == 'work' else ('BLOCKED', 2)
+                    self.assertEqual((report.get('status'), code), expected, message)
+                    self.assertEqual(summary.get('status'), expected[0], message + ': JSON')
+                    self.assertEqual(report.get('failure', {}).get('rule'),
+                                     'EVIDENCE' if stage == 'work' else 'APPARATUS_IMPORTS', message + ': rule')
+                    self.assertFalse(held, message + ': released')
 
     def test_main_code_is_verified_after_entry_disk_restore(self):
         from types import ModuleType
