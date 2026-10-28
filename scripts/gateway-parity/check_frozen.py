@@ -268,5 +268,9 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
-    _verify_cli_imports()
+    try:
+        _verify_cli_imports()
+    except (Exception, KeyboardInterrupt) as error:
+        print(json.dumps({'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))
+        raise SystemExit(2)
     raise SystemExit(main())

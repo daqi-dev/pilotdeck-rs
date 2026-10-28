@@ -193,6 +193,10 @@ def main():
 if __name__ == '__main__':
     try:
         _verify_cli_imports()
+    except (Exception, KeyboardInterrupt) as error:
+        print(json.dumps({'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))
+        raise SystemExit(2)
+    try:
         code = main()
     except Exception as error:
         print(json.dumps({'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))

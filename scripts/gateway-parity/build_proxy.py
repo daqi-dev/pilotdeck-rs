@@ -96,7 +96,7 @@ def main():
     if problems:
         print(json.dumps({'status': 'BLOCKED', 'cargoConfigProblems': problems},
                          ensure_ascii=False))
-        return 1
+        return 2
     if args.check:
         print(json.dumps({'status': 'PASS', 'cargoConfigProblems': []}, ensure_ascii=False))
         return 0
@@ -109,9 +109,13 @@ def main():
         return subprocess.call(command, cwd=ROOT)
     except OSError as error:
         print(json.dumps({'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))
-        return 1
+        return 2
 
 
 if __name__ == '__main__':
-    _verify_cli_imports()
+    try:
+        _verify_cli_imports()
+    except (Exception, KeyboardInterrupt) as error:
+        print(json.dumps({'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))
+        raise SystemExit(2)
     raise SystemExit(main())

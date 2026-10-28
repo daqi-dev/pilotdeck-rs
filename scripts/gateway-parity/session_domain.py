@@ -127,6 +127,13 @@ class EvidenceError(ValueError):
         self.rule = rule
 
 
+class ApparatusVerificationError(EvidenceError):
+    """The instrument is untrusted; this is not a parity result."""
+
+    def __init__(self, detail):
+        super().__init__('APPARATUS_IMPORTS', detail)
+
+
 def require(condition, rule, detail):
     if not condition:
         raise EvidenceError(rule, detail)
@@ -908,8 +915,11 @@ def main():
                     require(audit['launcherAndFixtureReaped'], 'CLEANUP', 'launcher/fixture cleanup incomplete')
                     report.update(validate_calibration(output / 'six-cells', output, args.baseline.resolve()))
                     # Imported lazily to keep the independent negative-control CLI usable.
-                    controls = _load('session_controls', SCRIPT / 'controls/session_domain.py')
-                    _verify_cli_imports()  # Late imports must be checked before controls execute.
+                    try:
+                        controls = _load('session_controls', SCRIPT / 'controls/session_domain.py')
+                        _verify_cli_imports()  # Late imports must be checked before controls execute.
+                    except (Exception, KeyboardInterrupt) as error:
+                        raise ApparatusVerificationError(str(error)) from error
                     report['e1Controls'] = controls.run_all(output / 'controls', output / 'six-cells')
                     controls_status = report['e1Controls']['status']
                     require(controls_status in ('PASS', 'PASS_WITH_SKIPS'),
@@ -953,7 +963,7 @@ def main():
                     report['failure'] = {'rule': 'FROZEN', 'detail': 'measurements completed; see frozen check output; no acceptance PASS'}
             except (EvidenceError, OSError, ValueError, KeyError, TypeError, StopIteration,
                     subprocess.SubprocessError, TimeoutError, KeyboardInterrupt) as error:
-                report['status'] = 'BLOCKED' if isinstance(error, (PermissionError, TimeoutError, KeyboardInterrupt)) else 'FAIL'
+                report['status'] = 'BLOCKED' if isinstance(error, (ApparatusVerificationError, PermissionError, TimeoutError, KeyboardInterrupt)) else 'FAIL'
                 report['failure'] = {'rule': getattr(error, 'rule', 'EVIDENCE'), 'detail': str(error)}
                 code = common.aggregate_status(report['status'])[1]
             save(output / 'report.json', report)
