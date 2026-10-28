@@ -3,6 +3,7 @@ import base64
 import hashlib
 from contextlib import contextmanager, nullcontext, redirect_stdout
 import io
+from itertools import combinations
 import json
 import os
 from pathlib import Path
@@ -37,11 +38,16 @@ from run_round import (baseline_identity, capture, check_budget, main, mock_gate
 # (real, non-ASCII or nested under a system path) cannot. The Rust binary must
 # keep the staged <stage>/bin layout sandbox_profile() demands, so its parent
 # directory is literally named "bin".
-PIN_RUNTIME = Path('/PDRS/RUNTIME')
-PIN_BASELINE = Path('/PDRS/BASELINE')
-PIN_NODE = Path('/PDRS/node')
-PIN_RUST_BIN = Path('/PDRS/stage/bin/pilotdeck')
-PIN_SCRIPT = Path('/PDRS/SCRIPT')
+# fix-r5: every placeholder input sits under its own root, disjoint from the
+# other inputs and from the policy's fixed read paths (see the disjointness
+# assertion in test_mock_profile_appends_only_the_loopback_allow). Sharing one
+# root (the previous single-/PDRS shape) let a mutant grant an input's parent
+# metadata the profile already carried, and the digests could not see it.
+PIN_RUNTIME = Path('/PDRS-RUNTIME/runtime')
+PIN_BASELINE = Path('/PDRS-BASELINE/checkout')
+PIN_NODE = Path('/PDRS-NODE/bin/node')
+PIN_RUST_BIN = Path('/PDRS-RUSTBIN/rust-stage/bin/pilotdeck')
+PIN_SCRIPT = Path('/PDRS-SCRIPT/scripts/cli-parity')
 
 
 def pinned_profile(side, mock_gateway=False):
@@ -50,6 +56,17 @@ def pinned_profile(side, mock_gateway=False):
         return sandbox_profile(PIN_RUNTIME, PIN_BASELINE,
                                PIN_NODE if side == 'ts' else PIN_RUST_BIN,
                                side, mock_gateway=mock_gateway)
+
+
+def pinned_trees():
+    """(name, directory objects) each pinned input can contribute to the
+    metadata ancestors: itself (ts reads baseline/dist and friends, so the
+    baseline itself is an ancestor) and its parents, `/` excluded. The sets
+    must stay pairwise disjoint for the digest pin; the assertion lives in
+    test_mock_profile_appends_only_the_loopback_allow."""
+    pinned = (('runtime', PIN_RUNTIME), ('baseline', PIN_BASELINE), ('node', PIN_NODE),
+              ('rust-bin', PIN_RUST_BIN), ('script', PIN_SCRIPT))
+    return [(name, ({path} | set(path.parents)) - {Path('/')}) for name, path in pinned]
 
 
 def bind_policy(run):
@@ -938,10 +955,36 @@ class ContractTests(unittest.TestCase):
         # sessions-list-mock (mock); the ts base doubles as the probe profile
         # both sides record (bind_policy always probes with the node binary on
         # the ts side).
-        pinned = {('ts', False): '0a28f56cc7fd72fc4291edfd91b507fdbe0aa00b26ca5bcdb780df4d4d3cfc84',
-                  ('rust', False): '3ec5ae0ed96ca35dced10edad40648943bf03973a3a1617798793bb88909eb47',
-                  ('ts', True): '162612cc65cda15e942dea86b4a2a73bd44b6cf0464bd4ef8178ef57c6e5fa20',
-                  ('rust', True): '4010392eebb509e2930defcd9ffa12bd16bef5a00f8b1f6e8e57332ae5bb687e'}
+        # fix-r5 P1: the pinned inputs sit under pairwise-disjoint roots, and
+        # away from the policy's fixed read paths, so every ancestor of every
+        # input is authorized by that input alone: a mutant granting an
+        # input's parent the profile does not already carry (the review's
+        # ancestors.add(SCRIPT.parent) widening the rust metadata allow to the
+        # checkout's scripts dir) cannot keep the pinned bytes, and a digest
+        # flips. A shared root — the pre-fix single-/PDRS shape, where exactly
+        # that mutant survived — is refused here, not rediscovered by a
+        # negative control.
+        trees = pinned_trees()
+        for (name_a, tree_a), (name_b, tree_b) in combinations(trees, 2):
+            with self.subTest(pair=f'{name_a}/{name_b}'):
+                shared = tree_a & tree_b
+                self.assertFalse(shared,
+                                 f'#933-2: pinned inputs {name_a} and {name_b} must sit '
+                                 f'under disjoint roots; they share {sorted(shared)}')
+        fixed = {parent for path in (Path('/System'), Path('/usr/lib'), Path('/Library/Apple'),
+                                     Path('/dev/null'), Path('/dev/urandom'), Path('/dev/random'),
+                                     Path('/opt/homebrew/Cellar'), Path('/opt/homebrew/opt'))
+                 for parent in path.parents} - {Path('/')}
+        for name, tree in trees:
+            with self.subTest(overlap=name):
+                shared = tree & fixed
+                self.assertFalse(shared,
+                                 f'#933-2: pinned input {name} must not sit under a fixed '
+                                 f'policy path; it shares {sorted(shared)}')
+        pinned = {('ts', False): 'c5eb273a8170174ede7343d69efd4701b13cc34136eb918a639586c23979ea16',
+                  ('rust', False): '635cf7ad7e36311de52ccf4501114ada51ae0ab0d5154c5e7b72aa4e1b93648c',
+                  ('ts', True): 'fac4f3aaeb764a89f76d8bcc58086dd16a44d89ec873d62e1d5ff60e5af704c3',
+                  ('rust', True): '7ae751c55e079928960f1fde95152eed39a1f7694c6d7d62586936853e949c29'}
         for (side, mock), digest in pinned.items():
             with self.subTest(side=side, mock=mock):
                 self.assertEqual(

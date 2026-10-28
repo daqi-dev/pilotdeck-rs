@@ -335,7 +335,7 @@ FAIL: test_mock_profile_appends_only_the_loopback_allow (__main__.ContractTests.
 Traceback (most recent call last):
   File "scripts/cli-parity/test_cli_parity.py", line 947, in test_mock_profile_appends_only_the_loopback_allow
     self.assertEqual(
-AssertionError: '162612cc65cda15e942dea86b4a2a73bd44b6cf0464bd4ef8178ef57c6e5fa20' != '0f1e2d3c4b5a69788695a4b3c2d1e0f9a8b7c6d5e4f30291a8b7c6d5e4f30291a' : #933-2: the mock TS profile changed
+AssertionError: 'fac4f3aaeb764a89f76d8bcc58086dd16a44d89ec873d62e1d5ff60e5af704c3' != '0f1e2d3c4b5a69788695a4b3c2d1e0f9a8b7c6d5e4f30291a8b7c6d5e4f30291a' : #933-2: the mock TS profile changed
 
 ----------------------------------------------------------------------
 Ran 1 test in 0.123s

@@ -177,6 +177,22 @@ mutations = [
      isolation_probe,
      'const port = Number(process.argv[3]);',
      'const port = 28999;'),
+    # fix-r5 P1 (the Codex repro): the metadata allow gains the checkout
+    # scripts dir as a fresh ancestor on the rust side, where SCRIPT is never
+    # read. With the pre-fix shared-/PDRS placeholder roots this mutant kept
+    # the pinned bytes; the disjoint roots must make a rust digest flip.
+    ('script-parent-metadata-allowed',
+     policy,
+     "    ancestors = {parent for path in read_dirs + read_files for parent in path.parents}",
+     "    ancestors = {parent for path in read_dirs + read_files for parent in path.parents}\n"
+     "    ancestors.add(SCRIPT.parent)"),
+    # The same widening for another input: the baseline is only read on ts, so
+    # its parent is new rust-side metadata no placeholder input contributes.
+    ('baseline-parent-metadata-allowed',
+     policy,
+     "    ancestors = {parent for path in read_dirs + read_files for parent in path.parents}",
+     "    ancestors = {parent for path in read_dirs + read_files for parent in path.parents}\n"
+     "    ancestors.add(baseline.parent)"),
 ]
 tests = {
     'allow-rule-drops-port': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
@@ -198,6 +214,8 @@ tests = {
     'default-deny-relaxed': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
     'deny-order-swapped': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
     'mock-port-changed': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
+    'script-parent-metadata-allowed': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
+    'baseline-parent-metadata-allowed': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
 }
 # The exclusive assertion message each mutant must turn red. A string is one
 # marker; a tuple lists the alternative markers of one assertion family (the
@@ -235,6 +253,11 @@ failure_fragments = {
         '#933-2: the isolation probe must be passed the port derived from MOCK_PORT',
     'probe-port-hardcoded':
         '#933-2: the probe must not hardcode the port; it reads argv[3]',
+    # fix-r5: both metadata-widening mutants keep the ts bytes (on ts, the
+    # probe file and the baseline subtree make those parents legitimate
+    # ancestors); only the pinned rust digests can catch them.
+    'script-parent-metadata-allowed': '#933-2: the base RUST profile changed',
+    'baseline-parent-metadata-allowed': '#933-2: the base RUST profile changed',
 }
 
 SEPARATOR = '-' * 70
