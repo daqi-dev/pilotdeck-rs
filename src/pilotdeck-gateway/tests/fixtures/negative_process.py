@@ -94,6 +94,36 @@ def run_owned(command, *, env=None, timeout=900, cwd=None, kill_timeout=KILL_TIM
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
+def new_output_directory(path):
+    """Create this run's evidence directory; refuse to reuse earlier evidence.
+
+    A negative control writes fixed log names. If a reused directory were
+    accepted, the next attempt would overwrite the previous run's original
+    bytes and destroy the evidence its failure report points at. Accept only a
+    missing directory or an empty one; anything else exits nonzero before any
+    cargo or source mutation starts.
+    """
+    path = Path(path).resolve()
+    try:
+        path.mkdir(parents=True)
+    except FileExistsError:
+        if not path.is_dir():
+            raise SystemExit(
+                f"#953 output path exists and is not a directory: {path}; "
+                "pass a new evidence directory")
+        if any(path.iterdir()):
+            raise SystemExit(
+                f"#953 refusing to reuse a non-empty output directory: {path}; "
+                "remove it or pass a new evidence directory")
+    return path
+
+
+def exclusive_write(path, text):
+    """Create a new evidence file; never overwrite an earlier run's bytes."""
+    with Path(path).open("x", encoding="utf-8") as stream:
+        stream.write(text)
+
+
 class SourceBaselineError(RuntimeError):
     """A path to be mutated does not match the committed baseline.
 

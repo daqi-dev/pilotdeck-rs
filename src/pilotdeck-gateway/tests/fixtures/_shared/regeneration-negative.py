@@ -14,7 +14,8 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (exclusive_write, mutating_sources, run_owned,
+                              wait_for_slot)
 from negative_suite import Case, classify, passed
 
 root = Path(__file__).resolve().parents[5]
@@ -287,9 +288,9 @@ def main():
 
     def run(label, args):
         slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
-        (out / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
+        exclusive_write(out / (label + '.slots.log'), slot.stdout + slot.stderr)
         result = run_owned(command + args, cwd=root, env=env, timeout=900)
-        (out / (label + '.log')).write_text(result.stdout + result.stderr)
+        exclusive_write(out / (label + '.log'), result.stdout + result.stderr)
         return result
 
     def record(name, test, assertion, status, reason):
@@ -337,7 +338,7 @@ def main():
             record(name, test, assertion, 'INVALID', 'source guard: ' + str(error))
     states = ('COMPILED', 'INVALID') if compile_only else ('KILLED', 'SURVIVED', 'INVALID')
     counts = {state: sum(row['status'] == state for row in results) for state in states}
-    (out / 'summary.json').write_text(json.dumps(dict(controls=results, counts=counts, skipped=skipped), indent=2) + '\n')
+    exclusive_write(out / 'summary.json', json.dumps(dict(controls=results, counts=counts, skipped=skipped), indent=2) + '\n')
     print(json.dumps(counts), flush=True)
     expected = 'COMPILED' if compile_only else 'KILLED'
     return int(not results or any(row['status'] != expected for row in results))
