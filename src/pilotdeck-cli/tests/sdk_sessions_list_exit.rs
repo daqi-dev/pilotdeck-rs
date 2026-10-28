@@ -6,15 +6,18 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs,
-    io::Write,
-    os::unix::{fs::PermissionsExt, process::ExitStatusExt},
+    io::{self, Write},
+    os::unix::{
+        fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+        process::ExitStatusExt,
+    },
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::Duration,
 };
 use tokio::{
     net::TcpListener,
-    time::{sleep, timeout},
+    time::{Instant, sleep, timeout},
 };
 use tokio_tungstenite::{
     accept_async,
@@ -352,25 +355,387 @@ async fn replay(listener: TcpListener, case: &Value, pid: u32) {
     );
 }
 
-// Port ownership coordinates with the D0 host runner. Never reclaim someone
-// else's lock; a busy host is an explicit test failure, never a skipped PASS.
-struct ParityLock;
+// Same directory lease as scripts/cli-parity/common.py: a stable flock guard,
+// mkdir and pid/timestamp/token ownership. A Tokio mutex alone cannot serialize
+// nextest's separate processes. Never reclaim a predecessor's directory.
+struct ParityLock {
+    path: PathBuf,
+    identity: (u64, u64),
+    owner: Vec<u8>,
+}
 impl ParityLock {
-    fn acquire() -> Self {
-        fs::create_dir("/tmp/pdrs-parity.lock").expect("#983 D0 parity lock must be free");
-        Self
+    async fn acquire() -> Self {
+        Self::acquire_at(Path::new("/tmp/pdrs-parity.lock"), Duration::from_secs(180))
+            .await
+            .expect("#983 D0 parity lease acquisition failed (bounded wait; no reclaim)")
+    }
+
+    async fn acquire_at(path: &Path, bound: Duration) -> io::Result<Self> {
+        let deadline = Instant::now() + bound;
+        let mut waiting = false;
+        loop {
+            // A delayed scheduler wake must not acquire a newly freed lease
+            // after the caller's deadline has already expired.
+            if waiting && Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!("#983 parity lease deadline: {}", path.display()),
+                ));
+            }
+            match Self::try_acquire(path) {
+                Ok(lease) => return Ok(lease),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::AlreadyExists | io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    if !waiting {
+                        eprintln!("#983 waiting for parity lease: {}", path.display());
+                        waiting = true;
+                    }
+                    tokio::time::sleep_until(
+                        deadline.min(Instant::now() + Duration::from_millis(100)),
+                    )
+                    .await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn guard(path: &Path) -> io::Result<fs::File> {
+        let mut name = path.as_os_str().to_owned();
+        name.push(".guard");
+        let guard = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(Path::new(&name))?;
+        let metadata = guard.metadata()?;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(io::Error::other("#983 unsafe parity guard"));
+        }
+        // std uses flock on Unix; the interoperability probe checks this
+        // against the D0 Python owner's fcntl.flock, not just another Rust call.
+        guard.try_lock().map_err(io::Error::from)?;
+        Ok(guard)
+    }
+
+    fn try_acquire(path: &Path) -> io::Result<Self> {
+        let _guard = Self::guard(path)?;
+        fs::DirBuilder::new().mode(0o700).create(path)?;
+        let metadata = fs::symlink_metadata(path)?;
+        let owner = serde_json::to_vec(&json!({
+            "pid": std::process::id(),
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(io::Error::other)?.as_secs_f64(),
+            "token": uuid::Uuid::new_v4().simple().to_string(),
+        }))?;
+        // Publish complete bytes atomically: readers may inspect owner.json as
+        // soon as it exists. On an IO error retain the directory, fail closed.
+        let temporary = path.join("owner.tmp");
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)?
+            .write_all(&owner)?;
+        fs::rename(temporary, path.join("owner.json"))?;
+        Ok(Self {
+            path: path.to_owned(),
+            identity: (metadata.dev(), metadata.ino()),
+            owner,
+        })
+    }
+
+    fn release_guard(path: &Path, mut on_wait: impl FnMut()) -> io::Result<fs::File> {
+        // A waiter may briefly hold the guard when the owner drops. Retry that
+        // race, but bound cleanup even during unwinding; never steal the guard.
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            match Self::guard(path) {
+                Ok(guard) => return Ok(guard),
+                Err(error)
+                    if error.kind() == io::ErrorKind::WouldBlock
+                        && std::time::Instant::now() < deadline =>
+                {
+                    on_wait();
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn release(&self) -> io::Result<()> {
+        let _guard = Self::release_guard(&self.path, || {})?;
+        let metadata = fs::symlink_metadata(&self.path)?;
+        if metadata.is_dir()
+            && (metadata.dev(), metadata.ino()) == self.identity
+            && fs::read(self.path.join("owner.json"))? == self.owner
+        {
+            fs::remove_file(self.path.join("owner.json"))?;
+            fs::remove_dir(&self.path)?;
+        }
+        Ok(())
     }
 }
 impl Drop for ParityLock {
     fn drop(&mut self) {
-        let _ = fs::remove_dir("/tmp/pdrs-parity.lock");
+        if let Err(error) = self.release() {
+            eprintln!("#983 parity lease release failed; retained lease: {error}");
+            assert!(std::thread::panicking(), "#983 parity lease release failed");
+        }
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn parity_lock_publishes_and_releases_owned_lease() {
+    let runtime = Runtime::new();
+    let path = runtime.0.join("lease");
+    let lease = ParityLock::acquire_at(&path, Duration::from_secs(1))
+        .await
+        .expect("#983 acquire uncontended test lease");
+    let owner = fs::read(path.join("owner.json"));
+    let owner: Option<Value> = owner
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+    verify(
+        owner.as_ref().is_some_and(|owner| {
+            owner["pid"] == std::process::id()
+                && owner["timestamp"].as_f64().is_some_and(|time| time > 0.0)
+                && owner["token"]
+                    .as_str()
+                    .is_some_and(|token| token.len() == 32 && uuid::Uuid::parse_str(token).is_ok())
+        }),
+        "#983 parity lease publishes complete ownership",
+    );
+    drop(lease);
+    verify(!path.exists(), "#983 parity lease releases owned directory");
+    verify(
+        runtime.0.join("lease.guard").is_file(),
+        "#983 parity guard inode remains stable",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn parity_lock_waits_for_predecessor() {
+    let runtime = Runtime::new();
+    let path = runtime.0.join("lease");
+    let predecessor = ParityLock::acquire_at(&path, Duration::from_secs(1))
+        .await
+        .expect("#983 acquire predecessor lease");
+    let mut waiter = Box::pin(ParityLock::acquire_at(&path, Duration::from_secs(1)));
+    let pending =
+        std::future::poll_fn(|cx| std::task::Poll::Ready(waiter.as_mut().poll(cx).is_pending()))
+            .await;
+    verify(pending, "#983 occupied lease waits before acquisition");
+    drop(predecessor);
+    let acquired = waiter.await;
+    verify(
+        acquired.is_ok(),
+        "#983 released predecessor unblocks waiter",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn parity_lock_times_out_without_reclaiming() {
+    let runtime = Runtime::new();
+    let path = runtime.0.join("lease");
+    fs::create_dir(&path).expect("#983 predecessor directory fixture");
+    fs::write(path.join("owner.json"), b"predecessor").expect("#983 predecessor owner fixture");
+    let result = ParityLock::acquire_at(&path, Duration::from_millis(20)).await;
+    verify(
+        matches!(result, Err(ref error) if error.kind() == io::ErrorKind::TimedOut),
+        "#983 occupied lease fails explicitly at deadline",
+    );
+    verify(
+        fs::read(path.join("owner.json")).is_ok_and(|owner| owner == b"predecessor"),
+        "#983 timed out waiter preserves predecessor ownership",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn parity_lock_does_not_acquire_after_deadline() {
+    let runtime = Runtime::new();
+    let path = runtime.0.join("lease");
+    let predecessor = ParityLock::acquire_at(&path, Duration::from_secs(1))
+        .await
+        .expect("#983 late wake predecessor");
+    let mut waiter = Box::pin(ParityLock::acquire_at(&path, Duration::from_millis(20)));
+    let pending =
+        std::future::poll_fn(|cx| std::task::Poll::Ready(waiter.as_mut().poll(cx).is_pending()))
+            .await;
+    verify(pending, "#983 late wake waiter reached occupied lease");
+    // Deliberately stall this current-thread executor beyond the deadline,
+    // then release before polling the waiter: no scheduler ordering assumption.
+    std::thread::sleep(Duration::from_millis(30));
+    drop(predecessor);
+    let result = waiter.await;
+    verify(
+        matches!(result, Err(ref error) if error.kind() == io::ErrorKind::TimedOut),
+        "#983 expired waiter cannot acquire released lease",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn parity_lock_cancelled_wait_preserves_owner() {
+    let runtime = Runtime::new();
+    let path = runtime.0.join("lease");
+    let predecessor = ParityLock::acquire_at(&path, Duration::from_secs(1))
+        .await
+        .expect("#983 cancelled wait predecessor");
+    let mut waiter = Box::pin(ParityLock::acquire_at(&path, Duration::from_secs(1)));
+    let pending =
+        std::future::poll_fn(|cx| std::task::Poll::Ready(waiter.as_mut().poll(cx).is_pending()))
+            .await;
+    verify(pending, "#983 cancelled waiter reached occupied lease");
+    drop(waiter);
+    verify(
+        fs::read(path.join("owner.json")).is_ok_and(|owner| owner == predecessor.owner),
+        "#983 cancelled waiter preserves predecessor ownership",
+    );
+    drop(predecessor);
+    verify(
+        ParityLock::acquire_at(&path, Duration::from_secs(1))
+            .await
+            .is_ok(),
+        "#983 cancelled waiter leaves no reservation",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn parity_lock_guard_wait_is_bounded() {
+    let runtime = Runtime::new();
+    let path = runtime.0.join("lease");
+    let guard = ParityLock::guard(&path).expect("#983 own guard fixture");
+    let result = ParityLock::acquire_at(&path, Duration::from_millis(20)).await;
+    verify(
+        matches!(result, Err(ref error) if error.kind() == io::ErrorKind::TimedOut),
+        "#983 occupied guard shares acquisition deadline",
+    );
+    verify(
+        !path.exists(),
+        "#983 occupied guard forbids lease publication",
+    );
+    drop(guard);
+}
+
+#[test]
+fn parity_lock_release_waits_for_guard() {
+    let runtime = Runtime::new();
+    let path = runtime.0.join("lease");
+    let mut guard = Some(ParityLock::guard(&path).expect("#983 own release guard fixture"));
+    let mut waited = false;
+    let result = ParityLock::release_guard(&path, || {
+        waited = true;
+        // Deterministic handoff only after the release path observes WouldBlock.
+        drop(guard.take());
+    });
+    verify(
+        waited && result.is_ok(),
+        "#983 release retries a briefly occupied guard",
+    );
+}
+
+#[test]
+fn parity_lock_release_guard_deadline_is_bounded() {
+    let runtime = Runtime::new();
+    let path = runtime.0.join("lease");
+    let _guard = ParityLock::guard(&path).expect("#983 own never released guard fixture");
+    let started = std::time::Instant::now();
+    let result = ParityLock::release_guard(&path, || {});
+    verify(
+        result.is_err() && started.elapsed() >= Duration::from_millis(1900),
+        "#983 release guard exhausts bounded retry before failure",
+    );
+}
+
+#[test]
+fn parity_lock_rejects_guard_hardlinks() {
+    let runtime = Runtime::new();
+    let path = runtime.0.join("lease");
+    let original = runtime.0.join("original");
+    fs::write(&original, b"").expect("#983 hardlink source fixture");
+    fs::hard_link(original, runtime.0.join("lease.guard")).expect("#983 guard hardlink fixture");
+    verify(
+        matches!(ParityLock::guard(&path), Err(error) if error.to_string() == "#983 unsafe parity guard"),
+        "#983 parity guard rejects multiple hardlinks",
+    );
+}
+
+#[test]
+fn parity_lock_rejects_guard_symlinks() {
+    let runtime = Runtime::new();
+    let path = runtime.0.join("lease");
+    let original = runtime.0.join("original");
+    fs::write(&original, b"").expect("#983 symlink source fixture");
+    std::os::unix::fs::symlink(original, runtime.0.join("lease.guard"))
+        .expect("#983 guard symlink fixture");
+    verify(
+        ParityLock::guard(&path).is_err(),
+        "#983 parity guard rejects symlinks",
+    );
+}
+
+#[test]
+fn parity_lock_rejects_guard_fifo() {
+    let runtime = Runtime::new();
+    let path = runtime.0.join("lease");
+    let status = Command::new("mkfifo")
+        .arg(runtime.0.join("lease.guard"))
+        .status()
+        .expect("#983 create FIFO guard fixture");
+    assert!(status.success(), "#983 FIFO guard fixture created");
+    verify(
+        matches!(ParityLock::guard(&path), Err(error) if error.to_string() == "#983 unsafe parity guard"),
+        "#983 parity guard rejects nonregular files",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn parity_lock_preserves_replaced_owner() {
+    let runtime = Runtime::new();
+    let path = runtime.0.join("lease");
+    let lease = ParityLock::acquire_at(&path, Duration::from_secs(1))
+        .await
+        .expect("#983 owner replacement lease");
+    let temporary = path.join("replacement.tmp");
+    fs::write(&temporary, b"successor").expect("#983 replacement owner fixture");
+    fs::rename(temporary, path.join("owner.json")).expect("#983 publish replacement owner");
+    drop(lease);
+    verify(
+        fs::read(path.join("owner.json")).is_ok_and(|owner| owner == b"successor"),
+        "#983 changed ownership prevents lease release",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn parity_lock_preserves_replaced_directory() {
+    let runtime = Runtime::new();
+    let path = runtime.0.join("lease");
+    let lease = ParityLock::acquire_at(&path, Duration::from_secs(1))
+        .await
+        .expect("#983 directory replacement lease");
+    fs::rename(&path, runtime.0.join("old-lease")).expect("#983 retain old directory inode");
+    fs::create_dir(&path).expect("#983 successor directory fixture");
+    fs::write(path.join("owner.json"), &lease.owner).expect("#983 successor same token fixture");
+    drop(lease);
+    verify(
+        path.is_dir(),
+        "#983 changed directory identity prevents lease release",
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn sessions_list_matches_ts_matrix() {
     let _port = PORT.lock().await;
-    let _lock = ParityLock::acquire();
+    let _lock = ParityLock::acquire().await;
     let oracle: Value = serde_json::from_str(ORACLE).expect("#983 TS oracle JSON");
     let cases = oracle["cases"].as_array().expect("#983 oracle cells");
     assert_eq!(
@@ -504,7 +869,7 @@ fn sessions_list_oracle_regenerates_identically() {
 #[tokio::test(flavor = "current_thread")]
 async fn sessions_list_transport_boundaries() {
     let _port = PORT.lock().await;
-    let _lock = ParityLock::acquire();
+    let _lock = ParityLock::acquire().await;
     let cells = [
         ("upgrade-never", "", "Gateway connection timed out.\n", 1),
         ("hello-close", "", "protocol_mismatch\n", 1),
