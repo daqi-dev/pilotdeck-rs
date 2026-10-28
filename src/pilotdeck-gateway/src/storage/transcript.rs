@@ -413,27 +413,32 @@ impl Drop for Temporary {
         let _ = fs::remove_file(&self.0);
     }
 }
-pub(super) struct LedgerLock(File);
+pub(crate) fn canonical_transcript_path(supplied: &Path) -> Result<PathBuf> {
+    let parent = supplied
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    private_dirs(parent)?;
+    let path = match fs::symlink_metadata(supplied) {
+        // A dangling leaf symlink must fail canonicalization, not acquire
+        // an alias lock while later appends follow its different target.
+        Ok(_) => supplied.canonicalize()?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => parent.canonicalize()?.join(
+            supplied
+                .file_name()
+                .ok_or_else(|| invalid("Transcript path requires a filename."))?,
+        ),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(path)
+}
+
+pub(crate) struct LedgerLock(File);
 impl LedgerLock {
     /// Shared single-writer fence. Resolve aliases before opening the stable
     /// sibling lock inode, and retain it for the actual writer's lifetime.
-    pub(super) fn acquire(supplied: &Path) -> Result<(PathBuf, Self)> {
-        let parent = supplied
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        private_dirs(parent)?;
-        let path = match fs::symlink_metadata(supplied) {
-            // A dangling leaf symlink must fail canonicalization, not acquire
-            // an alias lock while later appends follow its different target.
-            Ok(_) => supplied.canonicalize()?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => parent.canonicalize()?.join(
-                supplied
-                    .file_name()
-                    .ok_or_else(|| invalid("Transcript path requires a filename."))?,
-            ),
-            Err(error) => return Err(error.into()),
-        };
+    pub(crate) fn acquire(supplied: &Path) -> Result<(PathBuf, Self)> {
+        let path = canonical_transcript_path(supplied)?;
         let mut lock_path = path.as_os_str().to_os_string();
         lock_path.push(".lock");
         let lock = private_open()

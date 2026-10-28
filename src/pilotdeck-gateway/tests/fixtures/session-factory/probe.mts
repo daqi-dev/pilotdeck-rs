@@ -31,8 +31,10 @@ const {ToolRegistry}=await import(`${BASE}/src/tool/registry/ToolRegistry.ts`);
 const {SubagentProviderRegistry}=await import(`${BASE}/src/agent/sub/SubagentProviderRegistry.ts`);
 const {createAgentProjectSessionStorage}=await import(`${BASE}/src/session/storage/ProjectSessionStorage.ts`);
 const names=['resume-missing','resume-valid','resume-malformed','resume-eisdir','resume-load-reject','resume-checkpoint-reject','resume-rollback-reject','resume-release-reject','admission-read-reject','recreate-read-reject','recreate-rollback-reject','recreate-idle','recreate-draining','recreate-running','recreate-disposed','same-key-concurrent','same-key-cached','create-factory-dispose','create-owner-shutdown','create-dispose-before-mcp'];
+const fenceNames=['idle','quick','never','disposing'].flatMap(state=>['recreate','twice','close','shutdown'].flatMap(event=>['beforeload','afterload','publish'].map(timing=>`fence-${state}-${event}-${timing}`)));
+const coreNames=[...names];names.push(...fenceNames);
 const requested=process.argv.slice(2);if(requested.some(n=>!names.includes(n)))throw Error('UNKNOWN_CASE');
-const selected=requested.length?names.filter(n=>requested.includes(n)):names;
+const selected=requested.length?names.filter(n=>requested.includes(n)):coreNames;
 const output=process.env.MATRIX_OUTPUT??'raw';assert.match(output,/^[a-z0-9-]+$/);
 const negative=process.env.MATRIX_NEGATIVE==='1';
 const runDir=fs.mkdtempSync(path.join(ROOT,'run-'));const outDir=path.join(ROOT,output);fs.mkdirSync(outDir,{recursive:true});
@@ -42,6 +44,7 @@ function deferred(){let resolve!:(x?:any)=>void,reject!:(e:any)=>void;const prom
 async function bounded(p:Promise<any>,label:string){let timer:any;try{return await Promise.race([p,new Promise((_,r)=>{timer=setTimeout(()=>r(Error('PROBE_TIMEOUT:'+label)),15000)})]);}finally{clearTimeout(timer)}}
 const index:any[]=[];
 for(const name of selected){
+ const fence=name.startsWith('fence-')?name.split('-').slice(1):null;
  const caseDir=path.join(runDir,name),workspace=path.join(caseDir,'workspace'),pilotHome=path.join(caseDir,'home');fs.mkdirSync(workspace,{recursive:true});
  const report:any={name,baseline,node:process.version,negative,caseDir:path.relative(ROOT,caseDir),timeline:[],snapshots:[],modelRequests:[],events:[],commits:[],results:[],console:[]};
  let ordinal=0,clock=0,entryId=0,composition=0,storageCount=0,mcpCount=0;
@@ -53,6 +56,8 @@ for(const name of selected){
  const releases:any={};const handles:any[]=[],storages:any[]=[],mcps:any[]=[];const gates:any[]=[];
  const gate=(label:string)=>{const g={label,entered:deferred(),release:deferred()};gates.push(g);return g;};
  const createGates=[gate('create-storage-1'),gate('create-storage-2')],drainGate=gate('old-descendants'),loopGate=gate('old-loop'),refreshGate=gate('refresh');
+ const fenceGate=gate('fence-boundary');
+ const atBoundary=async(timing:string)=>{if(fence?.[2]===timing){log('fence.boundary',{state:fence[0],event:fence[1],timing});fenceGate.entered.resolve();await fenceGate.release.promise;}};
  const evicted=deferred(),abortSeen=deferred();let holdDrain=false,holdLoop=false,router:any,old:any,oldDisposal:any;
  const hId=(h:any)=>h?handles.indexOf(h)+1:null;
  const read=(f:()=>any)=>{try{return f()}catch(e){return {readError:err(e)}}};
@@ -78,13 +83,13 @@ for(const name of selected){
   const load=s.persistence.load.bind(s.persistence),checkpoint=s.projectionCheckpointStore.load.bind(s.projectionCheckpointStore),dispose=s.dispose.bind(s),restore=s.restore.bind(s);
   const record:any={id,s,disposeCalls:0,disposeDone:0,restores:[],entriesAtCheckpoint:null};storages.push(record);
   s.events.subscribe((entry:any)=>report.commits.push({ordinal:log('commit',{storage:id,entry}),storage:id,entry:clone(entry)}));
-  s.persistence.load=async()=>{log('persistence.load.begin',{id});if(!negative&&['resume-load-reject','resume-rollback-reject','resume-release-reject','admission-read-reject'].includes(name)){throw Error('LOAD_BOOM')};if(!negative&&id===2&&name.startsWith('recreate-')&&name.includes('reject'))throw Error('RECREATE_LOAD_BOOM');if(id===2&&name==='recreate-running'&&process.env.MATRIX_WRITER_TIMING==='before-read'){log('probe.before-read.release-old');loopGate.release.resolve();await bounded(oldDisposal.promise,'old drained before replacement read');log('probe.before-read.old-drained');}const r=await load();log('persistence.load.end',{id,result:r});return r;};
+  s.persistence.load=async()=>{log('persistence.load.begin',{id});if(fence&&id===2)await atBoundary('beforeload');if(!negative&&['resume-load-reject','resume-rollback-reject','resume-release-reject','admission-read-reject'].includes(name)){throw Error('LOAD_BOOM')};if(!negative&&id===2&&name.startsWith('recreate-')&&name.includes('reject'))throw Error('RECREATE_LOAD_BOOM');if(id===2&&name==='recreate-running'&&process.env.MATRIX_WRITER_TIMING==='before-read'){log('probe.before-read.release-old');loopGate.release.resolve();await bounded(oldDisposal.promise,'old drained before replacement read');log('probe.before-read.old-drained');}const r=await load();log('persistence.load.end',{id,result:r});if(fence&&id===2)await atBoundary('afterload');return r;};
   s.projectionCheckpointStore.load=async(key:any)=>{record.entriesAtCheckpoint=s.events.snapshotState();log('checkpoint.load',{id,writer:record.entriesAtCheckpoint});if(name==='resume-checkpoint-reject'&&!negative)throw Error('CHECKPOINT_BOOM');return checkpoint(key);};
   s.restore=async()=>{log('storage.restore.begin',{id});try{const r=await restore();record.restores.push(clone(r));log('storage.restore.end',{id,result:r});return r;}catch(e){log('storage.restore.error',{id,error:err(e)});throw e}};
   s.dispose=async()=>{record.disposeCalls++;log('storage.dispose.begin',{id});await dispose();record.disposeDone++;log('storage.dispose.end',{id});if(!negative&&(name==='resume-rollback-reject'||name==='recreate-rollback-reject'&&id===2))throw Error('STORAGE_DISPOSE_BOOM')};
   fs.mkdirSync(path.dirname(s.transcriptPath),{recursive:true});
   if(id===1){
-   if(name.startsWith('recreate-')){await s.transcript.recordAcceptedInput('session-745','seed-turn',[{role:'user',content:[{type:'text',text:' 已存历史 中文 '}]}]);await s.transcript.recordSessionMetadata('session-745','seed-turn',{title:'原题',titleSource:'user',firstPrompt:' 保留空白 '});await s.flush();}
+   if(name.startsWith('recreate-')||fence){await s.transcript.recordAcceptedInput('session-745','seed-turn',[{role:'user',content:[{type:'text',text:' 已存历史 中文 '}]}]);await s.transcript.recordSessionMetadata('session-745','seed-turn',{title:'原题',titleSource:'user',firstPrompt:' 保留空白 '});await s.flush();}
    if(name==='resume-eisdir'&&!negative)fs.mkdirSync(s.transcriptPath);
    if(name==='resume-malformed')fs.writeFileSync(s.transcriptPath,negative?'':'{broken}\n');
    if(['resume-valid','resume-checkpoint-reject'].includes(name)||name==='resume-missing'&&negative){const seed={type:'session_metadata',sessionId:'session-745',turnId:'seed',sequence:1,createdAt:'2026-10-27T00:00:00.000Z',entryId:'seed-entry',parentEntryId:null,metadata:{firstPrompt:' 已存 中文 ',title:'原题',titleSource:'user'}};fs.writeFileSync(s.transcriptPath,JSON.stringify(seed)+'\n');}
@@ -101,9 +106,45 @@ for(const name of selected){
  const observe=(p:Promise<any>,label:string)=>{const state:any={label,status:'pending'};report.results.push(state);return {state,promise:p.then(value=>{state.status='fulfilled';state.handle=hId(value);log('operation.fulfilled',{label,handle:state.handle});return value},e=>{state.status='rejected';state.error=err(e);log('operation.rejected',{label,error:state.error});return null})};};
  const files=()=>{const out:any[]=[];const walk=(p:string)=>{for(const n of fs.readdirSync(p).sort()){const f=path.join(p,n),st=fs.lstatSync(f);if(st.isDirectory()){out.push({path:path.relative(caseDir,f),kind:'directory'});walk(f)}else {const b=fs.readFileSync(f);out.push({path:path.relative(caseDir,f),kind:'file',utf8:b.toString('utf8'),base64:b.toString('base64'),sha256:crypto.createHash('sha256').update(b).digest('hex')});}}};walk(caseDir);return out};
  const snap=async(label:string)=>{await Promise.all(storages.map(r=>r.s.flush()));const state={label,active:clone(active),handles:handles.map((h,i)=>({id:i+1,state:h.state,inFlight:h.inFlight,session:read(()=>stateView(h.session.snapshot())),controllerSameAsFirst:read(()=>h.session.snapshot().abortController===handles[0].session.snapshot().abortController),reload:read(()=>reloadView(h))})),storages:storages.map(r=>({id:r.id,disposeCalls:r.disposeCalls,disposeDone:r.disposeDone,persistenceActive:r.s.persistenceBinding.active,writer:r.s.events.snapshotState(),entriesAtCheckpoint:r.entriesAtCheckpoint,restores:r.restores})),factoryMcp:{state:(factory as any).sessionMcpRuntimes.state,size:(factory as any).sessionMcpRuntimes.size},registry:router?{size:router.agents.size,handle:hId(router.agents.get(context.sessionKey)),hasSession:router.hasSession(context.sessionKey)}:null,results:clone(report.results),files:files()};report.snapshots.push({ordinal:log('snapshot',{label}),...clone(state)});};
- const mkRouter=()=>new SessionRouter({createSession:(c:any)=>factory.createSession(c),recreateSession:(c:any,p:any)=>factory.recreateSession(c,p),idleSweepIntervalMs:0,idleSessionTimeoutMs:1e12,now,onSessionEvict:(key:any,reason:any)=>{log('router.evict',{key,reason});if(reason==='dirty_recreate')evicted.resolve();}});
+ const mkRouter=()=>new SessionRouter({setupSession:async(_c:any,h:any)=>{if(fence&&hId(h)===2)await atBoundary('publish');},createSession:(c:any)=>factory.createSession(c),recreateSession:(c:any,p:any)=>factory.recreateSession(c,p),idleSweepIntervalMs:0,idleSessionTimeoutMs:1e12,now,onSessionEvict:(key:any,reason:any)=>{log('router.evict',{key,reason});if(reason==='dirty_recreate')evicted.resolve();}});
  try{
-  if(name.startsWith('resume-')||name==='admission-read-reject'){
+  if(fence){
+   const [state,event,timing]=fence;
+   router=mkRouter();old=await bounded(router.getOrCreate(context),'fence old create');
+   let running:any;
+   if(state==='quick'||state==='never'){
+    holdLoop=true;
+    running=observe((async()=>{for await(const e of old.submit({type:'text',text:'fence input'},{turnId:'turn-old'})){log('fence.old.event',{event:e});}})(),'fence-old-turn');
+    await bounded(loopGate.entered.promise,'fence old running');
+   }else if(state==='disposing'){
+    holdDrain=true;oldDisposal=observe(old.dispose('fence-prior-dispose'),'fence-old-dispose');
+    await bounded(drainGate.entered.promise,'fence disposing');
+   }
+   router.markSessionDirty(context.sessionKey);
+   const first=observe(router.getOrCreate(context),'fence-first');
+   await bounded(fenceGate.entered.promise,'fence boundary '+timing);
+   await snap('fence-boundary');
+   let concurrent:any;
+   if(event==='twice'){
+    concurrent=observe(router.getOrCreate(context),'fence-second');
+    // The second TS replacement publishes first, while candidate 1 is held.
+    await bounded(evicted.promise,'fence second published');
+   }else if(event==='close')concurrent=observe(router.close(context.sessionKey),'fence-close');
+   else if(event==='shutdown')concurrent=observe(router.shutdown(),'fence-shutdown');
+   await snap('fence-event');
+   // Never means unreleased throughout the measured prefix, not a probe timeout.
+   // Release only for deterministic owned cleanup; Rust tests exercise its bound.
+   if(state==='quick')loopGate.release.resolve();
+   fenceGate.release.resolve();
+   if(event==='recreate')await bounded(evicted.promise,'fence first published');
+   await snap('fence-before-cleanup');
+   loopGate.release.resolve();drainGate.release.resolve();
+   await bounded(first.promise,'fence first completed');
+   if(concurrent)await bounded(concurrent.promise,'fence concurrent completed');
+   if(running)await bounded(running.promise,'fence old finished');
+   if(oldDisposal)await bounded(oldDisposal.promise,'fence old disposed');
+   await snap('result');
+  }else if(name.startsWith('resume-')||name==='admission-read-reject'){
    const o=observe(factory.createSession(context),'create');await bounded(o.promise,'resume');await snap('result');
   }else if(['same-key-cached','same-key-concurrent'].includes(name)){
    router=mkRouter();const a=observe(router.getOrCreate(context),'first');
