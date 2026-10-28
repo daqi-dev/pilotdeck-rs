@@ -2,7 +2,7 @@
 
 旧入口是固定基线 `ui/` 的完整静态 Vite bundle，新入口仍是 `ui-rs/probe-leptos` 探针。`skeleton` / `streaming-scroll` / `baseline` 两入口代理到一个 mock backend，顺序运行，固定 127.0.0.1:28376（mock）/28377（old）/28378（new）。这三个套件不启动基线 dev server、gateway 或真实 `ui/server`。`real`（D 类）与 `blackbox-deploy`（B 类）使用隔离的真实 runtime 和本地 mock LLM，见文末；B 以旧侧为主，#927 起新侧 native-auth 配对入口开放（见文末），StaffDeck 依赖缺失保持 BLOCKED。
 
-原三个独立套件：`skeleton`（3 例登录/HTTP/WS）、`streaming-scroll`（legacy / timeline 各 4 例，共 8 例聊天黑盒）、`baseline`（直接复用基线 15 spec，循环展开 72 例）。新增用例不冲抵 72 分母。`streaming-scroll` 可以单独作为 F5 前置校准；`skeleton` 保留第一 PR 的完整基线缺口闸门，仍总 exit 1。**本 PR 只做离线构建与自检；旧侧黑盒通过和 #61 真实报告验收仍须协调者运行后确认。**
+原三个独立套件：`skeleton`（3 例登录/HTTP/WS）、`streaming-scroll`（legacy / timeline 各 4 例，共 8 例聊天黑盒）、`baseline`（直接复用基线 15 spec，循环展开 72 例）。新增用例不冲抵 72 分母。`streaming-scroll` 可以单独作为 F5 前置校准；`skeleton` 保留第一 PR 的完整基线缺口闸门，仍总 exit 1。**本 PR 只做离线构建与自检；旧侧黑盒通过仍须协调者运行后确认。**#61 的 72 例真实报告已在本仓 worktree 实跑并入库负控（见下文「#61.1 真实报告验收记录」），其如实红判定不等于行为对拍通过。
 
 ## 第二 PR：流式 / 滚动 / 搜索定位
 
@@ -107,6 +107,10 @@ STREAM-002 保留 `textErrors(textContent,400)`，增加 `textErrors(innerText,2
 
 预期全量报告当前**总 exit 1**，原因可包含未实现 API/页面、serial 级联 skip，以及新探针缺 fixture。#61 验收应检查真实报告的 72 个身份与每个 skip 的判定，不能只看退出码。不得据此宣称 37 个真实部署/LLM 用例已通过。
 
+### #61.1 真实报告验收记录
+
+真实全量报告已在本仓 worktree 实跑（真实基线 `cc7c4e6`、Node v22.22.0、本机 Chrome headless、隔离端口 28376–28378，不起基线 dev server；全程持 `/tmp/pdrs-parity.lock`，端口/进程审计入 RESULT）：`--suite baseline --profiles staffdeck,minimal,replacement --frontends old,new` 产出六份原件。防 skip 规则的判定如实红：六份各 72 身份全部出现且无重复、无缺失、每身份恰一次尝试（0 条 missing/duplicate 错误）；合并后 old 实际执行 49（30 PASS + 19 行为 FAIL）、new 46（全 FAIL，探针缺面如实红）；唯一获准 skip 是 `formal undefined routes`（清单身份+原文理由，三 profile 合并计 1）；`formal SOP lifecycle` / `formal SOP and Skills routes` 在 staffdeck/minimal 两个 profile 以**空 annotation 的 serial 级联 skip** 出现，身份在清单但理由不绑定 → `skip reason not bound` 判 FAIL，不扣减应执行数（replacement profile 命中 profile 闸门的绑定理由获准 skip，合并行仍因前两 profile 红）；D 类 old 20 / new 23 个 `NOT_RUN_PENDING_ORCHESTRATION` 保留原始空 annotation 与回源，仍 FAIL。真实报告的三条负例（删 1 例 / 1 例改 skip / 重复 1 例）由 [fe-baseline-report 负控](../../src/pilotdeck-gateway/tests/fixtures/fe-baseline-report/negative_controls.py) 在报告副本上执行，逐条以身份限定 marker（`report 1: missing/duplicate result`、`skip identity not in fixed allowlist`）KILLED，原件不改；该脚本同时对原件跑 pristine 对账作正控（无 missing/duplicate）。#61.2 node_modules 完整性闸门在同一实跑中通过（145 个直接依赖绑定锁文件，`result.json.baseline.nodeModules`）。
+
 ## 依赖与源码构建
 
 从worktree根运行。`BASELINE_UI`可指向只读基线ui目录；默认向祖先搜索ui/或resources/PilotDeck/ui。runner 在用例发现、self-check、报告对账和服务启动之前，要求该目录为 Git 仓库的实际 `ui/`，HEAD 精确等于清单中的 `baselineCommit`（`cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`）；不匹配、无法读取 Git、tracked 源码相对 HEAD 有改动、e2e 下有未跟踪源码均拒绝。校验结果写入 `result.json.baseline`。不能用父仓库 HEAD 为随意复制的 ui 背书。复用基线**现有**node_modules中的Vite、ws、Playwright、xterm；未装新JS包。node_modules 完整性（#61.2）：`node_modules/.pnpm/lock.yaml`（pnpm 安装时写入的锁文件副本）必须与 `pnpm-lock.yaml` 逐字节一致；`.modules.yaml` 须为 `nodeLinker: isolated`、`virtualStoreDir: .pnpm`、整数 `virtualStoreDirMaxLength`。ui 与根两个 manifest 的**全部**直接依赖（dependencies + devDependencies，真实基线共 145 个，含 runner 经 `requireUI`、`--import tsx` 与被求值冻结源码加载的包）逐一按锁文件对应 importer 绑定：store 依赖须 realpath 到按 pnpm 编码（含 peer 嵌套与超长名截断 + SHA-256 前缀）推得的目录且 package.json 版本吻合，`link:` 须指向锁定的本地目录，`file:` 以 store 目录绑定；未声明的 `@xterm/*` 也拒绝。self-check 断言 scripts/fe-parity 下所有 `requireUI(...)`/`requireUI.resolve(...)` 目标都在受检集合内（playwright-core 在 ui 下不可解析，调用方须容忍其缺失，单列为 UNBOUND）。结果写入 `result.json.baseline.nodeModules`。边界：不校验包内文件内容哈希与传递依赖的链接，安装后篡改包内文件仍检测不到。缺依赖时由协调者准备有 lockfile 的源码副本，用 `pnpm install --frozen-lockfile --ignore-scripts`（产生 isolated `.pnpm` 布局与 `node_modules/.pnpm/lock.yaml`）重建依赖；npm/hoisted 布局会被上面的 node_modules 门拒绝，不能用。不能写只读基线、伪造 lockfile 或下载 Playwright 浏览器。
@@ -210,7 +214,7 @@ WS 映射 self-check 检查全部45条消息（35主通道＋4历史兼容＋6�
 
 ## 留待协调者与后续 PR
 
-- 协调者真实 Chrome 跑旧侧流式双协议 8 例并保存全量 72 例多 profile 报告；未跑前 F5 闸门与 #61 待验收项不勾选。
+- 协调者真实 Chrome 跑旧侧流式双协议 8 例；全量 72 例多 profile 报告已在本仓 worktree 实跑（见「#61.1 真实报告验收记录」），但为如实红，不能据此勾选行为对拍。未跑流式 8 例前 F5 闸门不勾选。
 - A类34例逐条处置与替代分母，改冻结用例按另issue+评审流程。
 - B 类 StaffDeck 4 例仍 BLOCKED，待锁定外部模块源码与既有运行时/种子编排；D 类已有 real 编排。B/D 的完整 37 候选双跑与 72 全量验收仍待后续。
 
