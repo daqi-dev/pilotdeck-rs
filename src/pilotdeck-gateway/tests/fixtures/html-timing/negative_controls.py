@@ -22,7 +22,10 @@ hide slot contention from cargo-slots.sh.
 Every mutation is executed and recorded as KILLED, SURVIVED or INVALID (with a
 reason); the script exits non-zero unless all of them are KILLED. A non-zero
 exit from an unrelated unwrap, a compile error or a timeout is INVALID: the
-mutant must fail at the dedicated message named in its ``expects`` tuple.
+mutant must fail at the dedicated message named in its ``expects`` mapping. A
+mutation may name more than one acceptable dedicated line (``any``) when two
+issue-specific guards can stop it first; every token in ``all`` must still be
+present, so the accepted line stays bound to this test.
 """
 import difflib
 import hashlib
@@ -42,6 +45,12 @@ out.mkdir(parents=True, exist_ok=False)
 if not os.environ.get('CARGO_TARGET_DIR'):
     sys.exit('CARGO_TARGET_DIR must come from the caller; refusing a private build directory')
 
+# Local rehearsals of an uncommitted fix point this at ``git stash create``,
+# the same pre-commit escape hatch used by the other fixtures' controls
+# (live-recording, turn-runner, network-timing, ...). The host runs the
+# default HEAD, i.e. the committed tree.
+baseline = os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
+
 # Each mutation names the test whose timing assertion it must turn red.
 LIB_DEEP_FRAME = 'runtime::tools::builtin::web::html_compat::tests::deep_frame_stack_select_end_tags_stay_within_linear_budget'
 mutations = [
@@ -60,7 +69,7 @@ mutations = [
      '        self.frames.iter().any(|frame| frame.context == context)\n'
      '    }',
      ['--lib', LIB_DEEP_FRAME],
-     ('8 MiB rewrite', 'did not scale from')),
+     dict(all=('8 MiB rewrite', 'did not scale from'))),
     # The pre-4fbb5f78b rewalk of every moved subtree. Linear with the subtree
     # size; the retained absolute cap catches it, and its cache-unfriendly
     # constant can also cross the 8x ratio band on a loaded host. The sink
@@ -91,7 +100,10 @@ mutations = [
      '        self.update_height(parent);\n'
      '    }',
      ['--test', 'html_markdown', 'reparented_wide_subtrees_stay_fast'],
-     ('#873',)),
+     # This linear-but-slow rewalk can stay inside the 22.6x band (local probe
+     # measured 16.0x) and be stopped by the 5 s per-sample cap instead; both
+     # lines carry #873 and are that test's timing guards.
+     dict(all=('#873',), any=('did not scale from', 'per-sample budget'))),
     # The pre-rope join materialized both sides, so joining N siblings moved
     # the whole accumulated text every time. Byte-identical output; only the
     # scaling ratio and the cap turn red.
@@ -106,7 +118,11 @@ mutations = [
      '    }\n'
      '    pub fn indent',
      ['--test', 'html_markdown', 'large_shallow_pages_match_real_ts_bytes_and_stay_fast'],
-     ('did not scale from',)),
+     # At this page size the quadratic join's ratio can sit inside the 3x band
+     # (host: 33.96 s / 12.41 s = 2.74x) and the per-sample cap stops it first,
+     # while a faster host reds the ratio. Both are this test's dedicated #978
+     # timing guards; accept either line, but only with the #978 marker.
+     dict(all=('#978',), any=('did not scale from', 'per-sample budget'))),
     # The same quadratic join on the reparented wide page. The 2 MiB probe
     # (256 KiB/2 MiB, 8x) reds the 22.6x band (linear ~8x) in ~12 s. The
     # 8 MiB full sample is SIGKILLed by host memory pressure (inferred) before
@@ -123,7 +139,10 @@ mutations = [
      '    }\n'
      '    pub fn indent',
      ['--test', 'html_markdown', 'reparented_wide_subtrees_stay_fast'],
-     ('#873',)),
+     # The probe normally reds the #873 ratio band; accept the same test's
+     # per-sample cap too, so a host that trips that guard first still binds
+     # the mutant to a dedicated timing line.
+     dict(all=('#873',), any=('did not scale from', 'per-sample budget'))),
     # A broken "half": quartering the dominant repeat leaves the halved input
     # at ~0.25x the full bytes, so the doubling premise of the scaling ratio
     # no longer holds. The premise assertion must catch this before any
@@ -133,7 +152,7 @@ mutations = [
      '            rule["repeat"] = (target / 2).into();',
      '            rule["repeat"] = (target / 4).into();',
      ['--test', 'html_markdown', 'large_shallow_pages_match_real_ts_bytes_and_stay_fast'],
-     ('halved recipe',)),
+     dict(all=('#978', 'halved recipe'))),
 ]
 selected = sys.argv[2:]
 if selected:
@@ -154,18 +173,25 @@ def run_timing_test(target, extra_env, timeout):
 TIMING_MARKERS = ('did not scale from', 'per-sample budget', 'halved recipe')
 
 
-def outcome(result, test, expects=()):
+def outcome(result, test, expects=None):
     """A KILLED mutant must fail the named test at its dedicated message.
 
     A non-zero exit from an unrelated unwrap, a compile error or a timeout is
     INVALID, never KILLED: the mutant must bind to the assertion under test.
+    ``expects`` is a mapping with ``all`` tokens (required) and optional ``any``
+    alternatives (exactly one dedicated line is enough).
     """
+    expects = expects or {}
+    required = expects.get('all', ())
+    alternatives = expects.get('any', ())
     log = result.stdout + result.stderr
     failed_line = f'{test} ... FAILED'
     failure = next((line.strip() for line in log.splitlines()
                     if any(marker in line for marker in TIMING_MARKERS)), '')
-    killed = (failed_line in log and bool(failure)
-              and all(token in failure for token in expects))
+    matched = (all(token in failure for token in required)
+               and (not alternatives
+                    or any(token in failure for token in alternatives)))
+    killed = failed_line in log and bool(failure) and matched
     return log, killed, failure
 
 
@@ -176,7 +202,8 @@ def record(entry):
 
 
 summary = []
-with mutating_sources(root, sorted({root / filename for _, filename, _, _, _, _ in mutations})) as snapshots:
+with mutating_sources(root, sorted({root / filename for _, filename, _, _, _, _ in mutations}),
+                      baseline=baseline) as snapshots:
     for name, filename, old, new, target, expects in mutations:
         path = root / filename
         original = snapshots[path]
