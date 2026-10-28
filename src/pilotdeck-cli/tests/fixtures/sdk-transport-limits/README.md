@@ -6,7 +6,7 @@
 
 `oracle.json` 只存真实 transport 返回值、尺寸、版本、构造实参数量及 TS transport 的 SHA-256；它不是完整 TS CLI 四面实录。Rust `sessions_list_accepts_ts_large_frames` 启动真实 CLI 重放两个成功格，验证退出/输出与记录的 sessions 投影；旧 77 格继续覆盖完整 CLI 行为。生成器全程最多 30 秒，清理连接和监听；Rust mock 与子进程各最多 15 秒，并沿用已有 D0 端口租约。
 
-`PDRS_TS_ROOT` 可指定拥有相同基线及已安装依赖的只读路径，默认主仓 resources/PilotDeck。不下载运行器。生成目录 recursive=true、文件 flag=wx。重生成守卫：
+必须设置 `PDRS_BASELINE`，指向拥有固定 TS 基线及已安装依赖的只读目录；未设或为空即带 `#983 set PDRS_BASELINE` 消息失败，不使用默认路径。Rust 重生成守卫显式把它传给 Node 子进程。不下载运行器。生成目录 recursive=true、文件 flag=wx。重生成守卫（先设置该变量及项目要求的 Cargo 环境，并检查 slots）：
 
 ```sh
 cargo test --offline -p pilotdeck-cli --test sdk_sessions_list_exit \

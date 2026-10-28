@@ -1,6 +1,6 @@
 # #983 sessions 默认 / list
 
-`oracle.json` 由 `generate.mjs` 从协调者 Node v22.22.0 实录机械提取，不执行 TS、mock 或 sandbox-exec。来源根默认为 `/Users/da/ws/pilotdeck-rs/_tmp/20261028-issue-123-d1/plan/`，可由 `PDRS_D1_PLAN` 指定归档副本；原始批次见该目录 `HOST-RESULTS.md`。收录 `sessions-default--*`、`sessions-list--*` 共 76 格，另有 `sessions-unknown--argv`。
+`oracle.json` 由 `generate.mjs` 从协调者 Node v22.22.0 实录机械提取，不执行 TS、mock 或 sandbox-exec。必须用 `PDRS_D1_PLAN` 指定原始实录或归档副本的根目录；未设或为空即带 `#983 set PDRS_D1_PLAN` 消息失败，不使用默认路径。Rust 重生成守卫显式把它传给 Node 子进程；原始批次见该目录 `HOST-RESULTS.md`。收录 `sessions-default--*`、`sessions-list--*` 共 76 格，另有 `sessions-unknown--argv`。
 
 每格记录输入、原件相对路径、文件 SHA-256、原始 stderr、比较视图、退出/信号、原始顺序的 WS 帧、初始完整文件树。仅按 `specs/cli-parity/normalization.md` §6 去掉 TS stderr 开头一次完整 SQLite 两行；不调整 Rust 输出。请求 UUID 仅在 mock 重放数据中替换为 `<request>`，实际 CLI stdout/stderr 不改。
 
