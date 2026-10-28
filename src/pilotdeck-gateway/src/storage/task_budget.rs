@@ -6,7 +6,9 @@ use crate::{
     js_value,
     metadata::{object, resolve_units},
 };
-use pilotdeck_protocol::{JsString, JsValue, parse_json, stringify_json};
+use pilotdeck_protocol::{
+    JsString, JsValue, js_math::max as js_math_max, parse_json, stringify_json,
+};
 use std::{
     fmt, fs,
     io::{self, Write},
@@ -231,11 +233,9 @@ impl TaskBudgetStore {
                         number(&ledger.last_activity_at_ms)?
                     };
                     let new = number(at)?;
-                    ledger.last_activity_at_ms = JsValue::Number(if old.is_nan() || new.is_nan() {
-                        f64::NAN
-                    } else {
-                        old.max(new)
-                    });
+                    // TS Math.max: NaN wins from either side and a mixed-sign
+                    // zero tie is +0 (ProjectRuntimeRegistry.ts:1499).
+                    ledger.last_activity_at_ms = JsValue::Number(js_math_max(old, new));
                 }
             }
         }
