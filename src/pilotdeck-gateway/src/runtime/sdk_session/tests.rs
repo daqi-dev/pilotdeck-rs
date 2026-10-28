@@ -402,6 +402,24 @@ fn handler_registration_replaces_and_stale_tokens_are_noops() {
 }
 
 #[test]
+fn math_min_signed_zero_ties_match_ts() {
+    const PLUS_ZERO: u64 = 0.0f64.to_bits();
+    const MINUS_ZERO: u64 = (-0.0f64).to_bits();
+    for (index, (left, right)) in [(0.0, -0.0), (-0.0, 0.0)].into_iter().enumerate() {
+        assert_eq!(
+            math_min(left, right).to_bits(),
+            MINUS_ZERO,
+            "#947 sdk_session math_min tie {index} ({left}, {right}) must be -0"
+        );
+    }
+    assert_eq!(
+        math_min(0.0, 0.0).to_bits(),
+        PLUS_ZERO,
+        "#947 sdk_session math_min(+0,+0) must stay +0"
+    );
+}
+
+#[test]
 fn task_budget_cap_uses_js_math_min_and_preserves_optional_fields() {
     let mut config = js_object(vec![
         (

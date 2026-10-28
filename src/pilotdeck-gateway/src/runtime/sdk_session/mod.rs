@@ -31,6 +31,7 @@
 //! already-bounded configuration values.
 
 use crate::js_value;
+use pilotdeck_protocol::js_math::min as math_min;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 use std::{fmt, path::Path};
 
@@ -152,24 +153,6 @@ fn is_integer(value: f64) -> bool {
 /// `Number.isSafeInteger`.
 fn is_safe_integer(value: f64) -> bool {
     is_integer(value) && value.abs() <= 9_007_199_254_740_991.0
-}
-
-/// JavaScript `Math.min` (Rust's `f64::min` prefers the non-NaN operand).
-fn math_min(left: f64, right: f64) -> f64 {
-    if left.is_nan() || right.is_nan() {
-        return f64::NAN;
-    }
-    if left == right {
-        if left == 0.0 {
-            return if left.is_sign_negative() || right.is_sign_negative() {
-                -0.0
-            } else {
-                0.0
-            };
-        }
-        return left;
-    }
-    if left < right { left } else { right }
 }
 
 fn json_text(value: &JsValue) -> Option<String> {

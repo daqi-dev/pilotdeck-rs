@@ -27,6 +27,7 @@ use crate::{
     project_files::{node_collator, node_compare_utf16, node_locale},
     runtime::memory::{edgeclaw::text::json_text, js_trim_units},
 };
+use pilotdeck_protocol::js_math::{max as js_max, min as js_min};
 use pilotdeck_protocol::{
     JsObject, JsString, JsValue, json_syntax, parse_json, quote_json_string, stringify_json,
 };
@@ -601,26 +602,6 @@ fn selection_limit(limit: Option<f64>) -> f64 {
     js_max(1.0, js_min(5.0, limit.unwrap_or(5.0)))
 }
 
-fn js_min(left: f64, right: f64) -> f64 {
-    if left.is_nan() || right.is_nan() {
-        f64::NAN
-    } else if left < right {
-        left
-    } else {
-        right
-    }
-}
-
-fn js_max(left: f64, right: f64) -> f64 {
-    if left.is_nan() || right.is_nan() {
-        f64::NAN
-    } else if left > right {
-        left
-    } else {
-        right
-    }
-}
-
 /// `(input.recentMessages ?? []).slice(-4).map((m) => ({role, content}))`.
 fn recent_message_pairs(messages: &[MemoryMessage]) -> Vec<JsValue> {
     let start = messages.len().saturating_sub(4);
@@ -832,5 +813,41 @@ fn scalar_json(value: &JsValue) -> String {
             .ok()
             .flatten()
             .unwrap_or_else(|| "null".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{js_max, js_min};
+
+    const PLUS_ZERO: u64 = 0.0f64.to_bits();
+    const MINUS_ZERO: u64 = (-0.0f64).to_bits();
+
+    /// TS `llm-extraction.ts:3164`: `Math.max(1, Math.min(5, input.limit ?? 5))`.
+    /// Node v22.22.0 probe: `_tmp/20261026-issue-947/probe/js-math-zero.json`.
+    #[test]
+    fn js_math_signed_zero_ties_match_ts() {
+        for (index, (left, right)) in [(0.0, -0.0), (-0.0, 0.0)].into_iter().enumerate() {
+            assert_eq!(
+                js_max(left, right).to_bits(),
+                PLUS_ZERO,
+                "#947 recall js_max tie {index} ({left}, {right}) must be +0"
+            );
+            assert_eq!(
+                js_min(left, right).to_bits(),
+                MINUS_ZERO,
+                "#947 recall js_min tie {index} ({left}, {right}) must be -0"
+            );
+        }
+        assert_eq!(
+            js_max(-0.0, -0.0).to_bits(),
+            MINUS_ZERO,
+            "#947 recall js_max(-0,-0) must stay -0"
+        );
+        assert_eq!(
+            js_min(0.0, 0.0).to_bits(),
+            PLUS_ZERO,
+            "#947 recall js_min(+0,+0) must stay +0"
+        );
     }
 }

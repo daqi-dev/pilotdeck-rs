@@ -2,6 +2,7 @@
 //! b243 AgentLoop.ts 2473–2526 and 2707–2728.
 use crate::ports::{PortError, PortResult};
 use crate::request_materialization::{BudgetCandidateInput, PreparedWindowInput, RequestCapsInput};
+use pilotdeck_protocol::js_math::min as js_min;
 use pilotdeck_protocol::model::BoundarySnapshot;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
@@ -97,22 +98,6 @@ pub fn default_prepared_window(input: PreparedWindowInput<'_>) -> PortResult<Bou
     // the Source replaces cachePlan itself but retains unrelated cache controls.
     Ok(capture(prepared))
 }
-fn js_min(left: f64, right: f64) -> f64 {
-    // Rust f64::min skips NaN, unlike Math.min. Its signed-zero decision also
-    // cannot be delegated to argument order. Source normal current caps are
-    // positive finite floors, but the transform never silently alters numbers.
-    if left.is_nan() || right.is_nan() {
-        f64::NAN
-    } else if left == 0.0 && right == 0.0 {
-        if left.is_sign_negative() || right.is_sign_negative() {
-            -0.0
-        } else {
-            0.0
-        }
-    } else {
-        left.min(right)
-    }
-}
 pub fn apply_caps(input: RequestCapsInput<'_>) -> PortResult<BoundarySnapshot> {
     // Source reads request.maxOutputTokens before spreading; nullish request
     // fails here, unlike nullish prepared.request/candidate spreads above.
@@ -138,4 +123,30 @@ pub fn apply_caps(input: RequestCapsInput<'_>) -> PortResult<BoundarySnapshot> {
         request.insert("maxOutputTokens".into(), effective);
     }
     Ok(capture(request))
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::js_min;
+
+    const PLUS_ZERO: u64 = 0.0f64.to_bits();
+    const MINUS_ZERO: u64 = (-0.0f64).to_bits();
+
+    /// Node v22.22.0: `Math.min(+0,-0)` and `Math.min(-0,+0)` are both `-0`.
+    /// Probe: `_tmp/20261026-issue-947/probe/js-math-zero.json`.
+    #[test]
+    fn js_min_signed_zero_ties_match_ts() {
+        for (index, (left, right)) in [(0.0, -0.0), (-0.0, 0.0)].into_iter().enumerate() {
+            assert_eq!(
+                js_min(left, right).to_bits(),
+                MINUS_ZERO,
+                "#947 request_materialization js_min tie {index} ({left}, {right}) must be -0"
+            );
+        }
+        assert_eq!(
+            js_min(0.0, 0.0).to_bits(),
+            PLUS_ZERO,
+            "#947 request_materialization js_min(+0,+0) must stay +0"
+        );
+    }
 }

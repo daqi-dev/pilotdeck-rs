@@ -368,23 +368,8 @@ pub(crate) fn flatten_tool_result_block_text(block: &JsValue) -> JsString {
     JsString::from_utf16(units)
 }
 
-/// JS `Math.max`: NaN wins, unlike Rust's `f64::max`.
-pub(crate) fn js_max(left: f64, right: f64) -> f64 {
-    if left.is_nan() || right.is_nan() {
-        f64::NAN
-    } else {
-        left.max(right)
-    }
-}
-
-/// JS `Math.min`: NaN wins, unlike Rust's `f64::min`.
-pub(crate) fn js_min(left: f64, right: f64) -> f64 {
-    if left.is_nan() || right.is_nan() {
-        f64::NAN
-    } else {
-        left.min(right)
-    }
-}
+/// JS `Math.max` / `Math.min`: NaN wins and the ±0 tie has a fixed sign.
+pub(crate) use pilotdeck_protocol::js_math::{max as js_max, min as js_min};
 
 pub(crate) fn js_truthy(value: &JsValue) -> bool {
     match value {
@@ -510,4 +495,40 @@ fn tool_result_items(block: &JsValue) -> Vec<ToolResultItem> {
 
 pub(crate) fn count_tokens(value: &JsString) -> Result<usize, pilotdeck_tokenizer::TokenizeError> {
     pilotdeck_tokenizer::count_tokens(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{js_max, js_min};
+
+    const PLUS_ZERO: u64 = 0.0f64.to_bits();
+    const MINUS_ZERO: u64 = (-0.0f64).to_bits();
+
+    /// Node v22.22.0: `Math.max(+0,-0)` / `Math.max(-0,+0)` are `+0`;
+    /// `Math.min(+0,-0)` / `Math.min(-0,+0)` are `-0`.
+    #[test]
+    fn js_math_signed_zero_ties_match_ts() {
+        for (index, (left, right)) in [(0.0, -0.0), (-0.0, 0.0)].into_iter().enumerate() {
+            assert_eq!(
+                js_max(left, right).to_bits(),
+                PLUS_ZERO,
+                "#947 compaction js_max tie {index} ({left}, {right}) must be +0"
+            );
+            assert_eq!(
+                js_min(left, right).to_bits(),
+                MINUS_ZERO,
+                "#947 compaction js_min tie {index} ({left}, {right}) must be -0"
+            );
+        }
+        assert_eq!(
+            js_max(-0.0, -0.0).to_bits(),
+            MINUS_ZERO,
+            "#947 compaction js_max(-0,-0) must stay -0"
+        );
+        assert_eq!(
+            js_min(0.0, 0.0).to_bits(),
+            PLUS_ZERO,
+            "#947 compaction js_min(+0,+0) must stay +0"
+        );
+    }
 }

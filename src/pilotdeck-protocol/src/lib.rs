@@ -7,6 +7,7 @@ pub mod admission;
 mod codec;
 pub mod compaction;
 mod consumer;
+pub mod js_math;
 pub mod json_syntax;
 pub mod model;
 pub mod module;
