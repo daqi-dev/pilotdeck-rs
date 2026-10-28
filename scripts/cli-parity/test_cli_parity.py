@@ -1,7 +1,18 @@
 """Contract tests use clearly synthetic recordings, never calibration evidence."""
+import sys
+
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution.  Without it, exit before importing anything: a same-named stdlib
+# file beside this entry (json.py, pathlib.py, tempfile.py) would otherwise
+# execute before the guard.  ``sys`` is builtin/frozen and already loaded.
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
+import ast
 import base64
 import hashlib
 from contextlib import contextmanager, nullcontext, redirect_stdout
+import importlib.util
 import io
 from itertools import combinations
 import json
@@ -12,23 +23,96 @@ import signal
 import socket
 import stat
 import subprocess
-import sys
 import tempfile
 import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
+# Load apparatus modules by explicit path, never sys.path: a same-named package
+# or extension module beside the source would win before the scan (#701 item 3,
+# same defect gateway-parity fix-r6 P1).  Inline on purpose: importing common.py
+# is what this block defends.
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-cli-parity-pyc-')
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, MOCK_PORT, OPENSSL_CONFIG, ROOT, SCRIPT, SCENARIOS, TOKEN, baseline_path, environment, env_summary, fixture,
-                    digest_plain, read_plain, hashes, initial_tree, mock_gateway_scenarios, output_path, parity_lock, per_stream_scenarios, save, snapshot, staged_skills_identity)
-from compare import coalesce, compare, comparison_view, expected_stdout, load_round, GATEWAY_PROBE_CHECKS, PROBE_CHECKS
-from controls import run_controls
-from host_negative_controls import check_exec_control, main as host_control_main
-from policy import MOCK_GATEWAY_ALLOW
-from run_round import (baseline_identity, capture, check_budget, main, mock_gateway_preflight, preflight,
-                       mock_listening_line, run_round, rust_isolation, sandbox_profile, stage_rust, stop_group)
+
+
+def _load(name, path):
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        if not isinstance(getattr(existing, '_apparatus_source', None), bytes):
+            raise RuntimeError(f'unverified apparatus module cache: {path}')
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        source = path.read_bytes()
+        exec(compile(source, str(path), 'exec'), module.__dict__)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    module._apparatus_source = source
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+_here = Path(__file__).resolve().parent
+_common = _load('common', _here / 'common.py')
+LIVE_GROUPS = _common.LIVE_GROUPS
+Blocked = _common.Blocked
+CleanupBlocked = _common.CleanupBlocked
+HEAD = _common.HEAD
+MOCK_PORT = _common.MOCK_PORT
+OPENSSL_CONFIG = _common.OPENSSL_CONFIG
+ROOT = _common.ROOT
+SCRIPT = _common.SCRIPT
+SCENARIOS = _common.SCENARIOS
+TOKEN = _common.TOKEN
+baseline_path = _common.baseline_path
+environment = _common.environment
+env_summary = _common.env_summary
+fixture = _common.fixture
+digest_plain = _common.digest_plain
+read_plain = _common.read_plain
+hashes = _common.hashes
+initial_tree = _common.initial_tree
+mock_gateway_scenarios = _common.mock_gateway_scenarios
+output_path = _common.output_path
+parity_lock = _common.parity_lock
+per_stream_scenarios = _common.per_stream_scenarios
+save = _common.save
+snapshot = _common.snapshot
+staged_skills_identity = _common.staged_skills_identity
+_compare = _load('compare', _here / 'compare.py')
+coalesce = _compare.coalesce
+compare = _compare.compare
+comparison_view = _compare.comparison_view
+expected_stdout = _compare.expected_stdout
+load_round = _compare.load_round
+GATEWAY_PROBE_CHECKS = _compare.GATEWAY_PROBE_CHECKS
+PROBE_CHECKS = _compare.PROBE_CHECKS
+run_controls = _load('controls', _here / 'controls.py').run_controls
+_host_controls = _load('host_negative_controls', _here / 'host_negative_controls.py')
+check_exec_control = _host_controls.check_exec_control
+host_control_main = _host_controls.main
+MOCK_GATEWAY_ALLOW = _load('policy', _here / 'policy.py').MOCK_GATEWAY_ALLOW
+_run_round = _load('run_round', _here / 'run_round.py')
+baseline_identity = _run_round.baseline_identity
+capture = _run_round.capture
+check_budget = _run_round.check_budget
+main = _run_round.main
+mock_gateway_preflight = _run_round.mock_gateway_preflight
+preflight = _run_round.preflight
+mock_listening_line = _run_round.mock_listening_line
+run_round = _run_round.run_round
+rust_isolation = _run_round.rust_isolation
+sandbox_profile = _run_round.sandbox_profile
+stage_rust = _run_round.stage_rust
+stop_group = _run_round.stop_group
 
 # #933-2 (fix-r4): the profile guard pins sandbox_profile() output for fixed
 # placeholder paths — policy.SCRIPT included, since the probe literal is the
@@ -216,6 +300,71 @@ def synthetic_round(path, runtime, scenario_fixtures=False):
              'processTree': [{'pid': 123, 'ppid': 1, 'pgid': 123, 'state': 'Z', 'command': 'synthetic'}]})
 
 
+APPARATUS_MODULES = ('common', 'policy', 'compare', 'controls', 'run_round', 'host_negative_controls')
+
+
+def module_statements(source):
+    body = ast.parse(source).body
+    if (body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)):
+        body = body[1:]
+    return body
+
+
+class BootstrapTests(unittest.TestCase):
+    """#701 item 3: entries reject same-directory imposters before loading one."""
+
+    def test_isolated_guard_is_the_first_statement(self):
+        for name in ('compare.py', 'controls.py', 'host_negative_controls.py',
+                     'run_round.py', 'test_cli_parity.py', 'policy.py'):
+            with self.subTest(entry=name):
+                body = module_statements((SCRIPT / name).read_text())
+                self.assertGreaterEqual(len(body), 2)
+                self.assertEqual(ast.unparse(body[0]), 'import sys',
+                                 f'#701: {name}: only "import sys" may load before the guard')
+                guard = body[1]
+                self.assertIsInstance(guard, ast.If,
+                                      f'#701: {name}: the isolated guard must be the second statement')
+                self.assertEqual(ast.unparse(guard.test), 'not sys.flags.isolated',
+                                 f'#701: {name}: the guard must test sys.flags.isolated')
+                self.assertTrue(any(isinstance(node, ast.Raise) for node in guard.body),
+                                f'#701: {name}: the guard must exit before loading anything')
+
+    def test_apparatus_modules_load_by_explicit_path_only(self):
+        for name in ('common.py', 'compare.py', 'controls.py', 'host_negative_controls.py',
+                     'policy.py', 'run_round.py', 'test_cli_parity.py'):
+            tree = ast.parse((SCRIPT / name).read_text())
+            with self.subTest(entry=name):
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ImportFrom):
+                        self.assertNotIn(node.module, APPARATUS_MODULES,
+                                         f'#701: {name}:{node.lineno}: bare apparatus import')
+                    elif isinstance(node, ast.Import):
+                        for alias in node.names:
+                            self.assertNotIn(alias.name.split('.')[0], APPARATUS_MODULES,
+                                             f'#701: {name}:{node.lineno}: bare apparatus import')
+                    elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                        target = node.func.value
+                        if (node.func.attr in ('insert', 'append', 'extend')
+                                and isinstance(target, ast.Attribute) and target.attr == 'path'
+                                and isinstance(target.value, ast.Name) and target.value.id == 'sys'):
+                            self.fail(f'#701: {name}:{node.lineno}: sys.path.{node.func.attr} is forbidden')
+
+    def test_explicit_loader_ignores_a_same_name_package(self):
+        with tempfile.TemporaryDirectory(prefix='d0-bootstrap-') as temp:
+            mirror = Path(temp)
+            for name in ('common.py', 'policy.py', 'compare.py', 'scenarios.json', 'chat-search.json'):
+                shutil.copy2(SCRIPT / name, mirror / name)
+            (mirror / 'common').mkdir()
+            (mirror / 'common' / '__init__.py').write_text(
+                'raise RuntimeError("imposter package loaded")\n')
+            result = subprocess.run([sys.executable, '-I', str(mirror / 'compare.py'), '-h'],
+                                    capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0,
+                             f'#701: a same-named package must not shadow common.py: {result.stderr}')
+            self.assertEqual(result.stderr, '', '#701: the imposter package must never execute')
+
+
 class ContractTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='d0-test-')
@@ -341,7 +490,7 @@ class ContractTests(unittest.TestCase):
         self.assertIn('apparatus.stream-order', summary['error'])
 
     def test_empty_scenario_registry_cannot_pass(self):
-        import compare as compare_module
+        compare_module = _compare
         source = self.root / 'empty-reg'
         with patch.object(compare_module, 'SCENARIOS', []):
             synthetic_round(source, self.root / 'empty-runtime')
@@ -844,7 +993,7 @@ class ContractTests(unittest.TestCase):
                 self.assertIn('round.rust-stage-skills-bytes', rules)
 
     def test_pending_oracle_cannot_pass(self):
-        import compare as compare_module
+        compare_module = _compare
         pending = [{'id': 'pending', 'argv': [], 'stdinHex': '', 'token': False,
                     'oracle': compare_module.PENDING}]
         source = self.root / 'pending'
@@ -1504,7 +1653,7 @@ class ContractTests(unittest.TestCase):
             fixture(self.root / 'bad-blob', scenario, Path('/synthetic/baseline'))
 
     def test_registered_pending_scenarios_cannot_self_compare_to_pass(self):
-        import compare as compare_module
+        compare_module = _compare
         # Reintroduce missing calibration on the actual batch IDs/argv. This
         # guard must survive filling the registry, rather than become vacuous.
         cases = [{**{k: s[k] for k in ('id', 'argv', 'stdinHex', 'token')},
@@ -1520,7 +1669,7 @@ class ContractTests(unittest.TestCase):
             self.assertIn(scenario['id'] + '.oracle.pending', rules)
 
     def test_runtime_bound_oracle_preserves_exact_output_and_paths(self):
-        import compare as compare_module
+        compare_module = _compare
         runtime = self.root / 'runtime "quoted" \\ 中文'
         cases = [
             {'id': 'text', 'argv': [], 'stdinHex': '', 'token': False, 'exit': 0,
@@ -1699,7 +1848,7 @@ class ContractTests(unittest.TestCase):
                                      {f'{name}.oracle.disk'})
 
     def test_expected_disk_removals_require_exact_complete_tree(self):
-        import compare as compare_module
+        compare_module = _compare
         # A synthetic oracle only, never written to the production registry.
         scenario = {'id': 'remove', 'argv': [], 'stdinHex': '', 'token': False,
                     'exit': 0, 'stdout': '', 'stderr': '', 'diskRemovals': ['project/keep.txt']}
@@ -1916,7 +2065,7 @@ class ContractTests(unittest.TestCase):
             self.assertFalse(lock.exists(), type(error).__name__)
 
     def test_stop_group_unregisters_only_when_all_stopped(self):
-        import run_round
+        run_round = _run_round
         proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
         LIVE_GROUPS.add(proc.pid)
         original = run_round._stop_group
@@ -1934,7 +2083,7 @@ class ContractTests(unittest.TestCase):
                 proc.kill()
 
     def test_stop_group_defers_interrupts_and_delivers_after_cleanup(self):
-        import run_round
+        run_round = _run_round
         proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
         seen = []
         def handler(signum, frame):
@@ -1957,7 +2106,7 @@ class ContractTests(unittest.TestCase):
                 proc.kill()
 
     def test_spawned_child_runs_with_normal_signal_mask(self):
-        import run_round
+        run_round = _run_round
         proc = run_round.spawn([sys.executable, '-c', 'import signal;print(sorted(int(s) for s in signal.pthread_sigmask(signal.SIG_BLOCK, set())))'],
                                stdout=subprocess.PIPE, text=True, start_new_session=True)
         out = proc.communicate(timeout=10)[0].strip()
@@ -1966,7 +2115,7 @@ class ContractTests(unittest.TestCase):
             self.assertNotIn(str(int(sig)), out.strip('[]').replace(' ', '').split(','), out)
 
     def test_lease_alarm_during_cleanup_is_not_lost(self):
-        import run_round
+        run_round = _run_round
         proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
         fired = []
         previous = signal.signal(signal.SIGALRM, lambda *_: fired.append(True))
@@ -1990,7 +2139,7 @@ class ContractTests(unittest.TestCase):
                 proc.kill()
 
     def test_spawn_registers_group_atomically_with_respect_to_interrupts(self):
-        import run_round
+        run_round = _run_round
         seen = []
         previous = signal.signal(signal.SIGINT, lambda *_: seen.append(set(LIVE_GROUPS)))
         real_popen = subprocess.Popen

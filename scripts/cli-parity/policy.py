@@ -1,8 +1,52 @@
 """Deterministic Seatbelt policy, shared by recorder and evidence validator."""
+import sys
+
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution.  Without it, exit before importing anything: a same-named stdlib
+# file beside this module (json.py, pathlib.py, tempfile.py) would otherwise
+# execute before the guard.  ``sys`` is builtin/frozen and already loaded.
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
+import importlib.util
 import json
 from pathlib import Path
+import tempfile
 
-from common import MOCK_PORT, SCRIPT
+# Load apparatus modules by explicit path, never sys.path: a same-named package
+# or extension module beside the source would win before the scan (#701 item 3,
+# same defect gateway-parity fix-r6 P1).  Inline on purpose: importing common.py
+# is what this block defends.
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-cli-parity-pyc-')
+sys.dont_write_bytecode = True
+
+
+def _load(name, path):
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        if not isinstance(getattr(existing, '_apparatus_source', None), bytes):
+            raise RuntimeError(f'unverified apparatus module cache: {path}')
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        source = path.read_bytes()
+        exec(compile(source, str(path), 'exec'), module.__dict__)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    module._apparatus_source = source
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+_common = _load('common', Path(__file__).resolve().parent / 'common.py')
+MOCK_PORT = _common.MOCK_PORT
+SCRIPT = _common.SCRIPT
 
 # #933 mock-gateway scenarios append exactly this rule after (deny network*):
 # the apparatus-owned loopback port is the only network surface they get. The

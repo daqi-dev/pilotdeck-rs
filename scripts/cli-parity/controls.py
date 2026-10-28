@@ -1,15 +1,62 @@
 #!/usr/bin/env python3
 """Five mutations of a complete real TS recording; no synthetic calibration fallback."""
+import sys
+
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution.  Without it, exit before importing anything: a same-named stdlib
+# file beside this entry (json.py, pathlib.py, tempfile.py) would otherwise
+# execute before the guard.  ``sys`` is builtin/frozen and already loaded.
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 import shutil
-import sys
+import tempfile
 
+# Load apparatus modules by explicit path, never sys.path: a same-named package
+# or extension module beside the source would win before the scan (#701 item 3,
+# same defect gateway-parity fix-r6 P1).  Inline on purpose: importing common.py
+# is what this block defends.
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-cli-parity-pyc-')
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import output_path, read_plain, save, snapshot
-from compare import compare, load_round, plain
+
+
+def _load(name, path):
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        if not isinstance(getattr(existing, '_apparatus_source', None), bytes):
+            raise RuntimeError(f'unverified apparatus module cache: {path}')
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        source = path.read_bytes()
+        exec(compile(source, str(path), 'exec'), module.__dict__)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    module._apparatus_source = source
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+_here = Path(__file__).resolve().parent
+_common = _load('common', _here / 'common.py')
+output_path = _common.output_path
+read_plain = _common.read_plain
+save = _common.save
+snapshot = _common.snapshot
+_compare = _load('compare', _here / 'compare.py')
+compare = _compare.compare
+load_round = _compare.load_round
+plain = _compare.plain
 
 
 def select_case(cases, preferred, eligible):

@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
 """Offline CLI calibration: two TS rounds, optionally one --rust-bin round."""
+import sys
+
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution.  Without it, exit before importing anything: a same-named stdlib
+# file beside this entry (json.py, pathlib.py, tempfile.py) would otherwise
+# execute before the guard.  ``sys`` is builtin/frozen and already loaded.
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
 import argparse
 from contextlib import contextmanager
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -13,15 +23,67 @@ import signal
 import socket
 import stat
 import subprocess
-import sys
+import tempfile
 import time
 
+# Load apparatus modules by explicit path, never sys.path: a same-named package
+# or extension module beside the source would win before the scan (#701 item 3,
+# same defect gateway-parity fix-r6 P1).  Inline on purpose: importing common.py
+# is what this block defends.
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-cli-parity-pyc-')
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, MOCK_PORT, OPENSSL_CONFIG, ROOT, SCRIPT, SCENARIOS, TOKEN, baseline_path, digest, environment,
-                    env_summary, fixture, hashes, mock_gateway_scenarios, output_path, parity_lock, per_stream_scenarios, save, snapshot, staged_skills_identity)
-from compare import compare
-from policy import sandbox_profile
+
+
+def _load(name, path):
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        if not isinstance(getattr(existing, '_apparatus_source', None), bytes):
+            raise RuntimeError(f'unverified apparatus module cache: {path}')
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        source = path.read_bytes()
+        exec(compile(source, str(path), 'exec'), module.__dict__)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    module._apparatus_source = source
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+_here = Path(__file__).resolve().parent
+_common = _load('common', _here / 'common.py')
+LIVE_GROUPS = _common.LIVE_GROUPS
+Blocked = _common.Blocked
+CleanupBlocked = _common.CleanupBlocked
+HEAD = _common.HEAD
+MOCK_PORT = _common.MOCK_PORT
+OPENSSL_CONFIG = _common.OPENSSL_CONFIG
+ROOT = _common.ROOT
+SCRIPT = _common.SCRIPT
+SCENARIOS = _common.SCENARIOS
+TOKEN = _common.TOKEN
+baseline_path = _common.baseline_path
+digest = _common.digest
+environment = _common.environment
+env_summary = _common.env_summary
+fixture = _common.fixture
+hashes = _common.hashes
+mock_gateway_scenarios = _common.mock_gateway_scenarios
+output_path = _common.output_path
+parity_lock = _common.parity_lock
+per_stream_scenarios = _common.per_stream_scenarios
+save = _common.save
+snapshot = _common.snapshot
+staged_skills_identity = _common.staged_skills_identity
+compare = _load('compare', _here / 'compare.py').compare
+sandbox_profile = _load('policy', _here / 'policy.py').sandbox_profile
 
 MAX_BYTES = 4 * 1024 * 1024
 
@@ -624,7 +686,7 @@ def main():
                 if summary['selfComparison']['status'] != 'PASS':
                     summary['status'] = 'FAIL'
                 else:
-                    from controls import run_controls
+                    run_controls = _load('controls', _here / 'controls.py').run_controls
                     summary['controls'] = run_controls(first, output / 'controls')
                     summary['status'] = summary['controls']['status']
                     if args.rust_bin:
