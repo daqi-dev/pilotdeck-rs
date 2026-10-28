@@ -11,6 +11,14 @@ sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-cli-parity-pyc-')
 sys.dont_write_bytecode = True
 
 
+# One inventory for the apparatus tests and their negative-control driver.
+ENTRY_FILES = ('compare.py', 'controls.py', 'host_negative_controls.py',
+               'run_round.py', 'test_cli_parity.py', 'policy.py')
+APPARATUS_FILES = ENTRY_FILES + ('common.py', '_bootstrap.py')
+APPARATUS_MODULES = tuple(Path(name).stem for name in APPARATUS_FILES)
+MIRROR_FILES = APPARATUS_FILES + ('scenarios.json', 'chat-search.json')
+
+
 def load(name, path):
     path = Path(path).resolve()
     existing = sys.modules.get(name)

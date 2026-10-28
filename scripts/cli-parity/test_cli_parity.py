@@ -4,9 +4,10 @@ import sys
 # -I keeps PYTHONPATH, user site and the script directory out of module
 # resolution.  Without it, exit before importing anything: a same-named stdlib
 # file beside this entry (json.py, pathlib.py, tempfile.py) would otherwise
-# execute before the guard.  ``sys`` is builtin/frozen and already loaded.
-if not sys.flags.isolated:
-    raise SystemExit(f'run with -I: python3 -I {__file__}')
+# execute before the guard. Discover can add the directory back even with
+# -I, so reject that path too. ``sys`` is builtin/frozen and already loaded.
+if not sys.flags.isolated or __file__.rpartition('/')[0] in sys.path:
+    raise SystemExit(f'#701: unsafe import path; run with -I by file: python3 -I {__file__}')
 
 import importlib.util
 from pathlib import Path
@@ -27,6 +28,7 @@ from itertools import combinations
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -278,7 +280,10 @@ def synthetic_round(path, runtime, scenario_fixtures=False):
              'processTree': [{'pid': 123, 'ppid': 1, 'pgid': 123, 'state': 'Z', 'command': 'synthetic'}]})
 
 
-APPARATUS_MODULES = ('_bootstrap', 'common', 'policy', 'compare', 'controls', 'run_round', 'host_negative_controls')
+APPARATUS_MODULES = _bootstrap.APPARATUS_MODULES
+APPARATUS_FILES = _bootstrap.APPARATUS_FILES
+ENTRY_FILES = _bootstrap.ENTRY_FILES
+MIRROR_FILES = _bootstrap.MIRROR_FILES
 
 
 def module_statements(source):
@@ -289,8 +294,6 @@ def module_statements(source):
     return body
 
 
-ENTRY_FILES = ('compare.py', 'controls.py', 'host_negative_controls.py',
-               'run_round.py', 'test_cli_parity.py', 'policy.py')
 BOOTSTRAP_PREFIX = """\
 import importlib.util
 from pathlib import Path
@@ -300,6 +303,42 @@ _bootstrap = importlib.util.module_from_spec(_bootstrap_spec)
 exec(compile(_bootstrap_path.read_bytes(), str(_bootstrap_path), 'exec'), _bootstrap.__dict__)
 _load = _bootstrap.load
 """
+
+
+def documented_invocations(source):
+    """Yield shell argv and physical start line, including continued commands."""
+    invocation = re.compile(
+        r'''(?<![\w])["']?(?:python3(?:\.\d+)*|\$(?:\{[A-Za-z_]\w*\}|[A-Za-z_]\w*))'''
+        r'''["']?[ \t]+(?P<args>[^`\n;&|]+)''')
+    logical, start = '', 1
+    for number, line in enumerate(source.splitlines(), 1):
+        if not logical:
+            start = number
+        logical += line
+        if logical.endswith('\\'):
+            logical = logical[:-1] + ' '
+            continue
+        for match in invocation.finditer(logical):
+            if 'scripts/cli-parity' in match.group('args'):
+                yield start, shlex.split(match.group('args'), comments=True)
+        logical = ''
+
+
+def isolated_file_options(options):
+    """Consume Python options; -I used as a -W/-X value is not isolation."""
+    isolated = False
+    remaining = iter(options)
+    for option in remaining:
+        if option in ('-W', '-X'):
+            if next(remaining, None) is None:
+                return isolated, False
+        elif option.startswith(('-W', '-X')):
+            continue
+        elif re.fullmatch(r'-[bBdEIOPqRsSuvx]+', option):
+            isolated |= 'I' in option[1:]
+        else:
+            return isolated, False  # -m/-c/--, early script, unknown or exit flag
+    return isolated, True
 
 
 class BootstrapTests(unittest.TestCase):
@@ -315,13 +354,14 @@ class BootstrapTests(unittest.TestCase):
                 guard = body[1]
                 self.assertIsInstance(guard, ast.If,
                                       f'#701: {name}: the isolated guard must be the second statement')
-                self.assertEqual(ast.unparse(guard.test), 'not sys.flags.isolated',
-                                 f'#701: {name}: the guard must test sys.flags.isolated')
+                self.assertEqual(ast.unparse(guard.test),
+                                 "not sys.flags.isolated or __file__.rpartition('/')[0] in sys.path",
+                                 f'#701: {name}: the guard must reject non-isolated or reinserted paths')
                 self.assertTrue(any(isinstance(node, ast.Raise) for node in guard.body),
                                 f'#701: {name}: the guard must exit before loading anything')
 
     def test_apparatus_modules_load_by_explicit_path_only(self):
-        for name in ENTRY_FILES + ('common.py', '_bootstrap.py'):
+        for name in APPARATUS_FILES:
             tree = ast.parse((SCRIPT / name).read_text())
             with self.subTest(entry=name):
                 for node in ast.walk(tree):
@@ -365,25 +405,52 @@ class BootstrapTests(unittest.TestCase):
                                      f'#701: {name}: shared bootstrap binding {binding} must not change')
 
     def test_documented_commands_use_isolated_mode(self):
-        # Search every tracked location, including fixture docs and CI/scripts.
+        # Search tracked docs, shell and CI, without treating source literals
+        # in mutation fixtures as runnable documentation.
         result = subprocess.run(
-            ['git', 'grep', '-l', '-E', r'python3 .*scripts/cli-parity/'],
+            ['git', 'grep', '-l', '-F', 'scripts/cli-parity', '--',
+             '*.md', '*.sh', '*.yml', '*.yaml'],
             cwd=ROOT, capture_output=True, text=True, timeout=30)
         self.assertIn(result.returncode, (0, 1), '#701: command inventory must complete')
-        invocation = re.compile(
-            r'\bpython3[ \t]+(?P<flags>(?:-[A-Za-z]+[ \t]+)*)(?:\./)?scripts/cli-parity/[\w]+\.py')
+        matched = set()
         for relative in result.stdout.splitlines():
-            for number, line in enumerate((ROOT / relative).read_text().splitlines(), 1):
-                for match in invocation.finditer(line):
-                    self.assertIn('-I', match.group('flags').split(),
-                                  f'#701: {relative}:{number}: CLI parity command requires -I')
+            try:
+                commands = list(documented_invocations((ROOT / relative).read_text()))
+            except ValueError as error:
+                self.fail(f'#701: {relative}: CLI parity command cannot be parsed: {error}')
+            for number, argv in commands:
+                targets = [index for index, token in enumerate(argv) if 'scripts/cli-parity' in token]
+                self.assertTrue(targets, f'#701: {relative}:{number}: CLI parity command needs a path')
+                matched.add(relative)
+                isolated, explicit_file = isolated_file_options(argv[:targets[0]])
+                self.assertTrue(isolated, f'#701: {relative}:{number}: CLI parity command requires -I')
+                self.assertTrue(explicit_file,
+                                f'#701: {relative}:{number}: CLI parity command requires an explicit file')
+        self.assertTrue(matched, '#701: documented command inventory must not be empty')
+        self.assertIn('scripts/cli-parity/README.md', matched,
+                      '#701: documented command inventory must include scripts/cli-parity/README.md')
+
+    def test_discover_rejects_reinserted_path_before_stdlib(self):
+        with tempfile.TemporaryDirectory(prefix='d0-discover-') as temp:
+            mirror = Path(temp).resolve()
+            for name in MIRROR_FILES:
+                shutil.copy2(SCRIPT / name, mirror / name)
+            (mirror / 'json.py').write_text('raise RuntimeError("#701 JSON IMPOSTER EXECUTED")\n')
+            result = subprocess.run(
+                [sys.executable, '-I', '-B', '-m', 'unittest', 'discover',
+                 '-s', str(mirror), '-p', 'test_cli_parity.py', '-v'],
+                capture_output=True, text=True, timeout=60)
+            message = '#701: discover must reject the reinserted path before importing json'
+            self.assertEqual(result.returncode, 1, message)
+            self.assertIn('SystemExit: #701: unsafe import path', result.stderr, message)
+            self.assertNotIn('JSON IMPOSTER EXECUTED', result.stdout + result.stderr, message)
 
     def test_each_entry_starts_isolated_with_imposter_packages(self):
         with tempfile.TemporaryDirectory(prefix='d0-bootstrap-') as temp:
             mirror = Path(temp)
-            for name in ENTRY_FILES + ('_bootstrap.py', 'common.py', 'scenarios.json', 'chat-search.json'):
+            for name in MIRROR_FILES:
                 shutil.copy2(SCRIPT / name, mirror / name)
-            for name in ('_bootstrap', 'common', 'policy', 'compare'):
+            for name in ('_bootstrap', 'common', 'policy', 'compare', 'test_cli_parity'):
                 (mirror / name).mkdir()
                 (mirror / name / '__init__.py').write_text(
                     'raise RuntimeError("imposter package loaded")\n')

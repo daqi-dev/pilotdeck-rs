@@ -2,18 +2,21 @@
 # anchor-selfcheck: unsupported environment imposters and in-memory AST source checks, no in-place source replacement table
 """#701 item 3 negative controls: cli-parity entries must ignore same-dir imposters.
 
-Environment rows place imposter packages/extensions beside the apparatus;
+Environment rows place imposter packages/extensions in a private mirror;
 source rows feed compiled mutants to named unittest assertions in memory or
 in the unit test's temporary Python mirror, never in checkout source files.
 KILLED requires the bound assertion or an environment witness proving the
 imposter cannot execute. SURVIVED means the old behaviour returned; INVALID
 means the test could not run, compile, or reach the exclusive assertion.
 
-The in-place window holds ``common.parity_lock()`` so no calibration round can
-observe a half-written apparatus.  Every imposter is removed in a ``finally``;
-a leftover at startup refuses the run instead of guessing.  Run all rows and
-summarise; any non-KILLED row is a nonzero exit.
+No environment row writes to the checkout. Every mirror is removed on exit;
+run all rows and summarise; any non-KILLED row is a nonzero exit.
 """
+import sys
+
+if not sys.flags.isolated or __file__.rpartition('/')[0] in sys.path:
+    raise SystemExit(f'#701: unsafe import path; run with -I by file: python3 -I {__file__}')
+
 import argparse
 import ast
 import importlib.util
@@ -23,7 +26,6 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-import sys
 import sysconfig
 import tempfile
 import unittest
@@ -31,11 +33,6 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[5]
 DEFAULT_APPARATUS = ROOT / 'scripts/cli-parity'
-ENTRY_FILES = ('compare.py', 'controls.py', 'host_negative_controls.py',
-               'run_round.py', 'test_cli_parity.py')
-GUARDED_FILES = ENTRY_FILES + ('policy.py',)
-APPARATUS_MODULES = ('_bootstrap', 'common', 'policy', 'compare', 'controls', 'run_round',
-                     'host_negative_controls')
 IMPOSTERS = (('common', 'compare.py'), ('policy', 'compare.py'),
              ('compare', 'controls.py'))
 MARKER_ENV = 'PDRS_CLI_PARITY_IMPOSTER'
@@ -66,7 +63,10 @@ _bootstrap_spec = importlib.util.spec_from_file_location('_cli_parity_bootstrap'
 _bootstrap = importlib.util.module_from_spec(_bootstrap_spec)
 exec(compile(_bootstrap_path.read_bytes(), str(_bootstrap_path), 'exec'), _bootstrap.__dict__)
 load = _bootstrap.load
-COMMON = load('common', DEFAULT_APPARATUS / 'common.py')
+GUARDED_FILES = _bootstrap.ENTRY_FILES
+APPARATUS_FILES = _bootstrap.APPARATUS_FILES
+APPARATUS_MODULES = _bootstrap.APPARATUS_MODULES
+MIRROR_FILES = _bootstrap.MIRROR_FILES
 
 
 def statements(tree):
@@ -88,8 +88,9 @@ def guard_problem(tree):
     guard = body[1]
     if not isinstance(guard, ast.If):
         return 'second statement is not the isolated guard'
-    if ast.unparse(guard.test) != 'not sys.flags.isolated':
-        return f'guard tests {ast.unparse(guard.test)!r}, not "not sys.flags.isolated"'
+    expected = "not sys.flags.isolated or __file__.rpartition('/')[0] in sys.path"
+    if ast.unparse(guard.test) != expected:
+        return f'guard tests {ast.unparse(guard.test)!r}, not {expected!r}'
     if not any(isinstance(node, ast.Raise) for node in guard.body):
         return 'guard does not raise SystemExit'
     return None
@@ -129,8 +130,12 @@ def run(command, marker, timeout=120):
     env = {key: value for key, value in os.environ.items()
            if key not in ('PYTHONPATH', 'PYTHONHOME', 'PYTHONSTARTUP')}
     env[MARKER_ENV] = str(marker)
-    return subprocess.run(command, cwd=str(ROOT), env=env, capture_output=True,
-                          text=True, timeout=timeout)
+    try:
+        return subprocess.run(command, cwd=str(ROOT), env=env, capture_output=True,
+                              text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        # Keep later rows runnable; a timeout/crash never supplies a kill.
+        return subprocess.CompletedProcess(command, 124, '', f'{type(error).__name__}: {error}')
 
 
 def record(rows, name, status, reason):
@@ -139,7 +144,7 @@ def record(rows, name, status, reason):
 
 
 def static_checks(apparatus, rows):
-    for name in GUARDED_FILES + ('common.py', '_bootstrap.py'):
+    for name in APPARATUS_FILES:
         path = apparatus / name
         try:
             tree = ast.parse(path.read_text(encoding='utf-8'))
@@ -221,6 +226,8 @@ def package_checks(apparatus, rows, holder):
             else:
                 record(rows, f'imposter/{module}-package', 'INVALID',
                        f'rc={result.returncode}; stderr={message[:180]!r}')
+        except Exception as error:
+            record(rows, f'imposter/{module}-package', 'INVALID', f'{type(error).__name__}: {error}')
         finally:
             shutil.rmtree(target, ignore_errors=True)
 
@@ -290,12 +297,33 @@ class AssertionResult(unittest.TextTestResult):
         super().addSubTest(test, subtest, error)
 
 
+def passed(result):
+    return (result.testsRun == 1 and result.wasSuccessful() and not result.skipped)
+
+
+def classify(result, test, assertion):
+    if result.testsRun != 1 or result.errors or result.skipped:
+        return 'INVALID', 'wrong test count, error, or skip'
+    if result.wasSuccessful():
+        return 'SURVIVED', 'bound test still passed'
+    if (result.assertions
+            and all(full_name == test and kind is AssertionError
+                    for full_name, kind, _message in result.assertions)
+            and any(assertion in message for _full_name, _kind, message in result.assertions)):
+        return 'KILLED', 'bound test raised its exclusive assertion'
+    return 'INVALID', 'wrong failure point or assertion'
+
+
 def bootstrap_regressions(apparatus):
     """Compile source mutants before testing AST inputs or a temporary test mirror."""
     method = 'test_entries_use_shared_bootstrap'
     for entry in GUARDED_FILES:
         path = apparatus / entry
         original = path.read_text()
+        yield (f'bootstrap/path-guard/{entry}', path,
+               original.replace(" or __file__.rpartition('/')[0] in sys.path", '', 1),
+               'test_isolated_guard_is_the_first_statement',
+               f'#701: {entry}: the guard must reject non-isolated or reinserted paths')
         yield (f'bootstrap/local-load/{entry}', path,
                original + '\ndef _load(name, path):\n    return __import__(name)\n', method,
                f'#701: {entry}: entry must not define its own _load')
@@ -327,6 +355,60 @@ def bootstrap_regressions(apparatus):
            path.read_text().replace('python3 -I scripts/cli-parity/', 'python3 scripts/cli-parity/'),
            'test_documented_commands_use_isolated_mode',
            '#701: src/pilotdeck-cli/tests/fixtures/chat-search/README.md:16: CLI parity command requires -I')
+    path = apparatus / 'test_cli_parity.py'
+    yield ('discover/path-guard', path,
+           path.read_text().replace(" or __file__.rpartition('/')[0] in sys.path", '', 1),
+           'test_discover_rejects_reinserted_path_before_stdlib',
+           '#701: discover must reject the reinserted path before importing json')
+    path = apparatus / 'README.md'
+    source = path.read_text()
+    command = 'python3 -I scripts/cli-parity/run_round.py --help'
+    for name, replacement in (
+            ('versioned', 'python3.13 scripts/cli-parity/run_round.py --help'),
+            ('quoted-path', 'python3 "$PWD/scripts/cli-parity/run_round.py" --help'),
+            ('single-quoted-path', "python3 'scripts/cli-parity/run_round.py' --help"),
+            ('variable-python', '$PY scripts/cli-parity/run_round.py --help'),
+            ('quoted-python', '"python3.13" scripts/cli-parity/run_round.py --help'),
+            ('quoted-variable-python', '"$PY" scripts/cli-parity/run_round.py --help'),
+            ('warning-argument', 'python3 -W -I scripts/cli-parity/run_round.py --help'),
+            ('xoption-argument', 'python3 -X -I scripts/cli-parity/run_round.py --help'),
+            ('continued', 'python3 \\\n    scripts/cli-parity/run_round.py --help')):
+        yield (f'commands/{name}', path, source.replace(command, replacement, 1),
+               'test_documented_commands_use_isolated_mode',
+               '#701: scripts/cli-parity/README.md:6: CLI parity command requires -I')
+    yield ('commands/discover', path,
+           source.replace('python3 -I scripts/cli-parity/test_cli_parity.py',
+                          'python3 -I -m unittest discover -s scripts/cli-parity', 1),
+           'test_documented_commands_use_isolated_mode',
+           '#701: scripts/cli-parity/README.md:9: CLI parity command requires an explicit file')
+    yield ('commands/missing-readme', path,
+           source.replace('scripts/cli-parity', 'scripts/other-parity'),
+           'test_documented_commands_use_isolated_mode',
+           '#701: documented command inventory must include scripts/cli-parity/README.md')
+
+
+def run_bound_test(module, method, path=None, source=None):
+    read_text = Path.read_text
+    copy2 = shutil.copy2
+
+    def substituted(candidate, *args, **kwargs):
+        if path is not None and candidate.resolve() == path.resolve():
+            return source
+        return read_text(candidate, *args, **kwargs)
+
+    def copied(candidate, destination, *args, **kwargs):
+        if path is not None and Path(candidate).resolve() == path.resolve():
+            # Only the unit test's small temporary apparatus mirror is changed.
+            Path(destination).write_text(source)
+            return str(destination)
+        return copy2(candidate, destination, *args, **kwargs)
+
+    stream = io.StringIO()
+    with patch.object(Path, 'read_text', substituted), patch.object(shutil, 'copy2', copied):
+        result = unittest.TextTestRunner(stream=stream, verbosity=2,
+                                        resultclass=AssertionResult).run(
+            unittest.TestSuite([module.BootstrapTests(method)]))
+    return result, stream.getvalue()
 
 
 def bootstrap_checks(apparatus, rows, output, selection):
@@ -336,38 +418,16 @@ def bootstrap_checks(apparatus, rows, output, selection):
     if not selected:
         record(rows, selection, 'INVALID', 'unknown bootstrap regression name')
         return
-    read_text = Path.read_text
-    copy2 = shutil.copy2
-
-    def run_test(method, path=None, source=None):
-        def substituted(candidate, *args, **kwargs):
-            if path is not None and candidate.resolve() == path.resolve():
-                return source
-            return read_text(candidate, *args, **kwargs)
-        def copied(candidate, destination, *args, **kwargs):
-            if path is not None and Path(candidate).resolve() == path.resolve():
-                # Only the unit test's small temporary apparatus mirror is
-                # changed. No checkout source, git metadata or build is copied.
-                Path(destination).write_text(source)
-                return str(destination)
-            return copy2(candidate, destination, *args, **kwargs)
-        stream = io.StringIO()
-        with patch.object(Path, 'read_text', substituted), patch.object(shutil, 'copy2', copied):
-            result = unittest.TextTestRunner(stream=stream, verbosity=2,
-                                            resultclass=AssertionResult).run(
-                unittest.TestSuite([module.BootstrapTests(method)]))
-        return result, stream.getvalue()
-
     for name, path, changed, method, assertion in selected:
         test = 'test_cli_parity.BootstrapTests.' + method
         status, reason, compiled = 'INVALID', '', False
         logs = []
         try:
-            positive, log = run_test(method)
+            positive, log = run_bound_test(module, method)
             logs.append('POSITIVE\n' + log)
-            if positive.testsRun != 1 or not positive.wasSuccessful():
+            if not passed(positive):
                 raise RuntimeError('bound positive test did not pass')
-            if changed == read_text(path):
+            if changed == path.read_text():
                 raise RuntimeError('stale mutation anchor; source did not change')
             if path.suffix == '.py':
                 compile(changed, str(path), 'exec')
@@ -375,25 +435,15 @@ def bootstrap_checks(apparatus, rows, output, selection):
                 logs.append('COMPILE: Python source accepted\n')
             else:
                 logs.append('COMPILE: not applicable to Markdown command mutation\n')
-            negative, log = run_test(method, path, changed)
+            negative, log = run_bound_test(module, method, path, changed)
             logs.append('NEGATIVE\n' + log)
-            if negative.testsRun != 1 or negative.errors or negative.skipped:
-                status, reason = 'INVALID', 'wrong test count, error, or skip'
-            elif negative.wasSuccessful():
-                status, reason = 'SURVIVED', 'bound test still passed'
-            elif (negative.assertions
-                  and all(full_name == test and kind is AssertionError
-                          for full_name, kind, _message in negative.assertions)
-                  and any(assertion in message for _full_name, _kind, message in negative.assertions)):
-                status, reason = 'KILLED', 'bound test raised its exclusive assertion'
-            else:
-                status, reason = 'INVALID', 'wrong failure point or assertion'
+            status, reason = classify(negative, test, assertion)
         except Exception as error:
             status, reason = 'INVALID', f'{type(error).__name__}: {error}'
         try:
-            restored, log = run_test(method)
+            restored, log = run_bound_test(module, method)
             logs.append('RESTORED (memory substitution removed)\n' + log)
-            if restored.testsRun != 1 or not restored.wasSuccessful():
+            if not passed(restored):
                 status, reason = 'INVALID', reason + '; restored bound test did not pass'
         except Exception as error:
             status, reason = 'INVALID', reason + f'; restored: {type(error).__name__}: {error}'
@@ -404,7 +454,7 @@ def bootstrap_checks(apparatus, rows, output, selection):
             print(''.join(logs), flush=True)
         record(rows, name, status, reason)
         rows[-1].update(test=test, assertion=assertion, compiled=compiled,
-                        mutationKind=('temporary unit-test mirror' if method.startswith('test_each_entry') else
+                        mutationKind=('temporary unit-test mirror' if method.startswith(('test_each_entry', 'test_discover')) else
                                       'in-memory AST input' if path.suffix == '.py' else 'in-memory document'))
 
 
@@ -421,7 +471,7 @@ def main():
     if args.case and not args.bootstrap_only:
         parser.error('--case requires --bootstrap-only')
     apparatus = args.apparatus.resolve()
-    missing = [name for name in ('common.py', '_bootstrap.py', 'policy.py') + ENTRY_FILES + ('scenarios.json',)
+    missing = [name for name in MIRROR_FILES + ('README.md',)
                if not (apparatus / name).is_file()]
     if missing:
         print(json.dumps({'status': 'BLOCKED', 'error': f'missing apparatus files: {missing}'}))
@@ -438,17 +488,20 @@ def main():
     if args.output:
         args.output.mkdir(parents=True, exist_ok=False)
     try:
-        with COMMON.parity_lock():
-            holder = Path(tempfile.mkdtemp(prefix='pdrs-cli-parity-neg-'))
-            try:
-                bootstrap_checks(apparatus, rows, args.output, args.case)
-                if not args.bootstrap_only:
-                    static_checks(apparatus, rows)
-                    no_isolated_checks(apparatus, rows, holder)
-                    package_checks(apparatus, rows, holder)
-                    extension_check(apparatus, rows, holder)
-            finally:
-                shutil.rmtree(holder, ignore_errors=True)
+        bootstrap_checks(apparatus, rows, args.output, args.case)
+        if not args.bootstrap_only:
+            static_checks(apparatus, rows)
+            with tempfile.TemporaryDirectory(prefix='pdrs-cli-parity-neg-') as temp:
+                holder = Path(temp)
+                mirror = holder / 'apparatus'
+                mirror.mkdir()
+                for name in MIRROR_FILES:
+                    shutil.copy2(apparatus / name, mirror / name)
+                for check in (no_isolated_checks, package_checks, extension_check):
+                    try:
+                        check(mirror, rows, holder)
+                    except Exception as error:
+                        record(rows, check.__name__, 'INVALID', f'{type(error).__name__}: {error}')
     except BaseException as error:
         if isinstance(error, KeyboardInterrupt):
             raise
