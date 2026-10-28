@@ -365,7 +365,8 @@ fn assert_aborted_turn(event: &JsValue, turn: &str) {
         result.get("completedAt"),
         "#741i/#855: aborted terminal preserves its fields"
     );
-    let projected = GatewayAgentEventProjector::default()
+    let projected = GatewayAgentEventProjector::new(Default::default())
+        .expect("#879 default projector")
         .project(&GatewayAgentEventProjectionInput {
             event,
             run_id: "run",

@@ -32,11 +32,11 @@ collector 实际选中的 `jsonl_path`，不从 collector 副作用或测试预�
 负控：`python3 src/pilotdeck-gateway/tests/fixtures/stats-cwd/negative_controls.py --check` 只检查
 锚点；提交后用 `<新证据目录> [变异名...]` 运行一项或小批。13 项覆盖迟到的 `/` 回退、错误
 message/kind、绝对 home 误读 cwd、相对 home 基准、router 目录、disabled/filePath 短路，
-`~` 逐字返回、router 三个直接适配点，以及 runtime 入口选错 home。每项绑定被点名测试的专属
-消息，逐项记 KILLED / SURVIVED / INVALID 后汇总，任一非 KILLED 即非零退出；锚点过期直接
-失败退出，不记为 SURVIVED。编译 / 设置 / 超时错误记 INVALID，不冒充测试失败。失败格从
-libtest 的 `failures:` 清单读取（`--nocapture` 下 `... FAILED` 可能被 receipt 挤到下一行），
-再要求该格专属消息。
+`~` 逐字返回、router 三个直接适配点，以及 runtime 入口选错 home。每项绑定被点名测试与该格
+专属矩阵消息；#946 起每次运行生成独立 nonce，每个「测试全名 + 专属断言」各写一个回执文件，
+判杀同时要求 libtest 的 `test <测试全名> ... FAILED` 行和该轮 nonce 回执，声明的失败缺回执、
+编译失败、无关 panic 或超时都记 INVALID。逐项记 KILLED / SURVIVED / INVALID 后汇总，任一
+非 KILLED 即非零退出；锚点过期直接失败退出，不记为 SURVIVED。
 `absolute-guard` 只要求声明的四格中至少一格转红：裸 `~` 在 `stats.rs:1215` 提前返回，
 不经过被变异的 `expanded.is_absolute()`，`tilde_deleted_cwd` 结构上不会红；其余三格必须
 命中各自的 `#879 stats cwd collector matrix:` 消息，失败在无消息 panic 上不算杀。其余
@@ -45,8 +45,8 @@ libtest 的 `failures:` 清单读取（`--nocapture` 下 `... FAILED` 可能被 
 collector 的 home 改成 `/wrong` 后，这 18 格都须以
 `#879 stats cwd runtime matrix:` 消息转红。
 
-必须使用调用方设置的本树 `CARGO_TARGET_DIR`；未设报错。脚本使用 `mutating_sources` 默认
-HEAD、`run_owned`、`wait_for_slot`；源码未提交就拒跑，不建影子仓库或备用构建目录。提交前
-样本可用 `NEGATIVE_BASELINE=<临时 git commit-tree 对象>` 指向同字节的临时基线（不移动
-HEAD），默认值仍是 HEAD。全量约 39 次 cargo 测试，可能超过 20 分钟，由协调者提交后在宿主
-分批运行。
+必须使用调用方设置的本树 `CARGO_TARGET_DIR`；未设报错。脚本（#946 起）只认 HEAD：
+`negative_suite.matrix_main` 用 `mutating_sources` 默认 HEAD、`run_owned`、`wait_for_slot`；
+源码未提交就拒跑，不建影子仓库或备用构建目录，也不再接受 `NEGATIVE_BASELINE` 预提交基线。
+每项执行正控 → 变异 → 编译 → 恢复后正控共 4 次 cargo 调用，13 项约 52 次，可能超过 20 分钟，
+由协调者提交后在宿主分批运行。

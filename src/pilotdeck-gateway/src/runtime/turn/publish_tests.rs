@@ -272,7 +272,8 @@ async fn replay_case(case: &Value) -> Result<(), String> {
             ended.store(true, Ordering::SeqCst);
         })
     };
-    let projector = GatewayAgentEventProjector::default();
+    let projector =
+        GatewayAgentEventProjector::new(Default::default()).expect("#879 default projector");
     let mut finisher = None;
     for (index, step) in case["steps"].as_array().unwrap().iter().enumerate() {
         let stream = publisher.lock().unwrap().clone();
@@ -1039,7 +1040,8 @@ async fn pump_poison_does_not_disable_publication() {
         )));
         publisher
             .agent_event(
-                &GatewayAgentEventProjector::default(),
+                &GatewayAgentEventProjector::new(Default::default())
+                    .expect("#879 default projector"),
                 &js(&json!({"type":"model_event", "event":{"type":"text_delta", "text":"again"}})),
                 false,
             )

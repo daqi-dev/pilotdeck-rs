@@ -423,7 +423,10 @@ async fn replay_case(case: &Value) {
             owner,
             coordinator,
             registry: Some(port),
-            projector: Arc::new(GatewayAgentEventProjector::default()),
+            projector: Arc::new(
+                GatewayAgentEventProjector::new(Default::default())
+                    .expect("#879 default projector"),
+            ),
             host: Arc::new(Host {
                 interactions: interactions.clone(),
                 finally_failure,
@@ -699,7 +702,10 @@ fn empty_gateway_with_clock(retention: u64, clock: Arc<Clock>) -> TurnGateway {
                     owner: SessionOwner::new(options),
                     coordinator,
                     registry: None,
-                    projector: Arc::new(GatewayAgentEventProjector::default()),
+                    projector: Arc::new(
+                        GatewayAgentEventProjector::new(Default::default())
+                            .expect("#879 default projector"),
+                    ),
                     host: Arc::new(Host {
                         interactions: interactions.clone(),
                         finally_failure: false,

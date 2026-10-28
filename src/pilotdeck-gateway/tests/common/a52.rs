@@ -313,7 +313,10 @@ pub fn gateway(path: &Path, sessions: HashMap<String, Arc<Session>>) -> TurnGate
             submitter: Arc::new(TurnSubmitter {
                 owner: SessionOwner::new(options),
                 coordinator,
-                projector: Arc::new(GatewayAgentEventProjector::default()),
+                projector: Arc::new(
+                    GatewayAgentEventProjector::new(Default::default())
+                        .expect("#879 default projector"),
+                ),
                 registry: Some(Arc::new(file)),
                 host: Arc::new(Host(interactions.clone())),
                 workspace_admissions: WorkspaceAdmissions::default(),

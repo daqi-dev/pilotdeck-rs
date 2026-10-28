@@ -689,9 +689,10 @@ async fn replay_case(case: &Value) {
         },
         host: host.clone(),
         workspace_admissions: WorkspaceAdmissions::default(),
-        projector: Arc::new(GatewayAgentEventProjector::new(
-            GatewayAgentEventProjectorOptions::default(),
-        )),
+        projector: Arc::new(
+            GatewayAgentEventProjector::new(GatewayAgentEventProjectorOptions::default())
+                .expect("#879 default projector"),
+        ),
     });
     if setup["workspaceBusy"] == true {
         let workspace = JsString::from(setup["workspace"].as_str().unwrap());
