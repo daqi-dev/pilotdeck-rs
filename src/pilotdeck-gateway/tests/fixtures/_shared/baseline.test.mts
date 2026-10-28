@@ -79,7 +79,9 @@ test('#280 rejects wrong HEAD and a missing transitive source', t => {
   assert.throws(f.bind, /baseline HEAD mismatch/);
   f.git('checkout', '--detach', f.commit);
   rmSync(join(f.baseline, 'src/dependency.ts'));
-  assert.throws(f.bind, /missing tracked source file/);
+  // The tracked-tree check and the src walk both reject a deleted source; the
+  // status diagnostic runs first now that the old guard shares that check.
+  assert.throws(f.bind, /missing tracked source file|uncommitted changes to tracked files/);
 });
 
 test('#280 actual fixed baseline adapter preserves recorded oracle hashes', async () => {

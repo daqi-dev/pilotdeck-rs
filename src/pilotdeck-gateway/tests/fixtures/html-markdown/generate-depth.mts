@@ -1,12 +1,13 @@
 import { writeFileSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 import { pathToFileURL } from 'node:url';
 const base = resolve(process.env.PDRS_BASELINE!);
 const git = realpathSync(process.env.PDRS_GIT || execFileSync('which',['git'],{encoding:'utf8'}).trim());
 const ref = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
-bindSourceTree(base, ref, git);
+bindBaseline({ baseline: base, commit: ref, gitExecutable: git });
 const sourceSha256 = sourceClosureSha256(base,ref,git,['src/tool/builtin/webFetch.ts','src/tool/builtin/webSearch.ts']);
 const {getURLMarkdownContent,__setWebFetchHookForTesting}=await import(pathToFileURL(base+'/src/tool/builtin/web/urlFetcher.ts').href);
 const {WebFetchUrlCache,clearWebFetchCache}=await import(pathToFileURL(base+'/src/tool/builtin/web/urlContentCache.ts').href);

@@ -5,7 +5,8 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 import { freezeClock } from '../edgeclaw-file-memory/observe.mts';
 assert.equal(process.versions.node.split('.')[0], '22');
 assert.ok(process.env.PDRS_BASELINE); assert.ok(process.argv[2]);
@@ -13,7 +14,7 @@ const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const baseline = resolve(process.env.PDRS_BASELINE!);
 const source = 'src/context/memory/edgeclaw-memory-core/src/core/file-memory.ts';
 const git = realpathSync(process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim());
-const provenance = bindSourceTree(baseline, commit, git);
+const provenance = bindBaseline({ baseline: baseline, commit: commit, gitExecutable: git }).provenance;
 const sourceSha256 = sourceClosureSha256(baseline, commit, git, [source]);
 freezeClock();
 const { FileMemoryStore } = await import(pathToFileURL(join(baseline, source)).href);
@@ -42,7 +43,7 @@ try {
   symlinkSync(outside, join(root, 'Project', 'outside'));
   store.clearAllData({ rebuildManifest: false });
   const clearSentinel = readFileSync(join(outside, 'sentinel'), 'utf8');
-  bindSourceTree(baseline, commit, git);
+  bindBaseline({ baseline: baseline, commit: commit, gitExecutable: git });
   assert.deepEqual(sourceClosureSha256(baseline, commit, git, [source]), sourceSha256);
   const output = resolve(process.argv[2]!); mkdirSync(output, { recursive: true });
   // tests/common/baseline.rs reads `sourceCommit`, like every merged fixture.

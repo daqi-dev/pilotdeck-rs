@@ -4,7 +4,8 @@ import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {mkdirSync, realpathSync, writeFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
-import {bindSourceTree, sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 import {collect, ENTRY} from './observe.mts';
 
 assert.ok(process.env.PDRS_BASELINE);
@@ -13,7 +14,7 @@ const baseline = resolve(process.env.PDRS_BASELINE!);
 const out = resolve(process.argv[2]!);
 const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const git = realpathSync(process.env.PDRS_GIT || execFileSync('which', ['git'], {encoding: 'utf8'}).trim());
-const provenance = bindSourceTree(baseline, commit, git);
+const provenance = bindBaseline({ baseline: baseline, commit: commit, gitExecutable: git }).provenance;
 const sourceSha256 = sourceClosureSha256(baseline, commit, git, [ENTRY]);
 const {cases, clockMs} = await collect(baseline);
 assert.ok(cases.length > 35, `only ${cases.length} cases`);

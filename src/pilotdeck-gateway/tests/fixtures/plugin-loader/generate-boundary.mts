@@ -5,14 +5,15 @@ import {realpathSync} from 'node:fs';
 import {chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {bindSourceTree, sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'PDRS_BASELINE required');
 assert.ok(process.argv[2], 'output directory required');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const sourceCommit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const git = realpathSync(execFileSync('which', ['git'], {encoding: 'utf8'}).trim());
-bindSourceTree(baseline, sourceCommit, git);
+bindBaseline({ baseline: baseline, commit: sourceCommit, gitExecutable: git });
 const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
 assert.equal(execFileSync(git, ['--no-replace-objects', '-C', baseline, 'status', '--porcelain', '--untracked-files=no'], {env: gitEnv}).toString(), '');
 assert.equal(new Intl.Collator().resolvedOptions().locale, 'en-US');

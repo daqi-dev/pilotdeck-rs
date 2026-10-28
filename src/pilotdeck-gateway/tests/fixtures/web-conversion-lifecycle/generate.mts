@@ -5,7 +5,8 @@ import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.equal(process.version, 'v22.22.0', '#940 requires Node v22.22.0');
 assert.ok(process.env.PDRS_BASELINE, '#940 requires PDRS_BASELINE');
@@ -14,7 +15,7 @@ const base = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
 const git = realpathSync(process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim());
 const sourceCommit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
-bindSourceTree(base, sourceCommit, git);
+bindBaseline({ baseline: base, commit: sourceCommit, gitExecutable: git });
 const sourceSha256 = sourceClosureSha256(base, sourceCommit, git, ['src/tool/builtin/webFetch.ts']);
 const src = (path: string) => pathToFileURL(join(base, 'src', path)).href;
 const { createWebFetchTool } = await import(src('tool/builtin/webFetch.ts'));

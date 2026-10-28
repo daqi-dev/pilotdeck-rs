@@ -43,6 +43,14 @@ pub(crate) fn pid(oracle: &[u8]) -> Result<u32, String> {
 // This scanner collects complete scalar spans, not a rewritten JSON tree. Some
 // companions deliberately contain invalid UTF-8, lone surrogates or a cut-off
 // final string. On those tails scanning stops; all remaining bytes stay intact.
+// The completeness flag lets a truncated prefix report *where* it stopped
+// instead of looking like a valid document with a missing masked field.
+fn scan_all(bytes: &[u8]) -> (Vec<(String, Range<usize>)>, bool, usize) {
+    let mut spans = Vec::new();
+    let mut at = 0;
+    let complete = scan(bytes, &mut at, "", &mut spans).is_some();
+    (spans, complete, at)
+}
 fn scan(
     bytes: &[u8],
     at: &mut usize,
@@ -148,9 +156,19 @@ fn string_end(bytes: &[u8], at: &mut usize) -> Option<()> {
 }
 
 pub(crate) fn scalar_spans(bytes: &[u8]) -> Vec<(String, Range<usize>)> {
-    let mut spans = Vec::new();
-    scan(bytes, &mut 0, "", &mut spans);
-    spans
+    scan_all(bytes).0
+}
+
+fn mask_paths(remaining: &BTreeMap<&'static str, &'static str>) -> String {
+    let mut paths: Vec<String> = remaining
+        .keys()
+        .take(4)
+        .map(|path| format!("{path:?}"))
+        .collect();
+    if remaining.len() > paths.len() {
+        paths.push(format!("+{} more", remaining.len() - paths.len()));
+    }
+    paths.join(", ")
 }
 
 pub(crate) fn normalized(
@@ -174,7 +192,8 @@ pub(crate) fn normalized(
     let mut normalized = Vec::new();
     let mut copied = 0;
     let mut seen = std::collections::BTreeSet::new();
-    for (pointer, span) in scalar_spans(bytes) {
+    let (spans, complete, stopped) = scan_all(bytes);
+    for (pointer, span) in spans {
         if seen.contains(&pointer) {
             return Err(format!("#280 duplicate masked path {file}{pointer}"));
         }
@@ -209,6 +228,15 @@ pub(crate) fn normalized(
             _ => false,
         };
         if !valid {
+            if kind == "pid" {
+                let actual = String::from_utf8_lossy(token);
+                let expected = generator_pid
+                    .map(|pid| pid.to_string())
+                    .unwrap_or_else(|| "unavailable".into());
+                return Err(format!(
+                    "#280 foreign owner PID {actual} at {file}{pointer}; expected this run's generator PID {expected}"
+                ));
+            }
             return Err(format!("#280 invalid {kind} value at {file}{pointer}"));
         }
         normalized.extend_from_slice(&bytes[copied..span.start]);
@@ -216,9 +244,20 @@ pub(crate) fn normalized(
         copied = span.end;
     }
     if !remaining.is_empty() {
+        if !complete {
+            let position = if stopped >= bytes.len() {
+                format!("input ends at byte {}", bytes.len())
+            } else {
+                format!("is malformed at byte {stopped} of {}", bytes.len())
+            };
+            return Err(format!(
+                "#280 {file} {position} before masked path(s) [{}]",
+                mask_paths(&remaining)
+            ));
+        }
         return Err(format!(
-            "#280 missing masked paths in {file}: {:?}",
-            remaining.keys()
+            "#280 missing masked paths in {file}: [{}]",
+            mask_paths(&remaining)
         ));
     }
     normalized.extend_from_slice(&bytes[copied..]);

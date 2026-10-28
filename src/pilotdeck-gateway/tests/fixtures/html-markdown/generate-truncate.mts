@@ -8,14 +8,15 @@ import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 assert.ok(process.argv[2], 'provide a fresh output directory');
 const base = resolve(process.env.PDRS_BASELINE);
 const ref = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const git = realpathSync(process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim());
-bindSourceTree(base, ref, git);
+bindBaseline({ baseline: base, commit: ref, gitExecutable: git });
 const sourceSha256 = sourceClosureSha256(base, ref, git,
   ['src/tool/builtin/webFetch.ts', 'src/tool/builtin/web/urlFetcher.ts']);
 const original = JSON.parse(readFileSync(new URL('./oracle.json', import.meta.url), 'utf8'));

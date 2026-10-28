@@ -5,7 +5,8 @@ import { execFileSync, spawn } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { start } from './net.mjs';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 const baseline = resolve(process.env.PDRS_BASELINE!);
 const script = fileURLToPath(import.meta.url);
@@ -37,7 +38,7 @@ if (process.argv[2] === '--worker') {
 
 const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const git = fs.realpathSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim());
-bindSourceTree(baseline, commit, git);
+bindBaseline({ baseline: baseline, commit: commit, gitExecutable: git });
 assert.equal(JSON.parse(fs.readFileSync(join(baseline, 'node_modules/undici/package.json'), 'utf8')).version, '8.3.0');
 assert.equal(JSON.parse(fs.readFileSync(join(baseline, 'node_modules/@modelcontextprotocol/sdk/package.json'), 'utf8')).version, '1.29.0');
 const sourceSha256 = sourceClosureSha256(baseline, commit, git,

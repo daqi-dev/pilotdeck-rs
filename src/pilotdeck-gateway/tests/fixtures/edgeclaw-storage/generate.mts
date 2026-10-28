@@ -22,10 +22,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import {
-  bindSourceTree,
-  sourceClosureSha256,
-} from '../../baseline_source_guard.mjs';
+import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 import {
   DEFAULTS,
   OTHER_DEFAULTS,
@@ -48,7 +46,7 @@ const output = resolve(process.argv[2]);
 const gitExecutable = realpathSync(
   process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim(),
 );
-const provenance = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable);
+const provenance = bindBaseline({ baseline: baseline, commit: BASELINE_COMMIT, gitExecutable: gitExecutable }).provenance;
 const sourceSha256 = sourceClosureSha256(baseline, BASELINE_COMMIT, gitExecutable, [
   SQLITE_TS,
 ]);

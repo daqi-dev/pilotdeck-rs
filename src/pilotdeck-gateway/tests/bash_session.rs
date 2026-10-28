@@ -11,6 +11,8 @@
 #![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/node_provenance.rs"]
+mod node_provenance;
 #[path = "common/scratch.rs"]
 mod scratch;
 
@@ -251,8 +253,9 @@ fn detached_shell_leads_its_own_session() {
 
 /// The committed oracle is exactly what the real TS baseline produces.
 #[test]
-#[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules), Node 22, darwin and script(1)"]
+#[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules), Node v22.22.0, darwin and script(1)"]
 #[cfg(target_os = "macos")]
 fn fixture_regenerates_identically_from_the_baseline() {
+    let _ = node_provenance::pin(baseline::node_command());
     baseline::regenerates_identically("bash-session");
 }
