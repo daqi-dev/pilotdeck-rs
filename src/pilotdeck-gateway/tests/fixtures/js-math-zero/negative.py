@@ -5,8 +5,9 @@ when it is replaced by the platform `f64::min` / `f64::max`.
 Two mutant families:
 - signed-zero ties: the explicit projection is replaced by an
   order-dependent (input-order-dependent) tie;
-- retry clamps: the shared `js_math` call is reverted to the platform method,
-  which swallows the NaN that `Math.min` / `Math.max` propagate.
+- NaN clamps: the shared `js_math` call is reverted to the platform method,
+  which swallows the NaN that `Math.min` / `Math.max` propagate (retry
+  delays and the background completion-preview bounds).
 
 Platform caveat for the first family, measured on this host with
 `rustc 1.99.0`: Rust `f64::max(0.0, -0.0)` / `f64::min(0.0, -0.0)` already
@@ -52,6 +53,7 @@ agent_policy = root / 'src/pilotdeck-agent/src/request_materialization_policy.rs
 http = root / 'src/pilotdeck-gateway/src/runtime/model/http.rs'
 router_policy = root / 'src/pilotdeck-gateway/src/runtime/model/router/policy.rs'
 web_network = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/network.rs'
+background = root / 'src/pilotdeck-gateway/src/runtime/background.rs'
 
 # (name, source, before, after, exact test)
 cases = [
@@ -183,6 +185,19 @@ cases = [
     let jitter = (random() * (exponential * 0.25).floor().max(1.0)).floor();
     cap.min(exponential + jitter)''',
      'runtime::tools::builtin::web::network::retry_delay_tests::retry_delay_uses_js_math_min_max'),
+    # Single-site revert: the first exponential clamp alone.  The final
+    # `js_math_min` still propagates a NaN cap, so this mutant needs the
+    # separate `baseDelayMs=NaN, maxDelayMs=5000, random=0` row.
+    ('web-retry-exponential-base-nan', web_network,
+     '    let exponential = js_math_min(cap, retry.base_delay_ms * 2f64.powi(attempt as i32));',
+     '    let exponential = cap.min(retry.base_delay_ms * 2f64.powi(attempt as i32));',
+     'runtime::tools::builtin::web::network::retry_delay_tests::retry_delay_uses_js_math_min_max'),
+    # BackgroundTaskRuntime.ts:559/561 `Math.max`: a NaN preview size must
+    # stay NaN, which makes readSlice treat offset/cap as 0 / ring size.
+    ('background-preview-max-nan', background,
+     '                    let preview_bytes = js_math_max(self.completion_preview_bytes, 0.0);',
+     '                    let preview_bytes = self.completion_preview_bytes.max(0.0);',
+     'runtime::background::tests::completion_preview_uses_js_math_max_for_nan'),
 ]
 
 ASSERTIONS = {
@@ -196,6 +211,9 @@ ASSERTIONS = {
     'router-transient-min-nan': '#947 transient retry delay must propagate NaN',
     'web-retry-after-min-nan': '#947 retry-after Math.min must propagate a NaN cap',
     'web-retry-exponential-min-nan': '#947 exponential Math.min must propagate a NaN cap',
+    'web-retry-exponential-base-nan': '#947 exponential base NaN must survive the first Math.min',
+    'background-preview-max-nan':
+        '#947 completion preview Math.max must propagate NaN previewBytes like TS',
     'shared-max-left-tie': '#947 js_math::max tie',
     'shared-min-left-tie': '#947 js_math::min tie',
     'compaction-left-tie': '#947 compaction js_max tie',
@@ -224,6 +242,10 @@ BASELINE = {
         ['-p', 'pilotdeck-gateway', '--lib'],
         'retry_delay_uses_js_math_min_max',
     ),
+    'pilotdeck-gateway-background': (
+        ['-p', 'pilotdeck-gateway', '--lib'],
+        'completion_preview_uses_js_math_max_for_nan',
+    ),
 }
 
 
@@ -238,6 +260,8 @@ def package_for(path):
         return 'pilotdeck-gateway-router'
     if path == web_network:
         return 'pilotdeck-gateway-web'
+    if path == background:
+        return 'pilotdeck-gateway-background'
     return 'pilotdeck-gateway'
 
 
