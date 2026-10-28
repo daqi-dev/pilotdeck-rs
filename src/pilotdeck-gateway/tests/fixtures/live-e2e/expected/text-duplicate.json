@@ -1,0 +1,394 @@
+{
+  "result": {
+    "scenario": "text",
+    "injection": "duplicate",
+    "caseDir": "<CASE>",
+    "events": [
+      "model_request_started"
+    ],
+    "eventDetails": [
+      {
+        "type": "model_request_started"
+      }
+    ],
+    "terminal": null,
+    "error": "Sidecar event sequence mismatch: expected 1, got 0.",
+    "modelCalls": 0,
+    "modelEventCounts": [],
+    "modelInterrupted": false,
+    "toolCalls": [],
+    "toolResults": [],
+    "cancelWindowEnteredAtEvents": null,
+    "abortAfterEvents": null,
+    "abortReason": null,
+    "startedAtMs": 1792972800000,
+    "elapsedMs": 0
+  },
+  "frames": {
+    "h2s": [
+      {
+        "index": 1,
+        "dir": "h2s",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "request",
+          "messageId": "hello-fixed-1",
+          "method": "hello",
+          "payload": {}
+        }
+      },
+      {
+        "index": 2,
+        "dir": "h2s",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "request",
+          "messageId": "capabilities-fixed-2",
+          "method": "capabilities",
+          "payload": {}
+        }
+      },
+      {
+        "index": 3,
+        "dir": "h2s",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "request",
+          "messageId": "execute-fixed-3",
+          "method": "execute",
+          "runId": "run-text-duplicate",
+          "operationId": "operation-text-duplicate",
+          "requestId": "request-fixed-4",
+          "sessionId": "live-e2e-session",
+          "turnId": "turn-text-duplicate",
+          "payload": {
+            "agent": {
+              "provider": "live-e2e",
+              "model": "mock-model",
+              "cwd": "<CASE>/sandbox",
+              "runMode": "agent"
+            },
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "LIVE_E2E_TEXT run the text stream window"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "read",
+                "description": "Read one file from the live-e2e case sandbox.",
+                "kind": "filesystem",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ]
+                },
+                "readOnly": true,
+                "concurrencySafe": true,
+                "requiresUserInteraction": false,
+                "requiredRuntimeCapabilities": []
+              }
+            ],
+            "permissionContext": {
+              "mode": "default",
+              "canPrompt": false,
+              "bypassAvailable": false,
+              "cwd": "<CASE>/sandbox",
+              "additionalWorkingDirectories": [],
+              "rules": {
+                "allow": [],
+                "deny": [],
+                "ask": []
+              }
+            },
+            "hostModules": {
+              "model": {
+                "methods": [
+                  "prepare",
+                  "stream",
+                  "stream_next",
+                  "close_stream"
+                ]
+              },
+              "capability": {
+                "methods": [
+                  "execute",
+                  "execute_batch",
+                  "list_tools"
+                ]
+              }
+            },
+            "interactionCapabilities": {
+              "elicitationAvailable": false
+            },
+            "seedState": {
+              "allowedReadFiles": [],
+              "readFileState": {},
+              "writeSnapshots": {}
+            }
+          }
+        }
+      },
+      {
+        "index": 4,
+        "dir": "h2s",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "response",
+          "messageId": "host-module-fixed-5",
+          "inReplyTo": "module-call-8z7fqcpxgyw",
+          "requestId": "tool-catalog-gar5cjsjzyo",
+          "ok": true,
+          "payload": {
+            "tools": [
+              {
+                "name": "read",
+                "description": "Read one file from the live-e2e case sandbox.",
+                "kind": "filesystem",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ]
+                },
+                "readOnly": true,
+                "concurrencySafe": true,
+                "requiresUserInteraction": false,
+                "requiredRuntimeCapabilities": []
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "s2h": [
+      {
+        "index": 1,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "response",
+          "messageId": "hello-6u33ewi90zl",
+          "inReplyTo": "hello-fixed-1",
+          "ok": true,
+          "protocolVersion": "2.0",
+          "moduleId": "pilotdeck-agent-loop",
+          "moduleInstanceId": "pilotdeck-agent-loop-instance-64zkb9l6rdd",
+          "connectionGeneration": "pilotdeck-agent-loop-instance-64zkb9l6rdd-av73ihxgeoj-jblgoefcir",
+          "capabilitiesVersion": "1",
+          "payload": {}
+        }
+      },
+      {
+        "index": 2,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "response",
+          "messageId": "capabilities-5j44bucz4fm",
+          "inReplyTo": "capabilities-fixed-2",
+          "ok": true,
+          "protocolVersion": "2.0",
+          "moduleId": "pilotdeck-agent-loop",
+          "moduleInstanceId": "pilotdeck-agent-loop-instance-64zkb9l6rdd",
+          "connectionGeneration": "pilotdeck-agent-loop-instance-64zkb9l6rdd-av73ihxgeoj-jblgoefcir",
+          "capabilitiesVersion": "1",
+          "payload": {
+            "capabilitiesVersion": "1",
+            "methods": [
+              {
+                "name": "execute",
+                "enabled": true,
+                "profiles": [
+                  "streaming"
+                ],
+                "cancel": true,
+                "resumeSupport": "none",
+                "retry": "retry_after_status"
+              },
+              {
+                "name": "cancel",
+                "enabled": true
+              },
+              {
+                "name": "status",
+                "enabled": true
+              },
+              {
+                "name": "resume",
+                "enabled": false
+              },
+              {
+                "name": "ack",
+                "enabled": false
+              }
+            ]
+          }
+        }
+      },
+      {
+        "index": 3,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "response",
+          "messageId": "accepted-e4d2qub3s3l",
+          "inReplyTo": "execute-fixed-3",
+          "requestId": "request-fixed-4",
+          "ok": true,
+          "streamId": "stream-0o4a03o7yvdq",
+          "cursor": 0
+        }
+      },
+      {
+        "index": 4,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "request",
+          "messageId": "module-call-8z7fqcpxgyw",
+          "method": "module_call",
+          "runId": "run-text-duplicate",
+          "operationId": "operation-text-duplicate",
+          "requestId": "tool-catalog-gar5cjsjzyo",
+          "module": "capability",
+          "payload": {
+            "operation": "list_tools"
+          }
+        }
+      },
+      {
+        "index": 5,
+        "dir": "s2h",
+        "action": [
+          "duplicate"
+        ],
+        "delivered": true,
+        "frame": {
+          "kind": "event",
+          "messageId": "event-gg44uaniu7g",
+          "eventType": "agent.model_request_started",
+          "streamId": "stream-0o4a03o7yvdq",
+          "sequence": 0,
+          "runId": "run-text-duplicate",
+          "operationId": "operation-text-duplicate",
+          "requestId": "request-fixed-4",
+          "final": false,
+          "payload": {
+            "type": "model_request_started",
+            "sessionId": "live-e2e-session",
+            "turnId": "turn-text-duplicate",
+            "model": "mock-model",
+            "provider": "live-e2e"
+          }
+        }
+      },
+      {
+        "index": 6,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "request",
+          "messageId": "module-call-72ivryfxg1f",
+          "method": "module_call",
+          "runId": "run-text-duplicate",
+          "operationId": "operation-text-duplicate",
+          "requestId": "model-prepare-6xb4zou9ad",
+          "module": "model",
+          "abortSignal": {},
+          "payload": {
+            "operation": "prepare",
+            "request": {
+              "provider": "live-e2e",
+              "model": "mock-model",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "LIVE_E2E_TEXT run the text stream window"
+                    }
+                  ]
+                }
+              ],
+              "tools": [
+                {
+                  "name": "read",
+                  "description": "Read one file from the live-e2e case sandbox.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ]
+                  }
+                }
+              ],
+              "stream": true
+            },
+            "preparationId": "prepared-bjfyhxzpkc-1",
+            "context": {
+              "sessionId": "live-e2e-session",
+              "turnId": "turn-text-duplicate",
+              "runId": "run-text-duplicate",
+              "operationId": "operation-text-duplicate"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "summary": {
+    "frames": 10,
+    "injections": [
+      {
+        "spec": {
+          "action": "duplicate",
+          "direction": "s2h",
+          "kind": "event",
+          "final": false,
+          "nth": 1
+        },
+        "fired": true,
+        "matchedIndex": 9
+      }
+    ]
+  },
+  "mock": [
+    {
+      "listening": true,
+      "port": "<PORT>"
+    }
+  ]
+}

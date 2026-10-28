@@ -37,11 +37,17 @@ escalation could hit it.
 import argparse
 import json
 import os
+from pathlib import Path
 import signal
 import subprocess
 import sys
 import threading
 import time
+
+from io_deadline import Lines, write, DeadlineExceeded
+
+# Includes idle reads and backpressure writes, independent of peer cooperation.
+PIPE_SECONDS = 30
 
 # Bounded child reaping. The sidecar normally exits by itself once stdin ends;
 # these are the escalation bounds, not the expected path. TERM grace + KILL
@@ -135,6 +141,7 @@ class Mitm:
         self.log = open(log_path, "w", encoding="utf-8")
         self.summary_path = summary_path
         self.index = 0
+        self.records = {"h2s": [], "s2h": []}
         # Session/turn identity for synthesized terminals, captured from the
         # host's execute request observed on h2s.
         self.session_id = None
@@ -192,12 +199,13 @@ class Mitm:
             if not self.forward[direction]:
                 forward_count = 0
             record = {
-                "index": self.index,
+                "index": len(self.records[direction]) + 1,
                 "dir": direction,
                 "action": actions,
                 "delivered": False,
                 "frame": frame,
             }
+            self.records[direction].append(record)
             return record, forward_count, json.dumps(frame, ensure_ascii=False) + "\n"
 
     def settle(self, record, delivered):
@@ -209,6 +217,10 @@ class Mitm:
 
     def close_log(self):
         self.log.close()
+        # Two independent wire orders are recorded at observation, before forwarding.
+        # Cross-direction scheduling has no total-order contract. No frame is omitted.
+        Path(self.log.name).with_suffix(".json").write_text(
+            json.dumps(self.records, ensure_ascii=False, indent=2) + "\n")
         if self.summary_path:
             summary = {
                 "frames": self.index,
@@ -297,7 +309,7 @@ def parse_frame(line, source):
     try:
         return json.loads(line)
     except json.JSONDecodeError as error:
-        raise SystemExit(f"#969 mitm: {source} line is not JSON: {error}: {line[:200]!r}")
+        raise RuntimeError(f"#969 mitm: {source} line is not JSON: {error}: {line[:200]!r}")
 
 
 def main(argv):
@@ -320,8 +332,7 @@ def main(argv):
         written = 0
         for _ in range(copies):
             try:
-                child.stdin.write(encoded)
-                child.stdin.flush()
+                write(child.stdin, encoded, time.monotonic() + PIPE_SECONDS, "mitm h2s write")
                 written += 1
             except (BrokenPipeError, ValueError):
                 # The child is gone; stop forwarding, keep recording.
@@ -342,8 +353,7 @@ def main(argv):
         written = 0
         for _ in range(copies):
             try:
-                sys.stdout.write(encoded)
-                sys.stdout.flush()
+                write(sys.stdout, encoded, time.monotonic() + PIPE_SECONDS, "mitm s2h write")
                 written += 1
             except (BrokenPipeError, ValueError):
                 # The host is gone (for example it accepted a premature final
@@ -352,12 +362,17 @@ def main(argv):
                 break
         return written
 
+    stopped = threading.Event()
+    host_eof = threading.Event()
+
     def pump_host_to_sidecar():
-        for line in sys.stdin:
+        reader = Lines(sys.stdin)
+        while line := reader.readline(time.monotonic() + PIPE_SECONDS, "mitm h2s read", stop=stopped):
             frame = parse_frame(line, "host")
             record, forward_count, encoded = mitm.observe(frame, "h2s")
             written_to_child = deliver_to_child(encoded, forward_count) if forward_count else 0
             mitm.settle(record, written_to_child > 0)
+        host_eof.set()
         # Host closed our stdin: mirror it so the child can finish its turn,
         # then bound the wait — a child stuck on module calls to the departed
         # host must not keep the s2h reader blocked forever.
@@ -368,7 +383,8 @@ def main(argv):
         reap_after_host_eof(child)
 
     def pump_sidecar_to_host():
-        for line in child.stdout:
+        reader = Lines(child.stdout)
+        while line := reader.readline(time.monotonic() + PIPE_SECONDS, "mitm s2h read"):
             frame = parse_frame(line, "sidecar")
             record, forward_count, encoded = mitm.observe(frame, "s2h")
             written_to_host = deliver_to_host(encoded, forward_count) if forward_count else 0
@@ -383,24 +399,44 @@ def main(argv):
     signal.signal(signal.SIGTERM, terminate)
     signal.signal(signal.SIGINT, terminate)
 
-    host_thread = threading.Thread(target=pump_host_to_sidecar, daemon=True)
+    failures = []
+
+    def guarded_host():
+        try:
+            pump_host_to_sidecar()
+        except InterruptedError:
+            pass
+        except (DeadlineExceeded, OSError, ValueError, RuntimeError) as error:
+            failures.append(str(error))
+            kill_child_group(child)
+
+    host_thread = threading.Thread(target=guarded_host, daemon=True)
     host_thread.start()
     try:
         try:
             pump_sidecar_to_host()
-        except ValueError:
-            # The EOF reaper closed the child pipes under this reader; the
-            # child is being torn down, so ending the pump here is correct.
-            pass
+        except DeadlineExceeded as error:
+            failures.append(str(error))
+        except OSError as error:
+            if not host_eof.is_set():
+                failures.append(str(error))
+        except (ValueError, RuntimeError) as error:
+            # Only an explicitly owned fd-close is an expected shutdown.
+            if isinstance(error, (UnicodeError, RuntimeError)) or not host_eof.is_set():
+                failures.append(str(error))
         child.stdout.close()
     finally:
         # Unconditional: the leader may be gone while a TERM-ignoring
         # descendant still holds the pipes; the sweep itself is a no-op fast
         # path when the whole group is already dead.
         kill_child_group(child)
-        host_thread.join(timeout=5)
+        stopped.set()
+        host_thread.join(timeout=PIPE_SECONDS + CHILD_TERM_GRACE_SECONDS)
         unfired = mitm.unfired()
         mitm.close_log()
+    if failures:
+        print("#969 mitm: bounded I/O failure: " + "; ".join(failures), file=sys.stderr)
+        return 4
     if unfired:
         specs = [entry["spec"] for entry in unfired]
         print(f"#969 mitm: declared injections never matched a frame: {specs}", file=sys.stderr)

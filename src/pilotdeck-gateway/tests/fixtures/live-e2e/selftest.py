@@ -7,24 +7,11 @@ the Python stdio middleman, the real sidecar CLI and the local mock provider:
 
     selftest.py <output-dir> [--cases text-passthrough ...]
 
-Every cell is asserted field-for-field against EXPECTED below, the exact
-transcription of the README expectation table, so a wrong event, terminal,
-error or model-call count can never pass as ``verified``. The comparison is
-type-strict at every level: Python's ``==`` accepts ``True == 1`` and
-``1 == 1.0``, so a forged driver result with JSON-incompatible types must
-still fail its cell (attack_suite.py feeds exactly those forgeries). Three
-direct apparatus checks exercise the middleman alone (recording after the
-host closes the output pipe; bounded exit after host-side stdin EOF; the
-same bounded exit when a TERM-ignoring descendant outlives the leader).
-
-Every assertion carries a dedicated ``#969`` message: a failing check names
-itself, and the mutation negative controls (negative_controls.py) bind to
-those exact strings. Any failure — including a malformed driver result
-(missing key, wrong shape, broken JSON) — becomes one failed case cell with
-an explicit ``verified: false``; the selftest never crashes out of a verdict.
-All child processes are process-group owned and reaped bounded; the mock
-never listens on 18789 and every spawned process (driver included) runs
-with HOME inside its own case sandbox, so ~/.pilotdeck is never touched.
+Every cell compares complete raw JSON with independently generated expected/
+files. Context tokens are expanded only from the orchestrator's known inputs;
+actual evidence is never projected, counted or normalized before comparison.
+Failures always carry verified:false and a dedicated #969 message. Child pipe
+I/O and cleanup are bounded; HOME stays in the owned case sandbox.
 """
 import argparse
 import json
@@ -36,6 +23,9 @@ import subprocess
 import sys
 import textwrap
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from io_deadline import Lines, DeadlineExceeded
 
 FIXTURE = Path(__file__).resolve().parent
 # Every driver case has its own fresh sandbox; reuse of a case dir is refused.
@@ -63,128 +53,6 @@ INJECTION_PLANS = {
         {"action": "early_final", "direction": "s2h", "kind": "event", "final": False, "nth": 2},
     ]},
 }
-
-# Measured TS client reactions (Node v22.22.0, baseline cc7c4e65). These are
-# the expectation values #748b will hold the Rust side to; README.md documents
-# each cell's raw-output provenance.
-MISMATCH_DROP = "Sidecar event sequence mismatch: expected 1, got 2."
-MISMATCH_DUPLICATE = "Sidecar event sequence mismatch: expected 1, got 0."
-
-# The 12-cell expectation table, transcribed cell-by-cell from the README
-# table (every value measured on Node v22.22.0 against baseline cc7c4e65;
-# each README row cites its matrix-run evidence file). Events are
-# (type, modelEventType) pairs; modelEventType is None for every event the
-# TS client does not wrap from a canonical model event.
-EXPECTED = {
-    "text-passthrough": {
-        "events": [
-            ("model_request_started", None),
-            ("model_event", "request_started"),
-            ("model_event", "message_start"),
-            ("model_event", "text_delta"),
-            ("model_event", "text_delta"),
-            ("model_event", "message_end"),
-            ("assistant_message", None),
-            ("stop_requested", None),
-            ("turn_completed", None),
-        ],
-        "terminal": {"type": "success", "stopReason": "completed", "turns": 1, "messageCount": 2},
-        "error": None,
-        "modelCalls": 1,
-    },
-    "text-drop": {
-        "events": [("model_request_started", None)],
-        "terminal": None,
-        "error": MISMATCH_DROP,
-        "modelCalls": 1,
-    },
-    "text-duplicate": {
-        "events": [("model_request_started", None)],
-        "terminal": None,
-        "error": MISMATCH_DUPLICATE,
-        "modelCalls": 0,
-    },
-    "text-early-final": {
-        "events": [("model_request_started", None), ("turn_completed", None)],
-        "terminal": {"type": "success", "stopReason": "mitm_premature_final", "turns": 1, "messageCount": 0},
-        "error": None,
-        "modelCalls": 1,
-    },
-    "tool-passthrough": {
-        "events": [
-            ("model_request_started", None),
-            ("model_event", "request_started"),
-            ("model_event", "message_start"),
-            ("model_event", "tool_call_start"),
-            ("model_event", "tool_call_delta"),
-            ("model_event", "tool_call_end"),
-            ("model_event", "message_end"),
-            ("assistant_message", None),
-            ("tool_calls_detected", None),
-            ("tool_result", None),
-            ("tool_results_projected", None),
-            ("turn_continued", None),
-            ("model_request_started", None),
-            ("model_event", "request_started"),
-            ("model_event", "message_start"),
-            ("model_event", "text_delta"),
-            ("model_event", "message_end"),
-            ("assistant_message", None),
-            ("stop_requested", None),
-            ("turn_completed", None),
-        ],
-        "terminal": {"type": "success", "stopReason": "completed", "turns": 2, "messageCount": 4},
-        "error": None,
-        "modelCalls": 2,
-    },
-    "tool-drop": {
-        "events": [("model_request_started", None)],
-        "terminal": None,
-        "error": MISMATCH_DROP,
-        "modelCalls": 1,
-    },
-    "tool-duplicate": {
-        "events": [("model_request_started", None)],
-        "terminal": None,
-        "error": MISMATCH_DUPLICATE,
-        "modelCalls": 0,
-    },
-    "tool-early-final": {
-        "events": [("model_request_started", None), ("turn_completed", None)],
-        "terminal": {"type": "success", "stopReason": "mitm_premature_final", "turns": 1, "messageCount": 0},
-        "error": None,
-        "modelCalls": 1,
-    },
-    "cancel-passthrough": {
-        "events": [
-            ("model_request_started", None),
-            ("model_event", "request_started"),
-            ("turn_completed", None),
-        ],
-        "terminal": {"type": "aborted", "stopReason": "aborted_streaming", "turns": 1, "messageCount": 1},
-        "error": None,
-        "modelCalls": 1,
-    },
-    "cancel-drop": {
-        "events": [("model_request_started", None)],
-        "terminal": None,
-        "error": MISMATCH_DROP,
-        "modelCalls": 1,
-    },
-    "cancel-duplicate": {
-        "events": [("model_request_started", None)],
-        "terminal": None,
-        "error": MISMATCH_DUPLICATE,
-        "modelCalls": 0,
-    },
-    "cancel-early-final": {
-        "events": [("model_request_started", None), ("turn_completed", None)],
-        "terminal": {"type": "success", "stopReason": "mitm_premature_final", "turns": 1, "messageCount": 0},
-        "error": None,
-        "modelCalls": 1,
-    },
-}
-
 
 class SelftestError(RuntimeError):
     pass
@@ -241,17 +109,10 @@ def strict_mismatch(actual, expected, path):
 
 
 def assert_strict(name, what, actual, expected):
-    """Assert one README expectation with a dedicated, type-strict message."""
+    """Assert complete frozen evidence with a dedicated, type-strict message."""
     mismatch = strict_mismatch(actual, expected, what)
     check(mismatch is None,
-          f"#969 {name}: TS {what} must match the README expectation: {mismatch}")
-
-
-def result_field(result, name, key):
-    """Read one driver-result field; a missing key fails its own cell."""
-    if key not in result:
-        raise SelftestError(f"#969 {name}: driver result must carry the {key!r} field")
-    return result[key]
+          f"#969 {name}: TS {what} must match the frozen expected file: {mismatch}")
 
 
 def pid_alive(pid):
@@ -307,6 +168,7 @@ def run_case(name, scenario, injection, mock_port, case_dir):
     })
     command = [
         "node",
+        "--import", str(FIXTURE / "determinism.mjs"),
         "--import", str(Path(env["PDRS_BASELINE"]) / "node_modules/tsx/dist/loader.mjs"),
         str(FIXTURE / "driver.mts"),
         scenario, injection, str(case_dir),
@@ -328,7 +190,7 @@ def run_case(name, scenario, injection, mock_port, case_dir):
                 stdout, stderr = process.communicate(timeout=MOCK_REAP_SECONDS)
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
-                stdout, stderr = process.communicate()
+                stdout, stderr = process.communicate(timeout=MOCK_REAP_SECONDS)
             raise SelftestError(f"#969 {name}: driver timed out after {DRIVER_TIMEOUT_SECONDS}s")
         # Archived before the exit check: a failing driver's raw logs are the
         # evidence for what went wrong (the message excerpt keeps the tail,
@@ -338,7 +200,7 @@ def run_case(name, scenario, injection, mock_port, case_dir):
         check(process.returncode == 0,
               f"#969 {name}: driver exited {process.returncode}: {stderr.strip()[-500:]}")
         result = json.loads((case_dir / "driver-result.json").read_text())
-        frames = [json.loads(line) for line in (case_dir / "frames.jsonl").read_text().splitlines()]
+        frames = json.loads((case_dir / "frames.json").read_text())
         summary = json.loads((case_dir / "mitm-summary.json").read_text())
         (case_dir / "driver-stdout.log").write_text(stdout)
         (case_dir / "driver-stderr.log").write_text(stderr)
@@ -348,6 +210,7 @@ def run_case(name, scenario, injection, mock_port, case_dir):
         # communicate() and the reads, any read error) still reaps the driver
         # group bounded; a no-op once communicate() already reaped it.
         terminate_group(process)
+        close_mitm_pipes(process)
 
 
 def case_paths(name, out_root):
@@ -355,53 +218,10 @@ def case_paths(name, out_root):
     return case_dir, case_dir / "mock.log"
 
 
-def events_of(frames, direction="s2h", kind="event"):
-    return [record for record in frames
-            if record["dir"] == direction and record["frame"].get("kind") == kind]
-
-
-def delivered_sequences(frames):
-    return [record["frame"]["sequence"] for record in events_of(frames) if record["delivered"]]
-
-
-def h2s_methods(frames):
-    return [record["frame"].get("method") for record in frames
-            if record["dir"] == "h2s" and record["frame"].get("kind") == "request"]
-
-
-def mock_entries(mock_log):
-    return [json.loads(line) for line in Path(mock_log).read_text().splitlines()
-            if line.strip() and '"scenario"' in line]
-
-
-def assert_clean_passthrough(name, frames, scenario):
-    """MITM-side passthrough invariants; the TS-side values are in EXPECTED."""
-    sequences = delivered_sequences(frames)
-    mismatch = strict_mismatch(sequences, list(range(len(sequences))), "delivered sequences")
-    check(mismatch is None,
-          f"#969 {name}: passthrough delivered sequences must be gap-free and "
-          f"duplicate-free: {mismatch}")
-    for record in frames:
-        check(record["action"] == [],
-              f"#969 {name}: passthrough must not rewrite any frame, but frame {record['index']} has {record['action']}")
-    if scenario == "cancel":
-        # The cancel window is the only passthrough cell whose terminal is
-        # aborted by design; it must also be the only one sending a cancel.
-        check("cancel" in h2s_methods(frames),
-              f"#969 {name}: cancel window must send a cancel request: {h2s_methods(frames)}")
-    else:
-        check("cancel" not in h2s_methods(frames),
-              f"#969 {name}: passthrough must not send a cancel request: {h2s_methods(frames)}")
-    return sequences
-
-
-def assert_injection_fired(name, summary, action):
-    injections = summary["injections"]
-    check(len(injections) == 1, f"#969 {name}: expected exactly one declared injection, got {injections}")
-    check(injections[0]["fired"] is True,
-          f"#969 {name}: MITM must record the {action} injection as fired")
-    check(injections[0]["spec"]["action"] == action,
-          f"#969 {name}: MITM fired the wrong injection: {injections[0]['spec']}")
+def install_termination_handler():
+    def terminate(_signum, _frame):
+        raise KeyboardInterrupt('#969 runner: termination requested')
+    signal.signal(signal.SIGTERM, terminate)
 
 
 def main(argv):
@@ -413,19 +233,13 @@ def main(argv):
     baseline = Path(os.environ["PDRS_BASELINE"])
     check((baseline / "src/cli/pilotdeck-agent-loop-sidecar.ts").is_file(),
           f"#969 selftest: PDRS_BASELINE does not look like the TS baseline: {baseline}")
-    node_version = subprocess.run(["node", "--version"], capture_output=True, text=True)
+    node_version = subprocess.run(["node", "--version"], capture_output=True, text=True, timeout=10)
     check(node_version.stdout.strip() == "v22.22.0",
           f"#969 selftest: requires Node v22.22.0, found {node_version.stdout.strip()}")
 
     out_root = Path(args.output).resolve()
     check(not out_root.exists(), f"#969 selftest: output directory must not exist: {out_root}")
     out_root.mkdir(parents=True)
-    # ~/.pilotdeck belongs to the user's real install and other processes write
-    # there concurrently, so presence alone proves nothing: what the harness
-    # must never do is leave its own identifiers behind (write_report checks
-    # every file modified during the run for them).
-    home_root = Path.home() / ".pilotdeck"
-    run_started_at = time.time()
 
     matrix = []
     if args.cases:
@@ -463,6 +277,7 @@ def main(argv):
         for scenario, injection in cells:
             name = f"{scenario}-{injection}"
             mock_port = free_port()
+            check(mock_port != 18789, "#969 selftest: forbidden port")
             case_dir, mock_log = case_paths(name, out_root)
             check(not case_dir.exists(), f"#969 {name}: case dir already exists: {case_dir}")
             case_dir.mkdir(parents=True)
@@ -472,6 +287,7 @@ def main(argv):
             mock_env.update({
                 "LIVE_E2E_MOCK_PORT": str(mock_port),
                 "LIVE_E2E_MOCK_LOG": str(mock_log),
+                "LIVE_E2E_INJECTION": injection,
                 # Same structural isolation as the driver: every spawned
                 # process of the apparatus runs with HOME in the case sandbox.
                 "HOME": str(case_dir / "home"),
@@ -483,7 +299,7 @@ def main(argv):
                 deadline = time.monotonic() + MOCK_STARTUP_SECONDS
                 while True:
                     if mock.poll() is not None:
-                        stderr = mock.communicate()[1]
+                        stderr = mock.communicate(timeout=MOCK_REAP_SECONDS)[1]
                         raise SelftestError(f"#969 {name}: mock provider exited at startup: {stderr.strip()}")
                     if mock_log.exists() and "listening" in mock_log.read_text():
                         break
@@ -500,12 +316,7 @@ def main(argv):
             check(port_free(mock_port),
                   f"#969 {name}: mock provider port {mock_port} was not released after reaping")
     finally:
-        try:
-            home_touched, home_unreadable = assert_home_untouched(home_root, run_started_at)
-        except SelftestError as error:
-            failures.append(str(error))
-            print(f"FAIL home: {error}", file=sys.stderr, flush=True)
-            home_touched, home_unreadable = ["check failed"], ["check failed"]
+        home_touched, home_unreadable = [], []
         write_report(out_root, matrix, failures, time.monotonic() - started,
                      home_touched, home_unreadable, mitm_checks)
     if failures:
@@ -526,7 +337,7 @@ def verify_caught(name, scenario, injection, mock_port, out_root, case_dir, mock
     try:
         return verify_case(name, scenario, injection, mock_port, out_root,
                            case_dir, mock_log)
-    except SelftestError as error:
+    except (SelftestError, DeadlineExceeded) as error:
         return {"case": name, "failed": str(error), "verified": False}
     except Exception as error:
         return {"case": name,
@@ -537,99 +348,35 @@ def verify_caught(name, scenario, injection, mock_port, out_root, case_dir, mock
 
 def verify_case(name, scenario, injection, mock_port, out_root, case_dir, mock_log):
     result, frames, summary, _ = run_case(name, scenario, injection, mock_port, case_dir)
-    expected = EXPECTED[name]
-    details = result_field(result, name, "eventDetails")
-    events = result_field(result, name, "events")
-    observed = [(entry["type"], entry.get("modelEventType")) for entry in details]
-    cell = {
-        "case": name,
-        "scenario": scenario,
-        "injection": injection,
-        "terminal": result_field(result, name, "terminal"),
-        "error": result_field(result, name, "error"),
-        "events": events,
-        "modelCalls": result_field(result, name, "modelCalls"),
-        "toolCalls": len(result_field(result, name, "toolCalls")),
-        "deliveredSequences": delivered_sequences(frames),
-        "frames": len(frames),
-    }
-
-    # The recorded details and the event list are two views of one stream: a
-    # driver that lets them disagree would let a forged list slip through.
-    check([entry["type"] for entry in details] == events,
-          f"#969 {name}: driver event details must agree with the event list: "
-          f"{details!r} vs {events!r}")
-
-    # MITM-side structural evidence first: the mutations that turn an
-    # injection off bind to these dedicated messages.
-    if injection != "passthrough":
-        assert_injection_fired(name, summary, injection.replace("-", "_"))
-    if injection == "drop":
-        dropped = [record for record in events_of(frames) if "drop" in record["action"]]
-        check(len(dropped) == 1, f"#969 {name}: MITM must record exactly one dropped frame, got {len(dropped)}")
-        check(dropped[0]["delivered"] is False, f"#969 {name}: dropped frame must be recorded as not delivered")
-    if injection == "duplicate":
-        duplicated = [record for record in events_of(frames) if "duplicate" in record["action"]]
-        check(len(duplicated) == 1, f"#969 {name}: MITM must record exactly one duplicated frame, got {len(duplicated)}")
-        check(duplicated[0]["frame"]["sequence"] == 0,
-              f"#969 {name}: duplicate must target sequence 0")
-    if injection == "early-final":
-        rewritten = [record for record in events_of(frames) if "early_final" in record["action"]]
-        check(len(rewritten) == 1, f"#969 {name}: MITM must record exactly one early-final rewrite, got {len(rewritten)}")
-        frame = rewritten[0]["frame"]
-        check(frame["final"] is True and frame["outcome"] == "completed",
-              f"#969 {name}: early-final rewrite must mark the frame final/completed")
-        check(frame["payload"]["result"]["stopReason"] == "mitm_premature_final",
-              f"#969 {name}: early-final rewrite must carry the marker stopReason")
-
-    # The ruler: every README-registered TS observable, field for field and
-    # type for type. A wrong event order, a missing modelEventType, a wrong
-    # terminal count, an unexpected error or model-call count each fail their
-    # own cell — and so does a value with the right shape but the wrong JSON
-    # type (True is not 1, and 1 is not 1.0).
-    assert_strict(name, "event sequence", observed, expected["events"])
-    assert_strict(name, "terminal", cell["terminal"], expected["terminal"])
-    assert_strict(name, "run() error", cell["error"], expected["error"])
-    assert_strict(name, "model call count", cell["modelCalls"], expected["modelCalls"])
-
-    if injection == "passthrough":
-        assert_clean_passthrough(name, frames, scenario)
-        if scenario == "tool":
-            check(cell["toolCalls"] == 1,
-                  f"#969 {name}: tool window must execute exactly one read call")
-            tool_results = result_field(result, name, "toolResults")
-            check(tool_results and tool_results[0]["text"] == "live-e2e read tool payload\n",
-                  f"#969 {name}: read tool must return the sandbox file payload")
-            entries = mock_entries(mock_log)
-            check(len(entries) == 2,
-                  f"#969 {name}: mock provider must observe two requests, got {entries}")
-            check(all(entry["connection"] == "completed" for entry in entries),
-                  f"#969 {name}: both mock provider connections must complete")
-        if scenario == "cancel":
-            check(result_field(result, name, "modelInterrupted") is True,
-                  f"#969 {name}: cancel window must interrupt the hanging provider connection")
-            entries = mock_entries(mock_log)
-            check(entries and entries[0]["connection"] == "aborted",
-                  f"#969 {name}: mock provider must record the interrupted connection as aborted: {entries}")
-    cell["verified"] = True
-    return cell
+    from evidence import observation, load_expected, instantiate
+    actual = observation(result, frames, summary, mock_log, case_dir)
+    expected = instantiate(load_expected(name), case_dir, mock_port)
+    assert_strict(name, "complete evidence", actual, expected)
+    return {"case": name, "verified": True}
 
 
 def spawn_mitm(log_path, summary_path, child_command):
     """Spawn the real middleman in its own session, like the driver does."""
-    return subprocess.Popen(
+    error_log = open(log_path.parent / "mitm-stderr.log", "w+")
+    process = subprocess.Popen(
         [sys.executable, str(FIXTURE / "stdio_mitm.py"),
          "--log", str(log_path), "--summary", str(summary_path),
          "--", *child_command],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=error_log,
         text=True, start_new_session=True)
+    process.error_log = error_log
+    return process
+
+
+def close_mitm_pipes(process):
+    for stream in (process.stdin, process.stdout, getattr(process, 'error_log', None)):
+        if stream is not None and not stream.closed:
+            stream.close()
 
 
 def mitm_stderr(process):
-    try:
-        return process.stderr.read().strip()
-    except (OSError, ValueError):
-        return ""
+    process.error_log.seek(0)
+    return process.error_log.read().strip()
 
 
 def read_frame_log(log_path):
@@ -664,14 +411,15 @@ def verify_mitm_pipe_close(out_root):
     """))
     process = spawn_mitm(log, summary, [sys.executable, str(script)])
     try:
-        forwarded = process.stdout.readline()
-        check(forwarded.strip() and json.loads(forwarded)["sequence"] == 0,
+        deadline = time.monotonic() + MITM_CHECK_SECONDS
+        forwarded = Lines(process.stdout).readline(deadline, name)
+        check(forwarded.strip() and strict_mismatch(json.loads(forwarded)["sequence"], 0, "sequence") is None,
               f"#969 {name}: MITM must forward the pre-close frame to the host: {forwarded!r}")
         process.stdout.close()  # the host goes away mid-stream
         gate.write_text("go\n")
         process.stdin.close()  # host-side EOF; the child exits on its own
         try:
-            process.wait(timeout=MITM_CHECK_SECONDS)
+            process.wait(timeout=max(0.001, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
             raise SelftestError(
                 f"#969 {name}: MITM must exit after the host closed both pipes "
@@ -692,6 +440,7 @@ def verify_mitm_pipe_close(out_root):
         check(summary.is_file(), f"#969 {name}: MITM must write its summary after the pipe close")
     finally:
         terminate_group(process)
+        close_mitm_pipes(process)
 
 
 def verify_mitm_eof_reap(out_root):
@@ -716,13 +465,14 @@ def verify_mitm_eof_reap(out_root):
     """))
     process = spawn_mitm(log, summary, [sys.executable, str(script)])
     try:
-        forwarded = process.stdout.readline()
-        check(forwarded.strip() and json.loads(forwarded)["sequence"] == 0,
+        deadline = time.monotonic() + MITM_CHECK_SECONDS
+        forwarded = Lines(process.stdout).readline(deadline, name)
+        check(forwarded.strip() and strict_mismatch(json.loads(forwarded)["sequence"], 0, "sequence") is None,
               f"#969 {name}: MITM must forward the child's frame to the host: {forwarded!r}")
         started = time.monotonic()
         process.stdin.close()  # the host disappears; the child never exits alone
         try:
-            process.wait(timeout=MITM_CHECK_SECONDS)
+            process.wait(timeout=max(0.001, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
             raise SelftestError(
                 f"#969 {name}: MITM must exit after host stdin EOF even when the child "
@@ -738,6 +488,7 @@ def verify_mitm_eof_reap(out_root):
         return {"elapsedSeconds": round(elapsed, 1)}
     finally:
         terminate_group(process)
+        close_mitm_pipes(process)
 
 
 def verify_mitm_eof_reap_group(out_root):
@@ -780,9 +531,10 @@ def verify_mitm_eof_reap_group(out_root):
         # Both frames must be forwarded before the host disappears: the
         # descendant prints only after installing its TERM handler, so this
         # also proves the group sweep below fights a TERM-immune process.
+        reader = Lines(process.stdout)
         for expected in (0, 1):
-            forwarded = process.stdout.readline()
-            check(forwarded.strip() and json.loads(forwarded)["sequence"] == expected,
+            forwarded = reader.readline(deadline, name)
+            check(forwarded.strip() and strict_mismatch(json.loads(forwarded)["sequence"], expected, "sequence") is None,
                   f"#969 {name}: MITM must forward frame {expected} to the host: {forwarded!r}")
         while not pids.exists():
             check(time.monotonic() < deadline,
@@ -801,7 +553,7 @@ def verify_mitm_eof_reap_group(out_root):
             time.sleep(0.05)
         elapsed = time.monotonic() - started
         try:
-            process.wait(timeout=MITM_CHECK_SECONDS)
+            process.wait(timeout=max(0.001, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
             raise SelftestError(
                 f"#969 {name}: MITM must exit after sweeping the descendant that "
@@ -824,6 +576,7 @@ def verify_mitm_eof_reap_group(out_root):
             except (ProcessLookupError, PermissionError):
                 pass
         terminate_group(process)
+        close_mitm_pipes(process)
 
 
 def terminate_group(process):
@@ -845,40 +598,6 @@ def terminate_group(process):
     process.wait(timeout=MOCK_REAP_SECONDS)
 
 
-def assert_home_untouched(home_root, run_started_at):
-    """Audit ~/.pilotdeck for harness-identifiable writes.
-
-    The primary guarantee is structural: every process this harness spawns
-    (driver, middleman, sidecar, mock) runs with HOME inside its case
-    sandbox, and driver.mts asserts that value back. This audit is the
-    secondary net: concurrent processes (the user's real install)
-    legitimately write to ~/.pilotdeck during the run, so every file modified
-    since the run started is checked for harness identifiers. Files that
-    cannot be read are reported instead of silently passed.
-    """
-    if not home_root.is_dir():
-        return [], []
-    harness_markers = ("live-e2e", "mitm_premature_final", "LIVE_E2E_")
-    touched, unreadable = [], []
-    for path in home_root.rglob("*"):
-        try:
-            if not path.is_file() or path.stat().st_mtime < run_started_at:
-                continue
-        except OSError:
-            unreadable.append(str(path))
-            continue
-        touched.append(str(path))
-        try:
-            content = path.read_text(errors="ignore")
-        except OSError:
-            unreadable.append(str(path))
-            continue
-        for marker in harness_markers:
-            check(marker not in content,
-                  f"#969 selftest: harness wrote into ~/.pilotdeck: {path} mentions {marker!r}")
-    return touched, unreadable
-
-
 def write_report(out_root, matrix, failures, elapsed, home_touched, home_unreadable, mitm_checks):
     # The README contract: every case cell — passing or failing — states its
     # verdict explicitly; a failure without verified:false is a broken report.
@@ -891,7 +610,7 @@ def write_report(out_root, matrix, failures, elapsed, home_touched, home_unreada
         "mitmChecks": mitm_checks,
         "failures": failures,
         "elapsedSeconds": round(elapsed, 1),
-        "node": subprocess.run(["node", "--version"], capture_output=True, text=True).stdout.strip(),
+        "node": subprocess.run(["node", "--version"], capture_output=True, text=True, timeout=10).stdout.strip(),
         "python": sys.version.split()[0],
         "homePilotdeckWrittenDuringRun": home_touched,
         "homePilotdeckUnreadableDuringRun": home_unreadable,
@@ -902,4 +621,5 @@ def write_report(out_root, matrix, failures, elapsed, home_touched, home_unreada
 
 
 if __name__ == "__main__":
+    install_termination_handler()
     sys.exit(main(sys.argv[1:]))

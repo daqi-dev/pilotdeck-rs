@@ -28,6 +28,8 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('LIVE_E
 if (!log) throw new Error('LIVE_E2E_MOCK_LOG required');
 
 let requests = 0;
+let releaseWindow;
+const windowReleased = new Promise(resolve => { releaseWindow = resolve; });
 
 function userText(request) {
   const messages = Array.isArray(request?.messages) ? request.messages : [];
@@ -67,7 +69,7 @@ const toolCallId = 'call-live-e2e-read';
 // How long the hang scenario holds the connection before finishing it on
 // its own. Far above the healthy abort latency (milliseconds after the
 // first model event) and far below the driver's 60s watchdog.
-const HANG_HOLD_MS = 20_000;
+const HANG_HOLD_MS = 1_000;
 
 function textEvents(request, index) {
   return [
@@ -110,6 +112,11 @@ function hangEvents() {
 }
 
 const server = http.createServer(async (req, res) => {
+  if (req.method === 'POST' && req.url === '/release-window') {
+    releaseWindow();
+    res.end('released');
+    return;
+  }
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'content-type': 'text/plain' });
     res.end('ok');
@@ -156,6 +163,15 @@ const server = http.createServer(async (req, res) => {
     if (res.destroyed || res.writableEnded) break;
     res.write(JSON.stringify({ event }) + '\n');
     sent++;
+    // Explicit window gate: injections end at the first model event; cancel
+    // releases only after the client has observed that event without aborting.
+    const gateAt = process.env.LIVE_E2E_INJECTION === 'drop' ? 2 : 1;
+    if (sent === gateAt && (scenario === 'hang' || ['drop', 'early-final'].includes(process.env.LIVE_E2E_INJECTION))) {
+      await Promise.race([windowReleased, new Promise(resolve => {
+        const timer = setTimeout(resolve, 10_000);
+        res.once('close', () => { clearTimeout(timer); resolve(); });
+      })]);
+    }
     // A small deterministic pacing keeps mid-stream cancellation observable.
     await new Promise((resolve) => setTimeout(resolve, 25));
   }

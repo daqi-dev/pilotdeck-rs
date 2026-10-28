@@ -71,10 +71,13 @@ const evidence: any = {
   modelInterrupted: false,
   toolCalls: [],
   toolResults: [],
+  cancelWindowEnteredAtEvents: null,
   abortAfterEvents: null,
   abortReason: null,
   startedAtMs: Date.now(),
 };
+let enteredCancelWindow!: () => void;
+const cancelWindowVisited = new Promise<void>(resolve => { enteredCancelWindow = resolve; });
 const now = () => new Date('2026-10-26T00:00:00.000Z').toISOString();
 
 // The host model port: one mock HTTP request per model stream, canonical
@@ -121,6 +124,14 @@ function mockModelPort() {
             }
             received++;
             yield parsed.event;
+            if (scenario === 'cancel' && injection === 'passthrough' && received === 1) {
+              await cancelWindowVisited;
+              if (evidence.abortAfterEvents === null) {
+                await fetch(`http://127.0.0.1:${mockPort}/release-window`, {
+                  method: 'POST', signal: AbortSignal.timeout(5_000),
+                });
+              }
+            }
           }
         }
         evidence.modelEventCounts[callIndex] = received;
@@ -204,7 +215,7 @@ const connect = createStdioAgentLoopSidecarConnectionFactory({
     '--summary', join(caseDir, 'mitm-summary.json'),
     ...(injection === 'passthrough' ? [] : ['--plan', join(caseDir, 'plan.json')]),
     '--',
-    process.execPath, '--import', loader, sidecarCli,
+    process.execPath, '--import', fileURLToPath(new URL('./determinism.mjs', import.meta.url)), '--import', loader, sidecarCli,
   ],
   cwd: sandbox,
   env: { PATH: process.env.PATH!, HOME: home },
@@ -269,13 +280,26 @@ try {
       type: event.type,
       ...(event.type === 'model_event' ? { modelEventType: (event as any).event?.type } : {}),
     });
+    // If a disabled injection lets the normally hidden event through, release
+    // the mock explicitly. Correct drop/early-final never reach this branch.
+    if (event.type === 'model_event' && (
+        (injection === 'drop' && event.event?.type === 'message_start') ||
+        (injection === 'early-final' && event.event?.type === 'request_started'))) {
+      await fetch(`http://127.0.0.1:${mockPort}/release-window`, {
+        method: 'POST', signal: AbortSignal.timeout(5_000),
+      });
+    }
     // The cancel window is mid-stream: the first wrapped model event proves
     // the provider connection is open and hanging before the abort fires.
-    if (scenario === 'cancel' && evidence.abortAfterEvents === null && event.type === 'model_event') {
+    if (scenario === 'cancel' && event.type === 'model_event' && evidence.cancelWindowEnteredAtEvents === null) {
+      evidence.cancelWindowEnteredAtEvents = evidence.events.length;
+    }
+    if (process.env.LIVE_E2E_TEST_NO_ABORT !== '1' && scenario === 'cancel' && evidence.abortAfterEvents === null && event.type === 'model_event') {
       evidence.abortAfterEvents = evidence.events.length;
       evidence.abortReason = 'live_e2e_cancel';
       abortController.abort('live_e2e_cancel');
     }
+    if (scenario === 'cancel' && event.type === 'model_event') enteredCancelWindow();
   }
 } catch (error) {
   evidence.error = error instanceof Error ? error.message : String(error);
@@ -289,7 +313,8 @@ writeFileSync(join(caseDir, 'driver-result.json'), JSON.stringify(evidence, null
 // injected error or premature final) can preempt it. A missing abort is a
 // driver failure with its own dedicated message, never the 60s watchdog:
 // the mock bounds its hang, so the turn still ends when the abort is gone.
-if (scenario === 'cancel' && injection === 'passthrough' && evidence.abortAfterEvents === null) {
+if (scenario === 'cancel' && injection === 'passthrough' && evidence.abortAfterEvents === null
+    && evidence.cancelWindowEnteredAtEvents === 2 && evidence.error === null) {
   console.error('#969 driver: cancel window must fire the client-side abort after the first model event');
   process.exit(1);
 }

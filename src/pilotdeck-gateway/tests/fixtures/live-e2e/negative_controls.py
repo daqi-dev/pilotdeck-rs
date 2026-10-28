@@ -25,11 +25,8 @@ their negative control is the attack suite reporting the matching ESCAPED
 line. Every row that ran the selftest also has its report.json checked:
 each case cell must carry an explicit verified field (README contract).
 
-The mutated sources are tracked files, so ``mutating_sources`` checks them
-against HEAD (the official run). For pre-commit validation,
-LIVE_E2E_NEG_BASELINE can name another git tree-ish (for example a
-``git stash create`` snapshot of the working tree); unset it for the official
-semantics.
+Source mutations require the committed HEAD. No alternate baseline/dirty-source
+escape is accepted. The explicit no-abort runtime hook can run before commit.
 """
 import difflib
 import hashlib
@@ -40,7 +37,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned
+from negative_process import mutating_sources, run_owned, wait_for_slot
+from cancel_evidence import abort_evidence_ok as validate_abort
 
 root = Path(__file__).resolve().parents[5]
 source = Path(__file__).resolve().parent
@@ -52,103 +50,68 @@ out.mkdir(parents=True, exist_ok=False)
 # not count as a kill.
 TESTS = {
     'baseline': (['text-passthrough', 'cancel-passthrough'], None),
-    'mitm-drop-disabled': (['text-drop'], 'dropped frame must be recorded as not delivered'),
-    'mitm-duplicate-disabled': (['text-duplicate'], 'TS event sequence must match the README expectation'),
-    'mitm-early-final-disabled': (['text-early-final'], 'early-final rewrite must mark the frame final/completed'),
-    'mitm-double-delivery': (['text-passthrough'], 'TS event sequence must match the README expectation'),
-    'expectation-drop-weakened': (['text-drop'], 'TS run() error must match the README expectation'),
-    'expectation-events-weakened': (['text-passthrough'], 'TS event sequence must match the README expectation'),
-    'expectation-count-weakened': (['text-passthrough'], 'TS terminal must match the README expectation'),
-    'expectation-terminal-weakened': (['text-early-final'], 'TS terminal must match the README expectation'),
-    'driver-tool-payload-forged': (['tool-passthrough'], 'read tool must return the sandbox file payload'),
+    'mitm-drop-disabled': (['text-drop'], 'complete evidence.frames'),
+    'mitm-duplicate-disabled': (['text-duplicate'], 'complete evidence'),
+    'mitm-early-final-disabled': (['text-early-final'], 'complete evidence.frames'),
+    'mitm-double-delivery': (['text-passthrough'], 'complete evidence'),
+    'driver-tool-payload-forged': (['tool-passthrough'], 'complete evidence'),
     'driver-abort-never-fires': (['cancel-passthrough'],
-                                 'cancel window must fire the client-side abort after the first model event'),
+        'cancel window must fire the client-side abort after the first model event'),
     'driver-home-leaked': (['text-passthrough'], 'driver HOME must be the case sandbox home'),
     'mitm-record-stops-on-close': (['text-passthrough'], 'MITM must keep recording after the host closes the output pipe'),
     'mitm-delivered-lying': (['text-passthrough'], 'frames after the host closed the pipe must be recorded as not delivered'),
     'mitm-eof-reap-disabled': (['text-passthrough'], 'MITM must exit after host stdin EOF even when the child ignores SIGTERM'),
-    'mitm-group-reap-blind': (['text-passthrough'],
-                              'MITM must kill the TERM-ignoring descendant that outlives the leader'),
+    'mitm-group-reap-blind': (['text-passthrough'], 'MITM must kill the TERM-ignoring descendant that outlives the leader'),
     'comparator-type-blind': ([], 'ESCAPED bool-for-int-count'),
     'comparator-keys-blind': ([], 'ESCAPED extra-terminal-key'),
+    'comparator-length-blind': ([], 'ESCAPED events-truncated-together'),
     'report-failure-verified-dropped': ([], 'ESCAPED failing-case-carries-verified-false'),
 }
-
-# Rows whose negative control is the attack suite (forged driver results fed
-# to verify_caught) rather than a selftest matrix case: the comparator and
-# the report contract are unit-level properties of the verifier.
 ATTACK_ROWS = ('comparator-type-blind', 'comparator-keys-blind',
-               'report-failure-verified-dropped')
+               'comparator-length-blind', 'report-failure-verified-dropped')
 
-# Each independent mutant is applied to the original, never cumulatively.
-# The baseline row keeps every source untouched: it proves the same runner
-# path passes without a mutation.
 mutations = [
     ('baseline', None, None, None),
     ('mitm-drop-disabled', 'stdio_mitm.py',
      'forward_count = 0 if "drop" in actions else 2 if "duplicate" in actions else 1',
      'forward_count = 1 if "drop" in actions else 2 if "duplicate" in actions else 1'),
     ('mitm-duplicate-disabled', 'stdio_mitm.py',
-     '2 if "duplicate" in actions else 1',
-     '1 if "duplicate" in actions else 1'),
+     '2 if "duplicate" in actions else 1', '1 if "duplicate" in actions else 1'),
     ('mitm-early-final-disabled', 'stdio_mitm.py',
-     'if "early_final" in actions:',
-     'if False and "early_final" in actions:'),
+     'if "early_final" in actions:', 'if False and "early_final" in actions:'),
     ('mitm-double-delivery', 'stdio_mitm.py',
      'forward_count = 0 if "drop" in actions else 2 if "duplicate" in actions else 1',
-     'forward_count = 2'),
-    ('expectation-drop-weakened', 'selftest.py',
-     'MISMATCH_DROP = "Sidecar event sequence mismatch: expected 1, got 2."',
-     'MISMATCH_DROP = "Sidecar event sequence mismatch: expected 1, got 3."'),
-    ('expectation-events-weakened', 'selftest.py',
-     '            ("model_event", "text_delta"),\n'
-     '            ("model_event", "text_delta"),\n'
-     '            ("model_event", "message_end"),\n',
-     '            ("model_event", "text_delta"),\n'
-     '            ("model_event", "text_delta"),\n'),
-    ('expectation-count-weakened', 'selftest.py',
-     '"terminal": {"type": "success", "stopReason": "completed", "turns": 1, "messageCount": 2},',
-     '"terminal": {"type": "success", "stopReason": "completed", "turns": 1, "messageCount": 999},'),
-    ('expectation-terminal-weakened', 'selftest.py',
-     '    "text-early-final": {\n'
-     '        "events": [("model_request_started", None), ("turn_completed", None)],\n'
-     '        "terminal": {"type": "success", "stopReason": "mitm_premature_final", "turns": 1, "messageCount": 0},',
-     '    "text-early-final": {\n'
-     '        "events": [("model_request_started", None), ("turn_completed", None)],\n'
-     '        "terminal": {"type": "success", "stopReason": "completed", "turns": 1, "messageCount": 0},'),
+     'forward_count = 2 if direction == "s2h" and frame.get("kind") == "event" else 1'),
     ('driver-tool-payload-forged', 'driver.mts',
-     "const text = readFileSync(path, 'utf8');",
-     "const text = 'forged';"),
-    ('driver-abort-never-fires', 'driver.mts',
-     "if (scenario === 'cancel' && evidence.abortAfterEvents === null && event.type === 'model_event') {",
-     "if (false && scenario === 'cancel' && evidence.abortAfterEvents === null && event.type === 'model_event') {"),
+     "const text = readFileSync(path, 'utf8');", "const text = 'forged';"),
+    # An explicit runtime mutation hook exercises the real TS path without
+    # rewriting a dirty worktree. It is forbidden in the golden generator.
+    ('driver-abort-never-fires', None, None, None),
     ('driver-home-leaked', 'selftest.py',
-     '        "HOME": str(home),',
-     '        "HOME": os.environ.get("HOME", str(home)),'),
+     '        "HOME": str(home),', '        "HOME": os.environ.get("HOME", str(home)),'),
     ('mitm-record-stops-on-close', 'stdio_mitm.py',
      '            written_to_host = deliver_to_host(encoded, forward_count) if forward_count else 0',
      '            written_to_host = deliver_to_host(encoded, forward_count) if forward_count else 0\n'
-     '            if not mitm.forward["s2h"]:\n'
-     '                break'),
+     '            if not mitm.forward["s2h"]:\n                break'),
     ('mitm-delivered-lying', 'stdio_mitm.py',
      '            mitm.settle(record, written_to_host > 0)',
      '            mitm.settle(record, forward_count > 0)'),
     ('mitm-eof-reap-disabled', 'stdio_mitm.py',
-     '        reap_after_host_eof(child)',
-     '        pass  # eof reap disabled'),
+     '        reap_after_host_eof(child)', '        pass  # eof reap disabled'),
     ('mitm-group-reap-blind', 'stdio_mitm.py',
      '        if process.poll() is not None and not group_alive(process.pid):',
      '        if process.poll() is not None:'),
     ('comparator-type-blind', 'selftest.py',
-     '    if type(actual) is not type(expected):',
-     '    if False and type(actual) is not type(expected):'),
+     '    if type(actual) is not type(expected):', '    if False and type(actual) is not type(expected):'),
     ('comparator-keys-blind', 'selftest.py',
      '        for key in sorted(set(expected) | set(actual)):',
      '        for key in sorted(set(expected) & set(actual)):'),
+    ('comparator-length-blind', 'selftest.py',
+     '        if len(actual) != len(expected):', '        if False and len(actual) != len(expected):'),
     ('report-failure-verified-dropped', 'selftest.py',
-     '    except SelftestError as error:\n'
+     '    except (SelftestError, DeadlineExceeded) as error:\n'
      '        return {"case": name, "failed": str(error), "verified": False}',
-     '    except SelftestError as error:\n'
+     '    except (SelftestError, DeadlineExceeded) as error:\n'
      '        return {"case": name, "failed": str(error)}'),
 ]
 selected = sys.argv[2:]
@@ -157,7 +120,8 @@ if selected:
     assert len(mutations) == len(selected), 'unknown mutation name'
 env = os.environ.copy()
 assert env.get('PDRS_BASELINE'), 'PDRS_BASELINE must point at the read-only TS baseline root'
-baseline = env.get('LIVE_E2E_NEG_BASELINE') or 'HEAD'
+assert env.get('CARGO_TARGET_DIR'), '#969 negative: caller must set CARGO_TARGET_DIR'
+baseline = 'HEAD'
 
 
 def run_selftest(name, cases):
@@ -169,34 +133,19 @@ def run_selftest(name, cases):
 def run_row(name):
     """Run the row's named check: a selftest case run or the attack suite."""
     if name in ATTACK_ROWS:
-        return run_owned([sys.executable, str(source / 'attack_suite.py')],
+        return run_owned([sys.executable, '-B', str(source / 'attack_suite.py'), '--report', str(out / f'{name}-attacks.json')],
                          cwd=root, env=env, timeout=120)
+    if name == 'driver-abort-never-fires':
+        env['LIVE_E2E_TEST_NO_ABORT'] = '1'
+        try:
+            return run_selftest(name, TESTS[name][0])
+        finally:
+            env.pop('LIVE_E2E_TEST_NO_ABORT', None)
     return run_selftest(name, TESTS[name][0])
 
 
 def abort_evidence_ok():
-    """Structured proof that the cancel trigger failed, not the watchdog.
-
-    The mutated run must have ended its turn without the client abort and
-    without the driver watchdog: the mock's bounded hold let the turn
-    finish, the driver's own cancel assertion named the failure, and the
-    recorded evidence shows no abort and no interruption.
-    """
-    path = out / 'driver-abort-never-fires-evidence' / 'cancel-passthrough' / 'driver-result.json'
-    try:
-        result = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return False, f'missing/unreadable {path.name}'
-    if result.get('timeout') is True:
-        return False, 'driver watchdog fired (timeout:true)'
-    if result.get('abortAfterEvents') is not None:
-        return False, f'abortAfterEvents={result.get("abortAfterEvents")!r}'
-    if result.get('modelInterrupted') is not False:
-        return False, f'modelInterrupted={result.get("modelInterrupted")!r}'
-    ended = isinstance(result.get('terminal'), dict) or isinstance(result.get('error'), str)
-    if not ended:
-        return False, f'turn did not end (terminal={result.get("terminal")!r}, error={result.get("error")!r})'
-    return True, 'abort never fired; turn ended via the bounded mock hold, named by the driver assertion'
+    return validate_abort(out / 'driver-abort-never-fires-evidence' / 'cancel-passthrough')
 
 
 def report_contract_ok(name):
@@ -217,6 +166,59 @@ def report_contract_ok(name):
     return True, 'every case cell carries an explicit verdict'
 
 
+def attack_escaped(name, bound):
+    try:
+        rows = json.loads((out / f'{name}-attacks.json').read_text())
+        matches = [row for row in rows if row.get('name') == bound.removeprefix('ESCAPED ')]
+        return len(matches) == 1 and matches[0].get('caught') is False
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def target_observed(name):
+    if name.startswith('mitm-') and name in {
+        'mitm-record-stops-on-close', 'mitm-delivered-lying',
+        'mitm-eof-reap-disabled', 'mitm-group-reap-blind'}:
+        return True  # Each direct check already binds its full dedicated assertion.
+    if name in {'driver-abort-never-fires', 'driver-home-leaked'}:
+        return True  # Dedicated driver assertion, cancel also checks structured completion.
+    try:
+        case = out / f'{name}-evidence' / TESTS[name][0][0]
+        result = json.loads((case / 'driver-result.json').read_text())
+        frames = json.loads((case / 'frames.json').read_text())['s2h']
+        if name == 'driver-tool-payload-forged':
+            return result['error'] is None and result['toolResults'] == [{'id':'call-live-e2e-read', 'text':'forged'}]
+        if name == 'mitm-double-delivery':
+            return result['error'] == 'Sidecar event sequence mismatch: expected 1, got 0.'
+        if name == 'mitm-duplicate-disabled':
+            return result['error'] is None and result['terminal'] == {
+                'type':'success', 'stopReason':'completed', 'turns':1, 'messageCount':2}
+        action = 'drop' if name == 'mitm-drop-disabled' else 'early_final'
+        rows = [r for r in frames if r['action'] == [action]]
+        if len(rows) != 1 or result['error'] is not None:
+            return False
+        return (rows[0]['delivered'] is True if action == 'drop'
+                else rows[0]['frame']['final'] is False)
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+
+
+def bound_in_report(name, bound):
+    try:
+        report = json.loads((out / f'{name}-evidence' / 'report.json').read_text())
+        for cell in report['cases']:
+            if cell['case'] in TESTS[name][0] and cell.get('verified') is False and bound in cell.get('failed', ''):
+                return True
+        direct = {'mitm-record-stops-on-close': 'mitm-pipe-close',
+                  'mitm-delivered-lying': 'mitm-pipe-close',
+                  'mitm-eof-reap-disabled': 'mitm-eof-reap',
+                  'mitm-group-reap-blind': 'mitm-eof-reap-group'}
+        value = report['mitmChecks'].get(direct.get(name))
+        return isinstance(value, str) and bound in value
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 summary = []
 # Run every mutation before concluding anything; the verdict comes last.
 with mutating_sources(root, sorted({source / filename for _, filename, _, _ in mutations if filename}),
@@ -228,7 +230,6 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
         content = original.decode() if original else None
         changed = None
         if old:
-            assert content.count(old) == 1, (name, content.count(old))
             changed = content.replace(old, new, 1)
             (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(
                 content.splitlines(True), changed.splitlines(True),
@@ -236,9 +237,11 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
         status, detail, rc = 'INVALID', 'row did not produce a verdict', None
         try:
             bound = TESTS[name][1]
+            if old and content.count(old) != 1:
+                raise RuntimeError(f'anchor count {content.count(old)} for {name}, expected 1')
             # The cancel mutant first re-proves its own cell green with the
             # pristine sources: a selected single mutant skips the baseline.
-            if name == 'driver-abort-never-fires':
+            if name not in ATTACK_ROWS and name != 'baseline':
                 precheck = run_selftest(f'{name}-precheck', TESTS[name][0])
                 (out / f'{name}-precheck.log').write_text(precheck.stdout + precheck.stderr)
                 if precheck.returncode != 0:
@@ -246,6 +249,13 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
                         f'positive control failed before mutation: rc={precheck.returncode}')
             if changed is not None:
                 path.write_text(changed)
+                if path.suffix == '.py':
+                    compile(changed, str(path), 'exec')
+                else:
+                    syntax = run_owned(['node', '--import', str(Path(env['PDRS_BASELINE']) / 'node_modules/tsx/dist/loader.mjs'),
+                                        str(source / 'syntax.mts'), str(path)], cwd=root, env=env, timeout=30)
+                    if syntax.returncode != 0:
+                        raise RuntimeError('mutant TS syntax invalid: ' + syntax.stderr)
             try:
                 result = run_row(name)
             except subprocess.TimeoutExpired:
@@ -262,13 +272,13 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
                 elif name in ATTACK_ROWS:
                     if rc == 0:
                         status, detail = 'SURVIVED', 'attack suite caught nothing with the mutant applied'
-                    elif rc == 1 and bound in log:
-                        status, detail = 'KILLED', 'bound escape line present'
+                    elif rc == 1 and attack_escaped(name, bound):
+                        status, detail = 'KILLED', 'bound attack escaped in structured report'
                     else:
                         status, detail = 'INVALID', f'rc={rc} without the bound escape line'
                 elif rc == 0:
                     status, detail = 'SURVIVED', 'selftest passed with the mutant applied'
-                elif rc == 1 and bound in log:
+                elif rc == 1 and bound in log and bound_in_report(name, bound) and target_observed(name):
                     if name == 'driver-abort-never-fires':
                         if 'turn did not finish within 60s' in log:
                             status, detail = 'INVALID', 'killed by the driver watchdog, not the cancel assertion'

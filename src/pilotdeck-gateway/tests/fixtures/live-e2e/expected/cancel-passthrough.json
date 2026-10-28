@@ -1,0 +1,794 @@
+{
+  "result": {
+    "scenario": "cancel",
+    "injection": "passthrough",
+    "caseDir": "<CASE>",
+    "events": [
+      "model_request_started",
+      "model_event",
+      "turn_completed"
+    ],
+    "eventDetails": [
+      {
+        "type": "model_request_started"
+      },
+      {
+        "type": "model_event",
+        "modelEventType": "request_started"
+      },
+      {
+        "type": "turn_completed"
+      }
+    ],
+    "terminal": {
+      "type": "aborted",
+      "stopReason": "aborted_streaming",
+      "turns": 1,
+      "messageCount": 1
+    },
+    "error": null,
+    "modelCalls": 1,
+    "modelEventCounts": [
+      null,
+      1
+    ],
+    "modelInterrupted": true,
+    "toolCalls": [],
+    "toolResults": [],
+    "cancelWindowEnteredAtEvents": 2,
+    "abortAfterEvents": 2,
+    "abortReason": "live_e2e_cancel",
+    "startedAtMs": 1792972800000,
+    "elapsedMs": 0
+  },
+  "frames": {
+    "h2s": [
+      {
+        "index": 1,
+        "dir": "h2s",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "request",
+          "messageId": "hello-fixed-1",
+          "method": "hello",
+          "payload": {}
+        }
+      },
+      {
+        "index": 2,
+        "dir": "h2s",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "request",
+          "messageId": "capabilities-fixed-2",
+          "method": "capabilities",
+          "payload": {}
+        }
+      },
+      {
+        "index": 3,
+        "dir": "h2s",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "request",
+          "messageId": "execute-fixed-3",
+          "method": "execute",
+          "runId": "run-cancel-passthrough",
+          "operationId": "operation-cancel-passthrough",
+          "requestId": "request-fixed-4",
+          "sessionId": "live-e2e-session",
+          "turnId": "turn-cancel-passthrough",
+          "payload": {
+            "agent": {
+              "provider": "live-e2e",
+              "model": "mock-model",
+              "cwd": "<CASE>/sandbox",
+              "runMode": "agent"
+            },
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "LIVE_E2E_HANG run the cancel window"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "read",
+                "description": "Read one file from the live-e2e case sandbox.",
+                "kind": "filesystem",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ]
+                },
+                "readOnly": true,
+                "concurrencySafe": true,
+                "requiresUserInteraction": false,
+                "requiredRuntimeCapabilities": []
+              }
+            ],
+            "permissionContext": {
+              "mode": "default",
+              "canPrompt": false,
+              "bypassAvailable": false,
+              "cwd": "<CASE>/sandbox",
+              "additionalWorkingDirectories": [],
+              "rules": {
+                "allow": [],
+                "deny": [],
+                "ask": []
+              }
+            },
+            "hostModules": {
+              "model": {
+                "methods": [
+                  "prepare",
+                  "stream",
+                  "stream_next",
+                  "close_stream"
+                ]
+              },
+              "capability": {
+                "methods": [
+                  "execute",
+                  "execute_batch",
+                  "list_tools"
+                ]
+              }
+            },
+            "interactionCapabilities": {
+              "elicitationAvailable": false
+            },
+            "seedState": {
+              "allowedReadFiles": [],
+              "readFileState": {},
+              "writeSnapshots": {}
+            }
+          }
+        }
+      },
+      {
+        "index": 4,
+        "dir": "h2s",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "response",
+          "messageId": "host-module-fixed-5",
+          "inReplyTo": "module-call-8z7fqcpxgyw",
+          "requestId": "tool-catalog-gar5cjsjzyo",
+          "ok": true,
+          "payload": {
+            "tools": [
+              {
+                "name": "read",
+                "description": "Read one file from the live-e2e case sandbox.",
+                "kind": "filesystem",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ]
+                },
+                "readOnly": true,
+                "concurrencySafe": true,
+                "requiresUserInteraction": false,
+                "requiredRuntimeCapabilities": []
+              }
+            ]
+          }
+        }
+      },
+      {
+        "index": 5,
+        "dir": "h2s",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "response",
+          "messageId": "host-module-fixed-6",
+          "inReplyTo": "module-call-72ivryfxg1f",
+          "requestId": "model-prepare-6xb4zou9ad",
+          "ok": true,
+          "payload": {
+            "prepared": {
+              "request": {
+                "provider": "live-e2e",
+                "model": "mock-model",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "LIVE_E2E_HANG run the cancel window"
+                      }
+                    ]
+                  }
+                ],
+                "tools": [
+                  {
+                    "name": "read",
+                    "description": "Read one file from the live-e2e case sandbox.",
+                    "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "path"
+                      ]
+                    }
+                  }
+                ],
+                "stream": true
+              },
+              "provider": "live-e2e",
+              "model": "mock-model"
+            }
+          }
+        }
+      },
+      {
+        "index": 6,
+        "dir": "h2s",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "response",
+          "messageId": "host-module-fixed-7",
+          "inReplyTo": "module-call-5soovkcp508",
+          "requestId": "model-stream-next-96vcojfsci",
+          "ok": true,
+          "payload": {
+            "events": [
+              {
+                "type": "request_started",
+                "provider": "live-e2e",
+                "model": "mock-model"
+              }
+            ],
+            "done": false
+          }
+        }
+      },
+      {
+        "index": 7,
+        "dir": "h2s",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "request",
+          "messageId": "cancel-fixed-8",
+          "method": "cancel",
+          "runId": "run-cancel-passthrough",
+          "operationId": "operation-cancel-passthrough",
+          "requestId": "request-fixed-4",
+          "reason": "live_e2e_cancel"
+        }
+      },
+      {
+        "index": 8,
+        "dir": "h2s",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "response",
+          "messageId": "host-module-fixed-9",
+          "inReplyTo": "module-call-pmwpb91r2k",
+          "requestId": "model-stream-next-1guhuckexph",
+          "ok": false,
+          "code": "HOST_MODULE_FAILED",
+          "error": {
+            "message": "live_e2e_model_interrupted"
+          }
+        }
+      },
+      {
+        "index": 9,
+        "dir": "h2s",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "response",
+          "messageId": "host-module-fixed-10",
+          "inReplyTo": "module-call-x80fbtne31b",
+          "requestId": "model-close-stream-6rtzyachvot",
+          "ok": true,
+          "payload": {
+            "closed": true
+          }
+        }
+      }
+    ],
+    "s2h": [
+      {
+        "index": 1,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "response",
+          "messageId": "hello-6u33ewi90zl",
+          "inReplyTo": "hello-fixed-1",
+          "ok": true,
+          "protocolVersion": "2.0",
+          "moduleId": "pilotdeck-agent-loop",
+          "moduleInstanceId": "pilotdeck-agent-loop-instance-64zkb9l6rdd",
+          "connectionGeneration": "pilotdeck-agent-loop-instance-64zkb9l6rdd-av73ihxgeoj-jblgoefcir",
+          "capabilitiesVersion": "1",
+          "payload": {}
+        }
+      },
+      {
+        "index": 2,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "response",
+          "messageId": "capabilities-5j44bucz4fm",
+          "inReplyTo": "capabilities-fixed-2",
+          "ok": true,
+          "protocolVersion": "2.0",
+          "moduleId": "pilotdeck-agent-loop",
+          "moduleInstanceId": "pilotdeck-agent-loop-instance-64zkb9l6rdd",
+          "connectionGeneration": "pilotdeck-agent-loop-instance-64zkb9l6rdd-av73ihxgeoj-jblgoefcir",
+          "capabilitiesVersion": "1",
+          "payload": {
+            "capabilitiesVersion": "1",
+            "methods": [
+              {
+                "name": "execute",
+                "enabled": true,
+                "profiles": [
+                  "streaming"
+                ],
+                "cancel": true,
+                "resumeSupport": "none",
+                "retry": "retry_after_status"
+              },
+              {
+                "name": "cancel",
+                "enabled": true
+              },
+              {
+                "name": "status",
+                "enabled": true
+              },
+              {
+                "name": "resume",
+                "enabled": false
+              },
+              {
+                "name": "ack",
+                "enabled": false
+              }
+            ]
+          }
+        }
+      },
+      {
+        "index": 3,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "response",
+          "messageId": "accepted-e4d2qub3s3l",
+          "inReplyTo": "execute-fixed-3",
+          "requestId": "request-fixed-4",
+          "ok": true,
+          "streamId": "stream-0o4a03o7yvdq",
+          "cursor": 0
+        }
+      },
+      {
+        "index": 4,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "request",
+          "messageId": "module-call-8z7fqcpxgyw",
+          "method": "module_call",
+          "runId": "run-cancel-passthrough",
+          "operationId": "operation-cancel-passthrough",
+          "requestId": "tool-catalog-gar5cjsjzyo",
+          "module": "capability",
+          "payload": {
+            "operation": "list_tools"
+          }
+        }
+      },
+      {
+        "index": 5,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "event",
+          "messageId": "event-gg44uaniu7g",
+          "eventType": "agent.model_request_started",
+          "streamId": "stream-0o4a03o7yvdq",
+          "sequence": 0,
+          "runId": "run-cancel-passthrough",
+          "operationId": "operation-cancel-passthrough",
+          "requestId": "request-fixed-4",
+          "final": false,
+          "payload": {
+            "type": "model_request_started",
+            "sessionId": "live-e2e-session",
+            "turnId": "turn-cancel-passthrough",
+            "model": "mock-model",
+            "provider": "live-e2e"
+          }
+        }
+      },
+      {
+        "index": 6,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "request",
+          "messageId": "module-call-72ivryfxg1f",
+          "method": "module_call",
+          "runId": "run-cancel-passthrough",
+          "operationId": "operation-cancel-passthrough",
+          "requestId": "model-prepare-6xb4zou9ad",
+          "module": "model",
+          "abortSignal": {},
+          "payload": {
+            "operation": "prepare",
+            "request": {
+              "provider": "live-e2e",
+              "model": "mock-model",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "LIVE_E2E_HANG run the cancel window"
+                    }
+                  ]
+                }
+              ],
+              "tools": [
+                {
+                  "name": "read",
+                  "description": "Read one file from the live-e2e case sandbox.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ]
+                  }
+                }
+              ],
+              "stream": true
+            },
+            "preparationId": "prepared-bjfyhxzpkc-1",
+            "context": {
+              "sessionId": "live-e2e-session",
+              "turnId": "turn-cancel-passthrough",
+              "runId": "run-cancel-passthrough",
+              "operationId": "operation-cancel-passthrough"
+            }
+          }
+        }
+      },
+      {
+        "index": 7,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "request",
+          "messageId": "module-call-5soovkcp508",
+          "method": "module_call",
+          "runId": "run-cancel-passthrough",
+          "operationId": "operation-cancel-passthrough",
+          "requestId": "model-stream-next-96vcojfsci",
+          "module": "model",
+          "abortSignal": {},
+          "payload": {
+            "operation": "stream_next",
+            "request": {
+              "provider": "live-e2e",
+              "model": "mock-model",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "LIVE_E2E_HANG run the cancel window"
+                    }
+                  ]
+                }
+              ],
+              "tools": [
+                {
+                  "name": "read",
+                  "description": "Read one file from the live-e2e case sandbox.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ]
+                  }
+                }
+              ],
+              "stream": true
+            },
+            "preparationId": "prepared-bjfyhxzpkc-1",
+            "context": {
+              "sessionId": "live-e2e-session",
+              "turnId": "turn-cancel-passthrough",
+              "runId": "run-cancel-passthrough",
+              "operationId": "operation-cancel-passthrough"
+            }
+          }
+        }
+      },
+      {
+        "index": 8,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "event",
+          "messageId": "event-43ygnujbci",
+          "eventType": "agent.model_event",
+          "streamId": "stream-0o4a03o7yvdq",
+          "sequence": 1,
+          "runId": "run-cancel-passthrough",
+          "operationId": "operation-cancel-passthrough",
+          "requestId": "request-fixed-4",
+          "final": false,
+          "payload": {
+            "type": "model_event",
+            "sessionId": "live-e2e-session",
+            "turnId": "turn-cancel-passthrough",
+            "event": {
+              "type": "request_started",
+              "provider": "live-e2e",
+              "model": "mock-model"
+            }
+          }
+        }
+      },
+      {
+        "index": 9,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "request",
+          "messageId": "module-call-pmwpb91r2k",
+          "method": "module_call",
+          "runId": "run-cancel-passthrough",
+          "operationId": "operation-cancel-passthrough",
+          "requestId": "model-stream-next-1guhuckexph",
+          "module": "model",
+          "abortSignal": {},
+          "payload": {
+            "operation": "stream_next",
+            "request": {
+              "provider": "live-e2e",
+              "model": "mock-model",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "LIVE_E2E_HANG run the cancel window"
+                    }
+                  ]
+                }
+              ],
+              "tools": [
+                {
+                  "name": "read",
+                  "description": "Read one file from the live-e2e case sandbox.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ]
+                  }
+                }
+              ],
+              "stream": true
+            },
+            "preparationId": "prepared-bjfyhxzpkc-1",
+            "context": {
+              "sessionId": "live-e2e-session",
+              "turnId": "turn-cancel-passthrough",
+              "runId": "run-cancel-passthrough",
+              "operationId": "operation-cancel-passthrough"
+            }
+          }
+        }
+      },
+      {
+        "index": 10,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "response",
+          "messageId": "cancel-xo0v405o0om",
+          "inReplyTo": "cancel-fixed-8",
+          "requestId": "request-fixed-4",
+          "ok": true,
+          "payload": {
+            "operationId": "operation-cancel-passthrough",
+            "cancelled": true
+          }
+        }
+      },
+      {
+        "index": 11,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "request",
+          "messageId": "module-call-x80fbtne31b",
+          "method": "module_call",
+          "runId": "run-cancel-passthrough",
+          "operationId": "operation-cancel-passthrough",
+          "requestId": "model-close-stream-6rtzyachvot",
+          "module": "model",
+          "payload": {
+            "operation": "close_stream",
+            "preparationId": "prepared-bjfyhxzpkc-1"
+          }
+        }
+      },
+      {
+        "index": 12,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "event",
+          "messageId": "event-ut3s8m7gu7d",
+          "eventType": "agent.turn_completed",
+          "streamId": "stream-0o4a03o7yvdq",
+          "sequence": 2,
+          "runId": "run-cancel-passthrough",
+          "operationId": "operation-cancel-passthrough",
+          "requestId": "request-fixed-4",
+          "final": false,
+          "payload": {
+            "type": "turn_completed",
+            "sessionId": "live-e2e-session",
+            "turnId": "turn-cancel-passthrough",
+            "result": {
+              "type": "aborted",
+              "stopReason": "aborted_streaming",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-10-26T00:00:00.000Z",
+              "sessionId": "live-e2e-session",
+              "turnId": "turn-cancel-passthrough",
+              "completedAt": "2026-10-26T00:00:00.000Z"
+            }
+          }
+        }
+      },
+      {
+        "index": 13,
+        "dir": "s2h",
+        "action": [],
+        "delivered": true,
+        "frame": {
+          "kind": "event",
+          "messageId": "final-qeqo8kb9yxf",
+          "eventType": "agent.execute.cancelled",
+          "streamId": "stream-0o4a03o7yvdq",
+          "sequence": 3,
+          "runId": "run-cancel-passthrough",
+          "operationId": "operation-cancel-passthrough",
+          "requestId": "request-fixed-4",
+          "final": true,
+          "outcome": "cancelled",
+          "payload": {
+            "result": {
+              "type": "aborted",
+              "stopReason": "aborted_streaming",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-10-26T00:00:00.000Z",
+              "sessionId": "live-e2e-session",
+              "turnId": "turn-cancel-passthrough",
+              "completedAt": "2026-10-26T00:00:00.000Z"
+            },
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "LIVE_E2E_HANG run the cancel window"
+                  }
+                ]
+              }
+            ],
+            "seedState": {
+              "allowedReadFiles": [],
+              "readFileState": {},
+              "writeSnapshots": {}
+            },
+            "modelState": {}
+          }
+        }
+      }
+    ]
+  },
+  "summary": {
+    "frames": 22,
+    "injections": []
+  },
+  "mock": [
+    {
+      "listening": true,
+      "port": "<PORT>"
+    },
+    {
+      "index": 1,
+      "scenario": "hang",
+      "connection": "aborted",
+      "sent": 1,
+      "request": {
+        "roles": [
+          "user"
+        ],
+        "userText": "LIVE_E2E_HANG run the cancel window"
+      }
+    }
+  ]
+}
