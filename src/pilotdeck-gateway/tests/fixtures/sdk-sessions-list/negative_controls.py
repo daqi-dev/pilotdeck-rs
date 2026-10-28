@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """#983 HEAD-only CLI controls. Every mutant compiles before its bound test.
 
-Usage: --check | [--compile-only] NEW_OUTPUT_DIR [mutation ...]
+Usage: --check | --node-runtime NEW_OUTPUT_DIR | [--compile-only] NEW_OUTPUT_DIR [mutation ...]
 Requires caller CARGO_TARGET_DIR. New/uncommitted source deliberately refuses.
 """
 import difflib
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 
 sys.dont_write_bytecode = True
@@ -60,6 +61,89 @@ def check(row):
         raise ValueError(f'{row[0]}: stale anchor count={count}, expected 1')
 
 
+def node_runtime_controls(out, env, run, passed):
+    """Environment mutants: real extraction, no edits to uncommitted sources."""
+    node = env['NODE22'] if 'NODE22' in env else shutil.which('node', path=env.get('PATH'))
+    if not node:
+        raise RuntimeError('#983 Node v22.22.0 must be available through NODE22 or PATH')
+    node = shutil.which(node, path=env.get('PATH')) or node
+    version = run_owned([node, '--version'], env=env, timeout=30)
+    (out / 'real-node.stdout').write_text(version.stdout)
+    (out / 'real-node.stderr').write_text(version.stderr)
+    if version.returncode != 0 or version.stdout != 'v22.22.0\n':
+        raise RuntimeError('#983 runtime controls require real Node v22.22.0')
+    test = 'sessions_list_oracle_regenerates_identically'
+    rows = [
+        ('path-version', False, 'v22.22.1', 0,
+         '#983 selected Node must report v22.22.0 before extraction'),
+        ('override-version', True, 'v22.22.1', 0,
+         '#983 selected Node must report v22.22.0 before extraction'),
+        ('version-exit', True, 'v22.22.0', 23,
+         '#983 selected Node --version must exit successfully'),
+    ]
+
+    def environment(label, override, reported, code):
+        directory = out / label
+        directory.mkdir()
+        marker = directory / 'generator.called'
+
+        def wrapper(path, reported, code):
+            # Only --version is varied. Generation always executes real Node.
+            path.write_text(f'#!{sys.executable}\n' +
+                'import os, sys\nfrom pathlib import Path\n' +
+                f'if sys.argv[1:] == ["--version"]:\n    print({reported!r})\n    sys.exit({code})\n' +
+                f'marker = Path({str(marker)!r})\n' +
+                'temporary = marker.with_suffix(".tmp")\n' +
+                'temporary.write_text("generator invoked\\n")\ntemporary.replace(marker)\n' +
+                f'os.execv({node!r}, [{node!r}, *sys.argv[1:]])\n')
+            path.chmod(0o700)
+
+        wrapper(directory / 'node', 'v0.0.0' if override else reported,
+                0 if override else code)
+        changed = dict(env)
+        changed['PATH'] = str(directory) + os.pathsep + env.get('PATH', '')
+        changed.pop('NODE22', None)
+        if override:
+            wrapper(directory / 'explicit-node', reported, code)
+            changed['NODE22'] = str(directory / 'explicit-node')
+        return changed, marker
+
+    results = []
+    for name, override, reported, code, assertion in rows:
+        item = dict(name=name, test=test, assertion=assertion, status='INVALID',
+                    reason='not run', compiled=False, restoredPass=False)
+        try:
+            positive, marker = environment(name + '-positive-env', override, 'v22.22.0', 0)
+            if not passed(run(name + '-positive', test, positive), test) or not marker.is_file():
+                raise RuntimeError('positive bound test did not extract through selected Node')
+            negative, marker = environment(name + '-negative-env', override, reported, code)
+            if run(name + '-compile', test, negative, compile=True).returncode != 0:
+                raise RuntimeError('environment mutant compile failed; not evidence')
+            item['compiled'] = True
+            receipt = ReceiptRun(out, name + '-negative', [(test, assertion)])
+            result = run(name + '-negative', test, receipt.environment(negative))
+            killed, reason, _ = judge(result, '', [(test, assertion)], receipt)
+            item.update(status='KILLED' if killed else ('SURVIVED' if passed(result, test) else 'INVALID'), reason=reason)
+            if marker.exists():
+                item.update(status='INVALID', reason='generator ran before Node validation completed')
+        except Exception as error:
+            item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+        try:
+            restored, marker = environment(name + '-restored-env', override, 'v22.22.0', 0)
+            item['restoredPass'] = passed(run(name + '-restored', test, restored), test) and marker.is_file()
+            if not item['restoredPass']:
+                raise RuntimeError('restored bound test did not extract through selected Node')
+        except Exception as error:
+            item.update(status='INVALID', reason=item['reason'] + f'; restored: {error}')
+        results.append(item)
+        print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
+    counts = {status: sum(row['status'] == status for row in results)
+              for status in ['KILLED', 'SURVIVED', 'INVALID']}
+    (out / 'summary.json').write_text(json.dumps(dict(controls=results, counts=counts), indent=2) + '\n')
+    print(json.dumps(counts), flush=True)
+    return int(any(row['status'] != 'KILLED' for row in results))
+
+
 def main():
     args = sys.argv[1:]
     if args == ['--check']:
@@ -72,12 +156,15 @@ def main():
         print('\n'.join(failures) if failures else f'#983 {len(mutations)} anchors checked')
         return int(bool(failures))
     compile_only = '--compile-only' in args
-    args = [arg for arg in args if arg != '--compile-only']
+    node_runtime = '--node-runtime' in args
+    args = [arg for arg in args if arg not in ('--compile-only', '--node-runtime')]
     if not args:
         raise SystemExit('usage: --check | [--compile-only] NEW_OUTPUT_DIR [mutation ...]')
     selected = [row for row in mutations if not args[1:] or row[0] in args[1:]]
     if not selected or (args[1:] and len(selected) != len(args[1:])):
         raise SystemExit('unknown/duplicate mutation selection')
+    if node_runtime and (compile_only or len(args) != 1):
+        raise SystemExit('--node-runtime requires exactly one new output directory')
     env = dict(os.environ)
     if not env.get('CARGO_TARGET_DIR'):
         raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
@@ -99,6 +186,9 @@ def main():
     def passed(result, test):
         return (result.returncode == 0 and f'test {test} ... ok' in result.stdout
                 and 'test result: ok. 1 passed; 0 failed;' in result.stdout)
+
+    if node_runtime:
+        return node_runtime_controls(out, env, run, passed)
 
     guarded = [*sorted((root / 'src/pilotdeck-cli/src').rglob('*.rs')),
                root / 'src/pilotdeck-cli/Cargo.toml', root / 'src/Cargo.lock', Path(__file__).resolve(),

@@ -465,9 +465,20 @@ fn regenerates_identically(fixture: &str) {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(fixture);
-    let node = std::env::var_os("NODE22")
-        .unwrap_or_else(|| "/opt/homebrew/Cellar/node@22/22.22.0_1/bin/node".into());
-    let result = Command::new(node)
+    let node = std::env::var_os("NODE22").unwrap_or_else(|| "node".into());
+    let version = Command::new(&node)
+        .arg("--version")
+        .output()
+        .expect("#983 run selected Node --version (NODE22 or PATH node)");
+    verify(
+        version.status.success(),
+        "#983 selected Node --version must exit successfully",
+    );
+    verify(
+        version.stdout == b"v22.22.0\n",
+        "#983 selected Node must report v22.22.0 before extraction",
+    );
+    let result = Command::new(&node)
         .arg(directory.join("generate.mjs"))
         .arg(&output)
         .output()
