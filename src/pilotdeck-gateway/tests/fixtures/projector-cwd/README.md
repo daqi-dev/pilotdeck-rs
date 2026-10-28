@@ -18,8 +18,11 @@ Rust `runtime::turn::projector_cwd_tests`（源码模块
 `src/runtime/turn/projector_cwd_tests.rs`，不挂在 `projector.rs` 的 `#[path]` 上，保证
 agent-event-projector 负控拷贝的源码自洽）每格经共享 bounded worker 在独立子进程改 cwd；
 父进程 cwd 不变。相对 TMPDIR 删除两格先直接核对 `node_temp_dir` 的 cwd 错误传播，再走
-store 构造，避免 `build` 的第二次 cwd 读取掩盖 `node_temp_dir` 回退。worker 的失败点均带
-`#879 projector cwd matrix: <case>` 专属断言，最终矩阵断言同文本。暖缓存删除格是未批准差异
+store 构造，避免 `build` 的第二次 cwd 读取掩盖 `node_temp_dir` 回退。环境准备、fixture 解析与
+cwd 恢复的失败点只带 `#879 projector cwd setup: …` 消息，不写负控回执；只有产品结果检查
+（`node_temp_dir` 错误传播与最终矩阵断言）绑定 `#879 projector cwd matrix: <case>` 专属断言。
+`environment_failure_is_not_a_bound_negative_receipt` 用缺失 `cwd` 的 root 实跑 worker，
+断言 named FAILED 出现而目标回执文件不存在，即环境失败只能判 INVALID。暖缓存删除格是未批准差异
 `specs/gateway-parity/diffs/A6.9-PROJECTOR-CWD-001.md`，不能记为对拍通过。
 
 生成：
@@ -34,9 +37,9 @@ node --disable-warning=ExperimentalWarning --import "$PDRS_BASELINE/node_modules
 `runtime::turn::projector_cwd_tests::projector_cwd_regenerates_identically`。
 
 负控先 `python3 src/pilotdeck-gateway/tests/fixtures/projector-cwd/negative_controls.py --check`
-核 8 个唯一锚点；提交后指定 `<新证据目录> [变异名 ...]` 运行。脚本要求调用方设置本树
+核 9 个唯一锚点；提交后指定 `<新证据目录> [变异名 ...]` 运行。脚本要求调用方设置本树
 `CARGO_TARGET_DIR`，经 `negative_suite.matrix_main` 的默认 HEAD 守卫、`wait_for_slot`、
 `run_owned` 执行正控 → 变异 → 编译 → 恢复；每轮 nonce 回执绑定「测试全名 + 专属断言」，
 逐项记 KILLED / SURVIVED / INVALID，任一非 KILLED 即非零退出。锚点过期、编译失败、超时
 均为 INVALID，不冒充测试失败。源码未提交就拒跑，不建影子仓库或第二份构建目录。
-全量约 8 × 4 次 cargo 调用，可能超过 20 分钟，由协调者提交后在宿主分批运行。
+全量约 9 × 4 次 cargo 调用，可能超过 20 分钟，由协调者提交后在宿主分批运行。

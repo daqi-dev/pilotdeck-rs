@@ -10,7 +10,7 @@
 use crate::runtime::turn::projector::{
     DEFAULT_ARTIFACT_THRESHOLD_BYTES, GatewayToolResultArtifactStore, node_temp_dir,
 };
-use crate::test_negative_receipt::{expect_err, expect_ok, expect_some};
+use crate::test_negative_receipt::expect_err;
 use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
@@ -19,18 +19,22 @@ const ORACLE: &str = include_str!("../../../tests/fixtures/projector-cwd/oracle.
 const WORKER: &str = "runtime::turn::projector_cwd_tests::environment_worker";
 
 fn matrix(name: &str) {
-    let assertion = format!("#879 projector cwd matrix: {name}");
     crate::test_baseline::oracle(ORACLE);
+    // Environment preparation must never write the target nonce receipt: a
+    // permission/IO failure here is INVALID for a negative control, not a kill.
     let scratch = crate::test_scratch::Scratch::new("projector-cwd");
-    let root = expect_ok(fs::canonicalize(scratch.path()), &assertion);
-    expect_ok(fs::create_dir(root.join("cwd")), &assertion);
-    expect_ok(fs::create_dir(root.join("tmp")), &assertion);
-    expect_ok(fs::create_dir(root.join("tmpdir")), &assertion);
+    let root =
+        fs::canonicalize(scratch.path()).expect("#879 projector cwd setup: canonicalize scratch");
+    fs::create_dir(root.join("cwd")).expect("#879 projector cwd setup: create cwd");
+    fs::create_dir(root.join("tmp")).expect("#879 projector cwd setup: create tmp");
+    fs::create_dir(root.join("tmpdir")).expect("#879 projector cwd setup: create tmpdir");
     let mut env = vec![
         ("PDRS_PROJECTOR_CWD_CASE".into(), name.into()),
         (
             "PDRS_PROJECTOR_CWD_ROOT".into(),
-            expect_some(root.to_str(), &assertion).into(),
+            root.to_str()
+                .expect("#879 projector cwd setup: UTF-8 root")
+                .into(),
         ),
     ];
     if name.starts_with("tmpdir-") {
@@ -51,25 +55,38 @@ fn matrix(name: &str) {
 #[test]
 #[ignore = "worker only; parent supplies isolated cwd and checks one receipt"]
 fn environment_worker() {
-    let name = expect_ok(
-        std::env::var("PDRS_PROJECTOR_CWD_CASE"),
-        "#879 projector cwd matrix: missing case",
-    );
+    // Worker setup and restoration stay off the receipt protocol: only a
+    // product result below may produce the target `#879 projector cwd matrix`
+    // nonce. An environment failure therefore leaves a named FAILED test with
+    // no receipt, which every judge classifies as INVALID.
+    let name =
+        std::env::var("PDRS_PROJECTOR_CWD_CASE").expect("#879 projector cwd setup: case env");
     let assertion = format!("#879 projector cwd matrix: {name}");
-    let root = expect_ok(std::env::var("PDRS_PROJECTOR_CWD_ROOT"), &assertion);
-    let oracle: Value = expect_ok(serde_json::from_str(ORACLE), &assertion);
-    let rows = expect_some(oracle["cases"].as_array(), &assertion);
-    let row = expect_some(rows.iter().find(|row| row["name"] == name), &assertion);
+    let root =
+        std::env::var("PDRS_PROJECTOR_CWD_ROOT").expect("#879 projector cwd setup: root env");
+    let oracle: Value =
+        serde_json::from_str(ORACLE).expect("#879 projector cwd setup: oracle JSON");
+    let rows = oracle["cases"]
+        .as_array()
+        .expect("#879 projector cwd setup: oracle cases");
+    let row = rows
+        .iter()
+        .find(|row| row["name"] == name)
+        .expect("#879 projector cwd setup: oracle case row");
     let cwd = Path::new(&root).join("cwd");
-    let original_cwd = expect_ok(std::env::current_dir(), &assertion);
-    expect_ok(std::env::set_current_dir(&cwd), &assertion);
+    let original_cwd =
+        std::env::current_dir().expect("#879 projector cwd setup: read original cwd");
+    std::env::set_current_dir(&cwd).expect("#879 projector cwd setup: enter case cwd");
     if name.contains("-warmed-") {
         // Rust has no process cwd cache; the read just proves the path was alive.
-        expect_ok(std::env::current_dir(), &assertion);
+        std::env::current_dir().expect("#879 projector cwd setup: warm cwd read");
     }
     if name.ends_with("-deleted") {
-        expect_ok(fs::remove_dir(&cwd), &assertion);
-        crate::negative_assert!(std::env::current_dir().is_err(), "{assertion}");
+        fs::remove_dir(&cwd).expect("#879 projector cwd setup: delete case cwd");
+        assert!(
+            std::env::current_dir().is_err(),
+            "#879 projector cwd setup: deleted cwd must be unreadable"
+        );
     }
     if name == "tmpdir-relative-deleted" || name == "tmpdir-relative-warmed-deleted" {
         // `with_default_root` reads the relative TMPDIR first and then `build`
@@ -94,7 +111,8 @@ fn environment_worker() {
         GatewayToolResultArtifactStore::new(input, DEFAULT_ARTIFACT_THRESHOLD_BYTES)
     };
     // Restore before assertions, even if the product returned an unexpected result.
-    expect_ok(std::env::set_current_dir(original_cwd), &assertion);
+    std::env::set_current_dir(original_cwd)
+        .expect("#879 projector cwd setup: restore original cwd");
     let actual = match result {
         Ok(store) => json!({
             "ok": true,
@@ -102,22 +120,33 @@ fn environment_worker() {
         }),
         Err(error) => json!({"error": {"message": error.to_string()}}),
     };
-    let actual: Value = expect_ok(
-        serde_json::from_str(&actual.to_string().replace(&root, "<root>")),
-        &assertion,
-    );
+    let actual: Value = serde_json::from_str(&actual.to_string().replace(&root, "<root>"))
+        .expect("#879 projector cwd setup: product JSON");
     let expected = if name.ends_with("-warmed-deleted") {
         // Registered Node warm-cwd-cache divergence: A6.9-PROJECTOR-CWD-001.
         // TS resolves against the cached (deleted) cwd; Rust keeps the cold
         // read's explicit error instead of a silent fallback.
         let cold_name = name.replace("-warmed", "");
-        let cold = expect_some(rows.iter().find(|row| row["name"] == cold_name), &assertion);
-        crate::negative_assert_eq!(row["outcome"]["ok"], json!(true), "{assertion}");
-        json!({"error": {"message": cold["outcome"]["error"]["message"]}})
+        let cold = rows
+            .iter()
+            .find(|row| row["name"] == cold_name)
+            .expect("#879 projector cwd setup: cold oracle row");
+        assert_eq!(
+            row["outcome"]["ok"],
+            json!(true),
+            "#879 projector cwd setup: warm-deleted oracle row"
+        );
+        json!({"error": {"message": cold["outcome"]["error"]["message"]
+            .as_str()
+            .expect("#879 projector cwd setup: cold oracle error")}})
     } else if row["outcome"].get("error").is_some() {
-        json!({"error": {"message": row["outcome"]["error"]["message"]}})
+        json!({"error": {"message": row["outcome"]["error"]["message"]
+            .as_str()
+            .expect("#879 projector cwd setup: oracle error message")}})
     } else {
-        json!({"ok": true, "rootDir": row["outcome"]["rootDir"]})
+        json!({"ok": true, "rootDir": row["outcome"]["rootDir"]
+            .as_str()
+            .expect("#879 projector cwd setup: oracle rootDir")})
     };
     crate::negative_assert_eq!(actual, expected, "{assertion}");
     crate::test_process::receipt(&name);
@@ -144,6 +173,70 @@ case!(
     "tmpdir-relative-warmed-deleted"
 );
 case!(tmpdir_absolute_deleted_cwd, "tmpdir-absolute-deleted");
+
+/// A failed environment step must stay INVALID for the negative-control judge:
+/// the worker is named FAILED but writes no target nonce. Root exists without
+/// its `cwd` child, so entering the case directory fails before any product
+/// call; the receipt configuration targets the same test/assertion the matrix
+/// controls use. If a setup step is ever bound back to the matrix assertion,
+/// this test observes the receipt and fails.
+#[test]
+fn environment_failure_is_not_a_bound_negative_receipt() {
+    let scratch = crate::test_scratch::Scratch::new("projector-cwd-setup");
+    let receipt = scratch.path().join("setup.receipt");
+    let config = json!({
+        "nonce": "8790".repeat(16),
+        "targets": [{
+            "test": WORKER,
+            "assertion": "#879 projector cwd matrix: relative-normal",
+            "path": receipt
+                .to_str()
+                .expect("#879 projector cwd setup regression: receipt path"),
+        }],
+    });
+    let output = std::process::Command::new(
+        std::env::current_exe().expect("#879 projector cwd setup regression: test executable"),
+    )
+    .args([
+        "--exact",
+        WORKER,
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1",
+    ])
+    .env_clear()
+    .env("PDRS_PROJECTOR_CWD_CASE", "relative-normal")
+    .env("PDRS_PROJECTOR_CWD_ROOT", scratch.path())
+    .env(
+        crate::test_negative_receipt::CONFIG_ENV,
+        serde_json::to_string(&config).expect("#879 projector cwd setup regression: config JSON"),
+    )
+    .output()
+    .expect("#879 projector cwd setup regression: child result");
+    let stdout = String::from_utf8(output.stdout)
+        .expect("#879 projector cwd setup regression: child stdout UTF-8");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "#879 projector cwd setup regression: environment failure must fail the worker: {stdout}\n{stderr}"
+    );
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line == format!("test {WORKER} ... FAILED")),
+        "#879 projector cwd setup regression: named FAILED required: {stdout}\n{stderr}"
+    );
+    // The bound assertion must be reachable before the message-shape check:
+    // a setup step rebound to the matrix assertion fails here first.
+    crate::negative_assert!(
+        !receipt.exists(),
+        "#879 projector cwd environment: target receipt must be absent"
+    );
+    assert!(
+        stderr.contains("#879 projector cwd setup:"),
+        "#879 projector cwd setup regression: failure must be a setup step: {stdout}\n{stderr}"
+    );
+}
 
 #[test]
 #[ignore = "requires Node v22.22.0 and PDRS_BASELINE"]
