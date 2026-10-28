@@ -1,4 +1,4 @@
-# 决策卡：D0-pr2 cli-parity 放开单端口 loopback + mock gateway（2026-10-28，AI 代批，待人复核）
+# 决策卡：D0-pr2 cli-parity 放开单端口 loopback + mock gateway（2026-10-28，AI 代批，人已复核同意（#967））
 
 - **卡在哪**：cli-parity 装置 `scripts/cli-parity/policy.py:43` 对 TS / Rust 两侧一律 `(deny network*)`。D1 的 SDK 四命令（sessions / resume / settings 等建连后路径）与 D2 cron 必须连网关才有可观测输出，现只能测「建连前退出」的场景，D1 / D2 的主体无尺子。
 - **谁受影响**：D 阶段（CLI）D1 / D2 全部建连后场景；#245（exp003 准入元组）顺带。
@@ -15,3 +15,5 @@
 - **预注册判据**：① 既有 29 例两侧 profile 字节不变（哈希断言）；② 新负控 18789 / 他端口 / Unix socket 三项 EPERM；③ mock 端口被占用时整轮拒跑（不回落）；④ 新场景期望值只由真实 TS 两轮定标，未定标恒 `PENDING-TS-CALIBRATION`。
 - **可复用原则**：放宽隔离只能按「场景标记 × 装置自有资源」最小放开，并为被保护对象（用户 PilotDeck 端口）配一条必须拒绝的负控。
 - **执行**：开单派 GLM（Codex 沙箱内嵌套 sandbox-exec 不可用）；评审 opus + Codex。
+
+- **人复核（2026-10-28 #967）**：同意。
