@@ -137,7 +137,10 @@ impl Drop for WriterCloseGuard {
         std::thread::spawn(close);
     }
 }
-async fn acquire_writer(path: PathBuf) -> Result<WriterLease, RuntimeError> {
+async fn acquire_writer(
+    path: PathBuf,
+    deadline: tokio::time::Instant,
+) -> Result<WriterLease, RuntimeError> {
     static WRITERS: OnceLock<Mutex<HashMap<PathBuf, Weak<WriterMutex>>>> = OnceLock::new();
     let path =
         tokio::task::spawn_blocking(move || crate::storage::canonical_transcript_path(&path))
@@ -157,7 +160,14 @@ async fn acquire_writer(path: PathBuf) -> Result<WriterLease, RuntimeError> {
                 mutex
             })
     };
-    let process = mutex.lock_owned().await;
+    // Canonicalization may yield even when the lease is idle. Always try once
+    // after it completes; only an occupied lease enters the timed wait.
+    let process = match mutex.clone().try_lock_owned() {
+        Ok(process) => process,
+        Err(_) => tokio::time::timeout_at(deadline, mutex.lock_owned())
+            .await
+            .map_err(|_| writer_busy())?,
+    };
     let file = tokio::task::spawn_blocking(move || crate::storage::LedgerLock::acquire(&path))
         .await
         .map_err(|e| RuntimeError::new(e.to_string()))?
@@ -388,7 +398,9 @@ pub struct FactoryOptions {
     /// Total predecessor drain + writer lease wait budget, explicitly chosen by
     /// the host's cancellation policy (e.g. POST_CANCEL_EXIT_TIMEOUT). This is
     /// independent of host transport close_timeout; storage construction is
-    /// excluded from the budget.
+    /// excluded from the budget. Must be positive. Path resolution and one
+    /// nonblocking lease attempt still run at expiry; if the process lease is
+    /// busy, its wait uses the original deadline (including resolution time).
     pub writer_fence_timeout: std::time::Duration,
     pub prepare: Prepare,
     pub create_storage: CreateStorage,
@@ -401,7 +413,13 @@ pub struct ProjectSessionFactory {
     mcp: SessionMcpRuntimeRegistry,
 }
 impl ProjectSessionFactory {
+    /// # Panics
+    /// Panics for a zero writer fence budget (a host configuration error).
     pub fn new(options: FactoryOptions) -> Self {
+        assert!(
+            !options.writer_fence_timeout.is_zero(),
+            "writer_fence_timeout must be positive"
+        );
         Self {
             options: Arc::new(options),
             mcp: SessionMcpRuntimeRegistry::new(),
@@ -455,12 +473,8 @@ impl ProjectSessionFactory {
         // spend the remaining drain/lease budget before lease acquisition begins.
         let deadline = tokio::time::Instant::now() + writer_wait_remaining;
         let initialized = async {
-            let lease = tokio::time::timeout_at(
-                deadline,
-                acquire_writer(storage.recorder.writer().path().to_owned()),
-            )
-            .await
-            .map_err(|_| writer_busy())??;
+            let lease =
+                acquire_writer(storage.recorder.writer().path().to_owned(), deadline).await?;
             *lock(&storage.writer_lease) = Some(lease);
             if previous.is_none()
                 && let Some(admission) = &self.options.admission
@@ -661,6 +675,9 @@ impl LiveSession for OwnedSession {
     }
     fn abort(&self, reason: &JsString) -> RuntimeResult {
         self.adapter.abort(reason)
+    }
+    fn disposal_guard(&self) -> Option<Box<dyn Send>> {
+        Some(Box::new(self.storage.take_writer_lease()))
     }
     fn dispose(&self) -> DisposeFuture<'_> {
         // Handle disposal has already drained active turns. Take ownership
