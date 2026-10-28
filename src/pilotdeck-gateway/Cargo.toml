@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# #988: activated only inside this crate's cfg(test) build, never in products.
+pdrs-mutants = []
+
 [lints]
 workspace = true
 

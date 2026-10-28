@@ -11,7 +11,16 @@ mod js_value;
 mod metadata;
 mod model_catalog;
 pub mod model_cost;
+#[doc(hidden)]
+pub mod mutants;
 mod native_archive;
+#[cfg(all(test, feature = "pdrs-mutants"))]
+extern crate self as pilotdeck_gateway;
+#[cfg(all(test, feature = "pdrs-mutants"))]
+#[path = "../tests/edgeclaw_service_facade.rs"]
+// The same integration driver includes its own common helpers in this test-only module.
+#[allow(clippy::duplicate_mod)]
+mod mutant_facade;
 mod node_io;
 mod node_locale;
 mod pairing;

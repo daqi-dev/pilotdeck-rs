@@ -19,11 +19,14 @@ mutant names it runs the full set; names are for debugging one binding.
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 import types
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_suite import classify as shared_classify, passed
+
 from negative_process import (
     SourceBaselineError,
     mutating_sources,
@@ -124,14 +127,14 @@ MUTANTS = [
     mutation(
         'workspace-state-key',
         SERVICE,
-        'repository.storage.set_pipeline_state(\n            "workspaceDir",',
-        'repository.storage.set_pipeline_state(\n            "workspaceDirMutated",',
+        '"workspaceDir"',
+        '"workspaceDirMutated"',
     ),
     mutation(
         'default-capture-source',
         SERVICE,
-        'let source = options.source.clone().unwrap_or_else(|| "edgeclaw".into());',
-        'let source = options.source.clone().unwrap_or_else(|| "edgeclaw-mutated".into());',
+        'options.source.clone().unwrap_or_else(|| "edgeclaw".into())',
+        'options.source.clone().unwrap_or_else(|| "edgeclaw-mutated".into())',
     ),
     mutation(
         'case-trace-preview-not-normalized',
@@ -148,14 +151,14 @@ MUTANTS = [
     mutation(
         'close-not-idempotent-guarded',
         SERVICE,
-        '    pub fn close(&self) -> Result<()> {\n        self.repository.close()?;\n        Ok(())\n    }',
-        '    pub fn close(&self) -> Result<()> {\n        match self.repository.close() {\n            Ok(()) => Ok(()),\n            Err(FileMemoryError::Storage(StorageError::Closed)) => Ok(()),\n            Err(error) => Err(ServiceError::File(error)),\n        }\n    }',
+        '        self.repository.close()?;\n        Ok(())',
+        '        match self.repository.close() {\n            Ok(()) => Ok(()),\n            Err(FileMemoryError::Storage(StorageError::Closed)) => Ok(()),\n            Err(error) => Err(ServiceError::File(error)),\n        }',
     ),
     mutation(
         'capture-holds-indexer-lock',
         SERVICE,
-        '        let indexer = self\n            .indexer\n            .lock()\n            .expect("edgeclaw service indexer mutex poisoned")\n            .clone();\n        indexer.capture_l0_session(CaptureL0SessionInput {',
-        '        let indexer = self\n            .indexer\n            .lock()\n            .expect("edgeclaw service indexer mutex poisoned");\n        indexer.capture_l0_session(CaptureL0SessionInput {',
+        '            let indexer = self\n                .indexer\n                .lock()\n                .expect("edgeclaw service indexer mutex poisoned")\n                .clone();\n            indexer.capture_l0_session(CaptureL0SessionInput {',
+        '            let indexer = self\n                .indexer\n                .lock()\n                .expect("edgeclaw service indexer mutex poisoned");\n            indexer.capture_l0_session(CaptureL0SessionInput {',
         test='duplicate_capture_logger_can_save_settings',
     ),
     mutation(
@@ -168,8 +171,8 @@ MUTANTS = [
     mutation(
         'memory-empty-pollutes-data-dir',
         SERVICE,
-        'memory_dir_option.filter(|path| !path.as_os_str().is_empty()),',
-        'memory_dir_option,',
+        'memory_dir_option.filter(|path| !path.as_os_str().is_empty())',
+        'memory_dir_option',
         test='empty_path_options_use_ts_default_rules',
     ),
     mutation(
@@ -182,32 +185,32 @@ MUTANTS = [
     mutation(
         'workspace-data-dir-seed',
         SERVICE,
-        'let seed = JsString::from(workspace_dir.to_string_lossy().into_owned());',
-        'let seed = JsString::from(root_dir.to_string_lossy().into_owned());',
+        'JsString::from(workspace_dir.to_string_lossy().into_owned())',
+        'JsString::from(root_dir.to_string_lossy().into_owned())',
     ),
     mutation(
         'settings-truncate-nonfinite',
         SERVICE,
-        'auto_index_interval_minutes: merged.auto_index_interval_minutes,',
+        'auto_index_interval_minutes: if (crate::mutants::on("settings-truncate-nonfinite")\n            && merged.auto_index_interval_minutes.is_nan())\n            || (crate::mutants::on("settings-large-finite-preserved")\n                && merged.auto_index_interval_minutes.is_finite()\n                && merged.auto_index_interval_minutes > 10_080.0)\n        {\n            0.0\n        } else {\n            merged.auto_index_interval_minutes\n        },',
         'auto_index_interval_minutes: if merged.auto_index_interval_minutes.is_nan() { 0.0 } else { merged.auto_index_interval_minutes },',
     ),
     mutation(
         'reopen-indexer-defaults',
         SERVICE,
-        'let mut heartbeat_options = HeartbeatOptions::new(initial_indexing_settings);',
-        'let mut heartbeat_options = HeartbeatOptions::new(default_indexing_settings.clone());',
+        'HeartbeatOptions::new(initial_indexing_settings)',
+        'HeartbeatOptions::new(default_indexing_settings.clone())',
         test='reopen_restores_persisted_indexer_settings',
     ),
     mutation(
         'closed-capture-empty-not-early',
         SERVICE,
-        'if normalized_messages.is_empty() {',
+        'if !crate::mutants::on("closed-capture-empty-not-early") && normalized_messages.is_empty() {',
         'if false && normalized_messages.is_empty() {',
     ),
     mutation(
         'settings-negative-zero',
         STORAGE,
-        '0.0 // Math.max(+0, ±0) is +0',
+        '0.0 /* Math.max(+0, ±0) is +0 */',
         'number.floor() // mutated: keep -0',
         test='save_settings_projects_negative_zero_like_ts',
     ),
@@ -221,14 +224,8 @@ MUTANTS = [
     mutation(
         'settings-large-finite-preserved',
         SERVICE,
-        'auto_index_interval_minutes: merged.auto_index_interval_minutes,',
-        'auto_index_interval_minutes: if merged.auto_index_interval_minutes.is_finite()\n'
-        '            && merged.auto_index_interval_minutes > 10_080.0\n'
-        '        {\n'
-        '            0.0\n'
-        '        } else {\n'
-        '            merged.auto_index_interval_minutes\n'
-        '        },',
+        'auto_index_interval_minutes: if (crate::mutants::on("settings-truncate-nonfinite")\n            && merged.auto_index_interval_minutes.is_nan())\n            || (crate::mutants::on("settings-large-finite-preserved")\n                && merged.auto_index_interval_minutes.is_finite()\n                && merged.auto_index_interval_minutes > 10_080.0)\n        {\n            0.0\n        } else {\n            merged.auto_index_interval_minutes\n        },',
+        'auto_index_interval_minutes: if merged.auto_index_interval_minutes.is_finite()\n            && merged.auto_index_interval_minutes > 10_080.0\n        {\n            0.0\n        } else {\n            merged.auto_index_interval_minutes\n        },',
     ),
     mutation(
         'case-trace-retrieval-key-order',
@@ -267,8 +264,8 @@ MUTANTS = [
     mutation(
         'encode-negative-zero',
         TEST_SOURCE,
-        '            } else if *number == 0.0 && number.is_sign_negative() {',
-        '            } else if false && *number == 0.0 && number.is_sign_negative() {',
+        '            } else if !pilotdeck_gateway::mutants::on("encode-negative-zero")\n                && *number == 0.0\n                && number.is_sign_negative()\n            {',
+        '            } else if false\n                && *number == 0.0\n                && number.is_sign_negative()\n            {',
     ),
     # fix-r5 P2-1: TS defaults only `undefined`; `null <= 0` yields empty
     # content and the oracle records that in scenario 4. fix-r7 P1: bind the
@@ -322,30 +319,17 @@ MUTANTS = [
 ]
 
 
-def passed(result, test):
+def classify(result, mutant, *, source_file=TEST_FILE):
+    # #988: both engines share the verdict, retaining this fixture's stricter
+    # panic-file binding. The library inclusion has an explicit ../ path.
+    bound = types.SimpleNamespace(test=mutant['test'], assertion=mutant['anchor'])
+    status, reason = shared_classify(result, bound)
     log = result.stdout + result.stderr
-    return (
-        result.returncode == 0
-        and f'test {test} ... ok' in log
-        and 'test result: ok. 1 passed;' in log
-    )
-
-
-def classify(result, mutant):
-    log = result.stdout + result.stderr
-    if passed(result, mutant['test']):
-        return 'SURVIVED', 'bound test still passed'
-    if 'could not compile' in log:
-        return 'INVALID', 'mutation did not compile'
-    if (
-        result.returncode != 0
-        and 'test result: FAILED' in log
-        and f"test {mutant['test']} ... FAILED" in log
-        and f'panicked at {TEST_FILE}:' in log
-        and mutant['anchor'] in log
+    if status == 'KILLED' and (
+        'could not compile' in log or f'panicked at {source_file}:' not in log
     ):
-        return 'KILLED', 'bound test failed at its named assertion'
-    return 'INVALID', 'missing bound runtime failure (wrong panic or missing test)'
+        return 'INVALID', 'missing bound runtime failure (wrong panic or build error)'
+    return status, reason
 
 
 def classifier_self_test():
@@ -410,20 +394,69 @@ def classifier_self_test():
     return True
 
 
+def run_mutant(mutant, original, run):
+    """Run inside mutating_sources; a failed phase cannot skip the next binding."""
+    path = mutant['path']
+    source = original.decode()
+    status, reason = 'INVALID', ''
+    try:
+        occurrences = source.count(mutant['old'])
+        if occurrences != 1:
+            raise ValueError(f'anchor appears {occurrences} times, expected exactly once')
+        if not passed(run(f"{mutant['name']}-positive", mutant['test'], mutant['include_ignored']), mutant['test']):
+            raise ValueError('positive control did not pass the bound test')
+        if mutant['witness'] and not passed(
+            run(f"{mutant['name']}-witness-positive", mutant['witness'], mutant['include_ignored']),
+            mutant['witness'],
+        ):
+            raise ValueError('witness test did not pass before mutation')
+        path.write_text(source.replace(mutant['old'], mutant['new'], 1))
+        # A coarse-mtime filesystem must not reuse the original binary.
+        time.sleep(1.1)
+        if run(f"{mutant['name']}-compile", mutant['test'], compile_only=True).returncode:
+            raise RuntimeError('mutation did not compile; see compile log')
+        witness_failed = mutant['witness'] and not passed(
+            run(f"{mutant['name']}-witness-negative", mutant['witness'], mutant['include_ignored']),
+            mutant['witness'],
+        )
+        status, reason = classify(
+            run(f"{mutant['name']}-negative", mutant['test'], mutant['include_ignored']), mutant
+        )
+        if witness_failed:
+            status, reason = 'INVALID', reason + '; witness test failed under mutation'
+    except Exception as error:
+        status, reason = 'INVALID', f'{type(error).__name__}: {error}'
+    finally:
+        # The enclosing guard owns the snapshot and independently verifies exit.
+        path.write_bytes(original)
+        time.sleep(1.1)
+        if path.read_bytes() != original:
+            raise RuntimeError(f'byte restoration failed: {path}')
+    try:
+        if not passed(run(f"{mutant['name']}-restored", mutant['test'], mutant['include_ignored']), mutant['test']):
+            status, reason = 'INVALID', reason + '; restored test did not pass'
+    except Exception as error:
+        status, reason = 'INVALID', reason + f'; restored: {type(error).__name__}: {error}'
+    return status, reason
+
+
 def main():
     if sys.argv[1:] == ['--self-test']:
         return 0 if classifier_self_test() else 2
+    if len(sys.argv) < 2:
+        print('NEW_OUTPUT_DIR is required', file=sys.stderr)
+        return 2
     output = Path(sys.argv[1]).resolve()
     requested = sys.argv[2:]
     known = {mutant['name'] for mutant in MUTANTS}
     unknown = [name for name in requested if name not in known]
-    if unknown:
-        print(f'unknown mutant(s): {", ".join(unknown)}', file=sys.stderr)
+    if unknown or len(requested) != len(set(requested)):
+        print(f'unknown or duplicate mutant(s): {requested}', file=sys.stderr)
         return 2
     selected = [
         mutant for mutant in MUTANTS if not requested or mutant['name'] in requested
     ]
-    output.mkdir(parents=True, exist_ok=True)
+    output.mkdir(parents=True, exist_ok=False)
     if not classifier_self_test():
         return 2
     target = os.environ.get('CARGO_TARGET_DIR')
@@ -431,6 +464,8 @@ def main():
         print('CARGO_TARGET_DIR must be set by the caller', file=sys.stderr)
         return 2
     env = dict(os.environ)
+    env.pop('PDRS_MUTANT', None)
+    env.pop('PDRS_FACADE_ENCODER_MUTANT', None)
     env['CARGO_TARGET_DIR'] = target
     command = [
         'cargo', 'test', '--offline', '--locked',
@@ -439,37 +474,45 @@ def main():
     ]
     results = []
 
-    def run(label, mutant_test, include_ignored=False):
+    def run(label, mutant_test, include_ignored=False, compile_only=False):
         args = ['--', mutant_test, '--exact', '--nocapture']
         if include_ignored:
             # libtest option, so it stays after cargo's `--` separator.
             args.insert(1, '--include-ignored')
+        if compile_only:
+            args = ['--no-run']
         with (output / f'{label}.log').open('w') as log:
-            gate = wait_for_slot(ROOT / 'scripts/cargo-slots.sh')
-            log.write(gate.stdout + gate.stderr)
-            log.flush()
-            result = run_owned(
-                command + args,
-                cwd=ROOT, env=env, timeout=900,
-            )
-            log.write(result.stdout + result.stderr)
+            try:
+                gate = wait_for_slot(ROOT / 'scripts/cargo-slots.sh')
+                log.write(gate.stdout + gate.stderr)
+                log.flush()
+                result = run_owned(command + args, cwd=ROOT, env=env, timeout=900)
+                log.write(result.stdout + result.stderr)
+            except Exception as error:
+                if isinstance(error, subprocess.TimeoutExpired):
+                    for part in (error.stdout, error.stderr):
+                        log.write(part.decode(errors='replace') if isinstance(part, bytes) else part or '')
+                log.write(f'\n{type(error).__name__}: {error}\n')
+                raise
         return result
 
-    def record(mutant, status, reason):
-        results.append(dict(
-            name=mutant['name'],
-            test=mutant['test'],
-            anchor=mutant['anchor'],
-            status=status,
-            reason=reason,
-        ))
+    def publish():
         counts = {
             state: sum(row['status'] == state for row in results)
             for state in ('KILLED', 'SURVIVED', 'INVALID')
         }
-        (output / 'summary.json').write_text(
+        pending = output / 'summary.json.tmp'
+        pending.write_text(
             json.dumps({'controls': results, 'counts': counts}, indent=2) + '\n'
         )
+        pending.replace(output / 'summary.json')
+
+    def record(mutant, status, reason):
+        results.append(dict(
+            name=mutant['name'], test=mutant['test'], anchor=mutant['anchor'],
+            status=status, reason=reason,
+        ))
+        publish()
         print(f"{mutant['name']}: {status}: {reason}", flush=True)
 
     try:
@@ -479,66 +522,22 @@ def main():
             baseline='HEAD',
         ) as snapshots:
             for mutant in selected:
-                path = mutant['path']
-                original = snapshots[path].decode()
-                occurrences = original.count(mutant['old'])
-                if occurrences != 1:
-                    record(
-                        mutant,
-                        'INVALID',
-                        f"anchor appears {occurrences} times, expected exactly once",
-                    )
-                    continue
-                if not passed(run(f"{mutant['name']}-positive", mutant['test'], mutant['include_ignored']), mutant['test']):
-                    record(mutant, 'INVALID', 'positive control did not pass the bound test')
-                    continue
-                if mutant['witness'] and not passed(
-                    run(f"{mutant['name']}-witness-positive", mutant['witness'], mutant['include_ignored']),
-                    mutant['witness'],
-                ):
-                    record(mutant, 'INVALID', 'witness test did not pass before mutation')
-                    continue
-                mutated = original.replace(mutant['old'], mutant['new'], 1)
-                status, reason = 'INVALID', ''
-                try:
-                    path.write_text(mutated)
-                    # Force Cargo to observe the write even on a filesystem
-                    # with coarse mtimes; a cached binary would fake SURVIVED.
-                    time.sleep(1.1)
-                    witness_failed = ''
-                    if mutant['witness'] and not passed(
-                        run(f"{mutant['name']}-witness-negative", mutant['witness'], mutant['include_ignored']),
-                        mutant['witness'],
-                    ):
-                        witness_failed = '; witness test failed under mutation'
-                    status, reason = classify(
-                        run(f"{mutant['name']}-negative", mutant['test'], mutant['include_ignored']), mutant
-                    )
-                    if witness_failed:
-                        status, reason = 'INVALID', reason + witness_failed
-                except Exception as error:  # noqa: BLE001 - summarized as INVALID
-                    status, reason = 'INVALID', f'{type(error).__name__}: {error}'
-                finally:
-                    path.write_text(original)
-                    time.sleep(1.1)
-                    if path.read_text() != original:
-                        raise RuntimeError(f'byte restoration failed: {path}')
-                if not passed(
-                    run(f"{mutant['name']}-restored", mutant['test'], mutant['include_ignored']), mutant['test']
-                ):
-                    status, reason = 'INVALID', reason + '; restored test did not pass'
+                status, reason = run_mutant(mutant, snapshots[mutant['path']], run)
                 record(mutant, status, reason)
-    except SourceBaselineError as error:
-        # The new service file is not in HEAD yet: refuse, never fake a status.
+    except Exception as error:
+        # Lock/baseline/restoration errors prevent safe successor mutations.
+        for row in results:
+            row.update(status='INVALID', reason=row['reason'] + f'; source guard: {error}')
         for mutant in selected[len(results):]:
             record(mutant, 'INVALID', f'source guard: {error}')
+        publish()
         counts = {
             state: sum(row['status'] == state for row in results)
             for state in ('KILLED', 'SURVIVED', 'INVALID')
         }
         print(f'summary: KILLED={counts["KILLED"]}, SURVIVED={counts["SURVIVED"]}, '
               f'INVALID={counts["INVALID"]}', flush=True)
-        return 3
+        return 3 if isinstance(error, SourceBaselineError) else 2
     counts = {
         state: sum(row['status'] == state for row in results)
         for state in ('KILLED', 'SURVIVED', 'INVALID')

@@ -815,6 +815,9 @@ fn interval(value: Option<&JsValue>, fallback: f64) -> f64 {
             // `f64::max` may return either zero when +0 and -0 compare equal,
             // while JS `Math.max` ranks +0 above -0. Normalise the zero sign
             // instead of relying on the platform's tie-break.
+            if crate::mutants::on("interval-negative-zero") && clamped == 0.0 {
+                return -0.0;
+            }
             if clamped == 0.0 { 0.0 } else { clamped }
         }
         _ => fallback,
