@@ -511,3 +511,98 @@ fn zero_compact_threshold_selects_the_default() {
     assert_eq!(text.lines().count(), 1);
     assert!(text.contains("\"kind\":\"snapshot\""));
 }
+
+/// #1014: folding a settled record's activity is TS
+/// `Math.max(ledger.lastActivityAtMs ?? 0, record.lastActivityAtMs)`
+/// (`ProjectRuntimeRegistry.ts:1499`), so NaN wins from either side and only
+/// two `-0` inputs keep `-0`. JSON output collapses both zeros to `0`, so the
+/// sign is observable only on the in-memory ledger that `get()` returns; the
+/// Node v22.22.0 oracle over the real registry loader is
+/// `_tmp/20261026-issue-1014/probe/registry-zero.out`.
+#[test]
+fn settled_activity_zeros_and_nan_match_ts_math_max() {
+    const PLUS_ZERO: u64 = 0.0f64.to_bits();
+    const MINUS_ZERO: u64 = (-0.0f64).to_bits();
+
+    fn loaded_activity(scratch: &Path, session: &str, lines: &str) -> f64 {
+        let mut store = TaskBudgetStore::new(scratch.join(session), None);
+        fs::create_dir_all(store.path().parent().expect("#1014 ledger parent dir"))
+            .expect("#1014 create scratch gateway dir");
+        fs::write(store.path(), lines).expect("#1014 write scratch ledger");
+        store
+            .load()
+            .expect("#1014 load must accept the scratch ledger");
+        store
+            .get(&ROOT.into(), TaskBudgetScope::Session, &session.into())
+            .expect("#1014 get must not fail")
+            .unwrap_or_else(|| panic!("#1014 ledger {session} must exist after load"))
+            .last_activity_at_ms
+            .as_number()
+            .unwrap_or_else(|| panic!("#1014 {session}: lastActivityAtMs must be a number"))
+    }
+    let snapshot = |session: &str, activity: &str| {
+        format!(
+            "{{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"{ROOT}\",\
+             \"sessionKey\":\"{session}\",\"settledRunIds\":[],\"spentUsd\":0,\
+             \"lastActivityAtMs\":{activity}}}\n"
+        )
+    };
+    let settled = |session: &str, run: &str, activity: &str| {
+        format!(
+            "{{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"{ROOT}\",\
+             \"sessionKey\":\"{session}\",\"runId\":\"{run}\",\"turnSpentUsd\":0.1,\
+             \"lastActivityAtMs\":{activity}}}\n"
+        )
+    };
+    let scratch = Scratch::new();
+    // The four signed-zero pairings, plus the nullish `?? 0` default as a +0
+    // old operand. A `stored` of None means no prior activity record at all.
+    for (index, (stored, incoming, expected, context)) in [
+        (None, "0", PLUS_ZERO, "Math.max(+0 via ?? 0, +0)"),
+        (None, "-0", PLUS_ZERO, "Math.max(+0 via ?? 0, -0)"),
+        (Some("0"), "0", PLUS_ZERO, "Math.max(+0, +0)"),
+        (Some("0"), "-0", PLUS_ZERO, "Math.max(+0, -0)"),
+        (Some("-0"), "0", PLUS_ZERO, "Math.max(-0, +0)"),
+        (Some("-0"), "-0", MINUS_ZERO, "Math.max(-0, -0)"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let session = format!("zero-{index}");
+        let mut lines = String::new();
+        if let Some(stored) = stored {
+            lines.push_str(&snapshot(&session, stored));
+        }
+        lines.push_str(&settled(&session, "run-1", incoming));
+        let activity = loaded_activity(&scratch.0, &session, &lines);
+        assert_eq!(
+            activity.to_bits(),
+            expected,
+            "#1014 {context}: stored {stored:?} + settled {incoming} \
+             must keep the TS Math.max sign"
+        );
+    }
+    // NaN wins from either side, unlike the platform f64::max.
+    for (session, runs, context) in [
+        (
+            "nan-new",
+            vec![("run-1", "\"abc\"")],
+            "Math.max(+0 via ?? 0, NaN)",
+        ),
+        (
+            "nan-old",
+            vec![("run-1", "\"abc\""), ("run-2", "5")],
+            "Math.max(NaN, 5)",
+        ),
+    ] {
+        let lines: String = runs
+            .iter()
+            .map(|(run, activity)| settled(session, run, activity))
+            .collect();
+        let activity = loaded_activity(&scratch.0, session, &lines);
+        assert!(
+            activity.is_nan(),
+            "#1014 {context} must stay NaN like TS Math.max, got {activity:?}"
+        );
+    }
+}
