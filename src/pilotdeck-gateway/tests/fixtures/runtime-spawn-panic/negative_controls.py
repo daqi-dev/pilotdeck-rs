@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported conditional sequential re.subn rewrites of changed content with different flags, not whole-file table anchors
 """Run after the patch is committed; mutate only under the shared source guard."""
 import argparse
 import json

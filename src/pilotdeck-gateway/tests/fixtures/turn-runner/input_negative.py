@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported seven-field rows with per-row scope/None and an inline snapshot decode; not the recording adapter four-field consumer
 """Live input/Recorder controls; each runtime mutant names its test and assertion."""
 import os, sys
 from pathlib import Path

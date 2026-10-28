@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported protocol peer fixture, no mutation definitions
 """Deterministic execute/model/terminal boundaries; no timeout advances a gate."""
 import json
 import sys

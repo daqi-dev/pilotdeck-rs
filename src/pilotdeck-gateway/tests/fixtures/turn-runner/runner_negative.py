@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported three-field name/scope/replacements rows, including ordered multiple replacements; not the recording adapter single-replacement consumer
 """Runtime mutations of the durable runner; always restore the owned tree."""
 import json
 from functools import partial

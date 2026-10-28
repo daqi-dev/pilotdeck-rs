@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported static scanner, no executable product mutations
 """Read-only negative-control preflight; never imports a control or runs cargo.
 
 python3 -I .../anchor_selfcheck.py --anchors-only   # CI, report env gaps
@@ -37,67 +38,15 @@ import time
 import os
 
 TABLES = {'mutants', 'mutations', 'controls', 'cases', 'runner_mutations'}
-# These scripts do not have a declarative, whole-file source replacement table.
-# Keep exact paths and explanations; new scripts never inherit an exemption.
-UNSUPPORTED = {
-    'anchor_selfcheck.py': 'static scanner, no executable product mutations',
-    'test_anchor_selfcheck.py': 'synthetic scanner controls, no product mutations',
-    'host-cancel-timeout/peer.py': 'protocol peer fixture, no mutation definitions',
-    'host-factory/peer.py': 'protocol peer fixture, no mutation definitions',
-    'live-session/peer.py': 'protocol peer fixture, no mutation definitions',
-    'turn-gates/peer.py': 'protocol peer fixture, no mutation definitions',
-    'plugin-loader/dependency-tree.py': 'dependency fixture generator, no mutation definitions',
-    'native-topology/run.py': 'capture observation runner, no mutation definitions',
-    'native-topology/controls.py': 'callback mutations of captured evidence, no source before fragments',
-    '_shared/negative_control.py': 'shared mutation runner, no mutation definitions',
-    'negative_process.py': 'shared process/source guard, no mutation definitions',
-    'negative_suite.py': 'shared mutation suite runner, no mutation definitions',
-    'negative_panic.py': 'shared libtest panic-evidence helper, no source replacement table',
-    'negative_selection.py': 'shared subset-selection helper, no source replacement table',
-    'negative_source.py': 'shared exact-source assertion helper, no source replacement table',
-    'test_negative_panic.py': 'unit tests of the shared panic-evidence helper',
-    'test_negative_selection.py': 'unit tests of the shared subset-selection helper',
-    'test_negative_source.py': 'unit tests of the shared exact-source helper',
-    'negative_oracle_guard.py': 'JSON provenance corruption, no source before fragments',
-    'test_negative_process.py': 'unit tests of the shared process/source guard',
-    'test_negative_suite.py': 'unit tests of the shared mutation suite runner',
-    'failure-guard/verdict.py': 'failure-guard verdict helper, no source replacement table',
-    'failure-guard/test_verdict.py': 'unit tests of the failure-guard verdict helper',
-    'cli-parity-mock-gateway/test_negative_controls.py':
-        'kill-judge unit tests on synthetic unittest logs, no product mutation table',
-    'fe-baseline-report/negative_controls.py': 'report-copy corruption of real Playwright originals against the fe-parity ledger, no product source replacement anchors',
-    'session-domain-cleanup/check_cleanup.py': 'runtime process-census/probe monkeypatch controls; snapshots is an iterator of PID sets, not source bytes; no source replacement anchors',
-    'session-domain-cleanup/launcher.py': 'process-group behavior fixture with bounded children, no source mutation definitions',
-    'edgeclaw-llm/test_controls.py': 'unit tests of the shared process/source guard',
-    'edgeclaw-capture-turn/test_negative.py': 'unit tests of the restore-positive summary path using in-memory timeout/start failures, no product source replacement table',
-    'edgeclaw-llm-telemetry/test_controls.py': 'runner unit tests using synthetic cargo output and mocked source reads, no product mutation definitions',
-    'background-output/test_negative.py': 'unit tests of the mutation runner',
-    'background-panic/test_negative_controls.py': 'mutation helper unit tests on in-memory strings/JSON, no product source replacement table',
-    'session-admission/test_negative.py': 'mutation boundary unit tests on in-memory product text, no product source replacement table',
-    'replacement/test-negative-518.py': 'unit tests of the mutation runner',
-    'edgeclaw-entries/test_negative_runners.py': 'unit tests of the mutation runners',
-    'turn-runner/_negative_common.py': 'shared function-scoped replacement helper',
-    'turn-runner/negative_controls.py': 'three-field name/scope/replacements rows with a variable scope; the recording adapter only handles four-field rows and a name-conditional scope',
-    'turn-runner/runner_negative.py': 'three-field name/scope/replacements rows, including ordered multiple replacements; not the recording adapter single-replacement consumer',
-    'turn-runner/input_negative.py': 'seven-field rows with per-row scope/None and an inline snapshot decode; not the recording adapter four-field consumer',
-    'turn-runner/live_negative.py': 'two-field rows with name-dependent ordered replacements on intermediate text in submit',
-    'runtime-spawn-panic/negative_controls.py': 'conditional sequential re.subn rewrites of changed content with different flags, not whole-file table anchors',
-    'plugin-runtime/negative-controls.py': 'CASES contains precomputed complete mutated files, not before fragments',
-    'plugin-runtime/panic-negative.py': 'CASES contains precomputed complete mutated files, not before fragments',
-    'plugin-runtime/notify-window-negative.py': 'imperative slicing and chained replacements, no mutation table',
-    'edgeclaw-entries/negative_fix1.py': 'imperative function-body slicing and multiple run calls',
-    'edgeclaw-export/negative_locks.py': 'imperative sequential once/write mutations',
-    'skills-tree-files/negative.py': 'generator computes function spans and yields transformed bodies',
-    'tool-budget/negative_project.py': 'imperative function-scoped replacements',
-    'spill-isolation/negative_controls.py': 'name-dependent function slicing and sequential rewrites',
-    'session-domain/negative.py': 'imperative nth-occurrence and sliced guard mutations',
-    'session-domain/adapter-negative.py': 'imperative replacement chain, no mutation table',
-    'session-domain/fix1-negative.py': 'imperative replacement chain, no mutation table',
-    'session-domain/fix2-negative.py': 'imperative replacement chain, no mutation table',
-    'recorder/fix3-negative.py': 'imperative replacement chain, no mutation table',
-    'run-registry/count-negative.py': 'imperative replacement chain, no mutation table',
-    'skills/negative_controls.py': 'mixed imperative Rust edits and generated TS fixture corruption',
-}
+# A script without a declarative, whole-file source replacement table declares
+# its exact exemption in its own header: ``# anchor-selfcheck: unsupported
+# <nonempty reason>`` within the first 20 lines. The reason lives next to the
+# script, so a new control no longer edits one shared allowlist (the #933/#61
+# conflicts). Missing reason, a marker after the limit, and a marker without a
+# script all fail closed.
+MARKER_LINE = '# anchor-selfcheck: unsupported'
+MARKER_LINE_LIMIT = 20
+MARKER_PATTERN = re.compile(r'^#\s*anchor-selfcheck:\s*unsupported(?:\s+(.*))?$')
 # Known table/call signals in intentionally unsupported formats. All other
 # exempted helpers must remain free of these signals. The reason stays above;
 # neither a new filename nor a reason alone can hide a source mutation table.
@@ -1071,7 +1020,7 @@ def extract(script, root):
     if expected_scopes - scoped:
         raise Unsupported(f'stale scoped rows: {sorted(expected_scopes - scoped)}')
     if not anchors:
-        raise Unsupported('no supported mutation anchors found; add an explicit reason to UNSUPPORTED')
+        raise Unsupported('no supported mutation anchors found; add "# anchor-selfcheck: unsupported <reason>" in the first 20 lines')
     return anchors, notes, tree
 
 
@@ -1370,25 +1319,64 @@ def exemption_signals(tree):
     return signals
 
 
+def read_marker(script):
+    """Return the header's unsupported reason, or None when it has no marker.
+
+    Only whole-line comments in the first MARKER_LINE_LIMIT lines count. A
+    missing file, malformed marker, empty reason, late marker or duplicate
+    marker fails closed instead of silently becoming a checked script.
+    """
+    if not script.is_file():
+        raise Unsupported(f'unsupported marker source does not exist: {script}')
+    reason = None
+    for number, line in enumerate(script.read_text(encoding='utf-8').splitlines(), 1):
+        stripped = line.lstrip()
+        if not stripped.startswith('#'):
+            continue
+        match = MARKER_PATTERN.match(stripped)
+        if match is None:
+            if re.match(r'^#\s*anchor-selfcheck:', stripped):
+                raise Unsupported(f'malformed unsupported marker on line {number}')
+            continue
+        if number > MARKER_LINE_LIMIT:
+            raise Unsupported(f'unsupported marker must be within the first {MARKER_LINE_LIMIT} lines, found line {number}')
+        text = (match.group(1) or '').strip()
+        if not text:
+            raise Unsupported(f'unsupported marker on line {number} needs a nonempty reason')
+        if reason is not None:
+            raise Unsupported(f'duplicate unsupported marker on line {number}')
+        reason = text
+    return reason
+
+
 def check(root, *, anchors_only=False, environ=None):
     root = root.resolve()
     fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
     # Inventory every Python fixture: filenames are not proof that a script has
-    # no mutations. Non-control helpers need an explicit, stale-checked reason.
+    # no mutations. Non-control helpers declare their reason in their own header.
     scripts = sorted(fixtures.rglob('*.py'))
     env = os.environ if environ is None else environ
     errors, checked, total, skipped = [], 0, 0, 0
-    paths = {p.relative_to(fixtures).as_posix() for p in scripts}
-    for name, reason in UNSUPPORTED.items():
-        if name not in paths or not reason.strip():
-            errors.append(f'stale/empty UNSUPPORTED entry: {name}')
-    for name in UNSUPPORTED_SIGNALS:
-        if name not in UNSUPPORTED:
-            errors.append(f'stale UNSUPPORTED_SIGNALS entry: {name}')
     if not scripts:
         errors.append('no negative scripts discovered')
+    markers, marker_errors = {}, set()
     for script in scripts:
         relative = script.relative_to(fixtures).as_posix()
+        try:
+            reason = read_marker(script)
+        except (Unsupported, OSError) as error:
+            errors.append(f'{relative}: {error}')
+            marker_errors.add(relative)
+            continue
+        if reason is not None:
+            markers[relative] = reason
+    for name in UNSUPPORTED_SIGNALS:
+        if name not in markers:
+            errors.append(f'stale UNSUPPORTED_SIGNALS entry: {name}')
+    for script in scripts:
+        relative = script.relative_to(fixtures).as_posix()
+        if relative in marker_errors:
+            continue
         try:
             tree = ast.parse(script.read_text(encoding='utf-8'), filename=str(script))
             for name in sorted(environment_requirements(tree)):
@@ -1397,12 +1385,12 @@ def check(root, *, anchors_only=False, environ=None):
                     print(message)
                     if not anchors_only:
                         errors.append(message)
-            if relative in UNSUPPORTED:
+            if relative in markers:
                 actual = exemption_signals(tree)
                 expected = UNSUPPORTED_SIGNALS.get(relative, set())
                 if actual != expected:
                     raise Unsupported(f'unsupported exemption signals: expected={sorted(expected)} actual={sorted(actual)}')
-                print(f'UNSUPPORTED {relative}: {UNSUPPORTED[relative]}')
+                print(f'UNSUPPORTED {relative}: {markers[relative]}')
                 skipped += 1
                 continue
             anchors, notes, _ = extract(script, root)

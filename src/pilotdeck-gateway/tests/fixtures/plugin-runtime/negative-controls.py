@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported CASES contains precomputed complete mutated files, not before fragments
 """Bounded, serial #543 mutations. Restore implementation bytes after every run.
 Uses the launcher's one src/target; no scratch builds or background probes.
 Usage: python3 negative-controls.py <evidence-dir> [mutation-id ...]

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported imperative replacement chain, no mutation table
 """#562 repair 3: both recorder count guards reject one missing TS scenario."""
 import json
 import os

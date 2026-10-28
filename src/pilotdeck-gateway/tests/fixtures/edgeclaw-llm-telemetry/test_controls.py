@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported runner unit tests using synthetic cargo output and mocked source reads, no product mutation definitions
 """Runner checks use synthetic cargo output; never mutate product sources."""
 import importlib.util
 from pathlib import Path

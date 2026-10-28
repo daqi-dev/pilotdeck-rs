@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported mutation boundary unit tests on in-memory product text, no product source replacement table
 """Regression checks for the abort mutant's boundaries, using real product text."""
 import importlib.util
 from pathlib import Path

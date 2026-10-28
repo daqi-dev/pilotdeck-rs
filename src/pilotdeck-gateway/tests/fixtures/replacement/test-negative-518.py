@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported unit tests of the mutation runner
 """Guard against counting dependency failures as killed product mutations."""
 import importlib.util
 import os

@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported unit tests of the shared subset-selection helper
 """Negative controls for the shared subset selection (#813 fix-r3).
 
 Run from this directory: ``python3 -m unittest test_negative_selection.py``.

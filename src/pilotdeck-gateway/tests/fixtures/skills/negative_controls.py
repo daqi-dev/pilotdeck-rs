@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported mixed imperative Rust edits and generated TS fixture corruption
 """#241/#251: mutate fixture inputs/expected fields, never product sources."""
 import argparse
 from contextlib import contextmanager

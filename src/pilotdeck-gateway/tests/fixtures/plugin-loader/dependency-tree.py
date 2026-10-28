@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported dependency fixture generator, no mutation definitions
 """Capture/replay the installed dependency tree without writing to node_modules.
 
 Follow source directory aliases as distinct logical directories (like a

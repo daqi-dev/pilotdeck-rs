@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported shared subset-selection helper, no source replacement table
 """Subset selection shared by the gateway negative-control runners (#813 fix-r3).
 
 A subset run shortens a host re-run; it is not a reason to skip the control that

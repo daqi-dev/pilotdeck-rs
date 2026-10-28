@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported imperative function-body slicing and multiple run calls
 """Fix-round security / snapshot-lock mutations; each must fail at runtime."""
 import argparse, hashlib, json, os, pathlib, sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))

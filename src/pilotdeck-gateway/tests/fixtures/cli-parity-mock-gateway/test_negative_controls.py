@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported kill-judge unit tests on synthetic unittest logs, no product mutation table
 """Unit tests of the #933 kill judge, on synthetic logs only.
 
 The judge is the piece a forged log could otherwise fool, so every class of

@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported shared mutation suite runner, no mutation definitions
 """Run every selected control without treating harness failures as kills."""
 from dataclasses import dataclass
 import json

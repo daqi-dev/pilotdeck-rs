@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported synthetic scanner controls, no product mutations
 """Synthetic scanner controls: only tiny disposable text fixtures are changed."""
 import ast
 from contextlib import redirect_stdout
@@ -18,8 +19,14 @@ SPEC = importlib.util.spec_from_file_location('anchor_selfcheck', PATH)
 CHECK = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = CHECK
 SPEC.loader.exec_module(CHECK)
-PRODUCTION_UNSUPPORTED = dict(CHECK.UNSUPPORTED)
+PRODUCTION_FIXTURES = PATH.parent
+PRODUCTION_UNSUPPORTED = {}
+for _script in sorted(PRODUCTION_FIXTURES.rglob('*.py')):
+    _reason = CHECK.read_marker(_script)
+    if _reason is not None:
+        PRODUCTION_UNSUPPORTED[_script.relative_to(PRODUCTION_FIXTURES).as_posix()] = _reason
 PRODUCTION_UNSUPPORTED_SIGNALS = dict(CHECK.UNSUPPORTED_SIGNALS)
+MARKER_PREFIX = '# anchor-selfcheck: unsupported'
 
 
 class ScannerControls(unittest.TestCase):
@@ -37,15 +44,35 @@ class ScannerControls(unittest.TestCase):
         self.script.parent.mkdir()
         self.base = "from pathlib import Path\nroot = Path(__file__).resolve().parents[5]\nsource = root / 'src/example.rs'\n"
         self.write("mutants = [('sample', source, 'before', 'after')]\n")
-        self.allowlist = patch.dict(CHECK.UNSUPPORTED, {}, clear=True)
-        self.allowlist.start()
-        self.addCleanup(self.allowlist.stop)
         signals = patch.dict(CHECK.UNSUPPORTED_SIGNALS, {}, clear=True)
         signals.start()
         self.addCleanup(signals.stop)
 
     def write(self, body):
         self.script.write_text(self.base + body)
+
+    @staticmethod
+    def strip_marker(text):
+        return ''.join(line for line in text.splitlines(keepends=True)
+                       if not line.lstrip().startswith(MARKER_PREFIX))
+
+    def header(self, reason):
+        """Insert a #977 unsupported marker after an optional shebang."""
+        lines = self.script.read_text().splitlines(keepends=True)
+        index = 1 if lines and lines[0].startswith('#!') else 0
+        lines.insert(index, f'{MARKER_PREFIX} {reason}\n')
+        self.script.write_text(''.join(lines))
+
+    def remove_header(self):
+        self.script.write_text(self.strip_marker(self.script.read_text()))
+
+    def marker_at_line(self, number, reason):
+        """Write a scanner script whose marker is on one exact 1-based line."""
+        lines = self.base.splitlines(keepends=True)
+        while len(lines) < number - 1:
+            lines.append('# filler\n')
+        lines.insert(number - 1, f'{MARKER_PREFIX} {reason}\n')
+        self.script.write_text(''.join(lines) + "raise RuntimeError('must not run')\n")
 
     def run_check(self, expected=0, *, env=None, anchors_only=True, label=''):
         output = io.StringIO()
@@ -162,7 +189,7 @@ for name, path, pattern, replacement in mutants:
         self.assertIn(name, PRODUCTION_UNSUPPORTED)
         reason = PRODUCTION_UNSUPPORTED[name]
         self.assertTrue(reason.strip())
-        CHECK.UNSUPPORTED[name] = reason
+        self.header(reason)
         CHECK.UNSUPPORTED_SIGNALS[name] = PRODUCTION_UNSUPPORTED_SIGNALS[name]
         for anchors_only in (False, True):
             with self.subTest(anchors_only=anchors_only):
@@ -172,15 +199,15 @@ for name, path, pattern, replacement in mutants:
                 self.assertIn('checked=0 unsupported=1 anchors=0 errors=0', report)
         self.assertIn('MISSING_ENV CARGO_TARGET_DIR', self.run_check(
             1, anchors_only=False, label='sequential-regex-missing-environment'))
-        del CHECK.UNSUPPORTED[name]
+        self.remove_header()
         del CHECK.UNSUPPORTED_SIGNALS[name]
         self.assertIn('unsupported regex consumer', self.run_check(
             1, env=env, label='sequential-regex-exception-removed'))
-        CHECK.UNSUPPORTED[name] = reason
+        self.header(reason)
         CHECK.UNSUPPORTED_SIGNALS[name] = PRODUCTION_UNSUPPORTED_SIGNALS[name]
         self.run_check(env=env, anchors_only=False, label='sequential-regex-restored')
         other = self.fixtures / 'sample/negative.py'
-        other.write_text(self.script.read_text())
+        other.write_text(self.strip_marker(self.script.read_text()))
         self.assertIn('ERROR sample/negative.py: unsupported regex consumer',
                       self.run_check(1, env=env, label='sequential-regex-other-file'))
         other.unlink()
@@ -230,11 +257,11 @@ for name, path, pattern, replacement in mutants:
         self.write("def test_helper():\n    negative.mutate('probe', 'anchor', 'anchor', 'changed')\n")
         self.assertIn('no supported mutation anchors',
                       self.run_check(1, label='helper-tests-unregistered'))
-        CHECK.UNSUPPORTED[name] = PRODUCTION_UNSUPPORTED[name]
+        self.header(PRODUCTION_UNSUPPORTED[name])
         self.assertIn(f'UNSUPPORTED {name}:', self.run_check(label='helper-tests-registered'))
-        del CHECK.UNSUPPORTED[name]
+        self.remove_header()
         self.run_check(1, label='helper-tests-registration-removed')
-        CHECK.UNSUPPORTED[name] = PRODUCTION_UNSUPPORTED[name]
+        self.header(PRODUCTION_UNSUPPORTED[name])
         self.run_check(label='helper-tests-registration-restored')
 
     def test_llm_helper_exception_is_exact_and_signal_checked(self):
@@ -247,10 +274,10 @@ for name, path, pattern, replacement in mutants:
         reason = PRODUCTION_UNSUPPORTED.get(name)
         self.assertEqual(reason, PRODUCTION_UNSUPPORTED['test_negative_process.py'],
                          '#827 llm-helper must use the shared guard test reason')
-        CHECK.UNSUPPORTED[name] = reason
         CHECK.UNSUPPORTED_SIGNALS[name] = PRODUCTION_UNSUPPORTED_SIGNALS.get(name, set())
-        for broken in ('missing-signals', 'extra-signal', 'removed-registration', 'missing-file'):
+        for broken in ('missing-signals', 'extra-signal', 'removed-registration'):
             self.write(body)
+            self.header(reason)
             self.assertIn('checked=0 unsupported=1 anchors=0 errors=0',
                           self.run_check(label='#827 llm-helper original'),
                           '#827 llm-helper registered signal must pass')
@@ -258,14 +285,13 @@ for name, path, pattern, replacement in mutants:
                 CHECK.UNSUPPORTED_SIGNALS[name] = set()
             elif broken == 'extra-signal':
                 self.write(body + "mutants = [('sample', source, 'before', 'after')]\n")
-            elif broken == 'removed-registration':
-                del CHECK.UNSUPPORTED[name]
+                self.header(reason)
             else:
-                self.script.unlink()
+                self.remove_header()
             self.run_check(1, label=f'#827 llm-helper {broken}')
-            CHECK.UNSUPPORTED[name] = reason
             CHECK.UNSUPPORTED_SIGNALS[name] = PRODUCTION_UNSUPPORTED_SIGNALS.get(name, set())
             self.write(body)
+            self.header(reason)
             self.run_check(label='#827 llm-helper restored')
         other = self.fixtures / 'renamed/test_controls.py'
         other.parent.mkdir()
@@ -1464,11 +1490,16 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
         other = self.fixtures / 'sample/runner.py'
         other.write_text("raise RuntimeError('must never execute')\n")
         self.assertIn('runner.py: no supported mutation anchors', self.run_check(1, label='unregistered-helper'))
-        CHECK.UNSUPPORTED['sample/runner.py'] = 'synthetic helper without a table'
-        self.assertIn('UNSUPPORTED sample/runner.py', self.run_check(label='registered-helper'))
+        registered = f"{MARKER_PREFIX} synthetic helper without a table\nraise RuntimeError('must never execute')\n"
+        other.write_text(registered)
+        self.assertIn('UNSUPPORTED sample/runner.py: synthetic helper without a table',
+                      self.run_check(label='registered-helper'))
+        other.write_text("raise RuntimeError('must never execute')\n")
+        self.assertIn('runner.py: no supported mutation anchors',
+                      self.run_check(1, label='removed-helper'))
+        other.write_text(registered)
+        self.run_check(label='restored-helper')
         other.unlink()
-        self.assertIn('stale/empty UNSUPPORTED', self.run_check(1, label='removed-helper'))
-        del CHECK.UNSUPPORTED['sample/runner.py']
         self.run_check()
 
     def test_table_rewrites_fail_but_selection_is_supported(self):
@@ -1482,51 +1513,99 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
         self.write(table + "mutants.clear()\n")
         self.assertIn('unsupported mutation table update', self.run_check(1))
 
-    def test_allowlist_is_explicit_and_stale_entries_fail(self):
+    def test_unsupported_marker_is_explicit_and_fails_closed(self):
         self.write("raise RuntimeError('must not run')\n")
-        CHECK.UNSUPPORTED['sample/negative.py'] = 'synthetic unsupported format'
-        self.assertIn('UNSUPPORTED sample/negative.py: synthetic unsupported format', self.run_check())
-        CHECK.UNSUPPORTED['gone/negative.py'] = 'stale entry'
-        self.assertIn('stale/empty', self.run_check(1))
-        del CHECK.UNSUPPORTED['gone/negative.py']
-        CHECK.UNSUPPORTED['sample/negative.py'] = ''
-        self.run_check(1)
+        self.header('synthetic unsupported format')
+        self.assertIn('UNSUPPORTED sample/negative.py: synthetic unsupported format',
+                      self.run_check(label='#977 marker-present'),
+                      '#977 a marker with a reason must exempt its script')
+        # #977 negative 1: a marker without a reason must not exempt the script.
+        self.write("raise RuntimeError('must not run')\n")
+        self.header('')
+        self.assertIn('needs a nonempty reason',
+                      self.run_check(1, label='#977 marker-empty-reason'),
+                      '#977 an empty marker reason must fail closed')
+        # #977 negative 2: a marker after the first 20 lines is not an exemption.
+        self.marker_at_line(21, 'too late')
+        report = self.run_check(1, label='#977 marker-after-limit')
+        self.assertIn('must be within the first 20 lines, found line 21', report,
+                      '#977 late marker must be reported with its line')
+        # Line 20 is the last accepted position.
+        self.marker_at_line(20, 'last allowed line')
+        self.assertIn('UNSUPPORTED sample/negative.py: last allowed line',
+                      self.run_check(label='#977 marker-at-limit'),
+                      '#977 a marker on line 20 must be accepted')
+        # #977 negative 3: a near-miss marker prefix is malformed, never ignored.
+        self.write("raise RuntimeError('must not run')\n")
+        self.script.write_text('# anchor-selfcheck: suported typo\n' + self.script.read_text())
+        self.assertIn('malformed unsupported marker on line 1',
+                      self.run_check(1, label='#977 malformed-marker'),
+                      '#977 a malformed marker prefix must fail closed')
+        # #977 negative 4: a second marker cannot smuggle another reason in.
+        self.write("raise RuntimeError('must not run')\n")
+        self.header('first reason is the only reason')
+        lines = self.script.read_text().splitlines(keepends=True)
+        self.script.write_text(''.join(lines[:2]) + f'{MARKER_PREFIX} second reason\n' + ''.join(lines[2:]))
+        self.assertIn('duplicate unsupported marker on line 3',
+                      self.run_check(1, label='#977 duplicate-marker'),
+                      '#977 a duplicate marker must fail closed')
+        # #977 negative 5: the remaining shared signals table cannot name a
+        # script that does not exist (the old stale-allowlist failure).
+        CHECK.UNSUPPORTED_SIGNALS['gone/negative.py'] = set()
+        self.assertIn('stale UNSUPPORTED_SIGNALS entry: gone/negative.py',
+                      self.run_check(1, label='#977 stale-signal-missing-script'),
+                      '#977 a signal entry for a missing script must fail closed')
+        del CHECK.UNSUPPORTED_SIGNALS['gone/negative.py']
+        # read_marker itself rejects a missing script instead of returning None.
+        self.script.unlink()
+        with self.assertRaises(CHECK.Unsupported,
+                              msg='#977 missing marker script must fail closed') as caught:
+            CHECK.read_marker(self.script)
+        self.assertIn('does not exist', str(caught.exception),
+                      '#977 missing marker script must fail closed')
+        self.write("raise RuntimeError('must not run')\n")
+        self.header('restored')
+        self.run_check(label='#977 restored')
 
-    def test_each_file_exception_has_a_paired_missing_file_control(self):
+    def test_each_production_marker_has_a_paired_removal_control(self):
         for name, reason in PRODUCTION_UNSUPPORTED.items():
             with self.subTest(name=name):
                 self.assertTrue(reason.strip())
-                script = self.fixtures / name
-                script.parent.mkdir(parents=True, exist_ok=True)
+                body = (PATH.parent / name).read_text()
+                self.assertIn(MARKER_PREFIX, body[:4096], f'{name} marker')
+                self.script = self.fixtures / name
+                self.script.parent.mkdir(parents=True, exist_ok=True)
                 signals = PRODUCTION_UNSUPPORTED_SIGNALS.get(name, set())
-                body = ''.join(f'{value} = []\n' if kind == 'table' else f'{value}()\n'
-                               for kind, value in (signal.split(':') for signal in sorted(signals)))
-                body += "raise RuntimeError('must not run')\n"
-                script.write_text(body)
-                CHECK.UNSUPPORTED[name] = reason
                 if signals:
                     CHECK.UNSUPPORTED_SIGNALS[name] = signals
-                self.run_check(label=f'allowlist-present-{name}')
-                script.unlink()
-                self.assertIn('stale/empty', self.run_check(1, label=f'allowlist-missing-{name}'))
-                script.write_text(body)
-                self.run_check(label=f'allowlist-restored-{name}')
-                print(f'ALLOWLIST {name}: present=0 missing=1 restored=0')
-                script.unlink()
-                del CHECK.UNSUPPORTED[name]
+                self.script.write_text(body)
+                self.assertIn(f'UNSUPPORTED {name}: {reason}',
+                              self.run_check(label=f'#977 marker-present-{name}'),
+                              f'#977 {name} must be exempted by its own marker')
+                self.script.write_text(self.strip_marker(body))
+                self.run_check(1, label=f'#977 marker-removed-{name}')
+                self.assertNotIn(f'UNSUPPORTED {name}:',
+                                 self.run_check(1, label=f'#977 marker-removed-confirmed-{name}'),
+                                 f'#977 {name} must stop being exempt without its marker')
+                self.script.write_text(body)
+                self.run_check(label=f'#977 marker-restored-{name}')
+                print(f'MARKER {name}: present=0 removed=1 restored=0')
+                self.script.unlink()
                 CHECK.UNSUPPORTED_SIGNALS.pop(name, None)
 
     def test_helper_exemption_cannot_hide_mutation_signals(self):
-        name = 'sample/negative.py'
-        CHECK.UNSUPPORTED[name] = 'helper without mutation definitions'
+        reason = 'helper without mutation definitions'
         self.write("raise RuntimeError('must not execute')\n")
+        self.header(reason)
         self.run_check(label='signal-free-helper-original')
         bodies = [f"{table} = [('sample', source, 'before', 'after')]\n" for table in sorted(CHECK.TABLES)]
         bodies += ["mutation('sample', source, 'before', 'after')\n", "mutate('sample', source, 'before', 'after')\n"]
         for body in bodies:
             self.write(body)
+            self.header(reason)
             self.assertIn('unsupported exemption signals', self.run_check(1, label='helper-hidden-mutation'))
         self.write("raise RuntimeError('must not execute')\n")
+        self.header(reason)
         self.run_check(label='signal-free-helper-restored')
 
     def check_rebased_helper_registration(self, name, expected):
@@ -1538,7 +1617,6 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
         self.move_script(name)
         body = (PATH.parent / name).read_text()
         self.script.write_text(body)
-        CHECK.UNSUPPORTED[name] = PRODUCTION_UNSUPPORTED[name]
         if expected:
             CHECK.UNSUPPORTED_SIGNALS[name] = expected
         self.run_check(label=label + ' original')
@@ -1551,9 +1629,10 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
             self.assertIn('unsupported exemption signals', self.run_check(1, label=label + ' missing-signal'),
                           label + ' must require every registered signal')
             CHECK.UNSUPPORTED_SIGNALS[name] = expected
-        self.script.unlink()
-        self.assertIn('stale/empty', self.run_check(1, label=label + ' missing-file'),
-                      label + ' must reject stale exemption')
+        self.script.write_text(self.strip_marker(body))
+        report = self.run_check(1, label=label + ' marker-removed')
+        self.assertNotIn(f'UNSUPPORTED {name}:', report,
+                         label + ' must require its in-script reason')
         self.script.write_text(body)
         self.run_check(label=label + ' restored')
 
@@ -1585,28 +1664,34 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
     def test_registered_exemption_signals_are_exact_and_stale_checked(self):
         for name, signals in PRODUCTION_UNSUPPORTED_SIGNALS.items():
             with self.subTest(name=name):
+                reason = PRODUCTION_UNSUPPORTED[name]
                 self.move_script(name)
-                CHECK.UNSUPPORTED[name] = PRODUCTION_UNSUPPORTED[name]
                 CHECK.UNSUPPORTED_SIGNALS[name] = signals
                 fragments = {signal: (f'{value} = []\n' if kind == 'table' else f'{value}()\n')
                              for signal in signals for kind, value in [signal.split(':')]}
-                body = ''.join(fragments.values())
+                body = f'{MARKER_PREFIX} {reason}\n' + ''.join(fragments.values())
                 self.write(body)
                 self.run_check(label=f'exemption-signals-original-{name}')
                 for signal in signals:
-                    self.write(''.join(fragment for key, fragment in fragments.items() if key != signal))
-                    self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-removed'))
+                    self.write(f'{MARKER_PREFIX} {reason}\n'
+                               + ''.join(fragment for key, fragment in fragments.items() if key != signal))
+                    self.assertIn('unsupported exemption signals',
+                                  self.run_check(1, label='exemption-signal-removed'))
                 self.write(body + 'mutation()\n')
                 self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-added'))
                 self.write(body)
                 del CHECK.UNSUPPORTED_SIGNALS[name]
                 self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-unregistered'))
                 CHECK.UNSUPPORTED_SIGNALS[name] = signals
-                del CHECK.UNSUPPORTED[name]
+                # A registered signal with no marker is stale and fails closed.
+                self.write(''.join(fragments.values()))
                 self.assertIn('stale UNSUPPORTED_SIGNALS', self.run_check(1, label='exemption-signal-stale'))
-                CHECK.UNSUPPORTED[name] = PRODUCTION_UNSUPPORTED[name]
+                # So is a registered signal whose script is gone.
+                self.script.unlink()
+                self.assertIn('stale UNSUPPORTED_SIGNALS',
+                              self.run_check(1, label='exemption-signal-missing-script'))
+                self.write(body)
                 self.run_check(label=f'exemption-signals-restored-{name}')
-                del CHECK.UNSUPPORTED[name]
                 del CHECK.UNSUPPORTED_SIGNALS[name]
 
     def test_each_row_exception_has_a_paired_stale_control(self):

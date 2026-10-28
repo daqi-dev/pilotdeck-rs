@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported unit tests of the shared process/source guard
 """Check the new negative runner without modifying any product source."""
 import ast
 import contextlib

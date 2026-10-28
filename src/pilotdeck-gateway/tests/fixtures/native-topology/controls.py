@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported callback mutations of captured evidence, no source before fragments
 """Replay real A5.3 captures through run.py and reject targeted mutations.
 
 This checks the apparatus, not native entry acceptance. Source captures are

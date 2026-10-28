@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported imperative nth-occurrence and sliced guard mutations
 """Bounded product-source mutation checks, using only the launcher's target.
 
 The small rustc harness includes the real session_domain.rs (and its golden

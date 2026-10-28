@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported CASES contains precomputed complete mutated files, not before fragments
 """#574 repair 3: bounded behavioral controls, one cargo/test process at a time.
 
 Run with the launcher environment and a fresh evidence directory. Restore the

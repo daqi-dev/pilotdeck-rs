@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported mutation helper unit tests on in-memory strings/JSON, no product source replacement table
 """Stale controls must stop before mutating sources or launching cargo."""
 import importlib.util
 import json

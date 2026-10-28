@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported unit tests of the shared process/source guard
 """Run directly with Python; no Cargo, network or product fixtures needed.
 
 The source-window cases create a throwaway git repository under the system

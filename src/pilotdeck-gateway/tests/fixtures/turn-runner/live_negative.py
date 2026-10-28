@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported two-field rows with name-dependent ordered replacements on intermediate text in submit
 """Runtime counterexamples for cancellation before/during host creation."""
 import os
 from pathlib import Path
