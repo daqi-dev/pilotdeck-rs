@@ -543,8 +543,9 @@ mod retry_delay_tests {
 
     /// `network/fetch.ts:213-216` uses `Math.min` / `Math.max`: a NaN cap is
     /// sticky, while Rust `f64::min`/`max` would return the other operand.
-    /// Node v22.22.0 probe:
-    /// `_tmp/20261026-issue-947/fix-r1/node/web-retry-probe.out`.
+    /// Node v22.22.0 probes:
+    /// `_tmp/20261026-issue-947/fix-r1/node/web-retry-probe.out` and
+    /// `_tmp/20261026-issue-947/fix-r2/node/web-retry-probe.out`.
     #[test]
     fn retry_delay_uses_js_math_min_max() {
         let random: Random = Arc::new(|| 0.0);
@@ -561,6 +562,20 @@ mod retry_delay_tests {
         assert!(
             retry_delay(0, &nan_cap, None, &random).is_nan(),
             "#947 exponential Math.min must propagate a NaN cap"
+        );
+
+        // `cap=5000, base=NaN, random=0`: `Math.min(5000, NaN)` is NaN at
+        // the first (exponential) clamp; only reverting that one site yields
+        // 5000 even though the final clamp still uses `js_math_min`.
+        let nan_base = RetryOptions {
+            max_retries: 2,
+            base_delay_ms: f64::NAN,
+            max_delay_ms: 5_000.0,
+            retry_on_post: false,
+        };
+        assert!(
+            retry_delay(0, &nan_base, None, &random).is_nan(),
+            "#947 exponential base NaN must survive the first Math.min"
         );
 
         let normal = RetryOptions {

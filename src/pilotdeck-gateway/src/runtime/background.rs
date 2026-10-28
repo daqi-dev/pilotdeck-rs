@@ -55,7 +55,7 @@ use crate::{
         },
     },
 };
-use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, js_math::max as js_math_max};
 use pilotdeck_transport::system_clock::format_epoch_iso;
 use std::{
     future::Future,
@@ -1135,9 +1135,9 @@ impl Inner {
             let event = match task.ended_at {
                 Some(ended_at) if task.status.is_terminal() => {
                     let total = state.output.total as f64;
-                    let preview_bytes = self.completion_preview_bytes.max(0.0);
+                    let preview_bytes = js_math_max(self.completion_preview_bytes, 0.0);
                     let slice = state.output.read_slice(
-                        &JsValue::Number((total - preview_bytes).max(0.0)),
+                        &JsValue::Number(js_math_max(total - preview_bytes, 0.0)),
                         &JsValue::Number(preview_bytes),
                     );
                     let mut event = JsObject::new();
@@ -3456,5 +3456,61 @@ mod tests {
         assert!(!error.message.units().contains(&0xFFFD));
         assert!(error.requires_host);
         registry.dispose().await.unwrap();
+    }
+
+    /// `BackgroundTaskRuntime.ts:559-561` routes both preview bounds through
+    /// `Math.max`, so a NaN `completionPreviewBytes` stays NaN and
+    /// `TaskOutputStore.readSlice` then treats both non-finite arguments as
+    /// 0 / the ring size, returning the whole output. Node v22.22.0 probe:
+    /// `_tmp/20261026-issue-947/fix-r2/node/background-preview-nan.out`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn completion_preview_uses_js_math_max_for_nan() {
+        let events: Arc<Mutex<Vec<JsObject>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        let runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+            completion_preview_bytes: Some(f64::NAN),
+            on_completion: Some(Arc::new(move |event| lock(&captured).push(event))),
+            ..Default::default()
+        });
+        let spec = StartTaskSpec {
+            command: JsValue::from("printf abc"),
+            cwd: "/".into(),
+            env: None,
+            session_id: JsValue::Undefined,
+            agent_id: JsValue::Undefined,
+            kind: JsValue::Undefined,
+        };
+        let task = tokio::time::timeout(Duration::from_secs(5), runtime.start(spec))
+            .await
+            .expect("#947 completion preview start must settle before the deadline")
+            .expect("#947 completion preview task must start");
+        let entry = runtime
+            .find(&task.task_id, None)
+            .expect("#947 completion preview entry must be published");
+        let mut done = entry.done.subscribe();
+        tokio::time::timeout(Duration::from_secs(5), done.wait_for(|done| *done))
+            .await
+            .expect("#947 completion preview task must finish before the deadline")
+            .expect("#947 completion preview done channel must stay open");
+        let event = {
+            let events = lock(&events);
+            assert_eq!(
+                events.len(),
+                1,
+                "#947 completion preview must notify exactly once"
+            );
+            events[0].clone()
+        };
+        assert_eq!(
+            event.get("totalBytes"),
+            Some(&JsValue::Number(3.0)),
+            "#947 completion preview totalBytes"
+        );
+        assert_eq!(
+            event.get("outputPreview"),
+            Some(&JsValue::from("abc")),
+            "#947 completion preview Math.max must propagate NaN previewBytes like TS"
+        );
+        runtime.dispose().await;
     }
 }
