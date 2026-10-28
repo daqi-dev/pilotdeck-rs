@@ -103,9 +103,12 @@ class LockReleaseControls(unittest.TestCase):
                          '#209 retained groups must be explicit in owner.json')
         with patch.object(R, 'pid_alive', return_value=False), \
                 patch.object(R.time, 'sleep', side_effect=RuntimeError('waited')):
-            with self.assertRaises(RuntimeError, msg='#209 cleanupPending lock was stolen'):
+            # The refusal itself is the bound assertion: a mutant that takes
+            # the retained lease over makes assertRaises fail with this message.
+            with self.assertRaises(RuntimeError,
+                                   msg='#209 cleanupPending lock must be refused'):
                 with R.parity_lock(self.lock):
-                    self.fail('#209 cleanupPending lock was taken over')
+                    pass
 
     def test_cleanup_error_is_unproven(self):
         class FakeProc:
@@ -113,13 +116,32 @@ class LockReleaseControls(unittest.TestCase):
             returncode = None
 
             def wait(self, timeout=None):
-                raise subprocess.TimeoutExpired(str(self.pid), timeout)
+                return 0
 
-        with patch.object(R.os, 'killpg', side_effect=PermissionError('injected #209')):
-            audit = R._stop_group(FakeProc())
+        def killpg(pid, sig):
+            # The group is already gone (final ESRCH probe succeeds) but the
+            # TERM/KILL delivery itself failed: errors must still deny proof.
+            if sig == 0:
+                raise ProcessLookupError(pid)
+            raise PermissionError('injected #209')
+
+        R.LIVE_GROUPS.add(424242)
+        self.addCleanup(R.LIVE_GROUPS.discard, 424242)
+        with patch.object(R.os, 'killpg', side_effect=killpg):
+            audit = R.stop_group(FakeProc())
         self.assertFalse(audit['allStopped'],
                          '#209 kill/wait OSError must leave the group unproven')
         self.assertTrue(audit['errors'], '#209 the cleanup error must be recorded')
+        self.assertFalse(audit['remaining'],
+                         '#209 the final ESRCH probe must prove the group gone')
+        self.assertIn(424242, R.LIVE_GROUPS,
+                      '#209 unproven cleanup must stay in LIVE_GROUPS')
+        with R.parity_lock(self.lock):
+            pass
+        self.assertTrue(self.lock.exists(),
+                        '#209 unproven cleanup must retain the shared lock')
+        self.assertEqual(R.read_owner(self.lock).get('cleanupPending'), [424242],
+                         '#209 retained cleanupPending must be explicit in owner.json')
 
     def test_cleanup_pending_cannot_be_stolen(self):
         self.lock.mkdir()
@@ -128,9 +150,12 @@ class LockReleaseControls(unittest.TestCase):
         (self.lock / 'owner.json').write_text(json.dumps(original) + '\n')
         with patch.object(R, 'pid_alive', return_value=False), \
                 patch.object(R.time, 'sleep', side_effect=RuntimeError('waited')):
-            with self.assertRaises(RuntimeError, msg='#209 cleanupPending lock must be refused'):
+            # The refusal itself is the bound assertion: a mutant that steals
+            # this lease makes assertRaises fail with this exact message.
+            with self.assertRaises(RuntimeError,
+                                   msg='#209 cleanupPending lock must be refused'):
                 with R.parity_lock(self.lock):
-                    self.fail('#209 cleanupPending lock was stolen')
+                    pass
         self.assertEqual(R.read_owner(self.lock), original,
                          '#209 failed takeover must preserve the owner record')
 
