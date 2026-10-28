@@ -18,7 +18,9 @@
 //! published path, and the long-lived `.staging` parent is never removed
 //! (a removal raced another round's `create_dir_all` into a permanent
 //! `_FAILED.json`); the walk skips `.staging/`, and the committed early-exit
-//! additionally requires the manifest to be present as a file. Manifests are
+//! additionally requires the manifest to be readable through the same
+//! non-blocking regular-file read the walk performs (#293 fix-r5: a planted
+//! FIFO can never hang a round or a `list()`). Manifests are
 //! `JSON.stringify(value, null, 2)` with no trailing newline.
 //!
 //! Known divergences and storage-contract notes (ledger entries are unapproved):
@@ -26,7 +28,7 @@
 //! correction in diffs/ supersedes the fallback shape described there) and
 //! A6.6-SNAPSHOT-COLLATION-001; the #293 hardening entries live in
 //! diffs/A6.6-SNAPSHOT-OBJECTKEY-001(-R1),
-//! diffs/A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001(-R1, -R2, -R3), and
+//! diffs/A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001(-R1, -R2, -R3, -R4), and
 //! diffs/A6.6-SNAPSHOT-IO-001-R2. Synchronous execution and
 //! UTF-16 preservation below describe the contract, not independently
 //! measured output differences.
@@ -531,6 +533,43 @@ impl WorkspaceSnapshotProvider {
     }
 }
 
+/// #293 fix-r5 (r5 review P0; registered divergence
+/// A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R4): the manifest and failure-marker
+/// reads open with `O_NONBLOCK` and fstat the handle before reading —
+/// `file_history::write_private_backup`'s guard shape — so a planted or
+/// raced-in FIFO cannot block the open or the read, and through a blocked
+/// `capture_once` every same-key follower's Condvar wait. A non-regular,
+/// non-directory descriptor is refused unread with EPERM (file_history's
+/// refusal errno); a directory falls through to the read and Node's own
+/// read-stage EISDIR (the pinned oracle scenario `manifest-read-dir`), and
+/// symlinks are followed like every other snapshot read — O_NOFOLLOW would
+/// fail that oracle's EISDIR through a symlinked manifest. TS's readFile
+/// has no such guard and blocks on a writer-less FIFO (Node v22.22.0 probe
+/// `_tmp/20261026-issue-293/fix-r5/probe/node-fifo-probe.out`), so failing
+/// fast instead of hanging is the registered divergence.
+#[cfg(unix)]
+fn read_snapshot_bytes(path: &Path) -> io::Result<Vec<u8>> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    options.custom_flags(libc::O_NONBLOCK);
+    let mut file = options.open(path)?;
+    let file_type = file.metadata()?.file_type();
+    if !file_type.is_file() && !file_type.is_dir() {
+        return Err(io::Error::from_raw_os_error(libc::EPERM));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+/// Non-Unix keeps the plain read (unverified), like
+/// `read_object_within_root`'s fallback.
+#[cfg(not(unix))]
+fn read_snapshot_bytes(path: &Path) -> io::Result<Vec<u8>> {
+    fs::read(path)
+}
+
 /// workspaceSnapshot.ts:138-150. A missing or unreadable root lists nothing
 /// (TS catches every readdir rejection); per-entry iteration failures skip
 /// the entry, the closest synchronous mapping. Names come back in libuv
@@ -566,7 +605,7 @@ fn walk_manifests(
             walk_manifests(&path, manifests, false)?;
         } else if name == "manifest.json" {
             let path_text = path.to_string_lossy().into_owned();
-            let bytes = fs::read(&path).map_err(|error| {
+            let bytes = read_snapshot_bytes(&path).map_err(|error| {
                 crate::node_io::read_file(&error, &path_text)
                     .map(|(code, message)| WorkspaceSnapshotError::Io {
                         code: Some(code),
@@ -841,11 +880,14 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
         // (manifest first, `_COMMITTED` last) never leaves that residue
         // (probe-c c6); this only diverges on hand-planted partitions.
         // #293 fix-r4 (r4 review P1-1): "present" reads in `list()`'s own
-        // terms — the same `fs::read` its walk performs (an unreadable
+        // terms — the same manifest read its walk performs (an unreadable
         // manifest's descriptor is unusable there), so a permission-denied
         // or otherwise unreadable manifest beside a marker is not committed
-        // either; the round republishes a readable one over it.
-        if exists(&paths.committed_path) && fs::read(&paths.manifest_path).is_ok() {
+        // either; the round republishes a readable one over it. #293 fix-r5
+        // (r5 review P0): that read is `read_snapshot_bytes` — the walk's
+        // own helper — so a FIFO manifest cannot block it: non-regular
+        // files, failed opens and failed reads all read as "not committed".
+        if exists(&paths.committed_path) && read_snapshot_bytes(&paths.manifest_path).is_ok() {
             return Ok(WorkspaceSnapshotResult {
                 snapshot_id,
                 phase,
@@ -1298,9 +1340,12 @@ fn atomic_marker(path: &Path, content: &str) -> Result<()> {
 
 /// workspaceSnapshot.ts:366-373: any read or parse failure yields no error,
 /// and only a string `error` field is returned. The value keeps its raw UTF-16
-/// units (a marker can carry lone surrogates).
+/// units (a marker can carry lone surrogates). #293 fix-r5: the read goes
+/// through `read_snapshot_bytes`, so a FIFO `_FAILED.json` cannot block the
+/// failed early exit either — it reads as no message (TS's readFile blocks;
+/// registered divergence A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R4).
 fn read_failure_message(path: &Path) -> Option<JsString> {
-    let bytes = fs::read(path).ok()?;
+    let bytes = read_snapshot_bytes(path).ok()?;
     let value = parse_json(&String::from_utf8_lossy(&bytes)).ok()?;
     field(&value, "error").as_string().cloned()
 }

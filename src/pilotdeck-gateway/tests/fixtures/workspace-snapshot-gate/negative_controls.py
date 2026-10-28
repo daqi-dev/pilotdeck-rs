@@ -13,7 +13,11 @@ also fail identically under root (fix-r2, boundary#1: the old root refusal
 and its indistinguishable exit code are gone with the EACCES tests). One
 fix-r4 exception: `early-exit-unreadable-manifest` binds a permission-000
 manifest, and its test skips under root (chmod cannot make the manifest
-unreadable there), so that control needs a non-root run.
+unreadable there), so that control needs a non-root run. The fix-r5 FIFO
+controls plant named pipes (no mode bits), so they stay deterministic under
+root; their bound test enforces its own outer deadline, and that deadline
+assertion — not a cargo timeout — is the kill point for the blocking-read
+mutants.
 
 Because `mutating_sources` proves the tree equals HEAD, this must run after
 the #293 patch is committed; a pre-commit working tree is refused on purpose.
@@ -86,9 +90,28 @@ FALLBACK_MANIFEST = """            fs::rename(&staged_manifest, &paths.manifest_
                 two_path_message(&e, "rename", &staged_manifest, &paths.manifest_path).to_string()
             })?;
 """
-# fix-r3/fix-r4: the committed early-exit — the marker plus a manifest in
-# `list()`'s own readable state (fix-r4: `fs::read`, not mere file presence).
-EARLY_EXIT = """        if exists(&paths.committed_path) && fs::read(&paths.manifest_path).is_ok() {
+# fix-r3/fix-r4/fix-r5: the committed early-exit — the marker plus a manifest
+# in `list()`'s own readable state (fix-r4: actually readable, not mere
+# presence; fix-r5: through `read_snapshot_bytes`, so a FIFO cannot block it).
+EARLY_EXIT = """        if exists(&paths.committed_path) && read_snapshot_bytes(&paths.manifest_path).is_ok() {
+"""
+# fix-r5 (r5 review P0): the shared manifest/marker read — a NONBLOCK open
+# plus an fd-level type check (`file_history::write_private_backup`'s guard
+# shape), so a planted FIFO cannot block the open or the read.
+NONBLOCK_FLAGS = """    options.custom_flags(libc::O_NONBLOCK);
+"""
+# fix-r5: the fd-level refusal — non-regular, non-directory descriptors are
+# refused unread with EPERM.
+TYPE_CHECK = """    let file_type = file.metadata()?.file_type();
+    if !file_type.is_file() && !file_type.is_dir() {
+        return Err(io::Error::from_raw_os_error(libc::EPERM));
+    }
+"""
+# fix-r5: the walk's manifest read goes through the same helper.
+WALK_READ = """            let bytes = read_snapshot_bytes(&path).map_err(|error| {
+"""
+# fix-r5: the failure-marker read goes through the same helper.
+MARKER_READ = """    let bytes = read_snapshot_bytes(path).ok()?;
 """
 # fix-r4 (r4 review P1-2): the tree comparison's one private path —
 # `<snapshot_root>/.staging`, never "any .staging at the recorded root".
@@ -225,6 +248,44 @@ MUTATIONS = [
 """,
      ["--test", "workspace_snapshot", "committed_marker_with_unreadable"],
      "#293 fix-r4 the republished manifest is readable"),
+    # fix-r5 (r5 review P0): the committed early-exit must read the manifest
+    # without blocking. Reverting just that call site to `fs::read` hangs the
+    # child round on the writer-less FIFO; the parent's dedicated deadline
+    # assertion must catch it (an outer deadline counts as this test's own
+    # failure, never a cargo timeout).
+    ("early-exit-fifo-blocking-read", LIB, EARLY_EXIT,
+     """        if exists(&paths.committed_path) && fs::read(&paths.manifest_path).is_ok() {
+""",
+     ["--test", "workspace_snapshot", "fifo_manifests_cannot_block"],
+     "#293 fix-r5 the child round over the planted FIFOs returned within"),
+    # fix-r5: the helper's NONBLOCK open — dropping it blocks the open itself.
+    ("helper-nonblock-removed", LIB, NONBLOCK_FLAGS,
+     """    options.custom_flags(0);
+""",
+     ["--test", "workspace_snapshot", "fifo_manifests_cannot_block"],
+     "#293 fix-r5 the child round over the planted FIFOs returned within"),
+    # fix-r5: the helper's fd-level type check — dropping it lets the early
+    # exit read the writer-less FIFO as EOF and report a false Committed; the
+    # republished-manifest assertion must catch it.
+    ("helper-type-unchecked", LIB, TYPE_CHECK,
+     """    let _ = file.metadata();
+""",
+     ["--test", "workspace_snapshot", "fifo_manifests_cannot_block"],
+     "#293 fix-r5 the republished manifest is a regular file with this round's runId"),
+    # fix-r5: the walk's manifest read — reverting it to `fs::read` hangs
+    # `list()` on the other partition's FIFO (child step 2).
+    ("walk-fifo-blocking-read", LIB, WALK_READ,
+     """            let bytes = fs::read(&path).map_err(|error| {
+""",
+     ["--test", "workspace_snapshot", "fifo_manifests_cannot_block"],
+     "#293 fix-r5 the child round over the planted FIFOs returned within"),
+    # fix-r5: the failure-marker read — reverting it to `fs::read` hangs the
+    # failed early exit on the FIFO `_FAILED.json` (child step 3).
+    ("marker-fifo-blocking-read", LIB, MARKER_READ,
+     """    let bytes = fs::read(path).ok()?;
+""",
+     ["--test", "workspace_snapshot", "fifo_manifests_cannot_block"],
+     "#293 fix-r5 the child round over the planted FIFOs returned within"),
     # fix-r4 (P1-2): the tree comparison's staging exception is the exact
     # snapshot-root path. Widening it back to "any .staging at the recorded
     # root" hides a restore target's .staging residue from the comparison;
