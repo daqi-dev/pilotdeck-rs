@@ -15,6 +15,8 @@
 
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/exact_receipt.rs"]
+mod exact_receipt;
 #[path = "common/proxy_env.rs"]
 mod proxy_env;
 #[path = "common/scratch.rs"]
@@ -471,7 +473,9 @@ async fn replays_ts_mcp_http_proxy_scenarios() {
         let url = replace(&string(field(case, "url"), "url"), &replacements);
         let settings = proxy_settings(case, &replacements);
         let result_path = dir.join("rust-steps.json");
-        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        let mut command = std::process::Command::new(
+            std::env::current_exe().expect("#942 mcp-proxy test binary path"),
+        );
         command
             .args([
                 "--exact",
@@ -508,8 +512,23 @@ async fn replays_ts_mcp_http_proxy_scenarios() {
             .env("PDRS_MCP_PROXY_URL", &url)
             .env("PDRS_MCP_PROXY_TLS", if use_tls { "1" } else { "0" })
             .env("PDRS_MCP_PROXY_RESULT", &result_path);
-        let status = command.status().expect("spawn replay child");
-        assert!(status.success(), "{id}: replay child failed: {status}");
+        // .output() pipes the streams: the libtest receipt below needs the
+        // per-test lines, and the child writes its real result to
+        // `rust-steps.json`, not stdout.
+        let output = command.output().expect("#942 mcp-proxy replay child spawn");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // #942: exit 0 alone is not a receipt — a renamed test makes this
+        // `--exact` filter match nothing and libtest still exits 0.
+        assert!(
+            exact_receipt::single_pass(
+                &output.status,
+                "replays_ts_mcp_http_proxy_scenarios",
+                &stdout
+            ),
+            "#942 mcp-proxy rerun matched no test: {id}: {}\n{stdout}\n{stderr}",
+            output.status
+        );
         let actual = parse_json(&std::fs::read_to_string(&result_path).unwrap()).unwrap();
         let actual = array(&actual, "steps");
         let expected = array(field(case, "steps"), "steps");

@@ -21,3 +21,8 @@ for line in child.stdout.splitlines():
         row = json.loads(line.removeprefix('RESOURCE_SAMPLE '))
         row['rss_bytes'] = rss * (1 if platform.system() == 'Darwin' else 1024)
         print('RESOURCE_SAMPLE ' + json.dumps(row))
+    else:
+        # #942: forward the child's other stdout lines (libtest's
+        # `running 1 test`, per-test and summary lines) so the caller can
+        # check the exact-receipt criterion on the measured reruns.
+        print(line)

@@ -1,6 +1,8 @@
 //! Cold-cwd matrix from the original TS storage entry point, in owned children.
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/exact_receipt.rs"]
+mod exact_receipt;
 
 use pilotdeck_gateway::storage::{
     AdapterError, AsyncTranscriptAdapter, LedgerError, ProjectKey, SessionStorageInput,
@@ -35,28 +37,31 @@ impl TranscriptStore for UnusedStore {
 
 fn matrix(name: &str, test: &str) {
     if std::env::var("PDRS_TRANSCRIPT_RESOLVE_CHILD").as_deref() != Ok(test) {
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", test, "--nocapture"])
-            .env("PDRS_TRANSCRIPT_RESOLVE_CHILD", test)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut child =
+            Command::new(std::env::current_exe().expect("#942 matrix test binary path"))
+                .args(["--exact", test, "--nocapture"])
+                .env("PDRS_TRANSCRIPT_RESOLVE_CHILD", test)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("#942 matrix child spawn");
         let deadline = Instant::now() + Duration::from_secs(30);
-        while child.try_wait().unwrap().is_none() {
+        while child.try_wait().expect("#942 matrix child poll").is_none() {
             if Instant::now() >= deadline {
-                child.kill().unwrap();
-                let output = child.wait_with_output().unwrap();
+                child.kill().expect("#942 matrix child kill");
+                let output = child.wait_with_output().expect("#942 matrix child reap");
                 panic!("matrix child timed out: {output:?}");
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        let output = child.wait_with_output().unwrap();
+        let output = child.wait_with_output().expect("#942 matrix child collect");
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        // #942: exit 0 alone is not a receipt — a renamed matrix test makes
+        // this `--exact` filter match nothing and libtest still exits 0.
         assert!(
-            output.status.success(),
-            "matrix child failed: {stdout}\n{stderr}"
+            exact_receipt::single_pass(&output.status, test, &stdout),
+            "#942 transcript-resolve rerun matched no test: {test}:\n{stdout}\n{stderr}"
         );
         assert!(
             stdout.contains("TRANSCRIPT_RESOLVE_MATCH"),

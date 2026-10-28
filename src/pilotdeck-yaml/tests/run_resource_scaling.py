@@ -72,7 +72,22 @@ def source(family, n):
     raise ValueError(family)
 
 
-def sample(command, env, timeout):
+def libtest_receipt(stdout, test):
+    """#942: the #273 exact-receipt criterion, ported for the Python driver.
+
+    Mirrors `src/pilotdeck-gateway/tests/common/exact_receipt.rs` (no shared
+    crate between the yaml test driver and the gateway): exit 0, one
+    `running 1 test` banner, one passing summary, the per-test line.
+    """
+    lines = stdout.splitlines()
+    summaries = [line for line in lines if line.startswith('test result:')]
+    return (sum(line == 'running 1 test' for line in lines) == 1
+            and len(summaries) == 1
+            and summaries[0].startswith('test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured;')
+            and f'test {test} ... ok' in lines)
+
+
+def sample(command, env, timeout, receipt_test=None):
     proc = subprocess.Popen([sys.executable, str(HERE / 'resource_measure.py')] + command,
                             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             env=env, start_new_session=True)
@@ -85,6 +100,9 @@ def sample(command, env, timeout):
         raise
     if proc.returncode:
         raise RuntimeError(f'{command} exited {proc.returncode}: {stderr[-3000:]}')
+    if receipt_test and not libtest_receipt(stdout, receipt_test):
+        raise RuntimeError(f'#942 resource worker rerun matched no test ({receipt_test}): '
+                           f'{stdout[-3000:]}')
     rows = [json.loads(line.split('RESOURCE_SAMPLE ', 1)[1])
             for line in stdout.splitlines() if 'RESOURCE_SAMPLE ' in line]
     if len(rows) != 1:
@@ -157,7 +175,8 @@ def main():
                     samples = {'node': [], 'rust': []}
                     for repeat in range(args.repeats):
                         for name in (['node', 'rust'] if repeat % 2 == 0 else ['rust', 'node']):
-                            measured = sample(node if name == 'node' else rust, env, args.timeout)
+                            measured = sample(node if name == 'node' else rust, env, args.timeout,
+                                               receipt_test=None if name == 'node' else 'resource_worker')
                             samples[name].append(measured)
                             print(f'{family} {scale}N {name}: {measured["seconds"]:.3f}s {measured["rss_bytes"]/1048576:.1f}MiB', flush=True)
                     row['samples'][str(scale)] = samples

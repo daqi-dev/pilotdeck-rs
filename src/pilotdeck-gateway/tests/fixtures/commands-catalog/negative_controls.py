@@ -83,6 +83,8 @@ def main():
         if selected and name not in selected:
             continue
         entry = dict(name=name, verdict='INVALID', reason='not run')
+        # No -q (#942): cargo forwards it to libtest as --quiet, which drops
+        # the per-test lines this script's KILLED/restored criteria match.
         command = ['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', target, test]
         test_args = ['--', '--exact', '--format', 'pretty', '--nocapture']
         if ignored:

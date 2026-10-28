@@ -2,6 +2,8 @@
 //! Native system stores are never read. Registered differences stay explicit.
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/exact_receipt.rs"]
+mod exact_receipt;
 #[path = "common/proxy_env.rs"]
 mod proxy_env;
 #[path = "common/scratch.rs"]
@@ -139,7 +141,9 @@ async fn private_ca_matrix() {
         std::fs::write(&ca, &ca_bytes).unwrap();
         let mismatch = case["mismatch"].as_bool().unwrap();
         let result_path = scratch.path().join(format!("{mode}-{mismatch}.json"));
-        let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+        let mut command = tokio::process::Command::new(
+            std::env::current_exe().expect("#942 private-ca test binary path"),
+        );
         command
             .args(["--exact", "private_ca_matrix", "--nocapture"])
             .env(
@@ -244,11 +248,17 @@ async fn private_ca_matrix() {
         }
         let output = tokio::time::timeout(Duration::from_secs(30), command.output())
             .await
-            .unwrap()
-            .unwrap();
+            .expect("#942 private-ca child bounded")
+            .expect("#942 private-ca child collect");
+        // #942: exit 0 alone is not a receipt — a renamed `private_ca_matrix`
+        // makes this `--exact` filter match nothing and libtest still exits 0.
         assert!(
-            output.status.success(),
-            "{mode}: {}",
+            exact_receipt::single_pass(
+                &output.status,
+                "private_ca_matrix",
+                &String::from_utf8_lossy(&output.stdout)
+            ),
+            "#942 private-ca rerun matched no test: {mode}:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
         let actual: Value =

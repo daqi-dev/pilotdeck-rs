@@ -8,6 +8,8 @@
 //! byte (paths are masked as `<dir>`/`<url>`/`<refused>`/`<cwd>`).
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/exact_receipt.rs"]
+mod exact_receipt;
 #[path = "common/scratch.rs"]
 mod scratch;
 
@@ -2128,7 +2130,16 @@ fn deleted_process_cwd_fails_turn_environment() {
             .expect("run deleted-cwd child");
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(output.status.success(), "child failed: {stdout}\n{stderr}");
+        // #942: exit 0 alone is not a receipt — a renamed test makes this
+        // `--exact` filter match nothing and libtest still exits 0.
+        assert!(
+            exact_receipt::single_pass(
+                &output.status,
+                "deleted_process_cwd_fails_turn_environment",
+                &stdout
+            ),
+            "#942 deleted-cwd turn-environment rerun matched no test:\n{stdout}\n{stderr}"
+        );
         assert!(
             stdout.contains("PD_TURN_CWD_ERROR=ENOENT: no such file or directory, uv_cwd"),
             "missing Node-shaped error in: {stdout}\n{stderr}"

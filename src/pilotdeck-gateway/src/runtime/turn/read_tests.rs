@@ -645,14 +645,14 @@ fn run_events_pathological_depth_last_seq_is_bounded() {
     const MARKER: &str = "PDRS_LASTSEQ_DEPTH_CHILD_OK";
     let start = Instant::now();
     let mut child = ReapedChild(
-        Command::new(std::env::current_exe().unwrap())
+        Command::new(std::env::current_exe().expect("#942 lastseq-depth test binary path"))
             .args(["--exact", CHILD, "--ignored", "--nocapture"])
             .env("PDRS_TURN_READ_LASTSEQ_DEPTH_CHILD", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .unwrap(),
+            .expect("#942 lastseq-depth child spawn"),
     );
     let status = loop {
         match child.0.try_wait() {
@@ -691,6 +691,12 @@ fn run_events_pathological_depth_last_seq_is_bounded() {
     assert!(
         status.success(),
         "100,000-layer lastSeq join child failed: {status}\n{stderr}"
+    );
+    // #942: exit 0 alone is not a receipt — a renamed child makes this
+    // `--exact` filter match nothing and libtest still exits 0.
+    assert!(
+        crate::test_exact_receipt::single_pass(&status, CHILD, &stdout),
+        "#942 lastseq-depth rerun matched no test: {status}\n{stdout}\n{stderr}"
     );
     assert!(
         stdout.contains(MARKER),
