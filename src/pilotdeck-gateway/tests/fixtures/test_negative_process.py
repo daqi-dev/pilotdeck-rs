@@ -6,6 +6,7 @@ temporary directory, so they exercise the real baseline check without touching
 this worktree.
 """
 import errno
+from contextlib import contextmanager, nullcontext
 import os
 from pathlib import Path
 import signal
@@ -14,10 +15,13 @@ import sys
 import tempfile
 import time
 import unittest
+from types import ModuleType
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from negative_process import (SourceBaselineError, mutating_sources, run_owned,
                               tree_lock, wait_for_slot)
+import negative_process
 
 
 SIGKILL_RESIDUE = r"""
@@ -579,6 +583,122 @@ class MutatingSources(unittest.TestCase):
                     self.assertEqual(inner[target], b"// head\n")
                 target.write_text("// outer mutant\n")
             self.assertEqual(target.read_bytes(), b"// head\n")
+
+
+class ParityMutationLock(unittest.TestCase):
+    """#166 real ruler lock, isolated paths and deterministic source IO hooks."""
+
+    @contextmanager
+    def fixture(self):
+        with tempfile.TemporaryDirectory(prefix="pdrs-166-parity-") as temp:
+            root = Path(temp).resolve()
+            source = root / "scripts/gateway-parity/common.py"
+            source.parent.mkdir(parents=True)
+            original = (Path(__file__).resolve().parents[4]
+                        / "scripts/gateway-parity/common.py").read_bytes()
+            self.assertEqual(original.count(b"Path('/tmp/pdrs-parity.lock')"), 1,
+                             "#166 fixture must bind the real parity lock path")
+            lock = root / "parity.lock"
+            source.write_bytes(original.replace(b"Path('/tmp/pdrs-parity.lock')",
+                                               f"Path({str(lock)!r})".encode()))
+            target = root / "scripts/gateway-parity/probe.py"
+            target.write_bytes(b"# original\n")
+            snapshot = {source: source.read_bytes(), target: target.read_bytes()}
+            common = ModuleType("parity_probe")
+            common.__file__ = str(source)
+            exec(compile(snapshot[source], str(source), "exec"), common.__dict__)
+            with patch.object(negative_process, "_assert_product_pristine"), \
+                    patch.object(negative_process, "_head_bytes",
+                                 side_effect=lambda _root, path, _base: snapshot[root / path]):
+                yield root, source, target, snapshot, common
+
+    def contender(self, root, source):
+        probe = root / "contender.py"
+        probe.write_text(
+            "from pathlib import Path\nfrom types import ModuleType\nimport sys\n"
+            "m = ModuleType('contender'); m.__file__ = sys.argv[1]\n"
+            "exec(compile(Path(sys.argv[1]).read_bytes(), sys.argv[1], 'exec'), m.__dict__)\n"
+            "try:\n"
+            "    with m.parity_lock(timeout=0.05): print('ACQUIRED')\n"
+            "except TimeoutError:\n    print('REFUSED')\n")
+        result = run_owned([sys.executable, "-I", "-B", str(probe), str(source)], timeout=5)
+        self.assertEqual(result.returncode, 0, "#166 contender must finish without unrelated errors")
+        return result.stdout.strip()
+
+    def test_lock_held_through_restore_and_head_verification(self):
+        for event in (None, RuntimeError, KeyboardInterrupt):
+            with self.subTest(event=event), self.fixture() as (root, source, target, snapshot, common):
+                raw_head = negative_process._head_bytes
+                checks = []
+                readbacks = 0
+
+                def head(_root, path, baseline):
+                    nonlocal readbacks
+                    if root / path == target:
+                        readbacks += 1
+                        if readbacks == 2:
+                            checks.append(self.contender(root, source))
+                            self.assertEqual(target.read_bytes(), snapshot[target],
+                                             "#166 verification must observe restored bytes")
+                    return raw_head(_root, path, baseline)
+
+                expected = self.assertRaises(event) if event else nullcontext()
+                with patch.object(negative_process, "_head_bytes", side_effect=head), expected:
+                    with mutating_sources(root, [source, target], lock_timeout=0.1):
+                        self.assertEqual(self.contender(root, source), "REFUSED",
+                                         "#166 second parity acquirer must be refused during mutation")
+                        target.write_bytes(b"# mutant\n")
+                        if event:
+                            raise event("#166 controlled cancellation")
+                self.assertEqual(checks, ["REFUSED"],
+                                 "#166 parity lock must remain held through HEAD verification")
+                self.assertEqual(self.contender(root, source), "ACQUIRED",
+                                 "#166 verified restoration must release parity lock")
+
+    def test_busy_lease_and_guard_refuse_before_any_source_write(self):
+        for holder in ("lease", "guard"):
+            with self.subTest(holder=holder), self.fixture() as (root, source, target, snapshot, common):
+                context = (common.parity_lock(timeout=0.1) if holder == "lease"
+                           else common.guard(common.LOCK))
+                with context, patch.object(Path, "write_bytes") as write:
+                    with self.assertRaises(TimeoutError, msg="#166 busy parity lock must time out"):
+                        with mutating_sources(root, [source, target], lock_timeout=0.05):
+                            self.fail("#166 busy parity lock must refuse before mutation")
+                    self.assertEqual(write.call_count, 0, "#166 refused lock must not write source bytes")
+                self.assertEqual(target.read_bytes(), snapshot[target], "#166 busy lock preserves original bytes")
+
+    def test_failed_restore_retains_cleanup_pending_lease(self):
+        with self.fixture() as (root, source, target, snapshot, common):
+            raw_write = Path.write_bytes
+
+            def fail_restore(path, data):
+                if path == target and data == snapshot[target]:
+                    raise OSError("#166 injected restore failure")
+                return raw_write(path, data)
+
+            try:
+                with self.assertRaisesRegex(OSError, "#166 injected restore failure"), \
+                        patch.object(Path, "write_bytes", fail_restore):
+                    with mutating_sources(root, [source, target], lock_timeout=0.1):
+                        target.write_bytes(b"# mutant\n")
+                self.assertEqual(self.contender(root, source), "REFUSED",
+                                 "#166 failed restoration must retain parity lock")
+                self.assertEqual(common.owner(common.LOCK)["cleanupPending"],
+                                 ["source-restore-unverified"], "#166 failed restoration must record reason")
+            finally:
+                target.write_bytes(snapshot[target])
+
+    def test_without_parity_guard_the_bound_check_fails(self):
+        # Execute the exact positive test with the acquisition bypassed. An
+        # unrelated exception/timeout cannot satisfy this dedicated assertion.
+        with patch.object(negative_process, "_parity_mutation_lock", return_value=nullcontext()):
+            case = ParityMutationLock("test_lock_held_through_restore_and_head_verification")
+            result = unittest.TestResult()
+            case.run(result)
+        self.assertEqual(result.errors, [], "#166 bypass control must fail only at bound assertions")
+        self.assertTrue(result.failures, "#166 bypass control must kill the missing lock")
+        self.assertTrue(all("#166 second parity acquirer must be refused during mutation" in failure
+                            for _, failure in result.failures), "#166 bypass control must bind the lock assertion")
 
 
 if __name__ == "__main__":
