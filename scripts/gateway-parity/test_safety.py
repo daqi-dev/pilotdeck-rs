@@ -907,9 +907,13 @@ class ImportIsolation(unittest.TestCase):
             pass
         read = Path.read_bytes
         for name, control, alias in (('session_domain.py', 'session_domain.py', 'session_controls'),
-                                     ('check_ruler.py', 'run_all.py', 'gateway_controls')):
-            entry = _load('late_real_' + name[:-3], common.SCRIPT / name)
-            target = common.SCRIPT / 'controls' / control
+                                     ('check_ruler.py', 'run_all.py', 'gateway_controls'),
+                                     ('controls/prerequisites.py', '../common.py', 'prerequisite_common')):
+            entry = _load('late_real_' + name[:-3], common.SCRIPT /
+                          ('check_ruler.py' if name.startswith('controls/') else name))
+            late_entry = (_load('late_real_prerequisites', common.SCRIPT / name)
+                          if name.startswith('controls/') else entry)
+            target = (common.SCRIPT / 'controls' / control).resolve()
             original = read(target)
             for mutant in (False, True):
                 with self.subTest(entry=name, mutant=mutant), ExitStack() as stack:
@@ -935,8 +939,8 @@ class ImportIsolation(unittest.TestCase):
                         executed.append(True)
                         events.append('work')
                         raise WorkReached
-                    load = entry._load
-                    verify = entry._verify_cli_imports
+                    load = late_entry._load
+                    verify = late_entry._verify_cli_imports
                     def late_load(module_name, path):
                         lease_states.append(('load', held))
                         events.append('load')
@@ -947,12 +951,18 @@ class ImportIsolation(unittest.TestCase):
                         lease_states.append(('verify', held))
                         events.append('verify')
                         return verify()
-                    stack.enter_context(patch.object(entry, '_load', side_effect=late_load))
+                    if late_entry is not entry:
+                        def prerequisite_work(*args):
+                            late_entry.module_at(alias, target)
+                            return work()
+                        stack.enter_context(patch.object(entry, '_load', return_value=SimpleNamespace(run_controls=prerequisite_work)))
+                        stack.enter_context(patch.object(entry, '_verify_cli_imports'))
+                    stack.enter_context(patch.object(late_entry, '_load', side_effect=late_load))
                     changed = original + b'\n# controlled passive late-import mutant\n' if mutant else original
                     stack.enter_context(patch.object(Path, 'read_bytes', lambda path: changed if path.resolve() == target else read(path)))
                     stack.enter_context(patch.object(subprocess, 'check_output', side_effect=git_read))
                     stack.enter_context(patch.object(entry, 'parity_lock', recorded_lock))
-                    stack.enter_context(patch.object(entry, '_verify_cli_imports', side_effect=late_verify))
+                    stack.enter_context(patch.object(late_entry, '_verify_cli_imports', side_effect=late_verify))
                     stack.enter_context(patch.object(entry, 'baseline_dependency_hashes', return_value={}))
                     output_path = self.folder / (name + str(mutant))
                     args = ['--output', str(output_path)]
@@ -975,10 +985,10 @@ class ImportIsolation(unittest.TestCase):
                     try:
                         code = entry.main()
                         rejected = code != 0 and '#166 loaded apparatus differs from HEAD' in output.getvalue()
-                    except ValueError as error:
-                        rejected = '#166 loaded apparatus differs from HEAD' in str(error)
                     except WorkReached:
                         pass
+                    except (Exception, KeyboardInterrupt) as error:
+                        self.fail(message + ': escaped ' + repr(error))
                     self.assertTrue(lease_states and all(state for _, state in lease_states),
                                     lease_message + ': ' + repr(lease_states))
                     self.assertEqual((rejected, executed), (True, []) if mutant else (False, [True]),
@@ -986,12 +996,13 @@ class ImportIsolation(unittest.TestCase):
                     self.assertEqual(events, ['acquired', 'load', 'verify'] + ([] if mutant else ['work']) + ['released'],
                                      lease_message + ': ' + output.getvalue())
                     self.assertFalse(held, lease_message + ': released on either outcome')
-                    if name == 'session_domain.py' and mutant:
+                    if mutant:
                         blocked_message = '#166 late verification failure must be BLOCKED/2, not parity FAIL'
                         self.assertEqual(code, 2, blocked_message + ': ' + output.getvalue())
                         try:
-                            report = json.loads((output_path / 'report.json').read_text())
                             summary = json.loads(output.getvalue())
+                            report = (json.loads((output_path / 'report.json').read_text())
+                                      if name == 'session_domain.py' else summary)
                         except (OSError, ValueError) as error:
                             self.fail(blocked_message + ': invalid report: ' + str(error))
                         self.assertEqual((report.get('status'), summary.get('status')), ('BLOCKED', 'BLOCKED'), blocked_message)
@@ -1047,6 +1058,79 @@ class ImportIsolation(unittest.TestCase):
                     self.assertEqual(report.get('failure', {}).get('rule'),
                                      'EVIDENCE' if stage == 'work' else 'APPARATUS_IMPORTS', message + ': rule')
                     self.assertFalse(held, message + ': released')
+
+    def test_ruler_late_validation_errors_are_distinct_from_evidence_failures(self):
+        from contextlib import ExitStack, contextmanager, redirect_stdout, redirect_stderr
+        import ast
+        import io
+        message = '#166 ruler late validation errors are BLOCKED/2/APPARATUS_IMPORTS; evidence stays exit 1'
+        entry = _load('ruler_late_error_entry', common.SCRIPT / 'check_ruler.py')
+        prerequisites = _load('ruler_late_error_prerequisites', common.SCRIPT / 'controls/prerequisites.py')
+        source = (common.SCRIPT / 'check_ruler.py').read_text()
+        blocks = [node for node in ast.parse(source).body if isinstance(node, ast.If)
+                  and ast.unparse(node.test) == "__name__ == '__main__'"]
+        self.assertEqual(len(blocks), 1, message + ': dispatch anchor')
+        dispatch = compile(ast.get_source_segment(source, blocks[0]), entry.__file__, 'exec')
+        for route in ('ruler', 'prerequisites'):
+            for stage in ('load', 'verify', 'work'):
+                for error_type in (ValueError, OSError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt):
+                    if stage == 'work' and error_type not in (ValueError, OSError):
+                        continue
+                    with self.subTest(route=route, stage=stage, error=error_type.__name__), ExitStack() as stack:
+                        held = False
+                        reached = []
+                        @contextmanager
+                        def recorded_lock(*args, **kwargs):
+                            nonlocal held
+                            held = True
+                            try:
+                                yield
+                            finally:
+                                held = False
+                        def refuse(*args, **kwargs):
+                            reached.append((stage, held))
+                            raise error_type('controlled ' + stage + ' failure')
+                        def work(*args, **kwargs):
+                            if route == 'prerequisites':
+                                prerequisites.module_at('ruler_error_probe', common.SCRIPT / 'common.py')
+                            return refuse()
+                        controls = SimpleNamespace(run_controls=work)
+                        stack.enter_context(patch.object(entry, 'parity_lock', recorded_lock))
+                        for attr, value in [('cargo_config_problems', lambda: []), ('apparatus_hashes', lambda: {}),
+                                            ('baseline_dependency_hashes', lambda *a: {}), ('run_round', lambda *a: None),
+                                            ('compare', lambda *a: {'status': 'PASS', 'failures': []})]:
+                            stack.enter_context(patch.object(entry, attr, value))
+                        stack.enter_context(patch.object(entry, '_load', return_value=controls,
+                                                        side_effect=refuse if route == 'ruler' and stage == 'load' else None))
+                        stack.enter_context(patch.object(entry, '_verify_cli_imports',
+                                                        side_effect=refuse if route == 'ruler' and stage == 'verify' else None))
+                        stack.enter_context(patch.object(prerequisites, '_load', return_value=SimpleNamespace(),
+                                                        side_effect=refuse if stage == 'load' else None))
+                        stack.enter_context(patch.object(prerequisites, '_verify_cli_imports',
+                                                        side_effect=refuse if stage == 'verify' else None))
+                        path = self.folder / (route + stage + error_type.__name__)
+                        stack.enter_context(patch.object(sys, 'argv', ['check_ruler', '--output', str(path)]))
+                        output = stack.enter_context(redirect_stdout(io.StringIO()))
+                        errors = stack.enter_context(redirect_stderr(io.StringIO()))
+                        code = None
+                        try:
+                            # Only initial preflight is stubbed; main and its late verifier
+                            # retain their module globals and execute the real exception paths.
+                            exec(dispatch, dict(entry.__dict__, __name__='__main__', _verify_cli_imports=lambda: None))
+                        except SystemExit as exit_error:
+                            code = exit_error.code
+                        except (Exception, KeyboardInterrupt) as error:
+                            self.fail(message + ': escaped ' + repr(error))
+                        self.assertEqual(reached, [(stage, True)], message + ': injected path reached while held')
+                        try:
+                            summary = json.loads(output.getvalue())
+                        except ValueError as error:
+                            self.fail(message + ': invalid JSON: ' + str(error))
+                        self.assertEqual((summary.get('status'), code), ('BLOCKED', 1 if stage == 'work' else 2), message)
+                        self.assertEqual(summary.get('failure', {}).get('rule'),
+                                         None if stage == 'work' else 'APPARATUS_IMPORTS', message + ': rule')
+                        self.assertEqual(errors.getvalue(), '', message + ': no traceback')
+                        self.assertFalse(held, message + ': lease released')
 
     def test_main_code_is_verified_after_entry_disk_restore(self):
         from types import ModuleType

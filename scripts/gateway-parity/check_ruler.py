@@ -95,6 +95,15 @@ run_round = run_round_module.run_round
 
 
 def main():
+    try:
+        return _main()
+    except common.ApparatusVerificationError as error:
+        print(json.dumps({'status': 'BLOCKED',
+                          'failure': {'rule': error.rule, 'detail': str(error)}}, ensure_ascii=False))
+        return common.aggregate_status('BLOCKED')[1]
+
+
+def _main():
     install_shutdown()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--output', type=Path, default=DEFAULT_OUT)
@@ -141,8 +150,11 @@ def main():
             comparisons.append({'pair': [a, b], 'status': result['status'], 'rules': [row['rule'] for row in result['failures']]})
         proxy = compare(output / 'ts1', output / 'proxy')
         save(output / 'compare-proxy.json', proxy)
-        module = _load('gateway_controls', SCRIPT / 'controls/run_all.py')
-        _verify_cli_imports()  # Late imports must be checked before controls execute.
+        try:
+            module = _load('gateway_controls', SCRIPT / 'controls/run_all.py')
+            _verify_cli_imports()  # Late imports must be checked before controls execute.
+        except (Exception, KeyboardInterrupt) as error:
+            raise common.ApparatusVerificationError(str(error)) from error
         controls_path = output / 'controls'
         # Recompute in a new directory so a cached successful control report
         # cannot hide subsequent edits to source evidence or comparator.

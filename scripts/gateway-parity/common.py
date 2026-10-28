@@ -31,6 +31,12 @@ LIVE_GROUPS = set()
 DEFERRED_SIGNALS = {signal.SIGINT, signal.SIGTERM}
 
 
+class ApparatusVerificationError(ValueError):
+    """Late apparatus loading/verification failed, including cancellation."""
+
+    rule = 'APPARATUS_IMPORTS'
+
+
 @contextmanager
 def deferred_signals():
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, DEFERRED_SIGNALS)

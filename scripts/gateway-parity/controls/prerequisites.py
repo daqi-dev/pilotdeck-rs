@@ -84,11 +84,15 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def module_at(name, path):
-    module = _load(name, path)
+    if not Path(path).resolve().is_relative_to(_apparatus):
+        return _load(name, path)
     # Standalone controls do not own their parent's lease. A mutation may
     # start after CLI preflight but before a newly named lazy import.
-    if Path(path).resolve().is_relative_to(_apparatus):
+    try:
+        module = _load(name, path)
         _verify_cli_imports()
+    except (Exception, KeyboardInterrupt) as error:
+        raise common.ApparatusVerificationError(str(error)) from error
     return module
 
 
