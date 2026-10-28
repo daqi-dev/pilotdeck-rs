@@ -1,0 +1,54 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/tool/builtin/taskTools.ts": "43bfb5de2c3a6e0c795626902cb89270556bc5166a8adc75ae6589311a6e7331",
+    "src/task/runtime/BackgroundTaskRuntime.ts": "fe759de9c68ea65edeaea4791c8377f96ac6de40e5108ea61a78decc7d5b30c4",
+    "src/runtime/commandShell.ts": "b350a9cba14836c78ea4773758ec34d237c7abee4a6df1c207da6f8f92e79918",
+    "src/tool/execution-world/DetachedShellPort.ts": "4c9da257adbecc26baa1a52a66a1e9dac885bc88cb228ad5671db911d7b0f7d4"
+  },
+  "node": "v22.22.0",
+  "native": [
+    "running",
+    "running",
+    "running",
+    "running",
+    "running",
+    "running",
+    "running",
+    "running",
+    "running",
+    "running",
+    "running",
+    "running",
+    "running",
+    "running",
+    "running",
+    "running"
+  ],
+  "cases": [
+    {
+      "mode": "release",
+      "create": "running",
+      "held": "running",
+      "command": "printf 'done-output\\n'",
+      "terminal": "completed",
+      "outputBytes": 12
+    },
+    {
+      "mode": "stop",
+      "create": "running",
+      "held": "running",
+      "command": "printf 'done-output\\n'",
+      "terminal": "cancelled",
+      "outputBytes": 0
+    },
+    {
+      "mode": "dispose",
+      "create": "running",
+      "held": "running",
+      "command": "printf 'done-output\\n'",
+      "terminal": "cancelled",
+      "outputBytes": 0
+    }
+  ]
+}
