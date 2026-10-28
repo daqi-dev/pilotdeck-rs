@@ -23026,6 +23026,7 @@
   "writerInterleavings": [
     {
       "name": "after-publish",
+      "tsDefect": true,
       "error": {
         "name": "SessionEventValidationError",
         "message": "Session event sequence must increase strictly: received 6 after 6.",
@@ -23096,6 +23097,7 @@
     },
     {
       "name": "before-read",
+      "tsDefect": true,
       "error": {
         "name": "SessionEventValidationError",
         "message": "Session event sequence must increase strictly: received 6 after 6.",
@@ -23163,6 +23165,1100 @@
         "sequence": 7,
         "lastEntryId": "entry-0007"
       }
+    }
+  ],
+  "fenceMatrix": [
+    {
+      "name": "fence-idle-recreate-beforeload",
+      "oldState": "active",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-idle-recreate-afterload",
+      "oldState": "active",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-idle-recreate-publish",
+      "oldState": "active",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-idle-twice-beforeload",
+      "oldState": "active",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 2,
+      "results": [
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 3
+        },
+        {
+          "label": "fence-second",
+          "status": "fulfilled",
+          "handle": 3
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-idle-twice-afterload",
+      "oldState": "active",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 2,
+      "results": [
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 3
+        },
+        {
+          "label": "fence-second",
+          "status": "fulfilled",
+          "handle": 3
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-idle-twice-publish",
+      "oldState": "active",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 3,
+      "results": [
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        },
+        {
+          "label": "fence-second",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-idle-close-beforeload",
+      "oldState": "active",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Scoped service is not registered in gateway-agents: agent:session-745"
+          }
+        },
+        {
+          "label": "fence-close",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-idle-close-afterload",
+      "oldState": "active",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Scoped service is not registered in gateway-agents: agent:session-745"
+          }
+        },
+        {
+          "label": "fence-close",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-idle-close-publish",
+      "oldState": "active",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Scoped service is not registered in gateway-agents: agent:session-745"
+          }
+        },
+        {
+          "label": "fence-close",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-idle-shutdown-beforeload",
+      "oldState": "active",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Session router shut down during session recreation."
+          }
+        },
+        {
+          "label": "fence-shutdown",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-idle-shutdown-afterload",
+      "oldState": "active",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Session router shut down during session recreation."
+          }
+        },
+        {
+          "label": "fence-shutdown",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-idle-shutdown-publish",
+      "oldState": "active",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Session router shut down during session recreation."
+          }
+        },
+        {
+          "label": "fence-shutdown",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-quick-recreate-beforeload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-quick-recreate-afterload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-quick-recreate-publish",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-quick-twice-beforeload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 2,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 3
+        },
+        {
+          "label": "fence-second",
+          "status": "fulfilled",
+          "handle": 3
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-quick-twice-afterload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 2,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 3
+        },
+        {
+          "label": "fence-second",
+          "status": "fulfilled",
+          "handle": 3
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-quick-twice-publish",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 3,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        },
+        {
+          "label": "fence-second",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-quick-close-beforeload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Scoped service is not registered in gateway-agents: agent:session-745"
+          }
+        },
+        {
+          "label": "fence-close",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-quick-close-afterload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Scoped service is not registered in gateway-agents: agent:session-745"
+          }
+        },
+        {
+          "label": "fence-close",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-quick-close-publish",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Scoped service is not registered in gateway-agents: agent:session-745"
+          }
+        },
+        {
+          "label": "fence-close",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-quick-shutdown-beforeload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Session router shut down during session recreation."
+          }
+        },
+        {
+          "label": "fence-shutdown",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-quick-shutdown-afterload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Session router shut down during session recreation."
+          }
+        },
+        {
+          "label": "fence-shutdown",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-quick-shutdown-publish",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Session router shut down during session recreation."
+          }
+        },
+        {
+          "label": "fence-shutdown",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-never-recreate-beforeload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-never-recreate-afterload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-never-recreate-publish",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-never-twice-beforeload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 2,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 3
+        },
+        {
+          "label": "fence-second",
+          "status": "fulfilled",
+          "handle": 3
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-never-twice-afterload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 2,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 3
+        },
+        {
+          "label": "fence-second",
+          "status": "fulfilled",
+          "handle": 3
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-never-twice-publish",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 3,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        },
+        {
+          "label": "fence-second",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-never-close-beforeload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Scoped service is not registered in gateway-agents: agent:session-745"
+          }
+        },
+        {
+          "label": "fence-close",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-never-close-afterload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Scoped service is not registered in gateway-agents: agent:session-745"
+          }
+        },
+        {
+          "label": "fence-close",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-never-close-publish",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Scoped service is not registered in gateway-agents: agent:session-745"
+          }
+        },
+        {
+          "label": "fence-close",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-never-shutdown-beforeload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Session router shut down during session recreation."
+          }
+        },
+        {
+          "label": "fence-shutdown",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-never-shutdown-afterload",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Session router shut down during session recreation."
+          }
+        },
+        {
+          "label": "fence-shutdown",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-never-shutdown-publish",
+      "oldState": "active",
+      "oldInFlight": 1,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-turn",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Session router shut down during session recreation."
+          }
+        },
+        {
+          "label": "fence-shutdown",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": true
+    },
+    {
+      "name": "fence-disposing-recreate-beforeload",
+      "oldState": "draining",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-dispose",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-disposing-recreate-afterload",
+      "oldState": "draining",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-dispose",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-disposing-recreate-publish",
+      "oldState": "draining",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-dispose",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-disposing-twice-beforeload",
+      "oldState": "draining",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 2,
+      "results": [
+        {
+          "label": "fence-old-dispose",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 3
+        },
+        {
+          "label": "fence-second",
+          "status": "fulfilled",
+          "handle": 3
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-disposing-twice-afterload",
+      "oldState": "draining",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 2,
+      "results": [
+        {
+          "label": "fence-old-dispose",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 3
+        },
+        {
+          "label": "fence-second",
+          "status": "fulfilled",
+          "handle": 3
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-disposing-twice-publish",
+      "oldState": "draining",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 3,
+      "results": [
+        {
+          "label": "fence-old-dispose",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "fulfilled",
+          "handle": 2
+        },
+        {
+          "label": "fence-second",
+          "status": "fulfilled",
+          "handle": 2
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-disposing-close-beforeload",
+      "oldState": "draining",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-dispose",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Scoped service is not registered in gateway-agents: agent:session-745"
+          }
+        },
+        {
+          "label": "fence-close",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-disposing-close-afterload",
+      "oldState": "draining",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-dispose",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Scoped service is not registered in gateway-agents: agent:session-745"
+          }
+        },
+        {
+          "label": "fence-close",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-disposing-close-publish",
+      "oldState": "draining",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-dispose",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Scoped service is not registered in gateway-agents: agent:session-745"
+          }
+        },
+        {
+          "label": "fence-close",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-disposing-shutdown-beforeload",
+      "oldState": "draining",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-dispose",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Session router shut down during session recreation."
+          }
+        },
+        {
+          "label": "fence-shutdown",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-disposing-shutdown-afterload",
+      "oldState": "draining",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-dispose",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Session router shut down during session recreation."
+          }
+        },
+        {
+          "label": "fence-shutdown",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": false
+    },
+    {
+      "name": "fence-disposing-shutdown-publish",
+      "oldState": "draining",
+      "oldInFlight": 0,
+      "registryAtBoundary": 1,
+      "registryAfterEvent": 1,
+      "results": [
+        {
+          "label": "fence-old-dispose",
+          "status": "fulfilled"
+        },
+        {
+          "label": "fence-first",
+          "status": "rejected",
+          "error": {
+            "name": "Error",
+            "message": "Session router shut down during session recreation."
+          }
+        },
+        {
+          "label": "fence-shutdown",
+          "status": "fulfilled"
+        }
+      ],
+      "oldPendingAtBoundary": false
     }
   ],
   "memoryOnly": {

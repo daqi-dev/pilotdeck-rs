@@ -244,7 +244,10 @@ impl SessionOwner {
         let context = cached
             .as_ref()
             .map_or(context, |record| record.context.clone());
-        let previous = cached.as_ref().map(|record| record.handle.clone());
+        let previous = cached
+            .as_ref()
+            .filter(|record| record.handle.state() != super::HandleState::Disposed)
+            .map(|record| record.handle.clone());
         let handle = self
             .0
             .options

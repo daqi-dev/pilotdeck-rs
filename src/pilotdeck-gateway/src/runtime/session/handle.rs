@@ -32,6 +32,11 @@ pub trait LiveSession: Send + Sync {
             "Agent session runtime reload is unavailable.",
         ))
     }
+    /// During owned disposal the adapter may already reject ordinary reload,
+    /// while its storage and saved file seed are still held by the drain task.
+    fn draining_reload_snapshot(&self) -> Result<super::factory::ReloadSnapshot, RuntimeError> {
+        self.reload_snapshot()
+    }
     /// Explicit capability error preserves compatibility with lifecycle-only
     /// adapters; it cannot silently acknowledge input or start a fake loop.
     fn submit(
@@ -93,6 +98,19 @@ impl LiveSessionHandle {
     /// Draining handles remain readable until the underlying session is disposed.
     pub fn reload_snapshot(&self) -> Result<super::factory::ReloadSnapshot, RuntimeError> {
         self.0.session.reload_snapshot()
+    }
+
+    pub(super) fn recreation_snapshot(
+        &self,
+    ) -> Result<super::factory::ReloadSnapshot, RuntimeError> {
+        // Capture eligibility once. Disposal may advance after this read; the
+        // owned reload source stays valid through close and does not consult
+        // the adapter's later disposed flag.
+        if self.state() == HandleState::Disposed {
+            self.reload_snapshot()
+        } else {
+            self.0.session.draining_reload_snapshot()
+        }
     }
 
     pub fn new(session: Arc<dyn LiveSession>, lease: Option<RuntimeLease>) -> Self {

@@ -31,13 +31,25 @@ const writerInterleavings=['after-publish','before-read'].map(name=>{
  const report=supplemental('writer-'+name,{MATRIX_WRITER_TIMING:name},'recreate-running');
  const error=report.results.find((r:any)=>r.label==='resume-after-both-writers').error;
  assert.equal(error.code,'sequence_not_increasing');
- return {name,error,sequences:report.commits.map((r:any)=>({storage:r.storage,sequence:r.entry.sequence})),
+ return {name,tsDefect:true,error,sequences:report.commits.map((r:any)=>({storage:r.storage,sequence:r.entry.sequence})),
   replacementWriter:report.snapshots.find((s:any)=>s.label==='replacement-ready').storages[1].writer,
   entriesAtCheckpoint:report.snapshots.find((s:any)=>s.label==='replacement-ready').storages[1].entriesAtCheckpoint};
+});
+const fenceNames=['idle','quick','never','disposing'].flatMap(state=>['recreate','twice','close','shutdown'].flatMap(event=>['beforeload','afterload','publish'].map(timing=>`fence-${state}-${event}-${timing}`)));
+process.stdout.write(execFileSync(process.execPath,['--import',path.join(base,'node_modules/tsx/dist/loader.mjs'),path.join(here,'probe.mts'),...fenceNames],{env:{...process.env,PDRS_BASELINE:base,MATRIX_ROOT:output,MATRIX_OUTPUT:'fence-matrix',TSX_DISABLE_CACHE:'1'},encoding:'utf8',timeout:120000}));
+const fenceMatrix=fenceNames.map(name=>{
+ const r=JSON.parse(fs.readFileSync(path.join(output,'fence-matrix',name+'.json'),'utf8'));
+ assert.equal(r.status,'OBSERVED');assert.deepEqual(r.forbidden,[]);
+ const at=(label:string)=>r.snapshots.find((s:any)=>s.label===label);
+ const boundary=at('fence-boundary'),event=at('fence-event');
+ return {name,oldState:boundary.handles[0].state,oldInFlight:boundary.handles[0].inFlight,
+  registryAtBoundary:boundary.registry.handle,registryAfterEvent:event.registry.handle,
+  results:at('result').results.map((r:any)=>({label:r.label,status:r.status,...(r.error?{error:r.error}:{}),...(r.handle?{handle:r.handle}:{})})),
+  oldPendingAtBoundary:boundary.results.some((r:any)=>r.label==='fence-old-turn'&&r.status==='pending')};
 });
 const memory=supplemental('memory-only',{MATRIX_MEMORY_ONLY:'1'},'recreate-idle');
 const memoryOnly={injected:memory.timeline.find((e:any)=>e.type==='injected.reload').data.state,
  actual:memory.snapshots.find((s:any)=>s.label==='result').handles[1].session};
 assert.notDeepEqual(memoryOnly.actual.messages,memoryOnly.injected.messages);
-fs.writeFileSync(path.join(output,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,node:process.version,cases,...extra,fileTiming,writerInterleavings,memoryOnly},null,2)+'\n',{flag:'wx'});
+fs.writeFileSync(path.join(output,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,node:process.version,cases,...extra,fileTiming,writerInterleavings,fenceMatrix,memoryOnly},null,2)+'\n',{flag:'wx'});
 console.log('PASS: factory fixture', cases.length, 'cells and',extra.projections.length,'projection probes');

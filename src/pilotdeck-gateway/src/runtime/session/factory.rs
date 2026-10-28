@@ -21,10 +21,10 @@ use crate::{
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock, Weak,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -88,8 +88,8 @@ impl ReloadSource {
     }
 }
 
-/// The projection and writer state are deliberately separate: recreate restores
-/// the old writer state after reading storage, which may contain later entries.
+/// Durable state is restored from storage only after the predecessor writer
+/// has closed. A pre-drain snapshot must never rewind that durable sequence.
 #[derive(Default)]
 pub struct SessionProjection {
     entries: Mutex<Vec<JsValue>>,
@@ -107,7 +107,65 @@ impl SessionProjection {
     }
 }
 
+// Shared across factory instances. Weak entries do not retain idle sessions.
+// The advisory ledger lock also excludes writers in another process.
+type WriterMutex = tokio::sync::Mutex<()>;
+struct WriterLease {
+    // Unlock the file before waking the next in-process waiter.
+    _file: crate::storage::LedgerLock,
+    _process: tokio::sync::OwnedMutexGuard<()>,
+}
+type SharedWriterLease = Arc<Mutex<Option<WriterLease>>>;
+async fn acquire_writer(path: PathBuf) -> Result<WriterLease, RuntimeError> {
+    static WRITERS: OnceLock<Mutex<HashMap<PathBuf, Weak<WriterMutex>>>> = OnceLock::new();
+    let path =
+        tokio::task::spawn_blocking(move || crate::storage::canonical_transcript_path(&path))
+            .await
+            .map_err(|e| RuntimeError::new(e.to_string()))?
+            .map_err(|e| RuntimeError::new(e.to_string()))?;
+    let mutex = {
+        let mut writers = lock(WRITERS.get_or_init(Mutex::default));
+        writers.retain(|_, entry| entry.strong_count() != 0);
+        writers
+            .entry(path.clone())
+            .or_default()
+            .upgrade()
+            .unwrap_or_else(|| {
+                let mutex = Arc::new(WriterMutex::new(()));
+                writers.insert(path.clone(), Arc::downgrade(&mutex));
+                mutex
+            })
+    };
+    let process = mutex.lock_owned().await;
+    let file = tokio::task::spawn_blocking(move || crate::storage::LedgerLock::acquire(&path))
+        .await
+        .map_err(|e| RuntimeError::new(e.to_string()))?
+        .map_err(|e| match e {
+            crate::storage::LedgerError::Io(ref io)
+                if io.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                writer_busy()
+            }
+            _ => RuntimeError::new(e.to_string()),
+        })?
+        .1;
+    Ok(WriterLease {
+        _process: process,
+        _file: file,
+    })
+}
+fn writer_busy() -> RuntimeError {
+    let message = "Session writer is still draining; retry session recreation.";
+    RuntimeError::new(message).with_js_error(crate::runtime::project::RuntimeJsError {
+        name: "Error".into(),
+        code: Some("SESSION_WRITER_BUSY".into()),
+        message: message.into(),
+        requires_host: false,
+    })
+}
+
 struct ProjectedStore {
+    _writer_lease: SharedWriterLease,
     inner: Arc<dyn TranscriptStore>,
     key: TranscriptKey,
     projection: Arc<SessionProjection>,
@@ -203,6 +261,7 @@ pub struct SessionBinding {
 /// callers use `new`; explicit restore/checkpoint/dispose hooks support external
 /// providers without reporting success for an unavailable capability.
 pub struct FactoryStorage {
+    writer_lease: SharedWriterLease,
     pub recorder: Arc<Recorder>,
     pub projection: Arc<SessionProjection>,
     pub cwd: PathBuf,
@@ -213,7 +272,9 @@ pub struct FactoryStorage {
 impl FactoryStorage {
     pub fn new(store: Arc<dyn TranscriptStore>, key: TranscriptKey) -> Self {
         let projection = Arc::new(SessionProjection::default());
+        let writer_lease = Arc::new(Mutex::new(None));
         let projected = Arc::new(ProjectedStore {
+            _writer_lease: writer_lease.clone(),
             inner: store.clone(),
             key: key.clone(),
             projection: projection.clone(),
@@ -221,6 +282,7 @@ impl FactoryStorage {
         let recorder = Arc::new(Recorder::new(projected, key.clone()));
         let close_writer = recorder.writer().clone();
         Self {
+            writer_lease,
             cwd: key.project_root.clone(),
             recorder,
             projection,
@@ -250,6 +312,18 @@ impl FactoryStorage {
                 })
             }),
         }
+    }
+    async fn close_owned(&self) -> RuntimeResult {
+        let result = (self.close)().await;
+        // Even a custom close hook that fails must not leave the recorder open
+        // when its exclusive lease is released. close waits for admitted writes.
+        let writer = self.recorder.writer().clone();
+        writer.begin_close();
+        tokio::task::spawn_blocking(move || writer.close())
+            .await
+            .map_err(|e| RuntimeError::new(e.to_string()))?;
+        lock(&self.writer_lease).take();
+        result
     }
     async fn restore(&self) -> Result<TranscriptRead, RuntimeError> {
         let read = (self.load)().await?;
@@ -306,18 +380,31 @@ impl ProjectSessionFactory {
         context: SessionContext,
         previous: Option<LiveSessionHandle>,
     ) -> Result<LiveSessionHandle, RuntimeError> {
-        let prepared = (self.options.prepare)(context.clone(), self.mcp.clone()).await?;
-        let reload = match previous
+        let captured_reload = previous
             .as_ref()
-            .map(LiveSessionHandle::reload_snapshot)
-            .transpose()
-        {
+            .map(LiveSessionHandle::recreation_snapshot)
+            .transpose();
+        let prepared = (self.options.prepare)(context.clone(), self.mcp.clone()).await?;
+        let reload = match captured_reload {
             Ok(value) => value,
             Err(error) => {
                 let _ = prepared.resources.release().await;
                 return Err(error);
             }
         };
+        // A dropped timeout waiter cannot cancel the handle's owned drain task.
+        let deadline = tokio::time::Instant::now() + crate::host::Limits::default().close_timeout;
+        if let Some(previous) = &previous {
+            let drained =
+                tokio::time::timeout_at(deadline, previous.dispose("session_recreate".into()))
+                    .await;
+            let outcome = drained.unwrap_or_else(|_| Err(writer_busy()));
+            if let Err(error) = outcome {
+                let _ = prepared.resources.release().await;
+                return Err(error);
+            }
+        }
+        let writer_wait_remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         let storage = match (self.options.create_storage)(context.clone()).await {
             Ok(storage) => storage,
             Err(error) => {
@@ -326,7 +413,17 @@ impl ProjectSessionFactory {
             }
         };
         let storage = Arc::new(storage);
+        // Creating storage is not waiting for a writer. Slow providers must not
+        // spend the remaining drain/lease budget before lease acquisition begins.
+        let deadline = tokio::time::Instant::now() + writer_wait_remaining;
         let initialized = async {
+            let lease = tokio::time::timeout_at(
+                deadline,
+                acquire_writer(storage.recorder.writer().path().to_owned()),
+            )
+            .await
+            .map_err(|_| writer_busy())??;
+            *lock(&storage.writer_lease) = Some(lease);
             if previous.is_none()
                 && let Some(admission) = &self.options.admission
             {
@@ -355,21 +452,6 @@ impl ProjectSessionFactory {
             for diagnostic in &read.diagnostics {
                 (self.options.diagnostic)(diagnostic);
             }
-            if let Some(reload) = &reload {
-                let writer = &reload.transcript_writer_state;
-                storage
-                    .recorder
-                    .writer()
-                    .restore_state(
-                        writer.sequence as f64,
-                        &writer
-                            .last_entry_id
-                            .clone()
-                            .map(JsValue::String)
-                            .unwrap_or(JsValue::Null),
-                    )
-                    .map_err(|e| RuntimeError::new(e.to_string()))?;
-            }
             let checkpoint = HostToolCheckpoint::new(reload.as_ref().map(|r| &r.file_state), &[])
                 .map_err(|e| RuntimeError::new(e.to_string()))?;
             let binding = SessionBinding {
@@ -385,10 +467,7 @@ impl ProjectSessionFactory {
                 context.session_key.clone(),
                 prepared.tail,
             );
-            let state = match &reload {
-                Some(reload) => reload.state.clone(),
-                None => storage.projection.snapshot()?,
-            };
+            let state = storage.projection.snapshot()?;
             tail.restore(state.metadata);
             let saved_files = Arc::new(Mutex::new(
                 reload
@@ -409,16 +488,18 @@ impl ProjectSessionFactory {
                     lock(&projection.last_valid).messages.clone()
                 })
                 .with_tail(tail)
-                .with_reload_source(source),
+                .with_reload_source(source.clone()),
                 checkpoint,
                 saved_files,
+                source,
             ))
         }
         .await;
         match initialized {
-            Ok((adapter, checkpoint, saved_files)) => Ok(LiveSessionHandle::new(
+            Ok((adapter, checkpoint, saved_files, reload_source)) => Ok(LiveSessionHandle::new(
                 Arc::new(OwnedSession {
                     adapter,
+                    reload_source,
                     storage,
                     checkpoint,
                     saved_files,
@@ -431,9 +512,9 @@ impl ProjectSessionFactory {
                 // recreate reverses the order relative to resume rollback.
                 let rollback = if previous.is_some() {
                     let _ = prepared.resources.release().await;
-                    (storage.close)().await
+                    storage.close_owned().await
                 } else {
-                    let rollback = (storage.close)().await;
+                    let rollback = storage.close_owned().await;
                     let _ = prepared.resources.release().await;
                     rollback
                 };
@@ -509,6 +590,7 @@ impl Drop for PendingSession {
 }
 struct OwnedSession {
     adapter: LiveSessionAdapter,
+    reload_source: ReloadSource,
     checkpoint: HostToolCheckpoint,
     saved_files: Arc<Mutex<SeedState>>,
     storage: Arc<FactoryStorage>,
@@ -535,6 +617,10 @@ impl LiveSession for OwnedSession {
     fn reload_snapshot(&self) -> Result<ReloadSnapshot, RuntimeError> {
         self.adapter.reload_snapshot()
     }
+    fn draining_reload_snapshot(&self) -> Result<ReloadSnapshot, RuntimeError> {
+        self.reload_source
+            .snapshot_consistent(&self.storage.recorder)
+    }
     fn abort(&self, reason: &JsString) -> RuntimeResult {
         self.adapter.abort(reason)
     }
@@ -550,7 +636,7 @@ impl LiveSession for OwnedSession {
             if let Err(e) = self.adapter.dispose().await {
                 errors.push(e);
             }
-            if let Err(e) = (self.storage.close)().await {
+            if let Err(e) = self.storage.close_owned().await {
                 errors.push(e);
             }
             super::handle::aggregate("Failed to dispose factory session.", errors)

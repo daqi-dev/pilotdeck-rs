@@ -25,6 +25,7 @@ pub use transcript_adapter::{
     TranscriptStore, TranscriptWriter, sanitize_session_id,
 };
 
+pub(crate) use transcript::{LedgerLock, canonical_transcript_path};
 pub(crate) use transcript_adapter::slice_index;
 
 pub use ledger::{
