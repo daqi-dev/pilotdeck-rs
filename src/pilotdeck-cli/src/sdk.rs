@@ -1,4 +1,6 @@
-//! runSdkCli from src/cli/sdkCli.ts: argument reading and pre-network checks.
+//! SDK CLI dispatch and shared connection preflight.
+mod sessions;
+mod transport;
 use crate::paths::{self, Env};
 use crate::{Failure, stdout_line};
 use pilotdeck_protocol::json_syntax;
@@ -43,7 +45,7 @@ pub fn run_sdk_cli(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure
             Err(Failure::Todo("pilotdeck run (SDK sessions.create)"))
         }
         Some("resume") => run_resume(&argv[1..], env, cwd),
-        Some("sessions") => run_sessions(&argv[1..], env, cwd),
+        Some("sessions") => sessions::run(&argv[1..], env, cwd),
         Some("settings") => run_settings(&argv[1..], env, cwd),
         Some(_) => Err(Failure::Error(
             "Usage: pilotdeck <run|resume|sessions|settings> ...".into(),
@@ -61,31 +63,6 @@ fn run_resume(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
         ));
     }
     Err(Failure::Todo("pilotdeck resume (SDK sessions.resume)"))
-}
-
-/// runSessionsCommand (sdkCli.ts:135-155): the client is created, not connected,
-/// before the subcommand is checked.
-fn run_sessions(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
-    create_client(&read_connection(argv, env, cwd)?)?;
-    match argv.first().map_or("list", String::as_str) {
-        "list" => Err(Failure::Todo("pilotdeck sessions list (SDK sessions.list)")),
-        "messages" => {
-            if positional(&argv[1..])
-                .first()
-                .is_none_or(|id| id.is_empty())
-            {
-                return Err(Failure::Error(
-                    "Usage: pilotdeck sessions messages <session-id>".into(),
-                ));
-            }
-            Err(Failure::Todo(
-                "pilotdeck sessions messages (SDK sessions.messages)",
-            ))
-        }
-        _ => Err(Failure::Error(
-            "Usage: pilotdeck sessions <list|messages> ...".into(),
-        )),
-    }
 }
 
 fn run_settings(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
@@ -127,6 +104,7 @@ fn run_settings(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
 
 struct Connection {
     gateway_url: String,
+    auth_token: String,
 }
 
 /// readConnection (sdkCli.ts:180-191). Only the auth token is checked here.
@@ -162,7 +140,10 @@ fn read_connection(argv: &[String], env: &Env, cwd: &Path) -> Result<Connection,
             "Gateway auth token is required. Set PILOTDECK_TOKEN or pass --auth-token.".into(),
         ));
     }
-    Ok(Connection { gateway_url })
+    Ok(Connection {
+        gateway_url,
+        auth_token: token,
+    })
 }
 
 /// connectionOptions (packages/sdk/src/client.ts:130-135): the local gate shared by
@@ -293,7 +274,7 @@ mod tests {
         assert_eq!(run(&["sessions", "bogus"]), sessions_usage);
         assert_eq!(run(&["sessions", ""]), sessions_usage);
         assert_eq!(run(&["sessions", "--json"]), sessions_usage);
-        assert!(run(&["sessions"]).starts_with("TODO pilotdeck sessions list"));
+        // The default/list network branch is covered by sdk_sessions_list_exit.
         let messages_usage = "Usage: pilotdeck sessions messages <session-id>";
         assert_eq!(run(&["sessions", "messages"]), messages_usage);
         assert_eq!(
