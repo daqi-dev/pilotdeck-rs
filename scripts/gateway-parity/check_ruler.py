@@ -109,7 +109,11 @@ def main():
         with parity_lock(args.lock_timeout, takeovers):
             problems = cargo_config_problems()
             if problems:
-                raise ValueError('BLOCKED: cargo build inputs are not frozen: ' + '; '.join(problems))
+                print(json.dumps({'status': 'BLOCKED', 'failure': {
+                    'rule': 'CARGO_CONFIG',
+                    'detail': 'cargo build inputs are not frozen: ' + '; '.join(problems)}}, ensure_ascii=False))
+                code = common.aggregate_status('BLOCKED')[1]
+                return code
             dependencies = baseline_dependency_hashes(baseline)
             hashes = apparatus_hashes()
             for label in ['ts1', 'ts2', 'ts3', 'ts4', 'ts5', 'proxy']:
@@ -211,7 +215,9 @@ if __name__ == '__main__':
         raise SystemExit(2)
     try:
         code = main()
-    except Exception as error:
-        print(json.dumps({'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))
-        code = 1
+    except (Exception, KeyboardInterrupt) as error:
+        status, code = common.aggregate_status(
+            'BLOCKED' if isinstance(error, (PermissionError, TimeoutError, KeyboardInterrupt)) else 'FAIL')
+        print(json.dumps({'status': status,
+                          'failure': {'rule': 'EVIDENCE', 'detail': str(error)}}, ensure_ascii=False))
     raise SystemExit(code)

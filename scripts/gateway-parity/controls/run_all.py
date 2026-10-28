@@ -330,4 +330,10 @@ if __name__ == '__main__':
     except (Exception, KeyboardInterrupt) as error:
         print(json.dumps({'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))
         raise SystemExit(2)
-    raise SystemExit(main())
+    try:
+        code = main()
+    except common.ApparatusVerificationError as error:
+        print(json.dumps({'status': 'BLOCKED',
+                          'failure': {'rule': error.rule, 'detail': str(error)}}, ensure_ascii=False))
+        code = common.aggregate_status('BLOCKED')[1]
+    raise SystemExit(code)
