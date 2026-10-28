@@ -68,15 +68,31 @@ ARR_PANIC = """    if let JsValue::Array(items) = value {
         panic!("#293 oracle field {context} is not an array: {value:?}")
     }"""
 
-# fix-r2: the fallback per-file publish over an occupied partition — the two
-# renames in order (marker first, manifest last) are one anchor, and the
-# mutant swaps them wholesale.
-FALLBACK_ORDER = """            fs::rename(&staged_marker, &paths.committed_path).map_err(|e| {
-                two_path_message(&e, "rename", &staged_marker, &paths.committed_path).to_string()
-            })?;
-            fs::rename(&staged_manifest, &paths.manifest_path).map_err(|e| {
+# fix-r3: the fallback per-file publish over an occupied partition — the
+# manifest rename (first) and the committed-marker rename (last: the commit
+# point) are one anchor. Mutants swap the order wholesale or drop one leg.
+FALLBACK_ORDER = """            fs::rename(&staged_manifest, &paths.manifest_path).map_err(|e| {
                 two_path_message(&e, "rename", &staged_manifest, &paths.manifest_path).to_string()
             })?;
+            fs::rename(&staged_marker, &paths.committed_path).map_err(|e| {
+                two_path_message(&e, "rename", &staged_marker, &paths.committed_path).to_string()
+            })?;
+"""
+# fix-r3: the manifest leg alone, for the drop-one-leg mutant.
+FALLBACK_MANIFEST = """            fs::rename(&staged_manifest, &paths.manifest_path).map_err(|e| {
+                two_path_message(&e, "rename", &staged_manifest, &paths.manifest_path).to_string()
+            })?;
+"""
+# fix-r3: the committed early-exit requires the manifest as a file too.
+EARLY_EXIT = """        if exists(&paths.committed_path) && paths.manifest_path.is_file() {
+"""
+# fix-r3: no settle path may remove the shared .staging parent (P1-B race).
+FAILURE_CLEANUP = """fn failure_cleanup(staging: &Path) {
+    let _ = fs::remove_dir_all(staging);
+}
+"""
+COMMIT_TAIL = """    let _ = fs::remove_dir(staging);
+    Ok(())
 """
 
 UNIT = "two_path_message_uses_the_shared_diagnostic"
@@ -146,28 +162,64 @@ MUTATIONS = [
 """,
      ["--test", "workspace_snapshot", "list_ignores_in_flight"],
      "#293 an in-flight staging manifest is not listed"),
-    # fix-r2: the fallback publish order — marker first, so a publish
-    # interrupted between the two renames leaves the registered residue
-    # (a marker whose early-exit reports Committed) instead of a markerless
-    # manifest. The swap is the pre-fix order; M6 must catch it.
+    # fix-r3: the fallback publish order — manifest first, marker last (the
+    # commit point). The swap is the fix-r2 order whose interrupted publish
+    # left a marker-only half-commit the early-exit then reported as
+    # Committed; the reworked M6 must catch it at the marker-not-published
+    # assertion.
     ("fallback-order", LIB, FALLBACK_ORDER,
-     """            fs::rename(&staged_manifest, &paths.manifest_path).map_err(|e| {
-                two_path_message(&e, "rename", &staged_manifest, &paths.manifest_path).to_string()
-            })?;
-            fs::rename(&staged_marker, &paths.committed_path).map_err(|e| {
+     """            fs::rename(&staged_marker, &paths.committed_path).map_err(|e| {
                 two_path_message(&e, "rename", &staged_marker, &paths.committed_path).to_string()
+            })?;
+            fs::rename(&staged_manifest, &paths.manifest_path).map_err(|e| {
+                two_path_message(&e, "rename", &staged_manifest, &paths.manifest_path).to_string()
             })?;
 """,
      ["--test", "workspace_snapshot", "fallback_publish_writes"],
-     "#293 the committed marker is published before the manifest"),
-    # fix-r2: dropping the manifest publish still reports Committed while the
-    # concurrent round's manifest stays in place; M3's last-writer assertion
-    # must catch the silent stale read.
-    ("fallback-drops-manifest", LIB, FALLBACK_ORDER,
+     "#293 fix-r3 the committed marker is the commit point"),
+    # fix-r3: dropping only the manifest leg (r3 review boundary P3: the old
+    # mutant replaced both renames while its name said "drops-manifest")
+    # still reports Committed while the concurrent round's manifest stays in
+    # place; M3's last-writer assertion must catch the silent stale read.
+    ("fallback-drops-manifest", LIB, FALLBACK_MANIFEST,
      """            let _ = &staged_manifest;
 """,
      ["--test", "workspace_snapshot", "publish_over_a_concurrent"],
      "#293 the last writer's manifest wins"),
+    # fix-r3: the early-exit must require the manifest beside the marker —
+    # reverting to the marker alone resurrects the false Committed over a
+    # marker-only residue; the orphan-marker test must catch it at the
+    # republished-manifest read.
+    ("early-exit-marker-only", LIB, EARLY_EXIT,
+     """        if exists(&paths.committed_path) {
+""",
+     ["--test", "workspace_snapshot", "orphan_committed_marker"],
+     "#293 fix-r3 the republished manifest is readable"),
+    # fix-r3 (P1-B): the failure cleanup must not remove the shared .staging
+    # parent — a removal races another round's create_dir_all into a
+    # permanent _FAILED.json. The parent-survival test must catch the
+    # restored removal on its failed-round arm.
+    ("cleanup-removes-staging-parent", LIB, FAILURE_CLEANUP,
+     """fn failure_cleanup(staging: &Path) {
+    let _ = fs::remove_dir_all(staging);
+    if let Some(parent) = staging.parent() {
+        let _ = fs::remove_dir(parent);
+    }
+}
+""",
+     ["--test", "workspace_snapshot", "staging_parent_survives"],
+     "#293 fix-r3 the staging parent survives a failed round"),
+    # fix-r3 (P1-B): the committed round's publish tail must not remove the
+    # parent either; the same test's committed-round arm must catch it.
+    ("commit-removes-staging-parent", LIB, COMMIT_TAIL,
+     """    let _ = fs::remove_dir(staging);
+    if let Some(parent) = staging.parent() {
+        let _ = fs::remove_dir(parent);
+    }
+    Ok(())
+""",
+     ["--test", "workspace_snapshot", "staging_parent_survives"],
+     "#293 fix-r3 the staging parent survives a committed round"),
     # fix-r2: the failure cleanup must remove this round's own staging
     # directory; skipping the removal leaks the private area into the
     # snapshot root, and M4's cleanup assertion must catch it.
