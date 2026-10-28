@@ -91,7 +91,8 @@ cases = [
                 ));
             }''', '''            other => return Err(ManagerError::plain("TypeError", format!("{other:?}"))),''', None,
      prefix + 'manager_sessions_invalid_params_match_ts',
-     '#934 invalid manager params must fail'),
+     # The stringified TypeError drops the Node code first, before the message check.
+     '#934 invalid projectKey must keep the TS ERR_INVALID_ARG_TYPE code'),
     ('pagination-negative-end', adapter, '''    if value < 0.0 {
         (len as f64 + value).max(0.0) as usize
     } else {
