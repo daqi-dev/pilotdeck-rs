@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported unit tests of the mutation runner
 """Exercise scratch ownership and cleanup without compiling mutant artifacts."""
 import contextlib
 import importlib.util

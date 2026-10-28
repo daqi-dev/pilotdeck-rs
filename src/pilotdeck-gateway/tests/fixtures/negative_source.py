@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported shared exact-source assertion helper, no source replacement table
 """Exact-source checks shared by negative-control runners (#813 fix-r4).
 
 rustfmt may split a long ``assert!(...)`` across lines, so a preflight that

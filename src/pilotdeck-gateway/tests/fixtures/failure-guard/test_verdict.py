@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported unit tests of the failure-guard verdict helper
 """In-memory unit tests for the failure-guard verdict branch (#813 fix-r11).
 
 Run from this directory: ``python3 -m unittest test_verdict.py -v``.

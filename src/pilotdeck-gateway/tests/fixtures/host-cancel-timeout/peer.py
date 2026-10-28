@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported protocol peer fixture, no mutation definitions
 """Bounded adversarial peer, not a TS oracle; all gates have a 30 s parent alarm."""
 import json
 import os

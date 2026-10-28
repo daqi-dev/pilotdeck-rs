@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported imperative replacement chain, no mutation table
 """#562 repair 2: count/zip tripwires and real post-hydrate writer state."""
 import json
 from pathlib import Path

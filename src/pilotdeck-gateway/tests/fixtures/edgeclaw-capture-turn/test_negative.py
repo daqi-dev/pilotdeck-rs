@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported unit tests of the restore-positive summary path using in-memory timeout/start failures, no product source replacement table
 """#774 P2-1: a restored-positive failure must not drop ``summary.json``.
 
 These are in-memory stubs: they never start cargo, mutate a product source or

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported report-copy corruption of real Playwright originals against the fe-parity ledger, no product source replacement anchors
 """#61.1 anti-skip-rule negative controls on the real baseline 72-case reports.
 
 The ledger rule under test lives in scripts/fe-parity/accounting.mjs

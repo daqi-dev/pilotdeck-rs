@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported name-dependent function slicing and sequential rewrites
 """Candidate-baseline checked regressions; compilation errors never count as red."""
 import difflib
 import os

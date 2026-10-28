@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported three-field name/scope/replacements rows with a variable scope; the recording adapter only handles four-field rows and a name-conditional scope
 """Each completion mutation must fail a runtime oracle assertion, then recover."""
 import json
 from functools import partial

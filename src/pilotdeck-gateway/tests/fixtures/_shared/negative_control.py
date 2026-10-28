@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported shared mutation runner, no mutation definitions
 """Bounded negative controls: mutate only disposable /tmp copies."""
 import contextlib
 import os

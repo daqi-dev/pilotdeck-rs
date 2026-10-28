@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported unit tests of the shared panic-evidence helper
 """Negative controls for the #813 panic-block criterion.
 
 Run from this directory: ``python3 -m unittest test_negative_panic.py``.

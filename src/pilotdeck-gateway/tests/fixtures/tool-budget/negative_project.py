@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported imperative function-scoped replacements
 """Bounded #344 project-root / mkdir regression controls; always restore bytes."""
 import hashlib
 import os

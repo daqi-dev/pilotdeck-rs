@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported protocol peer fixture, no mutation definitions
 """Deterministic stdio peer for the turn host factory tests.
 
 Modes:

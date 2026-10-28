@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported unit tests of the mutation runners
 """Exercise both real runners' slot retry, owned timeout and byte restoration.
 
 Replaces the Cargo payload with a bounded child tree; no build or helper edit.

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported imperative replacement chain, no mutation table
 """Full gateway mutation checks for store ordering and the former Node gaps."""
 import os
 from pathlib import Path

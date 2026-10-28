@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported JSON provenance corruption, no source before fragments
 """Tamper one recorded source hash and require the real replay to reject it.
 
 Run only in an exclusively owned worktree, with PDRS_BASELINE set. Each case

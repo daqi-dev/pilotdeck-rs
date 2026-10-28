@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported imperative replacement chain, no mutation table
 """#562 repair 1: behavioral mutants, bounded process groups, one launcher target."""
 import os
 from pathlib import Path

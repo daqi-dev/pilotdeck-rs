@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported shared function-scoped replacement helper
 """Shared mutation anchors and bounded cargo execution for turn-runner controls."""
 import re
 import sys

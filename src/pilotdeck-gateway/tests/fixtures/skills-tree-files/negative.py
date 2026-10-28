@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported generator computes function spans and yields transformed bodies
 """#595 controls: mutate disposable source copies, never the working tree.
 
 Uses this tree's existing CARGO_TARGET_DIR. Each mutation must compile, run its

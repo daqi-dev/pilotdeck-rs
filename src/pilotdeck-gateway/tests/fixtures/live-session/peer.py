@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported protocol peer fixture, no mutation definitions
 """One-turn stdio peer for the gateway LiveSession adapter.
 
 Mirrors agentLoopSidecarServer.ts:270-340: every AgentLoop AgentEvent is

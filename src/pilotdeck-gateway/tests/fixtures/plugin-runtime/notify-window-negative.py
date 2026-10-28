@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported imperative slicing and chained replacements, no mutation table
 """#574: destroy pending callback state and require a bounded test failure.
 
 Run from any directory with the launcher environment and an output directory.

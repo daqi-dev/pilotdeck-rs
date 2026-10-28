@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported failure-guard verdict helper, no source replacement table
 """Verdicts for the failure-guard negative controls (#813 fix-r11).
 
 ``negative.py`` used to stop at the first invalid control. fix-r10 removed

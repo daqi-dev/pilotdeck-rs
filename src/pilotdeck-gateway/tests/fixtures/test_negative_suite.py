@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported unit tests of the shared mutation suite runner
 """Harness fault injection only; no cargo or product source mutation here."""
 import contextlib
 import io

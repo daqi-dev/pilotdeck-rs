@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported shared libtest panic-evidence helper, no source replacement table
 """Libtest panic-block evidence shared by the gateway negative controls (#813).
 
 A negative control is valid only when the *named* test failed and the marker

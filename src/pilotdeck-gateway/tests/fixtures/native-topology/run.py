@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported capture observation runner, no mutation definitions
 """A5.3 Module-host matrix; production WS/HTTP/background remain explicit NOT_RUN.
 
 Uses the existing parity lock and A5.1 method denominator. This is not a new

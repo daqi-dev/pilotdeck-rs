@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported process-group behavior fixture with bounded children, no source mutation definitions
 """Launcher for session_domain cleanup controls.
 
 The production runner starts the A5.2a launcher with start_new_session and then

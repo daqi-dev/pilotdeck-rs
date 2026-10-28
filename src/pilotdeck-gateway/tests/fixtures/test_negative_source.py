@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported unit tests of the shared exact-source helper
 """Negative controls for the exact-literal preflight (#813 fix-r4).
 
 Run from this directory: ``python3 -m unittest test_negative_source.py``.
