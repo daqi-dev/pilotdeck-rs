@@ -64,7 +64,7 @@ def main():
         parser.error('unknown or duplicate mutations')
     selected = [row for row in cases if not args.mutations or row[0] in args.mutations]
     args.out.mkdir(parents=True, exist_ok=False)
-    command = ['cargo', 'test', '--offline', '-q', '--manifest-path', 'src/Cargo.toml',
+    command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                '-p', 'pilotdeck-gateway', '--test', 'background_tasks']
     results = []
 

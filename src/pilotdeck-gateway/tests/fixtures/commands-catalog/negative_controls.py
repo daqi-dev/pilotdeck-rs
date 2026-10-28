@@ -83,7 +83,7 @@ def main():
         if selected and name not in selected:
             continue
         entry = dict(name=name, verdict='INVALID', reason='not run')
-        command = ['cargo', 'test', '-q', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', target, test]
+        command = ['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', target, test]
         test_args = ['--', '--exact', '--format', 'pretty', '--nocapture']
         if ignored:
             test_args.append('--ignored')

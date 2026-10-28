@@ -14,9 +14,12 @@ cwd 缓存掩盖 `uv_cwd`。
 | 默认 root，相对 `TMPDIR`（先读 cwd） | — | Node 用缓存 cwd 成功；Rust 冷读错误（同上） |
 | 默认 root，绝对 `TMPDIR` | — | 成功，`cwdReads=0` |
 
-Rust `runtime::turn::projector::cwd_tests` 每格经共享 bounded worker 在独立子进程改 cwd；
-父进程 cwd 不变。worker 的失败点均带 `#879` 专属消息，最终矩阵断言为
-`#879 projector cwd matrix: <case>`。暖缓存删除格是未批准差异
+Rust `runtime::turn::projector_cwd_tests`（源码模块
+`src/runtime/turn/projector_cwd_tests.rs`，不挂在 `projector.rs` 的 `#[path]` 上，保证
+agent-event-projector 负控拷贝的源码自洽）每格经共享 bounded worker 在独立子进程改 cwd；
+父进程 cwd 不变。相对 TMPDIR 删除两格先直接核对 `node_temp_dir` 的 cwd 错误传播，再走
+store 构造，避免 `build` 的第二次 cwd 读取掩盖 `node_temp_dir` 回退。worker 的失败点均带
+`#879 projector cwd matrix: <case>` 专属断言，最终矩阵断言同文本。暖缓存删除格是未批准差异
 `specs/gateway-parity/diffs/A6.9-PROJECTOR-CWD-001.md`，不能记为对拍通过。
 
 生成：
@@ -28,7 +31,7 @@ node --disable-warning=ExperimentalWarning --import "$PDRS_BASELINE/node_modules
 ```
 
 生成器 recursive mkdir、`flag:'wx'` 写 `oracle.json` 并记录源码 SHA256。ignored 重生成守卫：
-`runtime::turn::projector::cwd_tests::projector_cwd_regenerates_identically`。
+`runtime::turn::projector_cwd_tests::projector_cwd_regenerates_identically`。
 
 负控先 `python3 src/pilotdeck-gateway/tests/fixtures/projector-cwd/negative_controls.py --check`
 核 8 个唯一锚点；提交后指定 `<新证据目录> [变异名 ...]` 运行。脚本要求调用方设置本树

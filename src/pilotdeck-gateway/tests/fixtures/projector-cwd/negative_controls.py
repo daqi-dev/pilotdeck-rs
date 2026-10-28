@@ -14,8 +14,9 @@ from negative_suite import matrix_main
 
 ROOT = Path(__file__).resolve().parents[5]
 PROJECTOR = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/projector.rs'
+REGRESSION = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/projector_cwd_tests.rs'
 FIXTURE = Path(__file__).resolve().parent
-PREFIX = 'runtime::turn::projector::cwd_tests::'
+PREFIX = 'runtime::turn::projector_cwd_tests::'
 MATRIX = '#879 projector cwd matrix:'
 MUTATIONS = [
     ('root-cwd-fallback', PROJECTOR,
@@ -91,7 +92,7 @@ MUTATIONS = [
 def main():
     return matrix_main(ROOT, __file__, PREFIX, MUTATIONS,
                        passed_count=10, child_count=10,
-                       paths=[PROJECTOR, FIXTURE / "regression.rs",
+                       paths=[PROJECTOR, REGRESSION,
                               FIXTURE / "oracle.json", FIXTURE / "generate.mts"],
                        any_cell=(), exact=False)
 

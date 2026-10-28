@@ -247,7 +247,7 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
     def run(label, row, run_env, *, compile=False):
         slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=600, interval=15)
         _write_new(out / f'{label}.slots.log', slot.stdout + slot.stderr)
-        command = ['cargo', 'test', '--offline', '-q', '-p', 'pilotdeck-gateway', '--lib']
+        command = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib']
         if compile:
             command += ['--no-run']
         else:

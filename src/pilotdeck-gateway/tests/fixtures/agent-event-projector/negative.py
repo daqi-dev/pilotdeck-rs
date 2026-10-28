@@ -736,12 +736,16 @@ with tempfile.TemporaryDirectory(prefix="pdrs-aep-negative-", dir="/tmp") as tem
     (scratch / "src/js_value.rs").write_text(
         (rust / "pilotdeck-gateway/src/js_value.rs").read_text()
     )
-    # Mirrors `node_io.rs::node_tmpdir` (Node `os.tmpdir()` fallbacks).
+    # Mirrors `node_io.rs::node_tmpdir` (Node `os.tmpdir()` fallbacks) and the
+    # `uv_cwd` subset of `diagnostic_or_unknown` used by `projector.rs`.
+    # Keep in step with the production functions; the AEP controls never need
+    # an fs errno outside this four-entry cwd boundary.
     (scratch / "src/node_io_shim.rs").write_text(
         """\
 //! Minimal stand-in for `node_io::node_tmpdir` (node_io.rs): TMPDIR -> TMP ->
 //! TEMP, skipping empty values, then `/tmp`; one trailing slash is dropped.
-//! Keep in step with the production function.
+//! Also mirrors the `uv_cwd` subset of `node_io::diagnostic_or_unknown` that
+//! `projector.rs::node_cwd_error` calls. Keep in step with production.
 #![allow(dead_code)]
 pub(crate) fn node_tmpdir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> String {
     let mut path = ["TMPDIR", "TMP", "TEMP"]
@@ -756,6 +760,22 @@ pub(crate) fn node_tmpdir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> S
         path.pop();
     }
     path
+}
+
+pub(crate) fn diagnostic_or_unknown(
+    error: &std::io::Error,
+    syscall: &str,
+    path: Option<&str>,
+) -> (&'static str, String) {
+    let (code, description) = match error.raw_os_error() {
+        Some(libc::ENOENT) => ("ENOENT", "no such file or directory"),
+        Some(libc::EACCES) => ("EACCES", "permission denied"),
+        Some(libc::ENOTDIR) => ("ENOTDIR", "not a directory"),
+        Some(libc::ELOOP) => ("ELOOP", "too many symbolic links encountered"),
+        _ => ("UNKNOWN", "unknown error"),
+    };
+    let suffix = path.map_or(String::new(), |p| format!(" '{p}'"));
+    (code, format!("{code}: {description}, {syscall}{suffix}"))
 }
 """
     )

@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex, mpsc};
 pub const MAX_GATEWAY_TOOL_RESULT_PREVIEW_CHARS: usize = 20_000;
 /// `MAX_GATEWAY_TOOL_DATA_STRING_CHARS` (UTF-16 code units).
 pub const MAX_GATEWAY_TOOL_DATA_STRING_CHARS: usize = 4_000;
-const DEFAULT_ARTIFACT_THRESHOLD_BYTES: usize = 4_096;
+pub(crate) const DEFAULT_ARTIFACT_THRESHOLD_BYTES: usize = 4_096;
 /// Default artifact root directory name. This is only the last component of
 /// the default root: the parent (the OS temp directory) is shared and is not
 /// ownership-checked, while every level of `root_dir` and below must be a real
@@ -354,7 +354,9 @@ fn node_cwd_error(error: io::Error) -> io::Error {
 /// cwd-relative path; a relative tmpdir is resolved against the working
 /// directory like `path.resolve`, and a cwd read failure propagates instead of
 /// falling back to `.` (#879).
-fn node_temp_dir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> io::Result<PathBuf> {
+pub(crate) fn node_temp_dir(
+    var: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> io::Result<PathBuf> {
     let tmp = PathBuf::from(crate::node_io::node_tmpdir(var));
     // `path.resolve` absolutizes before normalizing, so a leading `..` in a
     // relative TMPDIR must keep referring to the parent of the working
@@ -2476,10 +2478,6 @@ fn subagent_tool_result_frames(event: &JsValue) -> ProjectionResult<Vec<JsValue>
         ("detail", JsValue::Object(detail)),
     ])])
 }
-
-#[cfg(all(test, unix))]
-#[path = "../../../tests/fixtures/projector-cwd/regression.rs"]
-mod cwd_tests;
 
 #[cfg(test)]
 #[path = "projector_tests.rs"]

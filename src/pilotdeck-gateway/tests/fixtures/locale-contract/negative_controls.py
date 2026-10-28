@@ -112,7 +112,7 @@ def main():
         raise SystemExit(f'unknown mutations: {sorted(unknown)}')
     env = os.environ.copy()
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only')
-    command = ['cargo', 'test', '-q', '--offline', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--lib']
+    command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--lib']
     summary = []
 
     for name, path, old, new, test_name, marker in mutations:

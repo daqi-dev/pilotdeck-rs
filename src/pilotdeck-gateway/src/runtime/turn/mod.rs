@@ -8,6 +8,8 @@ pub mod interaction;
 pub mod live;
 mod live_session;
 pub mod projector;
+#[cfg(all(test, unix))]
+mod projector_cwd_tests;
 pub mod publish;
 pub mod read;
 pub mod replay;
