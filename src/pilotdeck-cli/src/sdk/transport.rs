@@ -15,6 +15,7 @@ use tokio_tungstenite::{
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+const MAX_RECEIVE_BYTES: usize = 128 * 1024 * 1024;
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 fn error(message: &str) -> Failure {
@@ -26,12 +27,13 @@ pub(super) async fn request(
     method: &str,
     params: Value,
 ) -> Result<JsValue, Failure> {
-    // Node v22.22.0 uses the native WebSocket, not the ws package's 100 MiB
-    // maxPayload. The SDK passes only the URL; its native client accepts even
-    // 100 MiB + 1 byte (tests/fixtures/sdk-transport-limits).
+    // Preserve the measured Node v22.22.0 successes through 100 MiB + 1.
+    // A finite frame cap rejects hostile length headers before allocation;
+    // the message cap also bounds accumulated fragments. Security exception:
+    // specs/gateway-parity/diffs/D1-SDK-WS-RESOURCE-LIMIT-001.md.
     let config = WebSocketConfig::default()
-        .max_frame_size(None)
-        .max_message_size(None);
+        .max_frame_size(Some(MAX_RECEIVE_BYTES))
+        .max_message_size(Some(MAX_RECEIVE_BYTES));
     let (mut socket, _) = timeout(
         CONNECT_TIMEOUT,
         connect_async_with_config(&connection.gateway_url, Some(config), false),

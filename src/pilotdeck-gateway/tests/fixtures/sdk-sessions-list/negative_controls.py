@@ -28,9 +28,11 @@ LIFECYCLE = 'sessions_list_transport_boundaries'
 oracle = root / 'src/pilotdeck-cli/tests/fixtures/sdk-sessions-list/oracle.json'
 mutations = [
     ('hello-version', transport, '"protocolVersion": pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION', '"protocolVersion": "0.0"', MATRIX, '#983 hello and request wire sessions-default--argv'),
-    ('websocket-default-limits', transport, 'WebSocketConfig::default()\n        .max_frame_size(None)\n        .max_message_size(None)', 'WebSocketConfig::default()', 'sessions_list_accepts_ts_large_frames', '#983 TS native accepts 16777217 byte frame'),
-    ('websocket-default-message-limit', transport, '.max_message_size(None)', '.max_message_size(Some(64 * 1024 * 1024))', 'sessions_list_accepts_ts_large_frames', '#983 TS native accepts 104857601 byte frame'),
-    ('websocket-ws-payload-limit', transport, '.max_frame_size(None)', '.max_frame_size(Some(100 * 1024 * 1024))', 'sessions_list_accepts_ts_large_frames', '#983 TS native accepts 104857601 byte frame'),
+    ('websocket-default-limits', transport, 'WebSocketConfig::default()\n        .max_frame_size(Some(MAX_RECEIVE_BYTES))\n        .max_message_size(Some(MAX_RECEIVE_BYTES))', 'WebSocketConfig::default()', 'sessions_list_accepts_ts_large_frames', '#983 TS native accepts 16777217 byte frame'),
+    ('websocket-default-message-limit', transport, '.max_message_size(Some(MAX_RECEIVE_BYTES))', '.max_message_size(Some(64 * 1024 * 1024))', 'sessions_list_accepts_ts_large_frames', '#983 TS native accepts 104857601 byte frame'),
+    ('websocket-ws-payload-limit', transport, '.max_frame_size(Some(MAX_RECEIVE_BYTES))', '.max_frame_size(Some(100 * 1024 * 1024))', 'sessions_list_accepts_ts_large_frames', '#983 TS native accepts 104857601 byte frame'),
+    ('websocket-unlimited-frame', transport, '.max_frame_size(Some(MAX_RECEIVE_BYTES))', '.max_frame_size(None)', 'sessions_list_rejects_extreme_frame_header', '#983 hostile frame 4611686018427387904 rejected cleanly before payload'),
+    ('websocket-unlimited-message', transport, '.max_message_size(Some(MAX_RECEIVE_BYTES))', '.max_message_size(None)', 'sessions_list_rejects_fragmented_message_over_cap', '#983 fragmented message 134217729 bytes rejected cleanly'),
     ('transport-limits-coverage', limits_oracle, '"implementation": "node-native",\n      "frameBytes": 16777217', '"implementation": "ws-default",\n      "frameBytes": 16777217', 'sessions_list_accepts_ts_large_frames', '#983 native large-frame fixture coverage'),
     ('transport-limits-extraction', limits_oracle, '"constructorArgCount": 1', '"constructorArgCount": 2', 'sessions_list_transport_limits_regenerates_identically', '#983 identical TS fixture sdk-transport-limits'),
     ('hello-client-name', transport, '"clientName": "sdk"', '"clientName": "cli"', MATRIX, '#983 hello and request wire sessions-default--argv'),

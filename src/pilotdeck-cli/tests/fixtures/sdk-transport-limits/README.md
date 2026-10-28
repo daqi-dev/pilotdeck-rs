@@ -2,7 +2,7 @@
 
 `generate.mjs` 在 Node v22.22.0 中直接加载基线 `packages/sdk/src/transport.ts`，包装构造器记录实参但不改请求参数；真实本地 ws mock 发送一个未压缩、未分片的 Text 帧。响应 JSON 后追加空白，帧总长分别 16 MiB+1 与 100 MiB+1；成功结果始终 `{sessions:[]}`，不生成大 stdout，也不把大 payload 入库。
 
-实测 SDK 仅传 URL、默认使用 Node 原生 `globalThis.WebSocket`（undici 6.23.0），两个尺寸都可接收。显式替换为 `ws` 的诊断对照才使用默认 maxPayload=104857600；后一尺寸被拒。因此 Rust 显式将 `max_frame_size` / `max_message_size` 设为 `None`，避免误套第三方 ws 上限。这里证明两个实测尺寸，未宣称对任意大于宿主可分配内存的消息等价。
+实测 SDK 仅传 URL、默认使用 Node 原生 `globalThis.WebSocket`（undici 6.23.0），两个尺寸都可接收。显式替换为 `ws` 的诊断对照才使用默认 maxPayload=104857600；后一尺寸被拒。Rust 将 `max_frame_size` / `max_message_size` 同时设为 128 MiB，覆盖两个实测成功尺寸；不再使用 `None`，因为 tungstenite 会按敌意帧头声明的长度预分配。128 MiB 是覆盖 100 MiB+1 的紧邻常见二进制容量，并非 TS 的实测极限。新增安全/资源差异见 `specs/gateway-parity/diffs/D1-SDK-WS-RESOURCE-LIMIT-001.md`（仓库根目录）；仅证明上述两格与 TS 一致，不宣称任意大消息等价。
 
 `oracle.json` 只存真实 transport 返回值、尺寸、版本、构造实参数量及 TS transport 的 SHA-256；它不是完整 TS CLI 四面实录。Rust `sessions_list_accepts_ts_large_frames` 启动真实 CLI 重放两个成功格，验证退出/输出与记录的 sessions 投影；旧 77 格继续覆盖完整 CLI 行为。生成器全程最多 30 秒，清理连接和监听；Rust mock 与子进程各最多 15 秒，并沿用已有 D0 端口租约。
 
@@ -14,3 +14,5 @@ cargo test --offline -p pilotdeck-cli --test sdk_sessions_list_exit \
 ```
 
 负控同 `sdk-sessions-list/negative_controls.py`：恢复默认 config→16 MiB+1 格失败；只恢复 64 MiB 消息上限或误设 100 MiB 帧上限→100 MiB+1 格失败；篡改构造实参数量→重生成守卫失败；隐藏一格原生记录→完整性断言失败。精确测试名与 `#983` 断言由 nonce 回执绑定。提交后全量逐项编译、判杀、恢复，未提交树不得绕过 HEAD 守卫。
+
+fix-r4 新增三个 Rust 安全边界测试：合法服务端纯帧头分别声明 128 MiB+1 / 2^62（不发 payload、不主动关闭 TCP），以及每片 1 MiB、累计 128 MiB+1 的完整 JSON 响应；均要求 CLI 退出 1、无 signal、stdout 为空、stderr 精确为 `Gateway WebSocket closed.\n`。mock 发头/发片与子进程收集各有 15 秒上界，超时不判 KILLED。新增 `websocket-unlimited-frame` 绑定独立 2^62 用例，删除 frame cap 时 abort 触发专属回执；`websocket-unlimited-message` 绑定分片用例，删除 message cap 时有效响应成功返回 `[]`，触发拒绝断言。每个变异先编译，逐项汇总，完整执行在提交后宿主进行。
