@@ -301,6 +301,10 @@ regeneration!(
     "provider-sync-abort"
 );
 regeneration!(provider_timing_regenerates_identically, "provider-timing");
+regeneration!(
+    provider_http_boundaries_regenerates_identically,
+    "provider-http-boundaries"
+);
 regeneration!(pump_order_cases_regenerates_identically, "pump-order-cases");
 regeneration!(recorder_regenerates_identically, "recorder");
 regeneration!(replacement_regenerates_identically, "replacement");
@@ -344,6 +348,7 @@ regeneration!(
 regeneration!(settings_regenerates_identically, "settings");
 regeneration!(sidecar_payload_regenerates_identically, "sidecar-payload");
 regeneration!(skills_regenerates_identically, "skills");
+regeneration!(skills_external_regenerates_identically, "skills-external");
 regeneration!(
     skills_tree_files_regenerates_identically,
     "skills-tree-files"
@@ -386,6 +391,10 @@ regeneration!(
     "turn-lifecycle-matrix"
 );
 regeneration!(turn_publish_regenerates_identically, "turn-publish");
+regeneration!(
+    turn_prompt_hooks_regenerates_identically,
+    "turn-prompt-hooks"
+);
 regeneration!(turn_read_regenerates_identically, "turn-read");
 regeneration!(turn_replay_regenerates_identically, "turn-replay");
 regeneration!(turn_runner_regenerates_identically, "turn-runner");
@@ -411,10 +420,101 @@ regeneration!(
 );
 regeneration!(web_tools_regenerates_identically, "web-tools");
 regeneration!(
+    web_conversion_lifecycle_regenerates_identically,
+    "web-conversion-lifecycle"
+);
+regeneration!(
     workspace_snapshot_regenerates_identically,
     "workspace-snapshot"
 );
 regeneration!(write_tools_regenerates_identically, "write-tools");
+
+regeneration!(
+    edgeclaw_accessors_regenerates_identically,
+    "edgeclaw-accessors"
+);
+regeneration!(
+    edgeclaw_capture_turn_regenerates_identically,
+    "edgeclaw-capture-turn"
+);
+regeneration!(
+    edgeclaw_dangling_links_regenerates_identically,
+    "edgeclaw-dangling-links"
+);
+regeneration!(edgeclaw_dream_regenerates_identically, "edgeclaw-dream");
+regeneration!(
+    edgeclaw_dream_run_regenerates_identically,
+    "edgeclaw-dream-run"
+);
+regeneration!(
+    edgeclaw_dream_runner_regenerates_identically,
+    "edgeclaw-dream-runner"
+);
+regeneration!(edgeclaw_entries_regenerates_identically, "edgeclaw-entries");
+regeneration!(edgeclaw_export_regenerates_identically, "edgeclaw-export");
+regeneration!(
+    edgeclaw_file_memory_regenerates_identically,
+    "edgeclaw-file-memory"
+);
+regeneration!(
+    edgeclaw_heartbeat_regenerates_identically,
+    "edgeclaw-heartbeat"
+);
+regeneration!(
+    edgeclaw_heartbeat_indexer_regenerates_identically,
+    "edgeclaw-heartbeat-indexer"
+);
+regeneration!(edgeclaw_llm_regenerates_identically, "edgeclaw-llm");
+regeneration!(
+    edgeclaw_llm_config_regenerates_identically,
+    "edgeclaw-llm-config"
+);
+regeneration!(
+    edgeclaw_llm_dream_regenerates_identically,
+    "edgeclaw-llm-dream"
+);
+regeneration!(
+    edgeclaw_llm_envelope_regenerates_identically,
+    "edgeclaw-llm-envelope"
+);
+regeneration!(
+    edgeclaw_llm_fix_r1_regenerates_identically,
+    "edgeclaw-llm-fix-r1"
+);
+regeneration!(
+    edgeclaw_llm_index_regenerates_identically,
+    "edgeclaw-llm-index"
+);
+regeneration!(
+    edgeclaw_llm_recall_regenerates_identically,
+    "edgeclaw-llm-recall"
+);
+regeneration!(
+    edgeclaw_llm_recall_js_sort_regenerates_identically,
+    "edgeclaw-llm-recall-js-sort"
+);
+regeneration!(
+    edgeclaw_memory_write_regenerates_identically,
+    "edgeclaw-memory-write"
+);
+regeneration!(
+    edgeclaw_messages_regenerates_identically,
+    "edgeclaw-messages"
+);
+regeneration!(
+    edgeclaw_retrieval_helpers_regenerates_identically,
+    "edgeclaw-retrieval-helpers"
+);
+regeneration!(
+    edgeclaw_retriever_regenerates_identically,
+    "edgeclaw-retriever"
+);
+regeneration!(
+    edgeclaw_snapshots_regenerates_identically,
+    "edgeclaw-snapshots"
+);
+regeneration!(edgeclaw_storage_regenerates_identically, "edgeclaw-storage");
+regeneration!(edgeclaw_text_regenerates_identically, "edgeclaw-text");
 
 #[test]
 fn regeneration_layout_rejects_missing_ambiguous_and_symlink_outputs() {

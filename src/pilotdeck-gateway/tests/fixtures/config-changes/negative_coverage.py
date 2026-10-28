@@ -3,6 +3,9 @@
 
 The integration target requires a local all-cases loop because negative_suite's
 runner selects --lib. Classification is shared with negative_suite.
+Run exclusively in this worktree: no other cargo or test process may run here
+until restoration finishes. The source lock excludes negative runners only;
+the coordinator must serialize ordinary cargo/test jobs in the same worktree.
 """
 import json
 import os
