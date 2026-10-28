@@ -2,15 +2,17 @@
 # anchor-selfcheck: unsupported imperative checker rewrites for #977; no declarative whole-file product anchors
 """#977 marker mutants: every weakened fail-closed rule must fail a named test.
 
-Each rewrite weakens one ``anchor_selfcheck.py`` rule added by #977 (marker
-ignored / empty reason / late marker / malformed prefix / duplicate marker /
-stale signals / missing marker source). The bound oracle is
-``test_anchor_selfcheck.py``; a mutant is KILLED only when
-``test_unsupported_marker_is_explicit_and_fails_closed`` fails on an assertion
-whose message carries ``#977``. Anything else (suite green, or the bound test
-passing while others fail) is SURVIVED / INVALID, never silently accepted.
-No cargo is launched, so ``wait_for_slot`` is deliberately not called: a
-python-only control must not block on an unrelated cargo slot.
+Each rewrite weakens one ``anchor_selfcheck.py`` rule added by #977 or its
+fix-r1 (marker ignored / empty reason / late marker / malformed prefix /
+duplicate marker / stale signals / missing marker source / string marker
+accepted / inline marker accepted / tokenize failure swallowed / missing
+tracked script / unreadable inventory / empty inventory). The bound oracle is
+``test_anchor_selfcheck.py``; a mutant is KILLED only when its named test
+fails on an assertion whose message carries ``#977``. Anything else (suite
+green, or the bound test passing while others fail) is SURVIVED / INVALID,
+never silently accepted. No cargo is launched, so ``wait_for_slot`` is
+deliberately not called: a python-only control must not block on an
+unrelated cargo slot.
 """
 import json
 import os
@@ -24,36 +26,84 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 CHECKER = FIXTURES / 'anchor_selfcheck.py'
 TESTS = FIXTURES / 'test_anchor_selfcheck.py'
-TEST = 'test_unsupported_marker_is_explicit_and_fails_closed'
 
-# (name, old fragment, new fragment, #977 label the killed failure must show).
-# Every fragment occurs exactly once in the pristine checker; a stale anchor
-# is recorded as INVALID and fails the run instead of counting as SURVIVED.
+# (name, old fragment, new fragment, #977 label the killed failure must show,
+# bound test whose FAIL block must carry that label). Every fragment occurs
+# exactly once in the pristine checker; a stale anchor is recorded as INVALID
+# and fails the run instead of counting as SURVIVED.
 REWRITES = [
     ('marker-ignored', '        if reason is not None:\n            markers[relative] = reason',
      '        if False and reason is not None:\n            markers[relative] = reason',
-     '#977 marker-present'),
+     '#977 marker-present', 'test_unsupported_marker_is_explicit_and_fails_closed'),
     ('empty-reason-accepted',
      "        if not text:\n            raise Unsupported(f'unsupported marker on line {number} needs a nonempty reason')",
      "        if not text and False:\n            raise Unsupported(f'unsupported marker on line {number} needs a nonempty reason')",
-     '#977 marker-empty-reason'),
+     '#977 marker-empty-reason', 'test_unsupported_marker_is_explicit_and_fails_closed'),
     ('marker-limit-removed', 'MARKER_LINE_LIMIT = 20', 'MARKER_LINE_LIMIT = 9999',
-     '#977 marker-after-limit'),
+     '#977 marker-after-limit', 'test_unsupported_marker_is_explicit_and_fails_closed'),
     ('stale-signals-ignored', '    for name in UNSUPPORTED_SIGNALS:\n        if name not in markers:',
      '    for name in UNSUPPORTED_SIGNALS:\n        if False and name not in markers:',
-     '#977 stale-signal-missing-script'),
+     '#977 stale-signal-missing-script', 'test_unsupported_marker_is_explicit_and_fails_closed'),
     ('malformed-marker-ignored',
      "            if re.match(r'^#\\s*anchor-selfcheck:', stripped):",
      "            if False and re.match(r'^#\\s*anchor-selfcheck:', stripped):",
-     '#977 malformed-marker'),
+     '#977 malformed-marker', 'test_unsupported_marker_is_explicit_and_fails_closed'),
     ('duplicate-marker-accepted',
      "        if reason is not None:\n            raise Unsupported(f'duplicate unsupported marker on line {number}')",
      "        if False and reason is not None:\n            raise Unsupported(f'duplicate unsupported marker on line {number}')",
-     '#977 duplicate-marker'),
+     '#977 duplicate-marker', 'test_unsupported_marker_is_explicit_and_fails_closed'),
     ('missing-marker-source-ignored',
      "    if not script.is_file():\n        raise Unsupported(f'unsupported marker source does not exist: {script}')",
      "    if not script.is_file():\n        return None",
-     '#977 missing marker script must fail closed'),
+     '#977 missing marker script must fail closed', 'test_unsupported_marker_is_explicit_and_fails_closed'),
+    # fix-r1: only real COMMENT tokens are markers; a string or an inline
+    # comment carrying the marker text must not exempt a script.
+    ('string-marker-accepted',
+     '    for token in tokens:\n'
+     '        if token.type != tokenize.COMMENT:\n'
+     '            continue\n'
+     '        number, column = token.start\n'
+     '        if lines[number - 1][:column].strip():\n'
+     '            continue\n'
+     '        yield number, token.string',
+     '    for number, line in enumerate(lines, 1):\n'
+     '        stripped = line.lstrip()\n'
+     "        if stripped.startswith('#'):\n"
+     '            yield number, stripped',
+     '#977 string-marker-ignored', 'test_marker_text_inside_a_string_is_not_a_comment'),
+    ('inline-marker-accepted',
+     '        if lines[number - 1][:column].strip():\n            continue',
+     '        if False and lines[number - 1][:column].strip():\n            continue',
+     '#977 inline-marker-ignored', 'test_marker_text_inside_a_string_is_not_a_comment'),
+    ('tokenize-failure-swallowed',
+     '    try:\n'
+     '        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))\n'
+     '    except (tokenize.TokenError, SyntaxError, ValueError) as error:\n'
+     "        raise Unsupported(f'unsupported marker source is not tokenizable: {error}') from error",
+     '    try:\n'
+     '        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))\n'
+     '    except (tokenize.TokenError, SyntaxError, ValueError):\n'
+     '        tokens = []',
+     '#977 an untokenizable script must fail closed',
+     'test_marker_text_inside_a_string_is_not_a_comment'),
+    # fix-r1: a tracked script that vanished from the working tree, and an
+    # unreadable git inventory, must both fail the real check() entry.
+    ('missing-script-ignored',
+     '    for name in sorted(expected - discovered):',
+     '    for name in sorted(discovered - discovered):',
+     '#977 tracked-missing', 'test_missing_tracked_script_fails_closed_then_restores'),
+    ('inventory-failure-open',
+     '    except (Unsupported, OSError) as error:\n'
+     "        errors.append(f'fixture inventory: {error}')\n"
+     '        expected = set()',
+     '    except (Unsupported, OSError) as error:\n'
+     '        expected = set()',
+     '#977 inventory-unreadable', 'test_unreadable_fixture_inventory_fails_closed'),
+    ('tracked-inventory-empty',
+     '    return set(_TRACKED_FIXTURES[key])',
+     '    return set()',
+     '#977 the checker itself must be a tracked fixture',
+     'test_tracked_fixtures_reads_the_git_index'),
 ]
 
 
@@ -91,8 +141,8 @@ def main():
                   file=sys.stderr)
             return 2
         original = originals[CHECKER].decode('utf-8')
-        for name, old, new, label in REWRITES:
-            record = {'name': name, 'label': label}
+        for name, old, new, label, test in REWRITES:
+            record = {'name': name, 'label': label, 'test': test}
             records.append(record)
             occurrences = original.count(old)
             if occurrences != 1:
@@ -113,7 +163,7 @@ def main():
             finally:
                 CHECKER.write_bytes(originals[CHECKER])
             (out / f'{name}.log').write_text(log, encoding='utf-8')
-            block = failure_block(log, TEST)
+            block = failure_block(log, test)
             if block is not None and label in block:
                 record['verdict'] = 'KILLED'
                 record['reason'] = block.strip().splitlines()[-1]
