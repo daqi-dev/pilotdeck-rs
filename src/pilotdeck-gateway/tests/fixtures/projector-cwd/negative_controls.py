@@ -86,12 +86,20 @@ MUTATIONS = [
      'const TOOL_RESULT_DIR_NAME: &str = "mutated-tool-results";',
      [('tmpdir_relative_normal_cwd', MATRIX + ' tmpdir-relative-normal'),
       ('tmpdir_absolute_deleted_cwd', MATRIX + ' tmpdir-absolute-deleted')]),
+    # Environment failures must stay off the target receipt protocol. Binding
+    # the setup step back to the matrix assertion makes the regression see a
+    # receipt where only a product assertion may produce one.
+    ('setup-target-receipt', REGRESSION,
+     '    std::env::set_current_dir(&cwd).expect("#879 projector cwd setup: enter case cwd");',
+     '    crate::test_negative_receipt::expect_ok(std::env::set_current_dir(&cwd), &assertion);',
+     [('environment_failure_is_not_a_bound_negative_receipt',
+       '#879 projector cwd environment: target receipt must be absent')]),
 ]
 
 
 def main():
     return matrix_main(ROOT, __file__, PREFIX, MUTATIONS,
-                       passed_count=10, child_count=10,
+                       passed_count=11, child_count=10,
                        paths=[PROJECTOR, REGRESSION,
                               FIXTURE / "oracle.json", FIXTURE / "generate.mts"],
                        any_cell=(), exact=False)
