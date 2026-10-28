@@ -136,6 +136,48 @@ class ScannerControls(unittest.TestCase):
         self.write("switches = [('sample', source, 'sample_test', '#996 a')]\n")
         self.run_check(label='restored-bindings')
 
+    def test_switch_table_updates_fail_closed(self):
+        # #996 fix-r1: only the literal whole-table assignment is a table; any
+        # in-place update shape must fail closed instead of silently shrinking
+        # the audited rows below the executed table (the review's `del
+        # switches[0]` kept the scanner at 49 while the runtime table had 48).
+        self.source.write_text('crate::mutants::on("sample")\n')
+        table = "switches = [('sample', source, 'sample_test', '#996 a')]\n"
+        for update, message in (
+            ("switches.append(('other', source, 'sample_test', '#996 b'))\n",
+             'unsupported switches table update'),
+            ("switches.extend([('other', source, 'sample_test', '#996 b')])\n",
+             'unsupported switches table update'),
+            ("switches.insert(0, ('other', source, 'sample_test', '#996 b'))\n",
+             'unsupported switches table update'),
+            ("switches.pop()\n", 'unsupported switches table update'),
+            ("switches.remove('sample')\n", 'unsupported switches table update'),
+            ("switches.clear()\n", 'unsupported switches table update'),
+            ("switches.sort()\n", 'unsupported switches table update'),
+            ("del switches[0]\n", 'deleting/annotating switches tables is not supported'),
+            ("del switches\n", 'deleting/annotating switches tables is not supported'),
+            ("switches += [('other', source, 'sample_test', '#996 b')]\n",
+             'in-place switches table assignment is not supported'),
+            ("switches[0] = ('other', source, 'sample_test', '#996 b')\n",
+             'in-place switches table assignment is not supported'),
+            ("switches[0][1] = source\n",
+             'in-place switches table assignment is not supported'),
+            ("switches, extra = [], []\n",
+             'in-place switches table assignment is not supported'),
+            ("(extra, *switches) = ([], [])\n",
+             'in-place switches table assignment is not supported'),
+            ("switches: list = []\n",
+             'deleting/annotating switches tables is not supported'),
+            ("if (switches := []):\n    pass\n",
+             'switches table walrus assignment is not supported'),
+        ):
+            with self.subTest(update=update):
+                self.write(table + update)
+                self.assertIn(message, self.run_check(1))
+        self.write(table)
+        self.assertIn('CHECKED sample/negative.py: 1 anchors',
+                      self.run_check(label='restored-updates'))
+
     def test_marker_scripts_cannot_hide_a_switch_table(self):
         self.source.write_text('crate::mutants::on("sample")\n')
         self.write("switches = [('sample', source, 'sample_test', '#996 anchor')]\n")

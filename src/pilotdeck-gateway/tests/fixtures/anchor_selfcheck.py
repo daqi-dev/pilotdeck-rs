@@ -842,20 +842,46 @@ def switch_table_rows(tree):
     """Yield literal `switches` table rows; anything else fails closed.
 
     Rows are (name, path, test, assertion); the counted anchor is the single
-    compiled switch site, so no before/after pair exists here.
+    compiled switch site, so no before/after pair exists here. Every other
+    update shape is rejected outright, never parsed partially (#996 fix-r1):
+    deletion, annotation, augmented/subscript/unpacking/walrus assignment and
+    method calls would otherwise let the audited rows drift from the executed
+    table, exactly like the silent `del switches[0]`/`switches.append` forms.
     """
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        for target in node.targets:
-            if not (isinstance(target, ast.Name) and target.id.lower() == 'switches'):
-                continue
-            if not isinstance(node.value, ast.List):
-                raise Unsupported('switches table must be a literal list of rows')
-            for row in node.value.elts:
-                if not isinstance(row, ast.Tuple) or len(row.elts) != 4:
-                    raise Unsupported('switches rows must be (name, path, test, assertion)')
-                yield row
+    def touches_switches(target):
+        while isinstance(target, ast.Subscript):
+            target = target.value
+        if isinstance(target, (ast.Tuple, ast.List)):
+            return any(touches_switches(element) for element in target.elts)
+        if isinstance(target, ast.Starred):
+            return touches_switches(target.value)
+        return isinstance(target, ast.Name) and target.id.lower() in SWITCH_TABLE_NAMES
+
+    for node in sorted(ast.walk(tree), key=lambda n: getattr(n, 'lineno', 0)):
+        if isinstance(node, (ast.Delete, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Delete) else [node.target]
+            for target in targets:
+                if touches_switches(target):
+                    raise Unsupported('deleting/annotating switches tables is not supported')
+        if isinstance(node, (ast.Assign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if not touches_switches(target):
+                    continue
+                if not (isinstance(target, ast.Name) and isinstance(node, ast.Assign)):
+                    raise Unsupported('in-place switches table assignment is not supported')
+                if not isinstance(node.value, ast.List):
+                    raise Unsupported('switches table must be a literal list of rows')
+                for row in node.value.elts:
+                    if not isinstance(row, ast.Tuple) or len(row.elts) != 4:
+                        raise Unsupported('switches rows must be (name, path, test, assertion)')
+                    yield row
+        if isinstance(node, ast.NamedExpr) and touches_switches(node.target):
+            raise Unsupported('switches table walrus assignment is not supported')
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and isinstance(node.func.value, ast.Name) \
+                and node.func.value.id.lower() in SWITCH_TABLE_NAMES:
+            raise Unsupported('unsupported switches table update')
 
 
 def host_pump_count(tree, static, name, local):
