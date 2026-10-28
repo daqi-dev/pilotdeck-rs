@@ -841,6 +841,7 @@ def status_controls(md):
 # the enumeration test fails on any new key, so a new summary cannot be added
 # without updating this table.
 AGGREGATION_POINTS = {
+    ('scripts/gateway-parity/_guard.py', '_failure'): 'guard-failure',
     ('scripts/gateway-parity/controls/session_domain.py', 'cleanup_controls'): 'controls-cleanup',
     ('scripts/gateway-parity/controls/session_domain.py', 'run_all'): 'controls-run-all',
     ('scripts/gateway-parity/controls/session_domain.py', 'main'): 'controls-main',

@@ -33,10 +33,25 @@ COMMON = ROOT / 'scripts/gateway-parity/common.py'
 BUILD = ROOT / 'scripts/gateway-parity/build_proxy.py'
 COMPARE = ROOT / 'scripts/gateway-parity/compare.py'
 SAFETY = ROOT / 'scripts/gateway-parity/test_safety.py'
+CLEANUP = ROOT / 'src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py'
 
 # (name, source, before, after): the static checker and the runner share this
 # table; every before must occur exactly once or the anchor is stale.
 MUTATIONS = [
+    ('guard-aggregation-registration-removed', CLEANUP,
+     "    ('scripts/gateway-parity/_guard.py', '_failure'): 'guard-failure',\n", ''),
+    ('guard-round-aggregation-bypassed', GUARD,
+     "return {'status': 'BLOCKED', 'error': str(error)}, common.aggregate_status('FAIL')[1]",
+     "return {'status': 'BLOCKED', 'error': str(error)}, common.BATCH_EXIT_CODES['FAIL']"),
+    ('guard-session-aggregation-bypassed', GUARD,
+     "return {'status': 'BLOCKED', 'error': str(error)}, common.aggregate_status('BLOCKED')[1]",
+     "return {'status': 'BLOCKED', 'error': str(error)}, common.BATCH_EXIT_CODES['BLOCKED']"),
+    ('guard-ruler-aggregation-bypassed', GUARD,
+     "        status, code = common.aggregate_status('BLOCKED' if blocked else 'FAIL')",
+     "        status = 'BLOCKED' if blocked else 'FAIL'\n        code = common.BATCH_EXIT_CODES[status]"),
+    ('guard-controls-aggregation-bypassed', GUARD,
+     "'detail': str(error)}}, common.aggregate_status('BLOCKED')[1]",
+     "'detail': str(error)}}, common.BATCH_EXIT_CODES['BLOCKED']"),
     ('guard-preflight-removed', GUARD,
      '        verify_cli_imports()\n', '        pass  # mutant skips preflight\n'),
     ('guard-preflight-exit-one', GUARD,
@@ -60,8 +75,8 @@ MUTATIONS = [
      '        blocked = isinstance(error, (PermissionError, TimeoutError, KeyboardInterrupt))',
      '        blocked = True'),
     ('guard-error-rule-lost', GUARD,
-     "        return {'status': status, 'failure': {'rule': 'EVIDENCE', 'detail': str(error)}}, common.BATCH_EXIT_CODES[status]",
-     "        return {'status': status, 'failure': {'rule': 'APPARATUS_IMPORTS', 'detail': str(error)}}, common.BATCH_EXIT_CODES[status]"),
+     "        return {'status': status, 'failure': {'rule': 'EVIDENCE', 'detail': str(error)}}, code",
+     "        return {'status': status, 'failure': {'rule': 'APPARATUS_IMPORTS', 'detail': str(error)}}, code"),
     ('guard-load-cache-open', GUARD,
      "if not isinstance(getattr(existing, '_apparatus_source', None), bytes):",
      "if False and not isinstance(getattr(existing, '_apparatus_source', None), bytes):"),
@@ -134,7 +149,7 @@ MUTATIONS = [
      '(PermissionError, TimeoutError, KeyboardInterrupt)',
      '(PermissionError, TimeoutError, subprocess.TimeoutExpired, KeyboardInterrupt)'),
     ('guard-round-exit-literal', GUARD,
-     "return {'status': 'BLOCKED', 'error': str(error)}, common.BATCH_EXIT_CODES['FAIL']",
+     "return {'status': 'BLOCKED', 'error': str(error)}, common.aggregate_status('FAIL')[1]",
      "return {'status': 'BLOCKED', 'error': str(error)}, 1"),
     ('guard-preflight-untrusted-exit-map', GUARD,
      '        raise SystemExit(2)',
@@ -161,13 +176,13 @@ MUTATIONS = [
      '    paths = [COMMON, *dict.fromkeys(row[1] for row in selected)]\n    try:',
      '    paths = list(dict.fromkeys(row[1] for row in selected))\n    try:'),
     ('guard-session-exit-literal', GUARD,
-     "return {'status': 'BLOCKED', 'error': str(error)}, common.BATCH_EXIT_CODES['BLOCKED']",
+     "return {'status': 'BLOCKED', 'error': str(error)}, common.aggregate_status('BLOCKED')[1]",
      "return {'status': 'BLOCKED', 'error': str(error)}, 2"),
     ('guard-ruler-exit-literal', GUARD,
-     '}, common.BATCH_EXIT_CODES[status]',
+     '}, code',
      "}, 2 if status == 'BLOCKED' else 1"),
     ('guard-controls-exit-literal', GUARD,
-     "'detail': str(error)}}, common.BATCH_EXIT_CODES['BLOCKED']",
+     "'detail': str(error)}}, common.aggregate_status('BLOCKED')[1]",
      "'detail': str(error)}}, 2"),
     ('guard-unknown-policy-ignored', GUARD,
      "    raise ValueError(f'#991 unknown entry failure policy: {policy}')",
@@ -175,6 +190,21 @@ MUTATIONS = [
 ]
 
 CHECKS = {
+    'guard-aggregation-registration-removed': (
+        'ApparatusInputs.test_guard_failure_is_registered_aggregation_point',
+        '#991 guard failure must remain a registered shared aggregation point'),
+    'guard-round-aggregation-bypassed': (
+        'ImportIsolation.test_guard_exit_codes_use_shared_mapping',
+        '#991 guard failure must call the single shared aggregator: round'),
+    'guard-session-aggregation-bypassed': (
+        'ImportIsolation.test_guard_exit_codes_use_shared_mapping',
+        '#991 guard failure must call the single shared aggregator: session'),
+    'guard-ruler-aggregation-bypassed': (
+        'ImportIsolation.test_guard_exit_codes_use_shared_mapping',
+        '#991 guard failure must call the single shared aggregator: ruler'),
+    'guard-controls-aggregation-bypassed': (
+        'ImportIsolation.test_guard_exit_codes_use_shared_mapping',
+        '#991 guard failure must call the single shared aggregator: controls'),
     'guard-preflight-removed': (
         'ImportIsolation.test_tools_cli_preflight_errors_are_blocked',
         '#166 every CLI preflight failure must produce BLOCKED JSON/2'),

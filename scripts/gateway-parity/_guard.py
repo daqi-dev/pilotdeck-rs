@@ -106,16 +106,17 @@ def _failure(error, policy, common):
     if policy == 'round':
         if isinstance(error, KeyboardInterrupt):
             return None
-        return {'status': 'BLOCKED', 'error': str(error)}, common.BATCH_EXIT_CODES['FAIL']
+        # The historical round report is BLOCKED, but its exit category is FAIL.
+        return {'status': 'BLOCKED', 'error': str(error)}, common.aggregate_status('FAIL')[1]
     if policy == 'session':
-        return {'status': 'BLOCKED', 'error': str(error)}, common.BATCH_EXIT_CODES['BLOCKED']
+        return {'status': 'BLOCKED', 'error': str(error)}, common.aggregate_status('BLOCKED')[1]
     if policy == 'ruler':
         blocked = isinstance(error, (PermissionError, TimeoutError, KeyboardInterrupt))
-        status = 'BLOCKED' if blocked else 'FAIL'
-        return {'status': status, 'failure': {'rule': 'EVIDENCE', 'detail': str(error)}}, common.BATCH_EXIT_CODES[status]
+        status, code = common.aggregate_status('BLOCKED' if blocked else 'FAIL')
+        return {'status': status, 'failure': {'rule': 'EVIDENCE', 'detail': str(error)}}, code
     if policy == 'controls':
         if isinstance(error, common.ApparatusVerificationError):
-            return {'status': 'BLOCKED', 'failure': {'rule': error.rule, 'detail': str(error)}}, common.BATCH_EXIT_CODES['BLOCKED']
+            return {'status': 'BLOCKED', 'failure': {'rule': error.rule, 'detail': str(error)}}, common.aggregate_status('BLOCKED')[1]
         return None
     if policy == 'traceback':
         return None
