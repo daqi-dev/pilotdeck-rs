@@ -118,10 +118,12 @@ mutations = [
      '    }\n'
      '    pub fn indent',
      ['--test', 'html_markdown', 'large_shallow_pages_match_real_ts_bytes_and_stay_fast'],
-     # At this page size the quadratic join's ratio can sit inside the 3x band
-     # (host: 33.96 s / 12.41 s = 2.74x) and the per-sample cap stops it first,
-     # while a faster host reds the ratio. Both are this test's dedicated #978
-     # timing guards; accept either line, but only with the #978 marker.
+     # The quadratic join's ratio was diluted to about 2.7–2.8x on the host by the
+     # CPU worker's repeated provenance (a ~3.8 s constant per sample). After
+     # #978 fix-r2 the worker times conversion only, so the same mutant reds
+     # the 3x band (local: 38.58 s / 9.68 s = 3.99x). The per-sample cap stays
+     # as this test's anti-hang backstop; accept either dedicated #978 line so
+     # a host that trips one first still binds the mutant to this test.
      dict(all=('#978',), any=('did not scale from', 'per-sample budget'))),
     # The same quadratic join on the reparented wide page. The 2 MiB probe
     # (256 KiB/2 MiB, 8x) reds the 22.6x band (linear ~8x) in ~12 s. The
