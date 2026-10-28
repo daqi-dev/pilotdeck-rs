@@ -55,7 +55,7 @@ fn values(items: Vec<JsObject>) -> JsValue {
 /// non-callable, and `valueOf` never yields a primitive) — directly and inside
 /// arrays, whose join converts their elements; a too-deep array joins with
 /// the same "Maximum call stack size exceeded" `RangeError` as TS.
-fn to_number(value: &JsValue) -> Result<f64> {
+pub(crate) fn to_number(value: &JsValue) -> Result<f64> {
     match value {
         JsValue::Object(_) | JsValue::Array(_) => {
             let units = crate::js_value::to_string_units_checked(value).map_err(|error| {
