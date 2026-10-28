@@ -35,7 +35,7 @@ old, new, test = mutations[name]
 def run(label):
     slot = wait_for_slot(root / 'scripts/cargo-slots.sh')
     (out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
-    result = run_owned(['cargo', 'test', '--offline', '-q', '-p', 'pilotdeck-gateway', '--lib', f'host_pump_{test}'], cwd=root / 'src', env=os.environ.copy(), timeout=900)
+    result = run_owned(['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib', f'host_pump_{test}'], cwd=root / 'src', env=os.environ.copy(), timeout=900)
     (out / f'{label}.log').write_text(result.stdout + result.stderr)
     return result
 with mutating_sources(root, [path]) as snapshots:
