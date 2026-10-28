@@ -16,7 +16,7 @@ negative is applied to a copy of the FIRST old-side profile report, the other
 reports are passed through by path, and loadReportPair's distinct-file guard
 still applies. There is no cargo, no listen, no Chrome.
 
-Positive control (the #61 acceptance), fix-r2: only the real reconcile output
+Positive control (the #61 acceptance), fix-r3: only the real reconcile output
 is trusted — there is no second, hand-written accounting here (fix-r1's
 independent Python scan drifted from accounting.mjs's strict comparisons and
 accepted corrupted originals). ``assess_pristine`` reads the pristine run's own
@@ -24,29 +24,36 @@ accepted corrupted originals). ``assess_pristine`` reads the pristine run's own
 ``registration`` present with an empty error array and exactly 72 identities
 matching the exp007 frozen inventory (never an empty set), ``accounting.old``
 and ``accounting.new`` each carrying an ``errors`` array and a denominator of
-exactly 72, an exit code that agrees with the reported status, and zero
-*identity-ledger* error classes — the error classes accounting.mjs itself
-emits for the ledger dimensions (missing / duplicate result, expected one
-attempt, unknown result, unexecuted/interrupted status, skip outside the fixed
-allowlist). Behavioural failures (failed probes, D pending orchestration, skip
-floors, stale comparisons) are honestly red and are deliberately NOT ledger
-defects; the acceptance is the identity ledger, not a green verdict.
+exactly 72, the pair-level ``accounting.errors`` array checked the same way, a
+``status`` from the real reconcile's own enum ("PASS"/"FAIL", run.mjs writes
+accounting.status verbatim), an exit code that agrees with that status, and
+zero *non-behavioural* accounting errors. The behavioural-red classes are a
+whitelist (``BEHAVIORAL_RED``): the honest-red texts the real accounting emits
+for behavioural gaps (failed probes, D pending orchestration, unbound skip
+reasons, execution floors, stale-comparison positioning). Everything else —
+an unknown or empty error text, a renamed class, an A-rewrite variant, the
+``Report must attest config.forbidOnly=true`` attestation, a raw Playwright
+``report.errors`` message — is an accounting defect and FAILs the positive
+control; the acceptance is the identity ledger, not a green verdict.
 
-Nine report-level negatives, each bound to one target identity picked from the
-pristine reconciliation as the first old-side registration that is PASS in
+Twelve report-level negatives, each bound to one target identity picked from
+the pristine reconciliation as the first old-side registration that is PASS in
 every profile, is outside the fixed skip allowlist, and never triggers any
 negative marker in the pristine verdict (the new side honestly stays red on
 its missing surfaces, so it cannot supply a passing target):
 
-  missing-one        delete the identity's spec from the report copy      -> ``report 1: missing result <caseId>``
-  skip-one           flip its single result to ``skipped``                -> ``report 1: skip identity not in fixed allowlist <caseId>``
-  duplicate-one      append a duplicate of its spec entry                 -> ``report 1: duplicate result <caseId>``
-  extra-attempt-one  append a duplicate of its single attempt             -> ``report 1: expected one attempt, got 2: <caseId>``
-  retry-null-one     set its attempt's ``retry`` to null                  -> ``report 1: expected one attempt, got 1: <caseId>``
-  retry-false-one    set its attempt's ``retry`` to false                 -> ``report 1: expected one attempt, got 1: <caseId>``
-  retry-one          set its attempt's ``retry`` to 1                     -> ``report 1: expected one attempt, got 1: <caseId>``
-  unknown-result-one insert a renamed clone spec (unregistered identity)  -> ``report 1: unknown result <mutant caseId>``
-  unknown-status-one  flip its result status to ``interrupted``           -> ``report 1: unexecuted/interrupted status interrupted: <caseId>``
+  missing-one           delete the identity's spec from the report copy      -> ``report 1: missing result <caseId>``
+  skip-one              flip its single result to ``skipped``                -> ``report 1: skip identity not in fixed allowlist <caseId>``
+  duplicate-one         append a duplicate of its spec entry                 -> ``report 1: duplicate result <caseId>``
+  extra-attempt-one     append a duplicate of its single attempt              -> ``report 1: expected one attempt, got 2: <caseId>``
+  retry-null-one        set its attempt's ``retry`` to null                  -> ``report 1: expected one attempt, got 1: <caseId>``
+  retry-false-one       set its attempt's ``retry`` to false                 -> ``report 1: expected one attempt, got 1: <caseId>``
+  retry-one             set its attempt's ``retry`` to 1                     -> ``report 1: expected one attempt, got 1: <caseId>``
+  unknown-result-one    insert a renamed clone spec (unregistered identity)  -> ``report 1: unknown result <mutant caseId>``
+  unknown-status-one    flip its result status to ``interrupted``            -> ``report 1: unexecuted/interrupted status interrupted: <caseId>``
+  a-rewrite-one         insert an ``[A:``-titled clone spec                  -> ``report 1: A rewrite result never credits this ledger (A-class has its own account): <mutant caseId>``
+  forbid-only-one       flip the report copy's ``config.forbidOnly``         -> ``report 1: Report must attest config.forbidOnly=true``
+  playwright-errors-one append a message to the copy's ``errors``            -> ``report 1: #61 injected playwright-level error``
 
 ``caseId`` is the ledger identity ``JSON.stringify([file, full title])``
 exactly as accounting.mjs builds it. The three retry negatives exist because
@@ -89,23 +96,41 @@ NODE = "node"
 # fails the positive control instead of vacuously passing).
 EXPECTED_REGISTRATION = 72
 
+# The only statuses a real ``run.mjs --reconcile`` result carries: the run
+# writes accounting.status verbatim (run.mjs reconcile path), which the
+# producer derives as 'PASS' or 'FAIL' — anything else is not a real
+# reconcile verdict and fails the positive control.
+ALLOWED_STATUSES = ("PASS", "FAIL")
+
 # Appended to the target's leaf title by the unknown-result-one mutant; the
 # resulting full title is an unregistered identity accounting must reject.
 UNKNOWN_IDENTITY_SUFFIX = "#61-unknown-result-one"
 
-# The identity-ledger error classes of the real accounting (accounting.mjs
-# reconcileSingle/reconcile): the pristine originals must carry none of them
-# in either side's errors. Behavioural red (failed probes, D orchestration,
-# skip floors, stale comparisons, metadata) is not a ledger defect.
-LEDGER_CATEGORIES = (
-    "missing result ",
-    "duplicate result ",
-    "expected one attempt, got ",
-    "unknown result ",
-    "unexecuted/interrupted status ",
-    "skip identity not in fixed allowlist ",
+# Appended to the report copy's errors array by the playwright-errors-one
+# mutant; accounting.mjs carries Playwright-level report errors into the
+# verdict verbatim (error.message), so this exact text is the marker.
+PLAYWRIGHT_ERROR_MESSAGE = "#61 injected playwright-level error"
+
+# The honest-red classes of the real accounting, as a WHITELIST (fix-r3): an
+# error text that is none of these is an accounting defect and fails the
+# positive control, so an unknown, empty or renamed class can never slip
+# through. Every prefix is the producer's own wording: accounting.mjs:162
+# (behavioral failure), :135 (D pending orchestration), :151 (unbound skip
+# reason), :173/:174 (execution floors) and baseline-stale.mjs:186/:188 (the
+# pair-level stale-comparison positioning, which the pristine honest-red run
+# legitimately carries). Behavioural red is not a ledger defect; everything
+# else — including the A-rewrite variant, the forbidOnly attestation and raw
+# Playwright report.errors messages — is.
+BEHAVIORAL_RED = (
+    "behavioral failure ",
+    "NOT_RUN_PENDING_ORCHESTRATION ",
+    "skip reason not bound to identity ",
+    "实际执行数 ",
+    "应执行数 ",
+    "NEEDS_HUMAN_CONFIRMATION: evidence-bound old-side nondeterminism ",
+    "Baseline stale must be FAIL at reviewed assertion/callsite on both sides: ",
 )
-A_REWRITE_LEDGER = "A rewrite result never credits"
+SIDE_PREFIX = re.compile(r"^(?:old|new): ")
 REPORT_PREFIX = re.compile(r"^report \d+: ")
 
 # The report-level negatives, in execution order: (name, corruption kind).
@@ -119,6 +144,9 @@ NEGATIVES = [
     ("retry-one", "retry_one"),
     ("unknown-result-one", "unknown_identity"),
     ("unknown-status-one", "unknown_status"),
+    ("a-rewrite-one", "a_rewrite"),
+    ("forbid-only-one", "forbid_only"),
+    ("playwright-errors-one", "playwright_errors"),
 ]
 
 
@@ -154,19 +182,19 @@ def case_id(spec_file, title):
     return json.dumps([spec_file, title], ensure_ascii=False, separators=(",", ":"))
 
 
-def ledger_category(error):
-    """The identity-ledger error class of a real accounting error, or None.
+def is_behavioral_red(error):
+    """True only for the explicitly identified honest-red classes.
 
-    Multi-profile sides prefix each error with ``report N: ``; strip it before
-    matching accounting.mjs's own class prefixes, so the classes stay the
-    producer's wording, not an independent re-derivation."""
-    body = REPORT_PREFIX.sub("", error, count=1)
-    if body.startswith(A_REWRITE_LEDGER):
-        return "unknown result"
-    for prefix in LEDGER_CATEGORIES:
-        if body.startswith(prefix):
-            return prefix.strip()
-    return None
+    Multi-profile sides prefix each error with ``report N: `` and the pair
+    level with ``old: `` / ``new: ``; strip those producer prefixes before the
+    whitelist match, so the classes stay the producer's wording. Anything
+    else — an unknown or empty text, a non-string, a renamed class — is not
+    behavioural red and therefore an accounting defect."""
+    if not isinstance(error, str):
+        return False
+    body = SIDE_PREFIX.sub("", error, count=1)
+    body = REPORT_PREFIX.sub("", body, count=1)
+    return body.startswith(BEHAVIORAL_RED)
 
 
 def assess_pristine(result, exit_code):
@@ -175,9 +203,12 @@ def assess_pristine(result, exit_code):
     Returns a list of failures; empty means the pristine identity ledger
     holds. Every shape but the exact expected one fails closed: a missing or
     malformed registration, a non-array errors field, a denominator that is
-    not exactly the registered identity count (an empty or drifted
-    inventory), an exit code disagreeing with the reported status, or any
-    identity-ledger error class reported by the real accounting."""
+    not exactly the registered identity count (an empty or drifted inventory
+    — the denominator mirrors registration.actual and only proves the frozen
+    inventory is 72, never that all 72 ran), an exit code disagreeing with
+    the reported status, a status outside the real reconcile's own enum, or
+    any non-behavioural accounting error on either side or at the pair
+    level."""
     failures = []
     if not isinstance(result, dict):
         return [f"result.json is not an object: {type(result).__name__}"]
@@ -198,33 +229,38 @@ def assess_pristine(result, exit_code):
             failures.append(f"registration actual {actual} != {EXPECTED_REGISTRATION} registered identities")
         if isinstance(actual, int) and isinstance(expected, int) and actual != expected:
             failures.append(f"registration actual {actual} != exp007 expected {expected}")
-        if isinstance(actual, int) and actual <= 0:
-            failures.append(f"registration is empty: {actual} identities")
     accounting = result.get("accounting")
     if not isinstance(accounting, dict):
         failures.append(f"result.json has no accounting object: {accounting!r}")
         return failures
-    for side in ("old", "new"):
-        account = accounting.get(side)
+    for path, account, has_denominator in (
+            ("accounting.old", accounting.get("old"), True),
+            ("accounting.new", accounting.get("new"), True),
+            ("accounting", accounting, False)):
         if not isinstance(account, dict):
-            failures.append(f"accounting.{side} is not an object: {account!r}")
+            failures.append(f"{path} is not an object: {account!r}")
             continue
         errors = account.get("errors")
         if not isinstance(errors, list):
-            failures.append(f"accounting.{side}.errors is not an array: {errors!r}")
+            failures.append(f"{path}.errors is not an array: {errors!r}")
             errors = []
-        denominator = account.get("denominator")
-        if not isinstance(denominator, int) or denominator != EXPECTED_REGISTRATION:
-            failures.append(f"accounting.{side} denominator {denominator!r} != "
-                            f"{EXPECTED_REGISTRATION} registered identities")
-        ledger = [error for error in errors if ledger_category(error)]
-        if ledger:
-            failures.append(f"accounting.{side} reports identity-ledger errors: "
-                            f"{ledger[:2]} ({len(ledger)} total)")
+        if has_denominator:
+            denominator = account.get("denominator")
+            if not isinstance(denominator, int) or denominator != EXPECTED_REGISTRATION:
+                failures.append(f"{path} denominator {denominator!r} != "
+                                f"{EXPECTED_REGISTRATION} registered identities")
+        defects = [error for error in errors if not is_behavioral_red(error)]
+        if defects:
+            failures.append(f"{path} reports non-behavioural accounting error(s): "
+                            f"{defects[:2]} ({len(defects)} total)")
     status = result.get("status")
-    green = isinstance(status, str) and status.startswith("PASS")
-    if green != (exit_code == 0):
-        failures.append(f"reconcile exit {exit_code} disagrees with reported status {status!r}")
+    if status not in ALLOWED_STATUSES:
+        failures.append(f"result status {status!r} is not one of the real reconcile "
+                        f"statuses {ALLOWED_STATUSES} (run.mjs writes accounting.status)")
+    else:
+        green = status == "PASS"
+        if green != (exit_code == 0):
+            failures.append(f"reconcile exit {exit_code} disagrees with reported status {status!r}")
     return failures
 
 
@@ -288,6 +324,25 @@ def apply_negative(report, spec_file, title, kind):
         spec["tests"][0]["results"][0]["status"] = "interrupted"
         spec["tests"][0]["status"] = "interrupted"
         return "", f"unexecuted/interrupted status interrupted: {identity}"
+    if kind == "a_rewrite":
+        # accounting.mjs routes any '[A:'-titled identity away from the
+        # baseline ledger ("unknown result") into its own account and rejects
+        # it there; the marker is that rejection, not the unknown-result one.
+        clone = json.loads(json.dumps(spec))
+        clone["title"] = f"[A:{clone['title']}"
+        suite["specs"].insert(index + 1, clone)
+        return "", (f"A rewrite result never credits this ledger "
+                    f"(A-class has its own account): {case_id(spec_file, '[A:' + title)}")
+    if kind == "forbid_only":
+        # The whole report copy loses its forbidOnly attestation; accounting
+        # rejects the report itself (not an identity-scoped marker).
+        report.setdefault("config", {})["forbidOnly"] = False
+        return "", "Report must attest config.forbidOnly=true"
+    if kind == "playwright_errors":
+        # A Playwright-level error in the copy's own errors array is carried
+        # into the accounting verdict verbatim; the marker is the message.
+        report.setdefault("errors", []).append({"message": PLAYWRIGHT_ERROR_MESSAGE})
+        return "", PLAYWRIGHT_ERROR_MESSAGE
     return f"unknown negative kind {kind!r}", ""
 
 
@@ -382,8 +437,9 @@ def main():
         record("pristine", "PASS",
                f"real reconcile: exit {pristine['exit']} agrees with status "
                f"{pristine['result']['status']!r} (honest behavioural red preserved); "
-               f"0 identity-ledger error classes in "
-               f"{len(accounting['old']['errors'])}+{len(accounting['new']['errors'])} side errors; "
+               f"0 non-behavioural accounting errors in "
+               f"{len(accounting['old']['errors'])}+{len(accounting['new']['errors'])} side "
+               f"and {len(accounting['errors'])} pair-level errors; "
                f"denominators {accounting['old']['denominator']}/{accounting['new']['denominator']} "
                f"== registration {EXPECTED_REGISTRATION}")
 
