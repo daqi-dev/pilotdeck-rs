@@ -4,6 +4,57 @@
 HTTP bytes are forwarded unchanged. WS payloads are decoded after the upgrade
 for A4 no-forwarding evidence; both direction and connection order are retained.
 """
+# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution.  It must run before every other standard-library import: a
+# shadowed argparse/pathlib would otherwise execute before this check.  ``sys``
+# is already initialised by the interpreter, so it is the only safe import.
+import sys
+
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
+import importlib.util
+from pathlib import Path
+import tempfile
+
+# -B only stops cache writes, so redirect the bytecode prefix too (fix-r5).
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
+sys.dont_write_bytecode = True
+# CPython has already compiled the CLI entry before it can acquire a lease.
+# Capture that executing object, not a later read of the restored entry file.
+_apparatus_code = sys._getframe().f_code
+
+# Load the one guard by explicit path, never sys.path: a same-named package or
+# extension module beside the source would win before the scan (fix-r6 P1).
+# Inline on purpose: importing the guard is what this block defends.
+_here = Path(__file__).resolve().parent
+_apparatus = _here.parent if _here.name == 'controls' else _here
+_guard_path = _apparatus / '_guard.py'
+_guard = sys.modules.get('_guard')
+if not (getattr(_guard, '__file__', None)
+        and Path(_guard.__file__).resolve() == _guard_path
+        and isinstance(getattr(_guard, '_apparatus_source', None), bytes)):
+    _spec = importlib.util.spec_from_file_location('_guard', _guard_path)
+    _guard = importlib.util.module_from_spec(_spec)
+    sys.modules['_guard'] = _guard
+    _guard_source = _guard_path.read_bytes()
+    try:
+        exec(compile(_guard_source, str(_guard_path), 'exec'), _guard.__dict__)
+    except BaseException:
+        sys.modules.pop('_guard', None)
+        raise
+    _guard._apparatus_source = _guard_source
+if Path(_guard.__file__).resolve() != _guard_path:
+    raise RuntimeError(f'_guard: loaded {_guard.__file__}, expected {_guard_path}')
+
+_load = _guard.load
+_has_git_checkout = _guard._has_git_checkout
+_verify_cli_imports = _guard.verify_cli_imports
+run_entry = _guard.run_entry
+common = _load('common', _apparatus / 'common.py')
+# <<< apparatus bootstrap
+
 import argparse
 import asyncio
 import json
@@ -59,7 +110,7 @@ class Decoder:
             self.emit(row)
 
 
-async def main(args):
+async def serve(args):
     counter = 0
     sequence = 0
     file = args.out.open('w', buffering=1)
@@ -104,7 +155,7 @@ async def main(args):
         await server.serve_forever()
 
 
-if __name__ == '__main__':
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--port', type=int, required=True)
     ap.add_argument('--upstream', type=int, required=True)
@@ -112,4 +163,9 @@ if __name__ == '__main__':
     args = ap.parse_args()
     if not all(28000 <= port <= 28999 for port in (args.port, args.upstream)):
         ap.error('28xxx ports only')
-    asyncio.run(main(args))
+    asyncio.run(serve(args))
+    return 0
+
+
+if __name__ == '__main__':
+    run_entry(main)

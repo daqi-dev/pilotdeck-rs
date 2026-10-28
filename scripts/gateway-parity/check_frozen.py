@@ -1,5 +1,55 @@
 #!/usr/bin/env python3
 """Check coordinator-approved hash manifest; absence means DRAFT, never PASS."""
+# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution.  It must run before every other standard-library import: a
+# shadowed argparse/pathlib would otherwise execute before this check.  ``sys``
+# is already initialised by the interpreter, so it is the only safe import.
+import sys
+
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
+import importlib.util
+from pathlib import Path
+import tempfile
+
+# -B only stops cache writes, so redirect the bytecode prefix too (fix-r5).
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
+sys.dont_write_bytecode = True
+# CPython has already compiled the CLI entry before it can acquire a lease.
+# Capture that executing object, not a later read of the restored entry file.
+_apparatus_code = sys._getframe().f_code
+
+# Load the one guard by explicit path, never sys.path: a same-named package or
+# extension module beside the source would win before the scan (fix-r6 P1).
+# Inline on purpose: importing the guard is what this block defends.
+_here = Path(__file__).resolve().parent
+_apparatus = _here.parent if _here.name == 'controls' else _here
+_guard_path = _apparatus / '_guard.py'
+_guard = sys.modules.get('_guard')
+if not (getattr(_guard, '__file__', None)
+        and Path(_guard.__file__).resolve() == _guard_path
+        and isinstance(getattr(_guard, '_apparatus_source', None), bytes)):
+    _spec = importlib.util.spec_from_file_location('_guard', _guard_path)
+    _guard = importlib.util.module_from_spec(_spec)
+    sys.modules['_guard'] = _guard
+    _guard_source = _guard_path.read_bytes()
+    try:
+        exec(compile(_guard_source, str(_guard_path), 'exec'), _guard.__dict__)
+    except BaseException:
+        sys.modules.pop('_guard', None)
+        raise
+    _guard._apparatus_source = _guard_source
+if Path(_guard.__file__).resolve() != _guard_path:
+    raise RuntimeError(f'_guard: loaded {_guard.__file__}, expected {_guard_path}')
+
+_load = _guard.load
+_has_git_checkout = _guard._has_git_checkout
+_verify_cli_imports = _guard.verify_cli_imports
+run_entry = _guard.run_entry
+common = _load('common', _apparatus / 'common.py')
+# <<< apparatus bootstrap
 import argparse
 import json
 from pathlib import Path
@@ -8,86 +58,6 @@ import subprocess
 import sys
 import tempfile
 
-# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
-# Load apparatus modules by explicit path, never sys.path: a same-named package
-# or extension module beside the source would win before the scan (fix-r6 P1).
-# Inline on purpose: importing common.py is what this block defends.  -B only
-# stops cache writes, so redirect the bytecode prefix too (fix-r5).
-import importlib.util, sys, tempfile
-from pathlib import Path
-
-# -I keeps PYTHONPATH, user site and the script directory out of module
-# resolution.  Without it, exit before loading anything and print the command.
-if not sys.flags.isolated:
-    raise SystemExit(f'run with -I: python3 -I {Path(__file__).resolve()}')
-
-sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
-sys.dont_write_bytecode = True
-# CPython has already compiled the CLI entry before it can acquire a lease.
-# Capture that executing object, not a later read of the restored entry file.
-_apparatus_code = sys._getframe().f_code
-
-
-def _load(name, path):
-    path = Path(path).resolve()
-    existing = sys.modules.get(name)
-    existing_file = getattr(existing, '__file__', None)
-    if existing is not None and existing_file and Path(existing_file).resolve() == path:
-        if not isinstance(getattr(existing, '_apparatus_source', None), bytes):
-            raise RuntimeError(f'#166 unverified apparatus module cache: {path}')
-        return existing
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    try:
-        source = path.read_bytes()
-        exec(compile(source, str(path), 'exec'), module.__dict__)
-    except BaseException:
-        sys.modules.pop(name, None)
-        raise
-    module._apparatus_source = source
-    if Path(module.__file__).resolve() != path:
-        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
-    return module
-
-
-
-def _has_git_checkout(root):
-    """Missing checkout metadata permits static use; broken metadata does not."""
-    import os
-    if 'GIT_DIR' in os.environ:
-        return True
-    for directory in (root, *root.parents):
-        try:
-            (directory / '.git').lstat()
-        except FileNotFoundError:
-            continue
-        return True
-    return False
-
-
-def _verify_cli_imports():
-    # This trust root uses only stdlib + Git, never a helper from disk common:
-    # that module's verifier can itself be the active negative-control mutant.
-    import subprocess
-    from types import ModuleType
-    root = _apparatus.parent.parent
-    if not _has_git_checkout(root):
-        return  # Static exports have no HEAD; keep their existing checks.
-    head = subprocess.check_output(['git', '-C', str(root), 'rev-parse', '--verify', 'HEAD'],
-                                   timeout=30).decode().strip()
-    source = subprocess.check_output(['git', '-C', str(root), 'show',
-                                      f'{head}:scripts/gateway-parity/common.py'], timeout=30)
-    trusted = ModuleType('pristine_cli_verifier')
-    trusted.__file__ = str(_apparatus / 'common.py')
-    exec(compile(source, trusted.__file__, 'exec'), trusted.__dict__)
-    trusted.verify_loaded_apparatus(head)
-
-
-_here = Path(__file__).resolve().parent
-_apparatus = _here.parent if _here.name == 'controls' else _here
-common = _load('common', _apparatus / 'common.py')
-# <<< apparatus bootstrap
 
 A2_SCRIPTS = common.A2_SCRIPTS
 ROOT = common.ROOT
@@ -284,9 +254,4 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
-    try:
-        _verify_cli_imports()
-    except (Exception, KeyboardInterrupt) as error:
-        print(json.dumps({'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))
-        raise SystemExit(2)
-    raise SystemExit(main())
+    run_entry(main)

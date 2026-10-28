@@ -105,7 +105,7 @@ SITE_SUFFIXES = ('.pth',)
 # A5.3 registers E1 adapters here so A2 continues to reject unknown scripts.
 # The new hashes require coordinator review/registration before merge (plan 005).
 A2_SCRIPTS = (
-    'build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'common.py', 'compare.py',
+    '_guard.py', 'build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'common.py', 'compare.py',
     'controls/run_all.py', 'controls/prerequisites.py', 'driver.mts', 'mock.mjs',
     'observer.py', 'run_round.py', 'test_safety.py', 'watcher.mjs',
     'session_domain.py', 'session_observations.mjs', 'controls/session_domain.py',

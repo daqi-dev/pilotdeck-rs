@@ -1,5 +1,56 @@
 #!/usr/bin/env python3
 """Bounded offline regressions for lock lifecycle, corrupt evidence and observer."""
+# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution.  It must run before every other standard-library import: a
+# shadowed argparse/pathlib would otherwise execute before this check.  ``sys``
+# is already initialised by the interpreter, so it is the only safe import.
+import sys
+
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
+import importlib.util
+from pathlib import Path
+import tempfile
+
+# -B only stops cache writes, so redirect the bytecode prefix too (fix-r5).
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
+sys.dont_write_bytecode = True
+# CPython has already compiled the CLI entry before it can acquire a lease.
+# Capture that executing object, not a later read of the restored entry file.
+_apparatus_code = sys._getframe().f_code
+
+# Load the one guard by explicit path, never sys.path: a same-named package or
+# extension module beside the source would win before the scan (fix-r6 P1).
+# Inline on purpose: importing the guard is what this block defends.
+_here = Path(__file__).resolve().parent
+_apparatus = _here.parent if _here.name == 'controls' else _here
+_guard_path = _apparatus / '_guard.py'
+_guard = sys.modules.get('_guard')
+if not (getattr(_guard, '__file__', None)
+        and Path(_guard.__file__).resolve() == _guard_path
+        and isinstance(getattr(_guard, '_apparatus_source', None), bytes)):
+    _spec = importlib.util.spec_from_file_location('_guard', _guard_path)
+    _guard = importlib.util.module_from_spec(_spec)
+    sys.modules['_guard'] = _guard
+    _guard_source = _guard_path.read_bytes()
+    try:
+        exec(compile(_guard_source, str(_guard_path), 'exec'), _guard.__dict__)
+    except BaseException:
+        sys.modules.pop('_guard', None)
+        raise
+    _guard._apparatus_source = _guard_source
+if Path(_guard.__file__).resolve() != _guard_path:
+    raise RuntimeError(f'_guard: loaded {_guard.__file__}, expected {_guard_path}')
+
+_load = _guard.load
+_has_git_checkout = _guard._has_git_checkout
+_verify_cli_imports = _guard.verify_cli_imports
+run_entry = _guard.run_entry
+common = _load('common', _apparatus / 'common.py')
+# <<< apparatus bootstrap
+
 import json
 import multiprocessing
 import os
@@ -15,86 +66,6 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
-# Load apparatus modules by explicit path, never sys.path: a same-named package
-# or extension module beside the source would win before the scan (fix-r6 P1).
-# Inline on purpose: importing common.py is what this block defends.  -B only
-# stops cache writes, so redirect the bytecode prefix too (fix-r5).
-import importlib.util, sys, tempfile
-from pathlib import Path
-
-# -I keeps PYTHONPATH, user site and the script directory out of module
-# resolution.  Without it, exit before loading anything and print the command.
-if not sys.flags.isolated:
-    raise SystemExit(f'run with -I: python3 -I {Path(__file__).resolve()}')
-
-sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
-sys.dont_write_bytecode = True
-# CPython has already compiled the CLI entry before it can acquire a lease.
-# Capture that executing object, not a later read of the restored entry file.
-_apparatus_code = sys._getframe().f_code
-
-
-def _load(name, path):
-    path = Path(path).resolve()
-    existing = sys.modules.get(name)
-    existing_file = getattr(existing, '__file__', None)
-    if existing is not None and existing_file and Path(existing_file).resolve() == path:
-        if not isinstance(getattr(existing, '_apparatus_source', None), bytes):
-            raise RuntimeError(f'#166 unverified apparatus module cache: {path}')
-        return existing
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    try:
-        source = path.read_bytes()
-        exec(compile(source, str(path), 'exec'), module.__dict__)
-    except BaseException:
-        sys.modules.pop(name, None)
-        raise
-    module._apparatus_source = source
-    if Path(module.__file__).resolve() != path:
-        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
-    return module
-
-
-
-def _has_git_checkout(root):
-    """Missing checkout metadata permits static use; broken metadata does not."""
-    import os
-    if 'GIT_DIR' in os.environ:
-        return True
-    for directory in (root, *root.parents):
-        try:
-            (directory / '.git').lstat()
-        except FileNotFoundError:
-            continue
-        return True
-    return False
-
-
-def _verify_cli_imports():
-    # This trust root uses only stdlib + Git, never a helper from disk common:
-    # that module's verifier can itself be the active negative-control mutant.
-    import subprocess
-    from types import ModuleType
-    root = _apparatus.parent.parent
-    if not _has_git_checkout(root):
-        return  # Static exports have no HEAD; keep their existing checks.
-    head = subprocess.check_output(['git', '-C', str(root), 'rev-parse', '--verify', 'HEAD'],
-                                   timeout=30).decode().strip()
-    source = subprocess.check_output(['git', '-C', str(root), 'show',
-                                      f'{head}:scripts/gateway-parity/common.py'], timeout=30)
-    trusted = ModuleType('pristine_cli_verifier')
-    trusted.__file__ = str(_apparatus / 'common.py')
-    exec(compile(source, trusted.__file__, 'exec'), trusted.__dict__)
-    trusted.verify_loaded_apparatus(head)
-
-
-_here = Path(__file__).resolve().parent
-_apparatus = _here.parent if _here.name == 'controls' else _here
-common = _load('common', _apparatus / 'common.py')
-# <<< apparatus bootstrap
 
 APPARATUS_PROBES = common.APPARATUS_PROBES
 DATA_FILES = common.DATA_FILES
@@ -587,12 +558,14 @@ class CheckoutProvenance(unittest.TestCase):
         self.folder = Path(self.temp.name).resolve()
 
     def verifiers(self, root):
-        # Use each actual entry's detector, including the controls' library path.
+        # Use the one guard's detector for every entry, plus the library copy.
+        apparatus = root / 'scripts/gateway-parity'
         for index, name in enumerate(self.ENTRIES):
             alias = 'checkout_entry_' + str(index)
             self.addCleanup(sys.modules.pop, alias, None)
             entry = _load(alias, common.SCRIPT / name)
-            with patch.object(entry, '_apparatus', root / 'scripts/gateway-parity'):
+            with patch.object(entry, '_apparatus', apparatus), \
+                    patch.object(_guard, 'APPARATUS', apparatus):
                 yield name, entry._verify_cli_imports
         with patch.object(common, 'ROOT', root):
             yield 'common.verify_loaded_apparatus', common.verify_loaded_apparatus
@@ -661,9 +634,15 @@ class CheckoutProvenance(unittest.TestCase):
             self.assertEqual(len(matches), 1, '#166 checkout detector must have one definition')
             return ast.dump(matches[0], include_attributes=False)
         expected = detector(common.SCRIPT / 'common.py')
+        # The CLI trust root and the library lock share one copied function so
+        # the two checkout rules cannot drift apart; entries only alias it.
+        self.assertEqual(detector(common.SCRIPT / '_guard.py'), expected,
+                         '#166 CLI and library checkout detectors must match: _guard.py')
         for name in self.ENTRIES:
-            self.assertEqual(detector(common.SCRIPT / name), expected,
-                             '#166 CLI and library checkout detectors must match: ' + name)
+            tree = ast.parse((common.SCRIPT / name).read_bytes())
+            self.assertFalse(any(isinstance(node, ast.FunctionDef)
+                                 and node.name == '_has_git_checkout' for node in tree.body),
+                             '#991 entry must not carry a private checkout detector: ' + name)
 
 
 class ImportIsolation(unittest.TestCase):
@@ -862,7 +841,19 @@ class ImportIsolation(unittest.TestCase):
         blocks = [node for node in tree.body if isinstance(node, ast.If)
                   and ast.unparse(node.test) == "__name__ == '__main__'"]
         self.assertEqual(len(blocks), 1, '#166 CLI wrapper fixture must find exactly one dispatch')
-        command = 'import json, subprocess\n' + body + '\n' + ast.get_source_segment(source, blocks[0])
+        command = (
+            'import json, subprocess\n'
+            'import importlib.util, sys\n'
+            'from pathlib import Path\n'
+            f"_spec = importlib.util.spec_from_file_location('_guard', {str(common.SCRIPT / '_guard.py')!r})\n"
+            "_guard = importlib.util.module_from_spec(_spec)\n"
+            "_spec.loader.exec_module(_guard)\n"
+            "run_entry = _guard.run_entry\n"
+            + body + '\n'
+            # Inject the candidate preflight only; the dispatch and classifier
+            # under test stay the real ones.
+            "_guard.verify_cli_imports = _verify_cli_imports\n"
+            + ast.get_source_segment(source, blocks[0]))
         return subprocess.run([sys.executable, '-I', '-B', '-c', command],
                               capture_output=True, text=True, timeout=10)
 
@@ -1216,6 +1207,9 @@ class ImportIsolation(unittest.TestCase):
                                                         side_effect=refuse if stage == 'load' else None))
                         stack.enter_context(patch.object(prerequisites, '_verify_cli_imports',
                                                         side_effect=refuse if stage == 'verify' else None))
+                        # The one guard owns the initial preflight; only that
+                        # hook is stubbed so main's late verifier stays real.
+                        stack.enter_context(patch.object(_guard, 'verify_cli_imports', lambda: None))
                         path = self.folder / (route + stage + error_type.__name__)
                         stack.enter_context(patch.object(sys, 'argv', ['check_ruler', '--output', str(path)]))
                         output = stack.enter_context(redirect_stdout(io.StringIO()))
@@ -1329,6 +1323,7 @@ entry.save = save
 entry._load = lambda *a: SimpleNamespace(run_controls=cancel if phase == 'controls' else lambda *a: {
     'cases': {}, 'prerequisites': {'passed': True, 'inputSha256': {}, 'auditSha256': 'audit'}})
 entry._verify_cli_imports = lambda: None
+entry._guard.verify_cli_imports = lambda: None
 source = Path(path).read_text()
 block, = [node for node in ast.parse(source).body if isinstance(node, ast.If)
           and ast.unparse(node.test) == "__name__ == '__main__'"]
@@ -1391,6 +1386,9 @@ exec(compile(ast.get_source_segment(source, block), path, 'exec'),
                                                         side_effect=refuse if stage == 'load' else None))
                         stack.enter_context(patch.object(prerequisites, '_verify_cli_imports',
                                                         side_effect=refuse if stage == 'verify' else None))
+                        # The one guard owns the initial preflight; the real
+                        # run_entry classifier stays under test below.
+                        stack.enter_context(patch.object(_guard, 'verify_cli_imports', lambda: None))
                         stack.enter_context(patch.object(sys, 'argv', ['run_all', '--output', str(self.folder / 'out'),
                             *(['--offline'] if route == 'offline' else ['--source', str(self.folder / 'source')])]))
                         output = stack.enter_context(redirect_stdout(io.StringIO()))
@@ -1403,15 +1401,17 @@ exec(compile(ast.get_source_segment(source, block), path, 'exec'),
                         except (Exception, KeyboardInterrupt) as error:
                             escaped = error
                         self.assertEqual(reached, [stage], message + ': real module_at reached')
+                        self.assertIsNone(escaped, message + ': one guard classified the error')
+                        try:
+                            report = json.loads(output.getvalue())
+                        except ValueError as error:
+                            self.fail('#166 fix-r10 invalid standalone JSON; invalid control: ' + str(error))
                         if stage == 'work':
-                            self.assertIs(type(escaped), error_type, message + ': ordinary work not promoted')
-                            self.assertEqual(output.getvalue(), '', message)
+                            blocked = error_type is KeyboardInterrupt
+                            self.assertEqual((report.get('status'), code),
+                                             ('BLOCKED', 2) if blocked else ('FAIL', 1), message)
+                            self.assertEqual(report.get('failure', {}).get('rule'), 'EVIDENCE', message)
                         else:
-                            self.assertIsNone(escaped, message + ': escaped ' + repr(escaped))
-                            try:
-                                report = json.loads(output.getvalue())
-                            except ValueError as error:
-                                self.fail('#166 fix-r10 invalid standalone JSON; invalid control: ' + str(error))
                             self.assertEqual((report.get('status'), code), ('BLOCKED', 2), message)
                             self.assertEqual(report.get('failure', {}).get('rule'), 'APPARATUS_IMPORTS', message)
                         self.assertEqual(errors.getvalue(), '', message + ': no traceback')
@@ -1747,14 +1747,16 @@ class ApparatusInputs(unittest.TestCase):
         self.assertEqual(unknown_apparatus_files(self.root), [])
 
     def test_a2_entries_share_one_verbatim_path_bootstrap(self):
-        # Every A2 entry that touches common must carry the same inline block.
-        # It cannot move into common.py (importing common is what it defends),
-        # so the machine check is what stops a future entry from reverting to
-        # ``from common import`` and being shadowed before the scan (fix-r6 P1).
+        # Every A2 entry that touches common carries one identical inline
+        # preamble: -I before other stdlib imports, bytecode redirect, capture
+        # the executing code object, load _guard by explicit path.  It cannot
+        # move into common.py (importing common is what it defends), so the
+        # machine check stops a future entry from reverting to ``from common
+        # import``/``sys.path`` or from copying the guard body again.
         folder = Path(__file__).resolve().parent
         blocks = {}
         for name in common.A2_SCRIPTS + common.A3_SCRIPTS:
-            if name == 'common.py' or not name.endswith('.py'):
+            if name in ('common.py', '_guard.py') or not name.endswith('.py'):
                 continue
             text = (folder / name).read_text(encoding='utf-8')
             if 'common' not in text and '_load(' not in text:
@@ -1769,7 +1771,7 @@ class ApparatusInputs(unittest.TestCase):
             self.assertNotRegex(prefix, APPARATUS_IMPORT, name)
         self.assertEqual(sorted(blocks), sorted([
             'build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'compare.py',
-            'run_round.py', 'session_domain.py', 'test_safety.py',
+            'observer.py', 'run_round.py', 'session_domain.py', 'test_safety.py',
             'controls/run_all.py', 'controls/prerequisites.py',
             'controls/session_domain.py']))
         self.assertEqual(len(set(blocks.values())), 1,
@@ -1779,6 +1781,62 @@ class ApparatusInputs(unittest.TestCase):
         self.assertLess(block.index('sys.flags.isolated'),
                         block.index('sys.pycache_prefix'),
                         'isolated-mode guard must precede module loading')
+        # #701 item 2: the -I guard must precede every other stdlib import, so a
+        # shadowed argparse/pathlib cannot execute before it.  ``sys`` is the
+        # only import allowed ahead of the check (the interpreter preloads it).
+        import ast
+        for name, text in blocks.items():
+            tree = ast.parse(((folder / name).read_text(encoding='utf-8')))
+            imports = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
+            first = imports[0]
+            self.assertIsInstance(first, ast.Import, '#991 first import must be sys: ' + name)
+            self.assertEqual([alias.name for alias in first.names], ['sys'],
+                             '#991 first import must be sys: ' + name)
+            checks = [node for node in ast.walk(tree)
+                      if isinstance(node, ast.If)
+                      and 'sys.flags.isolated' in ast.unparse(node.test)]
+            self.assertEqual(len(checks), 1, '#991 one isolated-mode check: ' + name)
+            later = [node.lineno for node in imports if node is not first]
+            self.assertTrue(later, '#991 entry imports beyond sys: ' + name)
+            self.assertLess(checks[0].lineno, min(later),
+                            '#991 -I check must precede every other import: ' + name)
+
+    def test_cli_main_is_only_the_one_guard_call(self):
+        # The guard's single implementation is only useful if no entry keeps a
+        # private bootstrap/classifier.  Each product CLI __main__ is exactly
+        # ``run_entry(main)``; the test runner test_safety.py stays
+        # unittest.main() so the matrix itself can run before commit.
+        import ast
+        folder = Path(__file__).resolve().parent
+        entries = ('build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'compare.py',
+                   'observer.py', 'run_round.py', 'session_domain.py',
+                   'controls/run_all.py', 'controls/session_domain.py')
+        expected = "if __name__ == '__main__':\n    run_entry(main)"
+        for name in entries:
+            with self.subTest(entry=name):
+                text = (folder / name).read_text(encoding='utf-8')
+                tree = ast.parse(text)
+                blocks = [node for node in tree.body if isinstance(node, ast.If)
+                          and ast.unparse(node.test) == "__name__ == '__main__'"]
+                self.assertEqual(len(blocks), 1, '#991 one __main__ dispatch: ' + name)
+                self.assertEqual(ast.unparse(blocks[0]), expected,
+                                 '#991 __main__ must be exactly run_entry(main): ' + name)
+                self.assertFalse(any(isinstance(node, (ast.Try, ast.ExceptHandler))
+                                     for node in ast.walk(blocks[0])),
+                                 '#991 no private except classification: ' + name)
+                entry = _load('guard_shape_' + name.replace('/', '_')[:-3], folder / name)
+                self.assertIs(entry.run_entry, _guard.run_entry,
+                              '#991 entry must bind the one run_entry: ' + name)
+                for private in ('_load', '_has_git_checkout', '_verify_cli_imports'):
+                    self.assertFalse(any(isinstance(node, ast.FunctionDef) and node.name == private
+                                         for node in tree.body),
+                                     f'#991 {name} must alias, not redefine, {private}')
+        # A library-only entry has no dispatch but still aliases the guard.
+        prerequisites = _load('guard_shape_prerequisites', folder / 'controls/prerequisites.py')
+        self.assertIs(prerequisites._load, _guard.load)
+        self.assertIs(prerequisites._verify_cli_imports, _guard.verify_cli_imports)
+        self.assertIs(_load, _guard.load)
+        self.assertIs(run_entry, _guard.run_entry)
 
     def test_a2_entries_never_resolve_apparatus_through_sys_path(self):
         # Covers entries that do not mention ``common`` but still import a
@@ -1816,6 +1874,7 @@ class ApparatusInputs(unittest.TestCase):
         self.assertIn('observer', APPARATUS_MODULES, '#701 A2 observer must be guarded')
         self.assertIn('run_all', APPARATUS_MODULES, '#701 A2 run_all must be guarded')
         self.assertIn('check_schema', APPARATUS_MODULES, '#701 A3 module must be guarded')
+        self.assertIn('_guard', APPARATUS_MODULES, '#991 the one guard must be guarded')
         for name in common.A2_SCRIPTS + common.A3_SCRIPTS:
             if not name.endswith('.py'):
                 continue
@@ -1856,6 +1915,7 @@ class ApparatusInputs(unittest.TestCase):
                           "raise RuntimeError('controls/common.py must not be loaded')\n",
                           encoding='utf-8')
         saved = sys.modules.get('common')
+        saved_guard = sys.modules.get('_guard')
         try:
             module = _load('probe_controls_prerequisites',
                            tree / 'controls/prerequisites.py')
@@ -1863,10 +1923,11 @@ class ApparatusInputs(unittest.TestCase):
                              (tree / 'common.py').resolve())
             self.assertFalse(marker.exists())
         finally:
-            if saved is None:
-                sys.modules.pop('common', None)
-            else:
-                sys.modules['common'] = saved
+            for name, previous in (('common', saved), ('_guard', saved_guard)):
+                if previous is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = previous
         after = subprocess.check_output(git_status, timeout=30)
         self.assertEqual(after, before, 'test wrote into the real apparatus tree')
 
