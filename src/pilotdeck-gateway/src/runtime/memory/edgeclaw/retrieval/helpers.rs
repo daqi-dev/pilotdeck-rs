@@ -203,6 +203,14 @@ pub fn render_user_summary_block(user_summary: &JsObject) -> Vec<JsString> {
             let text = match item {
                 JsValue::String(text) => text.clone(),
                 JsValue::Undefined | JsValue::Null => JsString::default(),
+                // `identityBackground` is a `string[]` in the TS contract
+                // (`core/types.ts:73`) and in the real producer:
+                // `FileMemoryStore::execute("getUserSummary")` parses the
+                // user-profile markdown through `sections`/`facts` into
+                // `Vec<String>` and re-encodes it with `strings`
+                // (`file_memory.rs:1746-1763`). No wire JSON reaches this arm,
+                // so `String(value)` cannot overflow here; only internal
+                // strings (and test-only scalars) are converted.
                 other => JsString::from_utf16(to_string_units(other).unwrap_or_default()),
             };
             lines.push(concat(&[&prefix, &text]));
