@@ -6,12 +6,16 @@ Run from the repository root after the work is committed:
 
     CARGO_TARGET_DIR=<absolute> python3 \
         src/pilotdeck-gateway/tests/fixtures/regeneration-masks/negative.py \
-        _tmp/20261026-issue-953/negative-regeneration-masks
+        _tmp/20261026-issue-953/negative-regeneration-masks-<attempt>
 
 Each row runs the positive test, mutates `common/regeneration_masks.rs`, reruns
 the same exact test, and restores the bytes before the next row. All rows are
 collected before the summary; any non-KILLED row exits 1. Cargo uses the
 caller's CARGO_TARGET_DIR and never `-q`.
+
+The output directory must be missing or empty: reusing one that already holds
+evidence would overwrite the previous run's original logs. Every log is created
+exclusively, so a rerun needs a new directory.
 """
 import json
 import os
@@ -19,7 +23,8 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (exclusive_write, mutating_sources,
+                              new_output_directory, run_owned, wait_for_slot)
 
 ROOT = Path(__file__).resolve().parents[5]
 MASKS = 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs'
@@ -61,7 +66,7 @@ def command(test):
 def run(test, env, output, label):
     wait_for_slot(ROOT / 'scripts/cargo-slots.sh')
     result = run_owned(command(test), cwd=ROOT, env=env, timeout=900)
-    (output / f'{label}.log').write_text(result.stdout + result.stderr)
+    exclusive_write(output / f'{label}.log', result.stdout + result.stderr)
     return result
 
 
@@ -83,10 +88,9 @@ def classify(result, test, anchors):
 
 
 def main():
-    output = Path(sys.argv[1]).resolve()
-    output.mkdir(parents=True, exist_ok=True)
     if not os.environ.get('CARGO_TARGET_DIR'):
         raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
+    output = new_output_directory(sys.argv[1])
     env = dict(os.environ, CARGO_NET_OFFLINE='true')
     results = []
     try:
@@ -122,7 +126,7 @@ def main():
             results.append(dict(name=row['name'], test=row['test'], status='INVALID', reason=reason))
     counts = {state: sum(row['status'] == state for row in results)
               for state in ('KILLED', 'SURVIVED', 'INVALID')}
-    (output / 'summary.json').write_text(json.dumps(
+    exclusive_write(output / 'summary.json', json.dumps(
         {'controls': results, 'counts': counts}, indent=2) + '\n')
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()))
     return int(not results or any(row['status'] != 'KILLED' for row in results))

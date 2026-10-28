@@ -7,12 +7,16 @@ refuses to mutate a product tree that differs from HEAD):
 
     CARGO_TARGET_DIR=<absolute> PDRS_BASELINE=<fixed checkout> \
         python3 src/pilotdeck-gateway/tests/fixtures/node-provenance/negative.py \
-        _tmp/20261026-issue-953/negative-node-provenance
+        _tmp/20261026-issue-953/negative-node-provenance-<attempt>
 
 Every row runs its positive control, applies one source mutation, runs the
 same bound test, then restores the original bytes and runs the positive control
 again. All rows are collected before the summary; any non-KILLED row exits 1.
 Cargo always uses the caller's CARGO_TARGET_DIR and never `-q`.
+
+The output directory must be missing or empty: reusing one that already holds
+evidence would overwrite the previous run's original logs. Every log is created
+exclusively, so a rerun needs a new directory.
 """
 import json
 import os
@@ -20,7 +24,8 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (exclusive_write, mutating_sources,
+                              new_output_directory, run_owned, wait_for_slot)
 
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = 'src/pilotdeck-gateway/tests/fixtures'
@@ -107,7 +112,7 @@ def run_node(row, env):
 
 def run(row, env, output, stage):
     result = run_cargo(row, env) if row['runner'] == 'cargo' else run_node(row, env)
-    (output / f"{row['name']}-{stage}.log").write_text(result.stdout + result.stderr)
+    exclusive_write(output / f"{row['name']}-{stage}.log", result.stdout + result.stderr)
     return result
 
 
@@ -142,12 +147,11 @@ def positive_ok(row, result):
 
 
 def main():
-    output = Path(sys.argv[1]).resolve()
-    output.mkdir(parents=True, exist_ok=True)
     if not os.environ.get('CARGO_TARGET_DIR'):
         raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
     if not os.environ.get('PDRS_BASELINE'):
         raise SystemExit('PDRS_BASELINE must be supplied by the caller')
+    output = new_output_directory(sys.argv[1])
     env = dict(os.environ, CARGO_NET_OFFLINE='true')
     paths = [row['path'] for row in ROWS]
     results = []
@@ -186,7 +190,7 @@ def main():
             results.append(dict(name=row['name'], test=row['test'], status='INVALID', reason=reason))
     counts = {state: sum(row['status'] == state for row in results)
               for state in ('KILLED', 'SURVIVED', 'INVALID')}
-    (output / 'summary.json').write_text(json.dumps(
+    exclusive_write(output / 'summary.json', json.dumps(
         {'controls': results, 'counts': counts}, indent=2) + '\n')
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()))
     return int(not results or any(row['status'] != 'KILLED' for row in results))

@@ -19,7 +19,8 @@ from types import ModuleType
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from negative_process import (SourceBaselineError, mutating_sources, run_owned,
+from negative_process import (SourceBaselineError, exclusive_write,
+                              mutating_sources, new_output_directory, run_owned,
                               tree_lock, wait_for_slot)
 import negative_process
 
@@ -701,6 +702,60 @@ class ParityMutationLock(unittest.TestCase):
         self.assertTrue(result.failures, "#166 bypass control must kill the missing lock")
         self.assertTrue(all("#166 second parity acquirer must be refused during mutation" in failure
                             for _, failure in result.failures), "#166 bypass control must bind the lock assertion")
+
+
+class OutputDirectoryGuard(unittest.TestCase):
+    """#953: a reused evidence directory must never overwrite earlier logs."""
+
+    def test_missing_and_empty_directories_are_accepted(self):
+        with tempfile.TemporaryDirectory(prefix="pdrs-negative-out-") as temp:
+            missing = Path(temp) / "fresh"
+            self.assertEqual(new_output_directory(missing), missing.resolve(),
+                             "#953 a missing output directory must be created")
+            self.assertTrue(missing.is_dir(),
+                            "#953 the output directory must exist after preparation")
+            empty = Path(temp) / "empty"
+            empty.mkdir()
+            self.assertEqual(new_output_directory(empty), empty.resolve(),
+                             "#953 an existing empty output directory must be accepted")
+
+    def test_nonempty_directory_is_refused(self):
+        with tempfile.TemporaryDirectory(prefix="pdrs-negative-out-") as temp:
+            output = Path(temp) / "reused"
+            output.mkdir()
+            previous = output / "positive.log"
+            previous.write_text("#953 earlier run evidence\n")
+            with self.assertRaises(SystemExit,
+                                   msg="#953 non-empty output directory must refuse reuse") as caught:
+                new_output_directory(output)
+            self.assertIn("#953 refusing to reuse a non-empty output directory",
+                          str(caught.exception),
+                          "#953 refusal must name the non-empty output directory")
+            self.assertEqual(previous.read_text(), "#953 earlier run evidence\n",
+                             "#953 refusal must leave the earlier evidence untouched")
+
+    def test_file_at_output_path_is_refused(self):
+        with tempfile.TemporaryDirectory(prefix="pdrs-negative-out-") as temp:
+            output = Path(temp) / "evidence"
+            output.write_text("#953 not a directory\n")
+            with self.assertRaises(SystemExit,
+                                   msg="#953 output path that is a file must refuse") as caught:
+                new_output_directory(output)
+            self.assertIn("#953 output path exists and is not a directory",
+                          str(caught.exception),
+                          "#953 refusal must name the non-directory output path")
+            self.assertEqual(output.read_text(), "#953 not a directory\n",
+                             "#953 refusal must leave a non-directory output path untouched")
+
+    def test_logs_are_created_exclusively(self):
+        with tempfile.TemporaryDirectory(prefix="pdrs-negative-out-") as temp:
+            log = Path(temp) / "positive.log"
+            exclusive_write(log, "first run\n")
+            with self.assertRaises(FileExistsError,
+                                   msg="#953 existing log must not be overwritten"):
+                exclusive_write(log, "second run\n")
+            self.assertEqual(log.read_text(), "first run\n",
+                             "#953 exclusive log creation must preserve the first run bytes")
 
 
 if __name__ == "__main__":
