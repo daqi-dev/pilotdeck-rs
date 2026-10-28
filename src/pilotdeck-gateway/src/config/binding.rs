@@ -203,7 +203,10 @@ pub(super) fn apply<F: Files>(
             };
             return Err(Error::new(
                 "ERR_INVALID_ARG_TYPE",
-                format!("The \"path\" argument must be of type string. Received {received}"),
+                format!(
+                    "The \"path\" argument must be of type string. Received {}",
+                    String::from_utf16_lossy(received.units())
+                ),
             ));
         };
         // path.join normalizes segments, but does not reset at an absolute later segment.

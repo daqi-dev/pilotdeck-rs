@@ -887,7 +887,9 @@ fn path_arg(value: &JsValue) -> Result<String> {
             "ERR_INVALID_ARG_TYPE",
             format!(
                 "The \"paths[0]\" argument must be of type string. Received {}",
-                argument_received(value).unwrap_or_default()
+                argument_received(value).map_or_else(String::new, |received| {
+                    String::from_utf16_lossy(received.units())
+                })
             ),
         )),
     }

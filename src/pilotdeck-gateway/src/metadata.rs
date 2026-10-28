@@ -1,5 +1,6 @@
 //! Read-only native metadata. Filesystem facts are injectable for archived goldens.
-use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
+use crate::runtime::memory::js_trim_units;
+use pilotdeck_protocol::{JsObject, JsString, JsValue, json_syntax, parse_json};
 use std::{
     fs,
     io::{self, Read, Seek, SeekFrom},
@@ -23,30 +24,106 @@ pub(crate) fn text_field(value: &JsValue, key: &str) -> Option<String> {
     string(value.get(key)?)
 }
 
-/// Node's primitive/constructor argument description. Unsupported constructor
-/// names require the host's util.inspect contract, as with describe_project.
-pub(crate) fn argument_received(v: &JsValue) -> Option<String> {
+/// Node's primitive/constructor argument description
+/// (`internal/errors.js::determineSpecificType`). The constructor-name branch
+/// uses a template literal, i.e. JavaScript `ToString`: an object name becomes
+/// `[object Object]`, an array name becomes its comma join, and lone
+/// surrogates survive as raw UTF-16 units. `None` is reserved for shapes whose
+/// description Node itself aborts on (a truthy primitive constructor makes
+/// `'name' in constructor` throw a different TypeError).
+pub(crate) fn argument_received(v: &JsValue) -> Option<JsString> {
     Some(match v {
         JsValue::Undefined => "undefined".into(),
         JsValue::Null => "null".into(),
-        JsValue::Number(n) => format!("type number ({})", crate::dispatch::error_number(*n)),
-        JsValue::Bool(b) => format!("type boolean ({b})"),
+        JsValue::Number(n) => JsString::from(format!(
+            "type number ({})",
+            crate::dispatch::error_number(*n)
+        )),
+        JsValue::Bool(b) => format!("type boolean ({b})").into(),
         JsValue::Array(_) => "an instance of Array".into(),
         JsValue::Object(o) => match o.get("constructor") {
+            // A plain JSON object inherits `Object` from its prototype, so a
+            // missing own `constructor` is Node's `an instance of Object`.
             None => "an instance of Object".into(),
-            Some(c) => match c.get("name") {
-                Some(JsValue::String(s)) if !s.is_empty() => {
-                    format!("an instance of {}", s.to_utf8().ok()?)
+            Some(constructor) if !js_truthy(constructor) => "[Object]".into(),
+            Some(constructor @ (JsValue::Object(_) | JsValue::Array(_))) => {
+                // `'name' in constructor` is false for `{}` and `[]`, which
+                // falls through to `util.inspect(value, { depth: -1 })`.
+                if !constructor_has_name(constructor) {
+                    "[Object]".into()
+                } else {
+                    let name = constructor.get("name")?;
+                    let text = js_to_string(name)?;
+                    let mut units = "an instance of ".encode_utf16().collect::<Vec<_>>();
+                    units.extend_from_slice(text.units());
+                    JsString::from_utf16(units)
                 }
-                Some(JsValue::Number(n)) if *n != 0.0 && !n.is_nan() => {
-                    format!("an instance of {}", crate::dispatch::error_number(*n))
-                }
-                Some(JsValue::Bool(true)) => "an instance of true".into(),
-                Some(JsValue::Object(_) | JsValue::Array(_)) => return None,
-                _ => "[Object]".into(),
-            },
+            }
+            // Truthy primitive constructors (`5`, `true`, `"abc"`) make Node's
+            // `'name' in constructor` throw before a description is built.
+            Some(_) => return None,
         },
         JsValue::String(_) => return None,
+    })
+}
+
+/// `'name' in constructor` for the JSON-representable prototype chain. Parsed
+/// JSON objects inherit no own names and arrays have no `name`.
+fn constructor_has_name(constructor: &JsValue) -> bool {
+    match constructor {
+        JsValue::Object(o) => o.contains_key("name"),
+        _ => false,
+    }
+}
+
+fn js_truthy(value: &JsValue) -> bool {
+    match value {
+        JsValue::Undefined | JsValue::Null => false,
+        JsValue::Bool(value) => *value,
+        JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
+        JsValue::String(value) => !value.is_empty(),
+        JsValue::Object(_) | JsValue::Array(_) => true,
+    }
+}
+
+/// JavaScript `String(value)` for values that can appear in parsed JSON.
+/// `None` when `ToString` throws (`Cannot convert object to primitive value`).
+fn js_to_string(value: &JsValue) -> Option<JsString> {
+    Some(match value {
+        JsValue::Undefined => "undefined".into(),
+        JsValue::Null => "null".into(),
+        JsValue::Bool(true) => "true".into(),
+        JsValue::Bool(false) => "false".into(),
+        JsValue::Number(n) => {
+            // `String(-0)` is `"0"`, unlike Node's number diagnostic.
+            if *n == 0.0 {
+                "0".into()
+            } else {
+                crate::dispatch::error_number(*n).into()
+            }
+        }
+        JsValue::String(text) => text.clone(),
+        // Array.prototype.toString is `join(",")`; nullish elements are empty.
+        JsValue::Array(items) => {
+            let mut units = Vec::new();
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    units.push(b',' as u16);
+                }
+                if !matches!(item, JsValue::Null | JsValue::Undefined) {
+                    units.extend_from_slice(js_to_string(item)?.units());
+                }
+            }
+            JsString::from_utf16(units)
+        }
+        JsValue::Object(o) => {
+            // Parsed JSON cannot carry a callable `toString`, so an own key
+            // makes OrdinaryToPrimitive fall through to a TypeError.
+            if o.contains_key("toString") {
+                return None;
+            }
+            "[object Object]".into()
+        }
     })
 }
 
@@ -248,7 +325,7 @@ impl Files for NativeFiles {
         }
         let visible = fast || scan_metadata_summary(&mut file).unwrap_or(false);
         if visible && !fast {
-            captured_field(&String::from_utf8_lossy(&head), "createdAt")?;
+            captured_field(&String::from_utf8_lossy(&head), "createdAt").map_err(|_| ())?;
         }
         Ok(visible)
     }
@@ -271,7 +348,8 @@ impl Files for NativeFiles {
     }
 }
 
-fn millis(time: SystemTime) -> f64 {
+/// Fractional milliseconds, the input to Node's `Stats.mtimeMs`.
+pub(crate) fn millis(time: SystemTime) -> f64 {
     match time.duration_since(UNIX_EPOCH) {
         Ok(duration) => {
             duration.as_secs() as f64 * 1000.0 + duration.subsec_nanos() as f64 / 1_000_000.0
@@ -770,13 +848,15 @@ impl<F: Files> Metadata<F> {
     }
 }
 
-fn summary_string(value: &JsValue) -> Option<String> {
-    value
-        .as_string()
-        .map(|value| String::from_utf16_lossy(value.units()))
+fn summary_string(value: &JsValue) -> Option<JsString> {
+    value.as_string().cloned()
 }
 
-pub(crate) fn captured_field(source: &str, field: &str) -> Result<Option<String>, ()> {
+/// `lastMetadataStringField`/`firstJsonStringField` capture plus
+/// `unescapeJsonString`. A malformed escape is a V8 `SyntaxError` with the
+/// exact `JSON.parse` message; the caller must propagate it, never treat the
+/// field as absent (TS throws out of `readSessionInfo`).
+pub(crate) fn captured_field(source: &str, field: &str) -> Result<Option<JsString>, JsString> {
     const FIELDS: [&str; 6] = [
         "title",
         "aiTitle",
@@ -805,12 +885,20 @@ pub(crate) fn captured_field(source: &str, field: &str) -> Result<Option<String>
     if capture[1].is_empty() {
         return Ok(None);
     }
-    Ok(summary_string(
-        &parse_json(&format!("\"{}\"", &capture[1])).map_err(|_| ())?,
-    ))
+    let literal = format!("\"{}\"", &capture[1]);
+    let units = literal.encode_utf16().collect::<Vec<_>>();
+    match parse_json(&literal) {
+        Ok(value) => Ok(value.as_string().cloned()),
+        Err(_) => Err(json_syntax::parse_error_units(&units)
+            .unwrap_or_else(|| JsString::from("Unexpected end of JSON input"))),
+    }
 }
 
-fn node_date_ms(ms: f64) -> f64 {
+/// Node `Date#getTime()` for a `Stats.mtimeMs` value: V8 rounds the
+/// double-precision millisecond value half toward +Infinity, so a
+/// sub-millisecond fraction below 0.5 still moves up when the stored double is
+/// exactly `x.5` (Node v22.22.0).
+pub(crate) fn node_date_ms(ms: f64) -> f64 {
     let floor = ms.floor();
     let rounded = if ms - floor >= 0.5 {
         floor + 1.0
@@ -824,7 +912,7 @@ fn node_date_ms(ms: f64) -> f64 {
     }
 }
 
-pub(crate) fn accepted_text(source: &str, last: bool) -> Option<String> {
+pub(crate) fn accepted_text(source: &str, last: bool) -> Option<JsString> {
     let mut result = None;
     'lines: for line in source.split('\n') {
         if !line.contains("\"type\":\"accepted_input\"") {
@@ -876,9 +964,11 @@ pub(crate) fn accepted_text(source: &str, last: bool) -> Option<String> {
             }
             match block.get("text") {
                 Some(JsValue::String(text)) => {
-                    let text = String::from_utf16_lossy(text.units());
-                    if !js_trim(&text).is_empty() {
-                        result = Some(js_trim(&text).to_owned());
+                    // JS `String#trim` over raw UTF-16: a lone surrogate in
+                    // the prompt stays a surrogate, never U+FFFD.
+                    let trimmed = js_trim_units(text.units());
+                    if !trimmed.is_empty() {
+                        result = Some(JsString::from_utf16(trimmed.to_vec()));
                         if !last {
                             return result;
                         }
@@ -906,7 +996,7 @@ fn metadata_summary(value: &JsValue) -> bool {
                 .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
         })
         .and_then(summary_string)
-        .is_some_and(|text| !js_trim(&text).is_empty())
+        .is_some_and(|text| !js_trim_units(text.units()).is_empty())
 }
 
 const LITE_BYTES: usize = 65_536;
@@ -920,7 +1010,7 @@ fn session_has_summary(bytes: &[u8]) -> Result<bool, ()> {
     }
     let visible = fast || scan_metadata_summary(&mut io::Cursor::new(bytes)).unwrap_or(false);
     if visible && !fast {
-        captured_field(&String::from_utf8_lossy(head), "createdAt")?;
+        captured_field(&String::from_utf8_lossy(head), "createdAt").map_err(|_| ())?;
     }
     Ok(visible)
 }
@@ -958,13 +1048,13 @@ fn summary_preview(head: &[u8], tail: &[u8], large: bool) -> Result<(Option<bool
     let head = String::from_utf8_lossy(head);
     let tail = String::from_utf8_lossy(tail);
     let source = format!("{head}\n{tail}");
-    let metadata_field = |key| -> Result<Option<String>, ()> {
+    let metadata_field = |key| -> Result<Option<JsString>, ()> {
         let mut latest = None;
         for line in source
             .split('\n')
             .filter(|line| line.contains("\"session_metadata\""))
         {
-            if let Some(value) = captured_field(line, key)? {
+            if let Some(value) = captured_field(line, key).map_err(|_| ())? {
                 latest = Some(value);
             }
         }
@@ -979,9 +1069,9 @@ fn summary_preview(head: &[u8], tail: &[u8], large: bool) -> Result<(Option<bool
         .or(ai_title)
         .or_else(|| accepted_text(&tail, true))
         .or_else(|| accepted_text(&head, false))
-        .is_some_and(|text| !text.is_empty());
+        .is_some_and(|text| !js_trim_units(text.units()).is_empty());
     if fast {
-        captured_field(&head, "createdAt")?;
+        captured_field(&head, "createdAt").map_err(|_| ())?;
     }
     if fast && !large {
         return Ok((Some(true), fast));
@@ -1008,12 +1098,12 @@ fn summary_preview(head: &[u8], tail: &[u8], large: bool) -> Result<(Option<bool
                     latest
                         .get(key)
                         .and_then(summary_string)
-                        .is_some_and(|text| !js_trim(&text).is_empty())
+                        .is_some_and(|text| !js_trim_units(text.units()).is_empty())
                 })
         {
             let visible = fast || metadata_summary(&latest);
             if visible && !fast {
-                captured_field(&head, "createdAt")?;
+                captured_field(&head, "createdAt").map_err(|_| ())?;
             }
             return Ok((Some(visible), fast));
         }

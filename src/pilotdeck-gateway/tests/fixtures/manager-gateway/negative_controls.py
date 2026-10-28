@@ -29,6 +29,7 @@ from _negative_common import mutate
 catalog = root / 'src/pilotdeck-gateway/src/runtime/manager/catalog.rs'
 file_catalog = root / 'src/pilotdeck-gateway/src/runtime/manager/file_catalog.rs'
 projection = root / 'src/pilotdeck-gateway/src/runtime/manager/projection.rs'
+metadata_path = root / 'src/pilotdeck-gateway/src/metadata.rs'
 dispatch = root / 'src/pilotdeck-gateway/src/dispatch.rs'
 adapter = root / 'src/pilotdeck-gateway/src/storage/transcript_adapter.rs'
 prefix = 'runtime::manager::tests::'
@@ -57,8 +58,13 @@ cases = [
      prefix + 'manager_catalog_matrix_matches_real_ts',
      '#934 catalog matrix differs from real TS at committed'),
     ('catalog-summary-trimmed', file_catalog,
-     '    let summary = custom_title.clone().or(ai_title.clone()).or(last_prompt)?;',
-     '    let summary = js_trim(&custom_title.clone().or(ai_title.clone()).or(last_prompt)?).to_owned();', None,
+     '''    let Some(summary) = custom_title.clone().or(ai_title.clone()).or(last_prompt) else {
+        return Ok(None);
+    };''',
+     '''    let Some(summary) = custom_title.clone().or(ai_title.clone()).or(last_prompt) else {
+        return Ok(None);
+    };
+    let summary = JsString::from_utf16(js_trim_units(summary.units()).to_vec());''', None,
      prefix + 'manager_catalog_matrix_matches_real_ts',
      '#934 catalog matrix differs from real TS at metadata-title-spaces'),
     ('invalid-params-fallback', projection,
@@ -67,17 +73,23 @@ cases = [
      prefix + 'manager_sessions_invalid_params_match_ts',
      '#934 invalid manager params must fail'),
     ('invalid-project-key-stringified', projection, '''            other => {
-                // Reuse the gateway's existing Node `util.inspect` wording.
+                // Reuse the gateway's Node `util.inspect`/`ToString` wording.
+                // The description is UTF-16 so a lone surrogate in
+                // `constructor.name` reaches the wire unchanged; `[Object]` is
+                // the `inspect(value, { depth: -1 })` fallback for the exotic
+                // shapes where Node throws a different TypeError first.
                 let received = metadata::argument_received(other)
-                    .unwrap_or_else(|| "an instance of Object".into());
-                return Err(ManagerError::new(
+                    .unwrap_or_else(|| JsString::from("[Object]"));
+                let mut message = "The \\"paths[0]\\" argument must be of type string. Received "
+                    .encode_utf16()
+                    .collect::<Vec<_>>();
+                message.extend_from_slice(received.units());
+                return Err(ManagerError::with_message(
                     "TypeError",
                     Some("ERR_INVALID_ARG_TYPE".into()),
-                    format!(
-                        "The \\"paths[0]\\" argument must be of type string. Received {received}"
-                    ),
+                    JsString::from_utf16(message),
                 ));
-            }''', '''            other => crate::js_value::to_string_units(other).unwrap_or_default(),''', None,
+            }''', '''            other => return Err(ManagerError::plain("TypeError", format!("{other:?}"))),''', None,
      prefix + 'manager_sessions_invalid_params_match_ts',
      '#934 invalid manager params must fail'),
     ('pagination-negative-end', adapter, '''    if value < 0.0 {
@@ -131,6 +143,83 @@ cases = [
      '            message: JsString::from(String::from_utf16_lossy(&message)),', None,
      prefix + 'manager_projects_keeps_unknown_key_units',
      '#934 unknown key message must keep raw UTF-16 units'),
+    ('mtime-node-rounding', file_catalog,
+     '    metadata::node_date_ms(metadata::millis(time))',
+     '    { let ms = metadata::millis(time); ms as u64 as f64 }', None,
+     prefix + 'manager_catalog_mtime_matches_node_millisecond_rounding',
+     '#934 sub-millisecond mtime must round like Node getTime'),
+    ('same-mtime-name-order', file_catalog,
+     '    entries.sort_by_key(|entry| entry.file_name());',
+     '    entries.sort_by_key(|entry| std::cmp::Reverse(entry.file_name()));', None,
+     prefix + 'manager_catalog_same_mtime_orders_by_name',
+     '#934 same-mtime sessions must keep Node readdir name order'),
+    ('surrogate-fast-title-lossy', metadata_path,
+     '        Ok(value) => Ok(value.as_string().cloned()),',
+     '        Ok(value) => Ok(value.as_string().map(|text| JsString::from(String::from_utf16_lossy(text.units())))),', None,
+     prefix + 'manager_catalog_preserves_lone_surrogates',
+     '#934 fast metadata title must keep lone surrogate units'),
+    ('surrogate-prompt-lossy', metadata_path,
+     '                        result = Some(JsString::from_utf16(trimmed.to_vec()));',
+     '                        result = Some(JsString::from(String::from_utf16_lossy(trimmed)));', None,
+     prefix + 'manager_catalog_preserves_lone_surrogates',
+     '#934 prompt text must keep lone surrogate units'),
+    ('surrogate-fallback-lossy', file_catalog,
+     '    let string = |key: &str| metadata.get(key).and_then(JsValue::as_string).cloned();',
+     '    let string = |key: &str| metadata.get(key).and_then(JsValue::as_string).map(|text| JsString::from(String::from_utf16_lossy(text.units())));', None,
+     prefix + 'manager_catalog_preserves_lone_surrogates',
+     '#934 metadata fallback title must keep lone surrogate units'),
+    ('metadata-title-escape-swallowed', file_catalog,
+     '        if let Some(captured) = metadata::captured_field(line, field)? {',
+     '        if let Ok(Some(captured)) = metadata::captured_field(line, field) {', None,
+     prefix + 'manager_catalog_propagates_metadata_syntax_errors',
+     '#934 invalid metadata title escape must reject like TS SyntaxError'),
+    ('metadata-createdat-escape-swallowed', file_catalog,
+     '    match metadata::captured_field(head, "createdAt")? {',
+     '    match metadata::captured_field(head, "createdAt").unwrap_or(None) {', None,
+     prefix + 'manager_catalog_propagates_metadata_syntax_errors',
+     '#934 invalid createdAt escape must reject like TS SyntaxError'),
+    ('projectkey-name-explained-by-object', metadata_path,
+     '                    let text = js_to_string(name)?;',
+     '                    let text = JsString::from("Object");', None,
+     prefix + 'manager_sessions_matches_real_ts_projection',
+     '#934 manager gateway oracle replay differs at sessions-projectKey-name-object'),
+    ('projectkey-name-array-branch', metadata_path, '''                if !matches!(item, JsValue::Null | JsValue::Undefined) {
+                    units.extend_from_slice(js_to_string(item)?.units());
+                }
+            }
+            JsString::from_utf16(units)''', '''                if !matches!(item, JsValue::Null | JsValue::Undefined) {
+                    units.extend_from_slice(js_to_string(item)?.units());
+                }
+            }
+            JsString::from("[object Array]")''', None,
+     prefix + 'manager_sessions_matches_real_ts_projection',
+     '#934 manager gateway oracle replay differs at sessions-projectKey-name-array'),
+    ('projectkey-name-surrogate-lossy', metadata_path,
+     '        JsValue::String(text) => text.clone(),',
+     '''        JsValue::String(text) => {
+            JsString::from(String::from_utf16_lossy(text.units()))
+        }''', None,
+     prefix + 'manager_sessions_matches_real_ts_projection',
+     '#934 manager gateway oracle replay differs at sessions-projectKey-name-surrogate'),
+    ('internal-filter-after-read', file_catalog, '''        if !include_internal && is_internal_session(session_id) {
+            continue;
+        }
+        let path = entry.path();
+        if let Some((modified, info)) =
+            read_session_info(&path, &JsString::from(session_id), project_root)?
+        {
+            sessions.push((modified, info));
+        }''', '''        let path = entry.path();
+        let loaded = read_session_info(&path, &JsString::from(session_id), project_root);
+        if !include_internal && is_internal_session(session_id) {
+            continue;
+        }
+        if let Ok(Some((modified, info))) = loaded {
+            sessions.push((modified, info));
+        }''', None,
+     prefix + 'manager_catalog_filters_internal_before_reading',
+     '#934 internal sessions must be filtered before any file read'),
+
 ]
 
 def main():

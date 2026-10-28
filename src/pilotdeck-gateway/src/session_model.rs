@@ -332,7 +332,10 @@ fn path_argument(v: &JsValue) -> Error {
     };
     error(
         "ERR_INVALID_ARG_TYPE",
-        format!("The \"paths[0]\" argument must be of type string. Received {received}"),
+        format!(
+            "The \"paths[0]\" argument must be of type string. Received {}",
+            String::from_utf16_lossy(received.units())
+        ),
     )
 }
 fn io_error(e: &std::io::Error, path: &std::path::Path, syscall: &str) -> Error {

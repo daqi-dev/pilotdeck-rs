@@ -19,7 +19,8 @@
 //! Field order and `cwd` follow the TS object literal. Internal `always-on-*`
 //! sessions are filtered from the directory listing before any file is opened.
 
-use crate::metadata::{self, js_trim};
+use crate::metadata;
+use crate::runtime::memory::js_trim_units;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     fs::{self, File},
@@ -34,6 +35,25 @@ const SESSION_METADATA_SCAN_CHUNK_BYTES: usize = 64 * 1024;
 /// `MAX_SESSION_METADATA_LINE_BYTES`.
 const MAX_SESSION_METADATA_LINE_BYTES: usize = 128 * 1024;
 
+// Test-only observation of which paths the catalog actually opened. The
+// production path stays allocation-free; this proves "filter before reading"
+// rather than only observing the final hidden result.
+#[cfg(test)]
+thread_local! {
+    static READ_PATHS: std::cell::RefCell<Vec<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_read_paths() {
+    READ_PATHS.with(|paths| paths.borrow_mut().clear());
+}
+
+#[cfg(test)]
+pub(crate) fn recorded_read_paths() -> Vec<std::path::PathBuf> {
+    READ_PATHS.with(|paths| paths.borrow().clone())
+}
+
 /// `isInternalSession` (`SessionList.ts:10`), shared with the metadata reader.
 pub(crate) use crate::metadata::is_internal_session;
 
@@ -46,6 +66,8 @@ struct SessionLite {
 
 /// `readSessionLite`: any stat/read failure or an empty file yields `None`.
 fn read_session_lite(path: &Path) -> Option<SessionLite> {
+    #[cfg(test)]
+    READ_PATHS.with(|paths| paths.borrow_mut().push(path.to_path_buf()));
     let metadata = fs::metadata(path).ok()?;
     let size = metadata.len();
     if size == 0 {
@@ -73,26 +95,28 @@ fn read_session_lite(path: &Path) -> Option<SessionLite> {
     })
 }
 
-/// Node `Date#getTime()` truncates sub-millisecond precision toward zero.
+/// Node `Stats.mtime.getTime()`: `mtimeMs` is `sec*1000 + nsec/1e6` in a
+/// double, then V8 rounds half toward +Infinity. Truncating (the previous
+/// `as_millis()`) is off by one whenever the stored fraction reaches 0.5.
 fn system_time_ms(time: std::time::SystemTime) -> f64 {
-    match time.duration_since(std::time::UNIX_EPOCH) {
-        Ok(elapsed) => elapsed.as_millis() as f64,
-        Err(error) => -(error.duration().as_millis() as f64),
-    }
+    metadata::node_date_ms(metadata::millis(time))
 }
 
-/// `listProjectSessions`: directory entries in the order returned by the OS,
-/// internal filtering before reads, then a stable lastModified sort.
+/// `listProjectSessions`: Node `readdir` returns names sorted bytewise (libuv
+/// `alphasort`), so equal `lastModified` sessions keep that name order after
+/// the stable mtime sort. `fs::read_dir` has no ordering contract; sort first.
 pub(crate) fn list_sessions(
     chat_dir: &Path,
     project_root: &Path,
     include_internal: bool,
-) -> Vec<(f64, JsValue)> {
+) -> Result<Vec<(f64, JsValue)>, JsString> {
     let Ok(entries) = fs::read_dir(chat_dir) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
+    let mut entries = entries.flatten().collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry.file_name());
     let mut sessions = Vec::new();
-    for entry in entries.flatten() {
+    for entry in entries {
         let name = entry.file_name().to_string_lossy().into_owned();
         let Some(session_id) = name.strip_suffix(".jsonl") else {
             continue;
@@ -102,7 +126,7 @@ pub(crate) fn list_sessions(
         }
         let path = entry.path();
         if let Some((modified, info)) =
-            read_session_info(&path, &JsString::from(session_id), project_root)
+            read_session_info(&path, &JsString::from(session_id), project_root)?
         {
             sessions.push((modified, info));
         }
@@ -115,31 +139,41 @@ pub(crate) fn list_sessions(
             .partial_cmp(&left.0)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    sessions
+    Ok(sessions)
 }
 
-/// `readSessionInfo` including both metadata fallbacks.
+/// `readSessionInfo` including both metadata fallbacks. A malformed JSON escape
+/// inside a scanned metadata field is a V8 `SyntaxError` in TS and must abort
+/// the whole listing, not degrade to "field absent".
 fn read_session_info(
     path: &Path,
     session_id: &JsString,
     project_root: &Path,
-) -> Option<(f64, JsValue)> {
-    let lite = read_session_lite(path)?;
-    let fast = parse_session_info_from_lite(session_id, &lite, project_root);
+) -> Result<Option<(f64, JsValue)>, JsString> {
+    let Some(lite) = read_session_lite(path) else {
+        return Ok(None);
+    };
+    let fast = parse_session_info_from_lite(session_id, &lite, project_root)?;
     if fast.is_some() && lite.size <= SESSION_LITE_READ_BYTES {
-        return fast.map(|info| (lite.mtime, info));
+        return Ok(fast.map(|info| (lite.mtime, info)));
     }
     if let Some(snapshot) = read_latest_tail_snapshot(&lite)
         && let Some(info) =
-            parse_session_info_from_metadata(session_id, &lite, &snapshot, project_root)
+            parse_session_info_from_metadata(session_id, &lite, &snapshot, project_root)?
     {
-        return Some((lite.mtime, merge_session_info(fast, Some(info))?));
+        let Some(merged) = merge_session_info(fast, Some(info)) else {
+            return Ok(None);
+        };
+        return Ok(Some((lite.mtime, merged)));
     }
     let metadata = read_last_session_metadata(path);
-    let metadata_info = metadata.as_ref().and_then(|metadata| {
-        parse_session_info_from_metadata(session_id, &lite, metadata, project_root)
-    });
-    merge_session_info(fast, metadata_info).map(|info| (lite.mtime, info))
+    let metadata_info = match metadata.as_ref() {
+        Some(metadata) => {
+            parse_session_info_from_metadata(session_id, &lite, metadata, project_root)?
+        }
+        None => None,
+    };
+    Ok(merge_session_info(fast, metadata_info).map(|info| (lite.mtime, info)))
 }
 
 /// `parseSessionInfoFromLite`.
@@ -147,21 +181,23 @@ fn parse_session_info_from_lite(
     session_id: &JsString,
     lite: &SessionLite,
     project_root: &Path,
-) -> Option<JsValue> {
+) -> Result<Option<JsValue>, JsString> {
     let source = format!("{}\n{}", lite.head, lite.tail);
-    let custom_title = last_metadata_string_field(&source, "title");
-    let ai_title = last_metadata_string_field(&source, "aiTitle");
-    let tag = last_metadata_string_field(&source, "tag");
-    let parent_session_id = last_metadata_string_field(&source, "parentSessionId");
-    let forked_from_turn_id = last_metadata_string_field(&source, "forkedFromTurnId");
+    let custom_title = last_metadata_string_field(&source, "title")?;
+    let ai_title = last_metadata_string_field(&source, "aiTitle")?;
+    let tag = last_metadata_string_field(&source, "tag")?;
+    let parent_session_id = last_metadata_string_field(&source, "parentSessionId")?;
+    let forked_from_turn_id = last_metadata_string_field(&source, "forkedFromTurnId")?;
     let first_prompt = metadata::accepted_text(&lite.head, false);
     let last_prompt = metadata::accepted_text(&lite.tail, true).or_else(|| first_prompt.clone());
-    let summary = custom_title.clone().or(ai_title.clone()).or(last_prompt)?;
+    let Some(summary) = custom_title.clone().or(ai_title.clone()).or(last_prompt) else {
+        return Ok(None);
+    };
     if summary.is_empty() {
-        return None;
+        return Ok(None);
     }
-    let created_at = created_at_from_head(&lite.head);
-    Some(session_info(
+    let created_at = created_at_from_head(&lite.head)?;
+    Ok(Some(session_info(
         session_id,
         &summary,
         lite,
@@ -173,7 +209,7 @@ fn parse_session_info_from_lite(
         tag,
         parent_session_id,
         forked_from_turn_id,
-    ))
+    )))
 }
 
 /// `parseSessionInfoFromMetadata`.
@@ -182,33 +218,32 @@ fn parse_session_info_from_metadata(
     lite: &SessionLite,
     metadata: &JsObject,
     project_root: &Path,
-) -> Option<JsValue> {
-    let string = |key: &str| {
-        metadata
-            .get(key)
-            .and_then(JsValue::as_string)
-            .map(|value| String::from_utf16_lossy(value.units()))
-    };
-    let summary = string("title")
+) -> Result<Option<JsValue>, JsString> {
+    let string = |key: &str| metadata.get(key).and_then(JsValue::as_string).cloned();
+    let Some(summary) = string("title")
         .or_else(|| string("aiTitle"))
         .or_else(|| string("lastPrompt"))
-        .or_else(|| string("firstPrompt"))?;
-    if js_trim(&summary).is_empty() {
-        return None;
+        .or_else(|| string("firstPrompt"))
+    else {
+        return Ok(None);
+    };
+    if js_trim_units(summary.units()).is_empty() {
+        return Ok(None);
     }
-    Some(session_info(
+    let created_at = created_at_from_head(&lite.head)?;
+    Ok(Some(session_info(
         session_id,
         &summary,
         lite,
         project_root,
-        created_at_from_head(&lite.head),
+        created_at,
         string("title"),
         string("aiTitle"),
         string("firstPrompt"),
         string("tag"),
         string("parentSessionId"),
         string("forkedFromTurnId"),
-    ))
+    )))
 }
 
 /// `mergeSessionInfo`: later metadata wins except that `firstPrompt` and
@@ -258,23 +293,21 @@ fn merge_session_info(fast: Option<JsValue>, metadata: Option<JsValue>) -> Optio
 #[allow(clippy::too_many_arguments)]
 fn session_info(
     session_id: &JsString,
-    summary: &str,
+    summary: &JsString,
     lite: &SessionLite,
     project_root: &Path,
     created_at: JsValue,
-    custom_title: Option<String>,
-    ai_title: Option<String>,
-    first_prompt: Option<String>,
-    tag: Option<String>,
-    parent_session_id: Option<String>,
-    forked_from_turn_id: Option<String>,
+    custom_title: Option<JsString>,
+    ai_title: Option<JsString>,
+    first_prompt: Option<JsString>,
+    tag: Option<JsString>,
+    parent_session_id: Option<JsString>,
+    forked_from_turn_id: Option<JsString>,
 ) -> JsValue {
-    let string = |value: Option<String>| {
-        value.map_or(JsValue::Undefined, |value| JsValue::String(value.into()))
-    };
+    let string = |value: Option<JsString>| value.map_or(JsValue::Undefined, JsValue::String);
     let mut info = JsObject::new();
     info.insert("sessionId".into(), JsValue::String(session_id.clone()));
-    info.insert("summary".into(), JsValue::from(summary));
+    info.insert("summary".into(), JsValue::String(summary.clone()));
     info.insert("lastModified".into(), JsValue::Number(lite.mtime));
     info.insert("fileSize".into(), JsValue::Number(lite.size as f64));
     info.insert("customTitle".into(), string(custom_title));
@@ -292,33 +325,32 @@ fn session_info(
 }
 
 /// `firstJsonStringField(head, "createdAt")` then `Date.parse`; absent text is
-/// `undefined`, unparseable text is `NaN` (JSON `null`).
-fn created_at_from_head(head: &str) -> JsValue {
-    match metadata::captured_field(head, "createdAt") {
-        Ok(Some(text)) => match pilotdeck_transport::system_clock::parse_node22_date(
-            &JsString::from(text.as_str()),
-        ) {
-            Ok(Some(ms)) => JsValue::Number(ms),
-            Ok(None) | Err(_) => JsValue::Number(f64::NAN),
+/// `undefined`, unparseable text is `NaN` (JSON `null`). A bad escape throws
+/// the `JSON.parse` `SyntaxError` before `Date.parse`.
+fn created_at_from_head(head: &str) -> Result<JsValue, JsString> {
+    match metadata::captured_field(head, "createdAt")? {
+        Some(text) => match pilotdeck_transport::system_clock::parse_node22_date(&text) {
+            Ok(Some(ms)) => Ok(JsValue::Number(ms)),
+            Ok(None) | Err(_) => Ok(JsValue::Number(f64::NAN)),
         },
-        Ok(None) | Err(_) => JsValue::Undefined,
+        None => Ok(JsValue::Undefined),
     }
 }
 
 /// `lastMetadataStringField`: the last matching metadata line wins; within a
 /// line the first matching field occurrence wins, like `String#match`.
-fn last_metadata_string_field(source: &str, field: &str) -> Option<String> {
+fn last_metadata_string_field(source: &str, field: &str) -> Result<Option<JsString>, JsString> {
     let mut value = None;
     for line in source.split('\n') {
         let line = line.strip_suffix('\r').unwrap_or(line);
         if !line.contains("\"session_metadata\"") {
             continue;
         }
-        if let Ok(Some(captured)) = metadata::captured_field(line, field) {
+        if let Some(captured) = metadata::captured_field(line, field)? {
             value = Some(captured);
         }
     }
-    value
+    Ok(value)
 }
 
 /// `readLatestTailSnapshot`: only large files, skip the first (possibly
@@ -347,7 +379,7 @@ fn read_latest_tail_snapshot(lite: &SessionLite) -> Option<JsObject> {
             latest
                 .get(key)
                 .and_then(JsValue::as_string)
-                .is_some_and(|value| !js_trim(&String::from_utf16_lossy(value.units())).is_empty())
+                .is_some_and(|value| !js_trim_units(value.units()).is_empty())
         });
     has_summary.then_some(latest)
 }

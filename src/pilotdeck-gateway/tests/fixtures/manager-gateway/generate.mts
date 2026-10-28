@@ -6,7 +6,7 @@
 // `{error:{name,code?,message}}`. Project paths and the isolated root are
 // normalized to `<dir>` so the corpus is stable across runs.
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat as statFile, utimes, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
@@ -190,6 +190,9 @@ const operations: Operation[] = [
   { name: 'sessions-projectKey-number', method: 'manager_sessions', params: { projectKey: 42 }, catalog: { items: [S1] }, browser: { result: browserResult } },
   { name: 'sessions-projectKey-array', method: 'manager_sessions', params: { projectKey: [] }, catalog: { items: [S1] }, browser: { result: browserResult } },
   { name: 'sessions-projectKey-object', method: 'manager_sessions', params: { projectKey: {} }, catalog: { items: [S1] }, browser: { result: browserResult } },
+  { name: 'sessions-projectKey-name-object', method: 'manager_sessions', params: { projectKey: { constructor: { name: {} } } }, catalog: { items: [S1] }, browser: { result: browserResult } },
+  { name: 'sessions-projectKey-name-array', method: 'manager_sessions', params: { projectKey: { constructor: { name: [] } } }, catalog: { items: [S1] }, browser: { result: browserResult } },
+  { name: 'sessions-projectKey-name-surrogate', method: 'manager_sessions', params: { projectKey: { constructor: { name: '\ud800' } } }, catalog: { items: [S1] }, browser: { result: browserResult } },
   { name: 'sessions-projectKey-bool', method: 'manager_sessions', params: { projectKey: true }, catalog: { items: [S1] }, browser: { result: browserResult } },
   { name: 'browsers-success', method: 'manager_browsers', params: { projectKey: '<dir>', sessionKey: 's-1' }, catalog: { items: [S1] }, browser: { result: browserResult } },
   { name: 'browsers-empty', method: 'manager_browsers', params: { projectKey: '<dir>' }, catalog: { items: [S1] }, browser: { result: { items: [] } } },
@@ -264,6 +267,14 @@ try {
     boundary: { kind: 'compact' },
   }) + '\n';
   const file = (name: string, content: string, mtime: number) => ({ name, content, mtime });
+  // Sub-millisecond timestamps are set from nanoseconds; the generator records
+  // the filesystem's read-back value so the Rust side reproduces the exact ns.
+  const fileNs = (name: string, content: string, mtimeNs: string) => ({ name, content, mtimeNs });
+  const rawMetadataLine = (json: string) => `{"type":"session_metadata","metadata":${json}}\n`;
+  const padLine = JSON.stringify({
+    type: 'accepted_input',
+    messages: [{ content: [{ type: 'text', text: 'x'.repeat(70000) }] }],
+  }) + '\n';
   const fiveFiles = [
     file('s-1.jsonl', line1, 1_700_000_000_000),
     file('s-2.jsonl', line2, 1_700_000_001_000),
@@ -316,6 +327,37 @@ try {
     { name: 'pagination-negative-limit', includeInternal: false, limit: -1, offset: 0, files: fiveFiles },
     { name: 'pagination-negative-end', includeInternal: false, limit: -6, offset: 1, files: fiveFiles },
     { name: 'pagination-fractional', includeInternal: false, limit: 1.5, offset: 0, files: fiveFiles },
+    { name: 'same-mtime-name-order', includeInternal: false, files: [
+      file('c.jsonl', line3, 1_700_000_000_000),
+      file('a.jsonl', line1, 1_700_000_000_000),
+      file('b.jsonl', line2, 1_700_000_000_000),
+    ] },
+    { name: 'same-mtime-pagination', includeInternal: false, limit: 1, offset: 1, files: [
+      file('c.jsonl', line3, 1_700_000_000_000),
+      file('a.jsonl', line1, 1_700_000_000_000),
+      file('b.jsonl', line2, 1_700_000_000_000),
+    ] },
+    { name: 'mtime-submillisecond-up', includeInternal: false, files: [
+      fileNs('s-1.jsonl', line1, '1793128812309687438'),
+    ] },
+    { name: 'mtime-submillisecond-carry', includeInternal: false, files: [
+      fileNs('s-1.jsonl', line1, '1793128812299999999'),
+    ] },
+    { name: 'surrogate-fast-title', includeInternal: false, files: [
+      file('s-1.jsonl', line1 + metadataLine({ title: '\ud800' }, 9), 1_700_000_000_000),
+    ] },
+    { name: 'surrogate-prompt', includeInternal: false, files: [
+      file('s-1.jsonl', sessionLine('pre \ud800 post', 1), 1_700_000_000_000),
+    ] },
+    { name: 'surrogate-metadata-fallback', includeInternal: false, files: [
+      file('s-1.jsonl', line1 + padLine + metadataLine({ title: 'mid \ud800' }, 9) + padLine, 1_700_000_000_000),
+    ] },
+    { name: 'bad-escape-title', includeInternal: false, files: [
+      file('s-1.jsonl', line1 + rawMetadataLine('{"title":"\\q"}'), 1_700_000_000_000),
+    ] },
+    { name: 'bad-escape-createdAt', includeInternal: false, files: [
+      file('s-1.jsonl', '{"type":"other","createdAt":"\\q"}\n' + line1, 1_700_000_000_000),
+    ] },
   ];
   const matrix: any[] = [];
   for (const matrixCase of matrixCases) {
@@ -324,19 +366,33 @@ try {
     for (const entry of matrixCase.files) {
       const path = join(matrixChat, entry.name);
       await writeFile(path, entry.content, 'utf8');
-      await utimes(path, new Date(entry.mtime), new Date(entry.mtime));
+      if (entry.mtimeNs !== undefined) {
+        const seconds = Number(BigInt(entry.mtimeNs)) / 1e9;
+        await utimes(path, seconds, seconds);
+        const actual: any = await statFile(path, { bigint: true });
+        entry.mtimeNs = actual.mtimeNs.toString();
+      } else {
+        await utimes(path, new Date(entry.mtime), new Date(entry.mtime));
+      }
     }
-    const value = await listProjectSessions({
-      projectRoot: matrixRoot,
-      pilotHome: matrixHome,
-      includeInternal: matrixCase.includeInternal,
-      ...(matrixCase.limit === undefined ? {} : { limit: matrixCase.limit }),
-      ...(matrixCase.offset === undefined ? {} : { offset: matrixCase.offset }),
-    });
-    matrix.push({
-      ...matrixCase,
-      outcome: JSON.parse(JSON.stringify(value).split(matrixRoot).join('<dir>')),
-    });
+    try {
+      const value = await listProjectSessions({
+        projectRoot: matrixRoot,
+        pilotHome: matrixHome,
+        includeInternal: matrixCase.includeInternal,
+        ...(matrixCase.limit === undefined ? {} : { limit: matrixCase.limit }),
+        ...(matrixCase.offset === undefined ? {} : { offset: matrixCase.offset }),
+      });
+      matrix.push({
+        ...matrixCase,
+        outcome: JSON.parse(JSON.stringify(value).split(matrixRoot).join('<dir>')),
+      });
+    } catch (error: any) {
+      matrix.push({
+        ...matrixCase,
+        error: JSON.parse(JSON.stringify(errorRecord(error)).split(matrixRoot).join('<dir>')),
+      });
+    }
   }
 
   // The absent-provider path needs a Gateway whose InProcess options truly lack

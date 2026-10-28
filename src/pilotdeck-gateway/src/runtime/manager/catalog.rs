@@ -145,7 +145,8 @@ impl SessionCatalogPort for TranscriptSessionCatalog {
             &(self.chat_dir)(&project),
             &input.project_root,
             input.include_internal,
-        );
+        )
+        .map_err(|message| ManagerError::with_message("SyntaxError", None, message))?;
         Ok(paginate(
             sessions.into_iter().map(|(_, info)| info).collect(),
             input.offset.unwrap_or(0.0),
