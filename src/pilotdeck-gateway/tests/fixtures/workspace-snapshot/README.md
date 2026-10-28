@@ -24,7 +24,7 @@ cmp "$out/oracle.json" src/pilotdeck-gateway/tests/fixtures/workspace-snapshot/o
 - `cross`：normal 场景 TS 写出的快照树（文件 b64 + 目录表）与 list/get/restore 的 TS 结果，供 Rust 正向交叉（Rust 读 TS 写的快照）。
 - `hostBoundaryCases.unpairedSurrogateCollation`：手工 manifest 的 `createdAt` 依次为 `\ud800`、`\ufffd`、`\ue000`、`\u{10000}`，记录真实 TS `list()` 的排序。Node 让孤立代理项保留独立权重，ICU4X 把它们折成 U+FFFD，因此 Rust `list()` 在键含孤立代理项且实际需要比较时返回宿主边界错误（R19），不返回另一种顺序。
 
-Rust 测试 `tests/workspace_snapshot.rs` 逐场景回放：结果按 stringify 深比较，树逐行比较，另验无 `.tmp-` 残留；oracle.json 缺失时测试明确失败（提示先生成）。读入 oracle 时走 #280 的共享校验助手 `tests/common/baseline.rs` 的 `baseline::oracle`：始终断言 `sourceCommit==cc7c4e6` 且 `sourceSha256` 非空、路径与哈希形状合法；设了 `PDRS_BASELINE` 时再用 Git 重算闭包文件的 blob、对照工作树，并断言基线已跟踪文件干净。
+Rust 测试 `tests/workspace_snapshot.rs` 逐场景回放：结果按 stringify 深比较，树逐行比较（树根的 `.staging` 是 Rust 私有暂存父目录，TS 无对应物，回放时跳过、其空置由无残留检查另行断言），另验无 `.tmp-` 残留且 `.staging` 内无残留轮次目录；oracle.json 缺失时测试明确失败（提示先生成）。读入 oracle 时走 #280 的共享校验助手 `tests/common/baseline.rs` 的 `baseline::oracle`：始终断言 `sourceCommit==cc7c4e6` 且 `sourceSha256` 非空、路径与哈希形状合法；设了 `PDRS_BASELINE` 时再用 Git 重算闭包文件的 blob、对照工作树，并断言基线已跟踪文件干净。
 
 反向交叉：`generate.mts <snapshot-root> --verify-rust` 由 Rust 忽略测试 `real_ts_verifies_rust_written_snapshots` 调起（需要 `PDRS_BASELINE` 与 Node/tsx）：Rust 先写出至少两个快照，真实 TS provider 对该根 list/get（manifest 字节必须等于 `JSON.stringify(manifest, null, 2)`、对象摘要与内容一致）并 restore。
 

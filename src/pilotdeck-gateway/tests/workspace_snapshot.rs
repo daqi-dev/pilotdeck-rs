@@ -262,6 +262,14 @@ fn walk_tree(
         return;
     };
     for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // #293 fix-r3: the root-level `.staging` parent is the Rust-side
+        // private area (TS has none — the same registered boundary the
+        // provider walk skips), and the oracle tree is the TS view. Its
+        // emptiness is asserted by `no_temporaries` instead.
+        if directory == root && name == ".staging" {
+            continue;
+        }
         let path = directory.join(entry.file_name());
         let Ok(info) = fs::symlink_metadata(&path) else {
             continue;
@@ -326,13 +334,25 @@ fn non_utf8_names_writable(dir: &Path) -> bool {
 fn no_temporaries(directory: &Path) {
     for entry in fs::read_dir(directory).unwrap().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        // `.staging` is the #293 fix-r2 private staging area: it must be
-        // consumed by the publish or the failure cleanup, never left behind.
-        assert!(
-            !name.contains(".tmp-") && name != ".staging",
-            "leftover temporary {name}"
-        );
         let path = directory.join(entry.file_name());
+        // `.staging` is the #293 fix-r3 persistent staging parent: the fix-r2
+        // code removed it best-effort on every settle, which raced another
+        // round's create_dir_all into a permanent `_FAILED.json`. It stays
+        // now, and must hold no leftover round directory (uuid staging dirs
+        // and `.tmp-` files alike).
+        if name == ".staging" {
+            let leftovers: Vec<String> = fs::read_dir(&path)
+                .expect("#293 fix-r3 the staging parent is listable")
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect();
+            assert!(
+                leftovers.is_empty(),
+                "#293 fix-r3 leftover staging directories: {leftovers:?}"
+            );
+            continue;
+        }
+        assert!(!name.contains(".tmp-"), "leftover temporary {name}");
         if fs::symlink_metadata(&path)
             .map(|info| info.is_dir())
             .unwrap_or(false)
@@ -913,11 +933,21 @@ fn concurrent_failure_cleanup_keeps_other_rounds_commit() {
         failed.contains("ENOENT") && failed.contains("scandir"),
         "#293 R2's marker records the scandir failure: {failed}"
     );
-    // R2 removed its own staging directory and nothing else: the snapshot
-    // root holds the published partition and no staging area at all.
+    // R2 removed its own staging directory and nothing else: the persistent
+    // `.staging` parent (fix-r3) stays behind, holding no round directory.
     assert!(
-        !snapshot_root.join(".staging").exists(),
-        "#293 R2 removed its own staging directory"
+        snapshot_root.join(".staging").is_dir(),
+        "#293 fix-r3 the staging parent survives the failed round's cleanup"
+    );
+    let mut staging_names: Vec<String> = fs::read_dir(snapshot_root.join(".staging"))
+        .expect("#293 fix-r3 the staging parent is listable after the interleave")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    staging_names.sort();
+    assert!(
+        staging_names.is_empty(),
+        "#293 R2 removed its own staging directory, leaving the persistent parent empty: {staging_names:?}"
     );
     let mut names: Vec<String> = fs::read_dir(&partition)
         .expect("#293 the partition is listable after the interleave")
@@ -1052,7 +1082,15 @@ fn publish_over_a_concurrent_commit_overwrites_like_ts() {
         "#293 the partition holds exactly the manifest and the committed marker"
     );
     assert!(
-        !snapshot_root.join(".staging").exists(),
+        snapshot_root.join(".staging").is_dir(),
+        "#293 fix-r3 the staging parent survives both settles"
+    );
+    assert!(
+        fs::read_dir(snapshot_root.join(".staging"))
+            .expect("#293 fix-r3 the staging parent is listable after both rounds")
+            .flatten()
+            .next()
+            .is_none(),
         "#293 both rounds consumed their staging directories"
     );
 }
@@ -1141,7 +1179,15 @@ fn list_ignores_in_flight_staging_directories() {
         "#293 the released round's snapshot lists after it commits"
     );
     assert!(
-        !snapshot_root.join(".staging").exists(),
+        snapshot_root.join(".staging").is_dir(),
+        "#293 fix-r3 the staging parent survives the committed round"
+    );
+    assert!(
+        fs::read_dir(snapshot_root.join(".staging"))
+            .expect("#293 fix-r3 the staging parent is listable after the commit")
+            .flatten()
+            .next()
+            .is_none(),
         "#293 the committed round consumed its staging directory"
     );
 }
@@ -1235,20 +1281,20 @@ fn restore_refuses_object_keys_through_symlinks() {
     }
 }
 
-/// #293 fix-r2 (A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R2): the fallback
-/// publish writes the committed marker before the manifest, so a publish
-/// interrupted between the two renames never leaves a manifest a reader could
-/// mistake for a complete snapshot. The planted partition — a `manifest.json`
-/// directory plus `keep.txt`, no markers — makes the manifest rename fail
-/// with EISDIR deterministically after the marker landed (the same errno and
-/// message shape as TS, Node v22.22.0 probe
-/// `_tmp/20261026-issue-293/fix-r2/probe-c.out` c6, which quotes the round's
-/// temporary path inside the message). The residue — a published
-/// `_COMMITTED` with no readable manifest, which the next round's
-/// early-exit then reports as Committed — is the registered divergence
-/// (TS writes the manifest first and unlinks it in its catch instead).
+/// #293 fix-r3 (registered divergence A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001
+/// -R3): the fallback publish over an occupied partition writes the manifest
+/// first and the committed marker last — the marker is the commit point. The
+/// planted partition — a `manifest.json` directory plus `keep.txt`, no
+/// markers — makes the manifest rename fail with EISDIR deterministically
+/// before the marker is published, exactly what the real TS recorder leaves
+/// in the same scenario (Node v22.22.0 probe
+/// `_tmp/20261026-issue-293/fix-r2/probe-c.out` c6: `state: failed`, no
+/// `_COMMITTED` on the partition, `_FAILED.json` written). The fix-r2 order
+/// (marker first) instead left a published `_COMMITTED` with no readable
+/// manifest, and the next round's early-exit then reported Committed over a
+/// snapshot that could never be restored (r3 review P1-A).
 #[test]
-fn fallback_publish_writes_the_committed_marker_before_the_manifest() {
+fn fallback_publish_writes_the_manifest_before_the_committed_marker() {
     let run = Scratch::new();
     let snapshot_root = run.0.join("snapshots");
     let workspace = run.0.join("ws");
@@ -1259,7 +1305,7 @@ fn fallback_publish_writes_the_committed_marker_before_the_manifest() {
         .join(sha256_hex(b"s\0t\0pre_user"));
     // The planted partition: occupied, so the staging rename falls back to
     // the per-file publishes; manifest.json is a directory, so the manifest
-    // rename fails where the marker rename already succeeded.
+    // rename (now first) fails before the marker is published.
     fs::create_dir_all(partition.join("manifest.json")).expect("#293 plant the manifest directory");
     fs::write(
         partition.join("manifest.json/inner.txt"),
@@ -1304,11 +1350,13 @@ fn fallback_publish_writes_the_committed_marker_before_the_manifest() {
         "#293 the failure is the manifest rename over the planted directory: {:?}",
         result.error
     );
-    // The load-bearing order assertion: the marker is on the partition, the
-    // manifest never landed.
+    // The load-bearing order assertion (the kill criterion of the
+    // `fallback-order` negative control): the marker is the commit point, so
+    // a manifest publish that failed must leave no published marker at all —
+    // the residue a reader could mistake for a committed snapshot.
     assert!(
-        partition.join("_COMMITTED").is_file(),
-        "#293 the committed marker is published before the manifest"
+        !partition.join("_COMMITTED").exists(),
+        "#293 fix-r3 the committed marker is the commit point: not published while the manifest publish failed"
     );
     assert!(
         partition.join("manifest.json").is_dir(),
@@ -1327,22 +1375,225 @@ fn fallback_publish_writes_the_committed_marker_before_the_manifest() {
         partition.join("_FAILED.json").is_file(),
         "#293 the failure marker is written beside the residue"
     );
+    // The staging parent is persistent (fix-r3 P1-B): it stays, holding no
+    // leftover round directory.
     assert!(
-        !snapshot_root.join(".staging").exists(),
-        "#293 the failed round's staging directory is removed"
+        snapshot_root.join(".staging").is_dir(),
+        "#293 fix-r3 the staging parent survives the failed round"
     );
-    // The registered divergence pinned: the published `_COMMITTED` makes
-    // the next round early-exit as Committed even though its manifest is
-    // not readable (TS leaves no marker here — its catch unlinks the
-    // manifest it wrote first).
+    assert!(
+        fs::read_dir(snapshot_root.join(".staging"))
+            .expect("#293 fix-r3 the staging parent is listable after the failed round")
+            .flatten()
+            .next()
+            .is_none(),
+        "#293 the failed round's staging directory is removed, leaving the parent empty"
+    );
+    // A third round on the failed partition early-exits on `_FAILED.json`
+    // (no committed marker exists), exactly like a TS round over the probe-c
+    // c6 residue: not a false Committed, and never a rescan.
     let third = ContentAddressedWorkspaceSnapshotRecorder::new(config);
     let third_result = third
         .capture_pre_user(&input)
         .expect("#293 the third round returns a result, not a hard error");
     assert_eq!(
         third_result.state,
+        SnapshotState::Failed,
+        "#293 fix-r3 the third round sees the failure marker, not a phantom commit"
+    );
+    assert!(
+        !partition.join("_COMMITTED").exists(),
+        "#293 fix-r3 no committed marker appears behind the failure marker"
+    );
+}
+
+/// #293 fix-r3 (registered divergence A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001
+/// -R3): a committed snapshot is a partition whose manifest is present as a
+/// file AND whose `_COMMITTED` marker exists — the early exit no longer
+/// trusts the marker alone. The fix-r2 fallback order could leave exactly
+/// that marker-without-manifest residue, and every later round then reported
+/// Committed over a manifest that could never be read or restored (r3 review
+/// P1-A); the fix-r3 order (manifest first, marker last) cannot produce it,
+/// and a hand-planted or foreign marker must not fake a commit either. TS
+/// early-exits on the marker alone (read, not measured — the baseline tree
+/// was not available in this round), but its own write order never leaves
+/// that residue. The manifest-only residue (an interrupted publish between
+/// the two renames, no markers) must likewise republish and overwrite.
+#[test]
+fn orphan_committed_marker_without_a_manifest_recaptures() {
+    let run = Scratch::new();
+    let snapshot_root = run.0.join("snapshots");
+    let workspace = run.0.join("ws");
+    fs::create_dir_all(&workspace).expect("#293 fix-r3 create the workspace");
+    fs::write(workspace.join("only.txt"), b"x\n").expect("#293 fix-r3 seed the workspace");
+    let partitions = snapshot_root.join("workspaces/w/sessions/s/snapshots");
+    let marker_only = partitions.join(sha256_hex(b"s\0t1\0pre_user"));
+    fs::create_dir_all(&marker_only).expect("#293 fix-r3 create the marker-only partition");
+    // The fix-r2 residue: a committed marker with no manifest beside it.
+    fs::write(marker_only.join("_COMMITTED"), b"")
+        .expect("#293 fix-r3 plant the orphan committed marker");
+    let manifest_only = partitions.join(sha256_hex(b"s\0t2\0pre_user"));
+    fs::create_dir_all(&manifest_only).expect("#293 fix-r3 create the manifest-only partition");
+    // An interrupted publish between the two renames: the manifest landed,
+    // the marker never did, and no `_FAILED.json` exists.
+    fs::write(
+        manifest_only.join("manifest.json"),
+        "{\n  \"snapshotId\": \"interrupted\"\n}\n",
+    )
+    .expect("#293 fix-r3 plant the interrupted manifest");
+
+    let input = |turn_id: &str| WorkspaceSnapshotInput {
+        workspace_id: "w".into(),
+        session_id: "s".into(),
+        turn_id: turn_id.into(),
+        run_id: "run-r3".into(),
+        workspace_dir: workspace.to_string_lossy().into_owned(),
+        workspace_stable: None,
+        failure_kind: None,
+        failure_reason: None,
+    };
+    let config = WorkspaceSnapshotConfig {
+        root: run.0.to_string_lossy().into_owned(),
+        snapshot_root: snapshot_root.to_string_lossy().into_owned(),
+    };
+
+    // The orphan marker must not short-circuit: the round recaptures and
+    // republishes a complete snapshot over it.
+    let recorder = ContentAddressedWorkspaceSnapshotRecorder::new(config.clone());
+    let result = recorder
+        .capture_pre_user(&input("t1"))
+        .expect("#293 fix-r3 the round over the orphan marker returns a result");
+    assert_eq!(
+        result.state,
         SnapshotState::Committed,
-        "#293 the published marker short-circuits the third round (registered divergence)"
+        "#293 fix-r3 an orphan marker must not short-circuit: the round recaptured"
+    );
+    assert_eq!(
+        result.manifest_path.as_deref(),
+        Some(marker_only.join("manifest.json").to_string_lossy().as_ref()),
+        "#293 fix-r3 the recaptured round reports the shared manifest path"
+    );
+    let manifest = fs::read_to_string(marker_only.join("manifest.json"))
+        .expect("#293 fix-r3 the republished manifest is readable");
+    assert!(
+        manifest.contains("\"runId\": \"run-r3\""),
+        "#293 fix-r3 the republished manifest is this round's, not a stale one: {manifest}"
+    );
+    assert!(
+        marker_only.join("_COMMITTED").is_file(),
+        "#293 fix-r3 the republish refreshed the committed marker"
+    );
+    let listed = create_workspace_snapshot_provider(config.clone())
+        .list()
+        .expect("#293 fix-r3 the provider lists the republished snapshot");
+    assert_eq!(
+        listed.len(),
+        1,
+        "#293 fix-r3 the recaptured snapshot is the only listed one: {listed:?}"
+    );
+
+    // The interrupted manifest must be overwritten by the next round.
+    let recorder = ContentAddressedWorkspaceSnapshotRecorder::new(config);
+    let result = recorder
+        .capture_pre_user(&input("t2"))
+        .expect("#293 fix-r3 the round over the interrupted manifest returns a result");
+    assert_eq!(
+        result.state,
+        SnapshotState::Committed,
+        "#293 fix-r3 an unmarked manifest residue is republished over, not trusted"
+    );
+    let manifest = fs::read_to_string(manifest_only.join("manifest.json"))
+        .expect("#293 fix-r3 the overwritten manifest is readable");
+    assert!(
+        manifest.contains("\"runId\": \"run-r3\"")
+            && manifest.contains(sha256_hex(b"s\0t2\0pre_user").as_str()),
+        "#293 fix-r3 the overwrite replaced the interrupted manifest: {manifest}"
+    );
+    assert!(
+        manifest_only.join("_COMMITTED").is_file(),
+        "#293 fix-r3 the overwrite published the committed marker"
+    );
+}
+
+/// #293 fix-r3 (A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R3): `.staging` is a
+/// long-lived parent. No settle path may remove it: a best-effort removal
+/// racing another round's `create_dir_all` (which creates the parent, then
+/// retries the child once — std `DirBuilder::create_dir_all`) turns an
+/// innocent capture into a permanent `_FAILED.json` (r3 review P1-B, hit
+/// independently by two reviewers). Both settle paths — the committed round's
+/// publish tail and the failed round's cleanup — must leave the parent in
+/// place, empty. Its bounded reproduction is
+/// `removing_the_staging_parent_between_mkdirs_fails_the_round` in the lib
+/// tests.
+#[test]
+fn staging_parent_survives_round_settlement() {
+    let run = Scratch::new();
+    let snapshot_root = run.0.join("snapshots");
+    fs::create_dir_all(&snapshot_root).expect("#293 fix-r3 create the snapshot root");
+    let workspace = run.0.join("ws");
+    fs::create_dir_all(&workspace).expect("#293 fix-r3 create the workspace");
+    fs::write(workspace.join("only.txt"), b"x\n").expect("#293 fix-r3 seed the workspace");
+    let gone = run.0.join("ws-gone");
+
+    let input = |turn_id: &str, workspace_dir: &Path| WorkspaceSnapshotInput {
+        workspace_id: "w".into(),
+        session_id: "s".into(),
+        turn_id: turn_id.into(),
+        run_id: "run-r3".into(),
+        workspace_dir: workspace_dir.to_string_lossy().into_owned(),
+        workspace_stable: None,
+        failure_kind: None,
+        failure_reason: None,
+    };
+    let config = WorkspaceSnapshotConfig {
+        root: run.0.to_string_lossy().into_owned(),
+        snapshot_root: snapshot_root.to_string_lossy().into_owned(),
+    };
+
+    // A committed round: the publish tail must leave the parent in place.
+    let committed = ContentAddressedWorkspaceSnapshotRecorder::new(config.clone())
+        .capture_pre_user(&input("t1", &workspace))
+        .expect("#293 fix-r3 the first round commits");
+    assert_eq!(
+        committed.state,
+        SnapshotState::Committed,
+        "#293 fix-r3 the first round commits"
+    );
+    assert!(
+        snapshot_root.join(".staging").is_dir(),
+        "#293 fix-r3 the staging parent survives a committed round"
+    );
+    assert!(
+        fs::read_dir(snapshot_root.join(".staging"))
+            .expect("#293 fix-r3 the staging parent is listable after the committed round")
+            .flatten()
+            .next()
+            .is_none(),
+        "#293 fix-r3 a committed round leaves no staging directory behind"
+    );
+
+    // A failed round (its workspace directory does not exist): the failure
+    // cleanup must leave the parent in place too — this is the arm that used
+    // to race another round's create_dir_all.
+    let failed = ContentAddressedWorkspaceSnapshotRecorder::new(config)
+        .capture_pre_user(&input("t2", &gone))
+        .expect("#293 fix-r3 the second round returns a failed result, not a hard error");
+    assert_eq!(
+        failed.state,
+        SnapshotState::Failed,
+        "#293 fix-r3 the second round fails at the missing workspace directory"
+    );
+    assert!(
+        snapshot_root.join(".staging").is_dir(),
+        "#293 fix-r3 the staging parent survives a failed round"
+    );
+    assert!(
+        fs::read_dir(snapshot_root.join(".staging"))
+            .expect("#293 fix-r3 the staging parent is listable after the failed round")
+            .flatten()
+            .next()
+            .is_none(),
+        "#293 R2 removed its own staging directory, leaving the persistent parent empty"
     );
 }
 
