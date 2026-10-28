@@ -462,6 +462,17 @@ impl EdgeClawMemoryService {
                 Err(dispose_error) => Err(dispose_error.into()),
             };
         }
+        // The TS success tail (`service.ts:826-865`) is one synchronous
+        // segment: install, replace, the `finally` dispose and every state
+        // write below happen without an `await`, so on the event loop no
+        // other dream's tail can interleave. Threads must not interleave
+        // them either: `D1.install → D2.install → D2.replace → D1.replace`
+        // would leave the live roots from one dream and `last_dream`
+        // metadata from the other, which the rollback version guard then
+        // refuses. One shared root operation scope spans the whole tail; no
+        // LLM await happens inside it, and every repository call below
+        // reenters the same thread's already-held guards.
+        let _tail_scope = self.repository.snapshot_operation_scope()?;
         // TS wraps install/replace in `try { ... } finally { dispose }`
         // (`service.ts:826-857`): a dispose failure in `finally` overrides
         // the guarded error, exactly like a throw in the block.
@@ -507,6 +518,12 @@ impl EdgeClawMemoryService {
                 );
                 self.repository
                     .install_last_dream_snapshot(&stage.snapshot, &metadata)?;
+                // Test seam: park between install and replace while the tail
+                // scope is held (the tail-race regression proves the other
+                // thread's install cannot slip in here).
+                if let Some(gate) = &self.dream_tail_gate {
+                    gate();
+                }
                 self.repository
                     .replace_live_roots_with_stage(&stage, &stage.snapshot)?;
                 Ok(())

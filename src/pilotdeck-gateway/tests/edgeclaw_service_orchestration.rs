@@ -521,14 +521,47 @@ impl Ctx {
                 .join("last_dream"),
         ))
     }
+    /// The dream stage's workspace/global/db temps are SIBLINGS of their live
+    /// targets (`.memory.dream-*` / `.control.sqlite.dream-*` next to the
+    /// data dir entries, `.global.dream-*` next to the global root), not
+    /// inside `memoryDir`. Scan the actual parent directories and report the
+    /// leftover paths themselves, so a skipped cleanup fails on content, not
+    /// on a counter.
     fn stage_temp_left(&self) -> Value {
-        Value::Array(
-            tree(&self.service.memory_dir)
-                .into_iter()
-                .map(|file| file["relativePath"].clone())
-                .filter(|path| path.as_str().is_some_and(|path| path.contains("dream-")))
-                .collect(),
-        )
+        let global_root = self
+            .service
+            .repository
+            .global_user_memory
+            .get_root_dir()
+            .to_path_buf();
+        let mut parents = vec![
+            self.service.data_dir.clone(),
+            global_root
+                .parent()
+                .expect("#776 global root has a parent")
+                .to_path_buf(),
+        ];
+        parents.sort();
+        parents.dedup();
+        let mut left: Vec<Value> = Vec::new();
+        for parent in &parents {
+            let entries = match fs::read_dir(parent) {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            };
+            let mut names: Vec<String> = entries
+                .filter_map(std::result::Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.contains(".dream-"))
+                .collect();
+            names.sort();
+            left.extend(
+                names
+                    .into_iter()
+                    .map(|name| json!(parent.join(name).to_string_lossy().replace('\\', "/"))),
+            );
+        }
+        Value::Array(left)
     }
     fn names(&self) -> Vec<String> {
         let mut options = JsObject::new();
@@ -613,6 +646,7 @@ fn build_service(
             runtime: None,
             logger: Some(Arc::new(DebugLogger)),
             llm_config: Some(config),
+            dream_tail_gate: None,
         },
     )
     .expect("#776 construct test service")
@@ -1239,7 +1273,22 @@ fn observations(oracle: &Value) -> Value {
             .iter()
             .enumerate()
         {
-            scenarios.push(run_scenario(spec, root, index + 1, &math_index).await);
+            // Every wait inside a cell is bounded (the gate waits 30s), but a
+            // regression that makes any completion wait unbounded — e.g. the
+            // second operation waiting for a first that is itself waiting on
+            // the test — must fail here instead of hanging the suite (TS has
+            // no such bound either: the parked-flush probe in
+            // `_tmp/20261026-issue-776/fix-r1/probe/hang.mts` stays pending
+            // past the 30s request timeout).
+            let name = text_at(spec, "name");
+            scenarios.push(
+                tokio::time::timeout(
+                    Duration::from_secs(180),
+                    run_scenario(spec, root, index + 1, &math_index),
+                )
+                .await
+                .unwrap_or_else(|_| panic!("#776 scenario {name} exceeded the 180s cell deadline")),
+            );
         }
         scenarios
     }));
@@ -1270,6 +1319,133 @@ fn rust_matches_ts_oracle() {
             );
         }
     }
+}
+
+/// P1-3 (fix-r1): the completion waits a regression could make unbounded
+/// must fail bounded, not hang the suite. The first flush parks at its
+/// classify request and is never released — the real TS service has no
+/// built-in bound either (`_tmp/20261026-issue-776/fix-r1/probe/hang.mts`
+/// stays pending past the 30s request timeout, which only aborts the fetch
+/// that actually went out). The second flush must still complete while the
+/// first is parked, and cancelling the parked predecessor must leave the
+/// service usable.
+#[test]
+fn flush_second_completes_when_first_never_does() {
+    let scratch = Scratch::new("edgeclaw-service-orchestration-hang");
+    let root = scratch.path();
+    let dir = root.join("svc-hang");
+    fs::create_dir_all(dir.join("workspace")).expect("#776 hang scenario workspace");
+    fs::create_dir_all(dir.join("home")).expect("#776 hang scenario home");
+    // flush2's four steps reach the transport while flush1's classify stays
+    // parked before it, exactly like the flush-inflight-flush cell.
+    let step = |value: Value| {
+        (
+            200,
+            json!({"choices": [{"message": {"content": value.to_string()}}]}).to_string(),
+        )
+    };
+    let note = |name: &str| {
+        json!({
+            "skip": false,
+            "reason": "",
+            "name": name,
+            "description": format!("{name} description"),
+            "markdown": format!("## Summary\n{name} body"),
+        })
+    };
+    let steps = vec![
+        step(json!({"should_store": true, "labels": [{"type": "project", "reason": "r"}]})),
+        step(note("Alpha")),
+        step(json!({"should_store": true, "labels": [{"type": "project", "reason": "r"}]})),
+        step(note("Beta")),
+    ];
+    let (transport, mut gate) = ScriptedTransport::new(steps, Some(1));
+    let gate = gate.as_mut().expect("#776 hang scenario gate");
+    let math_index = Arc::new(AtomicUsize::new(0));
+    let service = Arc::new(build_service(
+        &dir,
+        Arc::new(transport.clone()),
+        &math_index,
+    ));
+    let messages: Vec<JsValue> = [
+        json!({"role": "user", "content": "alpha user"}),
+        json!({"role": "assistant", "content": "alpha assistant"}),
+    ]
+    .iter()
+    .map(js_from)
+    .collect();
+    for (session, timestamp) in [
+        ("s1", "2026-10-22T00:00:01.000Z"),
+        ("s2", "2026-10-22T00:00:02.000Z"),
+    ] {
+        service
+            .capture_turn(
+                &messages,
+                CaptureTurnInput {
+                    session_key: session.into(),
+                    timestamp: Some(timestamp.into()),
+                    source: None,
+                },
+            )
+            .expect("#776 hang scenario seed captureTurn");
+    }
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("#776 hang scenario runtime");
+    runtime.block_on(tokio::task::LocalSet::new().run_until(async {
+        transport.arm();
+        let gated = service.clone();
+        let first = tokio::task::spawn_local(async move {
+            gated
+                .flush(FlushOptions {
+                    reason: Some("manual".into()),
+                    session_keys: Some(vec!["s1".into()]),
+                    ..FlushOptions::default()
+                })
+                .await
+        });
+        gate.wait("flush-never-released").await;
+        // The parked predecessor must not block the second flush, and this
+        // wait must fail bounded (not hang) if a regression couples them.
+        let second = tokio::time::timeout(
+            Duration::from_secs(30),
+            service.flush(FlushOptions {
+                reason: Some("manual".into()),
+                ..FlushOptions::default()
+            }),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "#776 flush-never-released: the second flush waited for the \
+                 never-completing first flush (unbounded completion wait)"
+            )
+        })
+        .expect("#776 flush-never-released: the second flush failed");
+        let second = encode_js(&second.to_value());
+        assert_eq!(
+            second.get("capturedSessions").and_then(Value::as_f64),
+            Some(2.0),
+            "#776 flush-never-released: the second flush did not process both sessions"
+        );
+        assert_eq!(
+            tree(&service.memory_dir).len(),
+            4,
+            "#776 flush-never-released: the second flush did not index both sessions"
+        );
+        // Cancel the parked predecessor; the service must stay usable.
+        first.abort();
+        let cancelled = first.await;
+        assert!(
+            cancelled.is_err(),
+            "#776 flush-never-released: the parked first flush completed after abort"
+        );
+    }));
+    service
+        .close()
+        .expect("#776 flush-never-released close service");
 }
 
 #[test]

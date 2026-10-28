@@ -91,6 +91,12 @@ pub struct ServiceDependencies {
     pub logger: Option<Arc<dyn ServiceLogger>>,
     /// Pre-resolved `buildLlmConfig` value; defaults to the real env/home read.
     pub llm_config: Option<JsValue>,
+    /// Test seam for the dream success tail: called between installing the
+    /// last-dream snapshot and replacing the live roots, with the tail's root
+    /// operation scope held. The two-thread tail-race regression parks one
+    /// dream here to prove the other cannot interleave its own install and
+    /// replace. Blocking inside is allowed; no LLM await surrounds it.
+    pub dream_tail_gate: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 /// `EdgeClawMemoryServiceOptions` (`service.ts:66-82`).
@@ -257,6 +263,9 @@ pub struct EdgeClawMemoryService {
     /// [`Self::dream_stage_counters`] reads these instead.
     dream_stages_created: AtomicU64,
     dream_stages_disposed: AtomicU64,
+    /// Injected seam between the tail's install and replace (see
+    /// [`ServiceDependencies::dream_tail_gate`]).
+    dream_tail_gate: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl EdgeClawMemoryService {
@@ -280,6 +289,7 @@ impl EdgeClawMemoryService {
             runtime,
             logger,
             llm_config,
+            dream_tail_gate,
         } = dependencies;
         let workspace_dir = absolute(&options.workspace_dir)?;
         let home = match home {
@@ -430,6 +440,7 @@ impl EdgeClawMemoryService {
             logger,
             dream_stages_created: AtomicU64::new(0),
             dream_stages_disposed: AtomicU64::new(0),
+            dream_tail_gate,
         })
     }
 
