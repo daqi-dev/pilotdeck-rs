@@ -105,8 +105,10 @@ def run_node(row, env):
     )
 
 
-def run(row, env):
-    return run_cargo(row, env) if row['runner'] == 'cargo' else run_node(row, env)
+def run(row, env, output, stage):
+    result = run_cargo(row, env) if row['runner'] == 'cargo' else run_node(row, env)
+    (output / f"{row['name']}-{stage}.log").write_text(result.stdout + result.stderr)
+    return result
 
 
 def cargo_passed(result, test):
@@ -154,23 +156,24 @@ def main():
             for row in ROWS:
                 status, reason = 'INVALID', ''
                 try:
-                    base = run(row, env)
+                    base = run(row, env, output, 'positive')
                     if not positive_ok(row, base):
                         status, reason = 'INVALID', 'positive control did not pass the bound test'
                     else:
-                        original = originals[row['path']].decode()
+                        snapshot = originals[Path(row['path'])]
+                        original = snapshot.decode()
                         if original.count(row['old']) != 1:
                             status, reason = 'INVALID', 'mutation anchor is not unique'
                         else:
                             Path(ROOT / row['path']).write_bytes(
                                 original.replace(row['old'], row['new'], 1).encode())
-                            status, reason = classify(row, run(row, env))
+                            status, reason = classify(row, run(row, env, output, 'negative'))
                 except Exception as error:
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
-                    Path(ROOT / row['path']).write_bytes(originals[row['path']])
+                    Path(ROOT / row['path']).write_bytes(originals[Path(row['path'])])
                 try:
-                    restored = run(row, env)
+                    restored = run(row, env, output, 'restored')
                     if not positive_ok(row, restored):
                         status, reason = 'INVALID', (reason + '; ' if reason else '') + 'restored positive control did not pass'
                 except Exception as error:
