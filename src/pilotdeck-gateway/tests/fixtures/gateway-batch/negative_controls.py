@@ -28,7 +28,10 @@ NEGATIVE = Path(__file__).resolve()
 SESSION_NEGATIVE = NEGATIVE.parent.parent / 'session-domain-cleanup/negative_controls.py'
 DRIVER_TEST = ROOT / 'src/pilotdeck-gateway/tests/test_metadata_io_driver.py'
 PROCESS = NEGATIVE.parent.parent / 'negative_process.py'
+PROCESS_TEST = NEGATIVE.parent.parent / 'test_negative_process.py'
 MUTATIONS = [
+    ('parity-window-unlocked', PROCESS, 'if parity else nullcontext())', 'if False else nullcontext())'),
+    ('parity-unverified-released', PROCESS, 'if not restored[0]:', 'if False and not restored[0]:'),
     ('guard-contract-open', PROCESS,
      'if set(namespace) != names or len(functions) != 1:',
      'if False and (set(namespace) != names or len(functions) != 1):'),
@@ -117,11 +120,13 @@ MUTATIONS = [
      "'INVALID': 'BLOCKED'", "'INVALID': 'PASS'"),
 ]
 CHECKS = {
+    'parity-window-unlocked': ('ParityMutationLock.test_lock_held_through_restore_and_head_verification', '#166 second parity acquirer must be refused during mutation'),
+    'parity-unverified-released': ('ParityMutationLock.test_failed_restore_retains_cleanup_pending_lease', '#166 failed restoration must retain parity lock'),
     'guard-contract-open': ('AggregationAudit.test_committed_contract_requires_complete_head', '#166 incomplete committed contract must be refused'),
     'guard-exit-fail': ('AggregationAudit.test_residual_mapping_is_rejected_before_import', '#166 source guard must exit BLOCKED'),
     'compile-invalid-not-reached': ('AggregationAudit.test_session_suite_continues_after_invalid_mutants', '#166 uncompilable mutant must reach compiler'),
-    'gateway-common-unguarded': ('AggregationAudit.test_residual_mapping_is_rejected_before_import', '#166 residual mapping must be guarded before import'),
-    'session-common-unguarded': ('AggregationAudit.test_residual_mapping_is_rejected_before_import', '#166 residual mapping must be guarded before import'),
+    'gateway-common-unguarded': ('AggregationAudit.test_residual_mapping_is_rejected_before_import', '#166 common.py must be included in guarded sources'),
+    'session-common-unguarded': ('AggregationAudit.test_residual_mapping_is_rejected_before_import', '#166 common.py must be included in guarded sources'),
     'gateway-common-loaded-early': ('AggregationAudit.test_residual_mapping_is_rejected_before_import', '#166 residual mapping must be guarded before import'),
     'session-common-loaded-early': ('AggregationAudit.test_residual_mapping_is_rejected_before_import', '#166 residual mapping must be guarded before import'),
     'a3-bootstrap-unscanned': ('ApparatusInputs.test_a3_entries_are_scanned_by_both_guards', '#701 A3 scanner must inspect check_schema.py'),
@@ -154,7 +159,8 @@ CHECKS = {
 
 
 def run(out, label, test):
-    script = DRIVER_TEST if test.startswith('AggregationAudit.') else SAFETY
+    script = (DRIVER_TEST if test.startswith('AggregationAudit.') else
+              PROCESS_TEST if test.startswith('ParityMutationLock.') else SAFETY)
     result = run_owned([sys.executable, '-I', '-B', str(script), test, '-v'], cwd=ROOT, timeout=120)
     (out / (label + '.log')).write_text(result.stdout + result.stderr)
     return result

@@ -6,7 +6,7 @@ escapes the process group and can keep the inherited pipes open, which is why
 a plain ``with Popen(...)`` plus ``communicate()`` can block forever even after
 the leader is dead (#528).
 """
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import fcntl
 import os
 from pathlib import Path
@@ -14,6 +14,7 @@ import signal
 import subprocess
 import threading
 import time
+from types import ModuleType
 
 # Upper bound for collecting a killed tree. Kept short on purpose: the only
 # writer that can still hold the pipes is a setsid() descendant that the group
@@ -266,6 +267,35 @@ def _assert_product_pristine(root, baseline):
 
 
 @contextmanager
+def _parity_mutation_lock(root, snapshot, timeout):
+    """Use the ruler's own lease/guard protocol, loaded from verified bytes.
+
+    This checkout uses a lease directory plus a persistent .guard flock file.
+    Bound the guard's flock too: parity_lock's polling deadline alone cannot
+    interrupt its blocking guard acquisition. Never import mutated disk code.
+    """
+    path = root / "scripts/gateway-parity/common.py"
+    if path not in snapshot:
+        raise RuntimeError("#166 parity lock requires common.py in guarded sources")
+    common = ModuleType("negative_pristine_parity")
+    common.__file__ = str(path)
+    exec(compile(snapshot[path], str(path), "exec"), common.__dict__)
+    common.guard = lambda lock: TreeLock(
+        lock.with_name(lock.name + ".guard"), timeout=timeout)
+    restored = [False]
+    with common.parity_lock(timeout=timeout):
+        try:
+            yield restored
+        finally:
+            if not restored[0]:
+                # A restoration error must not publish a reusable lease.
+                # This private module uses an explicit non-PID cleanup reason;
+                # parity_lock persists it in cleanupPending instead of deleting
+                # the lease. Even a failed save leaves the original True marker.
+                common.LIVE_GROUPS.add("source-restore-unverified")
+
+
+@contextmanager
 def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
     """Lock the tree, prove ``paths`` are pristine, snapshot, mutate, restore.
 
@@ -277,8 +307,12 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
     human to inspect. On exit the snapshot is written back and compared both to
     the snapshot and to the same git object.
 
-    Nested use by one thread is supported through :class:`TreeLock`, so a
-    runner executed in-process (round6) can take the same lock as its caller.
+    Nested product-only use by one thread is supported through TreeLock;
+    parity mutation windows must not nest their non-reentrant ruler lease.
+    Any scripts/gateway-parity path requires common.py in the guarded set:
+    acquire the shared parity lease before yielding, then retain it through
+    restoration and byte verification. Lease polling and each guard flock
+    acquisition have separate 60s bounds; a busy lock fails before source writes.
     """
     root = Path(root).resolve()
     normalized = []
@@ -305,17 +339,24 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
                 raise SourceBaselineError(root, relative,
                                           f"differs from {baseline}")
         snapshot = dict(baseline_bytes)
-        try:
-            yield {alias: snapshot[path] for alias, path, _relative in normalized}
-        finally:
-            for _alias, path, _relative in normalized:
-                path.write_bytes(snapshot[path])
-            for _alias, path, relative in normalized:
-                if path.read_bytes() != snapshot[path]:
-                    raise RuntimeError(f"restore failed: {relative}")
-                if _head_bytes(root, relative, baseline) != snapshot[path]:
-                    raise RuntimeError(
-                        f"restored {relative} does not match {baseline}")
+        parity = any(relative.startswith("scripts/gateway-parity/")
+                     for _alias, _path, relative in normalized)
+        lock = (_parity_mutation_lock(root, snapshot, min(lock_timeout, 60))
+                if parity else nullcontext())
+        with lock as restored:
+            try:
+                yield {alias: snapshot[path] for alias, path, _relative in normalized}
+            finally:
+                for _alias, path, _relative in normalized:
+                    path.write_bytes(snapshot[path])
+                for _alias, path, relative in normalized:
+                    if path.read_bytes() != snapshot[path]:
+                        raise RuntimeError(f"restore failed: {relative}")
+                    if _head_bytes(root, relative, baseline) != snapshot[path]:
+                        raise RuntimeError(
+                            f"restored {relative} does not match {baseline}")
+                if restored is not None:
+                    restored[0] = True
 
 
 def wait_for_slot(script, *, timeout=900, interval=30):

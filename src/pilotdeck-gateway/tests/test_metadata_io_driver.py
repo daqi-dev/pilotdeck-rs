@@ -1225,6 +1225,52 @@ class AggregationAudit(unittest.TestCase):
         self.root = Path(__file__).resolve().parents[3]
         self.fixture = self.root / 'src/pilotdeck-gateway/tests/fixtures'
 
+    def test_negative_suites_require_parity_lock_and_report_busy_as_invalid(self):
+        import contextlib
+        import json
+        import sys
+        for folder in ('gateway-batch', 'session-domain-cleanup'):
+            with self.subTest(folder=folder), tempfile.TemporaryDirectory() as temp:
+                path = self.fixture / folder / 'negative_controls.py'
+                spec = importlib.util.spec_from_file_location('negative_lock_' + folder, path)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                guard = sys.modules['negative_process']
+                calls = []
+
+                @contextlib.contextmanager
+                def busy(*_args, **kwargs):
+                    calls.append(True)
+                    raise TimeoutError('#166 controlled busy parity lock')
+                    yield  # contextmanager; never enter a mutation window
+
+                output = Path(temp) / 'out'
+                names = [row[0] for row in module.MUTATIONS[:2]]
+                argv = ['negative_controls.py', '--output', str(output)]
+                for name in names:
+                    argv.extend(['--only', name])
+                raw_read = Path.read_bytes
+
+                def git(_root, *args):
+                    return raw_read(self.root / args[1].split(':', 1)[1]) if args[0] == 'show' else b''
+
+                with patch.object(guard, '_parity_mutation_lock', busy), \
+                        patch.object(guard, '_git', git), \
+                        patch.object(guard, 'tree_lock', return_value=contextlib.nullcontext()), \
+                        patch.object(Path, 'write_bytes', side_effect=AssertionError('#166 busy lock must not write source')), \
+                        patch.object(module.sys, 'argv', argv), \
+                        patch.object(module, 'run_owned', side_effect=AssertionError('#166 busy lock must not launch a test')):
+                    if hasattr(module, 'pgrep_launcher'):
+                        module.pgrep_launcher = lambda: ''
+                    code = module.main()
+                self.assertEqual(calls, [True], '#166 both negative suites must request parity lock')
+                self.assertEqual(code, 2, '#166 busy parity lock must exit BLOCKED')
+                report = json.loads((output / 'summary.json').read_text())
+                rows = report if folder == 'gateway-batch' else report['mutations']
+                key = 'status' if folder == 'gateway-batch' else 'verdict'
+                self.assertEqual([row[key] for row in rows], ['INVALID', 'INVALID'],
+                                 '#166 busy parity lock must mark all selected mutants INVALID')
+
 
     def test_residual_mapping_is_rejected_before_import(self):
         import contextlib
@@ -1263,12 +1309,20 @@ class AggregationAudit(unittest.TestCase):
                     module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(module)
                     guard = sys.modules['negative_process']
+                    supplied = []
+                    actual_guard = module.mutating_sources
+
+                    def observed_guard(root, paths, **kwargs):
+                        supplied.extend(paths)
+                        return actual_guard(root, paths, **kwargs)
+
                     row = next(row for row in module.MUTATIONS
                                if Path(row[1]) != common_path)
                     argv = ['negative_controls.py', '--output', str(Path(temp) / 'out'), '--only', row[0]]
                     caught = None
                     code = None
                     with patch.object(guard, '_git', git), \
+                            patch.object(module, 'mutating_sources', observed_guard), \
                             patch.object(guard, 'tree_lock', return_value=contextlib.nullcontext()), \
                             patch.object(Path, 'read_bytes', lambda p: residue if p == common_path else raw_read(p)), \
                             patch.object(Path, 'write_text', evidence_only), \
@@ -1281,6 +1335,7 @@ class AggregationAudit(unittest.TestCase):
                             code = module.main()
                         except Exception as error:
                             caught = error
+                    self.assertIn(common_path, supplied, '#166 common.py must be included in guarded sources')
                     self.assertEqual(imports, [], '#166 residual mapping must be guarded before import')
                     self.assertIsNone(caught, '#166 source guard must report BLOCKED without traceback')
                     self.assertEqual(code, 2, '#166 source guard must exit BLOCKED')
