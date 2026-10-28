@@ -41,6 +41,12 @@ Rust 默认测试 `skills::external_tests::external_skills_oracle_replays_reques
 `missing-credential` 测的是 `createSkillManagementPort` 适配器自身的分支，
 不代表 skills 配置会走到这里。
 
+另录 `credential-success`、`credential-trimmed`、`credential-whitespace`
+（#949）：虚构 token 只以长度 / SHA-256 存在 `oracle.json` 顶层 `credential`，
+案例 `env` 用 `$PDRS_929_SKILLS_TOKEN` 符号；请求的 `authorization` 记成
+`{scheme,length,sha256}`，不存原文。`credential-success` / `-trimmed` 必须发
+`Bearer <trim 后的 token>`，`-whitespace` 必须在 POST 前报未配置。
+
 负控：`negative_controls.py` 只变异产品源码（`skills/binding.rs`、
 `skills/external.rs`），用 `negative_suite.run_cases` 逐项汇总
 KILLED/SURVIVED/INVALID；锚点过期在 `--check-anchors` 预检直接退出 2。
@@ -52,3 +58,15 @@ CARGO_TARGET_DIR=/path/to/target python3 \
   src/pilotdeck-gateway/tests/fixtures/skills-external/negative_controls.py \
   _tmp/<date>-issue-929/negative-controls
 ```
+
+#949 新增的 6 条负控走 main 的 #946 nonce 回执矩阵
+（`negative_suite.matrix_main`，绑定专属断言 ID）：
+
+```sh
+CARGO_TARGET_DIR=/path/to/target python3 \
+  src/pilotdeck-gateway/tests/fixtures/skills-external/negative_controls_949.py \
+  _tmp/<date>-issue-949/negative-controls
+```
+
+`negative_controls_949.py --check` 预检锚点；`--compile-only` 只证明每个
+变异体能编译。两套脚本都要求提交后的源码等于 `HEAD`。

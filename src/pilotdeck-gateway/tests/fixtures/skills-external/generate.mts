@@ -3,6 +3,7 @@
 //   PDRS_BASELINE=/path/to/PilotDeck node --import .../tsx/dist/loader.mjs \
 //     src/pilotdeck-gateway/tests/fixtures/skills-external/generate.mts <scratch>
 import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -30,7 +31,14 @@ await mkdir(output, { recursive: true });
 const home = join(output, 'home');
 await mkdir(home, { recursive: true });
 process.env.HOME = home;
-delete process.env.PDRS_929_SKILLS_TOKEN;
+// #949: a fictional credential proves the success path without storing the
+// token in the oracle. The case env carries a symbol; the top-level metadata
+// carries only its length and SHA-256.
+const TOKEN_ENV = 'PDRS_929_SKILLS_TOKEN';
+const TOKEN_SYMBOL = '$PDRS_929_SKILLS_TOKEN';
+const FICTIONAL_TOKEN = 'pdrs-949-fictional-credential-7f3a9c2e';
+const sha256 = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
+delete process.env[TOKEN_ENV];
 
 const METHODS = ['list', 'read', 'write', 'create', 'delete', 'import', 'validate', 'scan'];
 const INPUTS: Record<string, unknown> = {
@@ -45,13 +53,20 @@ const INPUTS: Record<string, unknown> = {
 };
 
 type Reply = { status: number; body: string; destroy?: boolean };
+type Authorization = { scheme: string; length: number; sha256: string } | null;
 type Recorded = {
   method: string;
   path: string;
   contentType: string | null;
-  authorization: string | null;
+  authorization: Authorization;
   body: string | null;
 };
+function recordAuthorization(header: string | undefined): Authorization {
+  if (header === undefined) return null;
+  const bearer = /^Bearer (.*)$/.exec(header);
+  const credential = bearer ? bearer[1] : header;
+  return { scheme: bearer ? 'Bearer' : '', length: credential.length, sha256: sha256(credential) };
+}
 type Current = {
   binding: any;
   manifest: any;
@@ -70,7 +85,7 @@ const server = createServer(async (req, res) => {
     method: req.method ?? '',
     path: req.url ?? '',
     contentType: (req.headers['content-type'] as string | undefined) ?? null,
-    authorization: (req.headers.authorization as string | undefined) ?? null,
+    authorization: recordAuthorization(req.headers.authorization as string | undefined),
     body: body === '' ? null : body,
   });
   if (req.url === current.binding.manifestPath) {
@@ -177,9 +192,16 @@ async function runCase(
     manifest?: any;
     manifestText?: string;
     reply?: (request: any) => Reply;
+    env?: Record<string, string>;
   } = {},
 ): Promise<any> {
   const binding = options.binding ?? baseBinding();
+  const caseEnv = options.env ?? {};
+  const previousEnv = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(caseEnv)) {
+    previousEnv.set(key, process.env[key]);
+    process.env[key] = value;
+  }
   current = {
     binding,
     manifest: options.manifest ?? baseManifest(),
@@ -194,12 +216,20 @@ async function runCase(
     outcome = { result: await (port as any)[method](INPUTS[method]) };
   } catch (error: any) {
     outcome = { error: errorShape(error) };
+  } finally {
+    for (const [key, value] of previousEnv) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
+  const recordedEnv = Object.fromEntries(
+    Object.entries(caseEnv).map(([key, value]) => [key, value.split(FICTIONAL_TOKEN).join(TOKEN_SYMBOL)]),
+  );
   return {
     name,
     method,
     binding: normalize(binding),
-    ...(binding.credentialEnv ? { env: {} } : {}),
+    ...(binding.credentialEnv ? { env: recordedEnv } : {}),
     input: INPUTS[method],
     http: http.map(normalize),
     requests: requests.map(normalize),
@@ -220,6 +250,24 @@ for (const method of METHODS) {
 cases.push(
   await runCase('missing-credential', 'list', {
     binding: { ...baseBinding(), credentialEnv: 'PDRS_929_SKILLS_TOKEN' },
+  }),
+);
+cases.push(
+  await runCase('credential-success', 'list', {
+    binding: { ...baseBinding(), credentialEnv: TOKEN_ENV },
+    env: { [TOKEN_ENV]: FICTIONAL_TOKEN },
+  }),
+);
+cases.push(
+  await runCase('credential-trimmed', 'list', {
+    binding: { ...baseBinding(), credentialEnv: TOKEN_ENV },
+    env: { [TOKEN_ENV]: `  ${FICTIONAL_TOKEN}  ` },
+  }),
+);
+cases.push(
+  await runCase('credential-whitespace', 'list', {
+    binding: { ...baseBinding(), credentialEnv: TOKEN_ENV },
+    env: { [TOKEN_ENV]: '   ' },
   }),
 );
 cases.push(
@@ -394,10 +442,35 @@ assert.equal(
   'Knowledge module account credential is not configured.',
 );
 
+// #949: the success path must carry `Bearer <trim 后值>`; the oracle stores
+// only the credential length / SHA-256, never the fictional token itself.
+const credential = {
+  env: TOKEN_ENV,
+  symbol: TOKEN_SYMBOL,
+  length: FICTIONAL_TOKEN.length,
+  sha256: sha256(FICTIONAL_TOKEN),
+};
+assert.deepEqual(
+  cases.filter((row) => row.name.startsWith('credential-')).map((row) => row.name),
+  ['credential-success', 'credential-trimmed', 'credential-whitespace'],
+);
+for (const name of ['credential-success', 'credential-trimmed']) {
+  const row = cases.find((candidate) => candidate.name === name);
+  assert.equal(row.env[TOKEN_ENV].includes(FICTIONAL_TOKEN), false, `${name} env must use the symbol`);
+  assert.equal(row.requests.length, 2, `${name} must record manifest + call`);
+  assert.deepEqual(row.requests[1].authorization, {
+    scheme: 'Bearer', length: FICTIONAL_TOKEN.length, sha256: sha256(FICTIONAL_TOKEN),
+  }, `${name} must send the trimmed fictional token`);
+}
+const whitespace = cases.find((row) => row.name === 'credential-whitespace');
+assert.equal(whitespace.outcome.error.message, 'Knowledge module account credential is not configured.');
+assert.equal(whitespace.requests.length, 1, 'blank credential fails before the call POST');
+assert.equal(JSON.stringify(cases).includes(FICTIONAL_TOKEN), false, 'oracle must not contain the token');
+
 await new Promise<void>((closed) => server.close(() => closed()));
 await writeFile(
   join(output, 'oracle.json'),
-  JSON.stringify({ sourceCommit, sourceSha256, node: process.version, cases }, null, 2) + '\n',
+  JSON.stringify({ sourceCommit, sourceSha256, node: process.version, credential, cases }, null, 2) + '\n',
   { flag: 'wx' },
 );
 console.log(`PASS: ${cases.length} real TS external skill port cases`);
