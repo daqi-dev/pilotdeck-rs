@@ -236,6 +236,7 @@ def wiring_control(md, output):
             'sourceManifest': '', 'evidenceSha256': {}},
         'hashes': lambda: {'wiring': 'fixed'},
         'frozen_check': lambda: {'exitCode': 0, 'stdout': '', 'stderr': ''},
+        '_verify_cli_imports': lambda: None,  # Synthetic controls; provenance tested by test_safety.
         'baseline_dependency_hashes': lambda _baseline: {},
         'install_shutdown': lambda: None,
         'parity_lock': lambda **_kwargs: contextlib.nullcontext(),
@@ -1215,6 +1216,7 @@ def batch_aggregation_control(md, output):
         'validate_calibration': lambda *_a, **_k: {},
         'hashes': lambda: {'batch': 'fixed'},
         'frozen_check': lambda: {'exitCode': 0, 'stdout': '', 'stderr': ''},
+        '_verify_cli_imports': lambda: None,  # Synthetic controls; provenance tested by test_safety.
         'baseline_dependency_hashes': lambda _baseline: {},
         'install_shutdown': lambda: None,
         'parity_lock': lambda **_kwargs: contextlib.nullcontext(),

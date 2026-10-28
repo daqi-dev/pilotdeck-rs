@@ -113,4 +113,5 @@ def main():
 
 
 if __name__ == '__main__':
+    _verify_cli_imports()
     raise SystemExit(main())
