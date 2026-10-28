@@ -232,6 +232,9 @@ pub(crate) fn companion_names(fixture: &str, committed: &Path) -> Result<Vec<Str
         "interaction-events" => &["source.json"],
         "interaction-permission" => &["source.json", "profiles.json", "hooks.json"],
         "stats-dateparse" => &["local-profiles.json"],
+        // The generator emits this kernel-dependent oracle only on darwin;
+        // other hosts compare the portable oracle.json without this companion.
+        "skills-tree-files" if cfg!(target_os = "macos") => &["oracle-macos.json"],
         "user-dialog" => &["hosted.json"],
         "upload" => &[
             "created.json",

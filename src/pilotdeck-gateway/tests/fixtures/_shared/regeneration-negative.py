@@ -20,7 +20,13 @@ registry = root / 'src/pilotdeck-gateway/tests/fixtures/run-registry/oracle.json
 snapshot = root / 'src/pilotdeck-gateway/tests/fixtures/run-registry/normal.after.json'
 builtin = root / 'src/pilotdeck-gateway/tests/fixtures/builtin-tools/oracle.json'
 grep = root / 'src/pilotdeck-gateway/tests/fixtures/grep-tool/oracle.json'
+skills = root / 'src/pilotdeck-gateway/tests/fixtures/skills-tree-files/generate.mts'
 cases = [
+    ('skills-macos-provenance', skills,
+     "const oracleMacos = {sourceCommit, sourceSha256, platform: 'darwin', cases: macosCases};",
+     "const oracleMacos = {sourceCommit, sourceSha256: {[sources[0]]: sourceSha256[sources[0]]}, platform: 'darwin', cases: macosCases};",
+     'skills_tree_files_regenerates_identically',
+     '#280 skills-tree-files: companion oracle-macos.json differs from committed bytes'),
     ('grep-output', grep,
      'multi.txt:foo one\\nmulti.txt:foo two\\n\\n[grep pagination] returned=2 total=2 offset=0 limit=250 truncated=false',
      'multi.txt:foo one\\nmulti.txt:foo THREE\\n\\n[grep pagination] returned=2 total=2 offset=0 limit=250 truncated=false',
@@ -82,6 +88,10 @@ def main():
     selected = [case for case in cases if not names or case[0] in names]
     if names and len(selected) != len(set(names)):
         raise SystemExit('#280 unknown mutation name')
+    if sys.platform != 'darwin':
+        if 'skills-macos-provenance' in names:
+            raise SystemExit('#280 skills-macos-provenance requires darwin')
+        selected = [case for case in selected if case[1] != skills]
     env = os.environ.copy()
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                '-p', 'pilotdeck-gateway', '--test', 'generator_provenance']
@@ -109,7 +119,8 @@ def main():
                     if content.count(old) != 1:
                         raise RuntimeError(f'#280 stale anchor {name}: count={content.count(old)}')
                     changed = content.replace(old, new, 1)
-                    json.loads(changed)
+                    if path.suffix == '.json':
+                        json.loads(changed)
                     if not compile_only and not passed(run(name + '-positive', args), test):
                         raise RuntimeError('#280 positive bound test did not pass')
                     path.write_text(changed)

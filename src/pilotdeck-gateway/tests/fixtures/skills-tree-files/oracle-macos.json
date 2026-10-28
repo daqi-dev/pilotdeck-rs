@@ -1,7 +1,14 @@
 {
   "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
   "sourceSha256": {
-    "src/extension/skills/SkillManager.ts": "b971873bf42bb0141480e42826088c5e30bd1c1617fc1710375762ded3f87111"
+    "src/extension/skills/SkillManager.ts": "b971873bf42bb0141480e42826088c5e30bd1c1617fc1710375762ded3f87111",
+    "src/extension/skills/types.ts": "fa4cea5a828df7e2df986d624bed00b86cf171c9a0f111b0af3cee721598ea22",
+    "src/pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a",
+    "src/pilot/writablePaths.ts": "fd0d01bbeb320b6c9d10d15cfe643d632dbf3b8fbb26bf3389c1ea9f0c3702da",
+    "src/session/worktree/LRUMap.ts": "2887da0d01fb06b178978150746ecd4d6c5103fb1183c3dbd03b13b155f818ea",
+    "src/session/worktree/findCanonicalProjectRoot.ts": "968936decac98884dd8a54b8c92930183efcfd3b004b3bb258fe160e0131a97d",
+    "src/session/worktree/findGitRoot.ts": "f51e479a6d477accd30eca3087edd311d1012954a48aa2aab006817c78dbd6c9",
+    "src/session/worktree/resolveCanonicalRoot.ts": "d3667f25f4818dde7e586d5e202341d992340f1c3c65cfbc38e27ccfc219b958"
   },
   "platform": "darwin",
   "cases": [
