@@ -717,11 +717,18 @@ fn regeneration_masks_accept_only_declared_volatile_values() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let table = include_str!("fixtures/_shared/regeneration-masks.tsv");
     let mut entries = BTreeSet::new();
+    let mut pointers = BTreeSet::new();
     let mut files = BTreeSet::new();
     for line in table.lines().filter(|line| !line.starts_with('#')) {
         let columns: Vec<_> = line.split('\t').collect();
         assert_eq!(columns.len(), 4, "#280 exact mask table columns");
         assert!(entries.insert(line), "#280 duplicate mask table entry");
+        // One kind per pointer: a second kind for the same span would relax
+        // it silently (GLM #280 r5 P1).
+        assert!(
+            pointers.insert((columns[0], columns[1], columns[2])),
+            "#280 mask table repeats a pointer with another kind"
+        );
         assert!(
             matches!(columns[0], "provider-timing" | "run-registry"),
             "#280 masks limited to two fixtures"
