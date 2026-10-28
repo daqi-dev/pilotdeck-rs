@@ -754,8 +754,12 @@ fn manager_catalog_blank_title_paths_match_real_ts() {
     ] {
         let row = matrix_row(&oracle, name);
         let (_scratch, root, result) = run_matrix_row(row);
-        let actual =
-            result.unwrap_or_else(|error| panic!("{message}: catalog list failed: {error:?}"));
+        // Keep a precondition failure distinct from the result assertion below:
+        // the negative-control anchor is the assertion message, so a catalog
+        // error must never be classified as the bound assertion failing.
+        let actual = result.unwrap_or_else(|error| {
+            panic!("#970 catalog list failed before the result assertion for {name}: {error:?}")
+        });
         assert_eq!(
             compact_str(&normalize_dir(&JsValue::Array(actual), &root)),
             compact_str(item(row, "outcome")),
