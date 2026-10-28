@@ -16,6 +16,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_toolchain import cargo_compiler, cargo_externs
 
 REPO = Path(__file__).resolve().parents[5]
 SRC = REPO / 'src'
@@ -117,7 +118,7 @@ try:
                 raise
             with (OUT / f'{name}.log').open('x') as log:
                 log.write(result.stdout + result.stderr)
-            return result.returncode
+            return result
 
         def function(text, marker):
             at = text.index(marker)
@@ -156,20 +157,16 @@ try:
             code += '#[path = ' + repr(str(DOMAIN)).replace("'", '"') + '] mod session_domain;\n}\n'
             path = OUT / 'harness.rs'
             path.write_text(code)
-            deps = TARGET / 'debug/deps'
-            externs = []
-            for crate in ('pilotdeck_protocol', 'sha2', 'uuid', 'serde_json'):
-                candidates = sorted(deps.glob(f'lib{crate}-*.rlib'), key=lambda path: path.stat().st_mtime_ns)
-                assert candidates, f'build {crate} in the launcher target first'
-                externs += ['--extern', f'{crate}={candidates[-1]}']
             os.environ['CARGO_MANIFEST_DIR'] = str(SRC / 'pilotdeck-gateway')
-            return ['rustc', '--edition=2024', '--test', str(path), *externs, '-L', f'dependency={deps}', '-A', 'dead_code', '-A', 'unused_variables', '-o', str(TARGET / 'pdrs222-negative')]
+            return [rustc, '--edition=2024', '--test', str(path), *externs, '-L', f'dependency={TARGET / "debug/deps"}', '-A', 'dead_code', '-A', 'unused_variables', '-o', str(TARGET / 'pdrs222-negative')]
 
         def run(name, red):
-            assert bounded(harness(), name + '-build') == 0, f'{name}: compile failure is not a killed mutant'
+            assert bounded(harness(), name + '-build').returncode == 0, f'{name}: compile failure is not a killed mutant'
             if red and compile_only:
+                assert bounded([cargo, 'check', '--offline', '-p', 'pilotdeck-gateway', '--tests'],
+                               name + '-cargo-check', seconds=900).returncode == 0, f'{name}: Cargo compile failure is INVALID'
                 return
-            code = bounded([str(TARGET / 'pdrs222-negative'), '--exact', 'storage::session_domain::tests::real_ts_domain_logs_and_events_match_bytes', '--nocapture'], name)
+            code = bounded([str(TARGET / 'pdrs222-negative'), '--exact', 'storage::session_domain::tests::real_ts_domain_logs_and_events_match_bytes', '--nocapture'], name).returncode
             text = (OUT / f'{name}.log').read_text()
             assert 'running 1 test' in text
             assert ('test result: FAILED' in text and code != 0) if red else ('test result: ok. 1 passed' in text and code == 0), name
@@ -189,6 +186,15 @@ try:
 
         baseline_error = None
         try:
+            cargo, rustc = cargo_compiler(os.environ, bounded)
+            # Refresh dependencies with the same Cargo that identified the
+            # compiler. JSON artifact paths bind externs to this build, even
+            # when another compiler's newer rlibs remain in the caller target.
+            build = bounded([cargo, 'test', '--offline', '-p', 'pilotdeck-gateway',
+                             '--lib', '--no-run', '--message-format=json'],
+                            'cargo-externs', seconds=900)
+            build.check_returncode()
+            externs = cargo_externs(build.stdout, TARGET)
             run('baseline', False)
         except Exception as error:
             baseline_error = f'baseline: {type(error).__name__}: {error}'
