@@ -32,6 +32,15 @@ const sandbox = join(caseDir, 'sandbox');
 const home = join(caseDir, 'home');
 mkdirSync(sandbox, { recursive: true });
 mkdirSync(home, { recursive: true });
+// The orchestrator spawns this driver with HOME inside the case sandbox (the
+// MITM and sidecar below already get the sandbox HOME): a baseline that
+// resolves config through HOME must never see the real ~/.pilotdeck.
+// Printed and exited explicitly so the dedicated message is the last line of
+// stderr (the orchestrator's failure excerpt keeps the tail).
+if (process.env.HOME !== home) {
+  console.error(`#969 driver: driver HOME must be the case sandbox home: got ${process.env.HOME}, expected ${home}`);
+  process.exit(1);
+}
 const toolTarget = join(sandbox, 'tool-target.txt');
 const toolTargetText = 'live-e2e read tool payload\n';
 writeFileSync(toolTarget, toolTargetText, { flag: 'wx' });

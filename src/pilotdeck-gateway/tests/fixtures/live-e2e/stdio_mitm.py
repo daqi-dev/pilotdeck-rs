@@ -21,11 +21,15 @@ The protocol is full-duplex (cancel/ack/module_call responses travel h2s while
 events travel s2h), so each direction is pumped by its own thread; frame
 observation and plan state are serialized by one lock. A host that closes our
 stdout early (for example right after accepting an injected premature final)
-must not stop recording: s2h keeps logging until the child is reaped.
+must not stop recording: s2h keeps observing and logging until the child is
+reaped, with ``delivered`` reflecting only writes that actually went out.
 
 Child ownership: the sidecar runs in its own process group. On host-side EOF we
-mirror stdin EOF to the child and wait bounded for its own exit; SIGTERM/SIGKILL
-escalation covers a child stuck on module calls to a host that is already gone.
+mirror stdin EOF to the child and bound its exit (grace, then TERM, then KILL),
+so a child stuck on module calls to a host that is already gone can never keep
+our stdout reader blocked forever. The TERM->KILL budget stays below the TS
+connection's killTimeoutMs (3s), so the MITM always finishes its own reap and
+writes the summary before an outer escalation could hit it.
 """
 import argparse
 import json
@@ -37,8 +41,12 @@ import threading
 import time
 
 # Bounded child reaping. The sidecar normally exits by itself once stdin ends;
-# these are the escalation bounds, not the expected path.
-CHILD_TERM_GRACE_SECONDS = 10
+# these are the escalation bounds, not the expected path. TERM grace + KILL
+# wait must together stay under the TS connection's killTimeoutMs (3s).
+CHILD_TERM_GRACE_SECONDS = 1
+# After mirroring host-side stdin EOF, how long the child may take to exit on
+# its own before the escalation above is applied.
+CHILD_EXIT_GRACE_SECONDS = 2
 
 MATCH_ACTIONS = ("drop", "duplicate", "early_final")
 
@@ -128,7 +136,9 @@ class Mitm:
         # host's execute request observed on h2s.
         self.session_id = None
         self.turn_id = None
-        self.forward_out_open = True
+        # Per-direction forwarding latches: once a peer's pipe is gone we keep
+        # observing and logging, but never claim delivery again.
+        self.forward = {"s2h": True, "h2s": True}
         self.lock = threading.Lock()
 
     def note_control_frame(self, frame):
@@ -164,25 +174,35 @@ class Mitm:
         return frame
 
     def observe(self, frame, direction):
-        """Record one observed frame and return (forward_count, line)."""
+        """Observe one frame under the lock; return (record, forward_count, line).
+
+        The record is not logged yet: ``settle`` writes it once the pump knows
+        how many copies actually reached the peer, so ``delivered`` can never
+        claim a write that failed.
+        """
         with self.lock:
             self.index += 1
             self.note_control_frame(frame)
             actions = self.actions_for(frame, direction)
             frame = self.rewrite(frame, actions)
             forward_count = 0 if "drop" in actions else 2 if "duplicate" in actions else 1
-            if not self.forward_out_open:
+            if not self.forward[direction]:
                 forward_count = 0
             record = {
                 "index": self.index,
                 "dir": direction,
                 "action": actions,
-                "delivered": forward_count > 0,
+                "delivered": False,
                 "frame": frame,
             }
+            return record, forward_count, json.dumps(frame, ensure_ascii=False) + "\n"
+
+    def settle(self, record, delivered):
+        """Log one observed frame with its real delivery outcome."""
+        with self.lock:
+            record["delivered"] = bool(delivered)
             self.log.write(json.dumps(record, ensure_ascii=False) + "\n")
             self.log.flush()
-            return forward_count, json.dumps(frame, ensure_ascii=False) + "\n"
 
     def close_log(self):
         self.log.close()
@@ -226,6 +246,25 @@ def kill_child_group(process):
         pass
 
 
+def reap_after_host_eof(process):
+    """Bound the child's exit after the host closed our stdin.
+
+    A child stuck on module calls to the departed host would otherwise keep the
+    main thread blocked on its stdout forever. Give it a grace to finish on its
+    own, then escalate; closing the pipes also ends the blocked reader.
+    """
+    deadline = time.monotonic() + CHILD_EXIT_GRACE_SECONDS
+    while time.monotonic() < deadline and process.poll() is None:
+        time.sleep(0.05)
+    if process.poll() is None:
+        kill_child_group(process)
+    for stream in (process.stdout, process.stdin):
+        try:
+            stream.close()
+        except (OSError, ValueError):
+            pass
+
+
 def parse_frame(line, source):
     try:
         return json.loads(line)
@@ -249,36 +288,63 @@ def main(argv):
         start_new_session=True,
     )
 
+    def deliver_to_child(encoded, copies):
+        written = 0
+        for _ in range(copies):
+            try:
+                child.stdin.write(encoded)
+                child.stdin.flush()
+                written += 1
+            except (BrokenPipeError, ValueError):
+                # The child is gone; stop forwarding, keep recording.
+                mitm.forward["h2s"] = False
+                break
+        return written
+
+    def stop_delivering_to_host():
+        mitm.forward["s2h"] = False
+        # Keep interpreter shutdown clean: flushing a broken stdout at exit
+        # would turn a clean run into exit code 120.
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except (OSError, ValueError):
+            pass
+
+    def deliver_to_host(encoded, copies):
+        written = 0
+        for _ in range(copies):
+            try:
+                sys.stdout.write(encoded)
+                sys.stdout.flush()
+                written += 1
+            except (BrokenPipeError, ValueError):
+                # The host is gone (for example it accepted a premature final
+                # and closed). Stop delivering, keep recording.
+                stop_delivering_to_host()
+                break
+        return written
+
     def pump_host_to_sidecar():
         for line in sys.stdin:
             frame = parse_frame(line, "host")
-            forward_count, encoded = mitm.observe(frame, "h2s")
-            for _ in range(forward_count):
-                try:
-                    child.stdin.write(encoded)
-                    child.stdin.flush()
-                except (BrokenPipeError, ValueError):
-                    return
-        # Host closed our stdin: mirror it so the child can finish its turn.
+            record, forward_count, encoded = mitm.observe(frame, "h2s")
+            written_to_child = deliver_to_child(encoded, forward_count) if forward_count else 0
+            mitm.settle(record, written_to_child > 0)
+        # Host closed our stdin: mirror it so the child can finish its turn,
+        # then bound the wait — a child stuck on module calls to the departed
+        # host must not keep the s2h reader blocked forever.
         try:
             child.stdin.close()
         except (BrokenPipeError, ValueError):
             pass
+        reap_after_host_eof(child)
 
     def pump_sidecar_to_host():
         for line in child.stdout:
             frame = parse_frame(line, "sidecar")
-            forward_count, encoded = mitm.observe(frame, "s2h")
-            for _ in range(forward_count):
-                try:
-                    sys.stdout.write(encoded)
-                    sys.stdout.flush()
-                except BrokenPipeError:
-                    # The host is gone (for example it accepted a premature
-                    # final and closed). Keep recording, stop delivering.
-                    with mitm.lock:
-                        mitm.forward_out_open = False
-                    return
+            record, forward_count, encoded = mitm.observe(frame, "s2h")
+            written_to_host = deliver_to_host(encoded, forward_count) if forward_count else 0
+            mitm.settle(record, written_to_host > 0)
 
     def terminate(_signum, _frame):
         # A signal aimed at us must still reap the child group. Returning (not
@@ -292,7 +358,12 @@ def main(argv):
     host_thread = threading.Thread(target=pump_host_to_sidecar, daemon=True)
     host_thread.start()
     try:
-        pump_sidecar_to_host()
+        try:
+            pump_sidecar_to_host()
+        except ValueError:
+            # The EOF reaper closed the child pipes under this reader; the
+            # child is being torn down, so ending the pump here is correct.
+            pass
         child.stdout.close()
     finally:
         if child.poll() is None:
