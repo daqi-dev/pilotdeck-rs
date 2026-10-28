@@ -6,7 +6,11 @@ use super::{
 };
 use crate::host::HostError;
 use crate::model_cost::{calculate_cache_read_cost, calculate_input_cost};
-use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
+use pilotdeck_protocol::{
+    JsObject, JsString, JsValue,
+    js_math::{max as js_math_max, min as js_math_min},
+    stringify_json,
+};
 
 pub struct CachePolicyResult {
     pub selection: RouterModelRef,
@@ -410,32 +414,34 @@ pub fn retry_decide(
     random: f64,
 ) -> RetryDecision {
     if kind == "zero_usage" {
-        let max_attempts = config.zero_usage_retry.max_attempts.max(1.0);
+        let max_attempts = js_math_max(config.zero_usage_retry.max_attempts, 1.0);
         return RetryDecision {
             retry: config.zero_usage_retry.enabled && attempt < max_attempts,
             max_attempts,
-            delay_ms: 500.0 * attempt.max(0.0),
+            delay_ms: 500.0 * js_math_max(attempt, 0.0),
         };
     }
     let transient = &config.transient_retry;
-    if !transient.enabled || attempt >= transient.max_attempts {
+    let transient_max_attempts = js_math_max(transient.max_attempts, 1.0);
+    if !transient.enabled || attempt >= transient_max_attempts {
         return RetryDecision {
             retry: false,
-            max_attempts: transient.max_attempts,
+            max_attempts: transient_max_attempts,
             delay_ms: 0.0,
         };
     }
     let delay_ms = match retry_after_ms {
-        Some(value) => value.min(transient.max_delay_ms),
+        Some(value) => js_math_min(value, transient.max_delay_ms),
         None => {
             let deterministic = transient.base_delay_ms * (attempt + 1.0);
-            let jitter = deterministic * LITELLM_RETRY_JITTER * random.clamp(0.0, 1.0);
-            (deterministic + jitter).min(transient.max_delay_ms)
+            let jitter =
+                deterministic * LITELLM_RETRY_JITTER * js_math_max(0.0, js_math_min(1.0, random));
+            js_math_min(deterministic + jitter, transient.max_delay_ms)
         }
     };
     RetryDecision {
         retry: true,
-        max_attempts: transient.max_attempts,
+        max_attempts: transient_max_attempts,
         delay_ms,
     }
 }

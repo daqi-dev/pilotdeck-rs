@@ -16,7 +16,10 @@ use crate::runtime::{
 };
 use bytes::Bytes;
 use http_body_util::Full;
-use pilotdeck_protocol::{JsObject, JsValue};
+use pilotdeck_protocol::{
+    JsObject, JsValue,
+    js_math::{max as js_math_max, min as js_math_min},
+};
 use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 
@@ -267,11 +270,11 @@ fn retry_delay(
 ) -> f64 {
     let cap = retry.max_delay_ms;
     if let Some(ms) = crate::runtime::model::http::retry_after_header_ms(retry_after) {
-        return cap.min(ms);
+        return js_math_min(cap, ms);
     }
-    let exponential = cap.min(retry.base_delay_ms * 2f64.powi(attempt as i32));
-    let jitter = (random() * (exponential * 0.25).floor().max(1.0)).floor();
-    cap.min(exponential + jitter)
+    let exponential = js_math_min(cap, retry.base_delay_ms * 2f64.powi(attempt as i32));
+    let jitter = (random() * js_math_max(1.0, (exponential * 0.25).floor())).floor();
+    js_math_min(cap, exponential + jitter)
 }
 
 async fn parent_aborted(parent: Option<&ToolRunContext>) {
@@ -531,5 +534,50 @@ async fn network_fetch_inner(
                 attempt += 1;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod retry_delay_tests {
+    use super::*;
+
+    /// `network/fetch.ts:213-216` uses `Math.min` / `Math.max`: a NaN cap is
+    /// sticky, while Rust `f64::min`/`max` would return the other operand.
+    /// Node v22.22.0 probe:
+    /// `_tmp/20261026-issue-947/fix-r1/node/web-retry-probe.out`.
+    #[test]
+    fn retry_delay_uses_js_math_min_max() {
+        let random: Random = Arc::new(|| 0.0);
+        let nan_cap = RetryOptions {
+            max_retries: 2,
+            base_delay_ms: 500.0,
+            max_delay_ms: f64::NAN,
+            retry_on_post: false,
+        };
+        assert!(
+            retry_delay(0, &nan_cap, Some("1"), &random).is_nan(),
+            "#947 retry-after Math.min must propagate a NaN cap"
+        );
+        assert!(
+            retry_delay(0, &nan_cap, None, &random).is_nan(),
+            "#947 exponential Math.min must propagate a NaN cap"
+        );
+
+        let normal = RetryOptions {
+            max_retries: 2,
+            base_delay_ms: 500.0,
+            max_delay_ms: 5_000.0,
+            retry_on_post: false,
+        };
+        assert_eq!(
+            retry_delay(0, &normal, Some("1"), &random),
+            1_000.0,
+            "#947 ordinary retry-after remains capped"
+        );
+        assert_eq!(
+            retry_delay(0, &normal, None, &random),
+            500.0,
+            "#947 ordinary exponential delay remains unchanged"
+        );
     }
 }

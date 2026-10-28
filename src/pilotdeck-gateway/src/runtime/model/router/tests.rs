@@ -429,6 +429,62 @@ fn retry_policy_defaults_match_baseline() {
     assert_eq!(zero.delay_ms, 500.0);
 }
 
+/// `RouterRetryPolicy.ts:39,43,49,70,71` routes every bound through
+/// `Math.max` / `Math.min`, which propagate NaN. Node v22.22.0 probe:
+/// `_tmp/20261026-issue-947/fix-r1/node/router-retry-probe.out`.
+#[test]
+fn router_retry_policy_uses_js_math_min_max() {
+    let mut overflow = RouterConfig::default();
+    overflow.transient_retry.base_delay_ms = 1e308;
+    overflow.transient_retry.max_delay_ms = 8_000.0;
+    let decision = retry_decide(&overflow, "transient", 1.0, None, 0.0);
+    assert!(
+        decision.delay_ms.is_nan(),
+        "#947 transient retry delay must propagate NaN from Math.min, got {}",
+        decision.delay_ms
+    );
+
+    let mut nan_attempts = RouterConfig::default();
+    nan_attempts.zero_usage_retry.max_attempts = f64::NAN;
+    let decision = retry_decide(&nan_attempts, "zero_usage", 0.0, None, 0.0);
+    assert!(
+        decision.max_attempts.is_nan(),
+        "#947 zero_usage Math.max must keep a NaN maxAttempts, got {}",
+        decision.max_attempts
+    );
+
+    let mut negative_attempts = RouterConfig::default();
+    negative_attempts.transient_retry.max_attempts = -1.0;
+    let decision = retry_decide(&negative_attempts, "transient", 0.0, None, 0.0);
+    assert_eq!(
+        decision.max_attempts, 1.0,
+        "#947 transient Math.max must clamp a negative maxAttempts to 1"
+    );
+
+    let decision = retry_decide(&RouterConfig::default(), "zero_usage", f64::NAN, None, 0.0);
+    assert!(
+        decision.delay_ms.is_nan(),
+        "#947 zero_usage Math.max must propagate a NaN attempt, got {}",
+        decision.delay_ms
+    );
+
+    let mut nan_max_delay = RouterConfig::default();
+    nan_max_delay.transient_retry.max_delay_ms = f64::NAN;
+    let decision = retry_decide(&nan_max_delay, "transient", 0.0, Some(100.0), 0.0);
+    assert!(
+        decision.delay_ms.is_nan(),
+        "#947 retry-after Math.min must propagate a NaN maxDelayMs, got {}",
+        decision.delay_ms
+    );
+
+    let decision = retry_decide(&RouterConfig::default(), "zero_usage", -0.0, None, 0.0);
+    assert_eq!(
+        decision.delay_ms.to_bits(),
+        0.0f64.to_bits(),
+        "#947 zero_usage Math.max(+0, -0) must project +0"
+    );
+}
+
 #[tokio::test]
 async fn cache_policy_switches_when_prefill_is_cheaper() {
     let mut pricing = crate::model_cost::PricingMap::new();
