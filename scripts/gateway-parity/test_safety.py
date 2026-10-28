@@ -711,7 +711,8 @@ class ImportIsolation(unittest.TestCase):
         import io
         head_verifier = b"def verify_loaded_apparatus(head):\n    raise RuntimeError('#166 controlled HEAD preflight reached')\n"
         for name in ('run_round.py', 'check_ruler.py', 'session_domain.py',
-                     'controls/run_all.py', 'controls/session_domain.py'):
+                     'controls/run_all.py', 'controls/session_domain.py',
+                     'check_frozen.py', 'compare.py', 'build_proxy.py'):
             with self.subTest(entry=name):
                 path = common.SCRIPT / name
                 module = ModuleType('__main__')
@@ -735,6 +736,172 @@ class ImportIsolation(unittest.TestCase):
                     except SystemExit:
                         reached = '#166 controlled HEAD preflight reached' in output.getvalue()
                 self.assertTrue(reached, '#166 CLI dispatch must verify HEAD imports before main')
+
+
+    def session_dispatch_process(self, body):
+        """Run the actual __main__ block in a child; inject only its dependencies.
+
+        Candidate bytes cannot pass their own HEAD check until committed. This
+        focused subprocess still executes the unmodified dispatch/SystemExit
+        statements, so neither return-code mapping nor exception handling is
+        replaced by a test stub.
+        """
+        import ast
+        path = common.SCRIPT / 'session_domain.py'
+        source = path.read_bytes().decode()
+        tree = ast.parse(source)
+        blocks = [node for node in tree.body if isinstance(node, ast.If)
+                  and ast.unparse(node.test) == "__name__ == '__main__'"]
+        self.assertEqual(len(blocks), 1, '#166 CLI wrapper fixture must find exactly one dispatch')
+        command = 'import json, subprocess\n' + body + '\n' + ast.get_source_segment(source, blocks[0])
+        return subprocess.run([sys.executable, '-I', '-B', '-c', command],
+                              capture_output=True, text=True, timeout=10)
+
+    def test_session_cli_dispatch_preserves_exit_codes(self):
+        message = '#166 real CLI wrapper must preserve main exit code'
+        for status, code in (('PASS', 0), ('FAIL', 1), ('BLOCKED', 2), ('NOT_RUN', 3)):
+            with self.subTest(status=status):
+                body = ("def _verify_cli_imports(): pass\n"
+                        "def main():\n"
+                        f"    print(json.dumps({{'status': {status!r}}}))\n    return {code}\n")
+                result = self.session_dispatch_process(body)
+                self.assertEqual(result.returncode, code, message + ': ' + result.stderr)
+                self.assertEqual(result.stdout.strip(), json.dumps({'status': status}), message + ': JSON')
+                self.assertEqual(result.stderr, '', message + ': no traceback')
+
+    def test_session_cli_preflight_errors_are_blocked(self):
+        message = '#166 CLI preflight failure must produce BLOCKED JSON/2'
+        for error in ("ValueError('controlled HEAD drift')", "OSError('controlled missing git')",
+                      "subprocess.CalledProcessError(1, ['git'])",
+                      "subprocess.TimeoutExpired(['git'], 30)", "KeyboardInterrupt('controlled cancel')"):
+            with self.subTest(error=error):
+                body = (f"def _verify_cli_imports(): raise {error}\n"
+                        "def main(): raise AssertionError('main reached after preflight refusal')\n")
+                result = self.session_dispatch_process(body)
+                self.assertEqual(result.returncode, 2, message + ': ' + result.stderr)
+                self.assertIn('"status": "BLOCKED"', result.stdout, message)
+                self.assertNotIn('main reached', result.stdout, message + ': main must not run')
+                self.assertEqual(result.stderr, '', message + ': no traceback')
+
+    def test_session_lock_validation_errors_are_blocked(self):
+        from contextlib import redirect_stdout
+        import io
+        message = '#166 lock verification failure must produce BLOCKED JSON/2'
+        entry = _load('validation_entry', common.SCRIPT / 'session_domain.py')
+        for error in (ValueError('controlled HEAD drift'), OSError('controlled missing git'),
+                      subprocess.CalledProcessError(1, ['git']), subprocess.TimeoutExpired(['git'], 30)):
+            with self.subTest(error=type(error).__name__), \
+                    patch.object(entry, 'parity_lock', side_effect=error), \
+                    patch.object(sys, 'argv', ['session_domain', '--suite', 'deadline', '--output', str(self.folder / 'out')]), \
+                    redirect_stdout(io.StringIO()) as output:
+                try:
+                    code = entry.main()
+                except Exception as escaped:
+                    self.fail(message + ': escaped ' + repr(escaped))
+                self.assertEqual(code, 2, message)
+                self.assertIn('"status": "BLOCKED"', output.getvalue(), message)
+                self.assertFalse((self.folder / 'out').exists(), message + ': no output directory')
+
+    def test_session_deadline_uses_real_lease(self):
+        from contextlib import contextmanager, redirect_stdout
+        import io
+        message = '#166 deadline must respect real lease and preserve predecessor'
+        entry = _load('lease_entry', common.SCRIPT / 'session_domain.py')
+        _load('import_isolation_probe', self.path)
+        entered = []
+
+        @contextmanager
+        def private_lock(**kwargs):
+            with common.verified_parity_lock(timeout=.02, lock=self.lock):
+                entered.append(True)
+                yield
+
+        input_hashes = entry.hashes()
+        with self.environment(), patch.object(entry, 'parity_lock', private_lock), \
+                patch.object(entry, 'hashes', return_value=input_hashes):
+            for mode in ('free', 'busy', 'cancelled'):
+                with self.subTest(mode=mode):
+                    from contextlib import ExitStack
+                    output_path = self.folder / mode
+                    with ExitStack() as stack:
+                        if mode != 'free':
+                            stack.enter_context(parity_lock(lock=self.lock))
+                            before = (self.lock / 'owner.json').read_bytes()
+                        if mode == 'cancelled':
+                            stack.enter_context(patch.object(time, 'sleep', side_effect=KeyboardInterrupt('controlled cancellation')))
+                        stack.enter_context(patch.object(sys, 'argv', ['session_domain', '--suite', 'deadline', '--output', str(output_path)]))
+                        output = stack.enter_context(redirect_stdout(io.StringIO()))
+                        code = entry.main()
+                        self.assertEqual(code, 3 if mode == 'free' else 2, message + ': ' + output.getvalue())
+                        self.assertIn('"status": "NOT_RUN"' if mode == 'free' else '"status": "BLOCKED"',
+                                      output.getvalue(), message + ': JSON')
+                        if mode != 'free':
+                            self.assertFalse(output_path.exists(), message + ': no busy output')
+                            self.assertEqual((self.lock / 'owner.json').read_bytes(), before, message + ': owner unchanged')
+                    self.assertFalse(self.lock.exists(), message + ': lease released')
+            self.assertEqual(entered, [True], message + ': only free request entered')
+
+    def test_real_entries_verify_late_controls_before_execution(self):
+        from contextlib import ExitStack, nullcontext, redirect_stdout
+        import io
+        message = '#166 late controls must be HEAD-verified before execution'
+        sources = {p.relative_to(common.ROOT).as_posix(): p.read_bytes()
+                   for p in common.SCRIPT.rglob('*.py') if 'node_modules' not in p.parts}
+        def git_read(command, **kwargs):
+            return ((self.head + '\n').encode() if command[3] == 'rev-parse'
+                    else sources[command[-1].split(':', 1)[1]])
+        class WorkReached(Exception):
+            pass
+        read = Path.read_bytes
+        for name, control, alias in (('session_domain.py', 'session_domain.py', 'session_controls'),
+                                     ('check_ruler.py', 'run_all.py', 'gateway_controls')):
+            entry = _load('late_real_' + name[:-3], common.SCRIPT / name)
+            target = common.SCRIPT / 'controls' / control
+            original = read(target)
+            for mutant in (False, True):
+                with self.subTest(entry=name, mutant=mutant), ExitStack() as stack:
+                    stack.enter_context(patch.dict(sys.modules))
+                    sys.modules.pop(alias, None)
+                    executed = []
+                    def work(*args, **kwargs):
+                        executed.append(True)
+                        raise WorkReached
+                    load = entry._load
+                    def late_load(module_name, path):
+                        module = load(module_name, path)
+                        module.run_all = module.run_controls = work
+                        return module
+                    stack.enter_context(patch.object(entry, '_load', side_effect=late_load))
+                    changed = original + b'\n# controlled passive late-import mutant\n' if mutant else original
+                    stack.enter_context(patch.object(Path, 'read_bytes', lambda path: changed if path.resolve() == target else read(path)))
+                    stack.enter_context(patch.object(subprocess, 'check_output', side_effect=git_read))
+                    stack.enter_context(patch.object(entry, 'parity_lock', return_value=nullcontext()))
+                    stack.enter_context(patch.object(entry, 'baseline_dependency_hashes', return_value={}))
+                    output_path = self.folder / (name + str(mutant))
+                    args = ['--output', str(output_path)]
+                    if name == 'session_domain.py':
+                        args += ['--suite', 'calibrate']
+                        for attr, value in [('E1_SOURCES', ()), ('hashes', lambda: {}),
+                                            ('frozen_check', lambda: {'exitCode': 0}),
+                                            ('run_fixture', lambda *a: {'exitCode': 0, 'launcherAndFixtureReaped': True}),
+                                            ('validate_calibration', lambda *a: {})]:
+                            stack.enter_context(patch.object(entry, attr, value))
+                    else:
+                        for attr, value in [('cargo_config_problems', lambda: []), ('apparatus_hashes', lambda: {}),
+                                            ('run_round', lambda *a: None),
+                                            ('compare', lambda *a: {'status': 'PASS', 'failures': []})]:
+                            stack.enter_context(patch.object(entry, attr, value))
+                    stack.enter_context(patch.object(sys, 'argv', [name, *args]))
+                    output = stack.enter_context(redirect_stdout(io.StringIO()))
+                    rejected = False
+                    try:
+                        code = entry.main()
+                        rejected = code != 0 and '#166 loaded apparatus differs from HEAD' in output.getvalue()
+                    except ValueError as error:
+                        rejected = '#166 loaded apparatus differs from HEAD' in str(error)
+                    except WorkReached:
+                        pass
+                    self.assertEqual((rejected, executed), (True, []) if mutant else (False, [True]), message)
 
     def test_main_code_is_verified_after_entry_disk_restore(self):
         from types import ModuleType
@@ -892,7 +1059,11 @@ class ImportIsolation(unittest.TestCase):
                         patch.object(entry, 'parity_lock', isolated_lock, create=True):
                     rejected = False
                     try:
-                        entry.main()
+                        from contextlib import redirect_stdout
+                        import io
+                        with redirect_stdout(io.StringIO()) as output:
+                            code = entry.main()
+                        rejected = (code == 2 and '#166 loaded apparatus differs from HEAD' in output.getvalue())
                     except ValueError as error:
                         rejected = '#166 loaded apparatus differs from HEAD' in str(error)
                     except WorkReached:

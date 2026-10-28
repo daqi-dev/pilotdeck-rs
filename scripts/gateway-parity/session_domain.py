@@ -909,6 +909,7 @@ def main():
                     report.update(validate_calibration(output / 'six-cells', output, args.baseline.resolve()))
                     # Imported lazily to keep the independent negative-control CLI usable.
                     controls = _load('session_controls', SCRIPT / 'controls/session_domain.py')
+                    _verify_cli_imports()  # Late imports must be checked before controls execute.
                     report['e1Controls'] = controls.run_all(output / 'controls', output / 'six-cells')
                     controls_status = report['e1Controls']['status']
                     require(controls_status in ('PASS', 'PASS_WITH_SKIPS'),
@@ -959,11 +960,16 @@ def main():
             print(json.dumps({'status': report['status'], 'suite': args.suite, 'report': str(output / 'report.json'),
                               'failure': report.get('failure'), 'acceptanceStatus': report['acceptanceStatus']}, ensure_ascii=False))
             return code
-    except (TimeoutError, KeyboardInterrupt) as error:
+    except (TimeoutError, KeyboardInterrupt, ValueError, OSError, subprocess.SubprocessError) as error:
         print(json.dumps({'suite': args.suite, 'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))
         return 2
 
 
 if __name__ == '__main__':
-    _verify_cli_imports()
-    raise SystemExit(main())
+    try:
+        _verify_cli_imports()
+        code = main()
+    except (Exception, KeyboardInterrupt) as error:
+        print(json.dumps({'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))
+        code = 2
+    raise SystemExit(code)

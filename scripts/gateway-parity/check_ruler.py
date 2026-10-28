@@ -142,6 +142,7 @@ def main():
         proxy = compare(output / 'ts1', output / 'proxy')
         save(output / 'compare-proxy.json', proxy)
         module = _load('gateway_controls', SCRIPT / 'controls/run_all.py')
+        _verify_cli_imports()  # Late imports must be checked before controls execute.
         controls_path = output / 'controls'
         # Recompute in a new directory so a cached successful control report
         # cannot hide subsequent edits to source evidence or comparator.

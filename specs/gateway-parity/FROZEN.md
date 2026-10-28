@@ -2,6 +2,8 @@
 
 > **2026-10-28 重登记候选（#166 split-892；Closes #166 · Closes #909 · Closes #701 · Refs #209 · Refs #892；待两家非作者终审与人复核）**：按 `state/decisions-20261028-892-suspend.md` 选项 A，从批 5a 机械剥离 #892，汇总 AST 审计恢复 main 的既有能力，删除 entry 契约登记与专属负控；为该契约提取的入口助手及退出表达式恢复 main。#892 挂起，不声明审计漏洞已修复。保留 #166：NOT_RUN 专用退出码 **3**（deadline 四格 execution/acceptance 仍 NOT_RUN），PASS=0、FAIL/PASS_WITH_SKIPS=1、BLOCKED=2 不变；空/全 None 聚合保持 main 的 PASS/0，改判 FAIL 待 #952 人定；有实际状态时 None 仍为可选子项；两套负控的 KILLED/SURVIVED/INVALID 共用状态映射，先验证 HEAD 再导入，失效锚点/编译失败逐项记录 INVALID 后继续。保留 #909：删除 prerequisites 跨 job `ci-check-node` 文本谓词，由 CI 实际运行的逐 job 守卫及 12 条配对负例承担。保留 #701：import 词干与实际扫描覆盖 A2+A3 Python 并集。保留 #209 的 A2 启动登记、延迟中断、WNOWAIT 身份、全组清理、最终 ESRCH 证明及 cleanupPending 锁保护，相关实现和测试原字节不变；E1 未接入 LIVE_GROUPS、A1/其他姊妹接管仍须 #209 续办，前置于下一次全量对拍/定标。本候选相对 main 只重登记 common.py、session_domain.py、run_round.py、test_safety.py、controls/prerequisites.py 五件；controls/session_domain.py 哈希恢复 main。不改阈值、分母、归一化、评分或旧差异账本。真实存档复算、检查输出及提交后宿主全量负控步骤见 `_tmp/20261026-issue-166/split-892/RESULT.md`；本候选不代表阶段验收完成。
 
+> **2026-10-28 #166 fix-r7 重登记候选（协调者明确授权，待两家非作者终审与人复核）**：补齐 check_frozen / compare / build_proxy 三个独立 CLI 的可信 HEAD 预检，统一为八个 CLI 在 main 前验证实际加载来源；test_safety 为负控测试入口，刻意不预检，prerequisites 无独立 __main__。check_ruler 与 session_domain 在租约内迟加载 controls 后、调用 controls 前再用 HEAD 校验，未新增租约或改变评分。session 的 CLI 预检及取锁/来源核验异常统一 BLOCKED JSON/exit 2；deadline 同样受租约串行化，正常取得租约仍 NOT_RUN/3，忙锁或取消为 BLOCKED/2，且不创建输出目录或 report.json。相应测试覆盖真实私有租约（自由、前驱不释放、等待取消）、真实 __main__ 包装块子进程（0/1/2/3 与预检异常）及 controls 干净/变异格。**澄清 fix-r6 的检测边界**：上述校验检测被动字节漂移，导入后的校验不能阻止顶层代码已执行；主动 monkeypatch stdlib/Git/sys.modules，以及 PATH/Git 元数据劫持，属于既有人批 R4 排除的本机恶意者范围，不声明防御。scripts/parity 的姊妹 loader 属另一冻结装置，本候选不改，前置缺口见本轮 RESULT。只重登记六个装置哈希行（build_proxy / check_frozen / check_ruler / compare / session_domain / test_safety），不改阈值、分母、归一化、评分与旧差异账本。原始验证与提交后宿主步骤见 `_tmp/20261026-issue-166/fix-r7/RESULT.md`；候选未入 HEAD 时 CLI 拒跑是预期，内容校验 PASS 与提交后的 CLI PASS 分开记录，不代表阶段验收完成。
+
 > **2026-10-28 #166 fix-r6 重登记候选（协调者明确授权，待两家非作者终审与人复核）**：闭合 fix-r5 留下的取锁前 import 污染格。五个 CLI 在 main 前从 HEAD common 加载可信校验器，拒绝校验器自身已被变异的装置；不依赖磁盘 common 的校验函数。共同 bootstrap 记录同一次读取并 compile 的实际执行字节，未知来源缓存拒绝；CLI 的 __main__ 另记录真正执行的 code object，锁内与 HEAD 字节按同文件名/优化设置编译的 code object（含嵌套函数）比较，不以恢复后的文件冒充已执行字节；真实 run_round/check_ruler/session_domain 使用 HEAD common 的原 parity_lock（目录租约 + .guard flock），取得锁后核对已加载模块与同一 HEAD，磁盘恢复不能洗白内存 mutant。私有锁共享运行模块 LIVE_GROUPS；session 取锁前安装 shutdown，忙锁/取消保持 BLOCKED/2。独立 controls 两入口在正文前校验已加载字节，不重复取父租约。check_ruler 的依赖与装置摘要移入锁内；session 的延迟 controls 导入、prerequisites.module_at 统一走记录字节的 loader；后者对当前树的每次迟加载另用可信 HEAD 校验，防止独立 controls 初次预检后才发生变异；显式旧树 --code-root 保持原语义。空/全 None 只补 PASS/0 钉住测试，#952 的改判另单处理，不恢复撤回的 FAIL 断言/负控。本次重登记 common 与十份共享 bootstrap，共 11 行；无阈值、分母、归一化或评分变更。A2 真实存档 11/11 PASS，E1 72 cases / 360 measurements、5 rounds、0 unstable groups；原始输出、负控与提交后 CLI 验证步骤见 `_tmp/20261026-issue-166/fix-r6/RESULT.md`。候选字节尚未进入 HEAD 时实际 CLI 会按设计拒跑；不将单测依赖注入或存档复算冒充已提交 CLI 验收。沿用 common.guard 的阻塞 flock，本次未变更 guard 等待语义；新测试覆盖 lease 前驱不释放与等待取消。本条不代表双评审或阶段完成。
 
 > **2026-10-28 #166 fix-r5 登记说明更正**：按本轮协调者明确范围，更正上段空/全 None 的现状，不改变聚合代码或评分语义。两套源码负控启用共享 source guard 的 parity 租约（与本树 run_round 使用同一 `/tmp/pdrs-parity.lock` 目录及 `.guard` 文件上的 `fcntl.flock` 协议），持有到恢复原字节并核验 HEAD 后释放；锁忙有界报 INVALID，恢复未核验则保留 cleanupPending。只改 fixtures 侧执行器及测试，没有修改任何本表登记的装置文件，因此全部已登记 SHA256 复算后原值保留；原始输出及完整待宿主步骤见 `_tmp/20261026-issue-166/fix-r5/RESULT.md`。取锁前导入装置模块的边界仍存在，本条不宣称已封闭该路径；本轮不代表双评审或阶段验收完成。
@@ -156,20 +158,20 @@
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
 3e641ee353effae94c3751b198cb08f1728bf225bc9963356befea1d722df49b  accepted-diffs.md
-893f680e7d99136c3553c51f6e7e00f6201be2440ca0d21d7a4eebe153ca6fdf  ../../scripts/gateway-parity/build_proxy.py
-07a6efac75f1b6faa4f448307321df76db2e30ae1ca700b273c436dbdd23fc97  ../../scripts/gateway-parity/check_frozen.py
-525ed2c8cbc5b28c4b3ad20628444f1798a28422849e1306d5d3379502fb62ce  ../../scripts/gateway-parity/check_ruler.py
+cef151f96fdcc5f25f391b19ad2fd5aa98aa151deebb35b53f464d5a39145cf1  ../../scripts/gateway-parity/build_proxy.py
+c5605b201d9fcbcd1a0df53b560707452b26c82b08b6ac28711434c8f64081b2  ../../scripts/gateway-parity/check_frozen.py
+2c78aec7d0bf52f1c595143d15dfa6c9dfe48757be8c13f667d69564d0c2d2bd  ../../scripts/gateway-parity/check_ruler.py
 421ae603ab3f6a4dae58dd0db0d4e72df954898331f78edfeb18e1c8ca1943c9  ../../scripts/gateway-parity/common.py
-7fce390ec7eeaaf3fe89a3c52c7f782c613f326d2a50b9e9240f7ec67410ee5c  ../../scripts/gateway-parity/compare.py
+e0a7fa75cc6aa83abde0d4995705b9f8052373fe03c4e8a45e8cb32de1fab569  ../../scripts/gateway-parity/compare.py
 2d9529d66d64a5241ad94699fac2b129087cc3e4af00983c82a0a1ead5188b82  ../../scripts/gateway-parity/controls/prerequisites.py
 9bed1ddbb88c1e43d415dcf6a6da4fbd12369daa37aaec2008e9972943253da9  ../../scripts/gateway-parity/controls/run_all.py
 5f8e906fa532a58b994dff4f5e6438b07e31f14195b8142b75b398b6778e9e63  ../../scripts/gateway-parity/driver.mts
 95fe265a7b7512f1969f19b7ee2d14133ce56916fb25c0953a84b5ec05568f74  ../../scripts/gateway-parity/mock.mjs
 3a758aa57cbb5d8129c2e9b73c0baa04028a87aa7bae5dba6d8519f713869692  ../../scripts/gateway-parity/observer.py
 5ac40ea27add538ebb0982e9c22fff6956ff7f30f480788617e746699ebcab28  ../../scripts/gateway-parity/run_round.py
-0106a49154a7b2c04dd14fb1fa99a0703458e5e4e45c98237c03c42c9cdaf931  ../../scripts/gateway-parity/test_safety.py
+738859c56b39f17a91d1771b6c44563f0051a5037fb64d9b295bb3f7276654a7  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
-f559c4c50b45a7e646a828c4836a82ed687794949914f027230d706a69e5665f  ../../scripts/gateway-parity/session_domain.py
+e2c5984c3ce1ee5ca3f612a9d105b67d7adb7ad588f3a411f4f79ac6e65e0abd  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
 de2f5e1dcd2f9b5b25d26f28617c88927a342ea2fda253257b514950af4927c7  ../../scripts/gateway-parity/controls/session_domain.py
 41b1313fc047e8334a1655b69e277c4bcc451edaf15b79efd37e403e7005dab2  ../../scripts/gateway-parity/fixtures/session-calibration.json
