@@ -2,6 +2,7 @@
 //! Transport routing and durable acceptance are assembled by later packages.
 mod admission;
 mod completion;
+pub mod factory;
 mod handle;
 mod owner;
 

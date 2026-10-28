@@ -83,6 +83,8 @@ pub struct LiveSessionAdapter {
 
 #[derive(Default)]
 pub(super) struct SessionState {
+    reload: Option<Arc<crate::runtime::session::factory::ReloadSource>>,
+    reload_execution: Arc<std::sync::atomic::AtomicBool>,
     pub(super) disposed: bool,
     pub(super) active: Option<Cancellation>,
     pub(super) signal: crate::runtime::hooks::Cancellation,
@@ -213,6 +215,14 @@ impl LiveSessionAdapter {
 }
 
 impl LiveSession for LiveSessionAdapter {
+    fn reload_snapshot(
+        &self,
+    ) -> Result<crate::runtime::session::factory::ReloadSnapshot, RuntimeError> {
+        let state = self.state.lock().unwrap();
+        let source = state.reload_source()?;
+        source.snapshot_consistent(&self.recorder)
+    }
+
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         // Invalid requests must not occupy the session's active turn slot.
         let (mut request, mut input) = parse_execute_request(&input, &options, vec![])?;
@@ -232,11 +242,25 @@ impl LiveSession for LiveSessionAdapter {
             state.signal = signal.clone();
             state.status = super::live_session::SessionStatus::Running;
             state.current_turn_id = Some(request.identity.turn_id.clone());
+            state.reload_execution = Arc::default();
         }
         let active = Arc::new(ActiveTurn(self.state.clone()));
+        let reload_execution = self.reload_execution_started();
         // Read the projection only after admission owns the slot. Rejected
         // submissions must not observe history or race its current owner.
         input.history = (self.history)();
+        let reload_source = self.state.lock().unwrap().reload.clone();
+        if let Some(source) = reload_source {
+            match source.projection.snapshot() {
+                Ok(snapshot) => input.history = snapshot.messages,
+                Err(error) => {
+                    let mut state = self.state.lock().unwrap();
+                    state.status = super::live_session::SessionStatus::Idle;
+                    state.current_turn_id = None;
+                    return Err(error);
+                }
+            }
+        }
         request
             .payload
             .insert("messages".into(), JsValue::Array(input.loop_messages()));
@@ -300,6 +324,11 @@ impl LiveSession for LiveSessionAdapter {
                     integrity: hook_integrity,
                     forwarding: Arc::default(),
                     callback_cancel: Some(cancellation.clone()),
+                });
+                let client: HostFuture<HostClient> = Box::pin(async move {
+                    let client = client.await?;
+                    reload_execution.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(client)
                 });
                 // No connection or execute can start until both durable gates commit.
                 let Ok(messages) = execute_wait.await else {
@@ -397,6 +426,34 @@ impl LiveSession for LiveSessionAdapter {
             }
             Ok(())
         })
+    }
+}
+
+impl SessionState {
+    fn reload_source(
+        &self,
+    ) -> Result<Arc<crate::runtime::session::factory::ReloadSource>, RuntimeError> {
+        if self.disposed {
+            return Err(RuntimeError::new("Session projection driver is disposed."));
+        }
+        self.reload
+            .clone()
+            .ok_or_else(|| RuntimeError::new("Agent session runtime reload is unavailable."))
+    }
+}
+
+impl LiveSessionAdapter {
+    /// Bind the same projection and session file-state owner used by the host.
+    pub fn with_reload_source(
+        self,
+        source: crate::runtime::session::factory::ReloadSource,
+    ) -> Self {
+        self.state.lock().unwrap().reload = Some(Arc::new(source));
+        self
+    }
+
+    pub(crate) fn reload_execution_started(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        self.state.lock().unwrap().reload_execution.clone()
     }
 }
 

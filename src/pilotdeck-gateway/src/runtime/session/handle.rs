@@ -21,6 +21,12 @@ pub trait LiveTurn: Send {
 /// Implementations own the real session writer and its resources. No default
 /// no-op implementation is supplied for unavailable providers.
 pub trait LiveSession: Send + Sync {
+    /// Runtime reload is a fallible capability, separate from the public view.
+    fn reload_snapshot(&self) -> Result<super::factory::ReloadSnapshot, RuntimeError> {
+        Err(RuntimeError::new(
+            "Agent session runtime reload is unavailable.",
+        ))
+    }
     /// Explicit capability error preserves compatibility with lifecycle-only
     /// adapters; it cannot silently acknowledge input or start a fake loop.
     fn submit(
@@ -75,6 +81,11 @@ struct Inner {
 pub struct LiveSessionHandle(Arc<Inner>);
 
 impl LiveSessionHandle {
+    /// Draining handles remain readable until the underlying session is disposed.
+    pub fn reload_snapshot(&self) -> Result<super::factory::ReloadSnapshot, RuntimeError> {
+        self.0.session.reload_snapshot()
+    }
+
     pub fn new(session: Arc<dyn LiveSession>, lease: Option<RuntimeLease>) -> Self {
         Self(Arc::new(Inner {
             session,
