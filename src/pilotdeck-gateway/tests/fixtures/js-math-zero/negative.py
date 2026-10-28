@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 """#947 negative controls: every JS `Math.max` / `Math.min` mirror must fail
-when the explicit signed-zero projection is replaced by an order-dependent
-(input-order-dependent) tie.
+when it is replaced by the platform `f64::min` / `f64::max`.
 
-Platform caveat, measured on this host with `rustc 1.99.0`: Rust
-`f64::max(0.0, -0.0)` / `f64::min(0.0, -0.0)` already project the JS sign, so
-a "put back `left.max(right)`" mutant is behaviorally equivalent here and
-would SURVIVE.  The mutants therefore keep the platform method for ordinary
-numbers but make the zero tie pick one input (`left`, or `right` for the
-per-site max helper) instead of the JS-projected value, which is the
-order-dependent behavior the explicit branch exists to remove; the probe
-transcript is
+Two mutant families:
+- signed-zero ties: the explicit projection is replaced by an
+  order-dependent (input-order-dependent) tie;
+- retry clamps: the shared `js_math` call is reverted to the platform method,
+  which swallows the NaN that `Math.min` / `Math.max` propagate.
+
+Platform caveat for the first family, measured on this host with
+`rustc 1.99.0`: Rust `f64::max(0.0, -0.0)` / `f64::min(0.0, -0.0)` already
+project the JS sign, so a "put back `left.max(right)`" mutant is
+behaviorally equivalent here and would SURVIVE.  Those mutants therefore
+keep the platform method for ordinary numbers but make the zero tie pick one
+input (`left`, or `right` for the per-site max helper) instead of the
+JS-projected value, which is the order-dependent behavior the explicit branch
+exists to remove; the probe transcript is
 `_tmp/20261026-issue-947/fix-r0/f64-probe/probe.out`.
 
-The anchors are one import/helper line per site.  A mutant must first compile
+The anchors are one exact source replacement per site (an import, helper line
+or the clamped expression itself).  A mutant must first compile
 (`cargo test --no-run`), then the named test must fail on a `#947` assertion,
 then restoring the bytes must make the same test pass again.
 
@@ -43,6 +49,9 @@ token_accounting = root / 'src/pilotdeck-gateway/src/runtime/model/token_account
 recall = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/recall.rs'
 sdk_session = root / 'src/pilotdeck-gateway/src/runtime/sdk_session/mod.rs'
 agent_policy = root / 'src/pilotdeck-agent/src/request_materialization_policy.rs'
+http = root / 'src/pilotdeck-gateway/src/runtime/model/http.rs'
+router_policy = root / 'src/pilotdeck-gateway/src/runtime/model/router/policy.rs'
+web_network = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/network.rs'
 
 # (name, source, before, after, exact test)
 cases = [
@@ -105,9 +114,88 @@ cases = [
      '    if left == 0.0 && right == 0.0 { left } else { left.min(right) }\n'
      '}',
      'request_materialization_policy::unit_tests::js_min_signed_zero_ties_match_ts'),
+    # RetryPolicy.ts:44/50 call Math.min at the HTTP retry call sites; these
+    # read the provider config as JsValue, so NaN and -0 must survive too.
+    ('http-retry-after-min-nan', http,
+     '        return (max_retries, js_math_min(after, max_delay));',
+     '        return (max_retries, after.min(max_delay));',
+     'runtime::model::http::tests::retry_delay_uses_js_math_min_for_nan_and_signed_zero'),
+    ('http-retry-stream-min-nan', http,
+     '''    let jitter = retry_number(provider, "jitter").unwrap_or(0.75);
+    let deterministic = base * (attempt + 1.0);
+    (
+        max_retries,
+        js_math_min(deterministic + deterministic * jitter * random, max_delay),
+    )''',
+     '''    let jitter = retry_number(provider, "jitter").unwrap_or(0.75);
+    let deterministic = base * (attempt + 1.0);
+    (
+        max_retries,
+        (deterministic + deterministic * jitter * random).min(max_delay),
+    )''',
+     'runtime::model::http::tests::retry_delay_uses_js_math_min_for_nan_and_signed_zero'),
+    ('http-retry-request-min-nan', http,
+     '''    let jitter = retry_number(provider, "jitter").unwrap_or(0.0);
+    let deterministic = base * (attempt + 1.0);
+    (
+        max_retries,
+        js_math_min(deterministic + deterministic * jitter * random, max_delay),
+    )''',
+     '''    let jitter = retry_number(provider, "jitter").unwrap_or(0.0);
+    let deterministic = base * (attempt + 1.0);
+    (
+        max_retries,
+        (deterministic + deterministic * jitter * random).min(max_delay),
+    )''',
+     'runtime::model::http::tests::retry_delay_uses_js_math_min_for_nan_and_signed_zero'),
+    # RouterRetryPolicy.ts:39/43/49/70/71 has the same Math.min/Math.max
+    # mirrors: config values are read as JS numbers by the baseline.
+    ('router-zero-max-attempts-nan', router_policy,
+     '        let max_attempts = js_math_max(config.zero_usage_retry.max_attempts, 1.0);',
+     '        let max_attempts = config.zero_usage_retry.max_attempts.max(1.0);',
+     'runtime::model::router::tests::router_retry_policy_uses_js_math_min_max'),
+    ('router-transient-max-clamp', router_policy,
+     '    let transient_max_attempts = js_math_max(transient.max_attempts, 1.0);',
+     '    let transient_max_attempts = transient.max_attempts;',
+     'runtime::model::router::tests::router_retry_policy_uses_js_math_min_max'),
+    ('router-zero-attempt-max-nan', router_policy,
+     '            delay_ms: 500.0 * js_math_max(attempt, 0.0),',
+     '            delay_ms: 500.0 * attempt.max(0.0),',
+     'runtime::model::router::tests::router_retry_policy_uses_js_math_min_max'),
+    ('router-retry-after-min-nan', router_policy,
+     '        Some(value) => js_math_min(value, transient.max_delay_ms),',
+     '        Some(value) => value.min(transient.max_delay_ms),',
+     'runtime::model::router::tests::router_retry_policy_uses_js_math_min_max'),
+    ('router-transient-min-nan', router_policy,
+     '            js_math_min(deterministic + jitter, transient.max_delay_ms)',
+     '            (deterministic + jitter).min(transient.max_delay_ms)',
+     'runtime::model::router::tests::router_retry_policy_uses_js_math_min_max'),
+    # network/fetch.ts:213-216 has the same Math.min/Math.max clamp.
+    ('web-retry-after-min-nan', web_network,
+     '        return js_math_min(cap, ms);',
+     '        return cap.min(ms);',
+     'runtime::tools::builtin::web::network::retry_delay_tests::retry_delay_uses_js_math_min_max'),
+    ('web-retry-exponential-min-nan', web_network,
+     '''    let exponential = js_math_min(cap, retry.base_delay_ms * 2f64.powi(attempt as i32));
+    let jitter = (random() * js_math_max(1.0, (exponential * 0.25).floor())).floor();
+    js_math_min(cap, exponential + jitter)''',
+     '''    let exponential = cap.min(retry.base_delay_ms * 2f64.powi(attempt as i32));
+    let jitter = (random() * (exponential * 0.25).floor().max(1.0)).floor();
+    cap.min(exponential + jitter)''',
+     'runtime::tools::builtin::web::network::retry_delay_tests::retry_delay_uses_js_math_min_max'),
 ]
 
 ASSERTIONS = {
+    'http-retry-after-min-nan': '#947 retry_after must propagate NaN',
+    'http-retry-stream-min-nan': '#947 retry_decide stream must propagate NaN',
+    'http-retry-request-min-nan': '#947 retry_decide_request must propagate NaN',
+    'router-zero-max-attempts-nan': '#947 zero_usage Math.max must keep a NaN maxAttempts',
+    'router-transient-max-clamp': '#947 transient Math.max must clamp a negative maxAttempts',
+    'router-zero-attempt-max-nan': '#947 zero_usage Math.max must propagate a NaN attempt',
+    'router-retry-after-min-nan': '#947 retry-after Math.min must propagate a NaN maxDelayMs',
+    'router-transient-min-nan': '#947 transient retry delay must propagate NaN',
+    'web-retry-after-min-nan': '#947 retry-after Math.min must propagate a NaN cap',
+    'web-retry-exponential-min-nan': '#947 exponential Math.min must propagate a NaN cap',
     'shared-max-left-tie': '#947 js_math::max tie',
     'shared-min-left-tie': '#947 js_math::min tie',
     'compaction-left-tie': '#947 compaction js_max tie',
@@ -124,6 +212,18 @@ BASELINE = {
         ['-p', 'pilotdeck-agent', '--test', 'request_materialization'],
         'js_min_signed_zero_ties_match_ts',
     ),
+    'pilotdeck-gateway-http': (
+        ['-p', 'pilotdeck-gateway', '--lib'],
+        'retry_delay_uses_js_math_min_for_nan_and_signed_zero',
+    ),
+    'pilotdeck-gateway-router': (
+        ['-p', 'pilotdeck-gateway', '--lib'],
+        'router_retry_policy_uses_js_math_min_max',
+    ),
+    'pilotdeck-gateway-web': (
+        ['-p', 'pilotdeck-gateway', '--lib'],
+        'retry_delay_uses_js_math_min_max',
+    ),
 }
 
 
@@ -132,6 +232,12 @@ def package_for(path):
         return 'pilotdeck-protocol'
     if path == agent_policy:
         return 'pilotdeck-agent'
+    if path == http:
+        return 'pilotdeck-gateway-http'
+    if path == router_policy:
+        return 'pilotdeck-gateway-router'
+    if path == web_network:
+        return 'pilotdeck-gateway-web'
     return 'pilotdeck-gateway'
 
 

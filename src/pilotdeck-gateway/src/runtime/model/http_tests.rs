@@ -70,6 +70,75 @@ async fn provider_idle_timeout_uses_node_timer_delay() {
     }
 }
 
+fn retry_provider(entries: &[(&str, f64)]) -> JsValue {
+    let mut retry = JsObject::new();
+    for (key, value) in entries {
+        retry.insert((*key).into(), JsValue::Number(*value));
+    }
+    let mut provider = JsObject::new();
+    provider.insert("retry".into(), JsValue::Object(retry));
+    JsValue::Object(provider)
+}
+
+/// `RetryPolicy.ts:44,50` calls `Math.min`, which propagates NaN and projects
+/// `-0` for a signed-zero tie. Rust `f64::min` does neither on every input.
+/// Node v22.22.0 probe:
+/// `_tmp/20261026-issue-947/fix-r1/node/retry-policy-probe.out`.
+#[test]
+fn retry_delay_uses_js_math_min_for_nan_and_signed_zero() {
+    // baseDelay * 2 overflows to Infinity; jitter 0 makes `Infinity * 0` NaN,
+    // and Math.min(NaN, 8000) stays NaN (RetryPolicy.ts:50).
+    let overflow = retry_provider(&[
+        ("baseDelayMs", 1e308),
+        ("maxDelayMs", 8_000.0),
+        ("jitter", 0.0),
+    ]);
+    let (_, request_delay) = retry_decide_request(&overflow, 1.0, 0.0);
+    assert!(
+        request_delay.is_nan(),
+        "#947 retry_decide_request must propagate NaN from Math.min, got {request_delay}"
+    );
+    let (_, stream_delay) = retry_decide(&overflow, 1.0, None, 0.0);
+    assert!(
+        stream_delay.is_nan(),
+        "#947 retry_decide stream must propagate NaN from Math.min, got {stream_delay}"
+    );
+
+    // retryAfterMs goes through Math.min(input.retryAfterMs, maxDelayMs)
+    // (RetryPolicy.ts:44); a NaN maxDelay wins over a finite retry-after.
+    let nan_max = retry_provider(&[("maxDelayMs", f64::NAN)]);
+    let (_, after_delay) = retry_decide(&nan_max, 0.0, Some(100.0), 0.0);
+    assert!(
+        after_delay.is_nan(),
+        "#947 retry_after must propagate NaN from Math.min, got {after_delay}"
+    );
+
+    // Math.min(-0, +0) and Math.min(+0, -0) are both -0.
+    for (retry_after, max_delay) in [(-0.0, 0.0), (0.0, -0.0)] {
+        let provider = retry_provider(&[("maxDelayMs", max_delay)]);
+        let (_, delay) = retry_decide(&provider, 0.0, Some(retry_after), 0.0);
+        assert_eq!(
+            delay.to_bits(),
+            (-0.0f64).to_bits(),
+            "#947 retry_after Math.min signed-zero tie ({retry_after}, {max_delay}) must project -0"
+        );
+    }
+
+    // Ordinary capping is unchanged.
+    let ordinary = retry_provider(&[("baseDelayMs", 500.0), ("maxDelayMs", 8_000.0)]);
+    assert_eq!(
+        retry_decide_request(&ordinary, 1.0, 0.0).1,
+        1000.0,
+        "#947 ordinary request retry delay"
+    );
+    let capped = retry_provider(&[("baseDelayMs", 10_000.0), ("maxDelayMs", 8_000.0)]);
+    assert_eq!(
+        retry_decide_request(&capped, 1.0, 0.0).1,
+        8_000.0,
+        "#947 ordinary request retry cap"
+    );
+}
+
 /// Default idle and undici bodyTimeout are both 600000 ms. On a tie TS's
 /// native-timer idle watchdog wins (undici's coarse fast timer fires late), so
 /// the visible error is the idle timeout, not `terminated`.

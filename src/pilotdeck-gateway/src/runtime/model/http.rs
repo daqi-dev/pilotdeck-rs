@@ -26,7 +26,7 @@ use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::{Request, Response};
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, js_math::min as js_math_min, parse_json};
 use sha2::{Digest, Sha256};
 use std::{
     future::Future,
@@ -1288,14 +1288,14 @@ fn retry_decide(
     let max_retries = retry_number(provider, "streamMaxRetries").unwrap_or(2.0);
     let max_delay = retry_number(provider, "maxDelayMs").unwrap_or(8_000.0);
     if let Some(after) = retry_after {
-        return (max_retries, after.min(max_delay));
+        return (max_retries, js_math_min(after, max_delay));
     }
     let base = retry_number(provider, "baseDelayMs").unwrap_or(500.0);
     let jitter = retry_number(provider, "jitter").unwrap_or(0.75);
     let deterministic = base * (attempt + 1.0);
     (
         max_retries,
-        (deterministic + deterministic * jitter * random).min(max_delay),
+        js_math_min(deterministic + deterministic * jitter * random, max_delay),
     )
 }
 
@@ -3661,7 +3661,7 @@ fn retry_decide_request(provider: &JsValue, attempt: f64, random: f64) -> (f64, 
     let deterministic = base * (attempt + 1.0);
     (
         max_retries,
-        (deterministic + deterministic * jitter * random).min(max_delay),
+        js_math_min(deterministic + deterministic * jitter * random, max_delay),
     )
 }
 
