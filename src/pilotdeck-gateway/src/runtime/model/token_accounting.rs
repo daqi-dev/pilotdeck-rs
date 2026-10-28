@@ -7,6 +7,7 @@ use crate::model_cost;
 use crate::runtime::network::{
     Cancellation, Exchange, exchange_with_prearmed_parent, node_timer_duration,
 };
+use pilotdeck_protocol::js_math::{max as js_max, min as js_min};
 use pilotdeck_protocol::{
     JsObject, JsValue,
     model::{ContentBlock, ContentBody, Message},
@@ -429,21 +430,6 @@ fn cache_key(request: &JsObject) -> Result<[u8; 32], HostError> {
     Ok(Sha256::digest(serialized.as_bytes()).into())
 }
 
-fn js_max(a: f64, b: f64) -> f64 {
-    if a.is_nan() || b.is_nan() {
-        f64::NAN
-    } else {
-        a.max(b)
-    }
-}
-fn js_min(a: f64, b: f64) -> f64 {
-    if a.is_nan() || b.is_nan() {
-        f64::NAN
-    } else {
-        a.min(b)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,6 +439,37 @@ mod tests {
         sync::atomic::{AtomicBool, Ordering},
         task::Poll,
     };
+
+    /// Node v22.22.0: the TS `Math.max(0, …)` / `Math.min(maximum, …)` /
+    /// `clamp` helpers rank `+0` above `-0` for `Math.max` and `-0` below
+    /// `+0` for `Math.min`.
+    #[test]
+    fn js_math_signed_zero_ties_match_ts() {
+        const PLUS_ZERO: u64 = 0.0f64.to_bits();
+        const MINUS_ZERO: u64 = (-0.0f64).to_bits();
+        for (index, (left, right)) in [(0.0, -0.0), (-0.0, 0.0)].into_iter().enumerate() {
+            assert_eq!(
+                js_max(left, right).to_bits(),
+                PLUS_ZERO,
+                "#947 token_accounting js_max tie {index} ({left}, {right}) must be +0"
+            );
+            assert_eq!(
+                js_min(left, right).to_bits(),
+                MINUS_ZERO,
+                "#947 token_accounting js_min tie {index} ({left}, {right}) must be -0"
+            );
+        }
+        assert_eq!(
+            js_max(-0.0, -0.0).to_bits(),
+            MINUS_ZERO,
+            "#947 token_accounting js_max(-0,-0) must stay -0"
+        );
+        assert_eq!(
+            js_min(0.0, 0.0).to_bits(),
+            PLUS_ZERO,
+            "#947 token_accounting js_min(+0,+0) must stay +0"
+        );
+    }
 
     fn configured_count(
         transport: impl ProviderCountTransport + 'static,
