@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-29 #991 fix-r3 重登记候选（协调者明确授权，待两家非作者终审与人复核）**：修复 session-domain-cleanup 恢复正控的 aggregation-audit 回归；`_guard._failure` 四类已处理异常出口统一调用 `common.aggregate_status`，在既有 `AGGREGATION_POINTS` 登记为 `guard-failure`，不新增豁免、不改审计检测器。round 仍输出历史 BLOCKED/error 并从 FAIL 类取 exit 1，其余逐入口异常契约沿用 fix-r2 的 72 格原金样；未可信 common 的 preflight 拒绝仍固定 exit 2。补登记回归与逐策略共享调用断言、五项绑定变异，同步两套旧锚点；仅重登记 `_guard.py`、`test_safety.py` 两行哈希。判分、阈值、分母、归一化、差异账本、清理与租约语义均不变。证据及提交后完整宿主验证见 `_tmp/20261026-issue-991/fix-r3/RESULT.md`；不宣称未提交候选已通过 HEAD 准入或全量原地负控。
+
 > **2026-10-29 #991 fix-r2 重登记候选（决策卡 A；待两家非作者终审与人复核）**：统一实现保留逐入口策略：run_round 普通异常为 BLOCKED/1 + error，KeyboardInterrupt 仍透传；session_domain 为 BLOCKED/2 + error；check_ruler 保留原 failure/EVIDENCE 分类（subprocess.TimeoutExpired 仍 FAIL/1）；controls/run_all 仅捕 ApparatusVerificationError；其余入口保留 traceback。重构前 main 实测的 9 入口 × 8 异常类对照表逐字校验 stdout、退出码与异常诊断，补 observer 三矩阵、派生 A2 AST 入口集和负控套件准入回归。主阶段退出码使用 common.BATCH_EXIT_CODES；preflight 拒绝不读取未可信 common 的映射，固定 2 防止篡改为 0。相对重构前 main 的异常契约无变化，不改判分语义、阈值、分母或差异账本。证据见 `_tmp/20261026-issue-991/fix-r2/RESULT.md`；候选树内容校验与提交后 HEAD CLI 校验分列。
 
 > **2026-10-28 #991 重登记候选（独立单，待两家非作者终审与人复核）**：把 10 个 A2 入口各自复制的 HEAD 自举 / 显式路径加载 / 来源校验 / 退出码分类收成唯一 `_guard.py`；入口 `__main__` 仅 `run_entry(main, policy)`，`test_safety` 新增 AST 机检（`__main__` 恰为该调用、无私有 `except` 分类、入口不再定义 `_load` / `_verify_cli_imports` / `_has_git_checkout`）与 `-I` 先于其它标准库 import 的 AST 检查；`observer.py` 同收编。仅重登记 13 件 A2 哈希并新增 `_guard.py` 一行；不改判分语义、阈值、分母、归一化、差异账本。真实存档复算与提交后负控见 `_tmp/20261026-issue-991/RESULT.md`；未提交树入口按设计 BLOCKED，不冒充已提交 CLI 通过。
@@ -172,7 +174,7 @@
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
 3e641ee353effae94c3751b198cb08f1728bf225bc9963356befea1d722df49b  accepted-diffs.md
-a66a7ade58dea86f573e8404f175d3ec02f4a5933685eb2556efbcbe16097af2  ../../scripts/gateway-parity/_guard.py
+b8c6ac2f4c6de47274091184cadc3dbbd559db22587bb74328b18f0ea122c5f4  ../../scripts/gateway-parity/_guard.py
 96926219b68168ab7b926c5c52c8f4d8ecec7c83de324787479c1aa53410a3ac  ../../scripts/gateway-parity/build_proxy.py
 37e7c86d4c7e191f6202c39a6c223f4e9f5bd8d0e2f7f5fea84cb978eec45f9a  ../../scripts/gateway-parity/check_frozen.py
 c48c7e6818314b7a23a0660ab121edb2f95e97b2fea48d32c76779a3ee1c4830  ../../scripts/gateway-parity/check_ruler.py
@@ -184,7 +186,7 @@ eb48c34dbc6c245fa10421bf5a4015acc95a341df0d96b6f336dbafbded0ec5c  ../../scripts/
 95fe265a7b7512f1969f19b7ee2d14133ce56916fb25c0953a84b5ec05568f74  ../../scripts/gateway-parity/mock.mjs
 11d6c766f22c2ab221b0ef857b7e863309df1009717a5c08f423546c78f49a95  ../../scripts/gateway-parity/observer.py
 6158b25ba9105f17759ff1e2543ade8ab70724f59eef81bc6b551020831b5967  ../../scripts/gateway-parity/run_round.py
-79f964f32964619bf846e01bcfef77b3483980f8cad1c64d3cd6b40930088373  ../../scripts/gateway-parity/test_safety.py
+83ba6dd1772bba0888c6530c38fe5f3cb9c6c0531c1c3b158bd5048a1dcd10ad  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
 f878a55a372dc06cc5350f06ddb4fe3beac7b62c8826a6a200b79a3719a41d4b  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs

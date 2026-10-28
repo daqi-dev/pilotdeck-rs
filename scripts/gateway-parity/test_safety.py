@@ -954,8 +954,15 @@ class ImportIsolation(unittest.TestCase):
                                      ('controls', 0)]:
                 error = (common.ApparatusVerificationError('controlled') if policy == 'controls'
                          else ValueError('controlled'))
-                self.assertEqual(_guard._failure(error, policy, common)[1], expected, message)
-            self.assertEqual(_guard._failure(TimeoutError('controlled'), 'ruler', common)[1], 0, message)
+                child = 'FAIL' if policy in ('round', 'ruler') else 'BLOCKED'
+                with patch.object(common, 'aggregate_status', wraps=common.aggregate_status) as shared:
+                    self.assertEqual(_guard._failure(error, policy, common)[1], expected, message)
+                self.assertEqual(shared.call_args_list, [unittest.mock.call(child)],
+                                 '#991 guard failure must call the single shared aggregator: ' + policy)
+            with patch.object(common, 'aggregate_status', wraps=common.aggregate_status) as shared:
+                self.assertEqual(_guard._failure(TimeoutError('controlled'), 'ruler', common)[1], 0, message)
+            self.assertEqual(shared.call_args_list, [unittest.mock.call('BLOCKED')],
+                             '#991 guard failure must call the single shared aggregator: ruler blocked')
             with patch.object(_guard, 'verify_cli_imports', side_effect=ValueError('controlled')), \
                     patch('builtins.print'), self.assertRaises(SystemExit, msg=message) as raised:
                 _guard.run_entry(lambda: None, 'traceback')
@@ -1698,6 +1705,15 @@ exec(compile(ast.get_source_segment(source, block), path, 'exec'),
 
 class ApparatusInputs(unittest.TestCase):
     """#52 / #85: unregistered files, installed deps and cargo configs are inputs."""
+
+    def test_guard_failure_is_registered_aggregation_point(self):
+        message = '#991 guard failure must remain a registered shared aggregation point'
+        fixture = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py'
+        audit = _load('guard_aggregation_audit', fixture)
+        with patch.object(audit, 'md', SimpleNamespace(common=common)):
+            report = audit.aggregation_audit()
+        self.assertTrue(report['passed'], message + ': ' + repr(report['failures']))
+        self.assertEqual(report['points'].get('guard-failure', {}).get('shared'), True, message)
 
     def test_deadline_not_run_has_dedicated_exit_code(self):
         for children in ((), (None,), (None, None), ('PASS', None)):
