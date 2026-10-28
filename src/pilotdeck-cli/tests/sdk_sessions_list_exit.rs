@@ -827,7 +827,13 @@ async fn sessions_list_matches_ts_matrix() {
     }
 }
 
-fn regenerates_identically(fixture: &str) {
+fn regenerates_identically(fixture: &str, source_env: &str) {
+    let source = std::env::var_os(source_env);
+    verify(
+        source.as_ref().is_some_and(|value| !value.is_empty()),
+        &format!("#983 set {source_env}"),
+    );
+    let source = source.expect("#983 validated fixture source");
     let runtime = Runtime::new();
     let output = runtime.0.join("extracted");
     let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -849,6 +855,7 @@ fn regenerates_identically(fixture: &str) {
     let result = Command::new(&node)
         .arg(directory.join("generate.mjs"))
         .arg(&output)
+        .env(source_env, source)
         .output()
         .expect("#983 run extraction guard");
     assert!(
@@ -865,13 +872,13 @@ fn regenerates_identically(fixture: &str) {
 #[test]
 #[ignore = "requires coordinator-owned Node v22.22.0 captures; never reruns TS"]
 fn sessions_list_oracle_regenerates_identically() {
-    regenerates_identically("sdk-sessions-list");
+    regenerates_identically("sdk-sessions-list", "PDRS_D1_PLAN");
 }
 
 #[test]
 #[ignore = "requires Node v22.22.0 and the original TS SDK with installed dependencies"]
 fn sessions_list_transport_limits_regenerates_identically() {
-    regenerates_identically("sdk-transport-limits");
+    regenerates_identically("sdk-transport-limits", "PDRS_BASELINE");
 }
 
 #[tokio::test(flavor = "current_thread")]
