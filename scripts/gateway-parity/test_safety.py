@@ -1132,6 +1132,65 @@ class ImportIsolation(unittest.TestCase):
                         self.assertEqual(errors.getvalue(), '', message + ': no traceback')
                         self.assertFalse(held, message + ': lease released')
 
+    def test_ruler_summary_uses_shared_status_without_changing_pending_review(self):
+        from contextlib import ExitStack, nullcontext, redirect_stdout
+        from unittest.mock import call
+        import io
+        message = '#166 fix-r9b ruler summary must share aggregation and preserve PENDING_REVIEW/2 or FAIL/1'
+        entry = _load('ruler_summary_entry', common.SCRIPT / 'check_ruler.py')
+        gates = ('self_compare', 'positive_controls', 'prerequisite_controls',
+                 'same_bad_rejected', 'proxy_parity')
+        for failed_gate in (None, *gates):
+            with self.subTest(failed_gate=failed_gate), ExitStack() as stack:
+                path = self.folder / (failed_gate or 'all-green')
+                for index, label in enumerate(('ts1', 'ts2', 'ts3', 'ts4', 'ts5', 'proxy')):
+                    common.save(path / label / 'run.json', {
+                        'apparatusSha256': {}, 'baselineDepsSha256': {},
+                        'side': 'rust' if label == 'proxy' else 'ts', 'label': label})
+                    common.save(path / label / 'processes.json', [{
+                        'name': 'gateway', 'pid': 100 if failed_gate == 'self_compare' else 100 + index}])
+                cases = {name: {'passed': failed_gate != 'same_bad_rejected', 'bothSides': True}
+                         for name in ('both-sides-bad', 'corrupt-fingerprint', 'both-bad-disk',
+                                      'both-bad-http', 'both-bad-wire-metadata')}
+                cases['positive'] = {'passed': failed_gate != 'positive_controls'}
+                controls = SimpleNamespace(run_controls=lambda *a: {
+                    'cases': cases, 'prerequisites': {
+                        'passed': failed_gate != 'prerequisite_controls',
+                        'inputSha256': {}, 'auditSha256': 'audit'}})
+                for attr, value in [('install_shutdown', lambda: None),
+                                    ('parity_lock', lambda *a: nullcontext()),
+                                    ('cargo_config_problems', lambda: []),
+                                    ('apparatus_hashes', lambda: {}),
+                                    ('baseline_dependency_hashes', lambda *a: {}),
+                                    ('digest', lambda *a: 'audit'),
+                                    ('_load', lambda *a: controls),
+                                    ('_verify_cli_imports', lambda: None),
+                                    ('compare', lambda a, b: {
+                                        'status': 'FAIL' if failed_gate == 'proxy_parity' and b.name == 'proxy' else 'PASS',
+                                        'failures': []})]:
+                    stack.enter_context(patch.object(entry, attr, value))
+                stack.enter_context(patch.object(entry, 'run_round',
+                                                side_effect=AssertionError('#166 fix-r9b unexpected live round; invalid test setup')))
+                shared = stack.enter_context(patch.object(entry.common, 'aggregate_status',
+                                                          wraps=common.aggregate_status))
+                stack.enter_context(patch.object(sys, 'argv', ['check_ruler', '--output', str(path)]))
+                output = stack.enter_context(redirect_stdout(io.StringIO()))
+                try:
+                    code = entry.main()
+                    report = json.loads(output.getvalue())
+                    saved = json.loads((path / 'ruler.json').read_text())
+                except (Exception, KeyboardInterrupt) as error:
+                    self.fail('#166 fix-r9b main/report execution error; not a contract kill: ' + repr(error))
+                expected = ('PENDING_REVIEW', 2) if failed_gate is None else ('FAIL', 1)
+                self.assertEqual((report.get('status'), code), expected, message)
+                self.assertEqual(saved, report, message + ': persisted report')
+                self.assertIsNone(report.get('independent_review'), message + ': review remains pending')
+                self.assertEqual([report.get(gate) for gate in gates],
+                                 [gate != failed_gate for gate in gates], message + ': real gates exercised')
+                self.assertEqual(shared.call_args_list, [
+                    call(*('PASS' if gate != failed_gate else 'FAIL' for gate in gates)),
+                    call('BLOCKED' if failed_gate is None else 'FAIL')], message + ': shared status and exit')
+
     def test_main_code_is_verified_after_entry_disk_restore(self):
         from types import ModuleType
         clean = (b"import sys\n_apparatus_code = sys._getframe().f_code\nVALUE = 'clean'\n"

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported runtime process-census/probe monkeypatch controls; snapshots is an iterator of PID sets, not source bytes; no source replacement anchors
 """Behavior controls for the ps-free process-group cleanup probe.
 
 Run with ``python3 -I check_cleanup.py --output <new directory>``.  This file

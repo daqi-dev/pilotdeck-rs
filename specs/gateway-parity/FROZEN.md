@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-28 #166 fix-r9b 重登记候选（本轮明确授权，待两家非作者终审与人复核）**：修复 fix-r9 拆出 `_main` 后触发 #164-fix-r7 汇总审计的回归；正文收回已登记的 `main`，五个机器门与退出码经 `common.aggregate_status`，保留 A2 的 PENDING_REVIEW/2 与 FAIL/1。审计规则、登记表、共享状态顺序、判分和迟验证异常边界均不变。补六格真实 main 回归及四项专属变异，同步旧负控缩进锚点；只重登记 check_ruler.py、test_safety.py 两件哈希。session 源负控 22/22 KILLED、恢复正控 PASS，随后三件既有 fixture 仅补主线检查器要求的文件头说明（AST 与 HEAD 相同）；真实存档复算、完整证据和提交后宿主步骤见 `_tmp/20261026-issue-166/fix-r9b/RESULT.md`。不宣称新装置已重新采集全量校准或完成独立终审。
+
 > **2026-10-28 #166 fix-r9 重登记候选（协调者明确授权，待两家非作者终审与人复核）**：只补齐 r8 同源迟加载/复验异常：check_ruler 与 controls/prerequisites.module_at 共用 common.ApparatusVerificationError，将当前装置的加载、来源复验失败（含 KeyboardInterrupt）归为 BLOCKED/exit 2/APPARATUS_IMPORTS。ruler 在 main 边界接住该专用类型；普通 controls 工作错误不升格，外部保存树 --code-root 的既有导入语义不变。session 原专用错误已满足同一输出契约，保持不动。三入口测试均断言 BLOCKED/2 与规则名，补 ruler/prerequisites 错误矩阵及八个配对变异；既有负控同步受影响锚点。只重登记 common.py、check_ruler.py、controls/prerequisites.py、test_safety.py 四件哈希；不改判分、阈值、分母、归一化、差异账本、租约与等待协议。真实存档复算、内容 check_frozen 与有界负控证据见 `_tmp/20261026-issue-166/fix-r9/RESULT.md`；候选未提交，完整原地负控、干净 HEAD CLI、全量重新采集及终审由协调者续办。review 的 cargo 预检 BLOCKED/1、CLI 名单复用等其它发现按本轮补充范围保留，不宣称已闭合。
 
 > **2026-10-28 #166 fix-r8 重登记候选（协调者明确授权，待两家非作者终审与人复核）**：修复评审 P2a、P3-1（均复级 P1）：八个独立 CLI 的 HEAD 预检异常统一 BLOCKED JSON/exit 2，正常 main 结果原样保留；build_proxy 的配置预检/无法启动 cargo 同样 BLOCKED/2，真实编译失败仍透传返回码。session 以专用 APPARATUS_IMPORTS 错误区分迟加载/来源复验失败（BLOCKED/2）与普通证据错误（FAIL/1），保留报告与原租约释放流程；P3-2 测试用记录上下文钉住迟加载、复验和 controls 执行均持锁。P3-3 父进程执行磁盘 check_frozen 的组合篡改边界未在本小轮修复，不扩大防御承诺。只重登记九个装置哈希（build_proxy/check_frozen/check_ruler/compare/run_round/session_domain/test_safety/controls 两入口），不改阈值、分母、归一化、评分或旧差异账本。证据与提交后宿主负控步骤见 `_tmp/20261026-issue-166/fix-r8/RESULT.md`；未提交树的真实 CLI 拒绝运行是预期，内容校验 PASS 不冒充提交后 HEAD CLI PASS。
@@ -164,7 +166,7 @@
 3e641ee353effae94c3751b198cb08f1728bf225bc9963356befea1d722df49b  accepted-diffs.md
 36c3c1ea4f11cb85c6ab5fb8fa62cf3e5ea02bee00796d47177ed053fbd49354  ../../scripts/gateway-parity/build_proxy.py
 f10d43d59b930bca5da849f5e36de164fe061a9f1f82720a196097838bd86e9f  ../../scripts/gateway-parity/check_frozen.py
-4820a294d9ff97e5780e2170b4e3c9e958a4c2faab42dabbf58cab50c5597236  ../../scripts/gateway-parity/check_ruler.py
+6689e94c37db4019e50d8aaa23b056386001c992845153c44c43989668d137d6  ../../scripts/gateway-parity/check_ruler.py
 9c82a05095e7b946c44305e671187d4b7e76012532bca6b72b5d22cb53475112  ../../scripts/gateway-parity/common.py
 ab353c25cbb2e2523b80d398dc7d80375a15555169627c95d96498d632ddc487  ../../scripts/gateway-parity/compare.py
 edd32490c43f95b14d4054c7c9f56d30947e0da209b18edbd4f1ea676a8aa460  ../../scripts/gateway-parity/controls/prerequisites.py
@@ -173,7 +175,7 @@ edd32490c43f95b14d4054c7c9f56d30947e0da209b18edbd4f1ea676a8aa460  ../../scripts/
 95fe265a7b7512f1969f19b7ee2d14133ce56916fb25c0953a84b5ec05568f74  ../../scripts/gateway-parity/mock.mjs
 3a758aa57cbb5d8129c2e9b73c0baa04028a87aa7bae5dba6d8519f713869692  ../../scripts/gateway-parity/observer.py
 1e17aef505519fc5709cb9837b88d084ccc648b833c2b1943c62d1940731cabd  ../../scripts/gateway-parity/run_round.py
-d9ed3eea5a978b58c40cfa6734c49ff4a418e00e72e6c93bc005918358a106b5  ../../scripts/gateway-parity/test_safety.py
+7b004c169adeade34215cfda69a9d6712a21dcd0ed72839327e42976344f4e77  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
 a9bbfc9b68a437ec4842ba74c528619553d06cf0855bf1669f425dafc0b0a98a  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs

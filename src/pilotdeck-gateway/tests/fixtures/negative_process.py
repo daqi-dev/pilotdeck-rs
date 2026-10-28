@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported shared process/source guard, no mutation definitions
 """Bounded process ownership shared by the gateway negative controls.
 
 Every invocation owns a fresh session, so a timeout can kill the whole tree.
