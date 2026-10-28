@@ -60,7 +60,7 @@ class SchemataTests(unittest.TestCase):
             if selector == 'first':
                 raise subprocess.TimeoutExpired(['test'], 1)
             return result(test, 'FAILED' if selector else 'ok', row['anchor'])
-        rows = list(runner.execute_suite(bindings, invoke))
+        rows = list(runner.execute_suite(bindings, invoke, prefix=runner.PREFIX))
         self.assertEqual([r['status'] for r in rows], ['INVALID', 'KILLED'])
         self.assertIn(('first-restored', None), calls)
         self.assertIn(('second-negative', 'second'), calls)
@@ -70,7 +70,8 @@ class SchemataTests(unittest.TestCase):
             with self.subTest(failed=failed):
                 def invoke(label, test, selector, row):
                     return result(test, 'FAILED' if label == failed or (selector and test == 'sample') else 'ok', row['anchor'])
-                rows = list(runner.execute_suite([binding('sample', 'witness')], invoke))
+                rows = list(runner.execute_suite([binding('sample', 'witness')], invoke,
+                                                 prefix=runner.PREFIX))
                 self.assertEqual(rows[0]['status'], 'INVALID')
 
     def test_wrong_panic_missing_test_and_survivor(self):
@@ -86,7 +87,15 @@ class SchemataTests(unittest.TestCase):
             with self.subTest(expected=expected, response=response):
                 def invoke(label, test, selector, _row):
                     return response if selector else result(test)
-                self.assertEqual(list(runner.execute_suite([row], invoke))[0]['status'], expected)
+                # run() keeps this fixture's stricter panic-file verdict, with
+                # the library inclusion's explicit ../ path.
+                def verdict(response_, bound):
+                    return runner.legacy.classify(
+                        response_, bound,
+                        source_file='pilotdeck-gateway/src/../tests/edgeclaw_service_facade.rs')
+                rows = list(runner.execute_suite([row], invoke, prefix=runner.PREFIX,
+                                                 verdict=verdict))
+                self.assertEqual(rows[0]['status'], expected)
 
     def test_environment_and_request_validation(self):
         env = runner.clean_environment({'PDRS_MUTANT': 'bad', 'PDRS_FACADE_ENCODER_MUTANT': 'bad', 'KEEP': 'yes'})
@@ -153,9 +162,9 @@ class SchemataTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             out = Path(temp)
             with patch.object(Path, 'replace', autospec=True, wraps=Path.replace) as publish:
-                runner.write_summary(out, [{'status': 'INVALID'}], time.monotonic(), 1.0)
+                runner.publish_summary(out, [{'status': 'INVALID'}], time.monotonic(), 1.0)
                 publish.assert_called_once_with(out / 'summary.json.tmp', out / 'summary.json')
-            runner.write_summary(out, [{'status': 'KILLED'}, {'status': 'INVALID'}], time.monotonic(), 1.0)
+            runner.publish_summary(out, [{'status': 'KILLED'}, {'status': 'INVALID'}], time.monotonic(), 1.0)
             self.assertEqual(json.loads((out / 'summary.json').read_text())['counts'],
                              {'KILLED': 1, 'SURVIVED': 0, 'INVALID': 1})
             self.assertFalse((out / 'summary.json.tmp').exists())
