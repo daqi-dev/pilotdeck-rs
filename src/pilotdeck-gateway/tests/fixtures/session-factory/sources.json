@@ -20,5 +20,9 @@
   "src/session/projection/AgentTranscriptProjections.ts",
   "src/session/events/SessionRuntime.ts",
   "src/session/projection/BuiltinSessionProjections.ts",
-  "src/session/projection/SessionProjectionDriver.ts"
+  "src/session/projection/SessionProjectionDriver.ts",
+  "src/agent/modules/transport/agentLoopSidecarClient.ts",
+  "src/agent/modules/transport/stdioAgentLoopSidecarConnection.ts",
+  "src/agent/modules/checkpoint/seedStateProjection.ts",
+  "src/agent/turn/TurnRunner.ts"
 ]

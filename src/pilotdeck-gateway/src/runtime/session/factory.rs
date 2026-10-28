@@ -515,6 +515,10 @@ struct OwnedSession {
     resources: Mutex<Option<PreparedResources>>,
 }
 impl LiveSession for OwnedSession {
+    #[cfg(test)]
+    fn reload_signal_for_test(&self) -> Option<crate::runtime::hooks::Cancellation> {
+        self.adapter.reload_signal_for_test()
+    }
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         let turn = self.adapter.submit(input, options)?;
         Ok(Box::new(OwnedTurn {
@@ -567,8 +571,9 @@ impl LiveTurn for OwnedTurn {
             let result = self.turn.next().await;
             let terminal = matches!(&result, Ok(Some(event)) if is(field(event,"type"),"turn_completed"))
                 || !matches!(&result, Ok(Some(_)));
-            if matches!(&result, Ok(Some(event)) if is(field(event,"type"),"turn_completed"))
-                || (self.started.load(Ordering::SeqCst) && !matches!(&result, Ok(Some(_))))
+            if !self.finished
+                && (matches!(&result, Ok(Some(event)) if is(field(event,"type"),"turn_completed"))
+                    || (self.started.load(Ordering::SeqCst) && !matches!(&result, Ok(Some(_)))))
             {
                 *lock(&self.saved) = self
                     .checkpoint

@@ -215,6 +215,10 @@ impl LiveSessionAdapter {
 }
 
 impl LiveSession for LiveSessionAdapter {
+    #[cfg(test)]
+    fn reload_signal_for_test(&self) -> Option<crate::runtime::hooks::Cancellation> {
+        Some(self.state.lock().unwrap().signal.clone())
+    }
     fn reload_snapshot(
         &self,
     ) -> Result<crate::runtime::session::factory::ReloadSnapshot, RuntimeError> {

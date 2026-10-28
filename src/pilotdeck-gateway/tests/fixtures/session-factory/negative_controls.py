@@ -44,7 +44,7 @@ cases = [
     ('resume-release-reject', factory, 'let rollback = (storage.close)().await;\n                    let _ = prepared.resources.release().await;', 'let rollback = (storage.close)().await;\n                    prepared.resources.release().await?;', None, prefix+'resume_release_reject', '#745 resume-release-reject conclusion'),
     ('admission-read-reject', factory, 'let rollback = (storage.close)().await;', 'let rollback = if self.options.admission.is_some() { Ok(()) } else { (storage.close)().await };', None, prefix+'admission_read_reject', '#745 admission-read-reject rollback order'),
     ('default-reload', handle, 'Err(RuntimeError::new(\n            "Agent session runtime reload is unavailable.",\n        ))', 'Ok(super::factory::ReloadSnapshot { session_id:Default::default(),state:Default::default(),cwd:Default::default(),transcript_path:Default::default(),file_state:Default::default(),transcript_writer_state:Default::default() })', None, prefix+'reload_capability_is_not_fake_success', '#745 unavailable reload'),
-    ('terminal-file-state', factory, 'if matches!(&result, Ok(Some(event)) if is(field(event,"type"),"turn_completed"))', 'if false', None, prefix+'reload_retains_saved_files_until_turn_terminal', '#745 file state at terminal conclusion'),
+    ('terminal-file-state', factory, 'if !self.finished\n                && (matches!', 'if false\n                && (matches!', None, prefix+'reload_retains_saved_files_until_turn_terminal', '#745 file state at terminal conclusion'),
     ('initial-seed-absence', factory, '.map(|r| r.file_state.clone())', '.map(|r| r.file_state.clone()).or_else(|| checkpoint.snapshot().ok())', None, prefix+'initial_reload_preserves_absent_seed', '#745 initial seed absence conclusion'),
     ('unpolled-turn', factory, 'if !self.finished\n            && self.started.load(Ordering::SeqCst)\n            &&', 'if', None, prefix+'unpolled_turn_does_not_publish_file_state', '#745 unpolled turn file conclusion'),
     ('cancelled-create', factory, 'release_all(std::mem::take(&mut self.releases)).await', 'std::mem::forget(self); Ok(())', None, prefix+'cancelled_create_waiter_disposes_late_candidate', '#745 cancelled create conclusion'),
@@ -67,6 +67,21 @@ cases = [
     ('hydrate-invalid-content', factory, 'validate_web_history(&read.entries)?;', 'let _ = &read.entries;', None, prefix+'storage_hydration_matches_ts_errors', '#745 hydrate must reject'),
     ('reload-consistency', factory, 'if before.sequence == after.sequence && before.last_entry_id == after.last_entry_id {', 'if true {', None, prefix+'reload_retries_concurrent_append', '#745 reload version conclusion'),
     ('projection-null-usage', factory, 'let value = property(usage, name)?;', 'let value = field(usage, name);', None, prefix+'durable_projection_matches_ts', '#745 projection rejects malformed usage/metadata'),
+    ('terminal-next-once', factory, 'if !self.finished\n                && (matches!', 'if true\n                && (matches!', None, prefix+'reload_file_state_matches_ts_timing', '#745 post-terminal seed oracle'),
+    ('terminal-seed-oracle', factory, 'if !self.finished\n                && (matches!', 'if false\n                && (matches!', None, prefix+'reload_file_state_matches_ts_timing', '#745 terminal seed oracle'),
+    ('matrix-messages', factory, 'state: self.projection.snapshot()?,', 'state: { let mut state=self.projection.snapshot()?; state.messages.clear(); state },', None, prefix+'recreate_idle', '#745 recreate-idle reload messages oracle'),
+    ('matrix-title', factory, 'state: self.projection.snapshot()?,', 'state: { let mut state=self.projection.snapshot()?; state.metadata.insert("title".into(), "wrong".into()); state },', None, prefix+'resume_valid', '#745 resume-valid metadata oracle'),
+    ('matrix-title-source', factory, 'state: self.projection.snapshot()?,', 'state: { let mut state=self.projection.snapshot()?; state.metadata.insert("titleSource".into(), "wrong".into()); state },', None, prefix+'resume_valid', '#745 resume-valid metadata oracle'),
+    ('matrix-last-entry', factory, 'transcript_writer_state: writer,', 'transcript_writer_state: WriterState { last_entry_id: None, ..writer },', None, prefix+'recreate_idle', '#745 recreate-idle writer oracle'),
+    ('recreate-file-seed', factory, '.map(|r| r.file_state.clone())', '.map(|_| SeedState::default())', None, prefix+'recreate_preserves_snapshot_seed_and_uses_durable_state', '#745 recreated file seed oracle'),
+    ('checkpoint-before-restore', factory, 'let read = (self.load)().await?;', 'let read = (self.load)().await?; (self.load_checkpoint)().await?;', None, prefix+'resume_checkpoint_reject', '#745 resume-checkpoint-reject checkpoint writer oracle'),
+    ('matrix-exact-rollback', factory, 'Failed to {} and roll back agent session {}.', 'Failed to {} and rollback agent session {}.', None, prefix+'resume_rollback_reject', '#745 resume-rollback-reject exact error oracle'),
+    ('matrix-diagnostic-severity', factory, '(self.options.diagnostic)(diagnostic);', 'let mut diagnostic=diagnostic.clone(); diagnostic.severity="error"; (self.options.diagnostic)(&diagnostic);', None, prefix+'resume_malformed', '#745 resume-malformed diagnostic fields oracle'),
+    ('matrix-diagnostic-line', factory, '(self.options.diagnostic)(diagnostic);', 'let mut diagnostic=diagnostic.clone(); diagnostic.line=None; (self.options.diagnostic)(&diagnostic);', None, prefix+'resume_malformed', '#745 resume-malformed diagnostic fields oracle'),
+    ('writer-before-read', factory, 'writer.sequence as f64,', '(writer.sequence + 1) as f64,', None, prefix+'recreate_running_before_read', '#745 interleaving restored writer oracle'),
+    ('writer-after-publish', factory, 'writer.sequence as f64,', '(writer.sequence + 1) as f64,', None, prefix+'recreate_running_after_publish_resume', '#745 interleaving restored writer oracle'),
+    ('replacement-controller', live, 'self.state.lock().unwrap().reload = Some(Arc::new(source));', 'self.state.lock().unwrap().signal.abort(); self.state.lock().unwrap().reload = Some(Arc::new(source));', None, prefix+'recreate_controller_is_independent_of_actual_predecessor', '#745 replacement controller independent oracle'),
+    ('production-owner-cancel', factory, 'release_all(std::mem::take(&mut self.releases)).await', 'std::mem::forget(self); Ok(())', None, prefix+'production_owner_cancelled_create_close_and_shutdown', '#745 owner cancellation lease cleanup'),
     ('fixture-regeneration', oracle, '"sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"', '"sourceCommit": "0000000000000000000000000000000000000000"', None, prefix+'regenerates_identically', '#280 session-factory/oracle.json differs'),
 ]
 
@@ -74,7 +89,33 @@ def audit():
     rows = []
     for name, path, old, new, scope, test, assertion in cases:
         try:
-            mutate(path.read_text(), scope, [(old, new)])
+            original = path.read_text()
+            changed = mutate(original, scope, [(old, new)])
+            if changed == original:
+                raise ValueError('mutation leaves source unchanged')
+            source = factory.with_name('factory_tests.rs').read_text()
+            test_name = test.removeprefix(prefix)
+            compact = ''.join(source.split())
+            if 'fn' + test_name + '(' not in compact and test_name + '=>' not in compact:
+                raise ValueError('bound full test not found: ' + test)
+            # Static audit checks a literal/formatted failure marker, not semantic
+            # inequality. A compiled runtime kill proves the latter.
+            literals = source.split('"')[1::2]
+            def marker_matches(literal):
+                pieces = literal.split('{')
+                parts = [pieces[0]] + [piece.split('}', 1)[-1] for piece in pieces[1:]]
+                if not assertion.startswith(parts[0]) or not assertion.endswith(parts[-1]):
+                    return False
+                offset = 0
+                for part in parts:
+                    at = assertion.find(part, offset)
+                    if at < 0:
+                        return False
+                    offset = at + len(part)
+                return True
+            if test_name != 'regenerates_identically' and not any(
+                marker_matches(literal) for literal in literals if '#745 ' in literal):
+                raise ValueError('bound failure message not found: ' + assertion)
             rows.append(dict(mutation=name, status='CHECKED', test=test, assertion=assertion))
         except Exception as error:
             rows.append(dict(mutation=name, status='INVALID', reason=str(error)))
