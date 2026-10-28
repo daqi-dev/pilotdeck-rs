@@ -88,7 +88,9 @@ root, source, control = map(pathlib.Path, sys.argv[2:5])
 with (tree_lock(root, timeout=20) if sys.argv[5] == "lock" else nullcontext()):
     original = source.read_text()
     source.write_text("mutated")
-    (control / "mutated").write_text(original)
+    # Publish atomically: the parent polls for existence, then reads.
+    (control / "mutated.tmp").write_text(original)
+    (control / "mutated.tmp").replace(control / "mutated")
     while not (control / "release").exists():
         time.sleep(0.005)
     source.write_text(original)
