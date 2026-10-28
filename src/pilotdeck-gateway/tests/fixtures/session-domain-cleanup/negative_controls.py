@@ -222,18 +222,18 @@ MUTATIONS = [
      "        return 'FAIL', []\n"
      "    return 'PASS', []"),
     ('calibrate-controls-skip-accepted', SOURCE,
-     "                if controls_status == 'PASS_WITH_SKIPS':\n"
-     "                    # A skipped positive control is not proof of the batch.\n"
-     "                    # Keep the skipped names visible and never report PASS:\n"
-     "                    # BLOCKED / exit 2 is the apparatus' non-PASS convention.\n"
-     "                    report['controlsSkipped'] = (\n"
-     "                        report['e1Controls'].get('cleanupSkipped', [])\n"
-     "                        + [row['case'] for row in report['e1Controls'].get('notRun', [])])\n"
-     "                    report['failure'] = {\n"
-     "                        'rule': 'CONTROLS_SKIPPED',\n"
-     "                        'detail': 'E1 controls skipped platform-specific positives; not PASS'}\n"
-     "                    overall = 'BLOCKED'",
-     "                # mutant: accept a skipped controls batch as PASS"),
+     "                    if controls_status == 'PASS_WITH_SKIPS':\n"
+     "                        # A skipped positive control is not proof of the batch.\n"
+     "                        # Keep the skipped names visible and never report PASS:\n"
+     "                        # BLOCKED / exit 2 is the apparatus' non-PASS convention.\n"
+     "                        report['controlsSkipped'] = (\n"
+     "                            report['e1Controls'].get('cleanupSkipped', [])\n"
+     "                            + [row['case'] for row in report['e1Controls'].get('notRun', [])])\n"
+     "                        report['failure'] = {\n"
+     "                            'rule': 'CONTROLS_SKIPPED',\n"
+     "                            'detail': 'E1 controls skipped platform-specific positives; not PASS'}\n"
+     "                        overall = 'BLOCKED'",
+     "                    # mutant: accept a skipped controls batch as PASS"),
     ('aggregation-exit-bypassed', CONTROLS_SOURCE,
      "        return common.aggregate_status(report['status'])[1]",
      "        return int(report['status'] != 'PASS')"),

@@ -5,6 +5,7 @@ import hashlib
 import importlib.machinery
 import json
 import math
+import marshal
 import os
 from pathlib import Path
 import shutil
@@ -12,6 +13,7 @@ import signal
 import subprocess
 import sys
 import time
+from types import CodeType
 import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -653,6 +655,92 @@ def parity_lock(timeout=600, takeovers=None, lock=LOCK):
                     save(lock / 'owner.json', dict(mine, cleanupPending=sorted(LIVE_GROUPS)))
                 else:
                     shutil.rmtree(lock)
+
+
+def _apparatus_head():
+    return subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', '--verify', 'HEAD'],
+                                   timeout=30).decode().strip()
+
+
+def _head_source(head, path):
+    relative = Path(path).resolve().relative_to(ROOT).as_posix()
+    return subprocess.check_output(['git', '-C', str(ROOT), 'show', f'{head}:{relative}'],
+                                   timeout=30)
+
+
+
+def _compiled_fingerprint(code):
+    """Stable full code serialization, including Python 3.14 slice constants.
+
+    Marshal v2 omits execution-dependent reference-sharing records. Normalize
+    newer constant types before serializing; tag tuples too to avoid collisions
+    with the slice representation. The transformed code is never executed.
+    """
+    def normalize(value):
+        if isinstance(value, CodeType):
+            return value.replace(co_consts=tuple(normalize(item) for item in value.co_consts))
+        if isinstance(value, slice):
+            return ('slice', normalize(value.start), normalize(value.stop), normalize(value.step))
+        if isinstance(value, tuple):
+            return ('tuple', tuple(normalize(item) for item in value))
+        if isinstance(value, frozenset):
+            return ('frozenset', tuple(sorted((normalize(item) for item in value),
+                                             key=lambda item: marshal.dumps(item, 2))))
+        return value
+    return marshal.dumps(normalize(code), 2)
+
+
+def verify_loaded_apparatus(head=None):
+    """Compare executed source/code, never restored disk bytes, to one pinned HEAD.
+
+    All apparatus imports use the bootstrap's byte-recording loader. Standalone
+    controls use this fail-closed check without reacquiring their parent's lock.
+    Library controls called by a real round already run under its verified lock.
+    """
+    head = head or _apparatus_head()
+    for module in tuple(sys.modules.values()):
+        path = getattr(module, '__file__', None)
+        source = getattr(module, '_apparatus_source', None)
+        if path and Path(path).resolve().is_relative_to(SCRIPT):
+            expected = _head_source(head, path)
+            if getattr(module, '__name__', None) == '__main__':
+                # __main__ is compiled by CPython, outside _load. Compare its
+                # actual executing code object (including nested functions) to
+                # HEAD compiled with identical filename/optimization settings.
+                code = getattr(module, '_apparatus_code', None)
+                matches = False
+                if isinstance(code, CodeType):
+                    expected_code = compile(expected, code.co_filename, 'exec',
+                                            dont_inherit=True, optimize=sys.flags.optimize)
+                    # Version 2 has no reference-sharing records; execution can
+                    # change object sharing without changing compiled content.
+                    matches = _compiled_fingerprint(code) == _compiled_fingerprint(expected_code)
+            else:
+                matches = isinstance(source, bytes) and source == expected
+            if not matches:
+                raise ValueError(f'#166 loaded apparatus differs from HEAD: {path}')
+    return head
+
+
+@contextmanager
+def verified_parity_lock(timeout=600, takeovers=None, lock=LOCK):
+    """Use HEAD's lease protocol; reject pre-lock imports before any work.
+
+    A mutant may already be in sys.modules when a real round starts. Its lock
+    implementation must not decide when that round may proceed. The private
+    HEAD module shares the running module's cleanup registry, so an unverified
+    child still retains cleanupPending on exit. No second lock protocol.
+    """
+    from types import ModuleType
+    head = _apparatus_head()
+    path = SCRIPT / 'common.py'
+    trusted = ModuleType('pristine_parity_lock')
+    trusted.__file__ = str(path)
+    exec(compile(_head_source(head, path), str(path), 'exec'), trusted.__dict__)
+    trusted.LIVE_GROUPS = LIVE_GROUPS
+    with trusted.parity_lock(timeout, takeovers, lock):
+        verify_loaded_apparatus(head)
+        yield
 
 
 def install_shutdown():

@@ -30,6 +30,9 @@ if not sys.flags.isolated:
 
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
 sys.dont_write_bytecode = True
+# CPython has already compiled the CLI entry before it can acquire a lease.
+# Capture that executing object, not a later read of the restored entry file.
+_apparatus_code = sys._getframe().f_code
 
 
 def _load(name, path):
@@ -37,14 +40,39 @@ def _load(name, path):
     existing = sys.modules.get(name)
     existing_file = getattr(existing, '__file__', None)
     if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        if not isinstance(getattr(existing, '_apparatus_source', None), bytes):
+            raise RuntimeError(f'#166 unverified apparatus module cache: {path}')
         return existing
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
-    spec.loader.exec_module(module)
+    try:
+        source = path.read_bytes()
+        exec(compile(source, str(path), 'exec'), module.__dict__)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    module._apparatus_source = source
     if Path(module.__file__).resolve() != path:
         raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
     return module
+
+
+
+def _verify_cli_imports():
+    # This trust root uses only stdlib + Git, never a helper from disk common:
+    # that module's verifier can itself be the active negative-control mutant.
+    import subprocess
+    from types import ModuleType
+    root = _apparatus.parent.parent
+    head = subprocess.check_output(['git', '-C', str(root), 'rev-parse', '--verify', 'HEAD'],
+                                   timeout=30).decode().strip()
+    source = subprocess.check_output(['git', '-C', str(root), 'show',
+                                      f'{head}:scripts/gateway-parity/common.py'], timeout=30)
+    trusted = ModuleType('pristine_cli_verifier')
+    trusted.__file__ = str(_apparatus / 'common.py')
+    exec(compile(source, trusted.__file__, 'exec'), trusted.__dict__)
+    trusted.verify_loaded_apparatus(head)
 
 
 _here = Path(__file__).resolve().parent
@@ -529,16 +557,369 @@ class Safety(unittest.TestCase):
                 wire_frame({'wireHex': data})
 
 
+class ImportIsolation(unittest.TestCase):
+    """#166 exact imported bytes, real lease protocol, no alternate repository."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='pdrs-166-import-')
+        self.addCleanup(self.temp.cleanup)
+        self.folder = Path(self.temp.name).resolve()
+        self.lock = self.folder / 'parity.lock'
+        self.path = self.folder / 'probe.py'
+        self.clean = b"VALUE = 'clean'\n"
+        self.path.write_bytes(self.clean)
+        # Only the dependency reader is injected. The lock comes from real HEAD
+        # bytes, and both lease directory and .guard flock run on this host.
+        self.head = common._apparatus_head()
+        self.lock_source = common._head_source(self.head, common.SCRIPT / 'common.py')
+        self.expected = {self.path: self.clean, self.folder / 'common.py': self.lock_source}
+        self.addCleanup(sys.modules.pop, 'import_isolation_probe', None)
+
+    def environment(self):
+        from contextlib import ExitStack
+        stack = ExitStack()
+        stack.enter_context(patch.object(common, 'SCRIPT', self.folder))
+        stack.enter_context(patch.object(common, '_apparatus_head', return_value=self.head))
+        stack.enter_context(patch.object(common, '_head_source', side_effect=lambda head, path: self.expected[Path(path)]))
+        return stack
+
+    def test_imported_mutant_is_rejected_after_disk_restore(self):
+        message = '#166 pre-lock mutant must be rejected after disk restoration'
+        waiting, restored = threading.Event(), threading.Event()
+        outcomes = []
+        real_sleep = time.sleep
+
+        def sleep_until_restore(delay):
+            if threading.current_thread() is worker:
+                waiting.set()
+                if not restored.wait(3):
+                    raise RuntimeError('#166 restore hook exceeded deadline')
+            else:
+                real_sleep(delay)
+
+        def consume():
+            try:
+                with common.verified_parity_lock(timeout=3, lock=self.lock):
+                    outcomes.append('WORK')
+            except ValueError as error:
+                outcomes.append('REJECTED' if '#166 loaded apparatus differs from HEAD' in str(error)
+                                else repr(error))
+            except BaseException as error:
+                outcomes.append(repr(error))
+
+        worker = threading.Thread(target=consume)
+        with self.environment(), patch.object(time, 'sleep', side_effect=sleep_until_restore):
+            try:
+                with parity_lock(lock=self.lock):
+                    self.path.write_bytes(b"VALUE = 'mutant'\n")
+                    imported = _load('import_isolation_probe', self.path)
+                    self.assertEqual(imported.VALUE, 'mutant', message + ': import hook')
+                    worker.start()
+                    self.assertTrue(waiting.wait(3), message + ': consumer must wait for predecessor')
+                    self.path.write_bytes(self.clean)
+                    self.assertIs(_load('import_isolation_probe', self.path), imported,
+                                  message + ': cached import')
+                restored.set()
+            finally:
+                restored.set()
+                if worker.ident is not None:
+                    worker.join(4)
+        self.assertFalse(worker.is_alive(), message + ': bounded completion')
+        self.assertEqual(outcomes, ['REJECTED'], message)
+        self.assertFalse(self.lock.exists(), message + ': own lease released')
+
+    def test_loader_records_executed_bytes_not_later_disk(self):
+        source = ("from pathlib import Path\nPath(__file__).write_bytes(" + repr(self.clean) + ")\nVALUE = 'mutant'\n").encode()
+        self.path.write_bytes(source)
+        imported = _load('import_isolation_probe', self.path)
+        self.assertEqual(self.path.read_bytes(), self.clean, '#166 import hook must restore disk')
+        self.assertEqual(imported._apparatus_source, source, '#166 provenance must be exactly the compiled bytes')
+
+    def test_cli_preflight_uses_head_verifier_for_mutated_common(self):
+        from types import ModuleType
+        entry = _load('trusted_cli_entry', common.SCRIPT / 'run_round.py')
+        sources = {p.relative_to(common.ROOT).as_posix(): p.read_bytes()
+                   for p in common.SCRIPT.rglob('*.py') if 'node_modules' not in p.parts}
+        original = sources['scripts/gateway-parity/common.py']
+        old = b"raise ValueError(f'#166 loaded apparatus differs from HEAD: {path}')"
+        self.assertEqual(original.count(old), 1, '#166 trusted-verifier fixture anchor must be unique')
+        source = original.replace(old, b'pass  # controlled corrupt verifier')
+        mutant = ModuleType('common')
+        mutant.__file__ = common.__file__
+        exec(compile(source, mutant.__file__, 'exec'), mutant.__dict__)
+        mutant._apparatus_source = source
+
+        def git_read(command, **kwargs):
+            if command[3] == 'rev-parse':
+                return (self.head + '\n').encode()
+            return sources[command[-1].split(':', 1)[1]]
+
+        rejected = False
+        detail = 'verifier accepted'
+        with patch.dict(sys.modules, {'common': mutant}), patch.object(entry, 'common', mutant), \
+                patch.object(subprocess, 'check_output', side_effect=git_read):
+            try:
+                entry._verify_cli_imports()
+            except ValueError as error:
+                detail = str(error)
+                rejected = '#166 loaded apparatus differs from HEAD' in detail
+        self.assertTrue(rejected, '#166 CLI preflight must use HEAD verifier even when disk helper is mutant: ' + detail)
+
+    def test_controls_late_import_is_verified_before_return(self):
+        entry = _load('late_controls_entry', common.SCRIPT / 'controls/prerequisites.py')
+        sources = {p.relative_to(common.ROOT).as_posix(): p.read_bytes()
+                   for p in common.SCRIPT.rglob('*.py') if 'node_modules' not in p.parts}
+        target = common.SCRIPT / 'common.py'
+        original = sources['scripts/gateway-parity/common.py']
+        self.assertEqual(original.count(b'MAX_AGE = 2400'), 1,
+                         '#166 late-import fixture anchor must be unique')
+        mutant = original.replace(b'MAX_AGE = 2400', b'MAX_AGE = 2401', 1)
+        alias = 'late_import_probe'
+        self.addCleanup(sys.modules.pop, alias, None)
+        read = Path.read_bytes
+
+        def git_read(command, **kwargs):
+            return ((self.head + '\n').encode() if command[3] == 'rev-parse'
+                    else sources[command[-1].split(':', 1)[1]])
+
+        with patch.object(subprocess, 'check_output', side_effect=git_read):
+            entry._verify_cli_imports()  # The independent CLI's initial check passes.
+            for source in (original, mutant):
+                sys.modules.pop(alias, None)
+                rejected = False
+                with patch.object(Path, 'read_bytes',
+                                  lambda path: source if path.resolve() == target else read(path)):
+                    try:
+                        entry.module_at(alias, target)
+                    except ValueError as error:
+                        rejected = '#166 loaded apparatus differs from HEAD' in str(error)
+                self.assertEqual(rejected, source == mutant,
+                                 '#166 controls late import must reject mutant before returning module')
+
+    def test_controls_saved_tree_import_keeps_existing_semantics(self):
+        entry = _load('saved_controls_entry', common.SCRIPT / 'controls/prerequisites.py')
+        alias = 'saved_tree_probe'
+        self.addCleanup(sys.modules.pop, alias, None)
+        with patch.object(entry, '_verify_cli_imports') as verify:
+            module = entry.module_at(alias, self.path)
+        self.assertEqual((module.VALUE, verify.call_count), ('clean', 0),
+                         '#166 saved code-root import must retain its existing semantics')
+
+    def test_cli_dispatch_verifies_before_main(self):
+        from contextlib import redirect_stdout, redirect_stderr
+        from types import ModuleType
+        import io
+        head_verifier = b"def verify_loaded_apparatus(head):\n    raise RuntimeError('#166 controlled HEAD preflight reached')\n"
+        for name in ('run_round.py', 'check_ruler.py', 'session_domain.py',
+                     'controls/run_all.py', 'controls/session_domain.py'):
+            with self.subTest(entry=name):
+                path = common.SCRIPT / name
+                module = ModuleType('__main__')
+                module.__file__ = str(path)
+                output = io.StringIO()
+                reached = False
+                def git_read(command, **kwargs):
+                    return (self.head + '\n').encode() if command[3] == 'rev-parse' else head_verifier
+                with patch.dict(sys.modules, {'__main__': module}), \
+                        patch.object(subprocess, 'check_output', side_effect=git_read), \
+                        patch.object(common, 'verify_loaded_apparatus', return_value=None), \
+                        patch.object(sys, 'argv', [str(path), '--help']), \
+                        redirect_stdout(output), redirect_stderr(output):
+                    # Isolate CLI dispatch from the separately tested inner
+                    # verifier; deleting preflight must reach our assertion,
+                    # not die in a fallback HEAD check with an unrelated error.
+                    try:
+                        exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+                    except RuntimeError as error:
+                        reached = '#166 controlled HEAD preflight reached' in str(error)
+                    except SystemExit:
+                        reached = '#166 controlled HEAD preflight reached' in output.getvalue()
+                self.assertTrue(reached, '#166 CLI dispatch must verify HEAD imports before main')
+
+    def test_main_code_is_verified_after_entry_disk_restore(self):
+        from types import ModuleType
+        clean = (b"import sys\n_apparatus_code = sys._getframe().f_code\nVALUE = 'clean'\n"
+                 b"def slices(value): return value[1:5]\n"
+                 b"NESTED = ('slice', (None, 1, 2))\nSET = {1, 2, 3}\n")
+        self.expected[self.path] = clean
+        for value in ('clean', 'mutant', 'metadata', 'missing-code'):
+            with self.subTest(value=value):
+                module = ModuleType('__main__')
+                module.__file__ = str(self.path)
+                source = clean.replace(b"'clean'", b"'mutant'") if value == 'mutant' else clean
+                self.path.write_bytes(source)
+                exec(compile(source, str(self.path), 'exec'), module.__dict__)
+                if value == 'missing-code':
+                    del module._apparatus_code
+                elif value == 'metadata':
+                    module._apparatus_code = module._apparatus_code.replace(co_qualname='mutant-main')
+                self.path.write_bytes(clean)
+                rejected = False
+                with self.environment(), patch.dict(sys.modules, {'__main__': module}):
+                    try:
+                        with common.verified_parity_lock(timeout=.1, lock=self.lock):
+                            pass
+                    except ValueError as error:
+                        rejected = '#166 loaded apparatus differs from HEAD' in str(error)
+                self.assertEqual(rejected, value != 'clean',
+                                 '#166 CLI entry code must be verified after disk restoration')
+
+    def test_failed_import_does_not_poison_cache(self):
+        self.path.write_bytes(b"raise RuntimeError('controlled import failure')\n")
+        with self.assertRaisesRegex(RuntimeError, 'controlled import failure',
+                                    msg='#166 failed import must reach controlled exception'):
+            _load('import_isolation_probe', self.path)
+        self.assertNotIn('import_isolation_probe', sys.modules,
+                         '#166 failed import must not retain a partial module')
+        self.path.unlink()
+        with self.assertRaises(FileNotFoundError, msg='#166 missing source must fail closed'):
+            _load('import_isolation_probe', self.path)
+        self.assertNotIn('import_isolation_probe', sys.modules,
+                         '#166 failed import must not retain a partial module')
+
+    def test_unknown_cache_is_refused(self):
+        imported = _load('import_isolation_probe', self.path)
+        del imported._apparatus_source
+        rejected = False
+        try:
+            _load('import_isolation_probe', self.path)
+        except RuntimeError as error:
+            rejected = '#166 unverified apparatus module cache' in str(error)
+        self.assertTrue(rejected, '#166 cache without executed bytes must fail closed')
+        with self.environment():
+            with self.assertRaisesRegex(ValueError, '#166 loaded apparatus differs from HEAD',
+                                        msg='#166 verifier must reject missing provenance too'):
+                common.verify_loaded_apparatus()
+
+    def test_clean_controls_do_not_reacquire_parent_lease(self):
+        _load('import_isolation_probe', self.path)
+        with self.environment(), parity_lock(lock=self.lock):
+            before = (self.lock / 'owner.json').read_bytes()
+            self.assertEqual(common.verify_loaded_apparatus(), self.head,
+                             '#166 clean controls must verify while parent owns lease')
+            self.assertEqual((self.lock / 'owner.json').read_bytes(), before,
+                             '#166 controls must not replace parent lease')
+        with self.environment(), common.verified_parity_lock(timeout=.1, lock=self.lock):
+            self.assertTrue(self.lock.exists(), '#166 clean round must hold real parity lease')
+        self.assertFalse(self.lock.exists(), '#166 clean round releases lease')
+
+    def test_busy_or_cancelled_waiter_never_enters(self):
+        _load('import_isolation_probe', self.path)
+        with self.environment(), parity_lock(lock=self.lock):
+            before = (self.lock / 'owner.json').read_bytes()
+            with self.assertRaises(TimeoutError, msg='#166 never-finishing predecessor must time out'):
+                with common.verified_parity_lock(timeout=.01, lock=self.lock):
+                    self.fail('#166 busy predecessor must prevent work')
+            with patch.object(time, 'sleep', side_effect=KeyboardInterrupt('controlled cancellation')):
+                with self.assertRaises(KeyboardInterrupt, msg='#166 cancelled waiter must propagate'):
+                    with common.verified_parity_lock(timeout=.1, lock=self.lock):
+                        self.fail('#166 cancelled waiter must prevent work')
+            self.assertEqual((self.lock / 'owner.json').read_bytes(), before,
+                             '#166 rejected waiter must preserve predecessor')
+
+    def test_pending_cleanup_keeps_verified_lease(self):
+        _load('import_isolation_probe', self.path)
+        with patch.object(common, 'LIVE_GROUPS', set()), self.environment():
+            with common.verified_parity_lock(timeout=.1, lock=self.lock):
+                common.LIVE_GROUPS.add('controlled-pending-child')
+            pending = json.loads((self.lock / 'owner.json').read_text()).get('cleanupPending') if self.lock.exists() else None
+            self.assertEqual(pending, ['controlled-pending-child'],
+                             '#166 verified lock must preserve running cleanup registry')
+
+    def test_session_busy_or_cancelled_lock_is_blocked(self):
+        from contextlib import redirect_stdout
+        import io
+        entry = _load('blocked_entry', common.SCRIPT / 'session_domain.py')
+        for error in (TimeoutError('controlled busy lock'), KeyboardInterrupt('controlled cancellation')):
+            with self.subTest(error=type(error).__name__), \
+                    patch.object(entry, 'parity_lock', side_effect=error), \
+                    patch.object(sys, 'argv', ['session_domain', '--suite', 'deadline', '--output', str(self.folder / 'out')]), \
+                    redirect_stdout(io.StringIO()) as output:
+                code = entry.main()
+                self.assertEqual(code, 2, '#166 session lock refusal must remain BLOCKED/2')
+                self.assertIn('"status": "BLOCKED"', output.getvalue(), '#166 session lock refusal must report BLOCKED')
+                self.assertFalse((self.folder / 'out').exists(), '#166 busy session must not write output')
+
+    def test_entry_installs_shutdown_before_lock(self):
+        from contextlib import contextmanager
+        calls = []
+        entry = _load('shutdown_entry', common.SCRIPT / 'session_domain.py')
+
+        class StopBeforeWork(Exception):
+            pass
+
+        @contextmanager
+        def stop_at_lock(**kwargs):
+            self.assertEqual(calls, ['shutdown'], '#166 shutdown handler must precede lease acquisition')
+            raise StopBeforeWork
+            yield
+
+        with patch.object(entry, 'install_shutdown', side_effect=lambda: calls.append('shutdown')), \
+                patch.object(entry, 'parity_lock', stop_at_lock), \
+                patch.object(sys, 'argv', ['session_domain', '--suite', 'deadline', '--output', str(self.folder / 'out')]):
+            with self.assertRaises(StopBeforeWork, msg='#166 controlled lock boundary must be reached'):
+                entry.main()
+
+    def test_real_and_control_entries_enforce_import_verification(self):
+        from contextlib import contextmanager
+
+        class WorkReached(Exception):
+            pass
+
+        cases = [('run_round.py', ['--side', 'ts', '--label', 'probe'], 'run_round'),
+                 ('check_ruler.py', [], 'cargo_config_problems'),
+                 ('session_domain.py', ['--suite', 'deadline', '--output', str(self.folder / 'out')], 'hashes'),
+                 ('controls/run_all.py', ['--offline', '--output', str(self.folder / 'out')], 'run_prerequisites'),
+                 ('controls/session_domain.py', ['--case', 'healthy', '--output', str(self.folder / 'control-out')], 'check_case')]
+        entries = [(name, args, hook, _load('isolation_entry_' + str(index), common.SCRIPT / name))
+                   for index, (name, args, hook) in enumerate(cases)]
+        self.path.write_bytes(b"VALUE = 'mutant'\n")
+        _load('import_isolation_probe', self.path)
+        self.path.write_bytes(self.clean)
+
+        @contextmanager
+        def isolated_lock(*args, **kwargs):
+            with common.verified_parity_lock(timeout=.1, lock=self.lock):
+                yield
+
+        for name, args, hook, entry in entries:
+            with self.subTest(entry=name):
+                if not name.startswith('controls/'):
+                    self.assertIs(entry.parity_lock, common.verified_parity_lock,
+                                  '#166 real entry must use HEAD-backed verified parity lock')
+                with self.environment(), patch.object(sys, 'argv', [name, *args]), \
+                        patch.object(entry, hook, side_effect=WorkReached), \
+                        patch.object(entry, 'parity_lock', isolated_lock, create=True):
+                    rejected = False
+                    try:
+                        entry.main()
+                    except ValueError as error:
+                        rejected = '#166 loaded apparatus differs from HEAD' in str(error)
+                    except WorkReached:
+                        pass
+                    self.assertTrue(rejected, '#166 every real/control entry must reject imported mutant before work')
+
+
 class ApparatusInputs(unittest.TestCase):
     """#52 / #85: unregistered files, installed deps and cargo configs are inputs."""
 
     def test_deadline_not_run_has_dedicated_exit_code(self):
+        for children in ((), (None,), (None, None), ('PASS', None)):
+            self.assertEqual(common.aggregate_status(*children), ('PASS', 0),
+                             '#166 empty optional aggregation stays PASS/0')
+        # State/exit mutations run under the negative runner's parity lease.
+        # Exercise the actual main body in-process; CLI isolation is tested by
+        # ImportIsolation, so a HEAD refusal cannot masquerade as a status kill.
+        from contextlib import nullcontext, redirect_stdout
+        import io
+        entry = _load('session_domain', common.SCRIPT / 'session_domain.py')
         with tempfile.TemporaryDirectory(prefix='pdrs-166-deadline-') as folder:
             output = Path(folder) / 'deadline'
-            proc = subprocess.run([sys.executable, '-I', str(common.SCRIPT / 'session_domain.py'),
-                                   '--suite', 'deadline', '--output', str(output)],
-                                  text=True, capture_output=True, timeout=30)
-            self.assertEqual(proc.returncode, 3, '#166 NOT_RUN must exit 3: ' + proc.stdout + proc.stderr)
+            with patch.object(entry, 'parity_lock', return_value=nullcontext()), \
+                    patch.object(sys, 'argv', ['session_domain', '--suite', 'deadline', '--output', str(output)]), \
+                    redirect_stdout(io.StringIO()):
+                code = entry.main()
+            self.assertEqual(code, 3, '#166 NOT_RUN must exit 3')
             report = json.loads((output / 'report.json').read_text())
             for key in ('status', 'executionStatus', 'acceptanceStatus'):
                 self.assertEqual(report[key], 'NOT_RUN', f'#166 {key} must disclose no execution')
@@ -546,11 +927,12 @@ class ApparatusInputs(unittest.TestCase):
             self.assertEqual(len(report['cells']), 4, '#166 all four unexecuted cells remain')
             for cell in report['cells']:
                 self.assertEqual(cell['executedCases'], [], '#166 no execution is fabricated')
-            missing = subprocess.run([sys.executable, '-I', str(common.SCRIPT / 'session_domain.py'),
-                                      '--suite', 'calibrate', '--baseline', str(Path(folder) / 'missing'),
-                                      '--output', str(Path(folder) / 'blocked')],
-                                     text=True, capture_output=True, timeout=30)
-            self.assertEqual(missing.returncode, 2, '#166 BLOCKED remains distinct from NOT_RUN')
+            with patch.object(entry, 'parity_lock', return_value=nullcontext()), \
+                    patch.object(sys, 'argv', ['session_domain', '--suite', 'calibrate', '--baseline',
+                                              str(Path(folder) / 'missing'), '--output', str(Path(folder) / 'blocked')]), \
+                    redirect_stdout(io.StringIO()):
+                code = entry.main()
+            self.assertEqual(code, 2, '#166 BLOCKED remains distinct from NOT_RUN')
         for status, code in [('PASS', 0), ('FAIL', 1), ('PASS_WITH_SKIPS', 1),
                              ('BLOCKED', 2), ('NOT_RUN', 3)]:
             self.assertEqual(common.aggregate_status(status), (status, code), '#166 shared exit contract')
@@ -779,7 +1161,10 @@ class ApparatusInputs(unittest.TestCase):
             'APPARATUS_PROBES': (('file', 'old-only.py'),),
             'materialize_probe': None,
         })()
-        module, table = prerequisites.select_probe_source(old, running_path)
+        # This test isolates table selection; ImportIsolation covers lazy-load
+        # validation independently, including committed HEAD byte injection.
+        with patch.object(prerequisites, '_verify_cli_imports'):
+            module, table = prerequisites.select_probe_source(old, running_path)
         self.assertEqual(tuple(table), tuple(APPARATUS_PROBES))
         self.assertNotIn(('file', 'old-only.py'), table)
         current, current_table = prerequisites.select_probe_source(common, running_path)
