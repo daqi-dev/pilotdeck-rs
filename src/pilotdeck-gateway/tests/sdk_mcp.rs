@@ -554,6 +554,48 @@ fn release_gate(gate: &Gate) {
     gate.release.1.notify_all();
 }
 
+/// #347 fix-r3 (review P1): a counted start signal. The interleaving tests
+/// record as the first statement of the spawned second operation's closure,
+/// so `wait_at_least` confirms that operation is actually executing before a
+/// bounded completion window may be read as "blocked on the servers guard".
+/// Between the marker and that guard the second operation has no yield point
+/// (every fixture future on its path resolves Ready on the first poll, and
+/// the clear is synchronous from its first statement), so "started but
+/// unfinished" can only mean it is waiting for the guard. A start that never
+/// happens is a scheduling artifact: the cell fails as uncovered instead of
+/// passing on the serial final state.
+#[derive(Default)]
+struct Progress {
+    state: (Mutex<u32>, Condvar),
+}
+
+impl Progress {
+    fn record(&self) {
+        let mut count = lock(&self.state.0);
+        *count += 1;
+        self.state.1.notify_all();
+    }
+
+    /// Bounded wait until `target` starts have been recorded.
+    fn wait_at_least(&self, target: u32, what: &str) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut count = lock(&self.state.0);
+        while *count < target {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "#347 fix-r3 {what} was never scheduled within 30s (cell uncovered)"
+            );
+            let (guard, _timed_out) = self
+                .state
+                .1
+                .wait_timeout(count, remaining)
+                .expect("progress condvar");
+            count = guard;
+        }
+    }
+}
+
 #[tokio::test]
 async fn deep_configs_are_rejected_without_state_or_close() {
     let (config, calls) = test_config(Arc::new(FixtureEnvironment));
@@ -1290,14 +1332,23 @@ async fn set_and_toggle_do_not_lose_updates() {
         }
     }
     let toggle_config = Arc::clone(&config);
-    let mut toggle_task = tokio::spawn(async move {
+    let started = Arc::new(Progress::default());
+    let toggle_started = Arc::clone(&started);
+    let toggle_task = tokio::spawn(async move {
+        // #347 fix-r3 (review P1): the start marker plus the fact that the
+        // toggle path is synchronous from here to the servers guard make the
+        // window below evidence of guard waiting, not of "never scheduled".
+        toggle_started.record();
         toggle_config
             .toggle_mcp_server(&toggle_input("s", "a", false))
             .await
     });
-    let completed_early = tokio::time::timeout(Duration::from_millis(1000), &mut toggle_task)
-        .await
-        .is_ok();
+    started.wait_at_least(1, "the spawned toggleMcpServerForSdk task");
+    // Same timer-free window as the matrix-cell tests: the toggle parks on
+    // the servers guard on a worker thread, so a runtime timer is not
+    // reliable here (#347 fix-r3).
+    std::thread::sleep(Duration::from_millis(1000));
+    let completed_early = toggle_task.is_finished();
     // Release the setter before asserting so a failure cannot leave the
     // runtime blocked on the gate.
     *lock(&gate.release.0) = true;
@@ -1321,7 +1372,11 @@ async fn set_and_toggle_do_not_lose_updates() {
 /// there to begin with. #347 fix-r2 (review P1, same pattern as the cell-4
 /// test): the window outcome is consumed and the delete gate is only opened
 /// after the in-window completion is confirmed, so the two writes' order is
-/// pinned by the gates instead of thread wakeup order.
+/// pinned by the gates instead of thread wakeup order. #347 fix-r3 (review
+/// P1): the set task records a start marker and the window only opens once
+/// it is confirmed, so an expired window means "blocked on the servers
+/// guard" even when the set is scheduled late — the kill no longer depends
+/// on the second operation being scheduled promptly.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn clear_and_set_commits_share_one_critical_section() {
     let projects = Arc::new(GatedProjects::default());
@@ -1343,7 +1398,15 @@ async fn clear_and_set_commits_share_one_critical_section() {
     wait_entered(&projects.delete_gate, "shared-table delete");
 
     let set_config = Arc::clone(&config);
-    let mut set_task = tokio::spawn(async move {
+    let started = Arc::new(Progress::default());
+    let set_started = Arc::clone(&started);
+    let set_task = tokio::spawn(async move {
+        // #347 fix-r3 (review P1): the start marker. It fires on the task's
+        // first poll, and from it to the servers guard there is no yield
+        // point, so "marker fired but the window below elapsed" can only mean
+        // the commit is blocked on the guard — never that it was not
+        // scheduled yet.
+        set_started.record();
         set_config
             .set_mcp_servers(&set_input("s", &[("b", stdio_config("node"))]))
             .await
@@ -1354,33 +1417,40 @@ async fn clear_and_set_commits_share_one_critical_section() {
     // elapse; only a clear that already dropped the guard (the mutation under
     // test) lets the commit finish inside the window (#347 fix-r2: the
     // outcome is consumed, so the observed interleaving — not thread wakeup
-    // order — picks the branch).
+    // order — picks the branch). #347 fix-r3: the window only opens after the
+    // start marker is confirmed, so its expiry is lock-wait evidence, not a
+    // guess that distinguishes "blocked" from "never scheduled" by timing.
     release_gate(&projects.set_gate);
-    let outcome = tokio::time::timeout(Duration::from_secs(2), &mut set_task).await;
-    match outcome {
+    started.wait_at_least(1, "the spawned setMcpServersForSdk task");
+    // The window is a plain thread sleep plus an is_finished probe, not
+    // tokio::time::timeout: the commit parks on the servers guard *on a
+    // worker thread*, and a runtime timer whose driver worker ends up blocked
+    // that way never fires (#347 fix-r3, found by the delayed control).
+    std::thread::sleep(Duration::from_secs(2));
+    if set_task.is_finished() {
         // The commit finished while the clear was still parked: its
         // shared-table write has landed before the clear's delete even starts
         // (the gate is still closed), so the delete now wipes the entry the
         // server table keeps — exactly the half-cleared state the shared
         // critical section exists to prevent.
-        Ok(result) => {
-            release_gate(&projects.delete_gate);
-            clear.await.expect("#347 fix-r2 the clear task must join");
-            result
-                .expect("#347 fix-r2 the set task must join")
-                .expect("#347 fix-r2 setMcpServersForSdk must succeed after the clear");
-        }
+        release_gate(&projects.delete_gate);
+        clear.await.expect("#347 fix-r2 the clear task must join");
+        set_task
+            .await
+            .expect("#347 fix-r2 the set task must join")
+            .expect("#347 fix-r2 setMcpServersForSdk must succeed after the clear");
+    } else {
         // The commit spent the whole window blocked at the servers guard (the
-        // fixed shape): the clear finishes its drops — releasing the guard —
-        // and only then does the commit run in full, after the clear.
-        Err(_elapsed) => {
-            release_gate(&projects.delete_gate);
-            set_task
-                .await
-                .expect("#347 fix-r2 the set task must join")
-                .expect("#347 fix-r2 setMcpServersForSdk must succeed after the clear");
-            clear.await.expect("#347 fix-r2 the clear task must join");
-        }
+        // fixed shape) — confirmed, not inferred from the timeout: the start
+        // marker fired and nothing between it and the guard can yield. The
+        // clear finishes its drops — releasing the guard — and only then does
+        // the commit run in full, after the clear.
+        release_gate(&projects.delete_gate);
+        set_task
+            .await
+            .expect("#347 fix-r2 the set task must join")
+            .expect("#347 fix-r2 setMcpServersForSdk must succeed after the clear");
+        clear.await.expect("#347 fix-r2 the clear task must join");
     }
     let names: Vec<String> = config
         .session_mcp_servers(&JsValue::String("s".into()))
@@ -1406,7 +1476,10 @@ async fn clear_and_set_commits_share_one_critical_section() {
 /// after it. Matrix cell 4 in `fix-r1/plan.md`. #347 fix-r2 (review P1):
 /// the window outcome is consumed and the other gate is only opened after
 /// the in-window completion is confirmed, so the two writes' order is pinned
-/// by the gates instead of thread wakeup order.
+/// by the gates instead of thread wakeup order. #347 fix-r3 (review P1):
+/// the clear records a start marker as its first statement and the window
+/// only opens once it is confirmed, so an expired window means "blocked on
+/// the servers guard" even when the clear is scheduled late.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn set_commit_cannot_outlive_the_shared_table_write() {
     let projects = Arc::new(GatedProjects::default());
@@ -1426,39 +1499,56 @@ async fn set_commit_cannot_outlive_the_shared_table_write() {
 
     let clear_config = Arc::clone(&config);
     let clear_key = JsValue::String("s".into());
-    let mut clear =
-        tokio::task::spawn_blocking(move || clear_config.clear_sdk_session_state(&clear_key));
+    let started = Arc::new(Progress::default());
+    let clear_started = Arc::clone(&started);
+    let clear = tokio::task::spawn_blocking(move || {
+        // #347 fix-r3 (review P1): the start marker. It fires when the
+        // blocking thread begins the closure, and the clear is synchronous
+        // from its first statement (`lock(&self.servers)`) to the end, so
+        // "marker fired but the window below elapsed" can only mean the
+        // clear is blocked on the guard — never that it was not scheduled
+        // yet.
+        clear_started.record();
+        clear_config.clear_sdk_session_state(&clear_key)
+    });
     // Open the delete gate and hand the clear a bounded window: while the set
     // is parked at its gated write the servers guard stays held (the fixed
     // shape), so the clear cannot even acquire it and the window must elapse;
     // only a commit that already dropped the guard before its shared-table
     // write (the mutation under test) lets the clear run to completion inside
-    // the window.
+    // the window. #347 fix-r3: the window only opens after the start marker
+    // is confirmed, so its expiry is lock-wait evidence, not a guess that
+    // distinguishes "blocked" from "never scheduled" by timing.
     release_gate(&projects.delete_gate);
-    let outcome = tokio::time::timeout(Duration::from_secs(2), &mut clear).await;
+    started.wait_at_least(1, "the spawned clearSdkSessionState task");
+    // Same timer-free window as the cell-3 test: the set parks on the gated
+    // shared-table write *on a worker thread*, so a runtime timer is not
+    // reliable here either (#347 fix-r3).
+    std::thread::sleep(Duration::from_secs(2));
     release_gate(&projects.set_gate);
-    match outcome {
+    if clear.is_finished() {
         // The clear finished while the set was still parked: its shared-table
         // delete has returned before the set's write even starts (the gate
         // was still closed), so the write landing now is exactly the stale
         // entry the shared critical section exists to prevent.
-        Ok(joined) => {
-            joined.expect("#347 fix-r2 the in-window clear must join");
-            set_task
-                .await
-                .expect("#347 fix-r2 the set task must join")
-                .expect("#347 fix-r2 setMcpServersForSdk must succeed");
-        }
+        clear
+            .await
+            .expect("#347 fix-r2 the in-window clear must join");
+        set_task
+            .await
+            .expect("#347 fix-r2 the set task must join")
+            .expect("#347 fix-r2 setMcpServersForSdk must succeed");
+    } else {
         // The clear spent the whole window blocked at the servers guard (the
-        // fixed shape): the set's shared-table write lands inside the guard,
-        // and only once it is done does the clear take the guard and delete.
-        Err(_elapsed) => {
-            set_task
-                .await
-                .expect("#347 fix-r2 the set task must join")
-                .expect("#347 fix-r2 setMcpServersForSdk must succeed");
-            clear.await.expect("#347 fix-r2 the clear task must join");
-        }
+        // fixed shape) — confirmed, not inferred from the timeout: the start
+        // marker fired and the clear cannot yield between it and the guard.
+        // The set's shared-table write lands inside the guard, and only once
+        // it is done does the clear take the guard and delete.
+        set_task
+            .await
+            .expect("#347 fix-r2 the set task must join")
+            .expect("#347 fix-r2 setMcpServersForSdk must succeed");
+        clear.await.expect("#347 fix-r2 the clear task must join");
     }
     assert!(
         config

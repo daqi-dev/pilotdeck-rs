@@ -19,7 +19,15 @@ The two boundary mutants (`clear-commit-boundary` / `set-commit-boundary`)
 are killed by matrix-cell tests that consume the bounded-window outcome and
 confirm the in-window completion before opening the other gate, so the two
 writes' order is pinned by the gates instead of thread wakeup order
-(#347 fix-r2, review P1).
+(#347 fix-r2, review P1). #347 fix-r3 (review P1): those tests now record a
+start marker as the second operation's first statement and only open the
+window once it is confirmed, so an expired window is lock-wait evidence
+rather than a timing guess; the `-delayed` mutants re-run each boundary
+mutant with the spawned operation's start delayed past the window (the
+"not yet scheduled" interleaving the review showed could let it through) and
+must still die with the same bound message, while the matching `-control`
+entries apply the same delay with no mutation and must stay green (the delay
+alone must not break the fixed shape).
 
 Run post-commit from a clean tree (the mutation guard requires the gateway
 product sources to equal HEAD):
@@ -218,6 +226,57 @@ MUTATIONS = [
      '#401 the DOMException text is preserved'),
 ]
 
+# The test file the delayed rows below patch (relative to `source`, like
+# the product anchors above).
+TEST_REL = '../../tests/sdk_mcp.rs'
+TEST_FILE = (source / TEST_REL).resolve()
+
+# #347 fix-r3 (review P1): delayed re-runs of the two boundary mutants. Each
+# row patches the test file to sleep 3s — past the 2s completion window —
+# before the spawned operation's start marker, i.e. exactly the "clear/set
+# not yet scheduled" interleaving under which the pre-fix-r3 tests let both
+# mutants through; the row also names the product mutation it must be run
+# with. Kill predicate unchanged: the same bound message must appear in the
+# same test's own panic block.
+MUTANTS = [
+    ('clear-commit-boundary-delayed', '../../tests/sdk_mcp.rs',
+     'set_started.record();',
+     'tokio::time::sleep(Duration::from_secs(3)).await;\n'
+     '        set_started.record();',
+     'clear-commit-boundary',
+     'clear_and_set_commits_share_one_critical_section',
+     'the shared session→project entry must not lag the server table'),
+    ('set-commit-boundary-delayed', '../../tests/sdk_mcp.rs',
+     'clear_started.record();',
+     'std::thread::sleep(Duration::from_secs(3));\n'
+     '        clear_started.record();',
+     'set-commit-boundary',
+     'set_commit_cannot_outlive_the_shared_table_write',
+     "the clear must not leave the commit's shared-table entry behind"),
+]
+
+# #347 fix-r3: the paired positive controls — the same 3s start delay with
+# no product mutation. The delayed start must not break the fixed shape, or
+# the delayed mutants above would prove nothing (a false kill). These must
+# come back green.
+CONTROLS = [
+    ('cell3-delayed-control', '../../tests/sdk_mcp.rs',
+     'set_started.record();',
+     'tokio::time::sleep(Duration::from_secs(3)).await;\n'
+     '        set_started.record();',
+     'clear_and_set_commits_share_one_critical_section'),
+    ('cell4-delayed-control', '../../tests/sdk_mcp.rs',
+     'clear_started.record();',
+     'std::thread::sleep(Duration::from_secs(3));\n'
+     '        clear_started.record();',
+     'set_commit_cannot_outlive_the_shared_table_write'),
+    ('toggle-delayed-control', '../../tests/sdk_mcp.rs',
+     'toggle_started.record();',
+     'tokio::time::sleep(Duration::from_secs(3)).await;\n'
+     '        toggle_started.record();',
+     'set_and_toggle_do_not_lose_updates'),
+]
+
 
 def panic_block(log, test):
     """`test`'s own stdout block: libtest opens it with
@@ -337,10 +396,17 @@ def main():
         sys.exit(0 if classify_selftest(log) else 1)
     selected = sys.argv[2:]
     mutations = MUTATIONS
+    delayed = MUTANTS
+    controls = CONTROLS
     if selected:
         mutations = [m for m in MUTATIONS if m[0] in selected]
-        unknown = set(selected) - {m[0] for m in mutations}
+        delayed = [m for m in MUTANTS if m[0] in selected]
+        controls = [m for m in CONTROLS if m[0] in selected]
+        unknown = set(selected) - ({m[0] for m in mutations}
+                                   | {m[0] for m in delayed}
+                                   | {m[0] for m in controls})
         assert not unknown, f'unknown mutation name(s): {sorted(unknown)}'
+    by_name = {m[0]: m for m in MUTATIONS}
     if not os.environ.get('CARGO_TARGET_DIR'):
         sys.exit('CARGO_TARGET_DIR must be exported by the caller '
                  '(the shared slot-aware build tree)')
@@ -352,10 +418,13 @@ def main():
     check_command = ['cargo', 'check', '--manifest-path', 'src/Cargo.toml',
                      '-p', 'pilotdeck-gateway', '--tests']
     results = []
-    with mutating_sources(
-        root,
-        sorted({source / filename for _, filename, *_ in mutations}),
-    ) as snapshots:
+    product_paths = {source / filename for _, filename, *_ in mutations}
+    for entry in delayed:
+        product_paths.add(source / by_name[entry[4]][1])
+    paths = sorted(product_paths)
+    if delayed or controls:
+        paths.append(TEST_FILE)
+    with mutating_sources(root, paths) as snapshots:
         for name, filename, old, new, target, test, message in mutations:
             path = source / filename
             original = snapshots[path]
@@ -405,15 +474,132 @@ def main():
             finally:
                 path.write_bytes(original)
                 assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+        # #347 fix-r3: the delayed boundary mutants — product mutation plus a
+        # test-file patch that delays the second operation's start past the
+        # window. Same compile-then-run discipline and the same kill
+        # predicate as above.
+        for name, _test_rel, test_old, test_new, base, test, message in delayed:
+            entry = by_name[base]
+            filename, old, new, target = entry[1], entry[2], entry[3], entry[4]
+            path = source / filename
+            original = snapshots[path]
+            before = hashlib.sha256(original).hexdigest()
+            test_original = snapshots[TEST_FILE]
+            test_before = hashlib.sha256(test_original).hexdigest()
+            content = original.decode()
+            test_content = test_original.decode()
+            count = content.count(old)
+            test_count = test_content.count(test_old)
+            if count != 1 or test_count != 1:
+                results.append(dict(name=name, status='INVALID',
+                                    reason=f'stale anchor: product {count}, '
+                                           f'test {test_count}'))
+                print(f'{name}: INVALID stale anchor product {count} '
+                      f'test {test_count}', flush=True)
+                continue
+            changed = content.replace(old, new, 1)
+            test_changed = test_content.replace(test_old, test_new, 1)
+            (out / f'{name}.patch').write_text(
+                ''.join(difflib.unified_diff(
+                    content.splitlines(True), changed.splitlines(True),
+                    fromfile=filename, tofile=filename))
+                + ''.join(difflib.unified_diff(
+                    test_content.splitlines(True), test_changed.splitlines(True),
+                    fromfile='tests/sdk_mcp.rs', tofile='tests/sdk_mcp.rs')))
+            try:
+                wait_for_slot(root / 'scripts/cargo-slots.sh')
+                path.write_text(changed)
+                TEST_FILE.write_text(test_changed)
+                check = run_owned(check_command, cwd=root, env=env, timeout=900)
+                (out / f'{name}.check.log').write_text(check.stdout + check.stderr)
+                if check.returncode != 0:
+                    results.append(dict(name=name, status='INVALID',
+                                        reason='delayed mutant does not compile'))
+                    print(f'{name}: INVALID does not compile', flush=True)
+                    continue
+                wait_for_slot(root / 'scripts/cargo-slots.sh')
+                result = run_owned(
+                    ['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
+                     '-p', 'pilotdeck-gateway', target, '--',
+                     '--exact', test],
+                    cwd=root, env=env, timeout=900)
+                log = result.stdout + result.stderr
+                (out / f'{name}.log').write_text(log)
+                hit = killed(log, result.returncode, test, message)
+                results.append(dict(
+                    name=name,
+                    status='KILLED' if hit else 'SURVIVED',
+                    reason='' if hit else
+                    'rc={}; tagged message not in the test\'s own panic block'.format(
+                        result.returncode),
+                    message=message,
+                    sourceSha256=before,
+                ))
+                print(f'{name}: {"KILLED" if hit else "SURVIVED"}', flush=True)
+            finally:
+                path.write_bytes(original)
+                TEST_FILE.write_bytes(test_original)
+                assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+                assert hashlib.sha256(TEST_FILE.read_bytes()).hexdigest() \
+                    == test_before
+        # #347 fix-r3: the paired controls — the same start delay with no
+        # product mutation must leave the tests green.
+        for name, _test_rel, test_old, test_new, test in controls:
+            test_original = snapshots[TEST_FILE]
+            test_before = hashlib.sha256(test_original).hexdigest()
+            test_content = test_original.decode()
+            test_count = test_content.count(test_old)
+            if test_count != 1:
+                results.append(dict(name=name, status='INVALID',
+                                    reason=f'stale anchor: test {test_count}'))
+                print(f'{name}: INVALID stale anchor test {test_count}',
+                      flush=True)
+                continue
+            test_changed = test_content.replace(test_old, test_new, 1)
+            (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(
+                test_content.splitlines(True), test_changed.splitlines(True),
+                fromfile='tests/sdk_mcp.rs', tofile='tests/sdk_mcp.rs')))
+            try:
+                wait_for_slot(root / 'scripts/cargo-slots.sh')
+                TEST_FILE.write_text(test_changed)
+                check = run_owned(check_command, cwd=root, env=env, timeout=900)
+                (out / f'{name}.check.log').write_text(check.stdout + check.stderr)
+                if check.returncode != 0:
+                    results.append(dict(name=name, status='INVALID',
+                                        reason='control patch does not compile'))
+                    print(f'{name}: INVALID does not compile', flush=True)
+                    continue
+                wait_for_slot(root / 'scripts/cargo-slots.sh')
+                result = run_owned(
+                    ['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
+                     '-p', 'pilotdeck-gateway', '--test=sdk_mcp', '--',
+                     '--exact', test],
+                    cwd=root, env=env, timeout=900)
+                log = result.stdout + result.stderr
+                (out / f'{name}.log').write_text(log)
+                ok = (result.returncode == 0 and f'{test} ... ok' in log
+                      and 'test result: ok' in log)
+                results.append(dict(
+                    name=name,
+                    status='CONTROL-OK' if ok else 'CONTROL-FAILED',
+                    reason='' if ok else f'rc={result.returncode}',
+                ))
+                print(f'{name}: {"CONTROL-OK" if ok else "CONTROL-FAILED"}',
+                      flush=True)
+            finally:
+                TEST_FILE.write_bytes(test_original)
+                assert hashlib.sha256(TEST_FILE.read_bytes()).hexdigest() \
+                    == test_before
         # Written after the loop (fix-r1, review boundary #3): the last
         # mutant skipping the tail must not truncate the evidence.
         (out / 'summary.json').write_text(
             json.dumps(results, ensure_ascii=False, indent=2) + '\n')
-    not_killed = [result for result in results if result['status'] != 'KILLED']
-    print(f'{len(results) - len(not_killed)}/{len(results)} killed; '
+    unexpected = [result for result in results
+                  if result['status'] not in ('KILLED', 'CONTROL-OK')]
+    print(f'{len(results) - len(unexpected)}/{len(results)} as expected; '
           f'every source restored byte-for-byte', flush=True)
-    if not_killed:
-        for result in not_killed:
+    if unexpected:
+        for result in unexpected:
             print(f"{result['name']}: {result['status']} {result.get('reason', '')}",
                   flush=True)
         sys.exit(1)
