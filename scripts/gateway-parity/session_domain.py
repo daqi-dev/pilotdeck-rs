@@ -33,6 +33,9 @@ if not sys.flags.isolated:
 
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
 sys.dont_write_bytecode = True
+# CPython has already compiled the CLI entry before it can acquire a lease.
+# Capture that executing object, not a later read of the restored entry file.
+_apparatus_code = sys._getframe().f_code
 
 
 def _load(name, path):
@@ -40,14 +43,39 @@ def _load(name, path):
     existing = sys.modules.get(name)
     existing_file = getattr(existing, '__file__', None)
     if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        if not isinstance(getattr(existing, '_apparatus_source', None), bytes):
+            raise RuntimeError(f'#166 unverified apparatus module cache: {path}')
         return existing
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
-    spec.loader.exec_module(module)
+    try:
+        source = path.read_bytes()
+        exec(compile(source, str(path), 'exec'), module.__dict__)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    module._apparatus_source = source
     if Path(module.__file__).resolve() != path:
         raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
     return module
+
+
+
+def _verify_cli_imports():
+    # This trust root uses only stdlib + Git, never a helper from disk common:
+    # that module's verifier can itself be the active negative-control mutant.
+    import subprocess
+    from types import ModuleType
+    root = _apparatus.parent.parent
+    head = subprocess.check_output(['git', '-C', str(root), 'rev-parse', '--verify', 'HEAD'],
+                                   timeout=30).decode().strip()
+    source = subprocess.check_output(['git', '-C', str(root), 'show',
+                                      f'{head}:scripts/gateway-parity/common.py'], timeout=30)
+    trusted = ModuleType('pristine_cli_verifier')
+    trusted.__file__ = str(_apparatus / 'common.py')
+    exec(compile(source, trusted.__file__, 'exec'), trusted.__dict__)
+    trusted.verify_loaded_apparatus(head)
 
 
 _here = Path(__file__).resolve().parent
@@ -61,7 +89,7 @@ apparatus_hashes = common.apparatus_hashes
 baseline_dependency_hashes = common.baseline_dependency_hashes
 digest = common.digest
 install_shutdown = common.install_shutdown
-parity_lock = common.parity_lock
+parity_lock = common.verified_parity_lock
 save = common.save
 compare_module = _load('compare', common.SCRIPT / 'compare.py')
 wire_frame = compare_module.wire_frame
@@ -838,102 +866,104 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--baseline', type=Path, default=BASELINE)
     args = parser.parse_args()
-    missing = [name for name in E1_SOURCES if not (args.baseline / name).is_file()] if args.suite == 'calibrate' else []
-    if missing:
-        # 缺 baseline 是前置条件不满足：BLOCKED 且不建输出目录（#187）。按 E1 实际导入的源码入口核对，不要求 dist
-        print(json.dumps({'suite': args.suite, 'status': 'BLOCKED',
-                          'error': f'baseline at {args.baseline.resolve()} lacks E1 sources {missing[:3]}; '
-                                   'pass --baseline or set PDRS_BASELINE'}, ensure_ascii=False))
-        return 2
-    output = args.output.resolve()
-    # E1 drives the baseline TS source through the baseline runtime; bind the
-    # bytes of tsx/ws (and their declared dependencies) so a swapped loader or
-    # ws cannot certify a calibration (#85 85.1).
-    dependencies = None
-    if args.suite == 'calibrate':
-        try:
-            dependencies = baseline_dependency_hashes(args.baseline.resolve())
-        except ValueError as error:
-            print(json.dumps({'suite': args.suite, 'status': 'BLOCKED', 'error': str(error)},
-                             ensure_ascii=False))
-            return 2
-    output.mkdir(parents=True, exist_ok=False)
+    takeovers = []
     install_shutdown()
-    report = {'suite': args.suite, 'scope': 'A5.3 draft apparatus', 'status': 'RUNNING',
-              'acceptanceStatus': 'NOT_RUN', 'apparatusSha256': hashes(), 'frozen': frozen_check()}
-    if dependencies is not None:
-        report['baselineDepsSha256'] = dependencies
-    save(output / 'report.json', report)
-    code = 0
     try:
-        if args.suite == 'deadline':
-            report.update(deadline_report())
-            _, code = common.aggregate_status(report['status'])
-        else:
-            takeovers = []
-            with parity_lock(timeout=30, takeovers=takeovers):
-                report['lockTakeovers'] = takeovers
-                audit = run_fixture(output, args.baseline.resolve())
-                report['launch'] = audit
-                require(audit['exitCode'] == 0, 'CALIBRATION_EXECUTION', 'see launcher.log and six-cells/run.log')
-                require(audit['launcherAndFixtureReaped'], 'CLEANUP', 'launcher/fixture cleanup incomplete')
-                report.update(validate_calibration(output / 'six-cells', output, args.baseline.resolve()))
-                # Imported lazily to keep the independent negative-control CLI usable.
-                import importlib.util
-                spec = importlib.util.spec_from_file_location('session_controls', SCRIPT / 'controls/session_domain.py')
-                controls = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(controls)
-                report['e1Controls'] = controls.run_all(output / 'controls', output / 'six-cells')
-                controls_status = report['e1Controls']['status']
-                require(controls_status in ('PASS', 'PASS_WITH_SKIPS'),
-                        'CONTROLS', 'E1 mutation control failed')
-                overall = cleanup_status(audit)
-                if controls_status == 'PASS_WITH_SKIPS':
-                    # A skipped positive control is not proof of the batch.
-                    # Keep the skipped names visible and never report PASS:
-                    # BLOCKED / exit 2 is the apparatus' non-PASS convention.
-                    report['controlsSkipped'] = (
-                        report['e1Controls'].get('cleanupSkipped', [])
-                        + [row['case'] for row in report['e1Controls'].get('notRun', [])])
-                    report['failure'] = {
-                        'rule': 'CONTROLS_SKIPPED',
-                        'detail': 'E1 controls skipped platform-specific positives; not PASS'}
-                    overall = 'BLOCKED'
-                report['status'] = overall
-                report['executionStatus'] = overall
-                report['cleanupStatus'] = audit['processTreeCleanup']
-                report['topology'] = 'ts-in-process-controlled'
-                report['acceptanceStatus'] = 'NOT_RUN'
-                report['calibrationStatus'] = 'OBSERVED'
-                # Cleanup unverified is not a freeze candidate even though the
-                # measurements completed; downstream only-PASS consumers must
-                # see a non-PASS string, not a fresh DRAFT_AWAITING_A5_4.
-                report['freezeStatus'] = ('DRAFT_AWAITING_A5_4' if overall == 'PASS'
-                                          else CLEANUP_UNVERIFIED_FREEZE)
-                # Single shared exit-code mapping: only PASS maps to 0; a domain
-                # status outside the batch order (PASS_WITH_CLEANUP_UNVERIFIED)
-                # is BLOCKED, never an optimistic 0.
-                _, code = common.aggregate_status(
-                    overall if overall in common.BATCH_STATUS_ORDER else 'BLOCKED')
-        require(report['apparatusSha256'] == hashes(), 'APPARATUS_CHANGED', 'apparatus changed while collecting evidence')
-        if dependencies is not None:
-            require(baseline_dependency_hashes(args.baseline.resolve()) == dependencies,
-                    'BASELINE_DEPS_CHANGED', 'baseline runtime dependencies changed while collecting evidence')
-        require(report['frozen'] == frozen_check(), 'FROZEN_CHANGED', 'frozen inputs changed during suite')
-        if args.suite == 'calibrate' and report['frozen']['exitCode'] != 0:
-            report['status'], code = common.aggregate_status('BLOCKED')
-            report['freezeStatus'] = 'BLOCKED'
-            report['failure'] = {'rule': 'FROZEN', 'detail': 'measurements completed; see frozen check output; no acceptance PASS'}
-    except (EvidenceError, OSError, ValueError, KeyError, TypeError, StopIteration,
-            subprocess.SubprocessError, TimeoutError, KeyboardInterrupt) as error:
-        report['status'] = 'BLOCKED' if isinstance(error, (PermissionError, TimeoutError, KeyboardInterrupt)) else 'FAIL'
-        report['failure'] = {'rule': getattr(error, 'rule', 'EVIDENCE'), 'detail': str(error)}
-        code = common.aggregate_status(report['status'])[1]
-    save(output / 'report.json', report)
-    print(json.dumps({'status': report['status'], 'suite': args.suite, 'report': str(output / 'report.json'),
-                      'failure': report.get('failure'), 'acceptanceStatus': report['acceptanceStatus']}, ensure_ascii=False))
-    return code
+        with parity_lock(timeout=30, takeovers=takeovers):
+            missing = [name for name in E1_SOURCES if not (args.baseline / name).is_file()] if args.suite == 'calibrate' else []
+            if missing:
+                # 缺 baseline 是前置条件不满足：BLOCKED 且不建输出目录（#187）。按 E1 实际导入的源码入口核对，不要求 dist
+                print(json.dumps({'suite': args.suite, 'status': 'BLOCKED',
+                                  'error': f'baseline at {args.baseline.resolve()} lacks E1 sources {missing[:3]}; '
+                                           'pass --baseline or set PDRS_BASELINE'}, ensure_ascii=False))
+                return 2
+            output = args.output.resolve()
+            # E1 drives the baseline TS source through the baseline runtime; bind the
+            # bytes of tsx/ws (and their declared dependencies) so a swapped loader or
+            # ws cannot certify a calibration (#85 85.1).
+            dependencies = None
+            if args.suite == 'calibrate':
+                try:
+                    dependencies = baseline_dependency_hashes(args.baseline.resolve())
+                except ValueError as error:
+                    print(json.dumps({'suite': args.suite, 'status': 'BLOCKED', 'error': str(error)},
+                                     ensure_ascii=False))
+                    return 2
+            output.mkdir(parents=True, exist_ok=False)
+            report = {'suite': args.suite, 'scope': 'A5.3 draft apparatus', 'status': 'RUNNING',
+                      'acceptanceStatus': 'NOT_RUN', 'apparatusSha256': hashes(), 'frozen': frozen_check()}
+            if dependencies is not None:
+                report['baselineDepsSha256'] = dependencies
+            save(output / 'report.json', report)
+            code = 0
+            try:
+                if args.suite == 'deadline':
+                    report.update(deadline_report())
+                    _, code = common.aggregate_status(report['status'])
+                else:
+                    report['lockTakeovers'] = takeovers
+                    audit = run_fixture(output, args.baseline.resolve())
+                    report['launch'] = audit
+                    require(audit['exitCode'] == 0, 'CALIBRATION_EXECUTION', 'see launcher.log and six-cells/run.log')
+                    require(audit['launcherAndFixtureReaped'], 'CLEANUP', 'launcher/fixture cleanup incomplete')
+                    report.update(validate_calibration(output / 'six-cells', output, args.baseline.resolve()))
+                    # Imported lazily to keep the independent negative-control CLI usable.
+                    controls = _load('session_controls', SCRIPT / 'controls/session_domain.py')
+                    report['e1Controls'] = controls.run_all(output / 'controls', output / 'six-cells')
+                    controls_status = report['e1Controls']['status']
+                    require(controls_status in ('PASS', 'PASS_WITH_SKIPS'),
+                            'CONTROLS', 'E1 mutation control failed')
+                    overall = cleanup_status(audit)
+                    if controls_status == 'PASS_WITH_SKIPS':
+                        # A skipped positive control is not proof of the batch.
+                        # Keep the skipped names visible and never report PASS:
+                        # BLOCKED / exit 2 is the apparatus' non-PASS convention.
+                        report['controlsSkipped'] = (
+                            report['e1Controls'].get('cleanupSkipped', [])
+                            + [row['case'] for row in report['e1Controls'].get('notRun', [])])
+                        report['failure'] = {
+                            'rule': 'CONTROLS_SKIPPED',
+                            'detail': 'E1 controls skipped platform-specific positives; not PASS'}
+                        overall = 'BLOCKED'
+                    report['status'] = overall
+                    report['executionStatus'] = overall
+                    report['cleanupStatus'] = audit['processTreeCleanup']
+                    report['topology'] = 'ts-in-process-controlled'
+                    report['acceptanceStatus'] = 'NOT_RUN'
+                    report['calibrationStatus'] = 'OBSERVED'
+                    # Cleanup unverified is not a freeze candidate even though the
+                    # measurements completed; downstream only-PASS consumers must
+                    # see a non-PASS string, not a fresh DRAFT_AWAITING_A5_4.
+                    report['freezeStatus'] = ('DRAFT_AWAITING_A5_4' if overall == 'PASS'
+                                              else CLEANUP_UNVERIFIED_FREEZE)
+                    # Single shared exit-code mapping: only PASS maps to 0; a domain
+                    # status outside the batch order (PASS_WITH_CLEANUP_UNVERIFIED)
+                    # is BLOCKED, never an optimistic 0.
+                    _, code = common.aggregate_status(
+                        overall if overall in common.BATCH_STATUS_ORDER else 'BLOCKED')
+                require(report['apparatusSha256'] == hashes(), 'APPARATUS_CHANGED', 'apparatus changed while collecting evidence')
+                if dependencies is not None:
+                    require(baseline_dependency_hashes(args.baseline.resolve()) == dependencies,
+                            'BASELINE_DEPS_CHANGED', 'baseline runtime dependencies changed while collecting evidence')
+                require(report['frozen'] == frozen_check(), 'FROZEN_CHANGED', 'frozen inputs changed during suite')
+                if args.suite == 'calibrate' and report['frozen']['exitCode'] != 0:
+                    report['status'], code = common.aggregate_status('BLOCKED')
+                    report['freezeStatus'] = 'BLOCKED'
+                    report['failure'] = {'rule': 'FROZEN', 'detail': 'measurements completed; see frozen check output; no acceptance PASS'}
+            except (EvidenceError, OSError, ValueError, KeyError, TypeError, StopIteration,
+                    subprocess.SubprocessError, TimeoutError, KeyboardInterrupt) as error:
+                report['status'] = 'BLOCKED' if isinstance(error, (PermissionError, TimeoutError, KeyboardInterrupt)) else 'FAIL'
+                report['failure'] = {'rule': getattr(error, 'rule', 'EVIDENCE'), 'detail': str(error)}
+                code = common.aggregate_status(report['status'])[1]
+            save(output / 'report.json', report)
+            print(json.dumps({'status': report['status'], 'suite': args.suite, 'report': str(output / 'report.json'),
+                              'failure': report.get('failure'), 'acceptanceStatus': report['acceptanceStatus']}, ensure_ascii=False))
+            return code
+    except (TimeoutError, KeyboardInterrupt) as error:
+        print(json.dumps({'suite': args.suite, 'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))
+        return 2
 
 
 if __name__ == '__main__':
+    _verify_cli_imports()
     raise SystemExit(main())

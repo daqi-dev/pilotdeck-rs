@@ -75,7 +75,9 @@ def load_session_domain():
     spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)
     module = importlib.util.module_from_spec(spec)
     sys.modules['session_domain'] = module
-    spec.loader.exec_module(module)
+    source = Path(spec.origin).read_bytes()
+    exec(compile(source, spec.origin, 'exec'), module.__dict__)
+    module._apparatus_source = source
     return module
 
 
@@ -83,7 +85,9 @@ def load_controls():
     spec = importlib.util.spec_from_file_location('session_cleanup_controls', CONTROLS)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    source = Path(spec.origin).read_bytes()
+    exec(compile(source, spec.origin, 'exec'), module.__dict__)
+    module._apparatus_source = source
     return module
 
 
@@ -848,7 +852,7 @@ AGGREGATION_POINTS = {
 }
 NON_AGGREGATION_POINTS = {
     ('scripts/gateway-parity/test_safety.py', 'test_deadline_not_run_has_dedicated_exit_code'):
-        'test-only shared exit mapping and real CLI contract, not a batch',
+        'test-only shared exit mapping and main-body contract, not a batch',
     ('scripts/gateway-parity/common.py', 'aggregate_status'):
         'the single shared implementation (definition, not a call site)',
     ('scripts/gateway-parity/check_frozen.py', 'main'):
@@ -1152,7 +1156,9 @@ def batch_aggregation_control(md, output):
         if source:
             argv += ['--source', str(case / 'source')]
         stdout = io.StringIO()
-        with patch.object(controls.subprocess, 'run', side_effect=fake_run), \
+        # This replay isolates aggregation; import safety has its own bound tests.
+        with patch.object(controls.common, 'verify_loaded_apparatus'), \
+                patch.object(controls.subprocess, 'run', side_effect=fake_run), \
                 patch.object(controls, 'cleanup_controls',
                              return_value={'status': cleanup_status,
                                            'skipped': (['cleanup-empty-group']

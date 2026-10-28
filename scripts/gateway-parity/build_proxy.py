@@ -32,6 +32,9 @@ if not sys.flags.isolated:
 
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
 sys.dont_write_bytecode = True
+# CPython has already compiled the CLI entry before it can acquire a lease.
+# Capture that executing object, not a later read of the restored entry file.
+_apparatus_code = sys._getframe().f_code
 
 
 def _load(name, path):
@@ -39,14 +42,39 @@ def _load(name, path):
     existing = sys.modules.get(name)
     existing_file = getattr(existing, '__file__', None)
     if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        if not isinstance(getattr(existing, '_apparatus_source', None), bytes):
+            raise RuntimeError(f'#166 unverified apparatus module cache: {path}')
         return existing
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
-    spec.loader.exec_module(module)
+    try:
+        source = path.read_bytes()
+        exec(compile(source, str(path), 'exec'), module.__dict__)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    module._apparatus_source = source
     if Path(module.__file__).resolve() != path:
         raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
     return module
+
+
+
+def _verify_cli_imports():
+    # This trust root uses only stdlib + Git, never a helper from disk common:
+    # that module's verifier can itself be the active negative-control mutant.
+    import subprocess
+    from types import ModuleType
+    root = _apparatus.parent.parent
+    head = subprocess.check_output(['git', '-C', str(root), 'rev-parse', '--verify', 'HEAD'],
+                                   timeout=30).decode().strip()
+    source = subprocess.check_output(['git', '-C', str(root), 'show',
+                                      f'{head}:scripts/gateway-parity/common.py'], timeout=30)
+    trusted = ModuleType('pristine_cli_verifier')
+    trusted.__file__ = str(_apparatus / 'common.py')
+    exec(compile(source, trusted.__file__, 'exec'), trusted.__dict__)
+    trusted.verify_loaded_apparatus(head)
 
 
 _here = Path(__file__).resolve().parent
