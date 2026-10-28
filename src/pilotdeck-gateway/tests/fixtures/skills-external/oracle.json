@@ -653,6 +653,12 @@
     "src/web/client/webMessage.ts": "ada604e1438867fc15907e2dcd45daf3339c09c31e07d0cf595cd30fa9eb54a4"
   },
   "node": "v22.22.0",
+  "credential": {
+    "env": "PDRS_929_SKILLS_TOKEN",
+    "symbol": "$PDRS_929_SKILLS_TOKEN",
+    "length": 38,
+    "sha256": "95860ff5ddf6078e067879941749445719c2ffb7b38278393f39834627de3eac"
+  },
   "cases": [
     {
       "name": "list-success",
@@ -1988,6 +1994,193 @@
         "credentialEnv": "PDRS_929_SKILLS_TOKEN"
       },
       "env": {},
+      "input": {
+        "projectKey": "/p"
+      },
+      "http": [
+        {
+          "status": 200,
+          "body": "{\"protocolVersion\":\"2.0\",\"implementationId\":\"test.skills\",\"contract\":\"pilotdeck.skills/v1\",\"transport\":\"module-http-v2\",\"methods\":[\"list\",\"read\",\"write\",\"create\",\"delete\",\"import\",\"validate\",\"scan\"]}"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/module-manifest",
+          "contentType": null,
+          "authorization": null,
+          "body": null
+        }
+      ],
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "MODULE_PROTOCOL_INCOMPATIBLE",
+          "message": "Knowledge module account credential is not configured."
+        }
+      }
+    },
+    {
+      "name": "credential-success",
+      "method": "list",
+      "binding": {
+        "enabled": true,
+        "implementationId": "test.skills",
+        "contract": "pilotdeck.skills/v1",
+        "transport": "module-http-v2",
+        "endpoint": "http://127.0.0.1:<port>",
+        "manifestPath": "/module-manifest",
+        "callPath": "/v2/module/call",
+        "timeoutMs": 2000,
+        "methods": [
+          "list",
+          "read",
+          "write",
+          "create",
+          "delete",
+          "import",
+          "validate",
+          "scan"
+        ],
+        "credentialEnv": "PDRS_929_SKILLS_TOKEN"
+      },
+      "env": {
+        "PDRS_929_SKILLS_TOKEN": "$PDRS_929_SKILLS_TOKEN"
+      },
+      "input": {
+        "projectKey": "/p"
+      },
+      "http": [
+        {
+          "status": 200,
+          "body": "{\"protocolVersion\":\"2.0\",\"implementationId\":\"test.skills\",\"contract\":\"pilotdeck.skills/v1\",\"transport\":\"module-http-v2\",\"methods\":[\"list\",\"read\",\"write\",\"create\",\"delete\",\"import\",\"validate\",\"scan\"]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"kind\":\"response\",\"messageId\":\"provider-response\",\"inReplyTo\":\"module-http-1\",\"requestId\":\"skills-management-list-1\",\"ok\":true,\"payload\":{\"result\":{\"operation\":\"list\",\"marker\":\"success\"}}}"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/module-manifest",
+          "contentType": null,
+          "authorization": null,
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/v2/module/call",
+          "contentType": "application/json",
+          "authorization": {
+            "scheme": "Bearer",
+            "length": 38,
+            "sha256": "95860ff5ddf6078e067879941749445719c2ffb7b38278393f39834627de3eac"
+          },
+          "body": "{\"kind\":\"request\",\"method\":\"module_call\",\"messageId\":\"module-http-1\",\"runId\":\"skills-management\",\"operationId\":\"skills-management\",\"requestId\":\"skills-management-list-1\",\"module\":\"skills\",\"payload\":{\"operation\":\"list\",\"input\":{\"projectKey\":\"/p\"}}}"
+        }
+      ],
+      "outcome": {
+        "result": {
+          "operation": "list",
+          "marker": "success"
+        }
+      }
+    },
+    {
+      "name": "credential-trimmed",
+      "method": "list",
+      "binding": {
+        "enabled": true,
+        "implementationId": "test.skills",
+        "contract": "pilotdeck.skills/v1",
+        "transport": "module-http-v2",
+        "endpoint": "http://127.0.0.1:<port>",
+        "manifestPath": "/module-manifest",
+        "callPath": "/v2/module/call",
+        "timeoutMs": 2000,
+        "methods": [
+          "list",
+          "read",
+          "write",
+          "create",
+          "delete",
+          "import",
+          "validate",
+          "scan"
+        ],
+        "credentialEnv": "PDRS_929_SKILLS_TOKEN"
+      },
+      "env": {
+        "PDRS_929_SKILLS_TOKEN": "  $PDRS_929_SKILLS_TOKEN  "
+      },
+      "input": {
+        "projectKey": "/p"
+      },
+      "http": [
+        {
+          "status": 200,
+          "body": "{\"protocolVersion\":\"2.0\",\"implementationId\":\"test.skills\",\"contract\":\"pilotdeck.skills/v1\",\"transport\":\"module-http-v2\",\"methods\":[\"list\",\"read\",\"write\",\"create\",\"delete\",\"import\",\"validate\",\"scan\"]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"kind\":\"response\",\"messageId\":\"provider-response\",\"inReplyTo\":\"module-http-1\",\"requestId\":\"skills-management-list-1\",\"ok\":true,\"payload\":{\"result\":{\"operation\":\"list\",\"marker\":\"success\"}}}"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/module-manifest",
+          "contentType": null,
+          "authorization": null,
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/v2/module/call",
+          "contentType": "application/json",
+          "authorization": {
+            "scheme": "Bearer",
+            "length": 38,
+            "sha256": "95860ff5ddf6078e067879941749445719c2ffb7b38278393f39834627de3eac"
+          },
+          "body": "{\"kind\":\"request\",\"method\":\"module_call\",\"messageId\":\"module-http-1\",\"runId\":\"skills-management\",\"operationId\":\"skills-management\",\"requestId\":\"skills-management-list-1\",\"module\":\"skills\",\"payload\":{\"operation\":\"list\",\"input\":{\"projectKey\":\"/p\"}}}"
+        }
+      ],
+      "outcome": {
+        "result": {
+          "operation": "list",
+          "marker": "success"
+        }
+      }
+    },
+    {
+      "name": "credential-whitespace",
+      "method": "list",
+      "binding": {
+        "enabled": true,
+        "implementationId": "test.skills",
+        "contract": "pilotdeck.skills/v1",
+        "transport": "module-http-v2",
+        "endpoint": "http://127.0.0.1:<port>",
+        "manifestPath": "/module-manifest",
+        "callPath": "/v2/module/call",
+        "timeoutMs": 2000,
+        "methods": [
+          "list",
+          "read",
+          "write",
+          "create",
+          "delete",
+          "import",
+          "validate",
+          "scan"
+        ],
+        "credentialEnv": "PDRS_929_SKILLS_TOKEN"
+      },
+      "env": {
+        "PDRS_929_SKILLS_TOKEN": "   "
+      },
       "input": {
         "projectKey": "/p"
       },

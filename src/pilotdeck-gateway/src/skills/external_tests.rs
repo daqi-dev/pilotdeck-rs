@@ -4,6 +4,7 @@
 use super::external::ManifestWaitGate;
 use super::*;
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, VecDeque},
     path::Path,
@@ -16,13 +17,83 @@ const FIXTURES: &str = concat!(
     "/tests/fixtures/skills-external"
 );
 
+/// #949 fictional credential. The oracle stores only this value's length and
+/// SHA-256, never the value itself; the generator and this test share the
+/// constant so the TS golden can describe the outbound header without keeping
+/// a secret-shaped string in the fixture.
+const FICTIONAL_CREDENTIAL: &str = "pdrs-949-fictional-credential-7f3a9c2e";
+const CREDENTIAL_SYMBOL: &str = "$PDRS_929_SKILLS_TOKEN";
+const CREDENTIAL_ASSERTION: &str =
+    "#949 credential success: external-credential-env-value-is-sent-as-bearer";
+const MANIFEST_ASSERTION: &str = "#949 manifest cache: external-manifest-is-loaded-once-per-port";
+const SNAPSHOT_ASSERTION: &str =
+    "#949 snapshot chain: snapshot-projection-applies-the-optional-chain";
+const FACADE_ASSERTION: &str = "#949 facade replay: facade-replays-the-ts-list-success-case";
+const TRANSPORT_ASSERTION: &str = "#949 real transport: hyper-transport-reaches-a-real-module-host";
+const PANIC_ASSERTION: &str =
+    "#949 panic window: panicked-owner-before-waiter-notification-is-recovered";
+
+fn credential_value(value: &str) -> String {
+    value.replace(CREDENTIAL_SYMBOL, FICTIONAL_CREDENTIAL)
+}
+fn env_from_case(case: &JsValue) -> HashMap<String, String> {
+    case.get("env")
+        .and_then(JsValue::as_object)
+        .map(|object| {
+            object
+                .entries()
+                .iter()
+                .filter_map(|(key, value)| {
+                    Some((
+                        String::from_utf16_lossy(key.units()),
+                        credential_value(&String::from_utf16_lossy(value.as_string()?.units())),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+fn sha256_hex(value: &str) -> String {
+    format!("{:x}", Sha256::digest(value.as_bytes()))
+}
+fn authorization_matches(actual: &Option<String>, expected: &JsValue) -> bool {
+    match expected {
+        JsValue::Undefined | JsValue::Null => actual.is_none(),
+        JsValue::String(text) => actual.as_deref() == Some(&String::from_utf16_lossy(text.units())),
+        JsValue::Object(object) => {
+            let Some(actual) = actual else {
+                return false;
+            };
+            let (scheme, credential) = match actual.split_once(' ') {
+                Some((scheme, credential)) => (scheme, credential),
+                None => ("", actual.as_str()),
+            };
+            object
+                .get("scheme")
+                .and_then(JsValue::as_string)
+                .is_some_and(|value| String::from_utf16_lossy(value.units()) == scheme)
+                && object
+                    .get("length")
+                    .and_then(JsValue::as_number)
+                    .is_some_and(|value| value as usize == credential.encode_utf16().count())
+                && object
+                    .get("sha256")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|value| {
+                        String::from_utf16_lossy(value.units()) == sha256_hex(credential)
+                    })
+        }
+        _ => false,
+    }
+}
+
 fn json(text: &str) -> JsValue {
-    parse_json(text).expect("#929 test JSON")
+    parse_json(text).expect("#949 test JSON")
 }
 fn compact(value: &JsValue) -> String {
     stringify_json(value)
-        .expect("#929 stringify")
-        .expect("#929 defined JSON")
+        .expect("#949 stringify")
+        .expect("#949 defined JSON")
 }
 fn text(value: &JsValue, key: &str) -> String {
     value
@@ -107,20 +178,20 @@ impl ModuleHttpTransport for ScriptedTransport {
             let expected = self
                 .expected
                 .get(index)
-                .unwrap_or_else(|| panic!("#929 request {index} has no TS oracle entry"));
+                .unwrap_or_else(|| panic!("#949 request {index} has no TS oracle entry"));
             assert_eq!(
                 request.method,
                 text(expected, "method"),
-                "#929 request {index} method must match TS"
+                "#949 request {index} method must match TS"
             );
             let path = url::Url::parse(&request.url)
-                .expect("#929 request URL")
+                .expect("#949 request URL")
                 .path()
                 .to_owned();
             assert_eq!(
                 path,
                 text(expected, "path"),
-                "#929 request {index} path must match TS"
+                "#949 request {index} path must match TS"
             );
             assert_eq!(
                 request.content_type.map(str::to_owned),
@@ -129,16 +200,14 @@ impl ModuleHttpTransport for ScriptedTransport {
                     .filter(|value| !value.is_undefined() && !matches!(value, JsValue::Null))
                     .and_then(JsValue::as_string)
                     .map(|value| String::from_utf16_lossy(value.units())),
-                "#929 request {index} content-type must match TS"
+                "#949 request {index} content-type must match TS"
             );
-            assert_eq!(
-                request.authorization,
-                expected
-                    .get("authorization")
-                    .filter(|value| !value.is_undefined() && !matches!(value, JsValue::Null))
-                    .and_then(JsValue::as_string)
-                    .map(|value| String::from_utf16_lossy(value.units())),
-                "#929 request {index} authorization must match TS"
+            assert!(
+                authorization_matches(
+                    &request.authorization,
+                    expected.get("authorization").unwrap_or(&JsValue::Undefined)
+                ),
+                "#949 request {index} authorization must match the recorded TS header"
             );
             let expected_body = expected
                 .get("body")
@@ -149,7 +218,7 @@ impl ModuleHttpTransport for ScriptedTransport {
                 .then(|| String::from_utf8_lossy(&request.body).into_owned());
             assert_eq!(
                 actual_body, expected_body,
-                "#929 request {index} body must match TS byte for byte"
+                "#949 request {index} body must match TS byte for byte"
             );
             self.seen
                 .lock()
@@ -160,7 +229,7 @@ impl ModuleHttpTransport for ScriptedTransport {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .pop_front()
-                .unwrap_or_else(|| panic!("#929 no TS HTTP reply for request {index}"));
+                .unwrap_or_else(|| panic!("#949 no TS HTTP reply for request {index}"));
             Ok(ModuleHttpResponse {
                 status: reply.status,
                 body: reply.body,
@@ -177,7 +246,7 @@ impl ModuleEnvironment for FixedEnvironment {
 }
 
 fn binding_value_from_case(case: &JsValue) -> JsValue {
-    let binding = case.get("binding").expect("#929 case binding");
+    let binding = case.get("binding").expect("#949 case binding");
     let mut binding = binding.clone();
     let endpoint = binding
         .get("endpoint")
@@ -193,14 +262,14 @@ fn binding_value_from_case(case: &JsValue) -> JsValue {
 
 fn binding_from_case(case: &JsValue) -> ExternalSkillBinding {
     ExternalSkillBinding::from_value(&binding_value_from_case(case))
-        .expect("#929 ExternalSkillBinding")
+        .expect("#949 ExternalSkillBinding")
 }
 fn reply_from_case(reply: &JsValue) -> Reply {
     Reply {
         status: reply
             .get("status")
             .and_then(JsValue::as_number)
-            .expect("#929 reply status") as u16,
+            .expect("#949 reply status") as u16,
         body: text(reply, "body").into_bytes(),
     }
 }
@@ -234,23 +303,7 @@ async fn external_skills_oracle_replays_requests_and_outcomes() {
         };
         let replies: Vec<Reply> = http.iter().map(reply_from_case).collect();
         let transport = Arc::new(ScriptedTransport::new(requests.clone(), replies));
-        let env = Arc::new(FixedEnvironment(
-            case.get("env")
-                .and_then(JsValue::as_object)
-                .map(|object| {
-                    object
-                        .entries()
-                        .iter()
-                        .filter_map(|(key, value)| {
-                            Some((
-                                String::from_utf16_lossy(key.units()),
-                                String::from_utf16_lossy(value.as_string()?.units()),
-                            ))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-        ));
+        let env = Arc::new(FixedEnvironment(env_from_case(case)));
         let port = ExternalSkillsPort::with_environment(binding, transport.clone(), env);
         let input = case.get("input").cloned().unwrap_or(JsValue::Undefined);
         let actual = match port.call(method, &input).await {
@@ -345,7 +398,7 @@ impl ModuleHttpTransport for HarnessTransport {
                     body: body.into_bytes(),
                 });
             }
-            let body = parse_json(&String::from_utf8_lossy(&request.body)).expect("#929 call body");
+            let body = parse_json(&String::from_utf8_lossy(&request.body)).expect("#949 call body");
             let message_id = text(&body, "messageId");
             let request_id = text(&body, "requestId");
             let operation = text(body.get("payload").expect("#929 payload"), "operation");
@@ -448,7 +501,47 @@ async fn facade_routes_each_project_to_its_snapshot_binding() {
     let _ = std::fs::remove_dir_all(&scratch);
 }
 
-#[tokio::test]
+/// Yields the first manifest GET so two callers really overlap; later GETs
+/// (which a broken cache would issue) return immediately, so the mutant cannot
+/// deadlock the test.
+struct ManifestBarrierTransport {
+    manifest: Vec<u8>,
+    call: ReplyBody,
+    seen: Mutex<Vec<ModuleHttpRequest>>,
+    manifest_calls: std::sync::atomic::AtomicUsize,
+    started: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+impl ModuleHttpTransport for ManifestBarrierTransport {
+    fn send<'a>(&'a self, request: ModuleHttpRequest) -> ModuleHttpFuture<'a> {
+        Box::pin(async move {
+            self.seen
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(request.clone());
+            if request.method == "GET" {
+                let call = self
+                    .manifest_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if call == 0 {
+                    self.started.notify_one();
+                    self.release.notified().await;
+                }
+                return Ok(ModuleHttpResponse {
+                    status: 200,
+                    body: self.manifest.clone(),
+                });
+            }
+            let body = parse_json(&String::from_utf8_lossy(&request.body)).expect("#949 call body");
+            Ok(ModuleHttpResponse {
+                status: 200,
+                body: (self.call)(&body),
+            })
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn external_manifest_is_loaded_once_per_port() {
     let manifest = object(&[
         ("protocolVersion", "2.0".into()),
@@ -476,22 +569,52 @@ async fn external_manifest_is_loaded_once_per_port() {
         ]);
         compact(&response).into_bytes()
     };
-    let transport = Arc::new(DynamicTransport {
+    let transport = Arc::new(ManifestBarrierTransport {
         manifest: compact(&manifest).into_bytes(),
         call: Box::new(call_reply),
         seen: Mutex::new(Vec::new()),
+        manifest_calls: std::sync::atomic::AtomicUsize::new(0),
+        started: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
     });
     let binding =
         ExternalSkillBinding::from_value(&external_binding("test.skills", "", &["list", "read"]))
-            .expect("#929 binding");
-    let port = ExternalSkillsPort::new(binding, transport.clone());
+            .expect("#949 binding");
+    let port = Arc::new(ExternalSkillsPort::new(binding, transport.clone()));
     let list_input = json(r#"{"projectKey":"/p"}"#);
     let read_input = json(r#"{"projectKey":"/p","slug":"x","scope":"user"}"#);
-    let first = port.call(SkillMethod::List, &list_input);
-    let second = port.call(SkillMethod::Read, &read_input);
-    let (a, b) = tokio::join!(first, second);
-    a.expect("#929 concurrent list");
-    b.expect("#929 concurrent read");
+    let first = {
+        let port = port.clone();
+        let input = list_input.clone();
+        tokio::spawn(async move { port.call(SkillMethod::List, &input).await })
+    };
+    tokio::time::timeout(Duration::from_secs(2), transport.started.notified())
+        .await
+        .expect("#949 first manifest GET must start");
+    let second = {
+        let port = port.clone();
+        let input = read_input.clone();
+        tokio::spawn(async move { port.call(SkillMethod::Read, &input).await })
+    };
+    crate::test_negative_receipt::expect_ok(
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while port.manifest_waiters() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await,
+        MANIFEST_ASSERTION,
+    );
+    transport.release.notify_one();
+    let (a, b) = tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::join!(first, second)
+    })
+    .await
+    .expect("#949 both calls must finish");
+    a.expect("#949 concurrent list join")
+        .expect("#949 concurrent list");
+    b.expect("#949 concurrent read join")
+        .expect("#949 concurrent read");
     let seen = transport
         .seen
         .lock()
@@ -500,12 +623,12 @@ async fn external_manifest_is_loaded_once_per_port() {
         .iter()
         .filter(|request| request.method == "GET")
         .count();
-    assert_eq!(manifests, 1, "#929 one shared manifest load per port");
+    crate::negative_assert_eq!(manifests, 1, "{}", MANIFEST_ASSERTION);
     let mut ids: Vec<String> = seen
         .iter()
         .filter(|request| request.method == "POST")
         .map(|request| {
-            let body = parse_json(&String::from_utf8_lossy(&request.body)).expect("#929 body");
+            let body = parse_json(&String::from_utf8_lossy(&request.body)).expect("#949 body");
             text(&body, "messageId")
         })
         .collect();
@@ -513,7 +636,132 @@ async fn external_manifest_is_loaded_once_per_port() {
     assert_eq!(
         ids,
         vec!["module-http-1", "module-http-2"],
-        "#929 client counter"
+        "#949 client counter"
+    );
+}
+
+/// #949: the `credentialEnv` success path, replayed from the real TS oracle.
+/// The oracle keeps only the fictional token's length and SHA-256 (never the
+/// token); this test proves the port reads the environment, trims it like
+/// `String.prototype.trim()`, and sends exactly `Bearer <value>`.
+#[tokio::test]
+async fn external_credential_env_value_is_sent_as_bearer() {
+    let oracle_text = include_str!("../../tests/fixtures/skills-external/oracle.json");
+    assert!(
+        !oracle_text.contains(FICTIONAL_CREDENTIAL),
+        "#949 oracle must not store the fictional token"
+    );
+    let oracle = json(oracle_text);
+    let JsValue::Array(cases) = oracle.get("cases").expect("#949 credential cases") else {
+        panic!("#949 credential cases must be an array")
+    };
+    let credential = oracle.get("credential").expect("#949 credential metadata");
+    assert_eq!(
+        credential
+            .get("length")
+            .and_then(JsValue::as_number)
+            .expect("#949 credential length") as usize,
+        FICTIONAL_CREDENTIAL.encode_utf16().count(),
+        "#949 oracle credential length must describe the fictional token"
+    );
+    assert_eq!(
+        text(credential, "sha256"),
+        sha256_hex(FICTIONAL_CREDENTIAL),
+        "#949 oracle credential hash must describe the fictional token"
+    );
+
+    for name in ["credential-success", "credential-trimmed"] {
+        let case = cases
+            .iter()
+            .find(|case| text(case, "name") == name)
+            .expect("#949 credential success case");
+        let JsValue::Array(http) = case.get("http").expect("#949 credential http") else {
+            panic!("#949 credential http must be an array")
+        };
+        let reply = reply_from_case(http.get(1).expect("#949 credential call reply"));
+        let transport = Arc::new(DynamicTransport {
+            manifest: reply_from_case(http.first().expect("#949 credential manifest reply")).body,
+            call: Box::new(move |_body: &JsValue| reply.body.clone()),
+            seen: Mutex::new(Vec::new()),
+        });
+        let binding = ExternalSkillBinding::from_value(&binding_value_from_case(case))
+            .expect("#949 credential binding");
+        let port = ExternalSkillsPort::with_environment(
+            binding,
+            transport.clone(),
+            Arc::new(FixedEnvironment(env_from_case(case))),
+        );
+        let result = crate::test_negative_receipt::expect_ok(
+            port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+                .await,
+            CREDENTIAL_ASSERTION,
+        );
+        assert_eq!(
+            text(&result, "operation"),
+            "list",
+            "#949 credential call must return the TS success result"
+        );
+        let JsValue::Array(requests) = case.get("requests").expect("#949 credential requests")
+        else {
+            panic!("#949 credential requests must be an array")
+        };
+        let expected_auth = requests
+            .get(1)
+            .expect("#949 credential call request")
+            .get("authorization")
+            .expect("#949 credential authorization descriptor");
+        let seen = transport
+            .seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let actual = seen
+            .get(1)
+            .and_then(|request| request.authorization.clone());
+        crate::negative_assert!(
+            authorization_matches(&actual, expected_auth),
+            "{}",
+            CREDENTIAL_ASSERTION
+        );
+        crate::negative_assert_eq!(seen.len(), 2, "{}", CREDENTIAL_ASSERTION);
+    }
+
+    let case = cases
+        .iter()
+        .find(|case| text(case, "name") == "credential-whitespace")
+        .expect("#949 credential whitespace case");
+    let JsValue::Array(http) = case.get("http").expect("#949 credential whitespace http") else {
+        panic!("#949 credential whitespace http must be an array")
+    };
+    let transport = Arc::new(DynamicTransport {
+        manifest: reply_from_case(http.first().expect("#949 credential manifest reply")).body,
+        call: Box::new(|_body: &JsValue| panic!("#949 whitespace credential must not POST")),
+        seen: Mutex::new(Vec::new()),
+    });
+    let binding = ExternalSkillBinding::from_value(&binding_value_from_case(case))
+        .expect("#949 credential whitespace binding");
+    let port = ExternalSkillsPort::with_environment(
+        binding,
+        transport.clone(),
+        Arc::new(FixedEnvironment(env_from_case(case))),
+    );
+    let error = crate::test_negative_receipt::expect_err(
+        port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#))
+            .await,
+        CREDENTIAL_ASSERTION,
+    );
+    assert_eq!(
+        String::from_utf16_lossy(error.message.units()),
+        "Knowledge module account credential is not configured.",
+        "#949 blank credential keeps the TS configured message"
+    );
+    assert_eq!(
+        transport
+            .seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len(),
+        1,
+        "#949 blank credential sends only the manifest GET"
     );
 }
 
@@ -537,7 +785,7 @@ impl ModuleHttpTransport for DynamicTransport {
                     body: self.manifest.clone(),
                 });
             }
-            let body = parse_json(&String::from_utf8_lossy(&request.body)).expect("#929 call body");
+            let body = parse_json(&String::from_utf8_lossy(&request.body)).expect("#949 call body");
             Ok(ModuleHttpResponse {
                 status: 200,
                 body: (self.call)(&body),
@@ -570,10 +818,10 @@ async fn hyper_transport_reaches_a_real_module_host() {
 
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
-        .expect("#929 module host bind");
+        .expect("#949 module host bind");
     let endpoint = format!(
         "http://{}",
-        listener.local_addr().expect("#929 module host addr")
+        listener.local_addr().expect("#949 module host addr")
     );
     let server = tokio::spawn(async move {
         loop {
@@ -587,13 +835,13 @@ async fn hyper_transport_reaches_a_real_module_host() {
                         .into_body()
                         .collect()
                         .await
-                        .expect("#929 module host body")
+                        .expect("#949 module host body")
                         .to_bytes();
                     let response = if path == "/module-manifest" {
                         r#"{"protocolVersion":"2.0","implementationId":"test.skills","contract":"pilotdeck.skills/v1","transport":"module-http-v2","methods":["list"]}"#.to_owned()
                     } else {
                         let request = parse_json(&String::from_utf8_lossy(&body))
-                            .expect("#929 module host request");
+                            .expect("#949 module host request");
                         let response = object(&[
                             ("kind", "response".into()),
                             ("messageId", "m".into()),
@@ -626,16 +874,18 @@ async fn hyper_transport_reaches_a_real_module_host() {
         ("methods", JsValue::Array(vec!["list".into()])),
         ("timeoutMs", JsValue::Number(2000.0)),
     ]))
-    .expect("#929 real binding");
+    .expect("#949 real binding");
     let port = ExternalSkillsPort::new(binding, Arc::new(HyperModuleTransport::new()));
-    let result = tokio::time::timeout(
-        Duration::from_secs(5),
-        port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#)),
-    )
-    .await
-    .expect("#929 real HTTP call must terminate")
-    .expect("#929 real HTTP call must succeed");
-    assert_eq!(text(&result, "operation"), "list", "#929 real HTTP result");
+    let result = crate::test_negative_receipt::expect_ok(
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            port.call(SkillMethod::List, &json(r#"{"projectKey":"/p"}"#)),
+        )
+        .await,
+        TRANSPORT_ASSERTION,
+    );
+    let result = crate::test_negative_receipt::expect_ok(result, TRANSPORT_ASSERTION);
+    assert_eq!(text(&result, "operation"), "list", "#949 real HTTP result");
     server.abort();
 }
 
@@ -643,33 +893,34 @@ async fn hyper_transport_reaches_a_real_module_host() {
 fn snapshot_projection_applies_the_optional_chain() {
     let binding = external_binding("test.skills", "", &["list"]);
     assert_eq!(
-        compact(&skill_binding_from_snapshot(&snapshot(binding.clone())).expect("#929 snapshot")),
+        compact(&skill_binding_from_snapshot(&snapshot(binding.clone())).expect("#949 snapshot")),
         compact(&binding),
-        "#929 snapshot projection must return modules.skills"
+        "#949 snapshot projection must return modules.skills"
     );
     let modules_missing = object(&[("config", object(&[]))]);
     assert!(
         matches!(
-            skill_binding_from_snapshot(&modules_missing).expect("#929 missing modules"),
+            skill_binding_from_snapshot(&modules_missing).expect("#949 missing modules"),
             JsValue::Undefined
         ),
-        "#929 modules?.skills is undefined when modules is absent"
+        "#949 modules?.skills is undefined when modules is absent"
     );
     let modules_null = object(&[("config", object(&[("modules", JsValue::Null)]))]);
-    assert!(
+    crate::negative_assert!(
         matches!(
-            skill_binding_from_snapshot(&modules_null).expect("#929 null modules"),
+            skill_binding_from_snapshot(&modules_null).expect("#949 null modules"),
             JsValue::Undefined
         ),
-        "#929 modules?.skills is undefined when modules is null"
+        "{}",
+        SNAPSHOT_ASSERTION
     );
     let config_missing = object(&[]);
     assert_eq!(
         skill_binding_from_snapshot(&config_missing)
-            .expect_err("#929 missing config must throw")
+            .expect_err("#949 missing config must throw")
             .name,
         "TypeError",
-        "#929 config.modules throws when config is absent"
+        "#949 config.modules throws when config is absent"
     );
 }
 
@@ -723,50 +974,48 @@ async fn facade_replays_the_ts_list_success_case() {
     let oracle = json(include_str!(
         "../../tests/fixtures/skills-external/oracle.json"
     ));
-    let JsValue::Array(cases) = oracle.get("cases").expect("#929 cases") else {
-        panic!("#929 cases must be an array")
+    let JsValue::Array(cases) = oracle.get("cases").expect("#949 cases") else {
+        panic!("#949 cases must be an array")
     };
     let case = cases
         .iter()
         .find(|case| text(case, "name") == "list-success")
-        .expect("#929 list-success case");
+        .expect("#949 list-success case");
     let binding = binding_value_from_case(case);
     let snapshot = snapshot(binding);
-    let JsValue::Array(http) = case.get("http").expect("#929 http") else {
-        panic!("#929 http must be an array")
+    let JsValue::Array(http) = case.get("http").expect("#949 http") else {
+        panic!("#949 http must be an array")
     };
-    let JsValue::Array(requests) = case.get("requests").expect("#929 requests") else {
-        panic!("#929 requests must be an array")
+    let JsValue::Array(requests) = case.get("requests").expect("#949 requests") else {
+        panic!("#949 requests must be an array")
     };
     let transport = Arc::new(ScriptedTransport::new(
         requests.clone(),
         http.iter().map(reply_from_case).collect(),
     ));
     let scratch = std::env::temp_dir().join(format!("pdrs-929-golden-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&scratch).expect("#929 scratch");
+    std::fs::create_dir(&scratch).expect("#949 scratch");
     let manager = SkillManager::new(super::SkillManagerOptions::new(
         scratch.to_string_lossy().into_owned(),
     ))
-    .expect("#929 manager");
+    .expect("#949 manager");
     let facade = SkillsFacade::with_transport(
         manager,
         move |_key: Option<&JsValue>| skill_binding_from_snapshot(&snapshot),
         transport.clone(),
     );
     let input = case.get("input").cloned().unwrap_or(JsValue::Undefined);
-    let result = facade
-        .call(SkillMethod::List, &input)
-        .await
-        .expect("#929 facade list-success must succeed");
-    assert_eq!(
+    let result = crate::test_negative_receipt::expect_ok(
+        facade.call(SkillMethod::List, &input).await,
+        FACADE_ASSERTION,
+    );
+    crate::negative_assert_eq!(
         compact(&object(&[("result", result)])),
-        compact(case.get("outcome").expect("#929 outcome")),
-        "#929 facade list-success outcome must match real TS"
+        compact(case.get("outcome").expect("#949 outcome")),
+        "{}",
+        FACADE_ASSERTION
     );
-    assert!(
-        transport.exhausted(),
-        "#929 facade must consume every TS reply"
-    );
+    crate::negative_assert!(transport.exhausted(), "{}", FACADE_ASSERTION);
     let _ = std::fs::remove_dir_all(&scratch);
 }
 
@@ -1414,7 +1663,7 @@ impl ModuleHttpTransport for CancelTransport {
                         // Panic only after the waiter has parked in the
                         // pre-notification window.
                         self.panic_release.notified().await;
-                        panic!("#929 test owner panics before settling its manifest flight");
+                        panic!("#949 test owner panics before settling its manifest flight");
                     }
                     // The first owner never completes; aborting the call must
                     // release its flight.
@@ -1429,7 +1678,7 @@ impl ModuleHttpTransport for CancelTransport {
             self.post_calls
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let body =
-                parse_json(&String::from_utf8_lossy(&request.body)).expect("#929 cancel body");
+                parse_json(&String::from_utf8_lossy(&request.body)).expect("#949 cancel body");
             let response = object(&[
                 ("kind", "response".into()),
                 ("messageId", "m".into()),
@@ -1593,7 +1842,7 @@ async fn panicked_owner_before_waiter_notification_is_recovered() {
     let transport = cancel_transport(true);
     let port = Arc::new(ExternalSkillsPort::new(
         ExternalSkillBinding::from_value(&external_binding("test.skills", "", &["list"]))
-            .expect("#929 P0 panic-window binding"),
+            .expect("#949 P0 panic-window binding"),
         transport.clone(),
     ));
     let gate = Arc::new(ManifestWaitGate::new());
@@ -1607,7 +1856,7 @@ async fn panicked_owner_before_waiter_notification_is_recovered() {
     };
     tokio::time::timeout(Duration::from_secs(2), transport.started.notified())
         .await
-        .expect("#929 P0 panicking first manifest GET must start");
+        .expect("#949 P0 panicking first manifest GET must start");
     let second = {
         let port = port.clone();
         tokio::spawn(async move {
@@ -1617,37 +1866,38 @@ async fn panicked_owner_before_waiter_notification_is_recovered() {
     };
     tokio::time::timeout(Duration::from_secs(2), gate.reached.notified())
         .await
-        .expect("#929 P0 waiter must stop after cloning the flight and before creating Notified");
+        .expect("#949 P0 waiter must stop after cloning the flight and before creating Notified");
     transport.panic_release.notify_one();
     let first_join = first.await;
     assert!(
         first_join.is_err(),
-        "#929 P0 the owner task must have panicked before settling the flight"
+        "#949 P0 the owner task must have panicked before settling the flight"
     );
     gate.release.notify_one();
-    let joined = tokio::time::timeout(Duration::from_secs(2), second)
-        .await
-        .expect("#929 P0 a waiter that cloned the flight before owner panic must return within 2s");
+    let joined = crate::test_negative_receipt::expect_ok(
+        tokio::time::timeout(Duration::from_secs(2), second).await,
+        PANIC_ASSERTION,
+    );
     joined
-        .expect("#929 P0 waiter task must not panic")
-        .expect("#929 P0 waiter must load the manifest after the owner panicked");
+        .expect("#949 P0 waiter task must not panic")
+        .expect("#949 P0 waiter must load the manifest after the owner panicked");
     assert_eq!(
         transport
             .manifest_calls
             .load(std::sync::atomic::Ordering::SeqCst),
         2,
-        "#929 P0 the recovered waiter owns the replacement manifest GET after a panic"
+        "#949 P0 the recovered waiter owns the replacement manifest GET after a panic"
     );
     assert_eq!(
         transport
             .post_calls
             .load(std::sync::atomic::Ordering::SeqCst),
         1,
-        "#929 P0 the recovered waiter reaches its POST after a panic"
+        "#949 P0 the recovered waiter reaches its POST after a panic"
     );
     assert_eq!(
         port.manifest_waiters(),
         0,
-        "#929 P0 the waiter counter must return to zero after a panic"
+        "#949 P0 the waiter counter must return to zero after a panic"
     );
 }
