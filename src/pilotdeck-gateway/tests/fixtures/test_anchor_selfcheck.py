@@ -1567,6 +1567,90 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
         self.header('restored')
         self.run_check(label='#977 restored')
 
+    def test_marker_text_inside_a_string_is_not_a_comment(self):
+        # #977 fix-r1 negative: marker text inside a triple-quoted string is
+        # not a Python comment, so the pre-fix line scan wrongly exempted it.
+        self.script.write_text(
+            '"""Header example:\n# anchor-selfcheck: unsupported example only\n"""\n'
+            + self.base + "raise RuntimeError('must not run')\n")
+        report = self.run_check(1, label='#977 string-marker-ignored')
+        self.assertIn('no supported mutation anchors found', report,
+                      '#977 marker text inside a string must not exempt its script')
+        # An inline comment after code on the same line is not a whole-line
+        # marker either; only whole-line COMMENT tokens decide exemptions.
+        self.script.write_text(
+            self.base + "value = 1  # anchor-selfcheck: unsupported inline example\n"
+            "raise RuntimeError('must not run')\n")
+        report = self.run_check(1, label='#977 inline-marker-ignored')
+        self.assertIn('no supported mutation anchors found', report,
+                      '#977 an inline comment must not exempt its script')
+        # The same string text stays inert once a real whole-line marker is
+        # present; the comment counts, the string does not.
+        self.script.write_text(
+            '# anchor-selfcheck: unsupported real reason\n'
+            '"""Header example:\n# anchor-selfcheck: unsupported example only\n"""\n'
+            + self.base + "raise RuntimeError('must not run')\n")
+        self.assertIn('UNSUPPORTED sample/negative.py: real reason',
+                      self.run_check(label='#977 string-marker-plus-comment'),
+                      '#977 a real comment marker must still exempt its script')
+        # A script the tokenizer cannot even read fails closed as an error
+        # entry instead of crashing the checker with an unhandled exception.
+        self.script.write_text(self.base + '"""unterminated\n')
+        report = self.run_check(1, label='#977 untokenizable-script')
+        self.assertIn('not tokenizable', report,
+                      '#977 an untokenizable script must fail closed')
+
+    def test_missing_tracked_script_fails_closed_then_restores(self):
+        # #977 fix-r1: an exempt script without UNSUPPORTED_SIGNALS registration
+        # that disappears must fail the real check() entry, not only read_marker.
+        self.write("raise RuntimeError('must not run')\n")
+        self.header('no-signal exempt helper')
+        anchors = self.fixtures / 'sample/anchors.py'
+        anchors.write_text(self.base + "mutants = [('sample', source, 'before', 'after')]\n")
+        inventory = patch.object(CHECK, 'tracked_fixtures',
+                                 return_value={'sample/negative.py', 'sample/anchors.py'})
+        with inventory:
+            report = self.run_check(label='#977 tracked-present')
+            self.assertIn('UNSUPPORTED sample/negative.py: no-signal exempt helper', report,
+                          '#977 a tracked no-signal script is exempt while present')
+            self.assertIn('CHECKED sample/anchors.py: 1 anchors', report,
+                          '#977 a tracked anchor script is checked while present')
+            # One script vanishes at a time: the survivor keeps discovery alive,
+            # so the nonzero exit can only come from the missing-script rule.
+            self.script.unlink()
+            report = self.run_check(1, label='#977 tracked-missing')
+            self.assertIn('missing fixture script: sample/negative.py', report,
+                          '#977 a vanished tracked exempt script must fail closed')
+            self.write("raise RuntimeError('must not run')\n")
+            self.header('no-signal exempt helper')
+            anchors.unlink()
+            report = self.run_check(1, label='#977 tracked-anchors-missing')
+            self.assertIn('missing fixture script: sample/anchors.py', report,
+                          '#977 a vanished tracked anchor script must fail closed')
+            anchors.write_text(self.base + "mutants = [('sample', source, 'before', 'after')]\n")
+            self.assertIn('UNSUPPORTED sample/negative.py: no-signal exempt helper',
+                          self.run_check(label='#977 tracked-restored'),
+                          '#977 restoring the files must pass again')
+
+    def test_unreadable_fixture_inventory_fails_closed(self):
+        self.write("mutants = [('sample', source, 'before', 'after')]\n")
+        with patch.object(CHECK, 'tracked_fixtures',
+                          side_effect=CHECK.Unsupported('git ls-files failed: not a git checkout')):
+            report = self.run_check(1, label='#977 inventory-unreadable')
+        self.assertIn('fixture inventory: git ls-files failed: not a git checkout', report,
+                      '#977 an unreadable git inventory must fail closed')
+
+    def test_tracked_fixtures_reads_the_git_index(self):
+        tracked = CHECK.tracked_fixtures(PATH.resolve().parents[4], PRODUCTION_FIXTURES.resolve())
+        self.assertIn('anchor_selfcheck.py', tracked,
+                      '#977 the checker itself must be a tracked fixture')
+        self.assertIn('host-factory/peer.py', tracked,
+                      '#977 a no-signal exempt script must stay in the git inventory')
+        self.assertNotIn('sample/negative.py', tracked,
+                         '#977 synthetic scratch fixtures are never tracked')
+        self.assertTrue(all(not name.startswith('/') for name in tracked),
+                        '#977 inventory names are relative to the fixtures directory')
+
     def test_each_production_marker_has_a_paired_removal_control(self):
         for name, reason in PRODUCTION_UNSUPPORTED.items():
             with self.subTest(name=name):

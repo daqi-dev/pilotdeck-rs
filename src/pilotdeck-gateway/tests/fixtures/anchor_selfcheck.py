@@ -29,21 +29,24 @@ syntax check, not execution or general Python alias/purity analysis.
 """
 import argparse
 import ast
+import io
 import json
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import subprocess
 import sys
 import time
 import os
+import tokenize
 
 TABLES = {'mutants', 'mutations', 'controls', 'cases', 'runner_mutations'}
 # A script without a declarative, whole-file source replacement table declares
 # its exact exemption in its own header: ``# anchor-selfcheck: unsupported
 # <nonempty reason>`` within the first 20 lines. The reason lives next to the
 # script, so a new control no longer edits one shared allowlist (the #933/#61
-# conflicts). Missing reason, a marker after the limit, and a marker without a
-# script all fail closed.
+# conflicts). Missing reason, a marker after the limit, a marker without a
+# script, and a tracked script missing from the working tree all fail closed.
 MARKER_LINE = '# anchor-selfcheck: unsupported'
 MARKER_LINE_LIMIT = 20
 MARKER_PATTERN = re.compile(r'^#\s*anchor-selfcheck:\s*unsupported(?:\s+(.*))?$')
@@ -1319,6 +1322,28 @@ def exemption_signals(tree):
     return signals
 
 
+def marker_comments(source):
+    """Yield (line number, comment text) for whole-line COMMENT tokens only.
+
+    Marker text inside a string is not a comment, so the pre-#977 line scan
+    (lstrip + regex per source line) cannot decide exemptions; only real
+    tokenize COMMENT tokens can. An inline comment after code on the same
+    line is not a whole-line marker either.
+    """
+    lines = source.split('\n')
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (tokenize.TokenError, SyntaxError, ValueError) as error:
+        raise Unsupported(f'unsupported marker source is not tokenizable: {error}') from error
+    for token in tokens:
+        if token.type != tokenize.COMMENT:
+            continue
+        number, column = token.start
+        if lines[number - 1][:column].strip():
+            continue
+        yield number, token.string
+
+
 def read_marker(script):
     """Return the header's unsupported reason, or None when it has no marker.
 
@@ -1329,10 +1354,7 @@ def read_marker(script):
     if not script.is_file():
         raise Unsupported(f'unsupported marker source does not exist: {script}')
     reason = None
-    for number, line in enumerate(script.read_text(encoding='utf-8').splitlines(), 1):
-        stripped = line.lstrip()
-        if not stripped.startswith('#'):
-            continue
+    for number, stripped in marker_comments(script.read_text(encoding='utf-8')):
         match = MARKER_PATTERN.match(stripped)
         if match is None:
             if re.match(r'^#\s*anchor-selfcheck:', stripped):
@@ -1349,6 +1371,33 @@ def read_marker(script):
     return reason
 
 
+_TRACKED_FIXTURES = {}
+
+
+def tracked_fixtures(root, fixtures):
+    """Names of git-tracked fixture scripts: the discovery expectation.
+
+    The index, not the working tree, is the expectation (#977 fix-r1): an
+    exempt script without an UNSUPPORTED_SIGNALS registration that disappears
+    from disk must still fail closed, so discovery alone cannot decide. An
+    unreadable inventory fails closed too; untracked new scripts stay allowed.
+    """
+    prefix = f'{fixtures.relative_to(root).as_posix()}/'
+    # One git process per (root, fixtures) per process: the index is static
+    # here, and files deleted from disk are still caught because discovery
+    # is recomputed on every check() call and compared against this list.
+    key = (str(root), prefix)
+    if key not in _TRACKED_FIXTURES:
+        listing = subprocess.run(
+            ['git', '-C', str(root), 'ls-files', '--', prefix.rstrip('/')],
+            capture_output=True, text=True)
+        if listing.returncode != 0:
+            raise Unsupported(f'git ls-files failed: {(listing.stderr or "not a git checkout").strip()}')
+        _TRACKED_FIXTURES[key] = {name[len(prefix):] for name in listing.stdout.splitlines()
+                                  if name.startswith(prefix) and name.endswith('.py')}
+    return set(_TRACKED_FIXTURES[key])
+
+
 def check(root, *, anchors_only=False, environ=None):
     root = root.resolve()
     fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
@@ -1359,6 +1408,16 @@ def check(root, *, anchors_only=False, environ=None):
     errors, checked, total, skipped = [], 0, 0, 0
     if not scripts:
         errors.append('no negative scripts discovered')
+    # A tracked script that vanished is an error even without signals or a
+    # marker entry naming it; rglob alone would silently skip it (#977 fix-r1).
+    discovered = {script.relative_to(fixtures).as_posix() for script in scripts}
+    try:
+        expected = tracked_fixtures(root, fixtures)
+    except (Unsupported, OSError) as error:
+        errors.append(f'fixture inventory: {error}')
+        expected = set()
+    for name in sorted(expected - discovered):
+        errors.append(f'missing fixture script: {name}')
     markers, marker_errors = {}, set()
     for script in scripts:
         relative = script.relative_to(fixtures).as_posix()
