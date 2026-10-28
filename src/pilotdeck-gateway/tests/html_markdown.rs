@@ -489,32 +489,108 @@ fn halved_recipe(rule: &serde_json::Value) -> serde_json::Value {
     halved
 }
 
+/// One isolated conversion sample for the linear-budget test (#978): which
+/// case and which size arrive through the environment, so the parent test
+/// times the worker process's CPU instead of its own wall clock. The byte
+/// comparison stays inside the worker, and the shared sampler rejects any
+/// run whose single test did not pass, so a wrong or failed conversion can
+/// never masquerade as a timing sample.
+#[test]
+#[ignore = "#978 isolated CPU sample; invoked by the linear-budget test"]
+fn large_shallow_cpu_worker() {
+    let raw = include_str!("fixtures/html-markdown/large-oracle.json");
+    baseline::oracle(raw);
+    let oracle: serde_json::Value = serde_json::from_str(raw).expect("#978 CPU worker oracle JSON");
+    let cases = oracle["cases"]
+        .as_array()
+        .expect("#978 CPU worker cases array");
+    let index: usize = std::env::var("PDRS_HTML_CPU_CASE")
+        .expect("#978 CPU worker case selector")
+        .parse()
+        .expect("#978 CPU worker case selector is numeric");
+    let size = std::env::var("PDRS_HTML_CPU_SIZE").expect("#978 CPU worker size selector");
+    assert!(
+        matches!(size.as_str(), "full" | "half"),
+        "#978 CPU worker size must be full or half, not {size:?}"
+    );
+    let case = cases
+        .get(index)
+        .unwrap_or_else(|| panic!("#978 CPU worker case {index} is out of range"));
+    let name = case["name"]
+        .as_str()
+        .unwrap_or_else(|| panic!("#978 CPU worker case {index} name"));
+    let recipe = if size == "full" {
+        case["html"].clone()
+    } else {
+        halved_recipe(&case["html"])
+    };
+    let input = expand_large_recipe(&recipe);
+    let actual = Turndown
+        .convert(&input)
+        .unwrap_or_else(|why| panic!("#978 CPU worker {name} conversion failed: {why}"));
+    if size == "full" {
+        let expected = expand_large_recipe(&case["markdown"]);
+        assert_eq!(
+            actual.as_bytes(),
+            expected.as_bytes(),
+            "#978 CPU worker {name} TS bytes differ"
+        );
+    } else {
+        assert!(
+            !actual.is_empty(),
+            "#978 CPU worker {name} halved page empty"
+        );
+    }
+}
+
 #[test]
 fn large_shallow_pages_match_real_ts_bytes_and_stay_fast() {
     use sha2::{Digest, Sha256};
     let raw = include_str!("fixtures/html-markdown/large-oracle.json");
     baseline::oracle(raw);
-    let oracle: serde_json::Value = serde_json::from_str(raw).unwrap();
-    let cases = oracle["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 5);
+    let oracle: serde_json::Value = serde_json::from_str(raw).expect("#978 large-oracle JSON");
+    let cases = oracle["cases"]
+        .as_array()
+        .expect("#978 large-oracle cases array");
+    assert_eq!(cases.len(), 5, "#978 large-oracle must keep five cases");
     let samples = timing::timing_samples();
-    let mut failures = Vec::new();
-    for case in cases {
-        let name = case["name"].as_str().unwrap();
+    for (index, case) in cases.iter().enumerate() {
+        let name = case["name"]
+            .as_str()
+            .unwrap_or_else(|| panic!("#978 large-oracle case {index} name"));
         let html = expand_large_recipe(&case["html"]);
         let expected = expand_large_recipe(&case["markdown"]);
-        assert_eq!(html.len() as u64, case["htmlBytes"].as_u64().unwrap());
+        let html_bytes = case["htmlBytes"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("#978 {name}: htmlBytes is not a number"));
+        let markdown_bytes = case["markdownBytes"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("#978 {name}: markdownBytes is not a number"));
         assert_eq!(
-            expected.len() as u64,
-            case["markdownBytes"].as_u64().unwrap()
+            html.len() as u64,
+            html_bytes,
+            "#978 {name}: expanded HTML bytes"
         );
         assert_eq!(
+            expected.len() as u64,
+            markdown_bytes,
+            "#978 {name}: expanded Markdown bytes"
+        );
+        let html_sha = case["htmlSha256"]
+            .as_str()
+            .unwrap_or_else(|| panic!("#978 {name}: htmlSha256 is not a string"));
+        let markdown_sha = case["markdownSha256"]
+            .as_str()
+            .unwrap_or_else(|| panic!("#978 {name}: markdownSha256 is not a string"));
+        assert_eq!(
             format!("{:x}", Sha256::digest(html.as_bytes())),
-            case["htmlSha256"].as_str().unwrap()
+            html_sha,
+            "#978 {name}: expanded HTML hash"
         );
         assert_eq!(
             format!("{:x}", Sha256::digest(expected.as_bytes())),
-            case["markdownSha256"].as_str().unwrap()
+            markdown_sha,
+            "#978 {name}: expanded Markdown hash"
         );
         let halved = expand_large_recipe(&halved_recipe(&case["html"]));
         // The scaling ratio's premise is that the halved recipe really is
@@ -525,54 +601,45 @@ fn large_shallow_pages_match_real_ts_bytes_and_stay_fast() {
         let halved_ratio = halved.len() as f64 / html.len() as f64;
         assert!(
             (0.4..=0.6).contains(&halved_ratio),
-            "{name}: halved recipe is {halved_ratio:.3}x the full bytes; \
+            "#978 {name}: halved recipe is {halved_ratio:.3}x the full bytes; \
              the doubling premise of the scaling ratio no longer holds"
         );
-        let error = std::cell::RefCell::new(None);
-        let (half_elapsed, full_elapsed) = timing::fastest_scaling(name, samples, |full| {
-            let (input, want) = if full {
-                (&html, Some(expected.as_str()))
-            } else {
-                (&halved, None)
-            };
-            let started = std::time::Instant::now();
-            let actual = Turndown.convert(input);
-            let elapsed = started.elapsed();
-            match actual {
-                Ok(actual) => match want {
-                    Some(want) => assert!(
-                        actual.as_bytes() == want.as_bytes(),
-                        "{name}: TS bytes differ"
+        // #978: judge the scaling on the CPU seconds of isolated worker
+        // processes, not on this process's wall clock — a loaded host
+        // preempted the full-size samples and reddened the ratio (4.78 s vs
+        // 3x · 1.42 s + 0.15 s on the CI runner). Sample count, the
+        // interleaving, the 3x + 150 ms band and the per-sample cap are
+        // unchanged; the byte assertions moved into the worker, which the
+        // sampler only accepts after exactly one green test.
+        let (half_cpu, full_cpu) = timing::fastest_scaling(name, samples, |full| {
+            timing::cpu_time_isolated(
+                "large_shallow_cpu_worker",
+                &[
+                    ("PDRS_HTML_CPU_CASE", index.to_string()),
+                    (
+                        "PDRS_HTML_CPU_SIZE",
+                        if full { "full" } else { "half" }.to_string(),
                     ),
-                    None => assert!(!actual.is_empty(), "{name}: halved page empty"),
-                },
-                Err(why) => *error.borrow_mut() = Some(why),
-            }
-            elapsed
+                ],
+            )
         });
-        if let Some(why) = error.into_inner() {
-            failures.push(format!("{name}: {why}"));
-            continue;
-        }
         eprintln!(
-            "{name}: {} HTML bytes, fastest of {samples}: full {full_elapsed:?}, half {half_elapsed:?}",
+            "{name}: {} HTML bytes, fastest of {samples}: full CPU {full_cpu:?}, half CPU {half_cpu:?}",
             html.len()
         );
         // ~2.1 million DOM nodes at 10 MiB. Doubling the input doubles linear
-        // conversion work; the ratio keeps a preempted single sample from
-        // turning the test red on a loaded host.
+        // conversion work; a quadratic implementation needs about 4x.
         timing::assert_within_linear_band(
             &format!("{name}: full page"),
-            half_elapsed,
-            full_elapsed,
+            half_cpu,
+            full_cpu,
             samples,
         );
         // Constant-factor backstop: the pre-4fbb5f78b moved-subtree rewalk
         // scaled linearly at ~36x the cost per byte, invisible to the ratio;
         // see timing::assert_within_per_sample_cap.
-        timing::assert_within_per_sample_cap(&format!("{name}: full page"), full_elapsed, samples);
+        timing::assert_within_per_sample_cap(&format!("{name}: full page"), full_cpu, samples);
     }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]

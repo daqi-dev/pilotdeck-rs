@@ -147,6 +147,13 @@ SHA256。编码器会展开输出并与真实 TS 原始字节比较；Rust 回�
 （与 `html_compat` 的 deep-frame 单测同一份）。`large_shallow` 与 `ten_mib` 仍把
 主重复减半：半幅展开后先断言字节数在全幅的 40%–60% 之间（否则「输入翻倍」前提
 不成立），再交错采样取各自最快值，断言 full ≤ 3 × half + 150 ms（二次约 4x）。
+#978 第三批起 `large_shallow` 的采样改为子进程 CPU 秒（`timing::cpu_time_isolated`
+拉起本二进制里 `#[ignore]` 的 `large_shallow_cpu_worker`，用例与幅面经
+`PDRS_HTML_CPU_CASE`/`PDRS_HTML_CPU_SIZE` 选择；与 #987 给 `html_compat`
+deep-frame 改的是同一份助手）：负载只会拉长墙钟，不再污染比值，而二次 join 的
+变异在 release 下仍以 half 9.4 s / full 36.4 s 超出 3x + 150 ms 判据。字节断言移入
+worker，采样器只接受恰好一条绿色 `test result:` 的样本，转换失败或字节不符都以
+专属消息直接红。`ten_mib` 与 `reparented` 仍为墙钟采样（另列跟进）。
 `reparented_wide_subtrees_stay_fast`（#873）改用两对 8× 输入：256 KiB/2 MiB 的
 小探针与 1 MiB/8 MiB 的主回归；线性增长约 8x、二次约 64x，判据取几何中点
 8^1.5 ≈ 22.6x（两侧各留 2.83x），并用 5 轮交错采样的成对 `large/small` 比值中位数
