@@ -8,16 +8,25 @@ import sys
 if not sys.flags.isolated:
     raise SystemExit(f'run with -I: python3 -I {__file__}')
 
+import importlib.util
+from pathlib import Path
+
+# The bootstrap itself is also loaded from source by its exact sibling path.
+_bootstrap_path = Path(__file__).resolve().with_name('_bootstrap.py')
+_bootstrap_spec = importlib.util.spec_from_file_location('_cli_parity_bootstrap', _bootstrap_path)
+_bootstrap = importlib.util.module_from_spec(_bootstrap_spec)
+exec(compile(_bootstrap_path.read_bytes(), str(_bootstrap_path), 'exec'), _bootstrap.__dict__)
+_load = _bootstrap.load
+
 import ast
 import base64
 import hashlib
 from contextlib import contextmanager, nullcontext, redirect_stdout
-import importlib.util
 import io
 from itertools import combinations
 import json
 import os
-from pathlib import Path
+import re
 import shutil
 import signal
 import socket
@@ -28,37 +37,6 @@ import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
-
-# Load apparatus modules by explicit path, never sys.path: a same-named package
-# or extension module beside the source would win before the scan (#701 item 3,
-# same defect gateway-parity fix-r6 P1).  Inline on purpose: importing common.py
-# is what this block defends.
-sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-cli-parity-pyc-')
-sys.dont_write_bytecode = True
-
-
-def _load(name, path):
-    path = Path(path).resolve()
-    existing = sys.modules.get(name)
-    existing_file = getattr(existing, '__file__', None)
-    if existing is not None and existing_file and Path(existing_file).resolve() == path:
-        if not isinstance(getattr(existing, '_apparatus_source', None), bytes):
-            raise RuntimeError(f'unverified apparatus module cache: {path}')
-        return existing
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    try:
-        source = path.read_bytes()
-        exec(compile(source, str(path), 'exec'), module.__dict__)
-    except BaseException:
-        sys.modules.pop(name, None)
-        raise
-    module._apparatus_source = source
-    if Path(module.__file__).resolve() != path:
-        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
-    return module
-
 
 _here = Path(__file__).resolve().parent
 _common = _load('common', _here / 'common.py')
@@ -300,7 +278,7 @@ def synthetic_round(path, runtime, scenario_fixtures=False):
              'processTree': [{'pid': 123, 'ppid': 1, 'pgid': 123, 'state': 'Z', 'command': 'synthetic'}]})
 
 
-APPARATUS_MODULES = ('common', 'policy', 'compare', 'controls', 'run_round', 'host_negative_controls')
+APPARATUS_MODULES = ('_bootstrap', 'common', 'policy', 'compare', 'controls', 'run_round', 'host_negative_controls')
 
 
 def module_statements(source):
@@ -311,15 +289,27 @@ def module_statements(source):
     return body
 
 
+ENTRY_FILES = ('compare.py', 'controls.py', 'host_negative_controls.py',
+               'run_round.py', 'test_cli_parity.py', 'policy.py')
+BOOTSTRAP_PREFIX = """\
+import importlib.util
+from pathlib import Path
+_bootstrap_path = Path(__file__).resolve().with_name('_bootstrap.py')
+_bootstrap_spec = importlib.util.spec_from_file_location('_cli_parity_bootstrap', _bootstrap_path)
+_bootstrap = importlib.util.module_from_spec(_bootstrap_spec)
+exec(compile(_bootstrap_path.read_bytes(), str(_bootstrap_path), 'exec'), _bootstrap.__dict__)
+_load = _bootstrap.load
+"""
+
+
 class BootstrapTests(unittest.TestCase):
     """#701 item 3: entries reject same-directory imposters before loading one."""
 
     def test_isolated_guard_is_the_first_statement(self):
-        for name in ('compare.py', 'controls.py', 'host_negative_controls.py',
-                     'run_round.py', 'test_cli_parity.py', 'policy.py'):
+        for name in ENTRY_FILES:
             with self.subTest(entry=name):
                 body = module_statements((SCRIPT / name).read_text())
-                self.assertGreaterEqual(len(body), 2)
+                self.assertGreaterEqual(len(body), 2, f'#701: {name}: missing isolated guard')
                 self.assertEqual(ast.unparse(body[0]), 'import sys',
                                  f'#701: {name}: only "import sys" may load before the guard')
                 guard = body[1]
@@ -331,8 +321,7 @@ class BootstrapTests(unittest.TestCase):
                                 f'#701: {name}: the guard must exit before loading anything')
 
     def test_apparatus_modules_load_by_explicit_path_only(self):
-        for name in ('common.py', 'compare.py', 'controls.py', 'host_negative_controls.py',
-                     'policy.py', 'run_round.py', 'test_cli_parity.py'):
+        for name in ENTRY_FILES + ('common.py', '_bootstrap.py'):
             tree = ast.parse((SCRIPT / name).read_text())
             with self.subTest(entry=name):
                 for node in ast.walk(tree):
@@ -350,19 +339,61 @@ class BootstrapTests(unittest.TestCase):
                                 and isinstance(target.value, ast.Name) and target.value.id == 'sys'):
                             self.fail(f'#701: {name}:{node.lineno}: sys.path.{node.func.attr} is forbidden')
 
-    def test_explicit_loader_ignores_a_same_name_package(self):
+    def test_entries_use_shared_bootstrap(self):
+        expected = ast.parse(BOOTSTRAP_PREFIX).body
+        for name in ENTRY_FILES:
+            with self.subTest(entry=name):
+                source = (SCRIPT / name).read_text()
+                tree = ast.parse(source)
+                body = module_statements(source)
+                self.assertEqual(
+                    [ast.dump(node) for node in body[2:2 + len(expected)]],
+                    [ast.dump(node) for node in expected],
+                    f'#701: {name}: must load the shared bootstrap by explicit source path')
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        self.assertNotEqual(node.name, '_load',
+                                            f'#701: {name}: entry must not define its own _load')
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                        self.assertNotEqual(node.func.id, '__import__',
+                                            f'#701: {name}: dynamic bare import is forbidden')
+                for binding in ('_load', '_bootstrap', '_bootstrap_path', '_bootstrap_spec'):
+                    stores = [node for node in ast.walk(tree)
+                              if isinstance(node, ast.Name) and node.id == binding
+                              and isinstance(node.ctx, (ast.Store, ast.Del))]
+                    self.assertEqual(len(stores), 1,
+                                     f'#701: {name}: shared bootstrap binding {binding} must not change')
+
+    def test_documented_commands_use_isolated_mode(self):
+        # Search every tracked location, including fixture docs and CI/scripts.
+        result = subprocess.run(
+            ['git', 'grep', '-l', '-E', r'python3 .*scripts/cli-parity/'],
+            cwd=ROOT, capture_output=True, text=True, timeout=30)
+        self.assertIn(result.returncode, (0, 1), '#701: command inventory must complete')
+        invocation = re.compile(
+            r'\bpython3[ \t]+(?P<flags>(?:-[A-Za-z]+[ \t]+)*)(?:\./)?scripts/cli-parity/[\w]+\.py')
+        for relative in result.stdout.splitlines():
+            for number, line in enumerate((ROOT / relative).read_text().splitlines(), 1):
+                for match in invocation.finditer(line):
+                    self.assertIn('-I', match.group('flags').split(),
+                                  f'#701: {relative}:{number}: CLI parity command requires -I')
+
+    def test_each_entry_starts_isolated_with_imposter_packages(self):
         with tempfile.TemporaryDirectory(prefix='d0-bootstrap-') as temp:
             mirror = Path(temp)
-            for name in ('common.py', 'policy.py', 'compare.py', 'scenarios.json', 'chat-search.json'):
+            for name in ENTRY_FILES + ('_bootstrap.py', 'common.py', 'scenarios.json', 'chat-search.json'):
                 shutil.copy2(SCRIPT / name, mirror / name)
-            (mirror / 'common').mkdir()
-            (mirror / 'common' / '__init__.py').write_text(
-                'raise RuntimeError("imposter package loaded")\n')
-            result = subprocess.run([sys.executable, '-I', str(mirror / 'compare.py'), '-h'],
-                                    capture_output=True, text=True, timeout=60)
-            self.assertEqual(result.returncode, 0,
-                             f'#701: a same-named package must not shadow common.py: {result.stderr}')
-            self.assertEqual(result.stderr, '', '#701: the imposter package must never execute')
+            for name in ('_bootstrap', 'common', 'policy', 'compare'):
+                (mirror / name).mkdir()
+                (mirror / name / '__init__.py').write_text(
+                    'raise RuntimeError("imposter package loaded")\n')
+            for name in ENTRY_FILES:
+                with self.subTest(entry=name):
+                    result = subprocess.run([sys.executable, '-I', str(mirror / name), '-h'],
+                                            capture_output=True, text=True, timeout=60)
+                    self.assertEqual(result.returncode, 0,
+                                     f'#701: {name}: isolated startup must ignore packages: {result.stderr}')
+                    self.assertEqual(result.stderr, '', f'#701: {name}: imposter must never execute')
 
 
 class ContractTests(unittest.TestCase):

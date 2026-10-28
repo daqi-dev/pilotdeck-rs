@@ -13,7 +13,7 @@ src/pilotdeck-cli/tests/fixtures/chat-search/generate.mts /tmp/pdrs-chat-golden-
 D0 的 30 个场景是本 JSON 的子集，沿用相同夹具、argv、stdout、stderr 与退出码，注册于 `scripts/cli-parity/chat-search.json`。通过 `PDRS_CLI_PARITY_SUITE=chat-search` 选择此批次；运行器与比较器均须使用相同变量。全量默认批次保持原样。场景派生可重跑 `node scripts/cli-parity/generate_chat_search.mjs > scripts/cli-parity/chat-search.json`，期望字节直接取自 oracle。
 
 ```sh
-PDRS_CLI_PARITY_SUITE=chat-search python3 scripts/cli-parity/run_round.py \
+PDRS_CLI_PARITY_SUITE=chat-search python3 -I scripts/cli-parity/run_round.py \
   --baseline /Users/da/ws/pilotdeck-rs/resources/PilotDeck \
   --node /opt/homebrew/bin/node --output _tmp/20261023-d2-pr2-chat-search/d0 \
   --rust-bin "$PWD/src/target/debug/pilotdeck" --rust-source "$PWD"

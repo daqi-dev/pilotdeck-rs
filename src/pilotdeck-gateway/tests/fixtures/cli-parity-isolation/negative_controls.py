@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-# anchor-selfcheck: unsupported environment-level imposter files and subprocess isolation checks, no source replacement table
+# anchor-selfcheck: unsupported environment imposters and in-memory AST source checks, no in-place source replacement table
 """#701 item 3 negative controls: cli-parity entries must ignore same-dir imposters.
 
-Each row mutates the *environment* beside the apparatus (a same-named package
-directory, or a stdlib module file that only ``-I`` keeps out of ``sys.path``)
-and must be KILLED: the entry loads the real apparatus file or exits at the
-isolated guard, and the imposter never executes.  SURVIVED means the pre-fix
-behaviour came back; INVALID means the check could not run (stale path, syntax
-error, or a witness that failed to exercise the resolver).
+Environment rows place imposter packages/extensions beside the apparatus;
+source rows feed compiled mutants to named unittest assertions in memory or
+in the unit test's temporary Python mirror, never in checkout source files.
+KILLED requires the bound assertion or an environment witness proving the
+imposter cannot execute. SURVIVED means the old behaviour returned; INVALID
+means the test could not run, compile, or reach the exclusive assertion.
 
 The in-place window holds ``common.parity_lock()`` so no calibration round can
 observe a half-written apparatus.  Every imposter is removed in a ``finally``;
@@ -18,6 +18,7 @@ import argparse
 import ast
 import importlib.util
 import json
+import io
 import os
 from pathlib import Path
 import shutil
@@ -25,13 +26,15 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[5]
 DEFAULT_APPARATUS = ROOT / 'scripts/cli-parity'
 ENTRY_FILES = ('compare.py', 'controls.py', 'host_negative_controls.py',
                'run_round.py', 'test_cli_parity.py')
 GUARDED_FILES = ENTRY_FILES + ('policy.py',)
-APPARATUS_MODULES = ('common', 'policy', 'compare', 'controls', 'run_round',
+APPARATUS_MODULES = ('_bootstrap', 'common', 'policy', 'compare', 'controls', 'run_round',
                      'host_negative_controls')
 IMPOSTERS = (('common', 'compare.py'), ('policy', 'compare.py'),
              ('compare', 'controls.py'))
@@ -57,29 +60,12 @@ PyMODINIT_FUNC PyInit_common(void) {
 '''
 
 
-def load(name, path):
-    path = Path(path).resolve()
-    existing = sys.modules.get(name)
-    existing_file = getattr(existing, '__file__', None)
-    if existing is not None and existing_file and Path(existing_file).resolve() == path:
-        if not isinstance(getattr(existing, '_apparatus_source', None), bytes):
-            raise RuntimeError(f'unverified apparatus module cache: {path}')
-        return existing
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    try:
-        source = path.read_bytes()
-        exec(compile(source, str(path), 'exec'), module.__dict__)
-    except BaseException:
-        sys.modules.pop(name, None)
-        raise
-    module._apparatus_source = source
-    if Path(module.__file__).resolve() != path:
-        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
-    return module
-
-
+# Use the same source-only loader as the entries; this fixture has no copy.
+_bootstrap_path = DEFAULT_APPARATUS / '_bootstrap.py'
+_bootstrap_spec = importlib.util.spec_from_file_location('_cli_parity_bootstrap', _bootstrap_path)
+_bootstrap = importlib.util.module_from_spec(_bootstrap_spec)
+exec(compile(_bootstrap_path.read_bytes(), str(_bootstrap_path), 'exec'), _bootstrap.__dict__)
+load = _bootstrap.load
 COMMON = load('common', DEFAULT_APPARATUS / 'common.py')
 
 
@@ -153,7 +139,7 @@ def record(rows, name, status, reason):
 
 
 def static_checks(apparatus, rows):
-    for name in GUARDED_FILES + ('common.py',):
+    for name in GUARDED_FILES + ('common.py', '_bootstrap.py'):
         path = apparatus / name
         try:
             tree = ast.parse(path.read_text(encoding='utf-8'))
@@ -287,15 +273,155 @@ def extension_check(apparatus, rows, holder):
         target.unlink(missing_ok=True)
 
 
+class AssertionResult(unittest.TextTestResult):
+    """Retain actual exception identities; source/log echoes cannot earn a kill."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.assertions = []
+
+    def addFailure(self, test, error):
+        self.assertions.append((test.id(), error[0], str(error[1])))
+        super().addFailure(test, error)
+
+    def addSubTest(self, test, subtest, error):
+        if error is not None:
+            self.assertions.append((test.id(), error[0], str(error[1])))
+        super().addSubTest(test, subtest, error)
+
+
+def bootstrap_regressions(apparatus):
+    """Compile source mutants before testing AST inputs or a temporary test mirror."""
+    method = 'test_entries_use_shared_bootstrap'
+    for entry in GUARDED_FILES:
+        path = apparatus / entry
+        original = path.read_text()
+        yield (f'bootstrap/local-load/{entry}', path,
+               original + '\ndef _load(name, path):\n    return __import__(name)\n', method,
+               f'#701: {entry}: entry must not define its own _load')
+        yield (f'bootstrap/bare-load/{entry}', path,
+               original.replace('_load = _bootstrap.load', '_load = __import__', 1), method,
+               f'#701: {entry}: must load the shared bootstrap by explicit source path')
+        for binding in ('_load', '_bootstrap', '_bootstrap_path', '_bootstrap_spec'):
+            yield (f'bootstrap/rebind-{binding}/{entry}', path,
+                   original + f'\n{binding} = None\n', method,
+                   f'#701: {entry}: shared bootstrap binding {binding} must not change')
+        yield (f'bootstrap/dynamic-import/{entry}', path,
+               original + "\n__import__('common')\n", method,
+               f'#701: {entry}: dynamic bare import is forbidden')
+        yield (f'bootstrap/runtime-bare-load/{entry}', path,
+               original.replace('_load = _bootstrap.load',
+                                'def _load(name, path):\n    return __import__(name)', 1),
+               'test_each_entry_starts_isolated_with_imposter_packages',
+               f'#701: {entry}: isolated startup must ignore packages')
+    path = apparatus / '_bootstrap.py'
+    line = len(path.read_text().splitlines()) + 2
+    yield ('bootstrap/library-bare-import', path, path.read_text() + '\nimport common\n',
+           'test_apparatus_modules_load_by_explicit_path_only',
+           f'#701: _bootstrap.py:{line}: bare apparatus import')
+    yield ('bootstrap/library-path-mutation', path, path.read_text() + "\nsys.path.append('.')\n",
+           'test_apparatus_modules_load_by_explicit_path_only',
+           f'#701: _bootstrap.py:{line}: sys.path.append is forbidden')
+    path = ROOT / 'src/pilotdeck-cli/tests/fixtures/chat-search/README.md'
+    yield ('commands/chat-search-without-I', path,
+           path.read_text().replace('python3 -I scripts/cli-parity/', 'python3 scripts/cli-parity/'),
+           'test_documented_commands_use_isolated_mode',
+           '#701: src/pilotdeck-cli/tests/fixtures/chat-search/README.md:16: CLI parity command requires -I')
+
+
+def bootstrap_checks(apparatus, rows, output, selection):
+    module = load('test_cli_parity', apparatus / 'test_cli_parity.py')
+    selected = [row for row in bootstrap_regressions(apparatus)
+                if not selection or row[0] == selection]
+    if not selected:
+        record(rows, selection, 'INVALID', 'unknown bootstrap regression name')
+        return
+    read_text = Path.read_text
+    copy2 = shutil.copy2
+
+    def run_test(method, path=None, source=None):
+        def substituted(candidate, *args, **kwargs):
+            if path is not None and candidate.resolve() == path.resolve():
+                return source
+            return read_text(candidate, *args, **kwargs)
+        def copied(candidate, destination, *args, **kwargs):
+            if path is not None and Path(candidate).resolve() == path.resolve():
+                # Only the unit test's small temporary apparatus mirror is
+                # changed. No checkout source, git metadata or build is copied.
+                Path(destination).write_text(source)
+                return str(destination)
+            return copy2(candidate, destination, *args, **kwargs)
+        stream = io.StringIO()
+        with patch.object(Path, 'read_text', substituted), patch.object(shutil, 'copy2', copied):
+            result = unittest.TextTestRunner(stream=stream, verbosity=2,
+                                            resultclass=AssertionResult).run(
+                unittest.TestSuite([module.BootstrapTests(method)]))
+        return result, stream.getvalue()
+
+    for name, path, changed, method, assertion in selected:
+        test = 'test_cli_parity.BootstrapTests.' + method
+        status, reason, compiled = 'INVALID', '', False
+        logs = []
+        try:
+            positive, log = run_test(method)
+            logs.append('POSITIVE\n' + log)
+            if positive.testsRun != 1 or not positive.wasSuccessful():
+                raise RuntimeError('bound positive test did not pass')
+            if changed == read_text(path):
+                raise RuntimeError('stale mutation anchor; source did not change')
+            if path.suffix == '.py':
+                compile(changed, str(path), 'exec')
+                compiled = True
+                logs.append('COMPILE: Python source accepted\n')
+            else:
+                logs.append('COMPILE: not applicable to Markdown command mutation\n')
+            negative, log = run_test(method, path, changed)
+            logs.append('NEGATIVE\n' + log)
+            if negative.testsRun != 1 or negative.errors or negative.skipped:
+                status, reason = 'INVALID', 'wrong test count, error, or skip'
+            elif negative.wasSuccessful():
+                status, reason = 'SURVIVED', 'bound test still passed'
+            elif (negative.assertions
+                  and all(full_name == test and kind is AssertionError
+                          for full_name, kind, _message in negative.assertions)
+                  and any(assertion in message for _full_name, _kind, message in negative.assertions)):
+                status, reason = 'KILLED', 'bound test raised its exclusive assertion'
+            else:
+                status, reason = 'INVALID', 'wrong failure point or assertion'
+        except Exception as error:
+            status, reason = 'INVALID', f'{type(error).__name__}: {error}'
+        try:
+            restored, log = run_test(method)
+            logs.append('RESTORED (memory substitution removed)\n' + log)
+            if restored.testsRun != 1 or not restored.wasSuccessful():
+                status, reason = 'INVALID', reason + '; restored bound test did not pass'
+        except Exception as error:
+            status, reason = 'INVALID', reason + f'; restored: {type(error).__name__}: {error}'
+        if output:
+            with (output / (name.replace('/', '-') + '.log')).open('x') as stream:
+                stream.write(''.join(logs))
+        else:
+            print(''.join(logs), flush=True)
+        record(rows, name, status, reason)
+        rows[-1].update(test=test, assertion=assertion, compiled=compiled,
+                        mutationKind=('temporary unit-test mirror' if method.startswith('test_each_entry') else
+                                      'in-memory AST input' if path.suffix == '.py' else 'in-memory document'))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apparatus', type=Path, default=DEFAULT_APPARATUS,
                         help='apparatus directory to exercise (default: this checkout)')
     parser.add_argument('--output', type=Path,
                         help='directory for summary.json (optional)')
+    parser.add_argument('--bootstrap-only', action='store_true',
+                        help='only run bootstrap/document regressions')
+    parser.add_argument('--case', help='one bootstrap regression name (requires --bootstrap-only)')
     args = parser.parse_args()
+    if args.case and not args.bootstrap_only:
+        parser.error('--case requires --bootstrap-only')
     apparatus = args.apparatus.resolve()
-    missing = [name for name in ('common.py',) + ENTRY_FILES + ('scenarios.json',)
+    missing = [name for name in ('common.py', '_bootstrap.py', 'policy.py') + ENTRY_FILES + ('scenarios.json',)
                if not (apparatus / name).is_file()]
     if missing:
         print(json.dumps({'status': 'BLOCKED', 'error': f'missing apparatus files: {missing}'}))
@@ -309,14 +435,18 @@ def main():
         print(json.dumps({'status': 'BLOCKED', 'error': f'stale imposter paths: {stale}'}))
         return 2
     rows = []
+    if args.output:
+        args.output.mkdir(parents=True, exist_ok=False)
     try:
         with COMMON.parity_lock():
             holder = Path(tempfile.mkdtemp(prefix='pdrs-cli-parity-neg-'))
             try:
-                static_checks(apparatus, rows)
-                no_isolated_checks(apparatus, rows, holder)
-                package_checks(apparatus, rows, holder)
-                extension_check(apparatus, rows, holder)
+                bootstrap_checks(apparatus, rows, args.output, args.case)
+                if not args.bootstrap_only:
+                    static_checks(apparatus, rows)
+                    no_isolated_checks(apparatus, rows, holder)
+                    package_checks(apparatus, rows, holder)
+                    extension_check(apparatus, rows, holder)
             finally:
                 shutil.rmtree(holder, ignore_errors=True)
     except BaseException as error:
@@ -328,7 +458,6 @@ def main():
               for state in ('KILLED', 'SURVIVED', 'INVALID')}
     summary = {'apparatus': str(apparatus), 'controls': rows, 'counts': counts}
     if args.output:
-        args.output.mkdir(parents=True, exist_ok=True)
         (args.output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps({'apparatus': str(apparatus), 'counts': counts}))
     return 0 if counts['KILLED'] == len(rows) and rows else 1
