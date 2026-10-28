@@ -151,7 +151,10 @@ SHA256。编码器会展开输出并与真实 TS 原始字节比较；Rust 回�
 拉起本二进制里 `#[ignore]` 的 `large_shallow_cpu_worker`，用例与幅面经
 `PDRS_HTML_CPU_CASE`/`PDRS_HTML_CPU_SIZE` 选择；与 #987 给 `html_compat`
 deep-frame 改的是同一份助手）：负载只会拉长墙钟，不再污染比值，而二次 join 的
-变异在 release 下仍以 half 9.4 s / full 36.4 s 超出 3x + 150 ms 判据。字节断言移入
+变异在 release 下至少被本测试两道专属计时防线之一拦下——half 9.4 s / full 36.4 s
+时超出 3x + 150 ms 判据；宿主 macmini 的 12.4 s / 34.0 s（2.74x）落回带内时，
+则由每样本 5 s 上限以 `#978 … per-sample budget` 专属消息拦下（负控接受二者
+之一，但都要求 `#978` 标记）。字节断言移入
 worker，采样器只接受恰好一条绿色 `test result:` 的样本，转换失败或字节不符都以
 专属消息直接红。`ten_mib` 与 `reparented` 仍为墙钟采样（另列跟进）。
 `reparented_wide_subtrees_stay_fast`（#873）改用两对 8× 输入：256 KiB/2 MiB 的

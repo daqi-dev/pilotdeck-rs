@@ -445,13 +445,17 @@ fn expand_large_recipe(rule: &serde_json::Value) -> String {
     if let Some(text) = rule.as_str() {
         return text.to_owned();
     }
-    rule["parts"]
+    let parts = rule["parts"]
         .as_array()
-        .unwrap()
+        .unwrap_or_else(|| panic!("#978 large recipe parts must be an array: {rule}"));
+    let repeat = rule["repeat"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("#978 large recipe repeat must be a number: {rule}"));
+    parts
         .iter()
         .map(expand_large_recipe)
         .collect::<String>()
-        .repeat(rule["repeat"].as_u64().unwrap() as usize)
+        .repeat(repeat as usize)
 }
 
 /// The same recipe with its dominant (largest) repeat halved: the same shape
@@ -484,7 +488,7 @@ fn halved_recipe(rule: &serde_json::Value) -> serde_json::Value {
     let dominant = dominant(&halved);
     assert!(
         halve_first(&mut halved, dominant),
-        "recipe must contain a repeat"
+        "#978 recipe must contain a repeat"
     );
     halved
 }
@@ -629,8 +633,12 @@ fn large_shallow_pages_match_real_ts_bytes_and_stay_fast() {
         );
         // ~2.1 million DOM nodes at 10 MiB. Doubling the input doubles linear
         // conversion work; a quadratic implementation needs about 4x.
+        // Both timing guards below are dedicated to this issue: a quadratic
+        // join can land inside the 3x ratio band at this size (the host
+        // measured 33.96 s / 12.41 s = 2.74x) and be stopped by the per-sample
+        // cap instead, so either failure line must be recognisable as #978.
         timing::assert_within_linear_band(
-            &format!("{name}: full page"),
+            &format!("#978 {name}: full page"),
             half_cpu,
             full_cpu,
             samples,
@@ -638,7 +646,7 @@ fn large_shallow_pages_match_real_ts_bytes_and_stay_fast() {
         // Constant-factor backstop: the pre-4fbb5f78b moved-subtree rewalk
         // scaled linearly at ~36x the cost per byte, invisible to the ratio;
         // see timing::assert_within_per_sample_cap.
-        timing::assert_within_per_sample_cap(&format!("{name}: full page"), full_cpu, samples);
+        timing::assert_within_per_sample_cap(&format!("#978 {name}: full page"), full_cpu, samples);
     }
 }
 
@@ -679,8 +687,13 @@ fn ten_mib_of_flat_inline_siblings_stays_fast() {
          full {full_elapsed:?}, half {half_elapsed:?}",
         html.len()
     );
-    timing::assert_within_linear_band("flat inline: 10 MiB", half_elapsed, full_elapsed, samples);
-    timing::assert_within_per_sample_cap("flat inline: 10 MiB", full_elapsed, samples);
+    timing::assert_within_linear_band(
+        "#978 flat inline: 10 MiB",
+        half_elapsed,
+        full_elapsed,
+        samples,
+    );
+    timing::assert_within_per_sample_cap("#978 flat inline: 10 MiB", full_elapsed, samples);
 }
 
 #[test]
