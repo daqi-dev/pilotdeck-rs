@@ -147,12 +147,18 @@ fn help_aliases_and_flags_match_ts_bytes() {
         .arg("help")
         .spawn()
         .expect("#982 spawn pilotdeck with stdin");
-    child
+    // help never reads stdin and may exit before the write lands, so a broken
+    // pipe is the expected outcome rather than a failure (#1007).
+    match child
         .stdin
-        .as_mut()
+        .take()
         .expect("#982 stdin pipe")
         .write_all(b"must not replace argv\n")
-        .expect("#982 stdin write");
+    {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(error) => panic!("#982 stdin write: {error:?}"),
+    }
     let output = child.wait_with_output().expect("#982 help stdin output");
     assert_eq!(
         output.status.code(),
