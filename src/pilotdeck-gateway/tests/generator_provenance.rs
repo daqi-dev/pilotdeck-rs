@@ -508,6 +508,8 @@ fn regeneration_companions_reject_missing_corrupt_and_symlink_files() {
         ("interaction-events", 1),
         ("interaction-permission", 3),
         ("stats-dateparse", 1),
+        // Non-macOS generators omit this kernel-dependent companion entirely.
+        ("skills-tree-files", usize::from(cfg!(target_os = "macos"))),
         ("user-dialog", 1),
         ("upload", 5),
         ("operation-ledger", 34),
