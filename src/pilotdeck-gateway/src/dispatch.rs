@@ -139,15 +139,18 @@ pub(crate) fn route_with_metadata<F: Files>(
                         // `Route::Forward` for the shapes whose text Node
                         // never produces (a primitive constructor, an
                         // unconvertible `constructor.name`).
-                        let Some(received) = crate::metadata::argument_received(root) else {
+                        let crate::metadata::ArgumentReceived::Text(received) =
+                            crate::metadata::argument_received(root)
+                        else {
                             return Route::Forward;
                         };
-                        Err((
-                            "ERR_INVALID_ARG_TYPE",
-                            format!(
-                                "The \"paths[0]\" argument must be of type string. Received {received}"
-                            ),
-                        ))
+                        let Ok(message) =
+                            crate::metadata::invalid_arg_type_message("paths[0]", &received)
+                                .to_utf8()
+                        else {
+                            return Route::Forward;
+                        };
+                        Err(("ERR_INVALID_ARG_TYPE", message))
                     }
                 }
             }

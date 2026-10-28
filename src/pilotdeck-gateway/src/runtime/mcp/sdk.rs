@@ -804,13 +804,16 @@ fn project_key(input: &JsValue) -> Result<Option<JsString>, SdkMcpError> {
     match input.get("projectKey") {
         None | Some(JsValue::Undefined) | Some(JsValue::Null) => Ok(None),
         Some(JsValue::String(key)) => Ok(Some(key.clone())),
-        Some(value) => Err(SdkMcpError::type_error_with_code(
-            "ERR_INVALID_ARG_TYPE",
-            format!(
-                "The \"paths[0]\" argument must be of type string. Received {}",
-                crate::metadata::argument_received(value).unwrap_or_else(|| "[Object]".into())
-            ),
-        )),
+        Some(value) => {
+            let received = match crate::metadata::argument_received(value) {
+                crate::metadata::ArgumentReceived::Text(received) => received,
+                crate::metadata::ArgumentReceived::Throws { .. } => "[Object]".into(),
+            };
+            Err(SdkMcpError::type_error_with_code(
+                "ERR_INVALID_ARG_TYPE",
+                crate::metadata::invalid_arg_type_message("paths[0]", &received),
+            ))
+        }
     }
 }
 

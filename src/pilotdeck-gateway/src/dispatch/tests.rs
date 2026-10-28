@@ -325,6 +325,35 @@ fn describe_project_constructor_name_shapes_match_node() {
 }
 
 #[test]
+fn describe_project_unrepresentable_received_text_forwards() {
+    let metadata = Metadata {
+        home: PathBuf::from("/empty"),
+        cwd: PathBuf::from("/empty"),
+        files: FixtureFiles::default(),
+    };
+    for (label, key_json) in [
+        ("surrogate", r#"{"constructor":{"name":"\ud800"}}"#),
+        ("primitive-constructor", r#"{"constructor":5}"#),
+        (
+            "unconvertible-name",
+            r#"{"constructor":{"name":{"toString":null,"valueOf":null}}}"#,
+        ),
+    ] {
+        let raw = format!(
+            r#"{{"type":"request","id":"x","method":"describe_project","params":{{"projectKey":{key_json}}}}}"#
+        );
+        let request = parse(raw.as_bytes()).expect("#347 fix-r5b dispatch request must parse");
+        assert!(
+            matches!(
+                route_with_metadata(&request, Some(&metadata)),
+                Route::Forward
+            ),
+            "#347 fix-r5b {label} must forward without rewriting the Node error"
+        );
+    }
+}
+
+#[test]
 fn deferred_methods_and_invalid_frames_keep_upstream_ownership() {
     for raw in [
         r#"{"type":"request","id":"x","method":"session_model_set"}"#,

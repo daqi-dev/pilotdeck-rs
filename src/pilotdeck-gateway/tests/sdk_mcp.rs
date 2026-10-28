@@ -40,8 +40,8 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 fn text(value: &JsValue) -> String {
     stringify_json(value)
-        .expect("serializable value")
-        .expect("value is not undefined")
+        .expect("#347 sdk_mcp value must be serializable")
+        .expect("#347 sdk_mcp value must not be undefined")
 }
 
 static UNDEFINED: JsValue = JsValue::Undefined;
@@ -468,7 +468,7 @@ async fn non_string_project_key_throws_the_node_type_error() {
     config
         .set_mcp_servers(&set_input("s", &[("a", stdio_config("node"))]))
         .await
-        .unwrap();
+        .expect("#347 fix-r5b non-string setup must succeed");
     let before = text(&config.snapshot_state());
     lock(&calls).clear();
     for (label, key, received) in [
@@ -611,22 +611,25 @@ async fn constructor_name_shapes_project_the_node_received_text() {
         ),
         (
             "constructor-null",
-            parse_json(r#"{"constructor":null}"#).unwrap(),
+            parse_json(r#"{"constructor":null}"#)
+                .expect("#347 fix-r5b constructor-null JSON must parse"),
             "[Object]",
         ),
         (
             "constructor-array",
-            parse_json(r#"{"constructor":[]}"#).unwrap(),
+            parse_json(r#"{"constructor":[]}"#)
+                .expect("#347 fix-r5b constructor-array JSON must parse"),
             "[Object]",
         ),
         (
             "constructor-without-name",
-            parse_json(r#"{"constructor":{}}"#).unwrap(),
+            parse_json(r#"{"constructor":{}}"#)
+                .expect("#347 fix-r5b constructor-without-name JSON must parse"),
             "[Object]",
         ),
         (
             "constructor-missing",
-            parse_json("{}").unwrap(),
+            parse_json("{}").expect("#347 fix-r5b constructor-missing JSON must parse"),
             "an instance of Object",
         ),
     ] {
@@ -678,6 +681,70 @@ async fn constructor_name_shapes_project_the_node_received_text() {
         text(&config.snapshot_state()),
         before,
         "#347 fix-r1 a rejected projectKey must not mutate state"
+    );
+}
+
+/// UTF-16 text is lossless; description failures keep the pre-r5 approximation.
+#[tokio::test]
+async fn project_key_preserves_utf16_and_registered_throw_approximation() {
+    let (config, calls) = test_config(Arc::new(FixtureEnvironment));
+    for (label, key_json, suffix) in [
+        (
+            "surrogate",
+            r#"{"constructor":{"name":"\ud800"}}"#,
+            JsString::from_utf16("an instance of ".encode_utf16().chain([0xd800]).collect()),
+        ),
+        (
+            "primitive-constructor",
+            r#"{"constructor":5}"#,
+            JsString::from("[Object]"),
+        ),
+        (
+            "unconvertible-name",
+            r#"{"constructor":{"name":{"toString":null,"valueOf":null}}}"#,
+            JsString::from("[Object]"),
+        ),
+    ] {
+        let key = parse_json(key_json).expect("#347 fix-r5b SDK project key must parse");
+        let expected = JsString::from_utf16(
+            "The \"paths[0]\" argument must be of type string. Received "
+                .encode_utf16()
+                .chain(suffix.units().iter().copied())
+                .collect(),
+        );
+        let set_error = config
+            .set_mcp_servers(&set_input_with_project_key(
+                key.clone(),
+                &[("a", stdio_config("node"))],
+            ))
+            .await
+            .expect_err("#347 fix-r5b SDK set must reject invalid project key");
+        let status_error = config
+            .mcp_server_status(&status_input_with_project_key(key))
+            .await
+            .expect_err("#347 fix-r5b SDK status must reject invalid project key");
+        for (method, error) in [("set", set_error), ("status", status_error)] {
+            assert_eq!(
+                error.message(),
+                &expected,
+                "#347 fix-r5b {label} {method} preserves received units or registered approximation"
+            );
+            assert_eq!(
+                error.code(),
+                Some("ERR_INVALID_ARG_TYPE"),
+                "#347 fix-r5b {label} {method} keeps the argument error code"
+            );
+            assert_eq!(
+                error.name(),
+                "TypeError",
+                "#347 fix-r5b {label} {method} keeps the argument error name"
+            );
+        }
+    }
+    assert_eq!(
+        count_calls(&calls, "resolve"),
+        0,
+        "#347 fix-r5b invalid project keys must not reach the resolver"
     );
 }
 
