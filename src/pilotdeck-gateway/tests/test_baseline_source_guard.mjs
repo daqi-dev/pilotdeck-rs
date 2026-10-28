@@ -28,8 +28,8 @@ for (const mutation of ['healthy','dirty','dirty-tracked','missing','untracked',
   const files={'src/main.ts':{blob:f.git('rev-parse','HEAD:src/main.ts'),sha256:createHash('sha256').update(bytes).digest('hex'),size:bytes.length}};
   assert.equal(got.count,1);assert.equal(got.ref,f.ref);
   assert.equal(got.sha256,createHash('sha256').update(JSON.stringify(files)).digest('hex'));
- }else if(mutation==='dirty-tracked')assert.throws(()=>bindSourceTree(f.root,f.ref,gitExecutable),/uncommitted changes to tracked files/);
- else if(mutation==='assume-unchanged'||mutation==='skip-worktree')assert.throws(()=>bindSourceTree(f.root,f.ref,gitExecutable),/#303.*skip-worktree\/assume-unchanged/);
+ }else if(mutation==='dirty-tracked')assert.throws(()=>bindSourceTree(f.root,f.ref,gitExecutable),/uncommitted changes to tracked files/,'#953 dirty tracked files must name the uncommitted changes');
+ else if(mutation==='assume-unchanged'||mutation==='skip-worktree')assert.throws(()=>bindSourceTree(f.root,f.ref,gitExecutable),/#303.*skip-worktree\/assume-unchanged/,'#953 hidden index flags must name skip-worktree/assume-unchanged');
  else assert.throws(()=>bindSourceTree(f.root,f.ref,gitExecutable));
 });
 

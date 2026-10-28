@@ -58,9 +58,11 @@ def command(test):
     ]
 
 
-def run(test, env):
+def run(test, env, output, label):
     wait_for_slot(ROOT / 'scripts/cargo-slots.sh')
-    return run_owned(command(test), cwd=ROOT, env=env, timeout=900)
+    result = run_owned(command(test), cwd=ROOT, env=env, timeout=900)
+    (output / f'{label}.log').write_text(result.stdout + result.stderr)
+    return result
 
 
 def passed(result, test):
@@ -92,23 +94,23 @@ def main():
             for row in ROWS:
                 status, reason = 'INVALID', ''
                 try:
-                    base = run(row['test'], env)
+                    base = run(row['test'], env, output, row['name'] + '-positive')
                     if not passed(base, row['test']):
                         status, reason = 'INVALID', 'positive control did not pass the bound test'
                     else:
-                        original = originals[MASKS].decode()
+                        original = originals[Path(MASKS)].decode()
                         if original.count(row['old']) != 1:
                             status, reason = 'INVALID', 'mutation anchor is not unique'
                         else:
                             Path(ROOT / MASKS).write_bytes(
                                 original.replace(row['old'], row['new'], 1).encode())
-                            status, reason = classify(run(row['test'], env), row['test'], row['anchors'])
+                            status, reason = classify(run(row['test'], env, output, row['name'] + '-negative'), row['test'], row['anchors'])
                 except Exception as error:
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
-                    Path(ROOT / MASKS).write_bytes(originals[MASKS])
+                    Path(ROOT / MASKS).write_bytes(originals[Path(MASKS)])
                 try:
-                    if not passed(run(row['test'], env), row['test']):
+                    if not passed(run(row['test'], env, output, row['name'] + '-restored'), row['test']):
                         status, reason = 'INVALID', (reason + '; ' if reason else '') + 'restored positive control did not pass'
                 except Exception as error:
                     status, reason = 'INVALID', (reason + '; ' if reason else '') + f'restored: {type(error).__name__}: {error}'
