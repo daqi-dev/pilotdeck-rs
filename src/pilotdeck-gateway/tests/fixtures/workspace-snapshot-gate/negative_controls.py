@@ -187,7 +187,9 @@ MUTATIONS = [
      """    match fs::rename(staging, staging) {
 """,
      ["--lib", "commit_publishes_the_staging_directory_atomically"],
-     "#293 the partition directory exists after the publish"),
+     # The capture pre-creates the (empty) partition, so a no-op publish fails
+     # at the content assertion, not at the existence `.expect`.
+     "#293 the published partition holds exactly the marker and the manifest"),
 ]
 
 selected = sys.argv[2:]
