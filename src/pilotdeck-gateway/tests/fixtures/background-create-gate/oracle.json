@@ -50,5 +50,31 @@
       "terminal": "cancelled",
       "outputBytes": 0
     }
+  ],
+  "watchdog": [
+    {
+      "mode": "delayed-reader",
+      "outcome": "connected",
+      "status": "running",
+      "outputBytes": 0
+    },
+    {
+      "mode": "exited-reader",
+      "outcome": "child-exited",
+      "status": "completed",
+      "outputBytes": 0
+    },
+    {
+      "mode": "cancelled-reader",
+      "outcome": "child-exited",
+      "status": "cancelled",
+      "outputBytes": 0
+    },
+    {
+      "mode": "never-reader",
+      "outcome": "total-limit",
+      "status": "running",
+      "outputBytes": 0
+    }
   ]
 }
