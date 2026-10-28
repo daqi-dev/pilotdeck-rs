@@ -109,7 +109,20 @@ STREAM-002 保留 `textErrors(textContent,400)`，增加 `textErrors(innerText,2
 
 ### #61.1 真实报告验收记录
 
-真实全量报告已在本仓 worktree 实跑（真实基线 `cc7c4e6`、Node v22.22.0、本机 Chrome headless、隔离端口 28376–28378，不起基线 dev server；全程持 `/tmp/pdrs-parity.lock`，端口/进程审计入 RESULT）：`--suite baseline --profiles staffdeck,minimal,replacement --frontends old,new` 产出六份原件。防 skip 规则的判定如实红：六份各 72 身份全部出现且无重复、无缺失、每身份恰一次尝试（0 条 missing/duplicate 错误）；合并后 old 实际执行 49（30 PASS + 19 行为 FAIL）、new 46（全 FAIL，探针缺面如实红）；唯一获准 skip 是 `formal undefined routes`（清单身份+原文理由，三 profile 合并计 1）；`formal SOP lifecycle` / `formal SOP and Skills routes` 在 staffdeck/minimal 两个 profile 以**空 annotation 的 serial 级联 skip** 出现，身份在清单但理由不绑定 → `skip reason not bound` 判 FAIL，不扣减应执行数（replacement profile 命中 profile 闸门的绑定理由获准 skip，合并行仍因前两 profile 红）；D 类 old 20 / new 23 个 `NOT_RUN_PENDING_ORCHESTRATION` 保留原始空 annotation 与回源，仍 FAIL。真实报告的三条负例（删 1 例 / 1 例改 skip / 重复 1 例）由 [fe-baseline-report 负控](../../src/pilotdeck-gateway/tests/fixtures/fe-baseline-report/negative_controls.py) 在报告副本上执行，逐条以身份限定 marker（`report 1: missing/duplicate result`、`skip identity not in fixed allowlist`）KILLED，原件不改；该脚本同时对原件跑 pristine 对账作正控（无 missing/duplicate）。#61.2 node_modules 完整性闸门在同一实跑中通过（145 个直接依赖绑定锁文件，`result.json.baseline.nodeModules`）。
+真实全量报告已在本仓 worktree 实跑（真实基线 `cc7c4e6`、Node v22.22.0、本机 Chrome headless、隔离端口 28376–28378，不起基线 dev server；全程持 `/tmp/pdrs-parity.lock`，端口/进程审计入 RESULT）：`--suite baseline --profiles staffdeck,minimal,replacement --frontends old,new` 产出六份原件。防 skip 规则的判定如实红：六份各 72 身份全部出现且无重复、无缺失、每身份恰一次尝试（0 条 missing/duplicate 错误）；合并后 old 实际执行 49（30 PASS + 19 行为 FAIL）、new 46（全 FAIL，探针缺面如实红）；唯一获准 skip 是 `formal undefined routes`（清单身份+原文理由，三 profile 合并计 1）；`formal SOP lifecycle` / `formal SOP and Skills routes` 在 staffdeck/minimal 两个 profile 以**空 annotation 的 serial 级联 skip** 出现，身份在清单但理由不绑定 → `skip reason not bound` 判 FAIL，不扣减应执行数（replacement profile 命中 profile 闸门的绑定理由获准 skip，合并行仍因前两 profile 红）；D 类 old 20 / new 23 个 `NOT_RUN_PENDING_ORCHESTRATION` 保留原始空 annotation 与回源，仍 FAIL。真实报告的六条负例（删 1 例 / 1 例改 skip / 重复 1 例 / 多一次尝试 / 未注册身份 / 未知 result 状态）由 [fe-baseline-report 负控](../../src/pilotdeck-gateway/tests/fixtures/fe-baseline-report/negative_controls.py) 在报告副本上执行，逐条以身份限定 marker（`report 1: missing/duplicate result`、`skip identity not in fixed allowlist`、`expected one attempt, got 2`、`unknown result`、`unexecuted/interrupted status`）KILLED，原件不改；该脚本同时以**独立身份账目复算**作 pristine 正控——不筛 accounting.mjs 的错误消息，而是逐份核对身份集合等于注册清单、每身份恰一次出现、恰一次尝试、result 状态已知、forbidOnly 签证，任何一类不符即 FAIL（fix-r1：原先只筛 missing/duplicate 两条消息，多一次尝试或未知身份的腐蚀原件会假通过）。完整调用（worktree 根目录，六份原件换成实跑产物路径）：
+
+```sh
+python3 src/pilotdeck-gateway/tests/fixtures/fe-baseline-report/negative_controls.py \
+    _tmp/fe-parity/neg61 \
+    --old _tmp/fe-parity/issue61-baseline-1/old-staffdeck.json \
+          _tmp/fe-parity/issue61-baseline-1/old-minimal.json \
+          _tmp/fe-parity/issue61-baseline-1/old-replacement.json \
+    --new _tmp/fe-parity/issue61-baseline-1/new-staffdeck.json \
+          _tmp/fe-parity/issue61-baseline-1/new-minimal.json \
+          _tmp/fe-parity/issue61-baseline-1/new-replacement.json
+```
+
+out-dir 必须不存在；正控（pristine / pristine-inventory / pristine-identities）全 PASS 且六条负例全 KILLED 才 exit 0，行为红如实保留。#61.2 node_modules 完整性闸门在同一实跑中通过（145 个直接依赖绑定锁文件，`result.json.baseline.nodeModules`）。
 
 ## 依赖与源码构建
 
