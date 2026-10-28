@@ -871,18 +871,146 @@ mod tests {
         let head = TEMPLATE.repeat(templates);
         let pairs = (bytes - head.len()) / SELECT_PAIR.len();
         let html = head + &SELECT_PAIR.repeat(pairs);
-        assert_eq!(html.len(), bytes, "fixture must tile exactly");
+        assert_eq!(html.len(), bytes, "#978 fixture must tile exactly");
         html
     }
 
-    fn timed_rewrite(html: &str) -> Duration {
-        let started = std::time::Instant::now();
-        let output = domino_compatible(html);
-        let elapsed = started.elapsed();
-        assert!(
-            output.as_bytes() == html.as_bytes(),
-            "the deep-frame fixture must be rewritten byte-for-byte"
+    fn cpu_duration(sample: &serde_json::Value) -> Option<Duration> {
+        if sample["exit"].as_i64()? != 0 {
+            return None;
+        }
+        let results: Vec<_> = sample["stdout"]
+            .as_str()?
+            .lines()
+            .filter(|line| line.starts_with("test result:"))
+            .collect();
+        if results.len() != 1 || !results[0].starts_with("test result: ok. 1 passed; 0 failed;") {
+            return None;
+        }
+        let seconds = sample["cpu_seconds"].as_f64()?;
+        if !seconds.is_finite() || seconds <= 0.0 {
+            return None;
+        }
+        Duration::try_from_secs_f64(seconds).ok()
+    }
+
+    #[test]
+    fn cpu_sample_requires_completed_work_and_ignores_preemption() {
+        let valid = serde_json::json!({
+            "exit": 0, "cpu_seconds": 0.25, "wall_seconds": 40.0,
+            "stdout": "test result: ok. 1 passed; 0 failed; 0 ignored;\n"
+        });
+        crate::negative_assert_eq!(
+            cpu_duration(&valid),
+            Some(Duration::from_millis(250)),
+            "#978 CPU sample excludes preemption"
         );
+        for (key, value) in [
+            ("exit", serde_json::json!(101)),
+            ("cpu_seconds", serde_json::json!(0)),
+            ("cpu_seconds", serde_json::json!(-1)),
+            (
+                "stdout",
+                serde_json::json!("test result: ok. 0 passed; 0 failed;"),
+            ),
+            (
+                "stdout",
+                serde_json::json!(
+                    "test result: ok. 1 passed; 0 failed;\ntest result: ok. 1 passed; 0 failed;"
+                ),
+            ),
+        ] {
+            let mut invalid = valid.clone();
+            invalid[key] = value;
+            crate::negative_assert!(
+                cpu_duration(&invalid).is_none(),
+                "#978 CPU sample requires completed work"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "#978 isolated CPU sample; invoked by the linear-budget test"]
+    fn deep_frame_cpu_worker() {
+        let mib: usize = std::env::var("PDRS_HTML_CPU_MIB")
+            .expect("#978 CPU worker input")
+            .parse()
+            .expect("#978 CPU worker numeric input");
+        assert!(
+            matches!(mib, 4 | 8),
+            "#978 CPU worker size must be 4 or 8 MiB"
+        );
+        let html = deep_frame_select_fixture(mib * 1024 * 1024, mib * 12_500);
+        let output = domino_compatible(&html);
+        assert_eq!(
+            output.as_bytes(),
+            html.as_bytes(),
+            "#978 deep-frame rewrite preserves every byte"
+        );
+    }
+
+    const CPU_SAMPLER: &str = r#""""Measure one isolated Rust HTML test's CPU work, excluding host preemption."""
+import json
+import resource
+import sys
+import time
+import subprocess
+
+
+def main():
+    before = resource.getrusage(resource.RUSAGE_CHILDREN)
+    started = time.monotonic()
+    # Keep the worker in the caller's process group, so an outer timeout also
+    # reaps it. subprocess.run kills and waits for this child on its own timeout.
+    result = subprocess.run(sys.argv[1:], capture_output=True, text=True,
+                            timeout=600, check=False)
+    after = resource.getrusage(resource.RUSAGE_CHILDREN)
+    print(json.dumps({
+        "cpu_seconds": (after.ru_utime - before.ru_utime)
+                       + (after.ru_stime - before.ru_stime),
+        "wall_seconds": time.monotonic() - started,
+        "exit": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }))
+
+
+if __name__ == "__main__":
+    main()
+"#;
+
+    fn timed_rewrite(mib: usize) -> Duration {
+        // This algorithm test measures computation, not scheduler wait. A
+        // separate libtest worker excludes CPU spent by parallel sibling tests.
+        // Sample count and the original scaling threshold remain unchanged.
+        let worker = "runtime::tools::builtin::web::html_compat::tests::deep_frame_cpu_worker";
+        let result = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(CPU_SAMPLER)
+            .arg(std::env::current_exe().expect("#978 CPU worker executable"))
+            .args([
+                "--exact",
+                worker,
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("PDRS_HTML_CPU_MIB", mib.to_string())
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .output()
+            .expect("#978 CPU sampler spawn");
+        assert!(
+            result.status.success(),
+            "#978 CPU sampler exit: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let sample: serde_json::Value =
+            serde_json::from_slice(&result.stdout).expect("#978 CPU sampler JSON");
+        let elapsed = crate::test_negative_receipt::expect_some(
+            cpu_duration(&sample),
+            "#978 CPU worker completed",
+        );
+        eprintln!("#978 CPU sample {mib} MiB: {sample}");
         elapsed
     }
 
@@ -891,18 +1019,19 @@ mod tests {
         // GLM r4's shape: 100,000 nested <template> frames and 434,624
         // <select></select> pairs are exactly 8 MiB. Each `</select>` closes
         // the select frame sitting on top of the 100,000 template frames.
-        let half = deep_frame_select_fixture(4 * 1024 * 1024, 50_000);
-        let full = deep_frame_select_fixture(8 * 1024 * 1024, 100_000);
         let samples = timing::timing_samples();
         let (half_elapsed, full_elapsed) =
             timing::fastest_scaling("deep-frame-select", samples, |is_full| {
-                timed_rewrite(if is_full { &full } else { &half })
+                timed_rewrite(if is_full { 8 } else { 4 })
             });
         eprintln!(
             "deep-frame-select: fastest of {samples}: 4 MiB in {half_elapsed:?}, 8 MiB in {full_elapsed:?}"
         );
         // Doubling the input doubles linear work but quadruples the old
         // bottom-up rescan per `</select>`; see timing::assert_within_linear_band.
-        timing::assert_within_linear_band("8 MiB rewrite", half_elapsed, full_elapsed, samples);
+        let checked = std::panic::catch_unwind(|| {
+            timing::assert_within_linear_band("8 MiB rewrite", half_elapsed, full_elapsed, samples);
+        });
+        crate::test_negative_receipt::expect_ok(checked, "#978 CPU rewrite stays linear");
     }
 }
