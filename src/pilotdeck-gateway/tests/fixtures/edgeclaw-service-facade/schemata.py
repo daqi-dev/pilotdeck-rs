@@ -15,10 +15,13 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import negative as legacy
 from negative_process import run_owned, tree_lock, wait_for_slot
-from negative_suite import passed
+from _shared.mutant_switch import (artifact, clean_environment, execute_suite, publish_summary,
+                                    raw_timeout, record_sources, selector_environment,
+                                    verify_unchanged)
 
 PREFIX = 'mutant_facade::'
 ROOT = legacy.ROOT
@@ -55,80 +58,6 @@ def selected_rows(requested):
     return [row for row in legacy.MUTANTS if not requested or row['name'] in requested]
 
 
-def clean_environment(env):
-    result = dict(env)
-    result.pop('PDRS_MUTANT', None)
-    result.pop('PDRS_FACADE_ENCODER_MUTANT', None)
-    return result
-
-
-def artifact(result):
-    if result.returncode:
-        raise RuntimeError('precompile failed; see build.log')
-    executables = set()
-    for line in result.stdout.splitlines():
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        target = item.get('target', {})
-        if (item.get('reason') == 'compiler-artifact'
-                and target.get('name') == 'pilotdeck_gateway'
-                and target.get('kind') == ['lib']
-                and item.get('profile', {}).get('test') is True
-                and item.get('executable')
-                and 'pdrs-mutants' in item.get('features', [])):
-            executables.add(item['executable'])
-    if len(executables) != 1:
-        raise RuntimeError(f'expected one feature-enabled library test executable, got {len(executables)}')
-    binary = Path(executables.pop()).resolve()
-    target_dir = Path(os.environ['CARGO_TARGET_DIR']).resolve()
-    if not binary.is_relative_to(target_dir) or not binary.is_file():
-        raise RuntimeError('test executable is absent or outside caller CARGO_TARGET_DIR')
-    return binary
-
-
-def write_summary(output, rows, started, build_seconds):
-    counts = {state: sum(row['status'] == state for row in rows)
-              for state in ('KILLED', 'SURVIVED', 'INVALID')}
-    document = {'controls': rows, 'counts': counts, 'timing': {
-        'build_seconds': build_seconds, 'total_seconds': time.monotonic() - started}}
-    pending = output / 'summary.json.tmp'
-    pending.write_text(json.dumps(document, indent=2) + '\n')
-    pending.replace(output / 'summary.json')
-
-
-def execute_suite(selected, invoke):
-    """One bad binding must not hide later controls. invoke owns bounded children."""
-    for row in selected:
-        status, reason = 'INVALID', ''
-        try:
-            name, test, witness = row['name'], row['test'], row['witness']
-            if not passed(invoke(name + '-positive', test, None, row), PREFIX + test):
-                reason = 'positive control did not pass the bound test'
-            elif witness and not passed(invoke(name + '-witness-positive', witness, None, row), PREFIX + witness):
-                reason = 'witness test did not pass before mutation'
-            else:
-                witness_failed = witness and not passed(
-                    invoke(name + '-witness-negative', witness, name, row), PREFIX + witness)
-                result = invoke(name + '-negative', test, name, row)
-                bound = dict(row, test=PREFIX + test)
-                status, reason = legacy.classify(result, bound, source_file=
-                    'pilotdeck-gateway/src/../tests/edgeclaw_service_facade.rs')
-                if witness_failed:
-                    status, reason = 'INVALID', reason + '; witness test failed under mutation'
-        except Exception as error:
-            status, reason = 'INVALID', f'{type(error).__name__}: {error}'
-        # Fresh process, no selector: also run after exceptions and failed positives.
-        try:
-            if not passed(invoke(row['name'] + '-restored', row['test'], None, row), PREFIX + row['test']):
-                status, reason = 'INVALID', reason + '; restored bound test did not pass'
-        except Exception as error:
-            status, reason = 'INVALID', reason + f'; restored: {type(error).__name__}: {error}'
-        yield {key: row[key] for key in ('name', 'test', 'anchor')} | {
-            'status': status, 'reason': reason}
-
-
 def run(output, selected, env):
     started = time.monotonic()
     build_seconds = 0.0
@@ -148,16 +77,9 @@ def run(output, selected, env):
             paths.update(Path(__file__).resolve().parent / name
                          for name in ('oracle.json', 'verify.mts', 'generate.mts'))
             paths.update(Path(__file__).resolve().parents[1] / name
-                         for name in ('negative_suite.py', 'negative_process.py'))
-            hashes = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
-                      for path in sorted(paths)}
-            head = run_owned(['git', 'rev-parse', 'HEAD'], cwd=ROOT, timeout=30)
-            if head.returncode:
-                raise RuntimeError('cannot record source HEAD')
-            (output / 'source.json').write_text(json.dumps({
-                'head': head.stdout.strip(), 'sha256': hashes,
-                'note': 'working-tree source hashes; not a claim of committed HEAD equivalence',
-            }, indent=2) + '\n')
+                         for name in ('negative_suite.py', 'negative_process.py',
+                                     '_shared/mutant_switch.py'))
+            hashes = record_sources(ROOT, output, paths)
             gate = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=900)
             (output / 'build.slots.log').write_text(gate.stdout + gate.stderr)
             command = ['cargo', 'test', '--offline', '--locked',
@@ -192,9 +114,7 @@ def run(output, selected, env):
             def invoke(label, test, selector, row):
                 if row['include_ignored'] and node_error:
                     raise RuntimeError(node_error)
-                child_env = clean_environment(env)
-                if selector is not None:
-                    child_env['PDRS_MUTANT'] = selector
+                child_env = selector_environment(env, selector)
                 # The two cwd-changing tests are ignored in a full library run.
                 # Exact, separate processes also safely run those bindings here.
                 command = [str(binary), PREFIX + test, '--exact', '--nocapture', '--include-ignored']
@@ -212,13 +132,15 @@ def run(output, selected, env):
                     (output / (label + '.log')).write_text(raw_timeout(error))
                     raise
 
-            for row in execute_suite(selected, invoke):
+            def verdict(result, bound):
+                return legacy.classify(result, bound, source_file=
+                    'pilotdeck-gateway/src/../tests/edgeclaw_service_facade.rs')
+
+            for row in execute_suite(selected, invoke, verdict, PREFIX):
                 rows.append(row)
-                write_summary(output, rows, started, build_seconds)
+                publish_summary(output, rows, started, build_seconds)
                 print(f"{row['name']}: {row['status']}: {row['reason']}", flush=True)
-            if any(hashlib.sha256((ROOT / name).read_bytes()).hexdigest() != digest
-                   for name, digest in hashes.items()):
-                raise RuntimeError('sources changed during precompiled run')
+            verify_unchanged(ROOT, hashes)
     except Exception as error:
         reason = f'runner: {type(error).__name__}: {error}'
         for row in rows:
@@ -227,15 +149,10 @@ def run(output, selected, env):
             rows.append({key: row[key] for key in ('name', 'test', 'anchor')} | {
                 'status': 'INVALID', 'reason': reason})
         print(reason, file=sys.stderr)
-    write_summary(output, rows, started, build_seconds)
+    publish_summary(output, rows, started, build_seconds)
     print('summary: ' + ', '.join(f'{state}={sum(row["status"] == state for row in rows)}'
                                  for state in ('KILLED', 'SURVIVED', 'INVALID')), flush=True)
     return int(not rows or any(row['status'] != 'KILLED' for row in rows))
-
-
-def raw_timeout(error):
-    return ''.join(part.decode(errors='replace') if isinstance(part, bytes) else part or ''
-                   for part in (error.stdout, error.stderr)) + f'\nTIMEOUT: {error}\n'
 
 
 def main():

@@ -41,6 +41,12 @@ import os
 import tokenize
 
 TABLES = {'mutants', 'mutations', 'controls', 'cases', 'runner_mutations'}
+# #996: migrated fixture runners declare compile-time switch bindings in a
+# `switches = [...]` table of (name, path, test, assertion) rows. The counted
+# anchor is the single `::mutants::on("<name>")` call site in that source file,
+# not a text replacement; these names never enter TABLES because their rows
+# have no before/after pair.
+SWITCH_TABLE_NAMES = {'switches'}
 # A script without a declarative, whole-file source replacement table declares
 # its exact exemption in its own header: ``# anchor-selfcheck: unsupported
 # <nonempty reason>`` within the first 20 lines. The reason lives next to the
@@ -71,6 +77,11 @@ UNSUPPORTED_SIGNALS = {
     'plugin-runtime/panic-negative.py': {'table:CASES', 'table:cases'},
     'spill-isolation/negative_controls.py': {'call:mutate'},
     'skills/negative_controls.py': {'table:mutations'},
+    # #996: the shared precompiled-switch executor and its self-tests own no
+    # mutation table; registering the empty signal set pins that exemption.
+    '_shared/mutant_switch.py': set(),
+    '_shared/test_mutant_switch.py': set(),
+    'edgeclaw-service-facade/test_switch_negative.py': set(),
 }
 REGEX_SCRIPTS = {'background-panic/negative_controls.py'}
 IMPLICIT = {
@@ -83,7 +94,6 @@ IMPLICIT = {
     'turn-submit/negative.py': 'source',
     'host-event-pump/negative_controls.py': 'path',
     'output-schema/negative.py': 'source',
-    'host-factory/negative.py': 'SOURCE',
 }
 # (name, path, package, test, before, after), unlike the usual table layout.
 FIELD_ORDER = {'sidecar-payload/negative.py': (1, 4, 5)}
@@ -828,6 +838,26 @@ def table_rows(tree, static):
                 raise Unsupported('unsupported mutation table update')
 
 
+def switch_table_rows(tree):
+    """Yield literal `switches` table rows; anything else fails closed.
+
+    Rows are (name, path, test, assertion); the counted anchor is the single
+    compiled switch site, so no before/after pair exists here.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not (isinstance(target, ast.Name) and target.id.lower() == 'switches'):
+                continue
+            if not isinstance(node.value, ast.List):
+                raise Unsupported('switches table must be a literal list of rows')
+            for row in node.value.elts:
+                if not isinstance(row, ast.Tuple) or len(row.elts) != 4:
+                    raise Unsupported('switches rows must be (name, path, test, assertion)')
+                yield row
+
+
 def host_pump_count(tree, static, name, local):
     """Read this runner's exact occurrence guard, including its wire exception."""
     guards = [node for node in ast.walk(tree) if isinstance(node, ast.Assert)
@@ -984,6 +1014,28 @@ def extract(script, root):
                 check_scoped_consumer(static, name, scope)
                 scoped.add(name)
             anchors.append(Anchor(name, static.confined(path), before, count, flags is not None, line, flags or 0, scope))
+    # #996: compile-time switch tables count their single switch site per file.
+    switch_seen = set()
+    for row in switch_table_rows(tree):
+        for local in static.contexts(row):
+            line = row.lineno
+            name = static.value(row.elts[0], line, local)
+            path = static.target(row.elts[1], line, local)
+            test = static.value(row.elts[2], line, local)
+            assertion = static.value(row.elts[3], line, local)
+            if not isinstance(name, str) or not name:
+                raise Unsupported(f'line {line}: invalid switch name')
+            if name in switch_seen:
+                raise Unsupported(f'line {line}: duplicate switch name: {name}')
+            switch_seen.add(name)
+            if not isinstance(test, str) or not test:
+                raise Unsupported(f'{name}: invalid switch test binding')
+            if not ((isinstance(assertion, str) and assertion)
+                    or (isinstance(assertion, list) and assertion
+                        and all(isinstance(item, str) and item for item in assertion))):
+                raise Unsupported(f'{name}: invalid switch assertion binding')
+            anchors.append(Anchor(name, static.confined(path),
+                                  f'::mutants::on("{name}")', 1, line=line))
     # Imperative secondary replacements used alongside the declarative tables.
     # Match AST receiver + function scope, then read the existing argument; do
     # not duplicate the source fragment in this checker.
@@ -1315,7 +1367,8 @@ outputs of the runners, not required caller configuration.
 def exemption_signals(tree):
     signals = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id.lower() in TABLES:
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and (
+                node.id.lower() in TABLES or node.id.lower() in SWITCH_TABLE_NAMES):
             signals.add(f'table:{node.id}')
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ('mutation', 'mutate'):
             signals.add(f'call:{node.func.id}')

@@ -99,6 +99,58 @@ class ScannerControls(unittest.TestCase):
         self.write("mutants = [('sample', source, 'before', 'after')]\n")
         self.run_check(label='restored-before')
 
+    def test_switch_table_counts_one_compiled_site(self):
+        self.source.write_text('crate::mutants::on("sample")\n')
+        self.write("switches = [('sample', source, 'sample_test', '#996 sample anchor')]\n")
+        self.assertIn('CHECKED sample/negative.py: 1 anchors',
+                      self.run_check(label='switch-table'))
+        # Either assertion anchor of a golden test may prove the kill.
+        self.write("switches = [('sample', source, 'sample_test',"
+                   " ['#996 first outcome', '#996 second outcome'])]\n")
+        self.run_check(label='switch-anchor-list')
+        self.source.write_text('nothing here\n')
+        self.assertIn('actual=0', self.run_check(1, label='missing-site'))
+        self.source.write_text('crate::mutants::on("sample") crate::mutants::on("sample")\n')
+        self.assertIn('actual=2', self.run_check(1, label='duplicate-site'))
+        self.source.write_text('crate::mutants::on("sample")\n')
+        self.assertIn('CHECKED sample/negative.py: 1 anchors',
+                      self.run_check(label='restored'))
+
+    def test_switch_rows_require_full_bindings_and_literals(self):
+        self.source.write_text('crate::mutants::on("sample")\n')
+        for body, message in (
+            ("switches = [('sample', source, 'sample_test', '')]\n", 'invalid switch assertion'),
+            ("switches = [('sample', source, '', '#996 anchor')]\n", 'invalid switch test'),
+            ("switches = [('sample', source, 'sample_test', [])]\n", 'invalid switch assertion'),
+            ("switches = [('sample', source, 'sample_test')]\n",
+             'switches rows must be (name, path, test, assertion)'),
+            ("switches = [('sample', source, 'sample_test', '#996 a', 'extra')]\n",
+             'switches rows must be (name, path, test, assertion)'),
+            ("switches = [('sample', source, 'sample_test', '#996 a'),"
+             " ('sample', source, 'other', '#996 b')]\n", 'duplicate switch name'),
+            ("switches = None\n", 'switches table must be a literal list'),
+        ):
+            with self.subTest(body=body):
+                self.write(body)
+                self.assertIn(message, self.run_check(1))
+        self.write("switches = [('sample', source, 'sample_test', '#996 a')]\n")
+        self.run_check(label='restored-bindings')
+
+    def test_marker_scripts_cannot_hide_a_switch_table(self):
+        self.source.write_text('crate::mutants::on("sample")\n')
+        self.write("switches = [('sample', source, 'sample_test', '#996 anchor')]\n")
+        self.header('exempts the runner')
+        self.assertIn('exemption signals', self.run_check(1, label='hidden-switch-table'))
+        self.remove_header()
+        self.run_check(label='unhidden-switch-table')
+
+    def test_switch_table_counts_alongside_replacement_tables(self):
+        self.source.write_text('crate::mutants::on("sample") before\n')
+        self.write("mutants = [('replace', source, 'before', 'after')]\n"
+                   "switches = [('sample', source, 'sample_test', '#996 anchor')]\n")
+        self.assertIn('CHECKED sample/negative.py: 2 anchors',
+                      self.run_check(label='combined-tables'))
+
     def test_declared_occurrences_are_not_replace_limit(self):
         self.source.write_text('before before')
         self.write("ANCHOR_COUNTS = {'factory-ready-priority': 2}\nmutants = [('factory-ready-priority', source, 'before', 'after')]\nchanged = text.replace(before, after, 1)\n")
@@ -432,12 +484,14 @@ for route, test in [('wire', 'wire'), ('host', 'module')]:
         self.write(body)
         self.run_check(label='sidecar-row-restored')
 
-    def test_host_factory_relative_source_and_concatenated_anchor(self):
-        self.move_script('host-factory/negative.py')
-        body = """SOURCE = Path('src/example.rs')
+    def test_hooks_output_relative_source_and_concatenated_anchor(self):
+        # host-factory/negative.py migrated to compile-time switches (#996);
+        # hooks-output keeps the implicit relative-source shape.
+        self.move_script('hooks-output/negative.py')
+        body = """source = Path('src/example.rs')
 LOOP = 'before'
-MUTATIONS = [('lease', LOOP, 'after', 'test', 'failure'),
-             ('deadline', 'timeout ' + LOOP, 'changed ' + LOOP, 'test', 'failure')]
+mutants = [('lease', LOOP, 'after', 'test', 'failure'),
+           ('deadline', 'timeout ' + LOOP, 'changed ' + LOOP, 'test', 'failure')]
 """
         self.source.write_text('timeout before')
         self.write(body)
@@ -1756,17 +1810,23 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
                 body = f'{MARKER_PREFIX} {reason}\n' + ''.join(fragments.values())
                 self.write(body)
                 self.run_check(label=f'exemption-signals-original-{name}')
-                for signal in signals:
-                    self.write(f'{MARKER_PREFIX} {reason}\n'
-                               + ''.join(fragment for key, fragment in fragments.items() if key != signal))
-                    self.assertIn('unsupported exemption signals',
-                                  self.run_check(1, label='exemption-signal-removed'))
-                self.write(body + 'mutation()\n')
-                self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-added'))
-                self.write(body)
-                del CHECK.UNSUPPORTED_SIGNALS[name]
-                self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-unregistered'))
-                CHECK.UNSUPPORTED_SIGNALS[name] = signals
+                # An empty registration pins the absence of every signal; there
+                # is no signal to remove or to detect without the entry.
+                if signals:
+                    for signal in signals:
+                        self.write(f'{MARKER_PREFIX} {reason}\n'
+                                   + ''.join(fragment for key, fragment in fragments.items() if key != signal))
+                        self.assertIn('unsupported exemption signals',
+                                      self.run_check(1, label='exemption-signal-removed'))
+                    self.write(body + 'mutation()\n')
+                    self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-added'))
+                    self.write(body)
+                    del CHECK.UNSUPPORTED_SIGNALS[name]
+                    self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-unregistered'))
+                    CHECK.UNSUPPORTED_SIGNALS[name] = signals
+                else:
+                    self.write(body + 'mutation()\n')
+                    self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-added'))
                 # A registered signal with no marker is stale and fails closed.
                 self.write(''.join(fragments.values()))
                 self.assertIn('stale UNSUPPORTED_SIGNALS', self.run_check(1, label='exemption-signal-stale'))

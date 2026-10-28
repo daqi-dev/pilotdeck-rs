@@ -67,7 +67,8 @@ fn length_zero(value: &JsValue) -> RecorderResult<bool> {
 }
 fn require_step(turn: &DomainTurn, entry: &JsValue, kind: &str) -> RecorderResult<u64> {
     if turn.open_step.is_none()
-        || field(entry, "step").as_number() != turn.open_step.map(|n| n as f64)
+        || (!crate::mutants::on("step-matching")
+            && field(entry, "step").as_number() != turn.open_step.map(|n| n as f64))
     {
         return Err(domain(
             "step_not_open",
@@ -82,10 +83,14 @@ fn require_step(turn: &DomainTurn, entry: &JsValue, kind: &str) -> RecorderResul
 }
 impl DomainState {
     pub(super) fn next(&self, entry: &JsValue) -> RecorderResult<Self> {
-        let kind = call_id(entry, "type")?
-            .as_string()
-            .map(lossy)
-            .unwrap_or_default();
+        let kind = (if crate::mutants::on("null-entry-property") {
+            field(entry, "type")
+        } else {
+            call_id(entry, "type")?
+        })
+        .as_string()
+        .map(lossy)
+        .unwrap_or_default();
         let undefined = JsValue::Undefined;
         let id = field(entry, "turnId");
         let item = field(entry, "itemId");
@@ -102,23 +107,27 @@ impl DomainState {
             } else {
                 "(empty)".into()
             };
-            if !truthy(item)
-                || !truthy(id)
-                || !valid_input
-                || field(entry, "submitOptions").as_object().is_none()
+            if !crate::mutants::on("queue-input")
+                && (!truthy(item)
+                    || !truthy(id)
+                    || !valid_input
+                    || field(entry, "submitOptions").as_object().is_none())
             {
                 return Err(domain(
                     "invalid_inbox_mutation",
                     format!("Queued turn {subject} has invalid input."),
                 ));
             }
-            if contains(&next.used_items, item) {
+            if !crate::mutants::on("queue-reused-item") && contains(&next.used_items, item) {
                 return Err(domain(
                     "invalid_inbox_mutation",
                     format!("Queued turn item {} has already been used.", display(item)?),
                 ));
             }
-            if next.turns.iter().any(|(v, _)| same_id(v, id)) || contains(&next.used_turns, id) {
+            if !crate::mutants::on("queue-reused-turn")
+                && (next.turns.iter().any(|(v, _)| same_id(v, id))
+                    || contains(&next.used_turns, id))
+            {
                 return Err(domain(
                     "invalid_inbox_mutation",
                     format!("Queued turn id {} is already in use.", display(id)?),
@@ -132,10 +141,16 @@ impl DomainState {
         if kind == "agent_turn_discarded" {
             let pending = next.queue.iter().position(|(i, _)| same_id(i, item));
             let queued_turn = pending.map(|at| &next.queue[at].1).unwrap_or(&undefined);
-            if !truthy(item)
-                || !(text_is(field(entry, "reason"), "cancelled")
-                    || text_is(field(entry, "reason"), "agent_disposed"))
-                || !same_id(queued_turn, id)
+            let queued_mismatch = if crate::mutants::on("discard-undefined-lookup") {
+                pending.is_none_or(|at| !same_id(&next.queue[at].1, id))
+            } else {
+                !same_id(queued_turn, id)
+            };
+            if !crate::mutants::on("queue-discard")
+                && (!truthy(item)
+                    || !(text_is(field(entry, "reason"), "cancelled")
+                        || text_is(field(entry, "reason"), "agent_disposed"))
+                    || queued_mismatch)
             {
                 let subject = if truthy(item) {
                     display(item)?
@@ -163,7 +178,9 @@ impl DomainState {
                 && let Some((_, turn)) = next.turns.iter_mut().find(|(v, _)| same_id(v, id))
             {
                 let at = turn.inbox.iter().position(|(v, _)| same_id(v, claimed));
-                if turn.closed || at.is_none_or(|at| turn.inbox[at].1 != "claimed") {
+                if !crate::mutants::on("durable-inbox-claim")
+                    && (turn.closed || at.is_none_or(|at| turn.inbox[at].1 != "claimed"))
+                {
                     return Err(domain(
                         "invalid_inbox_mutation",
                         format!(
@@ -183,7 +200,9 @@ impl DomainState {
             return Ok(next);
         }
         if kind == "turn_started" {
-            if next.turns.iter().any(|(v, _)| same_id(v, id)) {
+            if !crate::mutants::on("duplicate-turn")
+                && next.turns.iter().any(|(v, _)| same_id(v, id))
+            {
                 return Err(domain(
                     "duplicate_turn_start",
                     format!("Turn {} has already started.", display(id)?),
@@ -191,10 +210,20 @@ impl DomainState {
             }
             let queued = next.queue.iter().position(|(_, v)| same_id(v, id));
             let claim = field(entry, "inboxItemId");
+            let must_claim = if crate::mutants::on("queue-must-claim") {
+                None
+            } else {
+                queued
+            };
             if !claim.is_undefined() {
                 let at = next.queue.iter().position(|(v, _)| same_id(v, claim));
                 let queued_turn = at.map(|at| &next.queue[at].1).unwrap_or(&undefined);
-                if !truthy(claim) || !same_id(queued_turn, id) {
+                let claim_mismatch = if crate::mutants::on("claim-undefined-lookup") {
+                    at.is_none_or(|at| !same_id(&next.queue[at].1, id))
+                } else {
+                    !same_id(queued_turn, id)
+                };
+                if !crate::mutants::on("queue-claim") && (!truthy(claim) || claim_mismatch) {
                     let subject = if truthy(claim) {
                         display(claim)?
                     } else {
@@ -216,7 +245,7 @@ impl DomainState {
                         ),
                     ));
                 }
-                if at != Some(0) {
+                if !crate::mutants::on("queue-fifo") && at != Some(0) {
                     return Err(domain(
                         "invalid_inbox_mutation",
                         format!(
@@ -227,7 +256,7 @@ impl DomainState {
                     ));
                 }
                 next.queue.remove(at.unwrap());
-            } else if let Some(at) = queued {
+            } else if let Some(at) = must_claim {
                 return Err(domain(
                     "invalid_inbox_mutation",
                     format!(
@@ -250,7 +279,7 @@ impl DomainState {
             ));
         };
         let turn = &mut next.turns[at].1;
-        if turn.closed {
+        if !crate::mutants::on("closed-turn") && turn.closed {
             return Err(domain(
                 "event_outside_turn",
                 format!("{kind} cannot follow the result for turn {}.", display(id)?),
@@ -300,7 +329,7 @@ impl DomainState {
                     if !invalid && phase == "failed" {
                         invalid = length_zero(field(entry, "error"))?;
                     }
-                    if invalid {
+                    if !crate::mutants::on("lifecycle-metadata") && invalid {
                         let code = if family == "question" {
                             "invalid_question"
                         } else {
@@ -327,7 +356,7 @@ impl DomainState {
                 }
                 if family == "permission" {
                     let step = require_step(turn, entry, "permission")?;
-                    if !turn.model_requested {
+                    if !crate::mutants::on("permission-request") && !turn.model_requested {
                         return Err(domain(
                             "model_request_missing",
                             format!(
@@ -343,14 +372,14 @@ impl DomainState {
                     _ => (&mut turn.permissions, "invalid_permission", "Permission"),
                 };
                 if phase == "started" {
-                    if contains(ids, operation) {
+                    if !crate::mutants::on("lifecycle-duplicate") && contains(ids, operation) {
                         return Err(domain(
                             code,
                             format!("{label} {} already started.", display(operation)?),
                         ));
                     }
                     ids.push(operation.clone());
-                } else if !remove(ids, operation) {
+                } else if !crate::mutants::on("lifecycle-terminal") && !remove(ids, operation) {
                     return Err(domain(
                         code,
                         format!(
@@ -362,7 +391,9 @@ impl DomainState {
             }
             "step_started" => {
                 let step = field(entry, "step").as_number();
-                if !safe_integer(step) || step.is_some_and(|n| n <= turn.last_step as f64) {
+                if !crate::mutants::on("step-increase")
+                    && (!safe_integer(step) || step.is_some_and(|n| n <= turn.last_step as f64))
+                {
                     return Err(domain(
                         "invalid_step",
                         format!(
@@ -372,7 +403,12 @@ impl DomainState {
                         ),
                     ));
                 }
-                if let Some(open) = turn.open_step {
+                let already_open = if crate::mutants::on("step-already-open") {
+                    None
+                } else {
+                    turn.open_step
+                };
+                if let Some(open) = already_open {
                     return Err(domain(
                         "step_already_open",
                         format!("Turn {} already has open step {open}.", display(id)?),
@@ -389,36 +425,40 @@ impl DomainState {
                 let step = require_step(turn, entry, &kind)?;
                 match kind.as_str() {
                     "context_snapshot" => {
-                        if turn.context_recorded {
+                        if !crate::mutants::on("context-duplicate") && turn.context_recorded {
                             return Err(domain(
                                 "duplicate_context_snapshot",
                                 format!("Step {step} already has a context snapshot."),
                             ));
                         }
-                        if turn.model_requested {
+                        if !crate::mutants::on("context-order") && turn.model_requested {
                             return Err(domain(
                                 "context_after_model_request",
                                 format!("Step {step} context must precede its model request."),
                             ));
                         }
-                        turn.context_recorded = true;
+                        turn.context_recorded = !crate::mutants::on("context-state");
                     }
-                    "agent_instructions" if turn.model_requested => {
+                    "agent_instructions"
+                        if !crate::mutants::on("instructions-order") && turn.model_requested =>
+                    {
                         return Err(domain(
                             "instructions_after_model_request",
                             format!("Step {step} instructions must precede its model request."),
                         ));
                     }
                     "model_request" => {
-                        if turn.model_requested {
+                        if !crate::mutants::on("request-duplicate") && turn.model_requested {
                             return Err(domain(
                                 "duplicate_model_request",
                                 format!("Step {step} already has a model request."),
                             ));
                         }
-                        turn.model_requested = true;
+                        turn.model_requested = !crate::mutants::on("request-state");
                     }
-                    "model_stream_event" if !turn.model_requested => {
+                    "model_stream_event"
+                        if !crate::mutants::on("model-event-order") && !turn.model_requested =>
+                    {
                         return Err(domain(
                             "model_request_missing",
                             format!("Step {step} emitted a model event before its request."),
@@ -426,7 +466,7 @@ impl DomainState {
                     }
                     "tool_call" => {
                         let call = call_id(field(entry, "call"), "id")?;
-                        if !turn.model_requested {
+                        if !crate::mutants::on("tool-request") && !turn.model_requested {
                             return Err(domain(
                                 "model_request_missing",
                                 format!(
@@ -435,7 +475,9 @@ impl DomainState {
                                 ),
                             ));
                         }
-                        if contains(&turn.open_tool_calls, call) {
+                        if !crate::mutants::on("tool-duplicate")
+                            && contains(&turn.open_tool_calls, call)
+                        {
                             return Err(domain(
                                 "duplicate_tool_call",
                                 format!("Tool call {} is already open.", display(call)?),
@@ -445,7 +487,9 @@ impl DomainState {
                     }
                     "tool_result" => {
                         let call = call_id(field(entry, "result"), "toolCallId")?;
-                        if !remove(&mut turn.open_tool_calls, call) {
+                        if !crate::mutants::on("tool-result-pair")
+                            && !remove(&mut turn.open_tool_calls, call)
+                        {
                             return Err(domain(
                                 "tool_result_without_call",
                                 format!(
@@ -456,8 +500,9 @@ impl DomainState {
                         }
                     }
                     "step_completed" => {
-                        if text_is(field(entry, "outcome"), "completed")
-                            && !turn.open_tool_calls.is_empty()
+                        if !crate::mutants::on("open-tool-on-step-close")
+                            && (text_is(field(entry, "outcome"), "completed")
+                                && !turn.open_tool_calls.is_empty())
                         {
                             return Err(domain(
                                 "step_has_open_tool_calls",
@@ -470,7 +515,7 @@ impl DomainState {
                 }
             }
             "inbox_mutation" => {
-                if !truthy(item) {
+                if !crate::mutants::on("inbox-empty-item") && !truthy(item) {
                     return Err(domain(
                         "invalid_inbox_mutation",
                         "Inbox mutation itemId must be non-empty.",
@@ -480,7 +525,9 @@ impl DomainState {
                 let current = at.map(|at| turn.inbox[at].1);
                 let mutation = field(entry, "mutation");
                 let status = if text_is(mutation, "insert") {
-                    if !truthy(field(entry, "message")) || current.is_some() {
+                    if !crate::mutants::on("inbox-insert")
+                        && (!truthy(field(entry, "message")) || current.is_some())
+                    {
                         return Err(domain(
                             "invalid_inbox_mutation",
                             format!(
@@ -491,7 +538,7 @@ impl DomainState {
                     }
                     Some("pending")
                 } else if text_is(mutation, "cancel") {
-                    if current == Some("claimed") {
+                    if !crate::mutants::on("inbox-cancel") && current == Some("claimed") {
                         return Err(domain(
                             "invalid_inbox_mutation",
                             format!("Claimed inbox item {} cannot be cancelled.", display(item)?),
@@ -499,7 +546,7 @@ impl DomainState {
                     }
                     Some("cancelled")
                 } else if text_is(mutation, "claim") {
-                    if current != Some("pending") {
+                    if !crate::mutants::on("inbox-claim") && current != Some("pending") {
                         return Err(domain(
                             "invalid_inbox_mutation",
                             format!(
@@ -510,7 +557,10 @@ impl DomainState {
                     }
                     Some("claimed")
                 } else if text_is(mutation, "discard") {
-                    if !matches!(current, Some("pending" | "claimed")) {
+                    let discardable = matches!(current, Some("pending"))
+                        || matches!(current, Some("claimed"))
+                            && !crate::mutants::on("inbox-discard");
+                    if !discardable {
                         return Err(domain(
                             "invalid_inbox_mutation",
                             format!(
@@ -534,7 +584,9 @@ impl DomainState {
             }
             "plan_todo_plan_changed" => {
                 let plan = field(entry, "plan");
-                if !matches!(plan, JsValue::Null) && !nonblank(plan) {
+                if !crate::mutants::on("plan-value")
+                    && (!matches!(plan, JsValue::Null) && !nonblank(plan))
+                {
                     return Err(domain(
                         "invalid_plan_todo",
                         "Plan/todo plan must be a non-empty string or null.",
@@ -550,7 +602,7 @@ impl DomainState {
                         "entry.toolName.trim is not a function".into(),
                     ));
                 }
-                if !trimmed(tool) {
+                if !crate::mutants::on("plan-progress") && !trimmed(tool) {
                     return Err(domain(
                         "invalid_plan_todo",
                         "Plan/todo progress requires a tool name.",
@@ -559,7 +611,12 @@ impl DomainState {
             }
             "goal_changed" => validate_goal(&mut next.goal_revision, entry)?,
             "turn_result" => {
-                if let Some(step) = turn.open_step {
+                let open_step = if crate::mutants::on("turn-open-step") {
+                    None
+                } else {
+                    turn.open_step
+                };
+                if let Some(step) = open_step {
                     return Err(domain(
                         "turn_has_open_step",
                         format!("Turn {} closed with step {step} open.", display(id)?),
@@ -578,7 +635,7 @@ impl DomainState {
                         "permission",
                     ),
                 ] {
-                    if !ids.is_empty() {
+                    if !crate::mutants::on("turn-pending-lifecycles") && !ids.is_empty() {
                         let values = ids
                             .iter()
                             .map(display)
@@ -593,17 +650,18 @@ impl DomainState {
                         ));
                     }
                 }
-                if turn
-                    .inbox
-                    .iter()
-                    .any(|(_, s)| matches!(*s, "pending" | "claimed"))
+                if !crate::mutants::on("turn-pending-inbox")
+                    && turn
+                        .inbox
+                        .iter()
+                        .any(|(_, s)| matches!(*s, "pending" | "claimed"))
                 {
                     return Err(domain(
                         "turn_has_pending_inbox",
                         format!("Turn {} closed with pending inbox items.", display(id)?),
                     ));
                 }
-                turn.closed = true;
+                turn.closed = !crate::mutants::on("closed-state");
             }
             _ => {}
         }
@@ -611,12 +669,14 @@ impl DomainState {
     }
 }
 fn validate_todos(entry: &JsValue) -> RecorderResult<()> {
-    if !(text_is(field(entry, "mode"), "markdown") || text_is(field(entry, "mode"), "structured"))
-        || !matches!(field(entry, "merge"), JsValue::Bool(_))
-        || ["markdown", "reason"]
-            .iter()
-            .any(|k| !field(entry, k).is_undefined() && field(entry, k).as_string().is_none())
-        || !matches!(field(entry, "todos"), JsValue::Array(_))
+    if !crate::mutants::on("todos-metadata")
+        && (!(text_is(field(entry, "mode"), "markdown")
+            || text_is(field(entry, "mode"), "structured"))
+            || !matches!(field(entry, "merge"), JsValue::Bool(_))
+            || ["markdown", "reason"]
+                .iter()
+                .any(|k| !field(entry, k).is_undefined() && field(entry, k).as_string().is_none())
+            || !matches!(field(entry, "todos"), JsValue::Array(_)))
     {
         return Err(domain(
             "invalid_plan_todo",
@@ -629,14 +689,15 @@ fn validate_todos(entry: &JsValue) -> RecorderResult<()> {
     let mut ids = Vec::new();
     for todo in todos {
         let id = call_id(todo, "id")?;
-        if !nonblank(id)
-            || !nonblank(field(todo, "content"))
-            || !["pending", "in_progress", "completed", "cancelled"]
-                .iter()
-                .any(|s| text_is(field(todo, "status"), s))
-            || (!field(todo, "priority").is_undefined()
-                && field(todo, "priority").as_string().is_none())
-            || contains(&ids, id)
+        if !crate::mutants::on("todo-item")
+            && (!nonblank(id)
+                || !nonblank(field(todo, "content"))
+                || !["pending", "in_progress", "completed", "cancelled"]
+                    .iter()
+                    .any(|s| text_is(field(todo, "status"), s))
+                || (!field(todo, "priority").is_undefined()
+                    && field(todo, "priority").as_string().is_none())
+                || contains(&ids, id))
         {
             return Err(domain(
                 "invalid_plan_todo",
@@ -649,13 +710,15 @@ fn validate_todos(entry: &JsValue) -> RecorderResult<()> {
 }
 fn validate_goal(revision: &mut f64, entry: &JsValue) -> RecorderResult<()> {
     let number = field(entry, "revision").as_number();
-    if !safe_integer(number) || number.is_some_and(|n| n < 1.0) {
+    if !crate::mutants::on("goal-revision-integer")
+        && (!safe_integer(number) || number.is_some_and(|n| n < 1.0))
+    {
         return Err(domain(
             "invalid_goal",
             "Goal revision must be a positive integer.",
         ));
     }
-    if number != Some(*revision + 1.0) {
+    if !crate::mutants::on("goal-revision-sequence") && number != Some(*revision + 1.0) {
         return Err(domain(
             "invalid_goal",
             format!(
@@ -669,24 +732,32 @@ fn validate_goal(revision: &mut f64, entry: &JsValue) -> RecorderResult<()> {
     if !matches!(goal, JsValue::Null) {
         let id = call_id(goal, "id")?;
         let max = field(goal, "maxGoalRounds");
-        if !nonblank(id)
-            || !nonblank(field(goal, "objective"))
-            || field(goal, "revision").as_number() != number
-            || !["active", "paused", "blocked", "complete"]
-                .iter()
-                .any(|s| text_is(field(goal, "phase"), s))
-            || (!field(goal, "blockedReason").is_undefined()
-                && field(goal, "blockedReason").as_string().is_none())
-            || (!max.is_undefined()
-                && (!safe_integer(max.as_number()) || max.as_number().is_some_and(|n| n < 1.0)))
+        if !crate::mutants::on("goal-snapshot")
+            && (!nonblank(id)
+                || !nonblank(field(goal, "objective"))
+                || field(goal, "revision").as_number() != number
+                || !["active", "paused", "blocked", "complete"]
+                    .iter()
+                    .any(|s| text_is(field(goal, "phase"), s))
+                || (!field(goal, "blockedReason").is_undefined()
+                    && field(goal, "blockedReason").as_string().is_none())
+                || (!max.is_undefined()
+                    && (!safe_integer(max.as_number())
+                        || max.as_number().is_some_and(|n| n < 1.0))))
         {
             return Err(domain("invalid_goal", "Goal snapshot is invalid."));
         }
-        if text_is(field(goal, "phase"), "blocked") && !trimmed(field(goal, "blockedReason")) {
+        if !crate::mutants::on("goal-blocked-reason")
+            && (text_is(field(goal, "phase"), "blocked") && !trimmed(field(goal, "blockedReason")))
+        {
             return Err(domain("invalid_goal", "Blocked goals require a reason."));
         }
     }
-    *revision = number.unwrap();
+    *revision = if crate::mutants::on("goal-state") {
+        0.0
+    } else {
+        number.unwrap()
+    };
     Ok(())
 }
 

@@ -147,11 +147,28 @@ async fn bounded<T>(future: impl Future<Output = T>) -> T {
 async fn wait_for_lease_release(
     runtime: &ProjectRuntime,
 ) -> Result<(), tokio::time::error::Elapsed> {
-    timeout(Duration::from_secs(10), async {
-        while runtime.lease_count() != 0 {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
+    timeout(
+        Duration::from_secs(if crate::mutants::on("late-deadline") {
+            20
+        } else {
+            10
+        }),
+        async {
+            if crate::mutants::on("old-instantaneous-assertion") {
+                assert_eq!(
+                    runtime.lease_count(),
+                    0,
+                    "#996 lease must already be released at stream end"
+                );
+            } else if crate::mutants::on("skip-observation") {
+                let _ = runtime;
+            } else {
+                while runtime.lease_count() != 0 {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            }
+        },
+    )
     .await
 }
 /// Regex-safe argv token unique to one test's pid path. `peer()` appends it so
