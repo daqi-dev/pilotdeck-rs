@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot
 
 repo = Path(__file__).resolve().parents[5]
 source = repo / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw'
@@ -26,17 +26,18 @@ def interrupted(signum, frame):
 signal.signal(signal.SIGTERM, interrupted)
 
 def run(command, label, extra=None, seconds=120):
-    with (out / (label + '.log')).open('w') as log:
-        process = subprocess.Popen(command, cwd=repo / 'src', env=dict(env, **(extra or {})),
-                                   stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-        try:
-            status = process.wait(timeout=seconds)
-        except BaseException:
-            if process.poll() is None:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-            raise
-    return status, (out / (label + '.log')).read_text()
+    # Shared bounded owner: every invocation gets a fresh session and a killed
+    # tree is reaped within run_owned's collection bound (#528).
+    try:
+        result = run_owned(command, cwd=repo / 'src',
+                           env=dict(env, **(extra or {})), timeout=seconds)
+    except subprocess.TimeoutExpired as error:
+        text = (error.output or '') + (error.stderr or '')
+        (out / (label + '.log')).write_text(text)
+        raise
+    text = result.stdout + result.stderr
+    (out / (label + '.log')).write_text(text)
+    return result.returncode, text
 
 def reserve(label):
     slot = wait_for_slot(repo / 'scripts/cargo-slots.sh', interval=30)
@@ -104,10 +105,20 @@ with mutating_sources(repo, list(files.values())) as snapshot:
         if not sys.argv[2:] or 'snapshot' in sys.argv[2:]:
             reset()
             sn = original['storage/snapshots.rs'].decode()
-            sn = once(sn, """        let _workspace = self.workspace_memory.operation_scope()?;
-        let _global = self.global_user_memory.operation_scope()?;""", """        let roots = [self.workspace_memory.get_root_dir(), self.global_user_memory.get_root_dir()];
-        let locks = roots.iter().map(|p| super::super::file_memory::operation_lock(p)).collect::<Result<Vec<_>>>()?;
-        let _guards = locks.iter().map(|l| super::super::file_memory::OperationGuard::enter(l)).collect::<Result<Vec<_>>>()?;""")
+            # fix-r2: fix-r1 moved `snapshot_operation` behind
+            # `snapshot_operation_scope`; the equivalent defense is that
+            # scope's root-ordered acquisition. Reproduce the old
+            # workspace-then-global order so the test still fails on its
+            # `snapshot/entries must use the same root order` assertion.
+            sn = once(sn, """        let workspace = self.workspace_memory.operation_scope()?;
+        let global = self.global_user_memory.operation_scope()?;""", """        let roots = [self.workspace_memory.get_root_dir(), self.global_user_memory.get_root_dir()];
+        let locks: Vec<&'static std::sync::Mutex<()>> = roots.iter().map(|p| super::super::file_memory::operation_lock(p).map(|lock| {
+            let leaked: &'static std::sync::Arc<std::sync::Mutex<()>> = Box::leak(Box::new(lock));
+            &**leaked
+        })).collect::<Result<Vec<_>>>()?;
+        let mut guards = locks.iter().map(|l| super::super::file_memory::OperationGuard::enter(*l)).collect::<Result<Vec<_>>>()?;
+        let global = vec![guards.pop().expect("snapshot root order mutation")];
+        let workspace = guards;""")
             reserve('snapshot-order-build')
             write('storage/snapshots.rs', sn)
             binary = build('snapshot-order-build')

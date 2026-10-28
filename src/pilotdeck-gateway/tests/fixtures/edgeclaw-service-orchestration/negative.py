@@ -51,6 +51,9 @@ TAIL_RACE_FILE = 'pilotdeck-gateway/tests/edgeclaw_dream_tail_race.rs'
 # fix-r1 P1-6: the cross-process same-DB WAL cell's Rust acceptance test.
 WAL_TWO_PROCESS_TEST = 'cross_process_wal_writer_blocks_service_writes_like_ts'
 WAL_TWO_PROCESS_FILE = 'pilotdeck-gateway/tests/edgeclaw_wal_two_process.rs'
+# fix-r2: the parked-flush cell cannot observe a widened session_keys;
+# this deterministic cell exercises the same flush -> run_heartbeat filter.
+FLUSH_FILTER_TEST = 'flush_session_filter_is_honored'
 
 
 ANCHORS = {
@@ -98,10 +101,15 @@ ANCHORS = {
     # snapshot's runtime state; inverting the truthiness drops every key.
     'rollback-result-runtime-state':
         '#776 scenario dream-stage-rollback-ok: observed differs from the real TS',
-    # fix-r1 P1-4 (flush × flush): the parked first flush's session filter
-    # must reach the heartbeat; widening it to all sessions double-consumes.
+    # fix-r1 P1-4 (flush × flush): fix-r2 re-bound this mutant. The parked
+    # flush resolves `list_pending_session_keys` before its gated request, and
+    # the concurrent second flush indexes s2 before the first resumes, so
+    # widening `session_keys` to None produced the same `flush-inflight-flush`
+    # cell (host r3 + local repro: SURVIVED). The deterministic
+    # `flush_session_filter_is_honored` cell exercises the same flush →
+    # run_heartbeat filter without that interleaving and fails here.
     'flush-concurrent-consumption':
-        '#776 scenario flush-inflight-flush: observed differs from the real TS',
+        '#776 session-filter: flush captured sessions outside its sessionKeys',
     # fix-r1 P1-1: the dream success tail must hold one shared root operation
     # scope across install and replace (two-thread tail-race regression).
     'dream-tail-scope':
@@ -232,9 +240,6 @@ MUTANTS = [
         '                self.repository\n'
         '                    .replace_live_roots_with_stage(&stage, &stage.snapshot)?;\n'
         '                Ok(())',
-        '                let _ = self\n'
-        '                    .repository\n'
-        '                    .replace_live_roots_with_stage(&stage, &stage.snapshot);\n'
         '                Ok(())',
     ),
     mutation(
@@ -266,6 +271,7 @@ MUTANTS = [
         '                session_keys: None,\n'
         '                reason: options.reason.clone(),\n'
         '            })',
+        test=FLUSH_FILTER_TEST,
     ),
     mutation(
         'dream-tail-scope',

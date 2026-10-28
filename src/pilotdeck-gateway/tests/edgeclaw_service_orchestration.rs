@@ -1448,6 +1448,113 @@ fn flush_second_completes_when_first_never_does() {
         .expect("#776 flush-never-released close service");
 }
 
+/// fix-r2: `flush-inflight-flush` cannot observe a widened `session_keys`.
+/// The parked flush resolves `list_pending_session_keys` before its gated
+/// request, and the concurrent second flush indexes s2 before the first
+/// resumes, so the fix-r1 `flush-concurrent-consumption` mutant
+/// (`HeartbeatRunOptions { session_keys: None }`) produced the same cell and
+/// survived on the host and locally. This deterministic cell walks the same
+/// `flush` → `run_heartbeat` filter without that interleaving: a flush scoped
+/// to s1 must not consume s2.
+#[test]
+fn flush_session_filter_is_honored() {
+    let scratch = Scratch::new("edgeclaw-service-orchestration-session-filter");
+    let root = scratch.path();
+    let dir = root.join("svc-filter");
+    fs::create_dir_all(dir.join("workspace")).expect("#776 session-filter workspace");
+    fs::create_dir_all(dir.join("home")).expect("#776 session-filter home");
+    let step = |value: Value| {
+        (
+            200,
+            json!({"choices": [{"message": {"content": value.to_string()}}]}).to_string(),
+        )
+    };
+    let note = |name: &str| {
+        json!({
+            "skip": false,
+            "reason": "",
+            "name": name,
+            "description": format!("{name} description"),
+            "markdown": format!("## Summary\n{name} body"),
+        })
+    };
+    let steps = vec![
+        step(json!({"should_store": true, "labels": [{"type": "project", "reason": "r"}]})),
+        step(note("Alpha")),
+        step(json!({"should_store": true, "labels": [{"type": "project", "reason": "r"}]})),
+        step(note("Beta")),
+    ];
+    let (transport, gate) = ScriptedTransport::new(steps, None);
+    assert!(
+        gate.is_none(),
+        "#776 session-filter: unexpected request gate"
+    );
+    let math_index = Arc::new(AtomicUsize::new(0));
+    let service = Arc::new(build_service(
+        &dir,
+        Arc::new(transport.clone()),
+        &math_index,
+    ));
+    let messages: Vec<JsValue> = [
+        json!({"role": "user", "content": "alpha user"}),
+        json!({"role": "assistant", "content": "alpha assistant"}),
+    ]
+    .iter()
+    .map(js_from)
+    .collect();
+    for (session, timestamp) in [
+        ("s1", "2026-10-22T00:00:01.000Z"),
+        ("s2", "2026-10-22T00:00:02.000Z"),
+    ] {
+        service
+            .capture_turn(
+                &messages,
+                CaptureTurnInput {
+                    session_key: session.into(),
+                    timestamp: Some(timestamp.into()),
+                    source: None,
+                },
+            )
+            .expect("#776 session-filter: seed captureTurn");
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("#776 session-filter: runtime");
+    runtime.block_on(async {
+        let stats = service
+            .flush(FlushOptions {
+                reason: Some("manual".into()),
+                session_keys: Some(vec!["s1".into()]),
+                ..FlushOptions::default()
+            })
+            .await
+            .expect("#776 session-filter: flush failed");
+        let stats = encode_js(&stats.to_value());
+        assert_eq!(
+            stats.get("capturedSessions").and_then(Value::as_f64),
+            Some(1.0),
+            "#776 session-filter: flush captured sessions outside its sessionKeys"
+        );
+        assert_eq!(
+            stats.get("writtenFiles").and_then(Value::as_f64),
+            Some(1.0),
+            "#776 session-filter: flush wrote files outside its sessionKeys"
+        );
+        let pending = service
+            .repository
+            .storage
+            .list_pending_session_keys(30, None)
+            .expect("#776 session-filter: list pending sessions");
+        assert_eq!(
+            pending,
+            vec!["s2".to_string()],
+            "#776 session-filter: the filtered-out session was consumed"
+        );
+    });
+    service.close().expect("#776 session-filter: close service");
+}
+
 #[test]
 #[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules)"]
 fn real_ts_reads_rust_service_observations() {
