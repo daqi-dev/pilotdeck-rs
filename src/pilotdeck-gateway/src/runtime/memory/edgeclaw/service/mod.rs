@@ -16,7 +16,9 @@
 //! duplicate it.
 
 use super::{
-    file_memory::{EdgeClawFileStores, FileMemoryClock, FileMemoryError, absolute},
+    file_memory::{
+        EdgeClawFileStores, FileMemoryClock, FileMemoryError, TempRandomFragment, absolute,
+    },
     heartbeat::indexer::{
         CaptureL0SessionInput, HeartbeatError, HeartbeatIndexer, HeartbeatLogger, HeartbeatOptions,
     },
@@ -34,7 +36,13 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     fmt,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::AtomicU64},
+};
+
+mod orchestration;
+pub use orchestration::{
+    DreamRunOutcome, DreamTrigger, FlushOptions, MaintenanceOutcome, MathRandom,
+    default_math_random,
 };
 
 /// `LoggerLike` (`service.ts:59-63`). Every level is optional in TS; the
@@ -75,6 +83,8 @@ pub struct ServiceDependencies {
     pub now_ms: Option<RetrieverClock>,
     /// `Math.random().toString(36).slice(2, 10)`.
     pub random_token: Option<RandomToken>,
+    /// `Math.random()` for the dream trace id (`A6.6-edgeclaw-19`).
+    pub math_random: Option<MathRandom>,
     /// Injected HTTP transport; defaults to the production hyper client.
     pub transport: Option<Arc<dyn ModelHttpTransport>>,
     pub runtime: Option<Arc<dyn LlmRuntime>>,
@@ -235,6 +245,18 @@ pub struct EdgeClawMemoryService {
     source: String,
     clock: FileMemoryClock,
     random_token: RandomToken,
+    /// `Date.now()` for `hasElapsedMinutes` and the dream environment.
+    now_ms: RetrieverClock,
+    /// `Math.random()` for the dream trace id.
+    math_random: MathRandom,
+    /// `options.logger`, kept for `DreamRewriteRunner` (`service.ts:819-822`).
+    logger: Option<Arc<dyn ServiceLogger>>,
+    /// Test seam for the dream stage lifecycle: how many stages `dream` created
+    /// and how many times it invoked `dispose` on them. The TS fixture counts
+    /// the same two by monkey-patching `createDreamStage` / `stage.dispose`;
+    /// [`Self::dream_stage_counters`] reads these instead.
+    dream_stages_created: AtomicU64,
+    dream_stages_disposed: AtomicU64,
 }
 
 impl EdgeClawMemoryService {
@@ -253,6 +275,7 @@ impl EdgeClawMemoryService {
             clock,
             now_ms,
             random_token,
+            math_random,
             transport,
             runtime,
             logger,
@@ -313,16 +336,23 @@ impl EdgeClawMemoryService {
         });
         let random_token: RandomToken =
             random_token.unwrap_or_else(|| Arc::new(super::retriever::default_random_token));
+        let math_random: MathRandom = math_random.unwrap_or_else(|| Arc::new(default_math_random));
         let general_workspace = absolute(&home.join(".pilotdeck"))?;
 
-        let repository = Arc::new(EdgeClawFileStores::with_workspace_clock(
-            &db_path,
-            &memory_dir,
-            root_dir.join("global"),
-            &workspace_dir,
-            &general_workspace,
-            clock.clone(),
-        )?);
+        let repository = Arc::new(
+            EdgeClawFileStores::with_workspace_clock(
+                &db_path,
+                &memory_dir,
+                root_dir.join("global"),
+                &workspace_dir,
+                &general_workspace,
+                clock.clone(),
+            )?
+            .with_temp_name_seams(
+                now_ms.clone(),
+                temp_name_fragment(&math_random, &random_token),
+            ),
+        );
         repository.storage.set_pipeline_state(
             if crate::mutants::on("workspace-state-key") {
                 "workspaceDirMutated"
@@ -375,7 +405,7 @@ impl EdgeClawMemoryService {
         let retriever = ReasoningRetriever::with_dependencies(
             repository.clone(),
             extractor.clone(),
-            now_ms,
+            now_ms.clone(),
             random_token.clone(),
         );
 
@@ -395,6 +425,11 @@ impl EdgeClawMemoryService {
             source,
             clock,
             random_token,
+            now_ms,
+            math_random,
+            logger,
+            dream_stages_created: AtomicU64::new(0),
+            dream_stages_disposed: AtomicU64::new(0),
         })
     }
 
@@ -965,6 +1000,21 @@ fn array_len(value: &JsValue) -> usize {
         JsValue::Array(items) => items.len(),
         _ => 0,
     }
+}
+
+/// The `Math.random().toString(36).slice(2, 8)` half of sibling temp path
+/// names (`sqlite.ts:422`). Every name consumes one draw from the shared
+/// `Math.random` seam, and `slice(2, 8)` is a prefix of the `slice(2, 10)`
+/// token [`RandomToken`] formats, so the fragment truncates that token.
+fn temp_name_fragment(math_random: &MathRandom, random_token: &RandomToken) -> TempRandomFragment {
+    let math_random = math_random.clone();
+    let random_token = random_token.clone();
+    Arc::new(move || {
+        let _ = math_random();
+        let token = random_token();
+        let units = token.units();
+        String::from_utf16_lossy(&units[..units.len().min(6)])
+    })
 }
 
 /// JS template-literal `String(value)` for the case-trace seed. The record is

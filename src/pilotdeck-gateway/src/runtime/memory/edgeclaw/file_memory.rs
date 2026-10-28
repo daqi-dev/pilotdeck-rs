@@ -42,6 +42,13 @@ pub type ProjectMetaRecord = JsObject;
 pub type ManifestUserEntriesProvider =
     Arc<dyn Fn() -> Result<Vec<MemoryManifestEntry>> + Send + Sync>;
 pub type FileMemoryClock = Arc<dyn Fn() -> String + Send + Sync>;
+/// `Date.now()` for sibling temp path names (`sqlite.ts:422`).
+pub type TempNowMs = Arc<dyn Fn() -> i64 + Send + Sync>;
+/// `Math.random().toString(36).slice(2, 8)` for sibling temp path names
+/// (`sqlite.ts:422`). V8's shortest-round-trip radix-36 formatting stays at
+/// the JS boundary: fixtures inject the exact fragment per draw, production
+/// only needs the uniqueness a fresh uuid provides.
+pub type TempRandomFragment = Arc<dyn Fn() -> String + Send + Sync>;
 
 #[derive(Clone)]
 pub struct FileMemoryStoreOptions {
@@ -387,6 +394,10 @@ pub struct EdgeClawFileStores {
     pub storage: EdgeClawStorage,
     pub workspace_memory: FileMemoryStore,
     pub global_user_memory: Arc<FileMemoryStore>,
+    /// The `Date.now()` / `Math.random()` halves of every sibling temp path
+    /// name (`sqlite.ts:422`); see [`Self::with_temp_name_seams`].
+    pub(super) temp_now_ms: TempNowMs,
+    pub(super) temp_random_fragment: TempRandomFragment,
 }
 impl EdgeClawFileStores {
     pub fn open(
@@ -463,8 +474,38 @@ impl EdgeClawFileStores {
             storage: EdgeClawStorage::with_clock(db, clock)?,
             workspace_memory,
             global_user_memory,
+            temp_now_ms: Arc::new(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+                    .min(i64::MAX as u128) as i64
+            }),
+            temp_random_fragment: Arc::new(default_temp_fragment),
         })
     }
+    /// Override the sibling temp-path naming seams. `sqlite.ts:422` reads
+    /// `Date.now()` and one `Math.random()` draw per path, so replay hosts
+    /// inject the frozen clock and the exact base-36 fragment of each draw.
+    pub fn with_temp_name_seams(
+        mut self,
+        now_ms: TempNowMs,
+        random_fragment: TempRandomFragment,
+    ) -> Self {
+        self.temp_now_ms = now_ms;
+        self.temp_random_fragment = random_fragment;
+        self
+    }
+}
+
+/// Production `Math.random().toString(36).slice(2, 8)`.
+fn default_temp_fragment() -> String {
+    uuid::Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(6)
+        .collect()
 }
 pub(crate) fn now_iso() -> String {
     let ms = match SystemTime::now().duration_since(UNIX_EPOCH) {
