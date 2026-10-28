@@ -14,8 +14,8 @@ single implementation of that entry contract:
   it to reject any already-imported apparatus module whose executed bytes
   differ from the same HEAD;
 * ``run_entry`` is the only ``__main__`` body: HEAD preflight, run ``main``,
-  and classify failures (untrusted apparatus / cancellation -> BLOCKED/2,
-  parity failure -> FAIL/1).
+  and preserve the entry's historical failure policy. Consolidating the
+  implementation must not change a frozen CLI's exit code or JSON shape.
 
 Entry files still carry a short verbatim preamble because the guard itself
 must be loaded before ``common.py`` and the ``-I`` check must precede every
@@ -96,30 +96,49 @@ def verify_cli_imports(apparatus=None):
     return head
 
 
-def _failure(error):
-    """Map one escaping entry error to the single status/exit contract."""
-    rule = getattr(error, 'rule', None) or 'EVIDENCE'
-    # Untrusted apparatus, cancellation and unavailable resources are not a
-    # parity verdict: BLOCKED/2.  Everything else is a failed comparison or an
-    # ordinary evidence failure: FAIL/1.
-    blocked = (rule == 'APPARATUS_IMPORTS'
-               or isinstance(error, (PermissionError, TimeoutError, KeyboardInterrupt)))
-    return ('BLOCKED', 2) if blocked else ('FAIL', 1), rule
+def _failure(error, policy, common):
+    """Return the original entry's report/code, or None to propagate unchanged.
+
+    These policies are measured against pre-refactor main (#991 decision A).
+    In particular run_round historically emits BLOCKED with exit 1, and
+    TimeoutExpired is not TimeoutError: ruler keeps FAIL/1 for the former.
+    """
+    if policy == 'round':
+        if isinstance(error, KeyboardInterrupt):
+            return None
+        return {'status': 'BLOCKED', 'error': str(error)}, common.BATCH_EXIT_CODES['FAIL']
+    if policy == 'session':
+        return {'status': 'BLOCKED', 'error': str(error)}, common.BATCH_EXIT_CODES['BLOCKED']
+    if policy == 'ruler':
+        blocked = isinstance(error, (PermissionError, TimeoutError, KeyboardInterrupt))
+        status = 'BLOCKED' if blocked else 'FAIL'
+        return {'status': status, 'failure': {'rule': 'EVIDENCE', 'detail': str(error)}}, common.BATCH_EXIT_CODES[status]
+    if policy == 'controls':
+        if isinstance(error, common.ApparatusVerificationError):
+            return {'status': 'BLOCKED', 'failure': {'rule': error.rule, 'detail': str(error)}}, common.BATCH_EXIT_CODES['BLOCKED']
+        return None
+    if policy == 'traceback':
+        return None
+    raise ValueError(f'#991 unknown entry failure policy: {policy}')
 
 
-def run_entry(main):
-    """Run one CLI entry: HEAD preflight, main, one shared exit classifier."""
+def run_entry(main, policy):
+    """Run the shared preflight and preserve this entry's main failure policy."""
+    common = load('common', APPARATUS / 'common.py')
     try:
         verify_cli_imports()
     except (Exception, KeyboardInterrupt) as error:
         print(json.dumps({'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))
+        # common failed provenance: even its exit mapping may be the mutant.
+        # Keep the preflight refusal independent of every untrusted module.
         raise SystemExit(2)
     try:
         code = main()
     except (Exception, KeyboardInterrupt) as error:
-        (status, code), rule = _failure(error)
-        print(json.dumps({'status': status,
-                          'failure': {'rule': rule, 'detail': str(error)}},
-                         ensure_ascii=False))
+        failure = _failure(error, policy, common)
+        if failure is None:
+            raise
+        report, code = failure
+        print(json.dumps(report, ensure_ascii=False))
         raise SystemExit(code)
     raise SystemExit(code)

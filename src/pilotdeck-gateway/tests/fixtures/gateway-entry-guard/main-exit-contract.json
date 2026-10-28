@@ -1,0 +1,465 @@
+{
+  "base": "a0f01e51815ddbd564865b3f8a63451b6a03425d",
+  "errors": {
+    "ordinary": "TypeError('#991 controlled ordinary')",
+    "interrupt": "KeyboardInterrupt('#991 controlled interrupt')",
+    "timeout": "TimeoutError('#991 controlled timeout')",
+    "permission": "PermissionError('#991 controlled permission')",
+    "subprocess_timeout": "subprocess.TimeoutExpired(['#991 controlled child'], 5)",
+    "apparatus": "common.ApparatusVerificationError('#991 controlled apparatus')",
+    "rule_only": "RuleOnly('#991 controlled rule-only')",
+    "system_exit": "SystemExit(7)"
+  },
+  "entries": {
+    "build_proxy.py": {
+      "ordinary": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "TypeError: #991 controlled ordinary"
+      },
+      "interrupt": {
+        "exit": -2,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "KeyboardInterrupt: #991 controlled interrupt"
+      },
+      "timeout": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "TimeoutError: #991 controlled timeout"
+      },
+      "permission": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "PermissionError: #991 controlled permission"
+      },
+      "subprocess_timeout": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "subprocess.TimeoutExpired: Command '['#991 controlled child']' timed out after 5 seconds"
+      },
+      "apparatus": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "common.ApparatusVerificationError: #991 controlled apparatus"
+      },
+      "rule_only": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "RuleOnly: #991 controlled rule-only"
+      },
+      "system_exit": {
+        "exit": 7,
+        "stdout": "",
+        "traceback": false,
+        "stderr_last": ""
+      }
+    },
+    "check_frozen.py": {
+      "ordinary": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "TypeError: #991 controlled ordinary"
+      },
+      "interrupt": {
+        "exit": -2,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "KeyboardInterrupt: #991 controlled interrupt"
+      },
+      "timeout": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "TimeoutError: #991 controlled timeout"
+      },
+      "permission": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "PermissionError: #991 controlled permission"
+      },
+      "subprocess_timeout": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "subprocess.TimeoutExpired: Command '['#991 controlled child']' timed out after 5 seconds"
+      },
+      "apparatus": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "common.ApparatusVerificationError: #991 controlled apparatus"
+      },
+      "rule_only": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "RuleOnly: #991 controlled rule-only"
+      },
+      "system_exit": {
+        "exit": 7,
+        "stdout": "",
+        "traceback": false,
+        "stderr_last": ""
+      }
+    },
+    "check_ruler.py": {
+      "ordinary": {
+        "exit": 1,
+        "stdout": "{\"status\": \"FAIL\", \"failure\": {\"rule\": \"EVIDENCE\", \"detail\": \"#991 controlled ordinary\"}}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "interrupt": {
+        "exit": 2,
+        "stdout": "{\"status\": \"BLOCKED\", \"failure\": {\"rule\": \"EVIDENCE\", \"detail\": \"#991 controlled interrupt\"}}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "timeout": {
+        "exit": 2,
+        "stdout": "{\"status\": \"BLOCKED\", \"failure\": {\"rule\": \"EVIDENCE\", \"detail\": \"#991 controlled timeout\"}}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "permission": {
+        "exit": 2,
+        "stdout": "{\"status\": \"BLOCKED\", \"failure\": {\"rule\": \"EVIDENCE\", \"detail\": \"#991 controlled permission\"}}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "subprocess_timeout": {
+        "exit": 1,
+        "stdout": "{\"status\": \"FAIL\", \"failure\": {\"rule\": \"EVIDENCE\", \"detail\": \"Command '['#991 controlled child']' timed out after 5 seconds\"}}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "apparatus": {
+        "exit": 1,
+        "stdout": "{\"status\": \"FAIL\", \"failure\": {\"rule\": \"EVIDENCE\", \"detail\": \"#991 controlled apparatus\"}}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "rule_only": {
+        "exit": 1,
+        "stdout": "{\"status\": \"FAIL\", \"failure\": {\"rule\": \"EVIDENCE\", \"detail\": \"#991 controlled rule-only\"}}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "system_exit": {
+        "exit": 7,
+        "stdout": "",
+        "traceback": false,
+        "stderr_last": ""
+      }
+    },
+    "compare.py": {
+      "ordinary": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "TypeError: #991 controlled ordinary"
+      },
+      "interrupt": {
+        "exit": -2,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "KeyboardInterrupt: #991 controlled interrupt"
+      },
+      "timeout": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "TimeoutError: #991 controlled timeout"
+      },
+      "permission": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "PermissionError: #991 controlled permission"
+      },
+      "subprocess_timeout": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "subprocess.TimeoutExpired: Command '['#991 controlled child']' timed out after 5 seconds"
+      },
+      "apparatus": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "common.ApparatusVerificationError: #991 controlled apparatus"
+      },
+      "rule_only": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "RuleOnly: #991 controlled rule-only"
+      },
+      "system_exit": {
+        "exit": 7,
+        "stdout": "",
+        "traceback": false,
+        "stderr_last": ""
+      }
+    },
+    "observer.py": {
+      "ordinary": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "TypeError: #991 controlled ordinary"
+      },
+      "interrupt": {
+        "exit": -2,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "KeyboardInterrupt: #991 controlled interrupt"
+      },
+      "timeout": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "TimeoutError: #991 controlled timeout"
+      },
+      "permission": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "PermissionError: #991 controlled permission"
+      },
+      "subprocess_timeout": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "subprocess.TimeoutExpired: Command '['#991 controlled child']' timed out after 5 seconds"
+      },
+      "apparatus": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "common.ApparatusVerificationError: #991 controlled apparatus"
+      },
+      "rule_only": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "RuleOnly: #991 controlled rule-only"
+      },
+      "system_exit": {
+        "exit": 7,
+        "stdout": "",
+        "traceback": false,
+        "stderr_last": ""
+      }
+    },
+    "run_round.py": {
+      "ordinary": {
+        "exit": 1,
+        "stdout": "{\"status\": \"BLOCKED\", \"error\": \"#991 controlled ordinary\"}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "interrupt": {
+        "exit": -2,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "KeyboardInterrupt: #991 controlled interrupt"
+      },
+      "timeout": {
+        "exit": 1,
+        "stdout": "{\"status\": \"BLOCKED\", \"error\": \"#991 controlled timeout\"}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "permission": {
+        "exit": 1,
+        "stdout": "{\"status\": \"BLOCKED\", \"error\": \"#991 controlled permission\"}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "subprocess_timeout": {
+        "exit": 1,
+        "stdout": "{\"status\": \"BLOCKED\", \"error\": \"Command '['#991 controlled child']' timed out after 5 seconds\"}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "apparatus": {
+        "exit": 1,
+        "stdout": "{\"status\": \"BLOCKED\", \"error\": \"#991 controlled apparatus\"}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "rule_only": {
+        "exit": 1,
+        "stdout": "{\"status\": \"BLOCKED\", \"error\": \"#991 controlled rule-only\"}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "system_exit": {
+        "exit": 7,
+        "stdout": "",
+        "traceback": false,
+        "stderr_last": ""
+      }
+    },
+    "session_domain.py": {
+      "ordinary": {
+        "exit": 2,
+        "stdout": "{\"status\": \"BLOCKED\", \"error\": \"#991 controlled ordinary\"}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "interrupt": {
+        "exit": 2,
+        "stdout": "{\"status\": \"BLOCKED\", \"error\": \"#991 controlled interrupt\"}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "timeout": {
+        "exit": 2,
+        "stdout": "{\"status\": \"BLOCKED\", \"error\": \"#991 controlled timeout\"}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "permission": {
+        "exit": 2,
+        "stdout": "{\"status\": \"BLOCKED\", \"error\": \"#991 controlled permission\"}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "subprocess_timeout": {
+        "exit": 2,
+        "stdout": "{\"status\": \"BLOCKED\", \"error\": \"Command '['#991 controlled child']' timed out after 5 seconds\"}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "apparatus": {
+        "exit": 2,
+        "stdout": "{\"status\": \"BLOCKED\", \"error\": \"#991 controlled apparatus\"}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "rule_only": {
+        "exit": 2,
+        "stdout": "{\"status\": \"BLOCKED\", \"error\": \"#991 controlled rule-only\"}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "system_exit": {
+        "exit": 7,
+        "stdout": "",
+        "traceback": false,
+        "stderr_last": ""
+      }
+    },
+    "controls/run_all.py": {
+      "ordinary": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "TypeError: #991 controlled ordinary"
+      },
+      "interrupt": {
+        "exit": -2,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "KeyboardInterrupt: #991 controlled interrupt"
+      },
+      "timeout": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "TimeoutError: #991 controlled timeout"
+      },
+      "permission": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "PermissionError: #991 controlled permission"
+      },
+      "subprocess_timeout": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "subprocess.TimeoutExpired: Command '['#991 controlled child']' timed out after 5 seconds"
+      },
+      "apparatus": {
+        "exit": 2,
+        "stdout": "{\"status\": \"BLOCKED\", \"failure\": {\"rule\": \"APPARATUS_IMPORTS\", \"detail\": \"#991 controlled apparatus\"}}\n",
+        "traceback": false,
+        "stderr_last": ""
+      },
+      "rule_only": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "RuleOnly: #991 controlled rule-only"
+      },
+      "system_exit": {
+        "exit": 7,
+        "stdout": "",
+        "traceback": false,
+        "stderr_last": ""
+      }
+    },
+    "controls/session_domain.py": {
+      "ordinary": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "TypeError: #991 controlled ordinary"
+      },
+      "interrupt": {
+        "exit": -2,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "KeyboardInterrupt: #991 controlled interrupt"
+      },
+      "timeout": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "TimeoutError: #991 controlled timeout"
+      },
+      "permission": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "PermissionError: #991 controlled permission"
+      },
+      "subprocess_timeout": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "subprocess.TimeoutExpired: Command '['#991 controlled child']' timed out after 5 seconds"
+      },
+      "apparatus": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "common.ApparatusVerificationError: #991 controlled apparatus"
+      },
+      "rule_only": {
+        "exit": 1,
+        "stdout": "",
+        "traceback": true,
+        "stderr_last": "RuleOnly: #991 controlled rule-only"
+      },
+      "system_exit": {
+        "exit": 7,
+        "stdout": "",
+        "traceback": false,
+        "stderr_last": ""
+      }
+    }
+  }
+}

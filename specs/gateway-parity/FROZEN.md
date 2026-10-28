@@ -1,6 +1,8 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
-> **2026-10-28 #991 重登记候选（独立单，待两家非作者终审与人复核）**：把 10 个 A2 入口各自复制的 HEAD 自举 / 显式路径加载 / 来源校验 / 退出码分类收成唯一 `_guard.py`；入口 `__main__` 仅 `run_entry(main)`，`test_safety` 新增 AST 机检（`__main__` 恰为该调用、无私有 `except` 分类、入口不再定义 `_load` / `_verify_cli_imports` / `_has_git_checkout`）与 `-I` 先于其它标准库 import 的 AST 检查；`observer.py` 同收编。仅重登记 13 件 A2 哈希并新增 `_guard.py` 一行；不改判分语义、阈值、分母、归一化、差异账本。真实存档复算与提交后负控见 `_tmp/20261026-issue-991/RESULT.md`；未提交树入口按设计 BLOCKED，不冒充已提交 CLI 通过。
+> **2026-10-29 #991 fix-r2 重登记候选（决策卡 A；待两家非作者终审与人复核）**：统一实现保留逐入口策略：run_round 普通异常为 BLOCKED/1 + error，KeyboardInterrupt 仍透传；session_domain 为 BLOCKED/2 + error；check_ruler 保留原 failure/EVIDENCE 分类（subprocess.TimeoutExpired 仍 FAIL/1）；controls/run_all 仅捕 ApparatusVerificationError；其余入口保留 traceback。重构前 main 实测的 9 入口 × 8 异常类对照表逐字校验 stdout、退出码与异常诊断，补 observer 三矩阵、派生 A2 AST 入口集和负控套件准入回归。主阶段退出码使用 common.BATCH_EXIT_CODES；preflight 拒绝不读取未可信 common 的映射，固定 2 防止篡改为 0。相对重构前 main 的异常契约无变化，不改判分语义、阈值、分母或差异账本。证据见 `_tmp/20261026-issue-991/fix-r2/RESULT.md`；候选树内容校验与提交后 HEAD CLI 校验分列。
+
+> **2026-10-28 #991 重登记候选（独立单，待两家非作者终审与人复核）**：把 10 个 A2 入口各自复制的 HEAD 自举 / 显式路径加载 / 来源校验 / 退出码分类收成唯一 `_guard.py`；入口 `__main__` 仅 `run_entry(main, policy)`，`test_safety` 新增 AST 机检（`__main__` 恰为该调用、无私有 `except` 分类、入口不再定义 `_load` / `_verify_cli_imports` / `_has_git_checkout`）与 `-I` 先于其它标准库 import 的 AST 检查；`observer.py` 同收编。仅重登记 13 件 A2 哈希并新增 `_guard.py` 一行；不改判分语义、阈值、分母、归一化、差异账本。真实存档复算与提交后负控见 `_tmp/20261026-issue-991/RESULT.md`；未提交树入口按设计 BLOCKED，不冒充已提交 CLI 通过。
 
 > **2026-10-28 #166 fix-r11 重登记候选（本轮明确授权，待两家非作者终审与人复核）**：恢复无 git 检出静态 CLI/库校验：仅无 `.git`（含祖先目录）且未设 GIT_DIR 时不读 HEAD，原哈希/账本检查继续；检出、worktree 文件、损坏元数据及显式 pinned HEAD 仍严格验证，真实采集租约继续硬要求 HEAD。十份相同 bootstrap 与 common 库入口同步，新增真实 ledger 回归、来源边界矩阵及成对变异。未改判分语义、阈值或历史账本。原始验证、真实存档复算及提交后全量负控交接见 `_tmp/20261026-issue-166/fix-r11/RESULT.md`；本记录不宣称终审或阶段完成。
 
@@ -170,30 +172,29 @@
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
 3e641ee353effae94c3751b198cb08f1728bf225bc9963356befea1d722df49b  accepted-diffs.md
-5157f972759bc56a37fa44d73b58a67e6d6ce3906dc1206d1e1fb68fda20bda2  ../../scripts/gateway-parity/_guard.py
-c53e40e9185b9cad5b510ca2297051155c1a4ab12cf691faf1c4544fbca2197e  ../../scripts/gateway-parity/build_proxy.py
-9b663806b5bb9326efb36e8f15a4ef14e5e8c3af72625fe12734fd2d7bd0173f  ../../scripts/gateway-parity/check_frozen.py
-3d8fc564c94cd5788def7b2eb2ede30660f11c5eec55a42e0bf857175436c4ab  ../../scripts/gateway-parity/check_ruler.py
+a66a7ade58dea86f573e8404f175d3ec02f4a5933685eb2556efbcbe16097af2  ../../scripts/gateway-parity/_guard.py
+96926219b68168ab7b926c5c52c8f4d8ecec7c83de324787479c1aa53410a3ac  ../../scripts/gateway-parity/build_proxy.py
+37e7c86d4c7e191f6202c39a6c223f4e9f5bd8d0e2f7f5fea84cb978eec45f9a  ../../scripts/gateway-parity/check_frozen.py
+c48c7e6818314b7a23a0660ab121edb2f95e97b2fea48d32c76779a3ee1c4830  ../../scripts/gateway-parity/check_ruler.py
 eb48c34dbc6c245fa10421bf5a4015acc95a341df0d96b6f336dbafbded0ec5c  ../../scripts/gateway-parity/common.py
-35513cb24f24ea5540ffb2ef2c2643704746081a0ba0a8f11d29c0cc2f6bd860  ../../scripts/gateway-parity/compare.py
+4ec51ff7fe79669cd062665cb414991b4411d684c4356eef98f28c573a85fcf7  ../../scripts/gateway-parity/compare.py
 9379b9e401e8a47537e933b2cdbfcff44aa16d6cef8138d7857349d87de2240a  ../../scripts/gateway-parity/controls/prerequisites.py
-09c786086c3afbfc5886244cc1daef885db22dd68ea18bef967c421594672455  ../../scripts/gateway-parity/controls/run_all.py
+51afd466698771350ea40cb3fee86a5c42aed699445f3cc3047cc0bbafd29294  ../../scripts/gateway-parity/controls/run_all.py
 5f8e906fa532a58b994dff4f5e6438b07e31f14195b8142b75b398b6778e9e63  ../../scripts/gateway-parity/driver.mts
 95fe265a7b7512f1969f19b7ee2d14133ce56916fb25c0953a84b5ec05568f74  ../../scripts/gateway-parity/mock.mjs
-d00cf0d2759ff0984b2138d7eeaa07dfb791e972fb42d6200974c8f804a71768  ../../scripts/gateway-parity/observer.py
-978760c9dd18d945bcdc5f23b181e13a3c0f1908971b1e217cef23a892d0109d  ../../scripts/gateway-parity/run_round.py
-e188afc67c5a53ae0188b798d8bb301944465c8ed9aee9bdcf77907318871fd7  ../../scripts/gateway-parity/test_safety.py
+11d6c766f22c2ab221b0ef857b7e863309df1009717a5c08f423546c78f49a95  ../../scripts/gateway-parity/observer.py
+6158b25ba9105f17759ff1e2543ade8ab70724f59eef81bc6b551020831b5967  ../../scripts/gateway-parity/run_round.py
+79f964f32964619bf846e01bcfef77b3483980f8cad1c64d3cd6b40930088373  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
-8ad48b71678dc99de870571e6d8d9d1eb338268d78ed5ea8e72e34b0ec916227  ../../scripts/gateway-parity/session_domain.py
+f878a55a372dc06cc5350f06ddb4fe3beac7b62c8826a6a200b79a3719a41d4b  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
-bfcb54e9e7011839e0a5d4c044f4aa1cd04b7d94beb6c274a2e65fcb0c503228  ../../scripts/gateway-parity/controls/session_domain.py
+d214b691ad77efa6c642577587f12865be046f9b99297c85caae566f9bfd2320  ../../scripts/gateway-parity/controls/session_domain.py
 41b1313fc047e8334a1655b69e277c4bcc451edaf15b79efd37e403e7005dab2  ../../scripts/gateway-parity/fixtures/session-calibration.json
 8ea02eadd41cc6bbf75c1e67c22152f37f6b729007ad1e3a34a190c9ab60188c  ../../scripts/a5-19/observation_rules.mjs
 0248507e617648bd8e81e1a54ae8b448cd7b7a2f14f1542424adc3a83b398c84  ../../scripts/a5-19/run.py
 b7373b5838370c43f5b35217f95ce688a0183b5494eb276a25d868a0c18517dd  ../../scripts/a5-19/six_cells.mts
 8ebd5ebaf0a189f9bf6727eb51765858abfe0afc94698b09ee53d6b707b7ec64  ../../scripts/a5-19/append-observer.mjs
 c2f69c000b4dd6e5f2912b05dbc846641d5cb7bac82976a6b1a1cf0e16fdee84  ../../scripts/a5-19/cleanup-observer.mjs
-
 > **2026-10-22 修复轮 8 重登记（PR #406，透明披露补齐）**：按本轮明确授权，accepted-diffs.md 的「已知未对齐（未接受，待 pr9c）」表格只追加第三条（240 层格式化元素 + 宽 P 子树在真实 TS 抛 `Invalid array length`、Rust 成功返回 Markdown），保留原有条目原文，并追加适用范围说明；本条属 V8 数组上限运行时行为，与深度批准无关。真实 TS 重测 2 / 4 MiB 并二分至 256 KiB 区间，Rust 2 / 4 / 8 MiB 原值与输出 SHA256 见 `_tmp/20261021-a65-pr9b/RESULT.md`「修复轮 8」。状态为「未批准，非已接受差异」，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
 
 > **2026-10-22 修复轮 9 重登记（PR #406，select 家族透明披露补齐）**：按本轮明确授权，在「已知未对齐（未接受，待 pr9c）」表只追加 select 内标签家族一行，保留已有条目原文；真实 TS（默认 Turndown + domino）与正式 Rust 实测 11 例，其中 9 例不一致录入 `parserGaps`，2 例一致仅记 RESULT。追加说明当前为 3 类解析器差异、1 类宽子树运行时差异，共 4 条已知未对齐；select 家族未穷举。第三条补入 2 MiB 完整真实 TS 金样与 Rust 逐字节回放、4 MiB Rust 成功断言。两侧原值、负控与验证见 `_tmp/20261021-a65-pr9b/RESULT.md`「修复轮 9」。状态仍为「未批准，非已接受差异」，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。

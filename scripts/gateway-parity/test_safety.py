@@ -800,7 +800,7 @@ class ImportIsolation(unittest.TestCase):
         head_verifier = b"def verify_loaded_apparatus(head):\n    raise RuntimeError('#166 controlled HEAD preflight reached')\n"
         for name in ('run_round.py', 'check_ruler.py', 'session_domain.py',
                      'controls/run_all.py', 'controls/session_domain.py',
-                     'check_frozen.py', 'compare.py', 'build_proxy.py'):
+                     'check_frozen.py', 'compare.py', 'build_proxy.py', 'observer.py'):
             with self.subTest(entry=name):
                 path = common.SCRIPT / name
                 module = ModuleType('__main__')
@@ -849,6 +849,7 @@ class ImportIsolation(unittest.TestCase):
             "_guard = importlib.util.module_from_spec(_spec)\n"
             "_spec.loader.exec_module(_guard)\n"
             "run_entry = _guard.run_entry\n"
+            "common = _guard.load('common', _guard.APPARATUS / 'common.py')\n"
             + body + '\n'
             # Inject the candidate preflight only; the dispatch and classifier
             # under test stay the real ones.
@@ -886,7 +887,7 @@ class ImportIsolation(unittest.TestCase):
     def test_tools_cli_preflight_errors_are_blocked(self):
         message = '#166 every CLI preflight failure must produce BLOCKED JSON/2'
         for name in ('check_frozen.py', 'compare.py', 'build_proxy.py', 'run_round.py',
-                     'check_ruler.py', 'controls/run_all.py', 'controls/session_domain.py'):
+                     'check_ruler.py', 'controls/run_all.py', 'controls/session_domain.py', 'observer.py'):
             for error in ("ValueError('controlled HEAD drift')", "OSError('controlled missing git')",
                           "subprocess.CalledProcessError(1, ['git'])",
                           "subprocess.TimeoutExpired(['git'], 30)", "KeyboardInterrupt('controlled cancel')"):
@@ -907,7 +908,7 @@ class ImportIsolation(unittest.TestCase):
     def test_tools_cli_dispatch_preserves_exit_codes(self):
         message = '#166 every CLI wrapper must preserve main exit code'
         for name in ('check_frozen.py', 'compare.py', 'build_proxy.py', 'run_round.py',
-                     'check_ruler.py', 'controls/run_all.py', 'controls/session_domain.py'):
+                     'check_ruler.py', 'controls/run_all.py', 'controls/session_domain.py', 'observer.py'):
             for status, code in (('PASS', 0), ('FAIL', 1), ('BLOCKED', 2), ('NOT_RUN', 3)):
                 with self.subTest(entry=name, status=status):
                     body = ("def _verify_cli_imports(): pass\n"
@@ -917,6 +918,51 @@ class ImportIsolation(unittest.TestCase):
                     self.assertEqual(result.returncode, code, message + ': ' + result.stderr)
                     self.assertEqual(result.stdout.strip(), json.dumps({'status': status}), message + ': JSON')
                     self.assertEqual(result.stderr, '', message + ': no traceback')
+
+    def test_cli_main_failures_preserve_pre_refactor_contract(self):
+        message = '#991 every entry must preserve its measured main exception contract'
+        fixture = (common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/'
+                   'gateway-entry-guard/main-exit-contract.json')
+        contract = json.loads(fixture.read_text())
+        entries = {name for name in common.A2_SCRIPTS if name.endswith('.py')
+                   and name not in ('common.py', '_guard.py', 'test_safety.py',
+                                    'controls/prerequisites.py')}
+        self.assertEqual(set(contract['errors']),
+                         {'ordinary', 'interrupt', 'timeout', 'permission', 'subprocess_timeout',
+                          'apparatus', 'rule_only', 'system_exit'}, message + ': required exception classes')
+        self.assertEqual(set(contract['entries']), entries, message + ': complete entry set')
+        for name, cases in contract['entries'].items():
+            self.assertEqual(set(cases), set(contract['errors']), message + ': complete exception set')
+            for label, expected in cases.items():
+                with self.subTest(entry=name, error=label):
+                    body = ("class RuleOnly(ValueError): rule = 'APPARATUS_IMPORTS'\n"
+                            "def _verify_cli_imports(): pass\n"
+                            f"def main(): raise {contract['errors'][label]}\n")
+                    result = self.session_dispatch_process(body, name)
+                    self.assertEqual(result.returncode, expected['exit'], message + ': exit: ' + result.stderr)
+                    self.assertEqual(result.stdout, expected['stdout'], message + ': exact stdout')
+                    self.assertEqual('Traceback (most recent call last):' in result.stderr,
+                                     expected['traceback'], message + ': traceback disposition')
+                    last = result.stderr.splitlines()[-1] if result.stderr else ''
+                    self.assertEqual(last, expected['stderr_last'], message + ': exact exception diagnostic')
+
+    def test_guard_exit_codes_use_shared_mapping(self):
+        message = '#991 guard must use shared exit codes including historical BLOCKED/1'
+        codes = {'BLOCKED': 0, 'FAIL': 17}
+        with patch.dict(common.BATCH_EXIT_CODES, codes):
+            for policy, expected in [('round', 17), ('session', 0), ('ruler', 17),
+                                     ('controls', 0)]:
+                error = (common.ApparatusVerificationError('controlled') if policy == 'controls'
+                         else ValueError('controlled'))
+                self.assertEqual(_guard._failure(error, policy, common)[1], expected, message)
+            self.assertEqual(_guard._failure(TimeoutError('controlled'), 'ruler', common)[1], 0, message)
+            with patch.object(_guard, 'verify_cli_imports', side_effect=ValueError('controlled')), \
+                    patch('builtins.print'), self.assertRaises(SystemExit, msg=message) as raised:
+                _guard.run_entry(lambda: None, 'traceback')
+            self.assertEqual(raised.exception.code, 2,
+                             '#991 untrusted shared mapping must never turn preflight refusal into success')
+        with self.assertRaisesRegex(ValueError, '#991 unknown entry failure policy', msg=message):
+            _guard._failure(ValueError('controlled'), 'unknown', common)
 
     def test_build_proxy_prerequisites_are_blocked_but_build_failure_is_fail(self):
         from contextlib import redirect_stdout
@@ -1401,17 +1447,19 @@ exec(compile(ast.get_source_segment(source, block), path, 'exec'),
                         except (Exception, KeyboardInterrupt) as error:
                             escaped = error
                         self.assertEqual(reached, [stage], message + ': real module_at reached')
-                        self.assertIsNone(escaped, message + ': one guard classified the error')
-                        try:
-                            report = json.loads(output.getvalue())
-                        except ValueError as error:
-                            self.fail('#166 fix-r10 invalid standalone JSON; invalid control: ' + str(error))
                         if stage == 'work':
-                            blocked = error_type is KeyboardInterrupt
-                            self.assertEqual((report.get('status'), code),
-                                             ('BLOCKED', 2) if blocked else ('FAIL', 1), message)
-                            self.assertEqual(report.get('failure', {}).get('rule'), 'EVIDENCE', message)
+                            # The original controls CLI catches only provenance
+                            # errors; ordinary work/cancellation still escapes.
+                            self.assertIsInstance(escaped, error_type, message + ': original work exception escapes')
+                            self.assertEqual(str(escaped), 'controlled work', message + ': original diagnostic')
+                            self.assertIsNone(code, message + ': no synthetic exit code')
+                            self.assertEqual(output.getvalue(), '', message + ': no synthetic JSON')
                         else:
+                            self.assertIsNone(escaped, message + ': provenance error classified')
+                            try:
+                                report = json.loads(output.getvalue())
+                            except ValueError as error:
+                                self.fail(message + ': invalid standalone JSON: ' + str(error))
                             self.assertEqual((report.get('status'), code), ('BLOCKED', 2), message)
                             self.assertEqual(report.get('failure', {}).get('rule'), 'APPARATUS_IMPORTS', message)
                         self.assertEqual(errors.getvalue(), '', message + ': no traceback')
@@ -1804,14 +1852,13 @@ class ApparatusInputs(unittest.TestCase):
     def test_cli_main_is_only_the_one_guard_call(self):
         # The guard's single implementation is only useful if no entry keeps a
         # private bootstrap/classifier.  Each product CLI __main__ is exactly
-        # ``run_entry(main)``; the test runner test_safety.py stays
+        # ``run_entry(main, policy)``; the test runner test_safety.py stays
         # unittest.main() so the matrix itself can run before commit.
         import ast
         folder = Path(__file__).resolve().parent
-        entries = ('build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'compare.py',
-                   'observer.py', 'run_round.py', 'session_domain.py',
-                   'controls/run_all.py', 'controls/session_domain.py')
-        expected = "if __name__ == '__main__':\n    run_entry(main)"
+        entries = [name for name in common.A2_SCRIPTS if name.endswith('.py')
+                   and name not in ('common.py', '_guard.py', 'test_safety.py',
+                                    'controls/prerequisites.py')]
         for name in entries:
             with self.subTest(entry=name):
                 text = (folder / name).read_text(encoding='utf-8')
@@ -1819,8 +1866,20 @@ class ApparatusInputs(unittest.TestCase):
                 blocks = [node for node in tree.body if isinstance(node, ast.If)
                           and ast.unparse(node.test) == "__name__ == '__main__'"]
                 self.assertEqual(len(blocks), 1, '#991 one __main__ dispatch: ' + name)
-                self.assertEqual(ast.unparse(blocks[0]), expected,
-                                 '#991 __main__ must be exactly run_entry(main): ' + name)
+                self.assertEqual(blocks[0].orelse, [], '#991 __main__ must have no alternate dispatch: ' + name)
+                calls = blocks[0].body
+                message = '#991 __main__ must be exactly run_entry(main, policy): ' + name
+                self.assertEqual(len(calls), 1, message)
+                self.assertIsInstance(calls[0], ast.Expr, message)
+                call = calls[0].value
+                self.assertIsInstance(call, ast.Call, message)
+                self.assertEqual(ast.unparse(call.func), 'run_entry', message)
+                self.assertEqual(len(call.args), 2, message)
+                self.assertEqual(ast.unparse(call.args[0]), 'main', message)
+                self.assertIsInstance(call.args[1], ast.Constant, message)
+                self.assertIn(call.args[1].value,
+                              ('traceback', 'round', 'session', 'ruler', 'controls'), message)
+                self.assertEqual(call.keywords, [], message)
                 self.assertFalse(any(isinstance(node, (ast.Try, ast.ExceptHandler))
                                      for node in ast.walk(blocks[0])),
                                  '#991 no private except classification: ' + name)
@@ -1833,10 +1892,11 @@ class ApparatusInputs(unittest.TestCase):
                                      f'#991 {name} must alias, not redefine, {private}')
         # A library-only entry has no dispatch but still aliases the guard.
         prerequisites = _load('guard_shape_prerequisites', folder / 'controls/prerequisites.py')
-        self.assertIs(prerequisites._load, _guard.load)
-        self.assertIs(prerequisites._verify_cli_imports, _guard.verify_cli_imports)
-        self.assertIs(_load, _guard.load)
-        self.assertIs(run_entry, _guard.run_entry)
+        self.assertIs(prerequisites._load, _guard.load, '#991 library must alias guard load')
+        self.assertIs(prerequisites._verify_cli_imports, _guard.verify_cli_imports,
+                      '#991 library must alias guard verifier')
+        self.assertIs(_load, _guard.load, '#991 test runner must alias guard load')
+        self.assertIs(run_entry, _guard.run_entry, '#991 test runner must alias guard dispatch')
 
     def test_a2_entries_never_resolve_apparatus_through_sys_path(self):
         # Covers entries that do not mention ``common`` but still import a
