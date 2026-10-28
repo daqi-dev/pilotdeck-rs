@@ -350,6 +350,20 @@ def bootstrap_regressions(apparatus):
     yield ('bootstrap/library-path-mutation', path, path.read_text() + "\nsys.path.append('.')\n",
            'test_apparatus_modules_load_by_explicit_path_only',
            f'#701: _bootstrap.py:{line}: sys.path.append is forbidden')
+    source = path.read_text()
+    yield ('bootstrap/cache-not-singleton', path,
+           source.replace("if not hasattr(sys, '_cli_parity_pycache_prefix'):", 'if True:', 1),
+           'test_bootstrap_cache_is_singleton_and_cleaned_on_exit',
+           '#701: repeated bootstrap loads must reuse one cache directory')
+    yield ('bootstrap/cache-not-cleaned', path,
+           source.replace('    atexit.register(shutil.rmtree, sys._cli_parity_pycache_prefix, ignore_errors=True)',
+                          '    pass  # mutation: omit cache cleanup', 1),
+           'test_bootstrap_cache_is_singleton_and_cleaned_on_exit',
+           '#701: bootstrap cache directory must be removed on process exit')
+    yield ('bootstrap/unregistered-python-file', apparatus / 'unregistered.py',
+           '# #701 mutation: new apparatus file omitted from all inventories\n',
+           'test_apparatus_inventory_matches_directory',
+           '#701: Python apparatus inventory must match actual directory files')
     path = ROOT / 'src/pilotdeck-cli/tests/fixtures/chat-search/README.md'
     yield ('commands/chat-search-without-I', path,
            path.read_text().replace('python3 -I scripts/cli-parity/', 'python3 scripts/cli-parity/'),
@@ -364,7 +378,14 @@ def bootstrap_regressions(apparatus):
     source = path.read_text()
     command = 'python3 -I scripts/cli-parity/run_round.py --help'
     for name, replacement in (
+            ('unversioned', 'python scripts/cli-parity/run_round.py --help'),
             ('versioned', 'python3.13 scripts/cli-parity/run_round.py --help'),
+            ('versioned-suffix', 'python3.13t scripts/cli-parity/run_round.py --help'),
+            ('absolute-python', '/usr/bin/python3 scripts/cli-parity/run_round.py --help'),
+            ('root-python', '/python3 scripts/cli-parity/run_round.py --help'),
+            ('relative-python', './venv/bin/python scripts/cli-parity/run_round.py --help'),
+            ('quoted-absolute-python', '"/opt/python bin/python3.13" scripts/cli-parity/run_round.py --help'),
+            ('single-quoted-python', "'/opt/python bin/python3.13' scripts/cli-parity/run_round.py --help"),
             ('quoted-path', 'python3 "$PWD/scripts/cli-parity/run_round.py" --help'),
             ('single-quoted-path', "python3 'scripts/cli-parity/run_round.py' --help"),
             ('variable-python', '$PY scripts/cli-parity/run_round.py --help'),
@@ -388,6 +409,15 @@ def bootstrap_regressions(apparatus):
 
 
 def run_bound_test(module, method, path=None, source=None):
+    if method == 'test_apparatus_inventory_matches_directory' and path is not None:
+        # Exercise the actual glob against an added file, not a mocked file list.
+        with tempfile.TemporaryDirectory(prefix='pdrs-cli-inventory-') as temp:
+            mirror = Path(temp)
+            for name in MIRROR_FILES:
+                shutil.copy2(module.SCRIPT / name, mirror / name)
+            (mirror / path.name).write_text(source)
+            with patch.object(module, 'SCRIPT', mirror):
+                return run_bound_test(module, method)
     read_text = Path.read_text
     copy2 = shutil.copy2
 
@@ -427,7 +457,7 @@ def bootstrap_checks(apparatus, rows, output, selection):
             logs.append('POSITIVE\n' + log)
             if not passed(positive):
                 raise RuntimeError('bound positive test did not pass')
-            if changed == path.read_text():
+            if path.exists() and changed == path.read_text():
                 raise RuntimeError('stale mutation anchor; source did not change')
             if path.suffix == '.py':
                 compile(changed, str(path), 'exec')
@@ -454,7 +484,8 @@ def bootstrap_checks(apparatus, rows, output, selection):
             print(''.join(logs), flush=True)
         record(rows, name, status, reason)
         rows[-1].update(test=test, assertion=assertion, compiled=compiled,
-                        mutationKind=('temporary unit-test mirror' if method.startswith(('test_each_entry', 'test_discover')) else
+                        mutationKind=('temporary unit-test mirror' if method.startswith((
+                            'test_each_entry', 'test_discover', 'test_bootstrap_cache', 'test_apparatus_inventory')) else
                                       'in-memory AST input' if path.suffix == '.py' else 'in-memory document'))
 
 
