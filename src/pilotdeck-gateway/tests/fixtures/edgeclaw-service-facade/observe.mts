@@ -40,6 +40,9 @@ const MESSAGES = [
 /// Rust mirrors this exact encoding in its observation writer.
 export function encode(value: any): any {
   if (value === undefined) return {$type: 'undefined'};
+  // #988: only the Rust test verifier explicitly enables this fixture mutant.
+  if (process.env.PDRS_FACADE_ENCODER_MUTANT === 'observe-negative-zero-encode'
+      && typeof value === 'number' && Object.is(value, -0)) return value;
   if (typeof value === 'number' && (Object.is(value, -0) || !Number.isFinite(value))) {
     return {$type: 'number', value: Object.is(value, -0) ? '-0' : String(value)};
   }

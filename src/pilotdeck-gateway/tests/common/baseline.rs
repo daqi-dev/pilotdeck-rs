@@ -14,7 +14,7 @@ fn text(value: &JsValue) -> String {
         .as_string()
         .expect("provenance string")
         .to_utf8()
-        .unwrap()
+        .expect("#988 provenance string must be valid UTF-8")
 }
 
 pub(crate) fn oracle(json: &str) -> JsValue {

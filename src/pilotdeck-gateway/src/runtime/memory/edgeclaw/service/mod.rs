@@ -171,6 +171,15 @@ impl ServiceError {
         match self {
             Self::File(error) => error.js_message(),
             Self::Storage(error) => JsString::from(error.to_string()),
+            Self::Heartbeat(error) if crate::mutants::on("heartbeat-message-not-reused") => {
+                match error {
+                    HeartbeatError::Storage(StorageError::Closed) => {
+                        JsString::from("database is not open")
+                    }
+                    HeartbeatError::File(error) => error.js_message(),
+                    other => JsString::from(other.to_string()),
+                }
+            }
             Self::Heartbeat(error) => error.message(),
             Self::Llm(error) => error.message.clone(),
         }
@@ -258,7 +267,11 @@ impl EdgeClawMemoryService {
         // (`service.ts:169-171`); `Some("")` must fall back to the default
         // root, while `" "` is a real (non-empty) relative path.
         let root_dir = match options.root_dir.as_deref() {
+            Some(root) if crate::mutants::on("root-empty-not-default") => absolute(root)?,
             Some(root) if !root.as_os_str().is_empty() => absolute(root)?,
+            _ if crate::mutants::on("default-root-dir") => {
+                absolute(&home.join(".edgeclaw-mutated").join("memory"))?
+            }
             _ => absolute(&home.join(".edgeclaw").join("memory"))?,
         };
         // `resolveConfiguredDataDir` uses `if (options.dbPath)` / `if
@@ -269,7 +282,11 @@ impl EdgeClawMemoryService {
         let memory_dir_option = options.memory_dir.as_deref();
         let data_dir = resolve_configured_data_dir(
             db_path_option.filter(|path| !path.as_os_str().is_empty()),
-            memory_dir_option.filter(|path| !path.as_os_str().is_empty()),
+            if crate::mutants::on("memory-empty-pollutes-data-dir") {
+                memory_dir_option
+            } else {
+                memory_dir_option.filter(|path| !path.as_os_str().is_empty())
+            },
             &workspace_dir,
             &root_dir,
         )?;
@@ -307,7 +324,11 @@ impl EdgeClawMemoryService {
             clock.clone(),
         )?);
         repository.storage.set_pipeline_state(
-            "workspaceDir",
+            if crate::mutants::on("workspace-state-key") {
+                "workspaceDirMutated"
+            } else {
+                "workspaceDir"
+            },
             &JsValue::String(workspace_dir.to_string_lossy().into_owned().into()),
         )?;
 
@@ -324,14 +345,25 @@ impl EdgeClawMemoryService {
             extractor = extractor.with_logger(Arc::new(LoggerAdapter(logger.clone())));
         }
         let extractor = Arc::new(extractor);
-        let source = options.source.clone().unwrap_or_else(|| "edgeclaw".into());
+        let source = if crate::mutants::on("default-capture-source") {
+            options
+                .source
+                .clone()
+                .unwrap_or_else(|| "edgeclaw-mutated".into())
+        } else {
+            options.source.clone().unwrap_or_else(|| "edgeclaw".into())
+        };
         // `service.ts:645` seeds the indexer from the repository, not from the
         // constructor defaults: reopening an existing database must restore the
         // persisted settings.
         let initial_indexing_settings = repository
             .storage
             .get_indexing_settings(&default_indexing_settings)?;
-        let mut heartbeat_options = HeartbeatOptions::new(initial_indexing_settings);
+        let mut heartbeat_options = if crate::mutants::on("reopen-indexer-defaults") {
+            HeartbeatOptions::new(default_indexing_settings.clone())
+        } else {
+            HeartbeatOptions::new(initial_indexing_settings)
+        };
         heartbeat_options.batch_size = Some(options.heartbeat_batch_size.unwrap_or(30));
         heartbeat_options.source = Some(source.clone());
         heartbeat_options.logger = logger
@@ -369,6 +401,13 @@ impl EdgeClawMemoryService {
     /// `close` (`service.ts:655-657`). Closing a closed repository raises
     /// `database is not open`, exactly like `DatabaseSync.close()`.
     pub fn close(&self) -> Result<()> {
+        if crate::mutants::on("close-not-idempotent-guarded") {
+            return match self.repository.close() {
+                Ok(()) => Ok(()),
+                Err(FileMemoryError::Storage(StorageError::Closed)) => Ok(()),
+                Err(error) => Err(ServiceError::File(error)),
+            };
+        }
         self.repository.close()?;
         Ok(())
     }
@@ -422,7 +461,7 @@ impl EdgeClawMemoryService {
                 capture_strategy: self.capture_strategy,
             },
         );
-        if normalized_messages.is_empty() {
+        if !crate::mutants::on("closed-capture-empty-not-early") && normalized_messages.is_empty() {
             return Ok(CaptureTurnResult {
                 captured: false,
                 normalized_messages,
@@ -435,17 +474,30 @@ impl EdgeClawMemoryService {
         // `Weak`) would otherwise wait on the same non-reentrant mutex and
         // deadlock. Clone the (cheap, `Arc`-based) indexer under the guard and
         // release it before doing any capture work.
-        let indexer = self
-            .indexer
-            .lock()
-            .expect("edgeclaw service indexer mutex poisoned")
-            .clone();
-        indexer.capture_l0_session(CaptureL0SessionInput {
-            session_key: input.session_key.clone(),
-            timestamp: input.timestamp,
-            messages: normalized_messages.clone(),
-            source: input.source.or_else(|| Some(self.source.clone())),
-        })?;
+        if crate::mutants::on("capture-holds-indexer-lock") {
+            let indexer = self
+                .indexer
+                .lock()
+                .expect("edgeclaw service indexer mutex poisoned");
+            indexer.capture_l0_session(CaptureL0SessionInput {
+                session_key: input.session_key.clone(),
+                timestamp: input.timestamp,
+                messages: normalized_messages.clone(),
+                source: input.source.or_else(|| Some(self.source.clone())),
+            })?;
+        } else {
+            let indexer = self
+                .indexer
+                .lock()
+                .expect("edgeclaw service indexer mutex poisoned")
+                .clone();
+            indexer.capture_l0_session(CaptureL0SessionInput {
+                session_key: input.session_key.clone(),
+                timestamp: input.timestamp,
+                messages: normalized_messages.clone(),
+                source: input.source.or_else(|| Some(self.source.clone())),
+            })?;
+        }
         Ok(CaptureTurnResult {
             captured: true,
             normalized_messages,
@@ -482,6 +534,11 @@ impl EdgeClawMemoryService {
     pub fn get(&self, ids: &JsValue, max_lines: Option<&JsValue>) -> Result<JsValue> {
         let max_lines = match max_lines {
             None | Some(JsValue::Undefined) => 80.0,
+            Some(JsValue::Null) if crate::mutants::on("get-null-maxlines") => 80.0,
+            Some(JsValue::Null) if crate::mutants::on("get-nonnumber-maxlines") => 0.0,
+            Some(value) if crate::mutants::on("get-nonnumber-maxlines") => {
+                value.as_number().unwrap_or(80.0)
+            }
             Some(value) => super::storage::overview::to_number(value)?,
         };
         Ok(self.repository.get_memory_records_by_ids(ids, max_lines)?)
@@ -573,7 +630,11 @@ impl EdgeClawMemoryService {
                     seed.extend(template_units(value));
                 }
                 seed.push(u16::from(b':'));
-                seed.extend_from_slice(started_at.units());
+                if crate::mutants::on("case-id-seed-lossy") {
+                    seed.extend(started_at.to_utf8().unwrap_or_default().encode_utf16());
+                } else {
+                    seed.extend_from_slice(started_at.units());
+                }
                 seed.push(u16::from(b':'));
                 seed.extend_from_slice((self.random_token)().units());
                 JsString::from(format!(
@@ -592,7 +653,26 @@ impl EdgeClawMemoryService {
         next.insert("startedAt".into(), JsValue::String(started_at));
         next.insert("finishedAt".into(), field("finishedAt"));
         next.insert("status".into(), field("status"));
-        next.insert("retrieval".into(), field("retrieval"));
+        if crate::mutants::on("case-trace-retrieval-key-order") {
+            let retrieval = field("retrieval");
+            let sorted = retrieval.as_object().map(|object| {
+                let mut sorted = JsObject::new();
+                let mut entries = object.entries().to_vec();
+                entries.sort_by(|left, right| {
+                    left.0
+                        .to_utf8()
+                        .unwrap_or_default()
+                        .cmp(&right.0.to_utf8().unwrap_or_default())
+                });
+                for (key, value) in entries {
+                    sorted.insert(key, value);
+                }
+                JsValue::Object(sorted)
+            });
+            next.insert("retrieval".into(), sorted.unwrap_or(retrieval));
+        } else {
+            next.insert("retrieval".into(), field("retrieval"));
+        }
         next.insert("toolEvents".into(), field("toolEvents"));
         next.insert("assistantReply".into(), field("assistantReply"));
         self.repository
@@ -657,6 +737,11 @@ impl EdgeClawMemoryService {
     /// clears the current workspace, and the retriever cache is dropped.
     pub fn clear(&self, scope: ClearMemoryScope) -> Result<JsValue> {
         let result = match scope {
+            ClearMemoryScope::AllMemory
+                if crate::mutants::on("clear-all-uses-current-workspace") =>
+            {
+                self.repository.clear_current_workspace_memory_data()?
+            }
             ClearMemoryScope::AllMemory => self.repository.clear_all_memory_data()?,
             ClearMemoryScope::CurrentProject => {
                 self.repository.clear_current_workspace_memory_data()?
@@ -828,7 +913,11 @@ fn resolve_configured_data_dir(
     if let Some(path) = memory_dir {
         return resolve_parent(path);
     }
-    let seed = JsString::from(workspace_dir.to_string_lossy().into_owned());
+    let seed = if crate::mutants::on("workspace-data-dir-seed") {
+        JsString::from(root_dir.to_string_lossy().into_owned())
+    } else {
+        JsString::from(workspace_dir.to_string_lossy().into_owned())
+    };
     Ok(root_dir.join("workspaces").join(hash_text(&seed)))
 }
 
@@ -847,13 +936,25 @@ fn resolve_parent(path: &Path) -> Result<PathBuf> {
 fn storage_settings(merged: MergedIndexingSettings) -> IndexingSettings {
     IndexingSettings {
         reasoning_mode: merged.reasoning_mode.to_utf8().unwrap_or_default(),
-        auto_index_interval_minutes: merged.auto_index_interval_minutes,
+        auto_index_interval_minutes: if (crate::mutants::on("settings-truncate-nonfinite")
+            && merged.auto_index_interval_minutes.is_nan())
+            || (crate::mutants::on("settings-large-finite-preserved")
+                && merged.auto_index_interval_minutes.is_finite()
+                && merged.auto_index_interval_minutes > 10_080.0)
+        {
+            0.0
+        } else {
+            merged.auto_index_interval_minutes
+        },
         auto_dream_interval_minutes: merged.auto_dream_interval_minutes,
     }
 }
 
 fn normalize_trace_preview(record: JsValue) -> JsValue {
     match record.as_object() {
+        Some(object) if crate::mutants::on("case-trace-preview-not-normalized") => {
+            JsValue::Object(object.clone())
+        }
         Some(object) => JsValue::Object(normalize_case_trace_context_preview(object)),
         None => record,
     }

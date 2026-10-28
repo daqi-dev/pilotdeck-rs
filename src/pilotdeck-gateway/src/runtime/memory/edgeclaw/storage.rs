@@ -1249,7 +1249,11 @@ fn clamp_int(value: Option<&JsValue>, fallback: f64, min: i64, max: i64) -> f64 
             if clamped != 0.0 {
                 clamped
             } else if min >= 0 {
-                0.0 // Math.max(+0, ±0) is +0
+                if crate::mutants::on("settings-negative-zero") {
+                    number.floor()
+                } else {
+                    0.0 /* Math.max(+0, ±0) is +0 */
+                }
             } else {
                 // min < 0: only -0 survives Math.min/Math.max; an upper-bound
                 // clamp to zero (e.g. max = 0, n = 3.7) is +0.

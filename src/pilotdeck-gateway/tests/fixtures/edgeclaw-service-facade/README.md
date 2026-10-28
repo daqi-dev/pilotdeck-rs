@@ -79,3 +79,43 @@ PDRS_BASELINE=/abs/PilotDeck CARGO_TARGET_DIR=/abs/target python3 \
 Pass mutant names after the output directory to run a single binding (for
 example `closed-capture-empty-not-early`). Without names the runner executes
 the full set and still summarises every mutant before exiting.
+
+## #988 预编译试点
+
+`pdrs-mutants` 不在默认 feature 图中。`mutants::on` 只有在库内
+`cfg(all(test, feature = "pdrs-mutants"))` 下读取 `PDRS_MUTANT`；普通库、
+集成测试链接的库及 release 产品库始终使用 `const false`，即使显式打开
+feature 也不会激活。既有测试文件在 feature 下同时作为库内的
+`mutant_facade` 模块编译，避免 integration 依赖库没有 `cfg(test)` 的陷阱。
+其中两条切换进程 cwd 的测试在 feature 下标为 ignored，避免与库内其它测试
+交错；新执行器使用 `--exact --include-ignored` 在独立进程中逐条执行它们。
+
+`schemata.py` 从 Cargo JSON 获取本次 feature 库测试的 executable，只编译
+一次；24 项复用 `negative.py` 的名称、绑定测试、专属断言、witness 和共享
+`negative_suite.classify`。保留 fixture panic 文件约束（库内 inclusion 的
+路径显式为 `src/../tests`）。每项启动独立进程，正控和恢复正控清除选择变量；
+超时/错断言/编译错误记 INVALID 后继续，最后任一非 KILLED 即非零退出。
+旧执行器也在正控、witness、编译、变异、恢复各阶段捕获超时并继续；若源码
+锁或恢复失败，则停止进一步改源码，把所有结果记 INVALID 并完整汇总。
+TS encoder 变异只由 gated Rust verifier 显式向 Node 传独立标记。
+
+```sh
+# 在仓库根目录；调用方设置独立 CARGO_TARGET_DIR 和两个 line-tables-only profile。
+python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-service-facade/schemata.py --check
+PATH=/path/to/node-v22.22.0/bin:$PATH PDRS_BASELINE=/abs/PilotDeck python3 \
+  src/pilotdeck-gateway/tests/fixtures/edgeclaw-service-facade/schemata.py NEW_OUTPUT_DIR
+python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-service-facade/test_schemata.py
+```
+
+新执行器不改源码，用共享 tree lock 排斥旧执行器，并记录 HEAD、源码哈希、
+二进制路径/哈希、逐次命令/退出码/计时、原始输出与原子发布的 summary。
+它允许验证未提交的实现，但记录明确不宣称这是同 HEAD 等价证据。
+旧 `negative.py` 继续受原始 `mutating_sources(..., baseline='HEAD')` 保护；
+锚点同步到未启用分支，仍通过原地替换制造既有故障，不靠改选择开关替代旧机制。
+提交后在同一 HEAD 分别运行两者，对比 summary 的 `(name, status)` 集合及总耗时。
+完整旧机制预计超过 20 分钟时在协调者宿主执行，不在 worker 后台续跑。
+
+`switch_negative.py` 为默认恒 false / 精确 selector 两条新增检查提供源码
+负控；必须提交后才能运行（新 mutants.rs 不在 HEAD 时拒跑）。每个变异
+先 no-run 再运行绑定测试，异常汇总并恢复。新机制一次 no-run 已同时类型检查
+全部 23 个 Rust 分支；第 24 项 TS encoder 由 ignored verifier 实跑。

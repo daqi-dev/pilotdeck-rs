@@ -1724,6 +1724,9 @@ impl Core {
                 // 80; `trimContentLines` coerces every other value with Number().
                 let max_lines = match input.get("maxLines") {
                     None | Some(JsValue::Undefined) => 80.0,
+                    Some(value) if crate::mutants::on("file-memory-nonnumber-maxlines") => {
+                        value.as_number().unwrap_or(80.0)
+                    }
                     Some(value) => {
                         crate::runtime::memory::edgeclaw::storage::overview::to_number(value)?
                     }

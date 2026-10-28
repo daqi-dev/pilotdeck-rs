@@ -156,7 +156,10 @@ fn encode_js(value: &JsValue) -> Value {
                 json!({"$type": "number", "value": "Infinity"})
             } else if *number == f64::NEG_INFINITY {
                 json!({"$type": "number", "value": "-Infinity"})
-            } else if *number == 0.0 && number.is_sign_negative() {
+            } else if !pilotdeck_gateway::mutants::on("encode-negative-zero")
+                && *number == 0.0
+                && number.is_sign_negative()
+            {
                 json!({"$type": "number", "value": "-0"})
             } else if number.fract() == 0.0
                 && *number >= i64::MIN as f64
@@ -1049,6 +1052,10 @@ fn duplicate_capture_logger_can_save_settings() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "pdrs-mutants",
+    ignore = "#988 run alone: changes process cwd"
+)]
 fn empty_path_options_use_ts_default_rules() {
     use pilotdeck_gateway::runtime::memory::edgeclaw::text::hash_text;
 
@@ -1114,6 +1121,10 @@ fn empty_path_options_use_ts_default_rules() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "pdrs-mutants",
+    ignore = "#988 run alone: changes process cwd"
+)]
 fn space_path_option_is_not_trimmed() {
     use pilotdeck_gateway::runtime::memory::edgeclaw::text::hash_text;
 
@@ -1541,7 +1552,12 @@ fn file_memory_store_get_records_coerces_non_number_max_lines() {
         let records = store
             .execute("getMemoryRecordsByIds", &input)
             .expect("#775 file-memory getMemoryRecordsByIds");
-        js_text_at(&js_array(&records)[0], "content")
+        js_text_at(
+            js_array(&records)
+                .first()
+                .expect("#988 file-memory maxLines returns a record"),
+            "content",
+        )
     };
     assert_eq!(
         content(Some(JsValue::Bool(false))),
@@ -1707,6 +1723,11 @@ fn regenerates_identically() {
 }
 
 fn run_node(command: &mut Command, scratch: &Path) {
+    // Only the feature's library test can activate the fixture encoder mutant.
+    command.env_remove("PDRS_FACADE_ENCODER_MUTANT");
+    if pilotdeck_gateway::mutants::on("observe-negative-zero-encode") {
+        command.env("PDRS_FACADE_ENCODER_MUTANT", "observe-negative-zero-encode");
+    }
     let stdout = scratch.join("node.stdout");
     let stderr = scratch.join("node.stderr");
     let mut child = command
