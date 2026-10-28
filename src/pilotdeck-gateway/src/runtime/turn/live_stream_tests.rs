@@ -199,14 +199,14 @@ async fn persisted_failure(turn: &mut dyn LiveTurn) -> String {
     for _ in 0..12 {
         let event = next(turn)
             .await
-            .unwrap()
+            .expect("#743 persisted failure prerequisite")
             .expect("failure terminal required");
         match event
             .get("type")
             .and_then(JsValue::as_string)
-            .unwrap()
+            .expect("#743 persisted failure prerequisite")
             .to_utf8()
-            .unwrap()
+            .expect("#743 persisted failure prerequisite")
             .as_str()
         {
             "turn_started"
@@ -223,12 +223,17 @@ async fn persisted_failure(turn: &mut dyn LiveTurn) -> String {
             }
             "turn_completed" => {
                 assert_eq!(
-                    event.get("result").unwrap().get("type"),
+                    event
+                        .get("result")
+                        .expect("#743 persisted failure prerequisite")
+                        .get("type"),
                     Some(&"error".into()),
                     "integrity failure terminal must be error"
                 );
                 assert_eq!(
-                    next(turn).await.unwrap(),
+                    next(turn)
+                        .await
+                        .expect("#743 persisted failure prerequisite"),
                     None,
                     "one persisted failure terminal"
                 );
@@ -3023,7 +3028,7 @@ fn test_lease() -> Arc<RuntimeLease> {
         std::env::temp_dir(),
         Arc::new(|_: &std::path::Path, _: &mut ResourceBundle| Ok(())),
     );
-    Arc::new(registry.acquire(None).unwrap())
+    Arc::new(registry.acquire(None).expect("#743 test lease acquired"))
 }
 
 /// The gate is inside the production blocking append, not an owner test guard.
@@ -3099,15 +3104,15 @@ async fn live_recording_matrix(phase: usize, action: &str) {
     let oracle = crate::test_baseline::oracle(include_str!(
         "../../../tests/fixtures/live-recording/oracle.json"
     ));
-    let JsValue::Array(rows) = oracle.get("matrix").unwrap() else {
-        panic!("matrix")
+    let JsValue::Array(rows) = oracle.get("matrix").expect("#743 recording prerequisite") else {
+        panic!("#743 recording matrix")
     };
     let row = rows
         .iter()
         .find(|r| r.get("name") == Some(&name.as_str().into()))
-        .unwrap();
+        .expect("#743 recording prerequisite");
     let root = std::env::temp_dir().join(format!("pdrs-live-recording-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(&root).expect("#743 recording prerequisite");
     let key = TranscriptKey {
         project_root: root.clone(),
         pilot_home: root.join("home"),
@@ -3118,7 +3123,7 @@ async fn live_recording_matrix(phase: usize, action: &str) {
         &root,
         Arc::new(|_: &std::path::Path, _: &mut ResourceBundle| Ok(())),
     ));
-    let runtime = registry.resolve(None).unwrap();
+    let runtime = registry.resolve(None).expect("#743 recording prerequisite");
     let (entered, mut entry) = oneshot::channel();
     let (release, wait) = std::sync::mpsc::channel();
     let store = Arc::new(RecordingStore {
@@ -3132,7 +3137,7 @@ async fn live_recording_matrix(phase: usize, action: &str) {
     let recorder = Arc::new(Recorder::new(store.clone(), key.clone()));
     let owner = registry.clone();
     let session = LiveSessionAdapter::new(recorder, Vec::new, move |_| {
-        let lease = Arc::new(owner.acquire(None).unwrap());
+        let lease = Arc::new(owner.acquire(None).expect("#743 recording prerequisite"));
         Box::pin(async move {
             Ok((
                 Box::pin(spawn_client("live-payload")) as HostFuture<HostClient>,
@@ -3141,18 +3146,33 @@ async fn live_recording_matrix(phase: usize, action: &str) {
             ))
         })
     });
-    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
+    let mut turn = session
+        .submit_turn_for_test(input(), options())
+        .expect("#743 recording prerequisite");
     for _ in 0..phase {
-        next(turn.as_mut()).await.unwrap().unwrap();
+        next(turn.as_mut())
+            .await
+            .expect("#743 recording prerequisite")
+            .expect("#743 recording prerequisite");
     }
     if phase == 2 {
         assert_eq!(
-            next(turn.as_mut()).await.unwrap().unwrap().get("type"),
-            Some(&"user_prompt_submitted".into())
+            next(turn.as_mut())
+                .await
+                .expect("#743 recording prerequisite")
+                .expect("#743 recording prerequisite")
+                .get("type"),
+            Some(&"user_prompt_submitted".into()),
+            "#743 recording submitted prefix"
         );
         assert_eq!(
-            next(turn.as_mut()).await.unwrap().unwrap().get("type"),
-            Some(&"model_request_started".into())
+            next(turn.as_mut())
+                .await
+                .expect("#743 recording prerequisite")
+                .expect("#743 recording prerequisite")
+                .get("type"),
+            Some(&"model_request_started".into()),
+            "#743 recording model prefix"
         );
     }
     {
@@ -3170,14 +3190,29 @@ async fn live_recording_matrix(phase: usize, action: &str) {
         std::fs::read_to_string(&key.transcript_path)
             .unwrap_or_default()
             .lines()
-            .filter(|line| parse_json(line).unwrap().get("type") == Some(&store.kind.into()))
+            .filter(|line| {
+                parse_json(line)
+                    .expect("#743 recording prerequisite")
+                    .get("type")
+                    == Some(&store.kind.into())
+            })
             .count()
     };
-    let active = || session.state.lock().unwrap().active.is_some();
+    let active = || {
+        session
+            .state
+            .lock()
+            .expect("#743 recording prerequisite")
+            .active
+            .is_some()
+    };
     let rejected = || session.submit_turn_for_test(input(), options()).is_err();
     assert_eq!(
-        row.get("before").unwrap().get("active"),
-        Some(&JsValue::Number(f64::from(active())))
+        row.get("before")
+            .expect("#743 recording prerequisite")
+            .get("active"),
+        Some(&JsValue::Number(f64::from(active()))),
+        "#743 recording initial active"
     );
     assert_eq!(count(), 0, "write awaits release");
     assert_eq!(store.attempts.load(Ordering::SeqCst), 1, "one I/O entered");
@@ -3204,55 +3239,71 @@ async fn live_recording_matrix(phase: usize, action: &str) {
         if action == "dispose" {
             assert_recording_pending(disposal.as_mut(), "factory waits for worker");
         }
-        release.send(()).unwrap();
+        release.send(()).expect("#743 recording prerequisite");
     } else if action == "failure" {
-        release.send(()).unwrap();
+        release.send(()).expect("#743 recording prerequisite");
         if phase == 0 {
             assert!(
                 next(turn.as_mut())
                     .await
-                    .unwrap_err()
+                    .expect_err("#743 recording expected failure")
                     .message
-                    .contains("recording write failed")
+                    .contains("recording write failed"),
+                "#743 recording start failure message"
             );
         } else {
             let error = persisted_failure(turn.as_mut()).await;
-            assert!(error.contains(if phase == 1 {
-                "Failed to record accepted input."
-            } else {
-                "recording write failed"
-            }));
+            assert!(
+                error.contains(if phase == 1 {
+                    "Failed to record accepted input."
+                } else {
+                    "recording write failed"
+                }),
+                "#743 recording completion failure message"
+            );
         }
         assert_eq!(
-            next(turn.as_mut()).await.unwrap(),
+            next(turn.as_mut())
+                .await
+                .expect("#743 recording prerequisite"),
             None,
             "failed stream closes"
         );
         drop(turn);
     } else {
-        release.send(()).unwrap();
-        let event = next(turn.as_mut()).await.unwrap().unwrap();
+        release.send(()).expect("#743 recording prerequisite");
+        let event = next(turn.as_mut())
+            .await
+            .expect("#743 recording prerequisite")
+            .expect("#743 recording prerequisite");
         assert_eq!(event.get("type"), row.get("event"), "same transition event");
         let mut expected = JsObject::new();
-        expected.insert("type".into(), row.get("event").unwrap().clone());
+        expected.insert(
+            "type".into(),
+            row.get("event")
+                .expect("#743 recording prerequisite")
+                .clone(),
+        );
         expected.insert("sessionId".into(), "session".into());
         expected.insert("turnId".into(), "turn".into());
         if phase == 1 {
             expected.insert("messages".into(), input_messages());
         } else if phase == 2 {
-            expected.insert("result".into(), parse_json(r#"{"type":"success","sessionId":"session","turnId":"turn","stopReason":"completed","turns":1}"#).unwrap());
+            expected.insert("result".into(), parse_json(r#"{"type":"success","sessionId":"session","turnId":"turn","stopReason":"completed","turns":1}"#).expect("#743 recording prerequisite"));
             expected.insert("messages".into(), input_messages());
         }
         assert_eq!(
             event,
             JsValue::Object(expected),
-            "original payload survives cancelled next"
+            "#743 original payload survives cancelled next"
         );
         assert_eq!(store.attempts.load(Ordering::SeqCst), 1, "one I/O");
         if phase == 2 {
             assert!(!active(), "EOF stream releases slot");
             assert_eq!(
-                next(turn.as_mut()).await.unwrap(),
+                next(turn.as_mut())
+                    .await
+                    .expect("#743 recording prerequisite"),
                 None,
                 "terminal delivered once"
             );
@@ -3281,8 +3332,11 @@ async fn live_recording_matrix(phase: usize, action: &str) {
     assert_eq!(count(), writes, "one durable write");
     if action != "failure" {
         assert_eq!(
-            row.get("after").unwrap().get("writes"),
-            Some(&JsValue::Number(count() as f64))
+            row.get("after")
+                .expect("#743 recording prerequisite")
+                .get("writes"),
+            Some(&JsValue::Number(count() as f64)),
+            "#743 recording writes match oracle"
         );
     }
     if action == "dispose" {
@@ -3292,31 +3346,43 @@ async fn live_recording_matrix(phase: usize, action: &str) {
                 .is_err(),
             "disposed session stays closed"
         );
-        assert_eq!(row.get("replacementStarted"), Some(&JsValue::Bool(false)));
+        assert_eq!(
+            row.get("replacementStarted"),
+            Some(&JsValue::Bool(false)),
+            "#743 recording closed oracle"
+        );
     } else {
         let mut replacement = session
             .submit_turn_for_test(input(), turn_options("next"))
-            .unwrap();
-        let event = next(replacement.as_mut()).await.unwrap().unwrap();
+            .expect("#743 recording prerequisite");
+        let event = next(replacement.as_mut())
+            .await
+            .expect("#743 recording prerequisite")
+            .expect("#743 recording prerequisite");
         assert_eq!(
             event.get("type"),
             Some(&"turn_started".into()),
             "fresh turn starts"
         );
         if action != "failure" {
-            assert_eq!(row.get("replacementStarted"), Some(&JsValue::Bool(true)));
+            assert_eq!(
+                row.get("replacementStarted"),
+                Some(&JsValue::Bool(true)),
+                "#743 recording replacement oracle"
+            );
         }
         drop(replacement);
     }
     timeout(Duration::from_secs(15), &mut disposal)
         .await
-        .unwrap()
-        .unwrap();
+        .expect("#743 recording prerequisite")
+        .expect("#743 recording prerequisite");
     assert_eq!(
         runtime.state(),
-        crate::runtime::project::RuntimeState::Disposed
+        crate::runtime::project::RuntimeState::Disposed,
+        "#743 recording runtime disposed"
     );
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("#743 recording prerequisite");
 }
 fn assert_fixture_consumed(rows: &[JsValue], expected: impl Iterator<Item = String>) {
     let mut actual: Vec<_> = rows
@@ -4002,6 +4068,10 @@ impl LiveTurn for TurnOnly {
                 }
                 assert_eq!(self.prefix, 2, "#743 turn-only runner after setup");
                 if kind.equals_str("turn_completed") {
+                    crate::negative_assert!(
+                        self.terminal.is_none(),
+                        "#743 turn-only terminal once"
+                    );
                     self.terminal = Some(event);
                     continue;
                 }

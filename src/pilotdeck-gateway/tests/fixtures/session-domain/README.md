@@ -14,7 +14,7 @@ cargo test -p pilotdeck-gateway --lib storage::session_domain::
 cargo test -p pilotdeck-gateway --lib storage::transcript_adapter_tests::
 ```
 
-负控：从仓库根执行 `python3 src/pilotdeck-gateway/tests/fixtures/session-domain/negative.py`，要求 `CARGO_TARGET_DIR` 恰为本树 `src/target`。脚本构造有界 rustc 探针，直接包含产品状态机与金样测试；依赖函数从产品源码逐字提取，避免每条负控重编整个 gateway。每次修改真正产品源码，执行失败后恢复；编译失败、零测试和超时均不算检出。全 gateway 的 adapter 负控另验证恢复旧 Node 兜底及投影拒绝路径，原始输出见本单 RESULT。
+负控：从仓库根执行 `python3 src/pilotdeck-gateway/tests/fixtures/session-domain/negative.py <新的输出目录> [变异名 ...]`，必须设置本树的 `CARGO_TARGET_DIR`，脚本不另建 target；`--compile-only` 先逐项验证变异可编译。脚本构造有界 rustc 探针，直接包含产品状态机与金样测试；依赖函数从产品源码逐字提取，避免每条负控重编整个 gateway。每次修改真正产品源码，逐项恢复并汇总 KILLED / SURVIVED / INVALID；任一非 KILLED 即非零退出。编译失败、零测试、超时和非绑定断言失败均不算检出。全 gateway 的 adapter 负控另验证恢复旧 Node 兜底及投影拒绝路径，原始输出见本单 RESULT。
 
 范围：校验与写入；完整 A7.5 reducer、checkpoint 及投影读取 API 未在本单实现。
 

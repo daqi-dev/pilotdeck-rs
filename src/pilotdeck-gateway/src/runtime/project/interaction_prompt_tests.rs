@@ -48,7 +48,7 @@ async fn run_prompt(mode: &'static str) {
     );
     let raw = parse_json(r#"{"type":"text","text":"probe"}"#).expect("#741 prompt live input");
     let mut turn = session
-        .submit(raw.clone(), wire_options())
+        .submit_turn_for_test(raw.clone(), wire_options())
         .expect("#741 prompt live submit");
     let mut events = vec![];
     for expected in ["turn_started", "input_accepted"] {

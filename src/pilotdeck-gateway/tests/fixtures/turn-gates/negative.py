@@ -6,9 +6,13 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import Case, run_cases, matrix_main
 root = Path(__file__).resolve().parents[5]
+compile_only = '--compile-only' in sys.argv[1:]
+sys.argv = [arg for arg in sys.argv if arg != '--compile-only']
 out = Path(sys.argv[1]).resolve()
-out.mkdir(parents=True, exist_ok=False)
+if not compile_only:
+    out.mkdir(parents=True, exist_ok=False)
 env = os.environ.copy()
 if not env.get('CARGO_TARGET_DIR'):
     raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
@@ -19,14 +23,8 @@ consumer = root / 'src/pilotdeck-gateway/tests/fixtures/turn-runner/oracle.json'
 factory_peer = root / 'src/pilotdeck-gateway/tests/fixtures/host-factory/peer.py'
 factory = root / 'src/pilotdeck-gateway/src/runtime/turn/host_factory.rs'
 factory_tests = root / 'src/pilotdeck-gateway/src/runtime/turn/host_factory_tests.rs'
-command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--lib']
-def run(name, test='gates_tests'):
-    slots = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
-    (out / (name + '.slots.log')).write_text(slots.stdout + slots.stderr)
-    result = run_owned(command + [test], cwd=root, env=env, timeout=900)
-    (out / (name + '.log')).write_text(result.stdout + result.stderr)
-    return result
-lazy = 'host = async { host_factory(request.identity.clone(), recorder.clone()).await } => host?,'
+stream_tests = root / 'src/pilotdeck-gateway/src/runtime/turn/live_stream_tests.rs'
+lazy = 'host = async { host_factory(request.identity.clone(), recorder.clone(), signal).await } => host?,'
 mutants = [
     ('factory-close-timeout', factory, '.with_close_timeout(close_timeout)', '.with_close_timeout({ let _ = close_timeout; Limits::default().close_timeout })', 'live_prepared_cleanup_uses_close_timeout'),
     ('prepared-close-timeout', source, 'TurnScope::new(inner.clone(), close_timeout)', 'TurnScope::new(inner.clone(), { let _ = close_timeout; std::time::Duration::from_secs(5) })', 'live_prepared_cleanup_uses_close_timeout'),
@@ -46,35 +44,79 @@ mutants = [
     ('duplicate-host-terminal', source, 'if event.get("type") == Some(&"turn_completed".into()) {', 'if event.get("type") == Some(&"turn_completed".into()) { self.recorded.push_back(event.clone());', 'gates_cancel_once'),
     ('multi-turn-peer-marker', factory_peer, 'f"{pid_file}.{os.getpid()}.execute"', 'pid_file + ".execute"', 'live_session_shares_recorder_and_reads_current_history'),
 ]
-# Include the new test source in the baseline guard. Before submission it is
-# absent from HEAD: refuse rather than manufacture a second repository/target.
-with mutating_sources(root, [source, runner, tests, consumer, factory_peer, factory_tests, factory]) as originals:
-    assert run('positive').returncode == 0
-    assert run('positive-consumers', 'oracle_consumers_exist').returncode == 0
-    selected = set(sys.argv[2:])
-    assert selected <= {'--sample'} | {m[0] for m in mutants}
-    chosen = [m for m in mutants if m[0] in {'skip-start', 'eager-connect'}] if '--sample' in selected else [m for m in mutants if not selected or m[0] in selected]
-    for name, path, old, new, test in chosen:
-        body = originals[path].decode()
-        if name == 'omit-prepared-cleanup':
-            assert body.count('pending_host.handoff();') == 1
-            body = body.replace('pending_host.handoff();', '', 1)
+# The shared executor records every selected outcome and restores each source
+# before continuing, including when an anchor or a baseline test fails.
+stream = 'runtime::turn::live::stream_tests::'
+def full_test(test):
+    if test.startswith('gates_'):
+        return stream + 'gates_tests::' + test
+    if test == 'oracle_consumers_exist':
+        return 'runtime::turn::runner::tests::' + test
+    if test == 'host_lifecycle_cannot_justify_a_sidecar_final':
+        return 'runtime::turn::live::tests::' + test
+    if test == 'live_session_shares_recorder_and_reads_current_history':
+        return 'runtime::turn::host_factory::tests::' + test
+    return stream + test
+
+assertions = {
+    'factory-close-timeout': 'factory forwards close_timeout',
+    'prepared-close-timeout': ['cleanup must stop at the configured deadline', 'cleanup must retain the configured budget'],
+    'consumer-exists': 'missing Rust consumer: runner_nonexistent_consumer',
+    'skip-start': '#743 gates start failure emits no event',
+    'eager-connect': '#743 gates failed persistence never connects',
+    'skip-accept': '#743 gates execute count',
+    'skip-complete': 'complete count',
+    'skip-failure-complete': 'complete count',
+    'release-pending-slot': 'worker owns slot after drop',
+    'discard-host-failure': '#743 gates complete count',
+    'original-success-after-fallback': '#743 gates result kind',
+    'omit-prepared-cleanup': 'handler cleanup exactly once',
+    'factory-ready-priority': '#743 gates pre-cancel skips factory',
+    'duplicate-normal-terminal': '#743 turn-only terminal once',
+    'sidecar-lifecycle-leak': 'host lifecycle leak must be rejected',
+    'duplicate-host-terminal': '#743 turn-only terminal once',
+    'multi-turn-peer-marker': '#741k every history turn must execute successfully in its own sidecar',
+}
+
+def mutate(body, name, replacements):
+    if name == 'omit-prepared-cleanup':
+        assert body.count('pending_host.handoff();') == 1, '#743 prepared handoff anchor'
+        body = body.replace('pending_host.handoff();', '', 1)
+    if name == 'factory-ready-priority':
+        assert body.count(lazy) == 1, '#743 factory branch anchor'
+        body = body.replace(lazy, '', 1)
+    for old, new in replacements:
         if name == 'factory-ready-priority':
-            assert body.count(lazy) == 1
-            body = body.replace(lazy, '', 1)
-            # Only the first select belongs to factory/cancel arbitration.
-            body = body.replace(old, new, 1)
+            assert old in body, '#743 cancellation select anchor'
         else:
             assert body.count(old) == 1, (name, body.count(old))
-            body = body.replace(old, new, 1)
-        path.write_text(body)
-        result = run(name, test)
-        assert result.returncode != 0 and 'test result: FAILED' in result.stdout, name
-        assert f'::{test} ... FAILED' in result.stdout and 'panicked at' in result.stdout + result.stderr, name
-        if name == 'factory-close-timeout':
-            assert 'factory forwards close_timeout' in result.stdout, name
-        if name == 'prepared-close-timeout':
-            assert 'configured deadline' in result.stdout or 'configured budget' in result.stdout, name
-        path.write_bytes(originals[path])
-        assert run(name + '-restored', test).returncode == 0
-    (out / 'summary.json').write_text(json.dumps({'mutants': len(chosen), 'restored': True}) + '\n')
+        body = body.replace(old, new, 1)
+    return body
+
+selected = set(sys.argv[2:])
+unknown = selected - {'--sample'} - {m[0] for m in mutants}
+if unknown:
+    raise SystemExit(f'unknown mutations: {sorted(unknown)}')
+chosen = [m for m in mutants if m[0] in {'skip-start', 'eager-connect'}] if '--sample' in selected else [m for m in mutants if not selected or m[0] in selected]
+guarded = [source, runner, tests, consumer, factory_peer, factory_tests, factory, stream_tests]
+if compile_only:
+    rows = []
+    for name, path, old, new, test in chosen:
+        original = path.read_text()
+        rows.append((name, path, original, mutate(original, name, [(old, new)]), full_test(test), name))
+    raise SystemExit(matrix_main(root, __file__, '', rows, passed_count=1, child_count=0,
+                                paths=guarded, exact=True, args=['--compile-only', str(out)]))
+try:
+    with mutating_sources(root, guarded):
+        result = run_cases(root,
+            [Case(name, path, old, new, full_test(test), assertions[name], name)
+             for name, path, old, new, test in chosen], out, env, mutate)
+except Exception as error:
+    result = 1
+    reason = f'source guard/restoration: {type(error).__name__}: {error}'
+    (out / 'summary.json').write_text(json.dumps({
+        'controls': [dict(mutation=name, status='INVALID', reason=reason) for name, *_ in chosen],
+        'counts': dict(KILLED=0, SURVIVED=0, INVALID=len(chosen)),
+    }, indent=2) + '\n')
+    print(reason, flush=True)
+raise SystemExit(result)

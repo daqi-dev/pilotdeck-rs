@@ -19,17 +19,14 @@ LIVE = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 PREFIX = 'runtime::turn::host_factory::tests::'
 TEST = 'session_composition_uv_cwd_error_reaches_stream_unwrapped'
 SESSION_KIND = '.map_err(|error| HostError::new(HostErrorKind::Session, error.message))?'
-SESSION_BRANCH = '''Err(error) if error.kind == HostErrorKind::Session => {
-                Err(RuntimeError::new(error.message))
-            }'''
+# Session composition now fails in prepare_session, before turn event polling.
+SESSION_BRANCH = 'Err(error) if error.kind == HostErrorKind::Session => Err(RuntimeError::new(error.message)),'
 MUTATIONS = [
     ('session-kind', FACTORY, SESSION_KIND,
      '.map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?',
      [(TEST, '#885 composition failure must preserve the TS uv_cwd message on the first poll')]),
     ('live-prefix', LIVE, SESSION_BRANCH,
-     '''Err(error) if error.kind == HostErrorKind::Session => {
-                Err(map_host_error(error))
-            }''',
+     'Err(error) if error.kind == HostErrorKind::Session => Err(map_host_error(error)),',
      [(TEST, '#885 composition failure must preserve the TS uv_cwd message on the first poll')]),
 ]
 

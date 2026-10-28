@@ -4,26 +4,60 @@ use crate::{
     storage::{JsonlTranscriptStore, TranscriptKey},
 };
 
+// Last-owner destruction is a deterministic boundary for the dispose count.
+struct GateHandler {
+    inner: Arc<Handler>,
+    released: Arc<AtomicBool>,
+}
+impl HostHandler for GateHandler {
+    fn module_call(&self, call: JsValue) -> HostFuture<JsObject> {
+        self.inner.module_call(call)
+    }
+    fn event(&self, event: JsValue) -> HostFuture<()> {
+        self.inner.event(event)
+    }
+    fn validate_event(&self, payload: &JsValue) -> Result<EventGuard, HostError> {
+        self.inner.validate_event(payload)
+    }
+    fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
+        self.inner.drain_events()
+    }
+    fn dispose(&self) -> HostFuture<()> {
+        self.inner.dispose()
+    }
+}
+impl Drop for GateHandler {
+    fn drop(&mut self) {
+        self.released.store(true, Ordering::SeqCst);
+    }
+}
+
 async fn matrix(name: &str) {
     let oracle = crate::test_baseline::oracle(include_str!(
         "../../../tests/fixtures/turn-gates/oracle.json"
     ));
-    let JsValue::Array(rows) = oracle.get("matrix").unwrap() else {
-        panic!("matrix")
+    let JsValue::Array(rows) = oracle.get("matrix").expect("#743 gates prerequisite") else {
+        panic!("#743 gates matrix")
     };
     let row = rows
         .iter()
         .find(|r| r.get("name") == Some(&name.into()))
-        .unwrap();
-    let counts = row.get("counts").unwrap();
-    let expected = |key| counts.get(key).unwrap().as_number().unwrap() as usize;
+        .expect("#743 gates prerequisite");
+    let counts = row.get("counts").expect("#743 gates prerequisite");
+    let expected = |key| {
+        counts
+            .get(key)
+            .expect("#743 gates prerequisite")
+            .as_number()
+            .expect("#743 gates prerequisite") as usize
+    };
     let root = std::env::temp_dir().join(format!("pdrs-turn-gates-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(&root).expect("#743 gates prerequisite");
     let registry = Arc::new(ProjectRuntimeRegistry::new(
         &root,
         Arc::new(|_: &std::path::Path, _: &mut ResourceBundle| Ok(())),
     ));
-    let runtime = registry.resolve(None).unwrap();
+    let runtime = registry.resolve(None).expect("#743 gates prerequisite");
     let key = TranscriptKey {
         project_root: root.clone(),
         pilot_home: root.join("home"),
@@ -55,6 +89,7 @@ async fn matrix(name: &str) {
     let children = Arc::new(Mutex::new(Vec::new()));
     let connecting = Arc::new(AtomicUsize::new(0));
     let handler = Arc::new(Handler::default());
+    let released = Arc::new(AtomicBool::new(false));
     let marker = root.join("execute");
     let session = LiveSessionAdapter::new(recorder, Vec::new, {
         let owner = registry.clone();
@@ -62,13 +97,17 @@ async fn matrix(name: &str) {
         let connecting = connecting.clone();
         let children = children.clone();
         let handler = handler.clone();
+        let released = released.clone();
         let marker = marker.clone();
         let mode = name.to_owned();
         move |_| {
             calls.fetch_add(1, Ordering::SeqCst);
-            let lease = Arc::new(owner.acquire(None).unwrap());
+            let lease = Arc::new(owner.acquire(None).expect("#743 gates prerequisite"));
             let children = children.clone();
-            let handler = handler.clone();
+            let handler = Arc::new(GateHandler {
+                inner: handler.clone(),
+                released: released.clone(),
+            });
             let marker = marker.clone();
             let mode = mode.clone();
             let connecting = connecting.clone();
@@ -93,23 +132,30 @@ async fn matrix(name: &str) {
                         },
                     )
                     .await?;
-                    children.lock().unwrap().push(client.child_id().unwrap());
+                    children
+                        .lock()
+                        .expect("#743 gates prerequisite")
+                        .push(client.child_id().expect("#743 gates prerequisite"));
                     Ok(client)
                 });
                 Ok((connect, handler as Arc<dyn HostHandler>, lease))
             })
         }
     });
-    let mut turn = Some(session.submit_turn_for_test(input(), options()).unwrap());
+    let mut turn = Some(
+        session
+            .submit_turn_for_test(input(), options())
+            .expect("#743 gates prerequisite"),
+    );
     let mut events = Vec::new();
     let mut error = false;
     let mut gated = false;
     for _ in 0..30 {
         let result = if !gated && name != "drop-before" {
-            let mut pending = turn.as_mut().unwrap().next();
+            let mut pending = turn.as_mut().expect("#743 gates prerequisite").next();
             let progress = timeout(Duration::from_secs(15), async {
                 tokio::select! { biased; _ = &mut entry => None, value = &mut pending => Some(value) }
-            }).await.expect("gate or next must settle");
+            }).await.expect("#743 gates gate or next must settle");
             drop(pending);
             if let Some(value) = progress {
                 value
@@ -121,54 +167,84 @@ async fn matrix(name: &str) {
                         .filter(|e: &&JsValue| e.get("type") == Some(&"turn_completed".into()))
                         .count(),
                     0,
-                    "no terminal before complete"
+                    "#743 gates no terminal before complete"
                 );
-                assert!(session.state.lock().unwrap().active.is_some());
+                assert!(
+                    session
+                        .state
+                        .lock()
+                        .expect("#743 gates prerequisite")
+                        .active
+                        .is_some(),
+                    "#743 gates active slot"
+                );
                 assert!(
                     session
                         .submit_turn_for_test(input(), turn_options("replacement"))
                         .is_err(),
-                    "pending write blocks admission"
+                    "#743 gates pending write blocks admission"
                 );
                 for _ in 0..2 {
-                    let mut pending = turn.as_mut().unwrap().next();
+                    let mut pending = turn.as_mut().expect("#743 gates prerequisite").next();
                     assert_recording_pending(
                         pending.as_mut(),
-                        "same pending write after cancelled borrow",
+                        "#743 gates same pending write after cancelled borrow",
                     );
                 }
-                let pids = children.lock().unwrap().clone();
+                if matches!(name, "start-failure" | "accept-failure") {
+                    crate::negative_assert_eq!(
+                        connecting.load(Ordering::SeqCst),
+                        0,
+                        "#743 gates failed persistence never connects"
+                    );
+                }
+                let pids = children.lock().expect("#743 gates prerequisite").clone();
                 for pid in pids {
                     assert_reaped(pid).await;
                 }
                 assert_eq!(
                     store.attempts.load(Ordering::SeqCst),
                     1,
-                    "single pending write"
+                    "#743 gates single pending write"
                 );
                 if name.starts_with("drop-pending") {
                     drop(turn.take());
                     assert!(
-                        session.state.lock().unwrap().active.is_some(),
-                        "worker owns slot after drop"
+                        session
+                            .state
+                            .lock()
+                            .expect("#743 gates prerequisite")
+                            .active
+                            .is_some(),
+                        "#743 gates worker owns slot after drop"
                     );
-                    assert_eq!(runtime.lease_count(), 1, "worker owns lease after drop");
-                    release.send(()).unwrap();
+                    assert_eq!(
+                        runtime.lease_count(),
+                        1,
+                        "#743 gates worker owns lease after drop"
+                    );
+                    release.send(()).expect("#743 gates prerequisite");
                     break;
                 }
-                release.send(()).unwrap();
-                next(turn.as_mut().unwrap().as_mut()).await
+                release.send(()).expect("#743 gates prerequisite");
+                next(turn.as_mut().expect("#743 gates prerequisite").as_mut()).await
             }
         } else {
-            next(turn.as_mut().unwrap().as_mut()).await
+            next(turn.as_mut().expect("#743 gates prerequisite").as_mut()).await
         };
         match result {
             Ok(Some(event)) => {
+                crate::negative_assert!(
+                    name != "start-failure",
+                    "#743 gates start failure emits no event"
+                );
                 let kind = event.get("type").cloned();
                 events.push(event);
                 if kind == Some("model_event".into()) {
                     if name.starts_with("cancel-") {
-                        session.abort(&"user-stop".into()).unwrap();
+                        session
+                            .abort(&"user-stop".into())
+                            .expect("#743 gates prerequisite");
                     }
                     if name == "drop-before" {
                         drop(turn.take());
@@ -183,37 +259,48 @@ async fn matrix(name: &str) {
             Ok(None) => break,
             Err(_) => {
                 error = true;
-                assert_eq!(next(turn.as_mut().unwrap().as_mut()).await.unwrap(), None);
+                assert_eq!(
+                    next(turn.as_mut().expect("#743 gates prerequisite").as_mut())
+                        .await
+                        .expect("#743 gates prerequisite"),
+                    None,
+                    "#743 gates failed stream closes"
+                );
                 break;
             }
         }
     }
     if let Some(turn) = turn.as_mut() {
         assert_eq!(
-            next(turn.as_mut()).await.unwrap(),
+            next(turn.as_mut()).await.expect("#743 gates prerequisite"),
             None,
-            "terminal is unique"
+            "#743 gates terminal is unique"
         );
     }
     drop(turn);
     timeout(Duration::from_secs(15), async {
-        while session.state.lock().unwrap().active.is_some()
+        while session
+            .state
+            .lock()
+            .expect("#743 gates prerequisite")
+            .active
+            .is_some()
             || runtime.lease_count() != 0
-            || handler.disposed.load(Ordering::SeqCst) == 0
+            || !released.load(Ordering::SeqCst)
         {
             tokio::task::yield_now().await;
         }
     })
     .await
-    .expect("owned cleanup must release slot and lease");
-    let pids = children.lock().unwrap().clone();
+    .expect("#743 gates owned cleanup must release slot and lease");
+    let pids = children.lock().expect("#743 gates prerequisite").clone();
     for pid in &pids {
         assert_reaped(*pid).await;
     }
     assert_eq!(
         calls.load(Ordering::SeqCst),
         expected("factory"),
-        "factory count"
+        "#743 gates factory count"
     );
     assert_eq!(
         std::fs::read_to_string(&marker)
@@ -221,18 +308,22 @@ async fn matrix(name: &str) {
             .lines()
             .count(),
         expected("loop"),
-        "execute count"
+        "#743 gates execute count"
     );
     assert_eq!(
         connecting.load(Ordering::SeqCst),
         expected("connect"),
-        "connection attempts"
+        "#743 gates connection attempts"
     );
-    assert_eq!(pids.len(), expected("connect"), "connection count");
+    assert_eq!(
+        pids.len(),
+        expected("connect"),
+        "#743 gates connection count"
+    );
     assert_eq!(
         handler.calls.load(Ordering::SeqCst),
         expected("model"),
-        "model count"
+        "#743 gates model count"
     );
     assert_eq!(
         store.completes.load(Ordering::SeqCst),
@@ -241,17 +332,17 @@ async fn matrix(name: &str) {
         } else {
             expected("complete")
         },
-        "complete count"
+        "#743 gates complete count"
     );
     assert_eq!(
         pids.len(),
         expected("closed"),
-        "all constructed children reaped"
+        "#743 gates all constructed children reaped"
     );
     assert_eq!(
         handler.disposed.load(Ordering::SeqCst),
         1,
-        "handler cleanup exactly once"
+        "#743 gates handler cleanup exactly once"
     );
     let terminals: Vec<_> = events
         .iter()
@@ -260,24 +351,40 @@ async fn matrix(name: &str) {
     let expected_terminals = if name.starts_with("drop-pending") {
         0
     } else {
-        row.get("terminal").unwrap().as_number().unwrap() as usize
+        row.get("terminal")
+            .expect("#743 gates prerequisite")
+            .as_number()
+            .expect("#743 gates prerequisite") as usize
     };
-    assert_eq!(terminals.len(), expected_terminals, "host terminal count");
+    assert_eq!(
+        terminals.len(),
+        expected_terminals,
+        "#743 gates host terminal count"
+    );
     if let Some(terminal) = terminals.first() {
         assert_eq!(
-            terminal.get("result").unwrap().get("type"),
-            row.get("result")
+            terminal
+                .get("result")
+                .expect("#743 gates prerequisite")
+                .get("type"),
+            row.get("result"),
+            "#743 gates result kind"
         );
     }
     assert_eq!(
         error,
         !name.starts_with("drop-pending") && row.get("error") != Some(&JsValue::Null),
-        "completion failure propagates"
+        "#743 gates completion failure propagates"
     );
     let bytes = std::fs::read_to_string(&key.transcript_path).unwrap_or_default();
     let durable = bytes
         .lines()
-        .filter(|line| parse_json(line).unwrap().get("type") == Some(&"turn_result".into()))
+        .filter(|line| {
+            parse_json(line)
+                .expect("#743 gates prerequisite")
+                .get("type")
+                == Some(&"turn_result".into())
+        })
         .count();
     assert_eq!(
         durable,
@@ -286,14 +393,14 @@ async fn matrix(name: &str) {
         } else {
             expected_terminals
         },
-        "durable terminal count"
+        "#743 gates durable terminal count"
     );
     let replacement = session
         .submit_turn_for_test(input(), turn_options("replacement"))
-        .unwrap();
+        .expect("#743 gates prerequisite");
     drop(replacement);
-    registry.dispose().await.unwrap();
-    std::fs::remove_dir_all(root).unwrap();
+    registry.dispose().await.expect("#743 gates prerequisite");
+    std::fs::remove_dir_all(root).expect("#743 gates prerequisite");
 }
 macro_rules! gate_cases {
     ($($name:ident, $case:literal;)*) => {
@@ -688,25 +795,60 @@ async fn gates_factory_ready_cancel() {
     let drops = Arc::new(AtomicUsize::new(0));
     let lease = test_lease();
     let runtime = lease.runtime().clone();
-    let client = spawn_client("live-payload").await.unwrap();
-    let pid = client.child_id().unwrap();
+    let client = spawn_client("live-payload")
+        .await
+        .expect("#743 ready-cancel prerequisite");
+    let pid = client.child_id().expect("#743 ready-cancel prerequisite");
     let (send, wait) = oneshot::channel();
     let wait = Mutex::new(Some(wait));
+    let prepared = Arc::new(AtomicBool::new(false));
+    let consumed = prepared.clone();
     let session = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
-        let wait = wait.lock().unwrap().take().unwrap();
-        Box::pin(async move { Ok(wait.await.unwrap()) })
+        let wait = wait
+            .lock()
+            .expect("#743 ready-cancel prerequisite")
+            .take()
+            .expect("#743 ready-cancel prerequisite");
+        let consumed = consumed.clone();
+        Box::pin(async move {
+            let resources = wait.await.expect("#743 ready-cancel prepared resources");
+            consumed.store(true, Ordering::SeqCst);
+            Ok(resources)
+        })
     });
-    let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
+    let mut turn = session
+        .submit_turn_for_test(input(), options())
+        .expect("#743 ready-cancel prerequisite");
     {
         let mut pending = turn.next();
         assert_recording_pending(pending.as_mut(), "factory waits for prepared resources");
     }
     let handler: Arc<dyn HostHandler> = Arc::new(Owner(drops.clone(), lease.clone()));
     let connect: HostFuture<HostClient> = Box::pin(async move { Ok(client) });
-    assert!(send.send((connect, handler, lease)).is_ok());
-    session.abort(&"same tick".into()).unwrap();
-    assert_aborted(&next(turn.as_mut()).await.unwrap().unwrap());
-    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    assert!(
+        send.send((connect, handler, lease)).is_ok(),
+        "#743 ready-cancel resources sent"
+    );
+    session
+        .abort(&"same tick".into())
+        .expect("#743 ready-cancel prerequisite");
+    let event = next(turn.as_mut()).await;
+    crate::negative_assert!(
+        !prepared.load(Ordering::SeqCst),
+        "#743 gates pre-cancel skips factory"
+    );
+    assert_aborted(
+        &event
+            .expect("#743 ready-cancel next")
+            .expect("#743 ready-cancel terminal"),
+    );
+    assert_eq!(
+        next(turn.as_mut())
+            .await
+            .expect("#743 ready-cancel prerequisite"),
+        None,
+        "#743 ready-cancel closes"
+    );
     assert_reaped(pid).await;
     forwarding::wait_for_cleanup(&session.state, &runtime).await;
     assert_eq!(
@@ -716,7 +858,12 @@ async fn gates_factory_ready_cancel() {
     );
     assert_eq!(runtime.lease_count(), 0, "prepared lease released");
     assert!(
-        session.state.lock().unwrap().active.is_none(),
+        session
+            .state
+            .lock()
+            .expect("#743 ready-cancel prerequisite")
+            .active
+            .is_none(),
         "prepared slot released"
     );
 }
