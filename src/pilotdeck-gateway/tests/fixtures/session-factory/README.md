@@ -15,7 +15,7 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib r
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --audit
 ```
 
-70 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
+91 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --compile "$OUT_COMPILE"
@@ -33,3 +33,11 @@ python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.p
 租约按 canonical path 跨 factory 协调，并复用既有 `.lock` 文件锁排除其他进程。锁随真实 recorder/store 保留；显式 close 等已受理写完成后释放，不依赖旧 handle clone Drop。recreate 总等待预算复用 `Limits::default().close_timeout`（1秒），storage构造自身耗时不消耗租约等待预算；超时不取消旧 handle 的持有型 drain任务。
 
 `regenerates_identically` 必须执行真实探针，生成器不再接受 `MATRIX_IMPORT_ROOT` 跳过采集。新增金样仍由同一个 `#[ignore]` 守卫逐字节重生成验证。`--audit` 只证明变异文本发生变化、测试存在、失败消息存在；语义非等价与判杀只能由编译和实际测试证明。
+
+fix-r2 的文件观察在写入期间只排除已知 checkpoint 路径、当前 PID、UUID v4 的原子发布暂存文件。其他 `.tmp`、持久文件读取错误仍原样报错；`after-owned-cleanup` 和 `finalFiles` 保留全部文件。`file-snapshot-test.mts` 调真实 TS checkpoint store，在 `readdir` 后、`lstat` 前完成真实 rename，验证暂存路径消失、新内容已发布、最终证据和错误传播。该验证由生成器在独立进程执行，整个进程（包括清理）硬截止15秒。
+
+TS `getOrCreateActive` 在等待旧 dispose 后读取共享 `cached.handle`，所以第二次重建可能返回先发布的 handle，也可能返回随后覆盖它的 handle。主48格的12个 `twice` 格明确采用 **旧 dispose 返回晚于最后候选发布** 的确定性时序；只延迟真实 storage dispose 完成后的返回，不延迟旧 turn 的 abort。`twiceReturnOrders` 另保留 idle/twice/beforeload 的 early 与 late 两种实际结果（第二请求分别返回2、3），没有把真实早返回归一化掉。48个 Rust 用例检查 TS 完整字段；Rust 的旧状态与首调用结果直接对照，writer fence、串行重建/close 的差异分别按既有登记断言，未批准部分仍未批准。代表格还断言 Rust 身份关系落在两种 TS 观测集合中。
+
+`matrix-diagnostic-severity` 改注入 `warning`：malformed 格的真实 TS 值是 `error`，原 `error→error` 是等价变异。fix-r2 的91项中，新增21项覆盖文件观察和完整矩阵/返回集合；未提交的新文件不得绕过 `mutating_sources`，须提交后在宿主逐项 `--compile` 再完整执行。
+
+`closeReturnOrders` 同样保留 idle/close/beforeload 的两种真实错误：旧关闭先完成时为 `Agent is not registered`，候选先碰到已移除的 scoped registration 时为 `Scoped service is not registered`。主48格的12个 close 格用 storage-dispose 返回门闩固定后一时序，第一候选拒绝后释放；其他事件不复用这个释放条件。shutdown 必须先等待创建完成，不能加入此门闩。

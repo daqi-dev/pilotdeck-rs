@@ -24261,6 +24261,36 @@
       "oldPendingAtBoundary": false
     }
   ],
+  "twiceReturnOrders": [
+    {
+      "order": "early",
+      "firstHandle": 3,
+      "secondHandle": 2,
+      "returnsSameHandle": false
+    },
+    {
+      "order": "late",
+      "firstHandle": 3,
+      "secondHandle": 3,
+      "returnsSameHandle": true
+    }
+  ],
+  "closeReturnOrders": [
+    {
+      "order": "early",
+      "error": {
+        "name": "Error",
+        "message": "Agent is not registered: session-745"
+      }
+    },
+    {
+      "order": "late",
+      "error": {
+        "name": "Error",
+        "message": "Scoped service is not registered in gateway-agents: agent:session-745"
+      }
+    }
+  ],
   "memoryOnly": {
     "injected": {
       "sessionId": "session-745",

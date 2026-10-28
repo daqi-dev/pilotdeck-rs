@@ -2015,7 +2015,62 @@ async fn production_owner_cancelled_create_close_and_shutdown() {
     h.finish("owner cancellation").await;
 }
 
-// Each name maps exactly to a real Node v22.22.0 fenceMatrix observation.
+// Pin every TS field before applying the registered Rust differences below.
+// This is the late-dispose schedule; twiceReturnOrders separately retains the
+// early-return schedule. Neither observation is silently normalized away.
+fn assert_fence_observation(row: &serde_json::Value, name: &str) {
+    let parts: Vec<_> = name.split('-').collect();
+    let (state, event, timing) = (parts[1], parts[2], parts[3]);
+    let running = state == "quick" || state == "never";
+    let mut results = Vec::new();
+    if running {
+        results.push(serde_json::json!({"label":"fence-old-turn","status":"fulfilled"}));
+    } else if state == "disposing" {
+        results.push(serde_json::json!({"label":"fence-old-dispose","status":"fulfilled"}));
+    }
+    let final_handle = if event == "twice" && timing != "publish" {
+        3
+    } else {
+        2
+    };
+    if event == "close" || event == "shutdown" {
+        results.push(
+            serde_json::json!({"label":"fence-first","status":"rejected","error":{
+                "name":"Error","message":if event == "close" {
+                    "Scoped service is not registered in gateway-agents: agent:session-745"
+                } else { "Session router shut down during session recreation." }
+            }}),
+        );
+    } else {
+        results.push(
+            serde_json::json!({"label":"fence-first","status":"fulfilled","handle":final_handle}),
+        );
+    }
+    if event == "twice" {
+        results.push(
+            serde_json::json!({"label":"fence-second","status":"fulfilled","handle":final_handle}),
+        );
+    } else if event != "recreate" {
+        results.push(serde_json::json!({"label":format!("fence-{event}"),"status":"fulfilled"}));
+    }
+    assert_eq!(
+        row,
+        &serde_json::json!({
+            "name":name,
+            "oldState":if state == "disposing" { "draining" } else { "active" },
+            "oldInFlight":usize::from(running),
+            "registryAtBoundary":1,
+            "registryAfterEvent":if event == "twice" { 5-final_handle } else { 1 },
+            "results":results,
+            "oldPendingAtBoundary":running,
+        }),
+        "#745 fence TS complete observation"
+    );
+}
+
+// Every field is checked, including exact rejection shape and identity. Rust
+// intentionally differs at the drain/load boundary (WRITER-FENCE-001), and at
+// second-call/close ordering (RECREATE-DRAIN-001, still pending approval).
 async fn fence_matrix(name: &'static str) {
     let h = Harness::new(name);
     let oracle = oracle_document();
@@ -2025,10 +2080,7 @@ async fn fence_matrix(name: &'static str) {
         .iter()
         .find(|r| r["name"] == name)
         .expect("#745 fence TS cell");
-    assert_eq!(
-        row["registryAtBoundary"], 1,
-        "#745 fence TS boundary identity"
-    );
+    assert_fence_observation(row, name);
     let parts: Vec<_> = name.split('-').collect();
     let (state, event) = (parts[1], parts[2]);
     let old = h.create(name).await;
@@ -2053,6 +2105,25 @@ async fn fence_matrix(name: &'static str) {
     } else {
         None
     };
+    assert_eq!(
+        row["oldState"],
+        match old.state() {
+            HandleState::Active => "active",
+            HandleState::Draining => "draining",
+            HandleState::Disposed => "disposed",
+        },
+        "#745 fence predecessor state matches TS"
+    );
+    assert_eq!(
+        row["oldInFlight"],
+        usize::from(activity.is_some()),
+        "#745 fence predecessor activity matches TS"
+    );
+    assert_eq!(
+        row["oldPendingAtBoundary"],
+        activity.is_some(),
+        "#745 fence predecessor pending matches TS"
+    );
     assert!(
         h.owner.mark_session_dirty(&"session-745".into(), "matrix"),
         "#745 matrix dirty"
@@ -2134,19 +2205,72 @@ async fn fence_matrix(name: &'static str) {
         );
         h.gate.open();
         let first = bounded(name, first).await;
+        let ts_first = row["results"]
+            .as_array()
+            .expect("#745 fence results")
+            .iter()
+            .find(|result| result["label"] == "fence-first")
+            .expect("#745 fence first result");
+        if event != "close" {
+            assert_eq!(
+                first.is_ok(),
+                ts_first["status"] == "fulfilled",
+                "#745 fence first outcome matches TS"
+            );
+        } else {
+            // RECREATE-DRAIN-001: Rust serializes close after recreation; TS
+            // removes the old registry entry before candidate publication.
+            assert_eq!(
+                ts_first["status"], "rejected",
+                "#745 fence registered close difference"
+            );
+            assert_eq!(
+                oracle["closeReturnOrders"],
+                serde_json::json!([
+                    {"order":"early","error":{"name":"Error","message":"Agent is not registered: session-745"}},
+                    {"order":"late","error":{"name":"Error","message":"Scoped service is not registered in gateway-agents: agent:session-745"}}
+                ]),
+                "#745 close distinct return orders"
+            );
+        }
         if event == "shutdown" {
             assert!(first.is_err(), "#745 matrix shutdown rejects publication");
         } else {
             let new = first.expect("#745 matrix replacement succeeds");
             if let Some(second) = second {
-                assert!(
-                    new.same_identity(
-                        &bounded(name, second)
-                            .await
-                            .expect("#745 matrix second succeeds")
-                    ),
-                    "#745 matrix two recreates share writer"
-                );
+                let second = bounded(name, second)
+                    .await
+                    .expect("#745 matrix second succeeds");
+                let same_handle = new.same_identity(&second);
+                if name == "fence-idle-twice-beforeload" {
+                    let observations = oracle["twiceReturnOrders"]
+                        .as_array()
+                        .expect("#745 twice return observations");
+                    assert_eq!(observations.len(), 2, "#745 twice return denominator");
+                    for (observation, order) in observations.iter().zip(["early", "late"]) {
+                        assert_eq!(observation["order"], order, "#745 twice return order");
+                        assert_eq!(
+                            observation["returnsSameHandle"],
+                            observation["firstHandle"] == observation["secondHandle"],
+                            "#745 twice return identity evidence"
+                        );
+                    }
+                    assert!(
+                        observations
+                            .iter()
+                            .any(|row| row["returnsSameHandle"] == same_handle),
+                        "#745 twice Rust identity belongs to TS observations"
+                    );
+                    assert_eq!(
+                        observations,
+                        serde_json::json!([
+                            {"order":"early","firstHandle":3,"secondHandle":2,"returnsSameHandle":false},
+                            {"order":"late","firstHandle":3,"secondHandle":3,"returnsSameHandle":true}
+                        ]).as_array().expect("#745 twice expected observations"),
+                        "#745 twice distinct return orders"
+                    );
+                }
+                assert!(same_handle, "#745 matrix two recreates share writer");
             }
         }
         assert_eq!(
