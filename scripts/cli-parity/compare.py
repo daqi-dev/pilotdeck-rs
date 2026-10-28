@@ -1,19 +1,74 @@
 #!/usr/bin/env python3
 """Compare full D0 recordings. Missing evidence never compares equal."""
+import sys
+
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution.  Without it, exit before importing anything: a same-named stdlib
+# file beside this entry (json.py, pathlib.py, tempfile.py) would otherwise
+# execute before the guard.  ``sys`` is builtin/frozen and already loaded.
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
 import argparse
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
 import stat
-import sys
+import tempfile
 
+# Load apparatus modules by explicit path, never sys.path: a same-named package
+# or extension module beside the source would win before the scan (#701 item 3,
+# same defect gateway-parity fix-r6 P1).  Inline on purpose: importing common.py
+# is what this block defends.
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-cli-parity-pyc-')
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (Blocked, HEAD, MOCK_PORT, OPENSSL_CONFIG, SCRIPT, SCENARIOS, TOKEN, digest_plain, read_plain,
-                    environment, env_summary, hashes, initial_tree, mock_gateway_scenarios, per_stream_scenarios,
-                    snapshot, staged_skills_identity)
-from policy import sandbox_profile
+
+
+def _load(name, path):
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        if not isinstance(getattr(existing, '_apparatus_source', None), bytes):
+            raise RuntimeError(f'unverified apparatus module cache: {path}')
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        source = path.read_bytes()
+        exec(compile(source, str(path), 'exec'), module.__dict__)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    module._apparatus_source = source
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+_here = Path(__file__).resolve().parent
+_common = _load('common', _here / 'common.py')
+Blocked = _common.Blocked
+HEAD = _common.HEAD
+MOCK_PORT = _common.MOCK_PORT
+OPENSSL_CONFIG = _common.OPENSSL_CONFIG
+SCRIPT = _common.SCRIPT
+SCENARIOS = _common.SCENARIOS
+TOKEN = _common.TOKEN
+digest_plain = _common.digest_plain
+read_plain = _common.read_plain
+environment = _common.environment
+env_summary = _common.env_summary
+hashes = _common.hashes
+initial_tree = _common.initial_tree
+mock_gateway_scenarios = _common.mock_gateway_scenarios
+per_stream_scenarios = _common.per_stream_scenarios
+snapshot = _common.snapshot
+staged_skills_identity = _common.staged_skills_identity
+sandbox_profile = _load('policy', _here / 'policy.py').sandbox_profile
 
 RECORDING_ORIGIN = 'live-os-sandbox'
 PENDING = 'PENDING-TS-CALIBRATION'
@@ -327,8 +382,8 @@ if __name__ == '__main__':
     if bool(args.rust_bin) != bool(args.rust_source):
         ap.error('--rust-bin and --rust-source must be supplied together')
     if args.rust_bin:
-        from run_round import rust_identity
-        expected = rust_identity(args.rust_bin, args.rust_source)
+        expected = _load('run_round', _here / 'run_round.py').rust_identity(
+            args.rust_bin, args.rust_source)
     else:
         expected = None
     result = compare(args.left, args.right, expected)
