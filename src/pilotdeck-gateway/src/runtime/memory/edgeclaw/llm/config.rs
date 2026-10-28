@@ -727,6 +727,10 @@ pub fn resolve_api_key(
     env: &dyn Fn(&str) -> Option<String>,
     resolved_auth: Option<&JsValue>,
 ) -> Result<JsString, ConfigError> {
+    // TS gates this source with `typeof providerConfig?.apiKey === "string"`
+    // (`llm-extraction.ts:2237`), so arrays/objects never enter `String()`
+    // here; `as_string` mirrors that. The resolver's `apiKey` below is the
+    // only value that needs the checked conversion.
     let configured = config
         .get("models")
         .and_then(JsRecord::of)
