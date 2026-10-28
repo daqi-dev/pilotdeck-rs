@@ -528,25 +528,53 @@ impl CreateGate {
         );
     }
 
-    async fn connect(&mut self) {
-        // O_NONBLOCK succeeds only when the child really opened its FIFO reader.
-        // Polling observes that event; elapsed time never releases the command.
-        until(
-            "#956 #957 FIFO reader rendezvous",
-            || match fs::OpenOptions::new()
+    async fn connect(&mut self, tasks: &BackgroundTaskRuntime, id: &JsString) {
+        let start = Instant::now();
+        self.connect_with_elapsed(tasks, id, || start.elapsed())
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    async fn connect_with_elapsed(
+        &mut self,
+        tasks: &BackgroundTaskRuntime,
+        id: &JsString,
+        elapsed: impl Fn() -> Duration,
+    ) -> Result<(), String> {
+        loop {
+            // Success is the reader rendezvous, never an elapsed-time release.
+            match fs::OpenOptions::new()
                 .write(true)
                 .custom_flags(libc::O_NONBLOCK)
                 .open(&self.fifo)
             {
                 Ok(writer) => {
                     self.writer = Some(writer);
-                    true
+                    return Ok(());
                 }
-                Err(error) if error.raw_os_error() == Some(libc::ENXIO) => false,
-                Err(error) => panic!("#956 #957 connect FIFO: {error}"),
-            },
-        )
-        .await;
+                Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {}
+                Err(error) => return Err(format!("#960 connect FIFO: {error}")),
+            }
+            let task = tasks.get(id, None).expect("#960 FIFO task registered");
+            let pid = task.pid.expect("#960 FIFO child pid");
+            let child = rustix::process::Pid::from_raw(pid as i32).expect("#960 valid child pid");
+            let alive = rustix::process::test_kill_process(child).is_ok();
+            let waited = elapsed();
+            let detail = format!(
+                "pid={pid} status={} alive={alive} waited={}ms",
+                task.status.as_str(),
+                waited.as_millis()
+            );
+            if !alive || task.ended_at.is_some() || task.status.as_str() != "running" {
+                return Err(format!(
+                    "#960 FIFO child exited before reader rendezvous: {detail}"
+                ));
+            }
+            if waited >= Duration::from_secs(60) {
+                return Err(format!("#960 FIFO reader rendezvous total limit: {detail}"));
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     fn release(mut self) {
@@ -677,7 +705,8 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                     }
                 }
                 if let Some(gate) = &mut create_gate {
-                    gate.connect().await;
+                    let id = placeholders.tasks.last().expect("#960 created task ID");
+                    gate.connect(&tasks, &JsString::from(id.as_str())).await;
                 }
                 Some(placeholders.apply(&tool_outcome(result)))
             }
@@ -1073,7 +1102,7 @@ fn creation_gate_lifecycle() {
                 .expect("#956 #957 gated task ID")
                 .clone();
             groups.track(number(field(&data, "pid")) as u32);
-            gate.connect().await;
+            gate.connect(&tasks, &id).await;
             assert_eq!(
                 field(&data, "status"),
                 field(case, "create"),
@@ -1098,7 +1127,7 @@ fn creation_gate_lifecycle() {
                 until("#956 #957 released command completes", || {
                     tasks
                         .get(&id, None)
-                        .is_some_and(|task| task.status.as_str() == "completed")
+                        .is_some_and(|task| task.ended_at.is_some())
                 })
                 .await;
             } else if mode == "stop" {
@@ -1137,6 +1166,187 @@ fn creation_gate_lifecycle() {
             groups.disarm();
         }
     });
+}
+
+// The second FIFO holds a real child before it can reach the creation FIFO.
+// Only the failure clock is injected: these tests still open the real FIFO,
+// inspect the actual runtime entry/PID, and cancel/drain the real process.
+fn creation_watchdog_case(mode: &str) {
+    let expected = baseline::oracle(include_str!("fixtures/background-create-gate/oracle.json"));
+    let cases = array(field(&expected, "watchdog"));
+    assert_eq!(
+        cases
+            .iter()
+            .map(|case| text(field(case, "mode")))
+            .collect::<Vec<_>>(),
+        [
+            "delayed-reader",
+            "exited-reader",
+            "cancelled-reader",
+            "never-reader"
+        ],
+        "#960 watchdog matrix coverage"
+    );
+    let case = cases
+        .iter()
+        .find(|case| text(field(case, "mode")) == mode)
+        .expect("#960 watchdog case exists");
+    let scratch = scratch::Scratch::new("background-create-watchdog");
+    let root = fs::canonicalize(scratch.path()).expect("#960 watchdog scratch root");
+    runtime().block_on(async {
+        let tasks = BackgroundTaskRuntime::default();
+        let groups = ProcessGroups::new();
+        let mut gate = CreateGate::new(&root, 0);
+        let mut admission = CreateGate::new(&root, 1);
+        let body = if mode == "exited-reader" {
+            "exit 0\n".to_owned()
+        } else {
+            fs::read_to_string(&gate.shell).expect("#960 read original shell")
+        };
+        fs::write(
+            &gate.shell,
+            format!(
+                "#!/bin/bash\nIFS= read -r token < '{}' || exit 96\n{body}",
+                admission.fifo.display()
+            ),
+        )
+        .expect("#960 write admission shell");
+        let mut env = object([("PATH", JsValue::from("/usr/bin:/bin"))]);
+        gate.configure(&mut env);
+        let fields = object([
+            ("cwd", JsValue::from(root.to_string_lossy().as_ref())),
+            ("sessionId", JsValue::from("s1")),
+            ("env", JsValue::Object(env)),
+        ]);
+        let output = task_tools(Some(tasks.clone()))[0]
+            .execute(
+                JsValue::Object(object([(
+                    "command",
+                    JsValue::from("printf 'done-output\\n'"),
+                )])),
+                context(fields, None),
+            )
+            .await
+            .expect("#960 watchdog create succeeds");
+        let data = output.data.expect("#960 watchdog create data");
+        let id = field(&data, "taskId")
+            .as_string()
+            .expect("#960 watchdog task ID")
+            .clone();
+        let pid = number(field(&data, "pid")) as u32;
+        groups.track(pid);
+        admission.connect(&tasks, &id).await;
+        let mut admission = Some(admission);
+        if mode == "exited-reader" {
+            admission.take().expect("#960 admission exists").release();
+            until("#960 pre-reader natural exit", || {
+                tasks
+                    .get(&id, None)
+                    .is_some_and(|task| task.ended_at.is_some())
+            })
+            .await;
+        } else if mode == "cancelled-reader" {
+            tokio::time::timeout(
+                Duration::from_secs(8),
+                tasks.stop(&id, &JsValue::Undefined, None),
+            )
+            .await
+            .expect("#960 pre-reader stop deadline")
+            .expect("#960 pre-reader stop succeeds");
+        }
+        // Terminal cases use the cap too, so a removed exit check yields a
+        // wrong *returned error*, not a harness timeout accepted as a kill.
+        let waited = if mode == "delayed-reader" { 9 } else { 60 };
+        let mut connecting =
+            std::pin::pin!(gate.connect_with_elapsed(&tasks, &id, || Duration::from_secs(waited)));
+        let first = connecting
+            .as_mut()
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+        let outcome = if mode == "delayed-reader" {
+            assert!(
+                first.is_pending(),
+                "#960 live delayed reader stays pending past 8s: {first:?}"
+            );
+            assert_eq!(
+                tasks
+                    .get(&id, None)
+                    .expect("#960 held task exists")
+                    .output_bytes,
+                0,
+                "#960 admission holds command"
+            );
+            admission
+                .take()
+                .expect("#960 admission release once")
+                .release();
+            tokio::time::timeout(Duration::from_secs(8), connecting.as_mut())
+                .await
+                .expect("#960 delayed reader connection deadline")
+                .expect("#960 delayed reader connects after admission release");
+            "connected"
+        } else {
+            let std::task::Poll::Ready(Err(error)) = first else {
+                panic!("#960 watchdog must reject without polling delay: {mode} {first:?}");
+            };
+            assert!(
+                error.contains(&format!("pid={pid} "))
+                    && error.contains("status=")
+                    && error.contains("alive=")
+                    && error.contains("waited=60000ms"),
+                "#960 watchdog diagnostic fields: {error}"
+            );
+            if mode == "never-reader" {
+                assert!(
+                    error.starts_with("#960 FIFO reader rendezvous total limit:"),
+                    "#960 live missing reader reaches total limit: {error}"
+                );
+                "total-limit"
+            } else {
+                assert!(
+                    error.starts_with("#960 FIFO child exited before reader rendezvous:"),
+                    "#960 terminal reader rejected before total limit: {error}"
+                );
+                "child-exited"
+            }
+        };
+        let task = tasks.get(&id, None).expect("#960 watchdog task retained");
+        let actual = JsValue::Object(object([
+            ("mode", JsValue::from(mode)),
+            ("outcome", JsValue::from(outcome)),
+            ("status", JsValue::from(task.status.as_str())),
+            ("outputBytes", JsValue::Number(task.output_bytes as f64)),
+        ]));
+        assert_eq!(
+            wire(&actual),
+            wire(case),
+            "#960 watchdog TS projection {mode}"
+        );
+        tokio::time::timeout(Duration::from_secs(8), tasks.dispose())
+            .await
+            .expect("#960 watchdog dispose deadline");
+        until("#960 watchdog child drained", || !group_alive(pid)).await;
+        groups.disarm();
+    });
+}
+
+#[test]
+fn creation_gate_waits_for_live_delayed_reader() {
+    creation_watchdog_case("delayed-reader");
+}
+
+#[test]
+fn creation_gate_rejects_exited_reader() {
+    creation_watchdog_case("exited-reader");
+}
+
+#[test]
+fn creation_gate_rejects_cancelled_reader() {
+    creation_watchdog_case("cancelled-reader");
+}
+
+#[test]
+fn creation_gate_bounds_missing_reader() {
+    creation_watchdog_case("never-reader");
 }
 
 #[test]

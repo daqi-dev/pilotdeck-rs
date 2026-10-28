@@ -44,6 +44,27 @@ const runtime = () => new BackgroundTaskRuntime({ spawn: (...args: Parameters<ty
   if (child.pid !== undefined) groups.add(child.pid);
   return child;
 } });
+// A slow but live shell is progress, not an 8-second failure. The injected
+// elapsed clock in the watchdog matrix never opens a FIFO or releases a body.
+async function connectFifo(fifo: string, tasks: any, id: string,
+  elapsed: () => number = (() => { const start = Date.now(); return () => Date.now() - start; })(),
+  onWait: () => void = () => {}) : Promise<number> {
+  while (true) {
+    try { return openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK); }
+    catch (error: any) { if (error.code !== 'ENXIO') throw error; }
+    const task = tasks.get(id);
+    const waited = elapsed();
+    let alive = false;
+    try { process.kill(task.pid, 0); alive = true; }
+    catch (error: any) { if (error.code !== 'ESRCH') throw error; }
+    const detail = `pid=${task.pid} status=${task.status} alive=${alive} waited=${waited}ms`;
+    assert.ok(alive && task.endedAt === undefined && task.status === 'running',
+      `#960 FIFO child exited before reader rendezvous: ${detail}`);
+    assert.ok(waited < 60000, `#960 FIFO reader rendezvous total limit: ${detail}`);
+    onWait();
+    await tick();
+  }
+}
 const cases: any[] = [];
 let active: any;
 let writer: number | undefined;
@@ -59,13 +80,8 @@ try {
       cwd: scratch, sessionId: 's1', env: { PATH: '/usr/bin:/bin', HOME: scratch,
         PILOTDECK_SHELL_PATH: shell, PDRS_CREATE_FIFO: fifo },
     }), 'gated create');
-    const connectDeadline = Date.now() + 8000;
-    while (writer === undefined) {
-      assert.ok(Date.now() < connectDeadline, "#956 FIFO reader rendezvous deadline");
-      try { writer = openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK); }
-      catch (error: any) { if (error.code !== 'ENXIO') throw error; await tick(); }
-    }
     const id = output.data.taskId;
+    writer = await connectFifo(fifo, active, id);
     assert.equal(output.data.status, 'running', '#956 create snapshot');
     await tick();
     const held = { ...active.get(id) };
@@ -100,8 +116,65 @@ try {
     await bounded(active.dispose(), 'dispose'); await drained(); active = undefined;
   }
   assert.deepEqual(native, Array(16).fill('running'), '#956 original TS creation snapshots');
+  const watchdog: any[] = [];
+  for (const mode of ['delayed-reader', 'exited-reader', 'cancelled-reader', 'never-reader']) {
+    const fifo = join(scratch, `${mode}.fifo`);
+    const admission = join(scratch, `${mode}-admission.fifo`);
+    const heldShell = join(scratch, `${mode}.sh`);
+    execFileSync('/usr/bin/mkfifo', [fifo]);
+    execFileSync('/usr/bin/mkfifo', [admission]);
+    await writeFile(heldShell, `#!/bin/bash\nIFS= read -r token < "${admission}" || exit 96\n` +
+      (mode === 'exited-reader' ? 'exit 0\n' : `exec "${shell}" "$@"\n`), { flag: 'wx' });
+    chmodSync(heldShell, 0o700);
+    active = runtime();
+    const output = await bounded(createTaskCreateTool(active).execute({ command }, {
+      cwd: scratch, sessionId: 's1', env: { PATH: '/usr/bin:/bin', HOME: scratch,
+        PILOTDECK_SHELL_PATH: heldShell, PDRS_CREATE_FIFO: fifo },
+    }), 'watchdog create');
+    const id = output.data.taskId;
+    const admissionWriter = await connectFifo(admission, active, id);
+    let outcome: string;
+    try {
+      if (mode === 'delayed-reader') {
+        let observed!: () => void;
+        const pending = new Promise<void>(resolve => { observed = resolve; });
+        let settled = false;
+        const connecting = connectFifo(fifo, active, id, () => 9000, observed)
+          .then(fd => { settled = true; return fd; });
+        await bounded(Promise.race([pending, connecting.then(() => {
+          throw Error('#960 reader connected before admission release');
+        })]), 'delayed reader pending observation');
+        assert.equal(settled, false, '#960 live delayed reader stays pending past 8s');
+        assert.equal(active.get(id).outputBytes, 0, '#960 admission holds command');
+        writeSync(admissionWriter, 'release\n');
+        writer = await bounded(connecting, 'delayed reader connects');
+        assert.equal(active.get(id).outputBytes, 0, '#960 connect does not release command');
+        outcome = 'connected';
+      } else {
+        if (mode === 'exited-reader') {
+          writeSync(admissionWriter, 'release\n');
+          await bounded(active.entries.get(id).done, 'pre-reader exit');
+        } else if (mode === 'cancelled-reader') await bounded(active.stop(id), 'pre-reader cancel');
+        const error = await connectFifo(fifo, active, id, () => 60000).then(fd => {
+            closeSync(fd); throw Error('#960 unexpected reader connection');
+          }, error => error);
+        outcome = mode === 'never-reader' ? 'total-limit' : 'child-exited';
+        assert.match(error.message, mode === 'never-reader'
+          ? /#960 FIFO reader rendezvous total limit/ : /#960 FIFO child exited before reader rendezvous/);
+        assert.match(error.message, /pid=\d+ status=\w+ alive=(true|false) waited=\d+ms/);
+        console.log(`${mode}: ${error.message}`);
+      }
+      const task = active.get(id);
+      watchdog.push({ mode, outcome, status: task.status, outputBytes: task.outputBytes });
+      await bounded(active.dispose(), 'watchdog cleanup');
+      await drained(); active = undefined;
+    } finally {
+      closeSync(admissionWriter);
+      if (writer !== undefined) { closeSync(writer); writer = undefined; }
+    }
+  }
   const sourceSha256 = await baselineSourceHashes(baseline, sources);
-  const oracle = { sourceCommit, sourceSha256, node: process.version, native, cases };
+  const oracle = { sourceCommit, sourceSha256, node: process.version, native, cases, watchdog };
   const out = resolve(process.argv[2]);
   await mkdir(out, { recursive: true });
   await writeFile(join(out, 'oracle.json'), JSON.stringify(oracle, null, 2) + '\n', { flag: 'wx' });
