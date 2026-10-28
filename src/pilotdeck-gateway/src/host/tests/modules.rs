@@ -30,12 +30,12 @@ impl capability::ToolExecution for EmptyCapabilityPort {
         _calls: Vec<capability::ToolCall>,
         _context: capability::ToolInvocationContext,
     ) -> HostFuture<Vec<JsObject>> {
-        Box::pin(async { panic!("X0 calls must fail validation before execution") })
+        Box::pin(async { panic!("#978 X0 calls must fail validation before execution") })
     }
 }
 impl capability::CapabilityResultObserver for EmptyCapabilityPort {
     fn on_capability_results(&self, _results: Vec<JsObject>) -> HostFuture<()> {
-        Box::pin(async { panic!("X0 calls must not reach the observer") })
+        Box::pin(async { panic!("#978 X0 calls must not reach the observer") })
     }
 }
 // X0 registers every optional module; only their ports stay empty, so every
@@ -50,18 +50,18 @@ impl tool_context::TurnEnvironment for PanicEnvironment {
         _: &JsString,
         _: &JsString,
     ) -> Result<JsObject, HostError> {
-        panic!("X0 context calls must fail before environment construction")
+        panic!("#978 X0 context calls must fail before environment construction")
     }
 }
 struct PanicPermission;
 impl capability::ToolCatalog for PanicPermission {
     fn list(&self) -> HostFuture<Vec<Arc<dyn capability::ToolDefinition>>> {
-        Box::pin(async { panic!("X0 permission calls must fail before the catalog") })
+        Box::pin(async { panic!("#978 X0 permission calls must fail before the catalog") })
     }
 }
 impl permission::PermissionContext for PanicPermission {
     fn prepare(&self, _value: JsValue) -> HostFuture<capability::RuntimeContext> {
-        Box::pin(async { panic!("X0 permission calls must fail before the context") })
+        Box::pin(async { panic!("#978 X0 permission calls must fail before the context") })
     }
 }
 impl permission::PermissionDecision for PanicPermission {
@@ -72,13 +72,13 @@ impl permission::PermissionDecision for PanicPermission {
         _context: capability::RuntimeContext,
         _tool_call_id: JsString,
     ) -> HostFuture<JsValue> {
-        Box::pin(async { panic!("X0 permission calls must fail before the decision") })
+        Box::pin(async { panic!("#978 X0 permission calls must fail before the decision") })
     }
 }
 struct PanicSink;
 impl event::EventSink for PanicSink {
     fn emit(&self, _event: JsObject) -> Result<(), HostError> {
-        panic!("X0 event calls must fail validation before the sink")
+        panic!("#978 X0 event calls must fail validation before the sink")
     }
 }
 fn fixture_router() -> ModuleRouter {
@@ -126,17 +126,32 @@ fn fixture_router() -> ModuleRouter {
 }
 
 fn oracle() -> JsValue {
-    let value = crate::test_baseline::oracle(include_str!(
-        "../../../tests/fixtures/host-modules/oracle.json"
-    ));
-    assert_eq!(array(&value, "routing").len(), 863);
-    assert_eq!(array(&value, "errors").len(), 11);
-    assert_eq!(array(&value, "fields").len(), 90);
+    let value = std::panic::catch_unwind(|| {
+        crate::test_baseline::oracle(include_str!(
+            "../../../tests/fixtures/host-modules/oracle.json"
+        ))
+    })
+    .expect("#978 routing oracle baseline");
+    assert_eq!(
+        array(&value, "routing").len(),
+        863,
+        "#978 routing oracle cardinality"
+    );
+    assert_eq!(
+        array(&value, "errors").len(),
+        11,
+        "#978 errors oracle cardinality"
+    );
+    assert_eq!(
+        array(&value, "fields").len(),
+        90,
+        "#978 fields oracle cardinality"
+    );
     value
 }
 fn array<'a>(value: &'a JsValue, key: &str) -> &'a [JsValue] {
-    let JsValue::Array(items) = value.get(key).unwrap() else {
-        panic!("{key}")
+    let JsValue::Array(items) = value.get(key).expect("#978 oracle array field") else {
+        panic!("#978 oracle array type: {key}")
     };
     items
 }
@@ -145,22 +160,31 @@ fn nonfinite(value: &JsValue) -> Option<f64> {
         .get("nonfinite")?
         .as_string()?
         .to_utf8()
-        .unwrap()
+        .expect("#978 error fixture UTF-8")
         .as_str()
     {
         "NaN" => Some(f64::NAN),
         "Infinity" => Some(f64::INFINITY),
         "-Infinity" => Some(f64::NEG_INFINITY),
-        other => panic!("unexpected special number {other}"),
+        other => panic!("#978 unexpected special number {other}"),
     }
 }
 fn module_error(case: &JsValue) -> HostError {
-    let mut fields = case.get("fields").unwrap().as_object().unwrap().clone();
+    let mut fields = case
+        .get("fields")
+        .expect("#978 error fields")
+        .as_object()
+        .expect("#978 error fields object")
+        .clone();
     if let Some(value) = nonfinite(case) {
         fields.insert("retryAfterMs".into(), JsValue::Number(value));
     }
     ModuleError::from_js_fields(
-        case.get("message").unwrap().as_string().unwrap().clone(),
+        case.get("message")
+            .expect("#978 error message")
+            .as_string()
+            .expect("#978 error message string")
+            .clone(),
         &JsValue::Object(fields),
     )
     .into()
@@ -259,11 +283,67 @@ impl HostHandler for ErrorHandler {
             let case = array(&oracle, "errors")
                 .iter()
                 .find(|case| case.get("call") == Some(&call))
-                .expect("known error fixture");
+                .expect("#978 known error fixture");
             Err(module_error(case))
         })
     }
 }
+// Routing checks can execute hundreds of callbacks. Bound stalled progress,
+// rather than charging Python scheduling and every completed batch to one timer.
+struct RoutingProgress {
+    inner: Arc<dyn HostHandler>,
+    completed: tokio::sync::watch::Sender<usize>,
+}
+impl HostHandler for RoutingProgress {
+    fn module_call(&self, call: JsValue) -> HostFuture<JsObject> {
+        let future = self.inner.module_call(call);
+        let completed = self.completed.clone();
+        Box::pin(async move {
+            let result = future.await;
+            completed.send_modify(|count| *count += 1);
+            result
+        })
+    }
+    fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
+        self.inner.drain_events()
+    }
+    fn dispose(&self) -> HostFuture<()> {
+        self.inner.dispose()
+    }
+    fn event(&self, event: JsValue) -> HostFuture<()> {
+        self.inner.event(event)
+    }
+    fn validate_event(&self, event: &JsValue) -> Result<EventGuard, HostError> {
+        self.inner.validate_event(event)
+    }
+    fn observe_transport(&self, observation: ReconnectObservation) {
+        self.inner.observe_transport(observation);
+    }
+}
+async fn routing_until_stalled<F: std::future::Future>(
+    future: F,
+    mut completed: tokio::sync::watch::Receiver<usize>,
+) -> Result<F::Output, &'static str> {
+    let idle = Duration::from_secs(10);
+    let deadline = tokio::time::sleep(idle);
+    tokio::pin!(future, deadline);
+    let mut reporting = true;
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut future => return Ok(result),
+            changed = completed.changed(), if reporting => {
+                if changed.is_ok() {
+                    deadline.as_mut().reset(tokio::time::Instant::now() + idle);
+                } else {
+                    reporting = false;
+                }
+            }
+            () = &mut deadline => return Err("#978 routing made no progress for 10 seconds"),
+        }
+    }
+}
+
 #[tokio::test]
 async fn stdio_routes_multiple_modules_and_projects_error_details() {
     for (mode, handler) in [
@@ -276,16 +356,125 @@ async fn stdio_routes_multiple_modules_and_projects_error_details() {
             Arc::new(ErrorHandler) as Arc<dyn HostHandler>,
         ),
     ] {
-        let (mut command, receipt) = peer(mode);
-        let client = HostClient::spawn(&mut command, None, protocol_limits())
+        let (mut command, receipt) =
+            std::panic::catch_unwind(|| peer(mode)).expect("#978 routing peer setup");
+        let mut limits = protocol_limits();
+        limits.execution_timeout = None;
+        let client = HostClient::spawn(&mut command, None, limits)
             .await
-            .unwrap();
-        assert!(matches!(
-            client.execute(request(), handler).await.unwrap(),
-            ExecuteResult::Terminal(_)
-        ));
-        receipt.assert_pass(mode);
+            .expect("#978 routing peer handshake");
+        let (completed, progress) = tokio::sync::watch::channel(0);
+        let handler = Arc::new(RoutingProgress {
+            inner: handler,
+            completed,
+        });
+        let result = crate::test_negative_receipt::expect_ok(
+            routing_until_stalled(client.execute(request(), handler), progress).await,
+            "#978 routing progress watchdog",
+        );
+        let result = crate::test_negative_receipt::expect_ok(result, "#978 routing execute");
+        crate::negative_assert!(
+            matches!(result, ExecuteResult::Terminal(_)),
+            "#978 routing terminal"
+        );
+        std::panic::catch_unwind(|| receipt.assert_pass(mode))
+            .expect("#978 routing peer assertions");
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn routing_progress_resets_idle_deadline() {
+    let (completed, progress) = tokio::sync::watch::channel(0);
+    let (finish, result) = tokio::sync::oneshot::channel();
+    let producer = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(9)).await;
+        let handler = RoutingProgress {
+            inner: Arc::new(ErrorHandler),
+            completed,
+        };
+        let oracle = oracle();
+        let call = array(&oracle, "errors")[0]
+            .get("call")
+            .expect("#978 error callback input")
+            .clone();
+        handler
+            .module_call(call)
+            .await
+            .expect_err("#978 error callback completes");
+        tokio::time::sleep(Duration::from_secs(9)).await;
+        finish.send(42).expect("#978 completion receiver alive");
+    });
+    let output = routing_until_stalled(result, progress).await;
+    crate::negative_assert_eq!(output, Ok(Ok(42)), "#978 progress renews idle deadline");
+    producer.await.expect("#978 progress producer joins");
+}
+
+#[tokio::test(start_paused = true)]
+async fn routing_progress_never_completed_is_bounded() {
+    let (_completed, progress) = tokio::sync::watch::channel(0);
+    let started = tokio::time::Instant::now();
+    let result = routing_until_stalled(std::future::pending::<()>(), progress).await;
+    crate::negative_assert_eq!(
+        result,
+        Err("#978 routing made no progress for 10 seconds"),
+        "#978 stalled predecessor terminates"
+    );
+    assert_eq!(
+        started.elapsed(),
+        Duration::from_secs(10),
+        "#978 original idle budget"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn routing_progress_closed_reporter_keeps_idle_bound() {
+    let (completed, progress) = tokio::sync::watch::channel(0);
+    drop(completed);
+    let started = tokio::time::Instant::now();
+    let result = routing_until_stalled(std::future::pending::<()>(), progress).await;
+    assert_eq!(
+        result,
+        Err("#978 routing made no progress for 10 seconds"),
+        "#978 closed reporter remains bounded"
+    );
+    crate::negative_assert_eq!(
+        started.elapsed(),
+        Duration::from_secs(10),
+        "#978 closed reporter preserves idle budget"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn routing_progress_cancelled_predecessor_settles() {
+    let (_completed, progress) = tokio::sync::watch::channel(0);
+    let (finish, result) = tokio::sync::oneshot::channel::<()>();
+    let producer = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(9)).await;
+        drop(finish);
+    });
+    let output = routing_until_stalled(result, progress).await;
+    crate::negative_assert!(
+        matches!(output, Ok(Err(_))),
+        "#978 cancelled predecessor settles"
+    );
+    producer.await.expect("#978 cancelling producer joins");
+}
+
+#[tokio::test(start_paused = true)]
+async fn routing_progress_dropped_driver_drops_predecessor() {
+    let (_completed, progress) = tokio::sync::watch::channel(0);
+    let (finish, result) = tokio::sync::oneshot::channel::<()>();
+    let mut driver = Box::pin(routing_until_stalled(result, progress));
+    let pending = std::future::poll_fn(|cx| {
+        std::task::Poll::Ready(std::future::Future::poll(driver.as_mut(), cx).is_pending())
+    })
+    .await;
+    assert!(pending, "#978 predecessor is pending before cancellation");
+    drop(driver);
+    crate::negative_assert!(
+        finish.is_closed(),
+        "#978 cancelled driver drops predecessor"
+    );
 }
 #[tokio::test]
 async fn dispose_once_after_callbacks_on_every_exit_path() {
