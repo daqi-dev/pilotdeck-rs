@@ -137,46 +137,122 @@ class ScannerControls(unittest.TestCase):
         self.run_check(label='restored-bindings')
 
     def test_switch_table_updates_fail_closed(self):
-        # #996 fix-r1: only the literal whole-table assignment is a table; any
-        # in-place update shape must fail closed instead of silently shrinking
-        # the audited rows below the executed table (the review's `del
-        # switches[0]` kept the scanner at 49 while the runtime table had 48).
+        # #996 fix-r2: the table name is a whitelist; the single module-level
+        # literal assignment is the only supported binding. r1's per-form
+        # blacklist could not enumerate every escape, so any other Store/Del
+        # shape or unlisted read now fails closed instead of silently
+        # shrinking the audited rows below the executed table.
         self.source.write_text('crate::mutants::on("sample")\n')
         table = "switches = [('sample', source, 'sample_test', '#996 a')]\n"
+        binding = 'the switches table must be the single module-level assignment'
         for update, message in (
             ("switches.append(('other', source, 'sample_test', '#996 b'))\n",
-             'unsupported switches table update'),
+             'unsupported switches read'),
             ("switches.extend([('other', source, 'sample_test', '#996 b')])\n",
-             'unsupported switches table update'),
+             'unsupported switches read'),
             ("switches.insert(0, ('other', source, 'sample_test', '#996 b'))\n",
-             'unsupported switches table update'),
-            ("switches.pop()\n", 'unsupported switches table update'),
-            ("switches.remove('sample')\n", 'unsupported switches table update'),
-            ("switches.clear()\n", 'unsupported switches table update'),
-            ("switches.sort()\n", 'unsupported switches table update'),
-            ("del switches[0]\n", 'deleting/annotating switches tables is not supported'),
-            ("del switches\n", 'deleting/annotating switches tables is not supported'),
-            ("switches += [('other', source, 'sample_test', '#996 b')]\n",
-             'in-place switches table assignment is not supported'),
+             'unsupported switches read'),
+            ("switches.pop()\n", 'unsupported switches read'),
+            ("switches.remove('sample')\n", 'unsupported switches read'),
+            ("switches.clear()\n", 'unsupported switches read'),
+            ("switches.sort()\n", 'unsupported switches read'),
+            # Subscript targets leave the inner Name in Load context, so these
+            # fall through the read rejection; the bare forms hit the binding.
+            ("del switches[0]\n", 'unsupported switches read'),
             ("switches[0] = ('other', source, 'sample_test', '#996 b')\n",
-             'in-place switches table assignment is not supported'),
-            ("switches[0][1] = source\n",
-             'in-place switches table assignment is not supported'),
-            ("switches, extra = [], []\n",
-             'in-place switches table assignment is not supported'),
-            ("(extra, *switches) = ([], [])\n",
-             'in-place switches table assignment is not supported'),
-            ("switches: list = []\n",
-             'deleting/annotating switches tables is not supported'),
-            ("if (switches := []):\n    pass\n",
-             'switches table walrus assignment is not supported'),
+             'unsupported switches read'),
+            ("switches[0][1] = source\n", 'unsupported switches read'),
+            ("switches[:] = []\n", 'unsupported switches read'),
+            ("switches += [('other', source, 'sample_test', '#996 b')]\n", binding),
+            ("switches, extra = [], []\n", binding),
+            ("(extra, *switches) = ([], [])\n", binding),
+            ("switches: list = []\n", binding),
+            ("if (switches := []):\n    pass\n", binding),
+            # Last: a mutant that drops the binding rejection crashes on the
+            # Delete node, so the earlier binding subTests must fail first.
+            ("del switches\n", binding),
         ):
             with self.subTest(update=update):
                 self.write(table + update)
-                self.assertIn(message, self.run_check(1))
+                self.assertIn(message, self.run_check(1),
+                              f'#996 r2 {update!r} must fail closed')
         self.write(table)
         self.assertIn('CHECKED sample/negative.py: 1 anchors',
-                      self.run_check(label='restored-updates'))
+                      self.run_check(label='restored-updates'),
+                      '#996 r2 the restored table must check one anchor again')
+
+    def test_switch_occurrences_outside_whitelist_fail_closed(self):
+        # #996 fix-r2 review P1: r1's per-form blacklist silently passed
+        # aliases (`s = switches; s.append`), indirect calls
+        # (`getattr(switches, "pop")`, `list.clear(switches)`) and dynamic
+        # rebinds (`setattr(sys.modules[__name__], "switches", [])`). The name
+        # is now a whitelist: every occurrence that is not the declaration,
+        # for-in, len() or an executor argument fails closed, including the
+        # spellings no Name node ever sees (imports, keywords, literals) and
+        # the dynamic module forms rejected outright in every checked script.
+        self.source.write_text('crate::mutants::on("sample")\n')
+        table = "switches = [('sample', source, 'sample_test', '#996 a')]\n"
+        for escape, message in (
+            ('s = switches\ns.append(("other", source, "sample_test", "#996 b"))\n',
+             'unsupported switches read'),
+            ('s = switches\ndel s[0]\n', 'unsupported switches read'),
+            ('getattr(switches, "pop")(0)\n', 'unsupported switches read'),
+            ('list.clear(switches)\n', 'unsupported switches read'),
+            ('operator.setitem(switches, 0, None)\n', 'unsupported switches read'),
+            ('consume(switches)\n', 'unsupported switches read'),
+            ('import os as switches\n', 'unsupported switches named occurrence'),
+            ('import switches\n', 'unsupported switches named occurrence'),
+            ('from os import path as switches\n', 'unsupported switches named occurrence'),
+            ('def helper(switches):\n    pass\n', 'unsupported switches named occurrence'),
+            ('consume(switches=1)\n', 'unsupported switches named occurrence'),
+            ("mirror = 'switches'\n", 'unsupported switches named occurrence'),
+            ('namespace.switches = []\n', 'unsupported switches named occurrence'),
+            ('global switches\n', 'unsupported switches named occurrence'),
+            ('setattr(sys.modules[__name__], "switches", [])\n',
+             'unsupported dynamic module access'),
+            # A concatenated key never spells the name statically; only the
+            # outright dynamic-form rejection can close these.
+            ('setattr(sys.modules[__name__], "swi" + "tches", [])\n',
+             'unsupported dynamic module access: setattr'),
+            ('globals()["swi" + "tches"] = []\n',
+             'unsupported dynamic module access: globals'),
+            ('vars(object)["swi" + "tches"] = []\n',
+             'unsupported dynamic module access: vars'),
+            ('mirror = sys.modules[__name__]\n',
+             'unsupported dynamic module access: sys.modules[...]'),
+        ):
+            with self.subTest(escape=escape):
+                self.write(table + escape)
+                self.assertIn(message, self.run_check(1),
+                              f'#996 r2 {escape!r} must fail closed')
+        self.write(table)
+        self.assertIn('CHECKED sample/negative.py: 1 anchors',
+                      self.run_check(label='restored-escapes'),
+                      '#996 r2 the restored table must check one anchor again')
+
+    def test_switch_whitelist_readonly_forms_stay_supported(self):
+        # The positive side of the fix-r2 whitelist: the enumerated read-only
+        # uses of the declared table must keep checking, or the scanner would
+        # force schemata runners into unsupported markers.
+        self.source.write_text('crate::mutants::on("sample")\n')
+        table = "switches = [('sample', source, 'sample_test', '#996 a')]\n"
+        reads = ('total = len(switches)\n'
+                 'chosen = mutant_switch.selected(switches, [])\n'
+                 "rows = [dict(zip(('name', 'path', 'test', 'anchor'), row))"
+                 ' for row in switches]\n'
+                 'for row in switches:\n    pass\n')
+        self.write(table + reads)
+        self.assertIn('CHECKED sample/negative.py: 1 anchors',
+                      self.run_check(label='switch-whitelist'),
+                      '#996 r2 the whitelisted read-only forms must stay supported')
+        self.write(reads)
+        self.assertIn('switches is read without its literal table declaration',
+                      self.run_check(1, label='switch-read-without-table'),
+                      '#996 r2 a read without the declaration must fail closed')
+        self.write(table)
+        self.assertIn('CHECKED sample/negative.py: 1 anchors',
+                      self.run_check(label='switch-whitelist-restored'),
+                      '#996 r2 the bare table must check one anchor again')
 
     def test_marker_scripts_cannot_hide_a_switch_table(self):
         self.source.write_text('crate::mutants::on("sample")\n')

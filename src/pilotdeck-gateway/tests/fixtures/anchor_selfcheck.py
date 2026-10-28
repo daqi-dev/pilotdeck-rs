@@ -45,8 +45,14 @@ TABLES = {'mutants', 'mutations', 'controls', 'cases', 'runner_mutations'}
 # `switches = [...]` table of (name, path, test, assertion) rows. The counted
 # anchor is the single `::mutants::on("<name>")` call site in that source file,
 # not a text replacement; these names never enter TABLES because their rows
-# have no before/after pair.
+# have no before/after pair. fix-r2 makes the name a whitelist: only the one
+# module-level literal declaration and the enumerated read-only uses below
+# are supported, so aliases and dynamic rebinds cannot hide an update.
 SWITCH_TABLE_NAMES = {'switches'}
+# Schemata runners need none of these dynamic module forms; every checked
+# script rejects them outright (#996 fix-r2), closing `'swi' + 'tches'`
+# spellings that no occurrence whitelist can see.
+SWITCH_DYNAMIC_SYMBOLS = {'setattr', 'globals', 'vars'}
 # A script without a declarative, whole-file source replacement table declares
 # its exact exemption in its own header: ``# anchor-selfcheck: unsupported
 # <nonempty reason>`` within the first 20 lines. The reason lives next to the
@@ -838,50 +844,90 @@ def table_rows(tree, static):
                 raise Unsupported('unsupported mutation table update')
 
 
-def switch_table_rows(tree):
-    """Yield literal `switches` table rows; anything else fails closed.
+def reject_dynamic_module_access(tree):
+    """Reject setattr/globals()/vars()/sys.modules[...] in every checked script.
 
-    Rows are (name, path, test, assertion); the counted anchor is the single
-    compiled switch site, so no before/after pair exists here. Every other
-    update shape is rejected outright, never parsed partially (#996 fix-r1):
-    deletion, annotation, augmented/subscript/unpacking/walrus assignment and
-    method calls would otherwise let the audited rows drift from the executed
-    table, exactly like the silent `del switches[0]`/`switches.append` forms.
+    #996 fix-r2: the switches whitelist below only sees names that occur
+    statically, so `setattr(module, 'swi' + 'tches', ...)` and
+    `globals()['swi' + 'tches'] = ...` rebind the executed table without one
+    whitelisted occurrence. Per-shape chasing cannot enumerate these spellings;
+    schemata scripts need none of the forms, and no other checked script uses
+    them, so they fail closed outright.
     """
-    def touches_switches(target):
-        while isinstance(target, ast.Subscript):
-            target = target.value
-        if isinstance(target, (ast.Tuple, ast.List)):
-            return any(touches_switches(element) for element in target.elts)
-        if isinstance(target, ast.Starred):
-            return touches_switches(target.value)
-        return isinstance(target, ast.Name) and target.id.lower() in SWITCH_TABLE_NAMES
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            symbol = (node.func.id if isinstance(node.func, ast.Name)
+                      else node.func.attr if isinstance(node.func, ast.Attribute) else None)
+            if symbol in SWITCH_DYNAMIC_SYMBOLS:
+                raise Unsupported(f'unsupported dynamic module access: {symbol}')
+        if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute)
+                and node.value.attr == 'modules'
+                and isinstance(node.value.value, ast.Name) and node.value.value.id == 'sys'):
+            raise Unsupported('unsupported dynamic module access: sys.modules[...]')
 
+
+def switch_table_rows(tree, static):
+    """Yield rows of the one literal `switches` table; every other name fails.
+
+    #996 fix-r2: the table name is a whitelist, not a blacklist of update
+    shapes (r1's per-form chase could not enumerate `s = switches; s.append`,
+    `getattr(switches, 'pop')`, `list.clear(switches)` or import aliases).
+    The name may occur only as (1) the unique module-level literal
+    `switches = [...]` assignment, (2) the iterable of a `for ... in
+    switches` loop or comprehension, (3) the single argument of
+    `len(switches)`, or (4) a positional argument of a `mutant_switch.*`
+    executor entry call. Imports, keyword names, attribute names, string
+    literals and every other read or write are rejected: the audited rows
+    must never drift from the executed table.
+    """
+    parents = static.parents
+    declaration = None
+    seen = False
     for node in sorted(ast.walk(tree), key=lambda n: getattr(n, 'lineno', 0)):
-        if isinstance(node, (ast.Delete, ast.AnnAssign)):
-            targets = node.targets if isinstance(node, ast.Delete) else [node.target]
-            for target in targets:
-                if touches_switches(target):
-                    raise Unsupported('deleting/annotating switches tables is not supported')
-        if isinstance(node, (ast.Assign, ast.AugAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            for target in targets:
-                if not touches_switches(target):
-                    continue
-                if not (isinstance(target, ast.Name) and isinstance(node, ast.Assign)):
-                    raise Unsupported('in-place switches table assignment is not supported')
-                if not isinstance(node.value, ast.List):
-                    raise Unsupported('switches table must be a literal list of rows')
-                for row in node.value.elts:
-                    if not isinstance(row, ast.Tuple) or len(row.elts) != 4:
-                        raise Unsupported('switches rows must be (name, path, test, assertion)')
-                    yield row
-        if isinstance(node, ast.NamedExpr) and touches_switches(node.target):
-            raise Unsupported('switches table walrus assignment is not supported')
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and isinstance(node.func.value, ast.Name) \
-                and node.func.value.id.lower() in SWITCH_TABLE_NAMES:
-            raise Unsupported('unsupported switches table update')
+        # Any spelling that is not a Name occurrence: import aliases, def and
+        # lambda parameters, keyword names, attribute names, string literals.
+        # Only Name.id proceeds to the use allowlist.
+        for field, value in ast.iter_fields(node):
+            if isinstance(node, ast.Name) and field == 'id':
+                continue
+            if isinstance(node, (ast.alias, ast.ImportFrom)) and field in ('name', 'module') and isinstance(value, str):
+                values = value.split('.')
+            else:
+                values = value if isinstance(value, list) else [value]
+            if any(isinstance(item, str) and item.lower() in SWITCH_TABLE_NAMES for item in values):
+                raise Unsupported('unsupported switches named occurrence')
+        if not isinstance(node, ast.Name) or node.id.lower() not in SWITCH_TABLE_NAMES:
+            continue
+        seen = True
+        parent = parents.get(node)
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            if (isinstance(node.ctx, ast.Del) or declaration is not None
+                    or not isinstance(parent, ast.Assign)
+                    or len(parent.targets) != 1 or parent.targets[0] is not node
+                    or parents.get(parent) is not tree):
+                raise Unsupported('the switches table must be the single module-level assignment')
+            if not isinstance(parent.value, ast.List):
+                raise Unsupported('switches table must be a literal list of rows')
+            declaration = parent
+            continue
+        if isinstance(parent, (ast.For, ast.AsyncFor, ast.comprehension)) and parent.iter is node:
+            continue  # for ... in switches iterates the audited rows.
+        if (isinstance(parent, ast.Call) and isinstance(parent.func, ast.Name)
+                and parent.func.id == 'len' and parent.args == [node] and not parent.keywords):
+            continue  # A size check never changes the audited rows.
+        if (isinstance(parent, ast.Call) and isinstance(parent.func, ast.Attribute)
+                and isinstance(parent.func.value, ast.Name)
+                and parent.func.value.id == 'mutant_switch' and node in parent.args):
+            continue  # The guarded shared executor consumes the table read-only.
+        raise Unsupported('unsupported switches read: only for-in, len(switches) '
+                          'and mutant_switch entry arguments are allowed')
+    if seen and declaration is None:
+        raise Unsupported('switches is read without its literal table declaration')
+    if declaration is not None:
+        for row in declaration.value.elts:
+            if not isinstance(row, ast.Tuple) or len(row.elts) != 4:
+                raise Unsupported('switches rows must be (name, path, test, assertion)')
+            yield row
 
 
 def host_pump_count(tree, static, name, local):
@@ -900,6 +946,7 @@ def extract(script, root):
     relative = script.relative_to(root / 'src/pilotdeck-gateway/tests/fixtures').as_posix()
     tree = ast.parse(script.read_text(encoding='utf-8'), filename=str(script))
     static = Static(script, root, tree)
+    reject_dynamic_module_access(tree)
     submit_maps = ({key: submit_mapping(static, key) for key in ('mutant_source', 'mutant_anchor')}
                    if relative == 'turn-submit/negative.py' else {})
     flags = regex_flags(tree)
@@ -1042,7 +1089,7 @@ def extract(script, root):
             anchors.append(Anchor(name, static.confined(path), before, count, flags is not None, line, flags or 0, scope))
     # #996: compile-time switch tables count their single switch site per file.
     switch_seen = set()
-    for row in switch_table_rows(tree):
+    for row in switch_table_rows(tree, static):
         for local in static.contexts(row):
             line = row.lineno
             name = static.value(row.elts[0], line, local)
