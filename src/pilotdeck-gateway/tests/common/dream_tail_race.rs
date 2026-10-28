@@ -30,10 +30,10 @@ use pilotdeck_gateway::runtime::{
     model::http::{BodyFailure, ModelHttpTransport, TransportFuture},
 };
 use pilotdeck_protocol::{JsObject, JsValue};
-#[path = "common/scratch.rs"]
-mod scratch;
-
-use scratch::Scratch;
+// This file is compiled as a library test module (`--lib`), so it reuses the
+// crate's one `test_scratch` module instead of loading scratch.rs a second time
+// (clippy::duplicate_mod).
+use crate::test_scratch::Scratch;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,

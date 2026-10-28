@@ -496,6 +496,7 @@ fn real_ts_reads_rust_databases_and_files() {
         }
         if start.elapsed() > Duration::from_secs(45) {
             child.kill().unwrap();
+            let _ = child.wait();
             panic!("Node verifier exceeded 45s");
         }
         std::thread::sleep(Duration::from_millis(20));

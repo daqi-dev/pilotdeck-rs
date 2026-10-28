@@ -1,7 +1,14 @@
 //! Provenance checks shared by unit and integration fixture replays.
 use pilotdeck_protocol::{JsValue, parse_json};
 use sha2::{Digest, Sha256};
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs,
+    io::Read,
+    path::Path,
+    process::{Command, ExitStatus, Stdio},
+    thread,
+    time::{Duration, Instant},
+};
 
 #[allow(dead_code)]
 #[path = "regeneration_masks.rs"]
@@ -144,7 +151,8 @@ pub(crate) fn regenerates_identically(fixture: &str) {
     } else {
         vec![]
     };
-    let output = node_command()
+    let mut command = node_command();
+    command
         .args(node_flags)
         .arg("--disable-warning=ExperimentalWarning")
         .arg("--import")
@@ -156,21 +164,28 @@ pub(crate) fn regenerates_identically(fixture: &str) {
         .env(
             "PDRS_GIT",
             std::env::var_os("PDRS_GIT").unwrap_or_else(|| "/usr/bin/git".into()),
-        )
-        .output()
-        .expect("#280 run TS generator");
+        );
+    let (status, stdout, stderr) = match run_generator(&mut command, fixture) {
+        Ok(output) => output,
+        Err(message) => {
+            // The child is already killed and reaped; remove the scratch this
+            // test owns so a parked fixture cannot leak it.
+            let _ = fs::remove_dir_all(&scratch);
+            panic!("{message}");
+        }
+    };
     assert!(
-        output.status.success(),
+        status.success(),
         "#280 {fixture}: generator failed\n{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8_lossy(&stdout),
+        String::from_utf8_lossy(&stderr)
     );
     println!(
         "#280 {fixture} stdout:\n{}stderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8_lossy(&stdout),
+        String::from_utf8_lossy(&stderr)
     );
-    let generated = generated_oracle_bytes(fixture, &scratch, &output.stdout)
+    let generated = generated_oracle_bytes(fixture, &scratch, &stdout)
         .unwrap_or_else(|error| panic!("#280 {fixture}: {error}"));
     let committed = fs::read(fixtures.join("oracle.json")).expect("#280 read committed oracle");
     // Keep the scratch on mismatch so the differing bytes can be inspected.
@@ -188,6 +203,88 @@ pub(crate) fn regenerates_identically(fixture: &str) {
         "#280 generator left a temporary file behind"
     );
     fs::remove_dir_all(&scratch).expect("#280 remove owned regeneration scratch");
+}
+
+/// Run a fixture generator child under a total deadline.
+///
+/// `Command::output()` waits forever when the fixture parks a cell before its
+/// completion (a gated LLM request, a stuck predecessor). Poll `try_wait`
+/// instead, keep both pipes drained on reader threads, and at the deadline
+/// kill *and reap* the child before reporting. `PDRS_REGEN_TIMEOUT_SECS`
+/// overrides the 600-second default for slow hosts.
+fn run_generator(
+    command: &mut Command,
+    fixture: &str,
+) -> Result<(ExitStatus, Vec<u8>, Vec<u8>), String> {
+    let deadline = Duration::from_secs(
+        std::env::var("PDRS_REGEN_TIMEOUT_SECS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(600),
+    );
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("#280 {fixture}: spawn TS generator: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("#280 {fixture}: capture generator stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| format!("#280 {fixture}: capture generator stderr"))?;
+    let drain = |mut pipe: std::process::ChildStdout| {
+        thread::spawn(move || {
+            let mut buffer = Vec::new();
+            let _ = pipe.read_to_end(&mut buffer);
+            buffer
+        })
+    };
+    let stdout_reader = drain(stdout);
+    let stderr_reader = thread::spawn(move || {
+        let mut pipe = stderr;
+        let mut buffer = Vec::new();
+        let _ = pipe.read_to_end(&mut buffer);
+        buffer
+    });
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let stdout = stdout_reader.join().unwrap_or_default();
+                let stderr = stderr_reader.join().unwrap_or_default();
+                return Err(format!(
+                    "#280 {fixture}: poll TS generator: {error}\nstdout:\n{}\nstderr:\n{}",
+                    String::from_utf8_lossy(&stdout),
+                    String::from_utf8_lossy(&stderr)
+                ));
+            }
+        }
+        if start.elapsed() >= deadline {
+            let _ = child.kill();
+            let status = child
+                .wait()
+                .map_err(|error| format!("#280 {fixture}: reap killed generator: {error}"))?;
+            let stdout = stdout_reader.join().unwrap_or_default();
+            let stderr = stderr_reader.join().unwrap_or_default();
+            return Err(format!(
+                "#280 {fixture}: generator exceeded the {deadline:?} total deadline; \
+                 killed and reaped ({status:?})\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&stdout),
+                String::from_utf8_lossy(&stderr)
+            ));
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+    let stdout = stdout_reader.join().unwrap_or_default();
+    let stderr = stderr_reader.join().unwrap_or_default();
+    Ok((status, stdout, stderr))
 }
 
 /// Additional generated artifacts consumed by replay tests must not silently

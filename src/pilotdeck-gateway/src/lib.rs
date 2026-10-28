@@ -14,7 +14,7 @@ pub mod model_cost;
 #[doc(hidden)]
 pub mod mutants;
 mod native_archive;
-#[cfg(all(test, feature = "pdrs-mutants"))]
+#[cfg(test)]
 extern crate self as pilotdeck_gateway;
 #[cfg(all(test, feature = "pdrs-mutants"))]
 #[path = "../tests/edgeclaw_service_facade.rs"]
@@ -35,6 +35,12 @@ pub mod storage;
 #[cfg(test)]
 #[path = "../tests/common/baseline.rs"]
 mod test_baseline;
+// fix-r3 P1-1: the dream-tail race needs the `cfg(test)`-only
+// `dream_tail_gate` seam, which an integration test cannot see. Compiled as a
+// library test module instead of its own test target.
+#[cfg(test)]
+#[path = "../tests/common/dream_tail_race.rs"]
+mod dream_tail_race;
 #[cfg(test)]
 #[path = "../tests/common/exact_receipt.rs"]
 mod test_exact_receipt;

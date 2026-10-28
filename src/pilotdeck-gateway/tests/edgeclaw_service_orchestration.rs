@@ -643,10 +643,9 @@ fn build_service(
                 }))
             },
             transport: Some(transport),
-            runtime: None,
             logger: Some(Arc::new(DebugLogger)),
             llm_config: Some(config),
-            dream_tail_gate: None,
+            ..ServiceDependencies::default()
         },
     )
     .expect("#776 construct test service")
@@ -1611,6 +1610,9 @@ fn run_node(command: &mut Command, scratch: &Path) {
         }
         if start.elapsed() > Duration::from_secs(180) {
             let _ = child.kill();
+            // Reap before panicking: a killed-but-unwaited child is a zombie
+            // on Unix and would keep the scratch/output files open.
+            let _ = child.wait();
             panic!("#776 verify.mts timed out");
         }
         std::thread::sleep(Duration::from_millis(25));

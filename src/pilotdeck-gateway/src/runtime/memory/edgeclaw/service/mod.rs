@@ -96,6 +96,11 @@ pub struct ServiceDependencies {
     /// operation scope held. The two-thread tail-race regression parks one
     /// dream here to prove the other cannot interleave its own install and
     /// replace. Blocking inside is allowed; no LLM await surrounds it.
+    ///
+    /// `#[cfg(test)]`: a production build has no field to inject, so ordinary
+    /// callers cannot stall or panic the success tail while it holds both root
+    /// locks (review fix-r3 P1-1).
+    #[cfg(test)]
     pub dream_tail_gate: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
@@ -264,7 +269,8 @@ pub struct EdgeClawMemoryService {
     dream_stages_created: AtomicU64,
     dream_stages_disposed: AtomicU64,
     /// Injected seam between the tail's install and replace (see
-    /// [`ServiceDependencies::dream_tail_gate`]).
+    /// [`ServiceDependencies::dream_tail_gate`]). Test builds only.
+    #[cfg(test)]
     dream_tail_gate: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
@@ -289,6 +295,7 @@ impl EdgeClawMemoryService {
             runtime,
             logger,
             llm_config,
+            #[cfg(test)]
             dream_tail_gate,
         } = dependencies;
         let workspace_dir = absolute(&options.workspace_dir)?;
@@ -440,6 +447,7 @@ impl EdgeClawMemoryService {
             logger,
             dream_stages_created: AtomicU64::new(0),
             dream_stages_disposed: AtomicU64::new(0),
+            #[cfg(test)]
             dream_tail_gate,
         })
     }
