@@ -61,6 +61,8 @@ struct Observed {
     mcp: AtomicUsize,
     bindings: Mutex<Vec<SessionBinding>>,
     published: AtomicUsize,
+    created_handles: Mutex<Vec<LiveSessionHandle>>,
+    writer_leases: Mutex<Vec<SharedWriterLease>>,
     diagnostics: Mutex<Vec<Diagnostic>>,
     checkpoints: Mutex<Vec<(usize, WriterState)>>,
 }
@@ -90,18 +92,25 @@ struct Harness {
 }
 struct PublishGate {
     factory: Arc<ProjectSessionFactory>,
-    gate: Arc<Gate>,
+    gate: Option<Arc<Gate>>,
+    observed: Arc<Observed>,
 }
 impl SessionFactory for PublishGate {
     fn can_recreate(&self) -> bool {
-        true
+        self.factory.can_recreate()
     }
     fn create(
         &self,
         context: SessionContext,
         previous: Option<LiveSessionHandle>,
     ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
-        self.factory.create(context, previous)
+        let creating = self.factory.create(context, previous);
+        let observed = self.observed.clone();
+        Box::pin(async move {
+            let handle = creating.await?;
+            lock(&observed.created_handles).push(handle.clone());
+            Ok(handle)
+        })
     }
     fn setup(
         &self,
@@ -111,7 +120,9 @@ impl SessionFactory for PublishGate {
     ) -> BoxFuture<RuntimeResult> {
         let gate = self.gate.clone();
         Box::pin(async move {
-            if previous.is_some() {
+            if previous.is_some()
+                && let Some(gate) = gate
+            {
                 gate.wait().await;
             }
             Ok(())
@@ -120,6 +131,9 @@ impl SessionFactory for PublishGate {
 }
 impl Harness {
     fn new(name: &'static str) -> Self {
+        Self::with_fence_timeout(name, Duration::from_secs(1))
+    }
+    fn with_fence_timeout(name: &'static str, writer_fence_timeout: Duration) -> Self {
         let root = std::env::temp_dir().join(format!("pdrs-745-{name}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("#745 scratch");
         let registry = Arc::new(ProjectRuntimeRegistry::new(
@@ -146,6 +160,17 @@ impl Harness {
                 let release_obs = obs.clone();
                 resources.push(move || {
                     Box::pin(async move {
+                        if name == "dispose-final-write" {
+                            lock(&release_obs.bindings)[id - 1]
+                                .recorder
+                                .writer()
+                                .record_session_metadata(
+                                    &"session-745".into(),
+                                    &"release".into(),
+                                    js(r#"{"final":true}"#),
+                                )
+                                .expect("#745 release hook final write");
+                        }
                         let mut lease = lease;
                         let result = lease.release().await;
                         release_obs.event(format!("release.{id}"));
@@ -224,6 +249,7 @@ impl Harness {
                         session_id: context.session_key,
                     },
                 );
+                lock(&obs.writer_leases).push(storage.writer_lease.clone());
                 let fail = [
                     "resume-load-reject",
                     "resume-rollback-reject",
@@ -299,6 +325,9 @@ impl Harness {
                         if name == "dispose-close-stage" && id == 1 {
                             gate.wait().await;
                         }
+                        if name == "storage-close-panic" && id == 1 {
+                            panic!("#745 injected storage close panic");
+                        }
                         (close)().await?;
                         obs.event(format!("close.{id}"));
                         if name == "resume-rollback-reject"
@@ -315,6 +344,7 @@ impl Harness {
         });
         let diagnostic_obs = observed.clone();
         let factory = Arc::new(ProjectSessionFactory::new(FactoryOptions {
+            writer_fence_timeout,
             prepare,
             create_storage,
             admission: (name == "admission-read-reject").then(|| {
@@ -329,15 +359,11 @@ impl Harness {
                 lock(&diagnostic_obs.diagnostics).push(d.clone());
             }),
         }));
-        let owner_factory: Arc<dyn SessionFactory> =
-            if name.starts_with("fence-") && name.ends_with("publish") {
-                Arc::new(PublishGate {
-                    factory: factory.clone(),
-                    gate: gate.clone(),
-                })
-            } else {
-                factory.clone()
-            };
+        let owner_factory: Arc<dyn SessionFactory> = Arc::new(PublishGate {
+            factory: factory.clone(),
+            gate: (name.starts_with("fence-") && name.ends_with("publish")).then(|| gate.clone()),
+            observed: observed.clone(),
+        });
         let mut options = SessionOwnerOptions::new(owner_factory);
         options.idle_sweep_interval_ms = 0;
         let publish_observed = observed.clone();
@@ -1740,7 +1766,7 @@ async fn writer_fence_timeout_then_owner_resume() {
     tokio::time::pause();
     let creating = h.owner.get_or_create(h.context());
     wait_draining(&old).await;
-    tokio::time::advance(crate::host::Limits::default().close_timeout).await;
+    tokio::time::advance(h.factory.options.writer_fence_timeout).await;
     let error = creating
         .await
         .err()
@@ -1803,6 +1829,7 @@ async fn writer_lease_excludes_second_factory_and_alias() {
     #[cfg(not(unix))]
     let alias = h.root.join(".");
     let second = ProjectSessionFactory::new(FactoryOptions {
+        writer_fence_timeout: h.factory.options.writer_fence_timeout,
         prepare: h.factory.options.prepare.clone(),
         create_storage: Arc::new(move |context| {
             let root = alias.clone();
@@ -2068,6 +2095,86 @@ fn assert_fence_observation(row: &serde_json::Value, name: &str) {
     );
 }
 
+fn fence_handle_id(h: &Harness, handle: &LiveSessionHandle) -> usize {
+    lock(&h.observed.created_handles)
+        .iter()
+        .position(|created| created.same_identity(handle))
+        .expect("#745 fence actual constructed handle")
+        + 1
+}
+fn fence_registry(h: &Harness) -> serde_json::Value {
+    h.owner
+        .current_handle(&"session-745".into())
+        .map(|handle| serde_json::json!(fence_handle_id(h, &handle)))
+        .unwrap_or(serde_json::Value::Null)
+}
+fn fence_error(error: &RuntimeError) -> serde_json::Value {
+    let mut result = serde_json::json!({"name":error.js_error().map_or("Error", |e|e.name.as_str()), "message":error.message});
+    if let Some(code) = error.js_error().and_then(|e| e.code.as_ref()) {
+        result["code"] = code.clone().into();
+    }
+    if !error.causes.is_empty() {
+        result["errors"] = error.causes.iter().map(fence_error).collect();
+    }
+    result
+}
+fn fence_result(
+    h: &Harness,
+    label: &str,
+    result: &Result<LiveSessionHandle, RuntimeError>,
+) -> serde_json::Value {
+    match result {
+        Ok(handle) => {
+            serde_json::json!({"label":label,"status":"fulfilled","handle":fence_handle_id(h,handle)})
+        }
+        Err(error) => {
+            serde_json::json!({"label":label,"status":"rejected","error":fence_error(error)})
+        }
+    }
+}
+fn fence_expected_rust(row: &serde_json::Value) -> serde_json::Value {
+    let name = row["name"].as_str().expect("#745 fence name");
+    let parts: Vec<_> = name.split('-').collect();
+    let (state, event) = (parts[1], parts[2]);
+    let mut expected = row.clone();
+    // A7.2-SESSION-WRITER-FENCE-001-R1: no live predecessor at load;
+    // never cannot reach load, so observe its draining prefix instead.
+    expected["oldState"] = if state == "never" {
+        "draining"
+    } else {
+        "disposed"
+    }
+    .into();
+    expected["oldInFlight"] = usize::from(state == "never").into();
+    expected["oldPendingAtBoundary"] = (state == "never").into();
+    // A7.2-SESSION-RECREATE-DRAIN-001-R1: serial second call and immediate
+    // shutdown removal; this registration remains unapproved.
+    if event == "twice" {
+        expected["registryAfterEvent"] = 1.into();
+    }
+    if event == "shutdown" {
+        expected["registryAfterEvent"] = serde_json::Value::Null;
+    }
+    for result in expected["results"]
+        .as_array_mut()
+        .expect("#745 fence expected results")
+    {
+        let label = result["label"]
+            .as_str()
+            .expect("#745 fence result label")
+            .to_owned();
+        if label == "fence-first" || label == "fence-second" {
+            if state == "never" {
+                // WRITER-FENCE bound, literal shape independent of implementation.
+                *result = serde_json::json!({"label":label,"status":"rejected","error":{"name":"Error","code":"SESSION_WRITER_BUSY","message":"Session writer is still draining; retry session recreation."}});
+            } else if event == "twice" || event == "close" {
+                *result = serde_json::json!({"label":label,"status":"fulfilled","handle":2});
+            }
+        }
+    }
+    expected
+}
+
 // Every field is checked, including exact rejection shape and identity. Rust
 // intentionally differs at the drain/load boundary (WRITER-FENCE-001), and at
 // second-call/close ordering (RECREATE-DRAIN-001, still pending approval).
@@ -2105,25 +2212,6 @@ async fn fence_matrix(name: &'static str) {
     } else {
         None
     };
-    assert_eq!(
-        row["oldState"],
-        match old.state() {
-            HandleState::Active => "active",
-            HandleState::Draining => "draining",
-            HandleState::Disposed => "disposed",
-        },
-        "#745 fence predecessor state matches TS"
-    );
-    assert_eq!(
-        row["oldInFlight"],
-        usize::from(activity.is_some()),
-        "#745 fence predecessor activity matches TS"
-    );
-    assert_eq!(
-        row["oldPendingAtBoundary"],
-        activity.is_some(),
-        "#745 fence predecessor pending matches TS"
-    );
     assert!(
         h.owner.mark_session_dirty(&"session-745".into(), "matrix"),
         "#745 matrix dirty"
@@ -2149,28 +2237,45 @@ async fn fence_matrix(name: &'static str) {
     if state != "never" {
         bounded(name, h.gate.entered()).await;
     }
+    let old_in_flight = old.in_flight_for_test();
+    let mut actual = serde_json::json!({
+        "name":name,
+        "oldState":match old.state() {
+            HandleState::Active => "active", HandleState::Draining => "draining", HandleState::Disposed => "disposed"
+        },
+        "oldInFlight":old_in_flight,
+        "oldPendingAtBoundary":old_in_flight != 0,
+        "registryAtBoundary":fence_registry(&h),
+        "registryAfterEvent":null,
+        "results":[],
+    });
     let second = (event == "twice").then(|| h.owner.get_or_create(h.context()));
     let closing = match event {
         "close" => Some(h.owner.close(&"session-745".into())),
         "shutdown" => Some(h.owner.shutdown()),
         _ => None,
     };
+    actual["registryAfterEvent"] = fence_registry(&h);
+    let mut result_rows = Vec::new();
+    if state == "quick" || state == "never" {
+        result_rows.push(serde_json::json!({"label":"fence-old-turn","status":"fulfilled"}));
+    } else if state == "disposing" {
+        result_rows.push(serde_json::json!({"label":"fence-old-dispose","status":"fulfilled"}));
+    }
     if state == "never" {
-        tokio::time::advance(crate::host::Limits::default().close_timeout).await;
-        let error = first
-            .await
-            .err()
-            .expect("#745 matrix timeout rejects first");
+        tokio::time::advance(h.factory.options.writer_fence_timeout).await;
+        let first = first.await;
+        result_rows.push(fence_result(&h, "fence-first", &first));
+        let error = first.err().expect("#745 matrix timeout rejects first");
         assert_eq!(
             error.js_error().and_then(|e| e.code.as_deref()),
             Some("SESSION_WRITER_BUSY"),
             "#745 matrix dedicated timeout"
         );
         if let Some(second) = second {
-            let error = second
-                .await
-                .err()
-                .expect("#745 matrix timeout rejects second");
+            let second = second.await;
+            result_rows.push(fence_result(&h, "fence-second", &second));
+            let error = second.err().expect("#745 matrix timeout rejects second");
             assert_eq!(
                 error.js_error().and_then(|e| e.code.as_deref()),
                 Some("SESSION_WRITER_BUSY"),
@@ -2205,6 +2310,7 @@ async fn fence_matrix(name: &'static str) {
         );
         h.gate.open();
         let first = bounded(name, first).await;
+        result_rows.push(fence_result(&h, "fence-first", &first));
         let ts_first = row["results"]
             .as_array()
             .expect("#745 fence results")
@@ -2238,9 +2344,9 @@ async fn fence_matrix(name: &'static str) {
         } else {
             let new = first.expect("#745 matrix replacement succeeds");
             if let Some(second) = second {
-                let second = bounded(name, second)
-                    .await
-                    .expect("#745 matrix second succeeds");
+                let second = bounded(name, second).await;
+                result_rows.push(fence_result(&h, "fence-second", &second));
+                let second = second.expect("#745 matrix second succeeds");
                 let same_handle = new.same_identity(&second);
                 if name == "fence-idle-twice-beforeload" {
                     let observations = oracle["twiceReturnOrders"]
@@ -2283,6 +2389,8 @@ async fn fence_matrix(name: &'static str) {
         bounded(name, closing)
             .await
             .expect("#745 matrix close shutdown completes");
+        result_rows
+            .push(serde_json::json!({"label":format!("fence-{event}"),"status":"fulfilled"}));
         assert!(
             h.owner.current_handle(&"session-745".into()).is_none(),
             "#745 matrix close leaves no handle"
@@ -2293,6 +2401,12 @@ async fn fence_matrix(name: &'static str) {
             .await
             .expect("#745 matrix shared disposal");
     }
+    actual["results"] = result_rows.into();
+    let expected = fence_expected_rust(row);
+    assert_eq!(
+        actual, expected,
+        "#745 fence runtime complete observation {name}"
+    );
     h.finish(name).await;
 }
 macro_rules! fence_cells {
@@ -2358,7 +2472,7 @@ async fn writer_fence_slow_storage_is_not_writer_timeout() {
     let creating = h.owner.get_or_create(h.context());
     bounded("slow storage", h.gate.entered()).await;
     tokio::time::pause();
-    tokio::time::advance(crate::host::Limits::default().close_timeout * 2).await;
+    tokio::time::advance(h.factory.options.writer_fence_timeout * 2).await;
     tokio::time::resume();
     h.gate.open();
     let new = bounded("slow storage", creating)
@@ -2381,7 +2495,7 @@ async fn writer_fence_timeout_returns_no_candidate() {
     tokio::time::pause();
     let creating = tokio::spawn(h.factory.create(h.context(), Some(old.clone())));
     wait_draining(&old).await;
-    tokio::time::advance(crate::host::Limits::default().close_timeout).await;
+    tokio::time::advance(h.factory.options.writer_fence_timeout).await;
     let error = creating
         .await
         .expect("#745 candidate task completes")
@@ -2460,21 +2574,405 @@ async fn recreate_while_storage_close_is_pending() {
 }
 
 #[tokio::test]
-async fn recreate_snapshot_survives_disposal_during_prepare() {
+async fn recreate_snapshot_rejects_disposal_during_prepare() {
     let h = Harness::new("snapshot-before-prepare");
     let old = h.create("snapshot-before-prepare").await;
-    let creating = tokio::spawn(h.factory.create(h.context(), Some(old.clone())));
+    assert!(
+        h.owner
+            .mark_session_dirty(&"session-745".into(), "prepare-race"),
+        "#745 prepare marks cached handle dirty"
+    );
+    let creating = h.owner.get_or_create(h.context());
     bounded("prepare snapshot", h.gate.entered()).await;
     old.dispose("finish during prepare".into())
         .await
         .expect("#745 dispose during prepare");
     h.gate.open();
-    let new = bounded("prepare snapshot", creating)
+    let error = bounded("prepare snapshot", creating)
         .await
-        .expect("#745 prepare snapshot task")
-        .expect("#745 captured recreation survives disposal during prepare");
+        .err()
+        .expect("#745 prepare disposal rejects recreation");
+    let actual =
+        serde_json::json!({"status":"rejected","error":{"name":"Error","message":error.message}});
+    assert_eq!(
+        actual,
+        oracle_document()["prepareDisposal"],
+        "#745 prepare disposal matches TS error"
+    );
+    assert_eq!(
+        h.leases(),
+        0,
+        "#745 prepare disposal releases prepared lease"
+    );
+    let new = h.create("prepare-race retry").await;
+    assert!(
+        !new.same_identity(&old),
+        "#745 prepare disposal next retry resumes"
+    );
+    h.finish("snapshot-before-prepare").await;
+}
+
+#[tokio::test]
+async fn writer_close_panic_releases_lease() {
+    let h = Harness::new("storage-close-panic");
+    let old = bounded("panic create", h.factory.create(h.context(), None))
+        .await
+        .expect("#745 panic initial create");
+    let writer = lock(&h.observed.bindings)[0].recorder.writer().clone();
+    let result = bounded("panic dispose", old.dispose("test panic".into())).await;
+    assert!(result.is_err(), "#745 panic disposal reports failure");
+    assert_eq!(
+        old.state(),
+        HandleState::Disposed,
+        "#745 panic handle disposed"
+    );
+    assert!(
+        lock(&lock(&h.observed.writer_leases)[0]).is_none(),
+        "#745 panic lease released"
+    );
+    let before = writer.snapshot_state();
+    writer
+        .record_session_metadata(
+            &"session-745".into(),
+            &"late".into(),
+            js(r#"{"late":true}"#),
+        )
+        .expect("#745 panic old writer append resolves");
+    assert_eq!(
+        writer.snapshot_state(),
+        before,
+        "#745 panic old writer retired"
+    );
+    let new = bounded("panic recreate", h.factory.create(h.context(), None))
+        .await
+        .expect("#745 panic subsequent create not BUSY");
     new.dispose("cleanup".into())
         .await
-        .expect("#745 prepare snapshot new disposal");
-    h.finish("snapshot-before-prepare").await;
+        .expect("#745 panic replacement cleanup");
+    h.finish("storage-close-panic").await;
+}
+
+#[tokio::test]
+async fn writer_rollback_close_panic_releases_lease() {
+    let h = Harness::new("rollback-close-panic");
+    let mut storage = (h.factory.options.create_storage)(h.context())
+        .await
+        .expect("#745 rollback storage");
+    *lock(&storage.writer_lease) = Some(
+        acquire_writer(storage.recorder.writer().path().to_owned())
+            .await
+            .expect("#745 rollback initial lease"),
+    );
+    storage.close = Arc::new(|| Box::pin(async { panic!("#745 injected rollback close panic") }));
+    let storage = Arc::new(storage);
+    let retained = storage.clone();
+    let failed = bounded(
+        "rollback panic",
+        tokio::spawn(async move { retained.close_owned().await }),
+    )
+    .await;
+    assert!(
+        failed.is_err_and(|e| e.is_panic()),
+        "#745 rollback hook actually panicked"
+    );
+    assert!(
+        lock(&storage.writer_lease).is_none(),
+        "#745 rollback panic lease released"
+    );
+    let writer = storage.recorder.writer();
+    let before = writer.snapshot_state();
+    writer
+        .record_session_metadata(
+            &"session-745".into(),
+            &"late".into(),
+            js(r#"{"late":true}"#),
+        )
+        .expect("#745 rollback panic late append resolves");
+    assert_eq!(
+        writer.snapshot_state(),
+        before,
+        "#745 rollback panic writer retired"
+    );
+    let new = h.create("rollback-panic retry").await;
+    assert_eq!(
+        new.state(),
+        HandleState::Active,
+        "#745 rollback panic subsequent create not BUSY"
+    );
+    h.finish("rollback-close-panic").await;
+}
+
+#[tokio::test]
+async fn writer_fence_uses_configured_budget() {
+    let h = Harness::with_fence_timeout("configured-budget", Duration::from_secs(5));
+    let old = h.create("configured-budget").await;
+    let activity = old
+        .begin_activity()
+        .expect("#745 configured budget holds old turn");
+    tokio::time::pause();
+    let creating = tokio::spawn(h.factory.create(h.context(), Some(old.clone())));
+    wait_draining(&old).await;
+    tokio::time::advance(Duration::from_millis(1100)).await;
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !creating.is_finished(),
+        "#745 configured budget exceeds default close timeout"
+    );
+    drop(activity);
+    tokio::time::resume();
+    let new = bounded("configured drain", creating)
+        .await
+        .expect("#745 configured drain task")
+        .expect("#745 configured budget allows slower drain");
+    let activity = new
+        .begin_activity()
+        .expect("#745 configured timeout holds turn");
+    tokio::time::pause();
+    let creating = tokio::spawn(h.factory.create(h.context(), Some(new.clone())));
+    wait_draining(&new).await;
+    tokio::time::advance(Duration::from_secs(5)).await;
+    let error = creating
+        .await
+        .expect("#745 configured timeout task")
+        .err()
+        .expect("#745 configured timeout rejects candidate");
+    assert_eq!(
+        error.js_error().and_then(|e| e.code.as_deref()),
+        Some("SESSION_WRITER_BUSY"),
+        "#745 configured timeout dedicated error"
+    );
+    drop(activity);
+    new.dispose("cleanup".into())
+        .await
+        .expect("#745 configured timeout late drain");
+    tokio::time::resume();
+    h.finish("configured-budget").await;
+}
+
+#[tokio::test]
+async fn writer_factory_rejects_already_locked_storage() {
+    let h = Harness::new("already-locked-storage");
+    let (store, path) = JsonlTranscriptStore::open_locked(&h.root.join("session-745.jsonl"))
+        .expect("#745 locked storage owns ledger");
+    let store = Arc::new(store);
+    let retained = store.clone();
+    let root = h.root.clone();
+    let factory = ProjectSessionFactory::new(FactoryOptions {
+        writer_fence_timeout: h.factory.options.writer_fence_timeout,
+        prepare: h.factory.options.prepare.clone(),
+        create_storage: Arc::new(move |context| {
+            let store = retained.clone();
+            let root = root.clone();
+            let path = path.clone();
+            Box::pin(async move {
+                Ok(FactoryStorage::new(
+                    store,
+                    TranscriptKey {
+                        project_root: root.clone(),
+                        pilot_home: root,
+                        transcript_path: path,
+                        session_id: context.session_key,
+                    },
+                ))
+            })
+        }),
+        admission: None,
+        diagnostic: Arc::new(|_| {}),
+    });
+    let error = bounded("locked storage create", factory.create(h.context(), None))
+        .await
+        .err()
+        .expect("#745 locked store cannot be double leased");
+    assert_eq!(
+        error.js_error().and_then(|e| e.code.as_deref()),
+        Some("SESSION_WRITER_BUSY"),
+        "#745 locked store factory error contract"
+    );
+    assert_eq!(
+        h.leases(),
+        0,
+        "#745 locked store releases prepared resources"
+    );
+    factory
+        .dispose()
+        .await
+        .expect("#745 locked store factory cleanup");
+    drop(factory);
+    drop(store);
+    let new = h.create("unlocked storage retry").await;
+    assert_eq!(
+        new.state(),
+        HandleState::Active,
+        "#745 unlocked storage permits create"
+    );
+    h.finish("already-locked-storage").await;
+}
+
+#[tokio::test]
+async fn writer_disposal_preserves_final_hooks() {
+    let h = Harness::new("dispose-final-write");
+    let old = h.create("dispose-final-write").await;
+    old.dispose("test".into())
+        .await
+        .expect("#745 release hook disposal");
+    assert_eq!(
+        lock(&h.observed.bindings)[0]
+            .recorder
+            .writer()
+            .snapshot_state()
+            .sequence,
+        1,
+        "#745 release hook final write committed"
+    );
+    h.finish("dispose-final-write").await;
+}
+
+#[tokio::test]
+async fn writer_rollback_close_preserves_final_hook() {
+    let h = Harness::new("rollback-final-write");
+    let mut storage = (h.factory.options.create_storage)(h.context())
+        .await
+        .expect("#745 final hook storage");
+    *lock(&storage.writer_lease) = Some(
+        acquire_writer(storage.recorder.writer().path().to_owned())
+            .await
+            .expect("#745 final hook lease"),
+    );
+    let writer = storage.recorder.writer().clone();
+    storage.close = Arc::new(move || {
+        let writer = writer.clone();
+        Box::pin(async move {
+            writer
+                .record_session_metadata(
+                    &"session-745".into(),
+                    &"close".into(),
+                    js(r#"{"final":true}"#),
+                )
+                .expect("#745 close hook final write");
+            Ok(())
+        })
+    });
+    storage.close_owned().await.expect("#745 final hook close");
+    assert_eq!(
+        storage.recorder.writer().snapshot_state().sequence,
+        1,
+        "#745 close hook final write committed"
+    );
+    assert!(
+        lock(&storage.writer_lease).is_none(),
+        "#745 final hook releases lease"
+    );
+    h.finish("rollback-final-write").await;
+}
+
+#[tokio::test]
+async fn writer_panic_cleanup_allows_runtime_progress() {
+    struct BlockingStore {
+        entered: tokio::sync::Notify,
+        barrier: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    }
+    impl TranscriptStore for BlockingStore {
+        fn append(&self, _: &TranscriptKey, _: &JsValue) -> crate::storage::StoreResult<()> {
+            self.entered.notify_one();
+            let (released, wake) = &*self.barrier;
+            let mut released = released.lock().expect("#745 panic append barrier");
+            while !*released {
+                released = wake.wait(released).expect("#745 panic append release");
+            }
+            Ok(())
+        }
+        fn read(
+            &self,
+            _: &TranscriptKey,
+            _: Option<u64>,
+        ) -> crate::storage::StoreResult<TranscriptRead> {
+            unreachable!("#745 panic background test never loads")
+        }
+    }
+    let h = Harness::new("panic-background");
+    let barrier = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let store = Arc::new(BlockingStore {
+        entered: tokio::sync::Notify::new(),
+        barrier: barrier.clone(),
+    });
+    let mut storage = FactoryStorage::new(
+        store.clone(),
+        TranscriptKey {
+            project_root: h.root.clone(),
+            pilot_home: h.root.clone(),
+            transcript_path: h.root.join("session-745.jsonl"),
+            session_id: "session-745".into(),
+        },
+    );
+    *lock(&storage.writer_lease) = Some(
+        acquire_writer(storage.recorder.writer().path().to_owned())
+            .await
+            .expect("#745 panic background lease"),
+    );
+    storage.close = Arc::new(|| Box::pin(async { panic!("#745 injected background close panic") }));
+    let storage = Arc::new(storage);
+    let writer = storage.recorder.writer().clone();
+    let append = tokio::task::spawn_blocking(move || {
+        writer.record_session_metadata(
+            &"session-745".into(),
+            &"background".into(),
+            js(r#"{"final":true}"#),
+        )
+    });
+    bounded("panic append entered", store.entered.notified()).await;
+    let watchdog_fired = Arc::new(AtomicBool::new(false));
+    let watched = watchdog_fired.clone();
+    let watchdog_barrier = barrier.clone();
+    let watchdog = std::thread::spawn(move || {
+        let (released, wake) = &*watchdog_barrier;
+        let (mut released, _) = wake
+            .wait_timeout_while(
+                released.lock().expect("#745 panic watchdog barrier"),
+                Duration::from_secs(3),
+                |released| !*released,
+            )
+            .expect("#745 panic watchdog wait");
+        if !*released {
+            watched.store(true, Ordering::SeqCst);
+            *released = true;
+            wake.notify_all();
+        }
+    });
+    let retained = storage.clone();
+    let failed = tokio::spawn(async move { retained.close_owned().await }).await;
+    let retained_until_drain = matches!(
+        crate::storage::LedgerLock::acquire(storage.recorder.writer().path()),
+        Err(crate::storage::LedgerError::Io(error)) if error.kind() == std::io::ErrorKind::WouldBlock
+    );
+    // This release requires the current-thread runtime to regain control.
+    let (released, wake) = &*barrier;
+    *released.lock().expect("#745 panic runtime releases append") = true;
+    wake.notify_all();
+    watchdog.join().expect("#745 panic watchdog joined");
+    assert!(
+        !watchdog_fired.load(Ordering::SeqCst),
+        "#745 panic cleanup permits runtime progress"
+    );
+    assert!(
+        retained_until_drain,
+        "#745 panic retains lease through admitted write"
+    );
+    assert!(
+        failed.is_err_and(|e| e.is_panic()),
+        "#745 panic background hook panicked"
+    );
+    append
+        .await
+        .expect("#745 panic background append joined")
+        .expect("#745 panic background append complete");
+    let lease = bounded(
+        "panic background lease release",
+        acquire_writer(storage.recorder.writer().path().to_owned()),
+    )
+    .await
+    .expect("#745 panic background lease eventually released");
+    drop(lease);
+    h.finish("panic-background").await;
 }

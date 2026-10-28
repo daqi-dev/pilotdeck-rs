@@ -66,9 +66,14 @@ const closeReturnOrders=['early','late'].map(order=>{
  assert.deepEqual(first.error,{name:'Error',message:order==='early'?'Agent is not registered: session-745':'Scoped service is not registered in gateway-agents: agent:session-745'},'#745 close return order observed');
  return {order,error:first.error};
 });
+const capture=supplemental('capture-after-prepare',{MATRIX_DISPOSE_PREPARE:'1'},'recreate-idle');
+const captureResult=capture.results.find((r:any)=>r.label==='recreate');
+assert.equal(captureResult.status,'rejected','#745 prepare disposal rejects TS recreate');
+assert.deepEqual(captureResult.error,{name:'Error',message:'Session projection driver is disposed.'},'#745 prepare disposal TS error');
+const prepareDisposal={status:captureResult.status,error:captureResult.error};
 const memory=supplemental('memory-only',{MATRIX_MEMORY_ONLY:'1'},'recreate-idle');
 const memoryOnly={injected:memory.timeline.find((e:any)=>e.type==='injected.reload').data.state,
  actual:memory.snapshots.find((s:any)=>s.label==='result').handles[1].session};
 assert.notDeepEqual(memoryOnly.actual.messages,memoryOnly.injected.messages);
-fs.writeFileSync(path.join(output,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,node:process.version,cases,...extra,fileTiming,writerInterleavings,fenceMatrix,twiceReturnOrders,closeReturnOrders,memoryOnly},null,2)+'\n',{flag:'wx'});
+fs.writeFileSync(path.join(output,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,node:process.version,cases,...extra,fileTiming,writerInterleavings,fenceMatrix,twiceReturnOrders,closeReturnOrders,memoryOnly,prepareDisposal},null,2)+'\n',{flag:'wx'});
 console.log('PASS: factory fixture', cases.length, 'cells and',extra.projections.length,'projection probes');

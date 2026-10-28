@@ -116,6 +116,27 @@ struct WriterLease {
     _process: tokio::sync::OwnedMutexGuard<()>,
 }
 type SharedWriterLease = Arc<Mutex<Option<WriterLease>>>;
+/// Cleanup hooks may still append. Retire new writes on unwind, then keep the
+/// lease until admitted appends drain. A provider's append may depend on the
+/// runtime making progress, so Drop must not wait for its commit lock here.
+struct WriterCloseGuard {
+    writer: Arc<crate::storage::TranscriptWriter>,
+    _lease: Option<WriterLease>,
+}
+impl Drop for WriterCloseGuard {
+    fn drop(&mut self) {
+        self.writer.begin_close();
+        let writer = self.writer.clone();
+        let lease = self._lease.take();
+        let close = move || {
+            writer.close();
+            drop(lease);
+        };
+        // An independent blocking thread also works when a future is dropped
+        // after its runtime has exited. It owns the lease through the drain.
+        std::thread::spawn(close);
+    }
+}
 async fn acquire_writer(path: PathBuf) -> Result<WriterLease, RuntimeError> {
     static WRITERS: OnceLock<Mutex<HashMap<PathBuf, Weak<WriterMutex>>>> = OnceLock::new();
     let path =
@@ -270,6 +291,11 @@ pub struct FactoryStorage {
     pub close: Arc<dyn Fn() -> BoxFuture<RuntimeResult> + Send + Sync>,
 }
 impl FactoryStorage {
+    /// Supply an unlocked store (for JSONL, `JsonlTranscriptStore::new`).
+    /// The factory acquires the canonical writer lease before restore. A store
+    /// already owned by `open_locked` / `PersistenceResources::create_session`
+    /// would contend with that lease; #589 must transfer ownership before using
+    /// that combination, rather than bypassing the factory's writer fence.
     pub fn new(store: Arc<dyn TranscriptStore>, key: TranscriptKey) -> Self {
         let projection = Arc::new(SessionProjection::default());
         let writer_lease = Arc::new(Mutex::new(None));
@@ -313,16 +339,23 @@ impl FactoryStorage {
             }),
         }
     }
+    fn take_writer_lease(&self) -> WriterCloseGuard {
+        WriterCloseGuard {
+            writer: self.recorder.writer().clone(),
+            _lease: lock(&self.writer_lease).take(),
+        }
+    }
     async fn close_owned(&self) -> RuntimeResult {
+        // Rollback has no OwnedSession guard. Keep the lease on this future's
+        // stack so a hook panic or blocking-task JoinError cannot strand it in
+        // an externally retained storage/recorder. Preserve final hook writes.
+        let _writer_lease = self.take_writer_lease();
         let result = (self.close)().await;
-        // Even a custom close hook that fails must not leave the recorder open
-        // when its exclusive lease is released. close waits for admitted writes.
         let writer = self.recorder.writer().clone();
         writer.begin_close();
         tokio::task::spawn_blocking(move || writer.close())
             .await
             .map_err(|e| RuntimeError::new(e.to_string()))?;
-        lock(&self.writer_lease).take();
         result
     }
     async fn restore(&self) -> Result<TranscriptRead, RuntimeError> {
@@ -352,6 +385,11 @@ pub type CreateStorage =
 pub type Admission =
     Arc<dyn Fn(SessionContext) -> BoxFuture<Result<Option<JsValue>, RuntimeError>> + Send + Sync>;
 pub struct FactoryOptions {
+    /// Total predecessor drain + writer lease wait budget, explicitly chosen by
+    /// the host's cancellation policy (e.g. POST_CANCEL_EXIT_TIMEOUT). This is
+    /// independent of host transport close_timeout; storage construction is
+    /// excluded from the budget.
+    pub writer_fence_timeout: std::time::Duration,
     pub prepare: Prepare,
     pub create_storage: CreateStorage,
     pub admission: Option<Admission>,
@@ -380,11 +418,11 @@ impl ProjectSessionFactory {
         context: SessionContext,
         previous: Option<LiveSessionHandle>,
     ) -> Result<LiveSessionHandle, RuntimeError> {
+        let prepared = (self.options.prepare)(context.clone(), self.mcp.clone()).await?;
         let captured_reload = previous
             .as_ref()
             .map(LiveSessionHandle::recreation_snapshot)
             .transpose();
-        let prepared = (self.options.prepare)(context.clone(), self.mcp.clone()).await?;
         let reload = match captured_reload {
             Ok(value) => value,
             Err(error) => {
@@ -393,7 +431,7 @@ impl ProjectSessionFactory {
             }
         };
         // A dropped timeout waiter cannot cancel the handle's owned drain task.
-        let deadline = tokio::time::Instant::now() + crate::host::Limits::default().close_timeout;
+        let deadline = tokio::time::Instant::now() + self.options.writer_fence_timeout;
         if let Some(previous) = &previous {
             let drained =
                 tokio::time::timeout_at(deadline, previous.dispose("session_recreate".into()))
@@ -625,8 +663,12 @@ impl LiveSession for OwnedSession {
         self.adapter.abort(reason)
     }
     fn dispose(&self) -> DisposeFuture<'_> {
+        // Handle disposal has already drained active turns. Take ownership
+        // before any adapter/resource hook can panic; retain through cleanup.
+        let writer_lease = self.storage.take_writer_lease();
         let resources = lock(&self.resources).take();
         Box::pin(async move {
+            let _writer_lease = writer_lease;
             let mut errors = vec![];
             if let Some(resources) = resources
                 && let Err(e) = resources.release().await
