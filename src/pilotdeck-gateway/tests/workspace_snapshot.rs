@@ -1652,6 +1652,257 @@ fn committed_marker_with_unreadable_manifest_republishes() {
     );
 }
 
+/// Environment variable carrying the child's snapshot root (the
+/// `PDRS_WRITE_STAGE_PATH` convention of `common/write_stage.rs`).
+#[cfg(unix)]
+const FIFO_CHILD_ROOT_ENV: &str = "PDRS_WS_SNAPSHOT_FIFO_ROOT";
+
+/// Child half of `fifo_manifests_cannot_block_capture_or_list`. Everything
+/// here must settle: under the pre-fix blocking reads the leader's `fs::read`
+/// (and through it every same-key follower's Condvar wait) never returns.
+#[cfg(unix)]
+#[test]
+#[ignore = "spawned by fifo_manifests_cannot_block_capture_or_list"]
+fn fifo_manifests_child_round() {
+    let Ok(root) = std::env::var(FIFO_CHILD_ROOT_ENV) else {
+        panic!(
+            "{FIFO_CHILD_ROOT_ENV} not set; spawn via \
+             fifo_manifests_cannot_block_capture_or_list"
+        );
+    };
+    let root = PathBuf::from(&root);
+    let snapshot_root = root.join("snapshots");
+    let workspace = root.join("ws");
+    let input = |turn_id: &str| WorkspaceSnapshotInput {
+        workspace_id: "w".into(),
+        session_id: "s".into(),
+        turn_id: turn_id.into(),
+        run_id: "run-r5".into(),
+        workspace_dir: workspace.to_string_lossy().into_owned(),
+        workspace_stable: None,
+        failure_kind: None,
+        failure_reason: None,
+    };
+    let config = WorkspaceSnapshotConfig {
+        root: root.to_string_lossy().into_owned(),
+        snapshot_root: snapshot_root.to_string_lossy().into_owned(),
+    };
+
+    // Step 1: the round over `_COMMITTED` + a writer-less FIFO manifest must
+    // recapture and publish a regular manifest. A same-key follower runs
+    // concurrently on the same recorder: whichever side leads, the other
+    // waits on the round, so a blocked leader would trap both threads.
+    let recorder = ContentAddressedWorkspaceSnapshotRecorder::new(config.clone());
+    let (follower_tx, follower_rx) = mpsc::channel();
+    thread::scope(|scope| {
+        let follower = scope.spawn(|| {
+            let outcome = recorder.capture_pre_user(&input("t1"));
+            let state = outcome
+                .expect("#293 fix-r5 the same-key follower gets a result, not a wait")
+                .state;
+            let _ = follower_tx.send(());
+            state
+        });
+        let leader = recorder
+            .capture_pre_user(&input("t1"))
+            .expect("#293 fix-r5 the round over the FIFO manifest returns a result");
+        println!("CAPTURED={}", leader.state.as_str());
+        println!(
+            "FOLLOWER={}",
+            follower
+                .join()
+                .expect("#293 fix-r5 the same-key follower thread settled")
+                .as_str()
+        );
+    });
+    drop(follower_rx);
+
+    // Step 2: `list()` must fail fast on the other partition's FIFO manifest
+    // (the walk's own read refuses it with EPERM), not block the walk.
+    let error = create_workspace_snapshot_provider(config.clone())
+        .list()
+        .expect_err("#293 fix-r5 the FIFO manifest makes list() fail");
+    let code = match &error {
+        WorkspaceSnapshotError::Io { code, .. } => code.unwrap_or("io-no-code").to_owned(),
+        WorkspaceSnapshotError::Syntax(_) => "syntax".to_owned(),
+        other => format!("{other:?}"),
+    };
+    println!("LIST_ERR={code}");
+
+    // Step 3: a writer-less FIFO `_FAILED.json` must early-exit as Failed
+    // with no error message (any read failure yields no message), not block
+    // the failed leg of the early exit.
+    let failed = ContentAddressedWorkspaceSnapshotRecorder::new(config)
+        .capture_pre_user(&input("t3"))
+        .expect("#293 fix-r5 the round over the FIFO failure marker returns a result");
+    println!(
+        "FAILED_ROUND={} ERROR={}",
+        failed.state.as_str(),
+        failed.error.is_some()
+    );
+}
+
+/// #293 fix-r5 (r5 review P0; registered divergence
+/// A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R4): a `_COMMITTED` marker beside a
+/// writer-less FIFO `manifest.json`, a FIFO manifest with no marker, and a
+/// FIFO `_FAILED.json` — the early-exit and walk reads are the
+/// `read_snapshot_bytes` non-blocking regular-file reads, so none of them can
+/// block the open or the read; the capture round republishes a regular
+/// manifest over the FIFO, `list()` fails fast, and the failed leg returns
+/// `Failed` with no message. TS's own `readFile` blocks on a writer-less FIFO
+/// (Node v22.22.0 probe
+/// `_tmp/20261026-issue-293/fix-r5/probe/node-fifo-probe.out`), so this is
+/// the registered divergence, and the pre-fix Rust hung the same way (r5
+/// review P0). The child runs under a hard outer deadline: a regression back
+/// to a blocking read fails HERE at the dedicated deadline assertion, not as
+/// a cargo-level timeout (the coordinator's kill criterion for the
+/// `*-fifo-blocking-read` negative controls).
+#[cfg(unix)]
+#[test]
+fn fifo_manifests_cannot_block_capture_or_list() {
+    let run = Scratch::new();
+    let snapshot_root = run.0.join("snapshots");
+    let workspace = run.0.join("ws");
+    fs::create_dir_all(&workspace).expect("#293 fix-r5 create the workspace");
+    fs::write(workspace.join("only.txt"), b"x\n").expect("#293 fix-r5 seed the workspace");
+    let partitions = snapshot_root.join("workspaces/w/sessions/s/snapshots");
+    // The P0 fixture: `_COMMITTED` + a writer-less FIFO manifest.
+    let committed_fifo = partitions.join(sha256_hex(b"s\0t1\0pre_user"));
+    fs::create_dir_all(&committed_fifo).expect("#293 fix-r5 create the committed-FIFO partition");
+    plant_fifo(&committed_fifo.join("manifest.json"), "committed manifest");
+    fs::write(committed_fifo.join("_COMMITTED"), b"")
+        .expect("#293 fix-r5 plant the committed marker");
+    // The walk fixture: a FIFO manifest with no marker beside it.
+    let listed_fifo = partitions.join(sha256_hex(b"s\0t2\0pre_user"));
+    fs::create_dir_all(&listed_fifo).expect("#293 fix-r5 create the list-FIFO partition");
+    plant_fifo(&listed_fifo.join("manifest.json"), "listed manifest");
+    // The failed-leg fixture: a writer-less FIFO `_FAILED.json`.
+    let failed_fifo = partitions.join(sha256_hex(b"s\0t3\0pre_user"));
+    fs::create_dir_all(&failed_fifo).expect("#293 fix-r5 create the failed-FIFO partition");
+    plant_fifo(&failed_fifo.join("_FAILED.json"), "failure marker");
+
+    let stdout = fifo_child_round(&run.0);
+
+    assert!(
+        stdout.contains("CAPTURED=committed"),
+        "#293 fix-r5 the capture over the writer-less FIFO manifest recaptured and committed: {stdout}"
+    );
+    assert!(
+        stdout.contains("FOLLOWER=committed"),
+        "#293 fix-r5 the same-key follower received the round's result, not an endless wait: {stdout}"
+    );
+    let manifest = committed_fifo.join("manifest.json");
+    let info =
+        fs::symlink_metadata(&manifest).expect("#293 fix-r5 the republished manifest is statable");
+    assert!(
+        info.is_file(),
+        "#293 fix-r5 the republished manifest is a regular file with this round's runId: {:?} at {}",
+        info,
+        manifest.display()
+    );
+    let text =
+        fs::read_to_string(&manifest).expect("#293 fix-r5 the republished manifest is readable");
+    assert!(
+        text.contains("\"runId\": \"run-r5\""),
+        "#293 fix-r5 the republished manifest is a regular file with this round's runId: {text}"
+    );
+    assert!(
+        stdout.contains("LIST_ERR=EPERM"),
+        "#293 fix-r5 list() fails fast on the FIFO manifest with EPERM, not a hang: {stdout}"
+    );
+    assert!(
+        stdout.contains("FAILED_ROUND=failed ERROR=false"),
+        "#293 fix-r5 the FIFO failure marker early-exits as Failed with no message, not a hang: {stdout}"
+    );
+}
+
+/// Plant a writer-less FIFO: the r5 review P0's manifest shape. The
+/// workspace forbids unsafe code, so `mkfifo(1)` creates the same node (the
+/// `project_files` tests' idiom).
+#[cfg(unix)]
+fn plant_fifo(path: &Path, label: &str) {
+    let status = std::process::Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .unwrap_or_else(|error| panic!("#293 fix-r5 spawn mkfifo for the {label}: {error}"));
+    assert!(
+        status.success(),
+        "#293 fix-r5 plant the {label} FIFO at {}: {status}",
+        path.display()
+    );
+}
+
+/// Run the ignored child test under a hard outer deadline, so a regression
+/// back to a blocking read fails at the dedicated assertion below instead of
+/// hanging the suite (`test_process::run_case`'s kill-on-drop shape).
+#[cfg(unix)]
+struct KilledOnDrop(std::process::Child);
+#[cfg(unix)]
+impl Drop for KilledOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[cfg(unix)]
+fn fifo_child_round(root: &Path) -> String {
+    use std::io::Read as _;
+    use std::process::{Command, Stdio};
+    let mut child = KilledOnDrop(
+        Command::new(std::env::current_exe().expect("#293 fix-r5 locate this test binary"))
+            .args([
+                "--exact",
+                "fifo_manifests_child_round",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env(FIFO_CHILD_ROOT_ENV, root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("#293 fix-r5 spawn the FIFO child round"),
+    );
+    let deadline = Duration::from_secs(10);
+    let started = std::time::Instant::now();
+    let status = loop {
+        match child.0.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(error) => panic!("#293 fix-r5 polling the FIFO child round: {error}"),
+        }
+        // The dedicated failure for every blocking-read mutant: the outer
+        // deadline fires, never a cargo-level timeout.
+        assert!(
+            started.elapsed() < deadline,
+            "#293 fix-r5 the child round over the planted FIFOs returned within the 10 s deadline"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    let mut stdout = String::new();
+    child
+        .0
+        .stdout
+        .take()
+        .expect("#293 fix-r5 the child's stdout is piped")
+        .read_to_string(&mut stdout)
+        .expect("#293 fix-r5 read the child's stdout");
+    let mut stderr = String::new();
+    child
+        .0
+        .stderr
+        .take()
+        .expect("#293 fix-r5 the child's stderr is piped")
+        .read_to_string(&mut stderr)
+        .expect("#293 fix-r5 read the child's stderr");
+    assert!(
+        status.success(),
+        "#293 fix-r5 the child round completed without panicking: {stdout}{stderr}"
+    );
+    stdout
+}
+
 /// #293 fix-r4 (r4 review P1-2): the private staging area is exactly
 /// `<snapshot_root>/.staging`. A restore target is user content: the tree
 /// comparison used to skip a `.staging` at any recorded root and the
