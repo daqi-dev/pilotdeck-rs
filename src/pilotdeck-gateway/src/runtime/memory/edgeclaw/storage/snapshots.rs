@@ -243,13 +243,39 @@ fn rename(h: &SnapshotIoHook, src: &Path, dst: &Path) -> Result<()> {
         Err(e) => Err(pair_error(e, "rename", src, dst).into()),
     }
 }
-fn temp(p: &Path, label: &str) -> PathBuf {
+/// `createSiblingTempPath(targetDir, label)` (`sqlite.ts:422-429`):
+/// `.${basename}.${label}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`.
+/// Each call consumes one `Math.random` draw in TS, so the injected fragment
+/// seam must draw from the same source the caller's fixtures froze.
+fn temp(p: &Path, label: &str, now_ms: i64, fragment: &str) -> PathBuf {
     p.with_file_name(format!(
-        ".{}.{}-{}",
+        ".{}.{}-{}-{}",
         p.file_name().unwrap_or_default().to_string_lossy(),
         label,
-        uuid::Uuid::new_v4().simple()
+        base36(now_ms),
+        fragment
     ))
+}
+
+/// `Number.prototype.toString(36)` for the integer `Date.now()` — the same
+/// digit alphabet and `-` sign V8 emits.
+fn base36(mut value: i64) -> String {
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    if value == 0 {
+        return "0".into();
+    }
+    let negative = value < 0;
+    let mut out = Vec::new();
+    while value != 0 {
+        let digit = (value % 36).unsigned_abs() as usize;
+        out.push(DIGITS[digit]);
+        value /= 36;
+    }
+    if negative {
+        out.push(b'-');
+    }
+    out.reverse();
+    String::from_utf8(out).expect("base36 digits are ASCII")
 }
 fn write_files(h: &SnapshotIoHook, root: &Path, files: &JsValue) -> Result<()> {
     mkdir(h, root)?;
@@ -469,7 +495,12 @@ impl EdgeClawFileStores {
     }
     fn replace_dir(&self, live: &Path, staged: &Path) -> Result<()> {
         let h = &self.repository.snapshot_io;
-        let backup = temp(live, "backup");
+        let backup = temp(
+            live,
+            "backup",
+            (self.temp_now_ms)(),
+            &(self.temp_random_fragment)(),
+        );
         let mut moved = false;
         let result = (|| {
             if live.exists() {
@@ -551,9 +582,26 @@ impl EdgeClawFileStores {
     }
     fn stage_from(&self, snapshot: &JsValue, label: &str) -> Result<MemoryRepositoryStage> {
         let h = &self.repository.snapshot_io;
-        let ws = temp(self.workspace_memory.get_root_dir(), label);
-        let gl = temp(self.global_user_memory.get_root_dir(), label);
-        let db = temp(self.storage.path(), label);
+        let now_ms = (self.temp_now_ms)();
+        // Three separate `Math.random` draws, one per path, like TS.
+        let ws = temp(
+            self.workspace_memory.get_root_dir(),
+            label,
+            now_ms,
+            &(self.temp_random_fragment)(),
+        );
+        let gl = temp(
+            self.global_user_memory.get_root_dir(),
+            label,
+            now_ms,
+            &(self.temp_random_fragment)(),
+        );
+        let db = temp(
+            self.storage.path(),
+            label,
+            now_ms,
+            &(self.temp_random_fragment)(),
+        );
         // Deliberately outside try, matching TS's partial mkdir failure state.
         mkdir(h, &ws)?;
         mkdir(h, &gl)?;
@@ -561,14 +609,17 @@ impl EdgeClawFileStores {
         let result = (|| {
             write_files(h, &ws, field(snapshot, "workspaceFiles"))?;
             write_files(h, &gl, field(snapshot, "globalFiles"))?;
-            repo = Some(Self::with_workspace_clock(
-                &db,
-                &ws,
-                &gl,
-                self.current_workspace()?,
-                &self.repository.general_workspace,
-                self.repository.clock.clone(),
-            )?);
+            repo = Some(
+                Self::with_workspace_clock(
+                    &db,
+                    &ws,
+                    &gl,
+                    self.current_workspace()?,
+                    &self.repository.general_workspace,
+                    self.repository.clock.clone(),
+                )?
+                .with_temp_name_seams(self.temp_now_ms.clone(), self.temp_random_fragment.clone()),
+            );
             repo.as_ref().unwrap().repair_workspace_manifest()?;
             Ok(())
         })();
@@ -634,7 +685,12 @@ impl EdgeClawFileStores {
     ) -> Result<()> {
         self.snapshot_operation(|| {
             let h = &self.repository.snapshot_io;
-            let stage = temp(&self.last_root(), "snapshot");
+            let stage = temp(
+                &self.last_root(),
+                "snapshot",
+                (self.temp_now_ms)(),
+                &(self.temp_random_fragment)(),
+            );
             mkdir(h, &stage)?;
             let result = (|| {
                 write_files(

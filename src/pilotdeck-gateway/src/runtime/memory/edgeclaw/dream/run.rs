@@ -1191,11 +1191,21 @@ fn array_field(object: &JsValue, key: &str) -> Vec<JsObject> {
         .unwrap_or_default()
 }
 
-fn with_i18n(mut detail: JsObject, i18n: Option<JsValue>) -> JsObject {
-    if let Some(i18n) = i18n {
-        detail.insert("labelI18n".into(), i18n);
+fn with_i18n(detail: JsObject, i18n: Option<JsValue>) -> JsObject {
+    let Some(i18n) = i18n else {
+        return detail;
+    };
+    // TS kvDetail/listDetail/jsonDetail spread `labelI18n` between `label`
+    // and `kind`; JsObject keeps first-insertion order, so rebuild with the
+    // key spliced in right after `label`.
+    let mut ordered = JsObject::new();
+    for (name, value) in detail.entries() {
+        ordered.insert(name.clone(), value.clone());
+        if name.equals_str("label") {
+            ordered.insert("labelI18n".into(), i18n.clone());
+        }
     }
-    detail
+    ordered
 }
 
 fn snapshot_summary_entries(
