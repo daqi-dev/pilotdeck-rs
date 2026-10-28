@@ -32,6 +32,10 @@ projection = root / 'src/pilotdeck-gateway/src/runtime/manager/projection.rs'
 metadata_path = root / 'src/pilotdeck-gateway/src/metadata.rs'
 dispatch = root / 'src/pilotdeck-gateway/src/dispatch.rs'
 adapter = root / 'src/pilotdeck-gateway/src/storage/transcript_adapter.rs'
+js_value_path = root / 'src/pilotdeck-gateway/src/js_value.rs'
+session_model = root / 'src/pilotdeck-gateway/src/session_model.rs'
+skills_path = root / 'src/pilotdeck-gateway/src/skills/mod.rs'
+binding = root / 'src/pilotdeck-gateway/src/config/binding.rs'
 prefix = 'runtime::manager::tests::'
 
 # (name, source, original, mutant, scope, bound test, exclusive failure text)
@@ -74,20 +78,20 @@ cases = [
      '#934 invalid manager params must fail'),
     ('invalid-project-key-stringified', projection, '''            other => {
                 // Reuse the gateway's Node `util.inspect`/`ToString` wording.
-                // The description is UTF-16 so a lone surrogate in
-                // `constructor.name` reaches the wire unchanged; `[Object]` is
-                // the `inspect(value, { depth: -1 })` fallback for the exotic
-                // shapes where Node throws a different TypeError first.
-                let received = metadata::argument_received(other)
-                    .unwrap_or_else(|| JsString::from("[Object]"));
-                let mut message = "The \\"paths[0]\\" argument must be of type string. Received "
-                    .encode_utf16()
-                    .collect::<Vec<_>>();
-                message.extend_from_slice(received.units());
+                // Node evaluates `'name' in constructor` and
+                // `${constructor.name}` while describing the argument, so a
+                // failure there escapes as its own TypeError/RangeError before
+                // `ERR_INVALID_ARG_TYPE` is ever constructed.
+                let received = match metadata::argument_received(other) {
+                    metadata::ArgumentReceived::Text(received) => received,
+                    metadata::ArgumentReceived::Throws { name, message } => {
+                        return Err(ManagerError::with_message(name, None, message));
+                    }
+                };
                 return Err(ManagerError::with_message(
                     "TypeError",
                     Some("ERR_INVALID_ARG_TYPE".into()),
-                    JsString::from_utf16(message),
+                    metadata::invalid_arg_type_message("paths[0]", &received),
                 ));
             }''', '''            other => return Err(ManagerError::plain("TypeError", format!("{other:?}"))),''', None,
      prefix + 'manager_sessions_invalid_params_match_ts',
@@ -180,26 +184,26 @@ cases = [
      prefix + 'manager_catalog_propagates_metadata_syntax_errors',
      '#934 invalid createdAt escape must reject like TS SyntaxError'),
     ('projectkey-name-explained-by-object', metadata_path,
-     '                    let text = js_to_string(name)?;',
-     '                    let text = JsString::from("Object");', None,
+     '                            text.extend_from_slice(&units);',
+     '                            text.extend_from_slice("Object".encode_utf16().collect::<Vec<_>>().as_slice());', None,
      prefix + 'manager_sessions_matches_real_ts_projection',
      '#934 manager gateway oracle replay differs at sessions-projectKey-name-object'),
-    ('projectkey-name-array-branch', metadata_path, '''                if !matches!(item, JsValue::Null | JsValue::Undefined) {
-                    units.extend_from_slice(js_to_string(item)?.units());
-                }
-            }
-            JsString::from_utf16(units)''', '''                if !matches!(item, JsValue::Null | JsValue::Undefined) {
-                    units.extend_from_slice(js_to_string(item)?.units());
-                }
-            }
-            JsString::from("[object Array]")''', None,
+    ('projectkey-name-array-branch', metadata_path, '''                    let name = constructor.get("name").unwrap_or(&undefined);
+                    // Reuse the shared iterative ToString: its MAX_ARRAY_DEPTH''', '''                    let name = constructor.get("name").unwrap_or(&undefined);
+                    if matches!(name, JsValue::Array(_)) {
+                        return Text("[object Array]".into());
+                    }
+                    // Reuse the shared iterative ToString: its MAX_ARRAY_DEPTH''', None,
      prefix + 'manager_sessions_matches_real_ts_projection',
      '#934 manager gateway oracle replay differs at sessions-projectKey-name-array'),
-    ('projectkey-name-surrogate-lossy', metadata_path,
-     '        JsValue::String(text) => text.clone(),',
-     '''        JsValue::String(text) => {
-            JsString::from(String::from_utf16_lossy(text.units()))
-        }''', None,
+    ('projectkey-name-surrogate-lossy', js_value_path,
+     '        JsValue::String(s) => out.extend_from_slice(s.units()),',
+     '''        JsValue::String(s) => out.extend_from_slice(
+            String::from_utf16_lossy(s.units())
+                .encode_utf16()
+                .collect::<Vec<_>>()
+                .as_slice(),
+        ),''', None,
      prefix + 'manager_sessions_matches_real_ts_projection',
      '#934 manager gateway oracle replay differs at sessions-projectKey-name-surrogate'),
     ('internal-filter-after-read', file_catalog, '''        if !include_internal && is_internal_session(session_id) {
@@ -221,15 +225,91 @@ cases = [
      prefix + 'manager_catalog_filters_internal_before_reading',
      '#934 internal sessions must be filtered before any file read'),
 
+
+    ('deep-project-key-recursive-tostring', js_value_path, '''            JsValue::Array(items) => {
+                if depth >= MAX_ARRAY_DEPTH {
+                    return Err(ToStringError::StackOverflow);
+                }
+                pending.extend(items.iter().rev().map(|item| (item, depth + 1)));
+            }''', '''            JsValue::Array(items) => {
+                fn depth_of(value: &JsValue) -> usize {
+                    match value {
+                        JsValue::Array(items) => 1 + items.iter().map(depth_of).max().unwrap_or(0),
+                        _ => 0,
+                    }
+                }
+                if depth_of(value) >= MAX_ARRAY_DEPTH {
+                    return Err(ToStringError::StackOverflow);
+                }
+                pending.extend(items.iter().rev().map(|item| (item, depth + 1)));
+            }''', None,
+     prefix + 'manager_deep_project_key_returns_range_error_without_aborting',
+     '#934 deep projectKey child must not abort'),
+    ('projectkey-description-throws-rewritten', projection, '''                let received = match metadata::argument_received(other) {
+                    metadata::ArgumentReceived::Text(received) => received,
+                    metadata::ArgumentReceived::Throws { name, message } => {
+                        return Err(ManagerError::with_message(name, None, message));
+                    }
+                };''', '''                let received = match metadata::argument_received(other) {
+                    metadata::ArgumentReceived::Text(received) => received,
+                    metadata::ArgumentReceived::Throws { .. } => "[Object]".into(),
+                };''', None,
+     prefix + 'manager_sessions_invalid_params_match_ts',
+     '#934 invalid projectKey must keep the TS ERR_INVALID_ARG_TYPE code'),
+    ('shared-fast-title-trimmed', metadata_path, '''        .or_else(|| accepted_text(&head, false))
+        .is_some_and(|text| !text.is_empty());''', '''        .or_else(|| accepted_text(&head, false))
+        .is_some_and(|text| !js_trim_units(text.units()).is_empty());''', None,
+     'metadata::tests::whitespace_only_title_keeps_shared_metadata_session_count',
+     '#934 whitespace-only title must count as a shared metadata summary'),
+    ('metadata-only-lite-field-order', file_catalog, '''        SessionInfoOrder::Metadata => {
+            info.insert("createdAt".into(), created_at);
+            info.insert("tag".into(), string(tag));
+        }''', '''        SessionInfoOrder::Metadata => {
+            info.insert("tag".into(), string(tag));
+            info.insert("createdAt".into(), created_at);
+        }''', None,
+     prefix + 'manager_catalog_metadata_only_keeps_ts_field_order',
+     '#934 metadata-only fallback must keep the TS createdAt-before-tag order'),
+    ('shared-descriptor-session-model-lossy', session_model, '''            crate::metadata::invalid_arg_type_message("paths[0]", &received),''', '''            crate::metadata::invalid_arg_type_message(
+                "paths[0]",
+                &JsString::from(String::from_utf16_lossy(received.units())),
+            ),''', None,
+     'session_model::tests::path_argument_preserves_lone_surrogate_units',
+     '#934 session_model path argument must keep the lone surrogate unit'),
+    ('shared-descriptor-skills-lossy', skills_path, '''                crate::metadata::invalid_arg_type_message("paths[0]", &received),''', '''                crate::metadata::invalid_arg_type_message(
+                    "paths[0]",
+                    &JsString::from(String::from_utf16_lossy(received.units())),
+                ),''', None,
+     'skills::tests::path_argument_preserves_lone_surrogate_units',
+     '#934 skills path argument must keep the lone surrogate unit'),
+    ('shared-descriptor-binding-lossy', binding, '''        crate::metadata::invalid_arg_type_message("path", received),''', '''        crate::metadata::invalid_arg_type_message(
+            "path",
+            &pilotdeck_protocol::JsString::from(String::from_utf16_lossy(received.units())),
+        ),''', None,
+     'config::tests::binding_path_argument_preserves_lone_surrogate_units',
+     '#934 binding path argument must keep the lone surrogate unit'),
+    ('shared-descriptor-manager-lossy', projection, '''                    metadata::invalid_arg_type_message("paths[0]", &received),''', '''                    metadata::invalid_arg_type_message(
+                        "paths[0]",
+                        &JsString::from(String::from_utf16_lossy(received.units())),
+                    ),''', None,
+     prefix + 'manager_sessions_matches_real_ts_projection',
+     '#934 manager gateway oracle replay differs at sessions-projectKey-name-surrogate'),
 ]
 
 def main():
-    if '--audit' in sys.argv[1:]:
-        for name, path, old, new, scope, _test, _expected in cases:
+    args = sys.argv[1:]
+    only = None
+    if '--only' in args:
+        index = args.index('--only')
+        only = set(args[index + 1].split(','))
+        del args[index:index + 2]
+    selected = [case for case in cases if only is None or case[0] in only]
+    if '--audit' in args:
+        for name, path, old, new, scope, _test, _expected in selected:
             mutate(path.read_text(), scope, [(old, new)])
         print(json.dumps([
             {'mutation': name, 'test': test, 'panic': expected}
-            for name, _path, _old, _new, _scope, test, expected in cases
+            for name, _path, _old, _new, _scope, test, expected in selected
         ], indent=2))
         return 0
 
@@ -238,13 +318,14 @@ def main():
         raise SystemExit('caller must set CARGO_TARGET_DIR and PDRS_BASELINE')
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',
                CARGO_PROFILE_TEST_DEBUG='line-tables-only', CARGO_TERM_QUIET='false')
-    out = Path(sys.argv[1])
+    out = Path(args[0])
     out.mkdir(parents=True, exist_ok=False)
     return run_cases(
         root,
         [Case(name, path, old, new, test, expected, scope)
-         for name, path, old, new, scope, test, expected in cases],
-        out, env, mutate, timeout=900, baseline='HEAD')
+         for name, path, old, new, scope, test, expected in selected],
+        out, env, mutate, timeout=900,
+        baseline=env.get('PDRS_NEG_BASELINE', 'HEAD'))
 
 
 if __name__ == '__main__':

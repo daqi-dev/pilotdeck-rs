@@ -54,7 +54,7 @@ pub(crate) fn recorded_read_paths() -> Vec<std::path::PathBuf> {
     READ_PATHS.with(|paths| paths.borrow().clone())
 }
 
-/// `isInternalSession` (`SessionList.ts:10`), shared with the metadata reader.
+/// `isInternalSession` (`SessionList.ts:13`), shared with the metadata reader.
 pub(crate) use crate::metadata::is_internal_session;
 
 struct SessionLite {
@@ -209,6 +209,7 @@ fn parse_session_info_from_lite(
         tag,
         parent_session_id,
         forked_from_turn_id,
+        SessionInfoOrder::Lite,
     )))
 }
 
@@ -243,6 +244,7 @@ fn parse_session_info_from_metadata(
         string("tag"),
         string("parentSessionId"),
         string("forkedFromTurnId"),
+        SessionInfoOrder::Metadata,
     )))
 }
 
@@ -290,6 +292,17 @@ fn merge_session_info(fast: Option<JsValue>, metadata: Option<JsValue>) -> Optio
     }
 }
 
+/// The TS object literal differs between the lite and metadata projections:
+/// `parseSessionInfoFromLite` inserts `tag` before `createdAt`, while
+/// `parseSessionInfoFromMetadata` inserts `createdAt` before `tag`. The wire
+/// compares whole objects byte-for-byte, so a metadata-only fallback must keep
+/// the latter order.
+#[derive(Clone, Copy)]
+enum SessionInfoOrder {
+    Lite,
+    Metadata,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn session_info(
     session_id: &JsString,
@@ -303,6 +316,7 @@ fn session_info(
     tag: Option<JsString>,
     parent_session_id: Option<JsString>,
     forked_from_turn_id: Option<JsString>,
+    order: SessionInfoOrder,
 ) -> JsValue {
     let string = |value: Option<JsString>| value.map_or(JsValue::Undefined, JsValue::String);
     let mut info = JsObject::new();
@@ -317,8 +331,16 @@ fn session_info(
         "cwd".into(),
         JsValue::from(project_root.to_string_lossy().as_ref()),
     );
-    info.insert("tag".into(), string(tag));
-    info.insert("createdAt".into(), created_at);
+    match order {
+        SessionInfoOrder::Lite => {
+            info.insert("tag".into(), string(tag));
+            info.insert("createdAt".into(), created_at);
+        }
+        SessionInfoOrder::Metadata => {
+            info.insert("createdAt".into(), created_at);
+            info.insert("tag".into(), string(tag));
+        }
+    }
     info.insert("parentSessionId".into(), string(parent_session_id));
     info.insert("forkedFromTurnId".into(), string(forked_from_turn_id));
     JsValue::Object(info)

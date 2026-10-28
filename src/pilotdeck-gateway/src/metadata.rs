@@ -1,5 +1,8 @@
 //! Read-only native metadata. Filesystem facts are injectable for archived goldens.
-use crate::runtime::memory::js_trim_units;
+use crate::{
+    js_value::{StackOverflow, ToStringError},
+    runtime::memory::js_trim_units,
+};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, json_syntax, parse_json};
 use std::{
     fs,
@@ -28,43 +31,85 @@ pub(crate) fn text_field(value: &JsValue, key: &str) -> Option<String> {
 /// (`internal/errors.js::determineSpecificType`). The constructor-name branch
 /// uses a template literal, i.e. JavaScript `ToString`: an object name becomes
 /// `[object Object]`, an array name becomes its comma join, and lone
-/// surrogates survive as raw UTF-16 units. `None` is reserved for shapes whose
-/// description Node itself aborts on (a truthy primitive constructor makes
-/// `'name' in constructor` throw a different TypeError).
-pub(crate) fn argument_received(v: &JsValue) -> Option<JsString> {
-    Some(match v {
-        JsValue::Undefined => "undefined".into(),
-        JsValue::Null => "null".into(),
-        JsValue::Number(n) => JsString::from(format!(
+/// surrogates survive as raw UTF-16 units.
+///
+/// `Throws` is the description phase itself failing. Node evaluates
+/// `'name' in constructor` and `${constructor.name}` before it ever builds
+/// the "Received ..." text, so those errors must escape instead of being
+/// rewritten into the caller's `ERR_INVALID_ARG_TYPE`.
+pub(crate) enum ArgumentReceived {
+    Text(JsString),
+    Throws {
+        name: &'static str,
+        message: JsString,
+    },
+}
+
+pub(crate) fn argument_received(v: &JsValue) -> ArgumentReceived {
+    use ArgumentReceived::{Text, Throws};
+    match v {
+        JsValue::Undefined => Text("undefined".into()),
+        JsValue::Null => Text("null".into()),
+        JsValue::Number(n) => Text(JsString::from(format!(
             "type number ({})",
             crate::dispatch::error_number(*n)
-        )),
-        JsValue::Bool(b) => format!("type boolean ({b})").into(),
-        JsValue::Array(_) => "an instance of Array".into(),
+        ))),
+        JsValue::Bool(b) => Text(format!("type boolean ({b})").into()),
+        JsValue::Array(_) => Text("an instance of Array".into()),
         JsValue::Object(o) => match o.get("constructor") {
             // A plain JSON object inherits `Object` from its prototype, so a
             // missing own `constructor` is Node's `an instance of Object`.
-            None => "an instance of Object".into(),
-            Some(constructor) if !js_truthy(constructor) => "[Object]".into(),
+            None => Text("an instance of Object".into()),
+            Some(constructor) if !js_truthy(constructor) => Text("[Object]".into()),
             Some(constructor @ (JsValue::Object(_) | JsValue::Array(_))) => {
                 // `'name' in constructor` is false for `{}` and `[]`, which
                 // falls through to `util.inspect(value, { depth: -1 })`.
                 if !constructor_has_name(constructor) {
-                    "[Object]".into()
+                    Text("[Object]".into())
                 } else {
-                    let name = constructor.get("name")?;
-                    let text = js_to_string(name)?;
-                    let mut units = "an instance of ".encode_utf16().collect::<Vec<_>>();
-                    units.extend_from_slice(text.units());
-                    JsString::from_utf16(units)
+                    let undefined = JsValue::Undefined;
+                    let name = constructor.get("name").unwrap_or(&undefined);
+                    // Reuse the shared iterative ToString: its MAX_ARRAY_DEPTH
+                    // guard makes V8's Array#join RangeError bounded, so a
+                    // wire-nested array cannot exhaust the Rust stack.
+                    match crate::js_value::to_string_units_checked(name) {
+                        Ok(units) => {
+                            let mut text = "an instance of ".encode_utf16().collect::<Vec<_>>();
+                            text.extend_from_slice(&units);
+                            Text(JsString::from_utf16(text))
+                        }
+                        Err(ToStringError::StackOverflow) => Throws {
+                            name: "RangeError",
+                            message: StackOverflow::MESSAGE.into(),
+                        },
+                        Err(ToStringError::NotPrimitive) => Throws {
+                            name: "TypeError",
+                            message: ToStringError::NOT_PRIMITIVE.into(),
+                        },
+                    }
                 }
             }
-            // Truthy primitive constructors (`5`, `true`, `"abc"`) make Node's
-            // `'name' in constructor` throw before a description is built.
-            Some(_) => return None,
+            // A truthy primitive constructor (`5`, `true`, `"abc"`) makes
+            // Node's `'name' in constructor` throw before a description is
+            // built. V8 words that TypeError with `String(constructor)`.
+            Some(constructor) => Throws {
+                name: "TypeError",
+                message: in_operator_message(constructor),
+            },
         },
-        JsValue::String(_) => return None,
-    })
+        // Callers only reach this description after `typeof value !== "string"`;
+        // keep the shape total without claiming a Node wording for it.
+        JsValue::String(_) => Text("an instance of String".into()),
+    }
+}
+
+fn in_operator_message(value: &JsValue) -> JsString {
+    let mut units = "Cannot use 'in' operator to search for 'name' in "
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    // `constructor` is a truthy primitive here, so ToString cannot throw.
+    units.extend(crate::js_value::to_string_units(value).unwrap_or_default());
+    JsString::from_utf16(units)
 }
 
 /// `'name' in constructor` for the JSON-representable prototype chain. Parsed
@@ -86,45 +131,15 @@ fn js_truthy(value: &JsValue) -> bool {
     }
 }
 
-/// JavaScript `String(value)` for values that can appear in parsed JSON.
-/// `None` when `ToString` throws (`Cannot convert object to primitive value`).
-fn js_to_string(value: &JsValue) -> Option<JsString> {
-    Some(match value {
-        JsValue::Undefined => "undefined".into(),
-        JsValue::Null => "null".into(),
-        JsValue::Bool(true) => "true".into(),
-        JsValue::Bool(false) => "false".into(),
-        JsValue::Number(n) => {
-            // `String(-0)` is `"0"`, unlike Node's number diagnostic.
-            if *n == 0.0 {
-                "0".into()
-            } else {
-                crate::dispatch::error_number(*n).into()
-            }
-        }
-        JsValue::String(text) => text.clone(),
-        // Array.prototype.toString is `join(",")`; nullish elements are empty.
-        JsValue::Array(items) => {
-            let mut units = Vec::new();
-            for (index, item) in items.iter().enumerate() {
-                if index > 0 {
-                    units.push(b',' as u16);
-                }
-                if !matches!(item, JsValue::Null | JsValue::Undefined) {
-                    units.extend_from_slice(js_to_string(item)?.units());
-                }
-            }
-            JsString::from_utf16(units)
-        }
-        JsValue::Object(o) => {
-            // Parsed JSON cannot carry a callable `toString`, so an own key
-            // makes OrdinaryToPrimitive fall through to a TypeError.
-            if o.contains_key("toString") {
-                return None;
-            }
-            "[object Object]".into()
-        }
-    })
+/// Node's `The "paths[0]" argument must be of type string. Received ...`
+/// message, keeping the received description as raw UTF-16. Shared by every
+/// Node `validateString` port so the wording and unit fidelity cannot drift.
+pub(crate) fn invalid_arg_type_message(argument: &str, received: &JsString) -> JsString {
+    let mut units = format!("The \"{argument}\" argument must be of type string. Received ")
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    units.extend_from_slice(received.units());
+    JsString::from_utf16(units)
 }
 
 /// ECMAScript WhiteSpace + LineTerminator (`String.prototype.trim`, `\s`).
@@ -136,7 +151,7 @@ pub(crate) fn js_trim(value: &str) -> &str {
     value.trim_matches(js_space)
 }
 
-/// TS `SessionList.ts:10` `isInternalSession`: `always-on-(discovery|workspace|report)`
+/// TS `SessionList.ts:13` `isInternalSession`: `always-on-(discovery|workspace|report)`
 /// followed by `:` or `-`. Shared with the manager file catalog so the prefix
 /// rule has one definition inside the gateway.
 pub(crate) fn is_internal_session(session_id: &str) -> bool {
@@ -1065,11 +1080,14 @@ fn summary_preview(head: &[u8], tail: &[u8], large: bool) -> Result<(Option<bool
     for key in ["tag", "parentSessionId", "forkedFromTurnId"] {
         metadata_field(key)?;
     }
+    // TS `parseSessionInfoFromLite` accepts any non-empty summary string,
+    // including a whitespace-only title; trimming here would hide a session
+    // from `list_projects`/`describe_project` counts and `lastActivity`.
     let fast = title
         .or(ai_title)
         .or_else(|| accepted_text(&tail, true))
         .or_else(|| accepted_text(&head, false))
-        .is_some_and(|text| !js_trim_units(text.units()).is_empty());
+        .is_some_and(|text| !text.is_empty());
     if fast {
         captured_field(&head, "createdAt").map_err(|_| ())?;
     }

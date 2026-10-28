@@ -883,14 +883,16 @@ fn project_root(project: &str) -> Result<String> {
 fn path_arg(value: &JsValue) -> Result<String> {
     match value {
         JsValue::String(s) => Ok(String::from_utf16_lossy(s.units())),
-        _ => Err(SkillError::type_error(
-            "ERR_INVALID_ARG_TYPE",
-            format!(
-                "The \"paths[0]\" argument must be of type string. Received {}",
-                argument_received(value).map_or_else(String::new, |received| {
-                    String::from_utf16_lossy(received.units())
-                })
-            ),
-        )),
+        _ => match argument_received(value) {
+            crate::metadata::ArgumentReceived::Text(received) => Err(SkillError::type_error(
+                "ERR_INVALID_ARG_TYPE",
+                crate::metadata::invalid_arg_type_message("paths[0]", &received),
+            )),
+            // Node's description phase throws before ERR_INVALID_ARG_TYPE; this
+            // error shape has no raw-JS passthrough, so let the host answer.
+            crate::metadata::ArgumentReceived::Throws { .. } => {
+                Err(SkillError::host_failure("JS_HOST_REQUIRED", ""))
+            }
+        },
     }
 }

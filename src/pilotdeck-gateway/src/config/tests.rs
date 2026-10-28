@@ -449,3 +449,29 @@ fn merge_reads_prototype_values_with_utf16_keys_like_javascript() {
     assert_eq!(field(merged, "a"), &JsValue::Number(1.0), "{left:?}");
     assert_eq!(field(merged, "b"), &JsValue::Number(2.0));
 }
+
+/// #934 P1-3: the StaffDeck binding path message must keep the shared
+/// descriptor's raw UTF-16 units instead of `from_utf16_lossy`.
+#[test]
+fn binding_path_argument_preserves_lone_surrogate_units() {
+    let value = parse_json(r#"{"constructor":{"name":"\ud800"}}"#).unwrap();
+    let received = match crate::metadata::argument_received(&value) {
+        crate::metadata::ArgumentReceived::Text(received) => received,
+        crate::metadata::ArgumentReceived::Throws { .. } => panic!("#934 unexpected throw"),
+    };
+    let error = binding::invalid_path_argument(&received);
+    assert_eq!(
+        error.code, "ERR_INVALID_ARG_TYPE",
+        "#934 binding path argument must keep the Node code"
+    );
+    assert_eq!(
+        error.message.units().last(),
+        Some(&0xd800),
+        "#934 binding path argument must keep the lone surrogate unit"
+    );
+    assert!(
+        String::from_utf16_lossy(error.message.units())
+            .starts_with("The \"path\" argument must be of type string. Received an instance of "),
+        "#934 binding path argument must keep the Node wording"
+    );
+}

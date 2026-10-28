@@ -325,18 +325,20 @@ fn sanitize_session_units(s: &JsString) -> Vec<u16> {
     }
 }
 fn path_argument(v: &JsValue) -> Error {
-    let Some(received) = crate::metadata::argument_received(v) else {
-        let mut e = error("JS_HOST_REQUIRED", "");
-        e.requires_host = true;
-        return e;
-    };
-    error(
-        "ERR_INVALID_ARG_TYPE",
-        format!(
-            "The \"paths[0]\" argument must be of type string. Received {}",
-            String::from_utf16_lossy(received.units())
+    match crate::metadata::argument_received(v) {
+        crate::metadata::ArgumentReceived::Text(received) => error(
+            "ERR_INVALID_ARG_TYPE",
+            crate::metadata::invalid_arg_type_message("paths[0]", &received),
         ),
-    )
+        // Node's description phase throws a different TypeError/RangeError
+        // here. This Rust error shape has no raw-JS error passthrough yet, so
+        // hand the call to the host instead of rewriting it.
+        crate::metadata::ArgumentReceived::Throws { .. } => {
+            let mut e = error("JS_HOST_REQUIRED", "");
+            e.requires_host = true;
+            e
+        }
+    }
 }
 fn io_error(e: &std::io::Error, path: &std::path::Path, syscall: &str) -> Error {
     match crate::node_io::lookup_for("session_model_get", e)

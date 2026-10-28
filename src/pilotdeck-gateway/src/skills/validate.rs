@@ -33,9 +33,10 @@ impl Report {
             None => JsValue::Null,
             // TS returns the toJS object as-is; only a cycle (which TS would
             // fail to JSON.stringify later) has no JsValue form.
-            Some(fm) => fm.graph.to_js_value().map_err(|e| {
-                SkillError::type_error("", String::from_utf16_lossy(e.message.units()))
-            })?,
+            Some(fm) => fm
+                .graph
+                .to_js_value()
+                .map_err(|e| SkillError::type_error("", e.message))?,
         };
         Ok(into_object(object([
             ("ok", JsValue::Bool(self.hard_fails.is_empty())),

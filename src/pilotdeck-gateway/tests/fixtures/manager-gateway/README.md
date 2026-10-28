@@ -13,7 +13,7 @@
 | `manager_sessions` | 先 `resolveProjectKey(input.projectKey ?? fallbackProjectRoot)`，再 `registry.listSessions({projectKey, limit:100})` | `{items: SessionInfo[]}`；`sessionKey` 为 JS truthy 时按 `sessionId === key || sessionKey === key` 过滤；空串/0 不过滤 |
 | `manager_browsers` | 直接 `options.managerBrowsers(input)`；不解析 project | provider 返回的 `{items: ...}` 原样返回；无 provider 为 `CAPABILITY_UNAVAILABLE` |
 
-`oracle.json` 的 27 个 operation 覆盖：sessions 成功/过滤（id、alias、无匹配、空串、0、数字）/空目录/fallback/未知 projectKey/catalog 结构化错误/catalog raw error/**null params/缺 params/`projectKey` 数字、数组、对象、布尔/`constructor.name` 为对象、数组、孤立代理项**；
+`oracle.json` 的 33 个 operation 覆盖：sessions 成功/过滤（id、alias、无匹配、空串、0、数字）/空目录/fallback/未知 projectKey/catalog 结构化错误/catalog raw error/**null params/缺 params/`projectKey` 数字、数组、对象、布尔/`constructor.name` 为对象、数组、孤立代理项，以及描述阶段抛出的 `constructor` 原始值 / `name.toString` TypeError**；
 browsers 成功/空/缺 sessionKey/结构化错误/raw error/无 provider。非法参数断言 catalog 不被调用。
 
 ## 文件 catalog 形状（P1-3）
@@ -58,6 +58,8 @@ Rust `runtime::manager::tests::manager_catalog_matrix_matches_real_ts` 用同一
 | R18 | accepted_input text 含 `\ud800` × list | summary/firstPrompt 保留孤立代理项 | `manager_catalog_preserves_lone_surrogates` |
 | R19 | metadata 在 head/tail 之外且 title 含 `\ud800` × list | 回退扫描仍保留孤立代理项 | `manager_catalog_preserves_lone_surrogates` |
 | R20 | metadata title `\q` / createdAt `\q` × list | `SyntaxError`（V8 JSON.parse 文案）整体拒绝 | `manager_catalog_propagates_metadata_syntax_errors` |
+| R21 | metadata title 仅空白 `" "` × list | 非空字符串即摘要，session 保留 | `manager_catalog_whitespace_title_is_a_summary` |
+| R22 | 大文件 head 无摘要、仅中段 metadata 提供 title/tag，head 另有 createdAt × list | metadata-only 投影，字段序 `cwd, createdAt, tag` | `manager_catalog_metadata_only_keeps_ts_field_order` |
 
 C3/C5 的等待全部有界：写者 gate `Condvar::wait_timeout(10s)`，读线程
 `recv_timeout(5s)`；失败路径先释放 gate。R4 证明“前驱永不完成”时读仍返回，R5 证明取消后前缀不变。
@@ -93,12 +95,14 @@ CARGO_TARGET_DIR="$PWD/_build/cargo-target" PDRS_BASELINE="$PDRS_BASELINE" \
   _tmp/20261026-issue-934/negative-controls
 ```
 
-24 个变异：半行尾丢弃、内部 session 过滤移除、`cwd` 移除、summary trim、非法 params 容错、
+32 个变异：半行尾丢弃、内部 session 过滤移除、`cwd` 移除、summary trim、非法 params 容错、
 非字符串 projectKey 字符串化、负 end 分页、browser port 恒 unavailable、错误 code 投影、
 sessionKey 过滤移除、catalog limit 改 50、manager 方法误加 LOCAL_METHODS、未知 projectKey 有损 UTF-16、
 mtime 截断、同 mtime 名字序反转、快速/metadata 回退/prompt 三路代理项有损、
 title/createdAt 反转义错误被吞、`constructor.name` 对象退化成 `Object`、`constructor.name`
-数组分支错误、`constructor.name` 代理项有损、内部 session 过滤后移到读取之后。
+数组分支错误、`constructor.name` 代理项有损、内部 session 过滤后移到读取之后；
+以及本轮的深嵌套 ToString 递归、描述阶段异常被改写、共享 metadata 空白标题 trim、
+metadata-only 字段序、session_model/config/skills/manager 四处描述器有损转换。
 执行器是 `tests/fixtures/negative_suite.py`：逐项正控 → 变异 → 恢复 → 汇总
 KILLED/SURVIVED/INVALID，任一非 KILLED 非零退出。新增产品文件在提交前不在 HEAD，
 `mutating_sources` 会拒绝；提交后由协调者运行。`--audit` 只核对锚点。

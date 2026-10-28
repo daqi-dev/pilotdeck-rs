@@ -193,6 +193,12 @@ const operations: Operation[] = [
   { name: 'sessions-projectKey-name-object', method: 'manager_sessions', params: { projectKey: { constructor: { name: {} } } }, catalog: { items: [S1] }, browser: { result: browserResult } },
   { name: 'sessions-projectKey-name-array', method: 'manager_sessions', params: { projectKey: { constructor: { name: [] } } }, catalog: { items: [S1] }, browser: { result: browserResult } },
   { name: 'sessions-projectKey-name-surrogate', method: 'manager_sessions', params: { projectKey: { constructor: { name: '\ud800' } } }, catalog: { items: [S1] }, browser: { result: browserResult } },
+  { name: 'sessions-projectKey-constructor-primitive', method: 'manager_sessions', params: { projectKey: { constructor: 5 } }, catalog: { items: [S1] }, browser: { result: browserResult } },
+  { name: 'sessions-projectKey-constructor-true', method: 'manager_sessions', params: { projectKey: { constructor: true } }, catalog: { items: [S1] }, browser: { result: browserResult } },
+  { name: 'sessions-projectKey-name-tostring', method: 'manager_sessions', params: { projectKey: { constructor: { name: { toString: 'x' } } } }, catalog: { items: [S1] }, browser: { result: browserResult } },
+  { name: 'sessions-projectKey-name-null', method: 'manager_sessions', params: { projectKey: { constructor: { name: null } } }, catalog: { items: [S1] }, browser: { result: browserResult } },
+  { name: 'sessions-projectKey-name-empty-array', method: 'manager_sessions', params: { projectKey: { constructor: { name: [] } } }, catalog: { items: [S1] }, browser: { result: browserResult } },
+  { name: 'sessions-projectKey-constructor-null', method: 'manager_sessions', params: { projectKey: { constructor: null } }, catalog: { items: [S1] }, browser: { result: browserResult } },
   { name: 'sessions-projectKey-bool', method: 'manager_sessions', params: { projectKey: true }, catalog: { items: [S1] }, browser: { result: browserResult } },
   { name: 'browsers-success', method: 'manager_browsers', params: { projectKey: '<dir>', sessionKey: 's-1' }, catalog: { items: [S1] }, browser: { result: browserResult } },
   { name: 'browsers-empty', method: 'manager_browsers', params: { projectKey: '<dir>' }, catalog: { items: [S1] }, browser: { result: { items: [] } } },
@@ -275,6 +281,7 @@ try {
     type: 'accepted_input',
     messages: [{ content: [{ type: 'text', text: 'x'.repeat(70000) }] }],
   }) + '\n';
+  const otherPadLine = JSON.stringify({ type: 'other', pad: 'x'.repeat(70000) }) + '\n';
   const fiveFiles = [
     file('s-1.jsonl', line1, 1_700_000_000_000),
     file('s-2.jsonl', line2, 1_700_000_001_000),
@@ -294,6 +301,17 @@ try {
         title: '  title  ', aiTitle: 'ai', tag: 'tag-1',
         parentSessionId: 'parent-1', forkedFromTurnId: 'fork-1',
       }, 9), 1_700_000_000_500),
+    ] },
+    { name: 'whitespace-title', includeInternal: false, files: [
+      file('space.jsonl', metadataLine({ title: ' ' }, 9), 1_700_000_000_000),
+    ] },
+    { name: 'metadata-only-order', includeInternal: false, files: [
+      file('meta-only.jsonl',
+        '{"type":"other","createdAt":"2023-01-01T00:00:00Z"}\n'
+        + otherPadLine
+        + metadataLine({ title: 'fallback', tag: 'tagged' }, 9)
+        + otherPadLine,
+        1_700_000_000_000),
     ] },
     { name: 'internal-hidden', includeInternal: false, files: [
       file('s-1.jsonl', line1, 1_700_000_000_000),
