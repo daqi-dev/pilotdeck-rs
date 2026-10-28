@@ -233,14 +233,20 @@ class ScannerControls(unittest.TestCase):
     def test_switch_whitelist_readonly_forms_stay_supported(self):
         # The positive side of the fix-r2 whitelist: the enumerated read-only
         # uses of the declared table must keep checking, or the scanner would
-        # force schemata runners into unsupported markers.
+        # force schemata runners into unsupported markers. fix-r3: the audit
+        # subprocess imports this script, so the executor entry must also be
+        # bound at runtime (production imports _shared.mutant_switch).
         self.source.write_text('crate::mutants::on("sample")\n')
         table = "switches = [('sample', source, 'sample_test', '#996 a')]\n"
-        reads = ('total = len(switches)\n'
-                 'chosen = mutant_switch.selected(switches, [])\n'
-                 "rows = [dict(zip(('name', 'path', 'test', 'anchor'), row))"
-                 ' for row in switches]\n'
-                 'for row in switches:\n    pass\n')
+        stub = ('class mutant_switch:\n'
+                '    @staticmethod\n'
+                '    def selected(rows, names):\n'
+                '        return list(rows)\n')
+        reads = stub + ('total = len(switches)\n'
+                        'chosen = mutant_switch.selected(switches, [])\n'
+                        "rows = [dict(zip(('name', 'path', 'test', 'anchor'), row))"
+                        ' for row in switches]\n'
+                        'for row in switches:\n    pass\n')
         self.write(table + reads)
         self.assertIn('CHECKED sample/negative.py: 1 anchors',
                       self.run_check(label='switch-whitelist'),
@@ -253,6 +259,127 @@ class ScannerControls(unittest.TestCase):
         self.assertIn('CHECKED sample/negative.py: 1 anchors',
                       self.run_check(label='switch-whitelist-restored'),
                       '#996 r2 the bare table must check one anchor again')
+
+    def test_switch_runtime_table_drift_fails_closed(self):
+        # #996 fix-r3 review P1: the r2 whitelist trusts call names without
+        # verifying bindings, so a shadowed len(), a rebound executor alias or
+        # an assignment/import alias of globals() shrinks the executed table
+        # while the static audit still extracts every declared row. The module
+        # imported by the audit subprocess is the truth: every drift, in row
+        # count or in any row field, fails closed.
+        self.source.write_text('crate::mutants::on("sample")\n')
+        table = "switches = [('sample', source, 'sample_test', '#996 a')]\n"
+        stub = ('class mutant_switch:\n'
+                '    @staticmethod\n'
+                '    def selected(rows, names):\n'
+                '        return list(rows)\n')
+        drift = (
+            ('len-shadow',
+             'original_len = len\nlen = lambda rows: rows.pop(0)\nlen(switches)\nlen = original_len\n',
+             'switches runtime drift: the static audit extracted 1 rows, '
+             'the imported module has 0'),
+            ('executor-rebind',
+             'executor = mutant_switch\nmutant_switch = list\n'
+             'mutant_switch.pop(switches, 0)\nmutant_switch = executor\n',
+             'switches runtime drift: the static audit extracted 1 rows, '
+             'the imported module has 0'),
+            ('globals-import-alias',
+             'from builtins import globals as namespace\n'
+             'namespace()["swi" + "tches"].pop(0)\n',
+             'switches runtime drift: the static audit extracted 1 rows, '
+             'the imported module has 0'),
+            ('globals-assignment-alias',
+             'namespace = globals\nnamespace()["swi" + "tches"].pop(0)\n',
+             'switches runtime drift: the static audit extracted 1 rows, '
+             'the imported module has 0'),
+            ('name-drift',
+             'namespace = globals\n'
+             'namespace()["swi" + "tches"][0] = ("other", source, "sample_test", "#996 a")\n',
+             "switches runtime row 0: name 'other' differs from the audited 'sample'"),
+            ('path-drift',
+             'namespace = globals\n'
+             'namespace()["swi" + "tches"][0] = ("sample", root / "src/elsewhere.rs", '
+             '"sample_test", "#996 a")\n',
+             'switches runtime row 0 (sample): target '),
+            ('test-drift',
+             'namespace = globals\n'
+             'namespace()["swi" + "tches"][0] = ("sample", source, "other_test", "#996 a")\n',
+             "switches runtime row 0 (sample): test 'other_test' differs "
+             "from the audited 'sample_test'"),
+            ('assertion-drift',
+             'namespace = globals\n'
+             'namespace()["swi" + "tches"][0] = ("sample", source, "sample_test", "#996 b")\n',
+             'switches runtime row 0 (sample): assertion differs from the audited binding'),
+        )
+        for label, escape, message in drift:
+            with self.subTest(escape=label):
+                self.write(table + stub + escape)
+                self.assertIn(message, self.run_check(1, label=f'#996 r3 {label}'),
+                              f'#996 r3 {label} must fail closed on runtime table drift')
+                self.write(table + stub)
+                self.assertIn('CHECKED sample/negative.py: 1 anchors',
+                              self.run_check(label=f'#996 r3 {label}-restored'),
+                              f'#996 r3 {label} must restore one checked anchor')
+
+    def test_switch_runtime_audit_failures_fail_closed(self):
+        # The audit subprocess itself must fail closed: a module that cannot
+        # be imported, whose executed table is not a list, whose rows are
+        # malformed, that forges an audit record, or that hangs past the
+        # bounded timeout are all errors, never silent passes.
+        self.source.write_text('crate::mutants::on("sample")\n')
+        table = "switches = [('sample', source, 'sample_test', '#996 a')]\n"
+        failures = (
+            ('import-error',
+             "raise RuntimeError('boom')\n",
+             'switches runtime audit failed: import failed: RuntimeError: boom'),
+            ('non-list-table',
+             'namespace = globals\nnamespace()["swi" + "tches"] = 42\n',
+             'the imported switches binding is int, not a list'),
+            ('malformed-row',
+             'namespace = globals\n'
+             'namespace()["swi" + "tches"] = [("sample", source, "sample_test")]\n',
+             'a runtime switches row is not a (name, path, test, assertion) quadruple'),
+            ('forged-audit-record',
+             'print("PDRS_RUNTIME_SWITCHES forged")\n',
+             'switches runtime audit produced 2 audit records'),
+        )
+        for label, failure, message in failures:
+            with self.subTest(failure=label):
+                self.write(table + failure)
+                self.assertIn(message, self.run_check(1, label=f'#996 r3 {label}'),
+                              f'#996 r3 {label} must fail closed')
+        with patch.object(CHECK, 'RUNTIME_SWITCH_TIMEOUT', 1):
+            self.write(table + 'import time\ntime.sleep(10)\n')
+            self.assertIn('switches runtime audit exceeded 1s',
+                          self.run_check(1, label='#996 r3 audit-timeout'),
+                          '#996 r3 a hanging module must hit the bounded timeout')
+        self.write(table)
+        self.assertIn('CHECKED sample/negative.py: 1 anchors',
+                      self.run_check(label='#996 r3 audit-restored'),
+                      '#996 r3 the restored table must check one anchor again')
+
+    def test_production_schemata_runtime_audit_stays_clean(self):
+        # fix-r3 positive control: the whole production repository must keep
+        # checking with the runtime reconciliation active. All three schemata
+        # are covered: session-domain and host-factory are checked through
+        # their switches tables, edgeclaw-service-facade stays the marked
+        # precompiled runner whose anchors live in negative.py.
+        signals = patch.dict(CHECK.UNSUPPORTED_SIGNALS, PRODUCTION_UNSUPPORTED_SIGNALS, clear=True)
+        signals.start()
+        self.addCleanup(signals.stop)
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = CHECK.check(PATH.resolve().parents[4], anchors_only=True)
+        report = output.getvalue()
+        self.assertEqual(code, 0, f'#996 r3 production check must stay clean\n{report}')
+        self.assertIn('CHECKED session-domain/schemata.py: 49 anchors', report,
+                      '#996 r3 session-domain must reconcile its 49 runtime rows')
+        self.assertIn('CHECKED host-factory/schemata.py: 3 anchors', report,
+                      '#996 r3 host-factory must reconcile its 3 runtime rows')
+        self.assertIn('UNSUPPORTED edgeclaw-service-facade/schemata.py:', report,
+                      '#996 r3 the precompiled schemata stays marker-exempt')
+        self.assertIn('errors=0', report,
+                      '#996 r3 the whole-tree audit must report no errors')
 
     def test_marker_scripts_cannot_hide_a_switch_table(self):
         self.source.write_text('crate::mutants::on("sample")\n')

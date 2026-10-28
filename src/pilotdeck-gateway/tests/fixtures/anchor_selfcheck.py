@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
-# anchor-selfcheck: unsupported static scanner, no executable product mutations
-"""Read-only negative-control preflight; never imports a control or runs cargo.
+# anchor-selfcheck: unsupported scanner host, no executable product mutations
+"""Read-only negative-control preflight; cargo is never run, no main() executes.
+
+#996 fix-r3: switches-table schemata are the one deliberate exception to a
+purely static scan. Each is imported once in an isolated ``python3 -I -B``
+audit subprocess (module name is never ``__main__``, so ``main()`` and
+``if __name__`` guards stay inert and no bytecode is written) and its final
+executed ``switches`` table is reconciled row by row with the statically
+extracted rows; any drift, import failure, timeout or malformed table fails
+closed. The static whitelist below stays only as the fast first gate.
 
 python3 -I .../anchor_selfcheck.py --anchors-only   # CI, report env gaps
 python3 -I .../anchor_selfcheck.py                  # local, env gaps fail
@@ -36,6 +44,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import os
 import tokenize
@@ -53,6 +62,58 @@ SWITCH_TABLE_NAMES = {'switches'}
 # script rejects them outright (#996 fix-r2), closing `'swi' + 'tches'`
 # spellings that no occurrence whitelist can see.
 SWITCH_DYNAMIC_SYMBOLS = {'setattr', 'globals', 'vars'}
+# #996 fix-r3: a static whitelist still trusts call *names*, so a shadowed
+# `len`, a rebound executor alias or an aliased `globals()` can shrink the
+# executed table without one whitelisted occurrence (3rd round of the same
+# hole; Python is dynamic, per-shape chasing cannot finish). The executed
+# module is therefore the truth: every switches-table script is imported in
+# an isolated audit subprocess (python3 -I -B; the module name below is never
+# `__main__`, so main()/if __name__ blocks stay inert) and its final
+# `switches` object is reconciled row by row with the static rows. The child
+# answers with exactly one prefixed JSON audit record; duplicates (a forged
+# decoy line), import failures, timeouts, non-list tables and malformed rows
+# all fail closed.
+RUNTIME_SWITCH_PREFIX = 'PDRS_RUNTIME_SWITCHES '
+RUNTIME_SWITCH_TIMEOUT = 30
+RUNTIME_SWITCH_BOOTSTRAP = '''\
+import importlib.util, json, os, sys
+name = 'pdrs_switch_runtime_audit'
+spec = importlib.util.spec_from_file_location(name, sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[name] = module
+document = {'rows': None, 'error': None}
+try:
+    spec.loader.exec_module(module)
+    table = getattr(module, 'switches', None)
+    if not isinstance(table, list):
+        document['error'] = f'the imported switches binding is {type(table).__name__}, not a list'
+    else:
+        rows = []
+        for row in table:
+            if not isinstance(row, (list, tuple)) or len(row) != 4:
+                document['error'] = 'a runtime switches row is not a (name, path, test, assertion) quadruple'
+                break
+            switch_name, switch_path, switch_test, switch_assertion = row
+            if not isinstance(switch_name, str) or not switch_name:
+                document['error'] = 'a runtime switches row has an empty or non-string name'
+                break
+            if not isinstance(switch_path, (str, os.PathLike)):
+                document['error'] = 'a runtime switches row has a non-path mutation target'
+                break
+            if not isinstance(switch_test, str) or not switch_test:
+                document['error'] = 'a runtime switches row has an empty or non-string test binding'
+                break
+            if not ((isinstance(switch_assertion, str) and switch_assertion)
+                    or (isinstance(switch_assertion, list) and switch_assertion
+                        and all(isinstance(item, str) and item for item in switch_assertion))):
+                document['error'] = 'a runtime switches row has an invalid assertion binding'
+                break
+            rows.append([switch_name, str(switch_path), switch_test, switch_assertion])
+        document['rows'] = rows
+except BaseException as error:
+    document['error'] = f'import failed: {type(error).__name__}: {error}'
+print('PDRS_RUNTIME_SWITCHES ' + json.dumps(document))
+'''
 # A script without a declarative, whole-file source replacement table declares
 # its exact exemption in its own header: ``# anchor-selfcheck: unsupported
 # <nonempty reason>`` within the first 20 lines. The reason lives next to the
@@ -930,6 +991,95 @@ def switch_table_rows(tree, static):
             yield row
 
 
+def switch_bindings(tree, static):
+    """Evaluate the audited (name, path, test, assertion, line) switch rows."""
+    bindings = []
+    seen = set()
+    for row in switch_table_rows(tree, static):
+        for local in static.contexts(row):
+            line = row.lineno
+            name = static.value(row.elts[0], line, local)
+            path = static.target(row.elts[1], line, local)
+            test = static.value(row.elts[2], line, local)
+            assertion = static.value(row.elts[3], line, local)
+            if not isinstance(name, str) or not name:
+                raise Unsupported(f'line {line}: invalid switch name')
+            if name in seen:
+                raise Unsupported(f'line {line}: duplicate switch name: {name}')
+            seen.add(name)
+            if not isinstance(test, str) or not test:
+                raise Unsupported(f'{name}: invalid switch test binding')
+            if not ((isinstance(assertion, str) and assertion)
+                    or (isinstance(assertion, list) and assertion
+                        and all(isinstance(item, str) and item for item in assertion))):
+                raise Unsupported(f'{name}: invalid switch assertion binding')
+            bindings.append((name, static.confined(path), test, assertion, line))
+    return bindings
+
+
+def runtime_switch_table(script):
+    """Import the switches-table script isolated; return its executed rows.
+
+    The child never runs as ``__main__`` and answers with exactly one prefixed
+    JSON audit record; anything else (import failure, timeout, a forged or
+    duplicated record, a non-JSON record) fails closed. Output goes to a real
+    temporary file, not a pipe, so a descendant that survives the timeout kill
+    cannot hold collection open (#528 shape).
+    """
+    command = [sys.executable or 'python3', '-I', '-B', '-c', RUNTIME_SWITCH_BOOTSTRAP, str(script)]
+    with tempfile.TemporaryFile() as report:
+        try:
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
+                                       stdout=report, stderr=subprocess.STDOUT)
+        except OSError as error:
+            raise Unsupported(f'switches runtime audit could not start python: {error}') from error
+        try:
+            process.wait(timeout=RUNTIME_SWITCH_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            raise Unsupported(f'switches runtime audit exceeded {RUNTIME_SWITCH_TIMEOUT}s') from None
+        report.seek(0)
+        finished = report.read().decode('utf-8', 'replace')
+    records = [line[len(RUNTIME_SWITCH_PREFIX):] for line in finished.splitlines()
+               if line.startswith(RUNTIME_SWITCH_PREFIX)]
+    if len(records) != 1:
+        tail = finished[-160:].replace('\n', ' ')
+        raise Unsupported(f'switches runtime audit produced {len(records)} audit records '
+                          f'(exit={process.returncode}); output tail: {tail!r}')
+    try:
+        document = json.loads(records[0])
+    except ValueError as error:
+        raise Unsupported(f'switches runtime audit record is not JSON: {error}') from error
+    if not isinstance(document, dict):
+        raise Unsupported('switches runtime audit record is not an object')
+    if document.get('error') is not None:
+        raise Unsupported(f'switches runtime audit failed: {document["error"]}')
+    if not isinstance(document.get('rows'), list):
+        raise Unsupported('switches runtime audit record carries no rows')
+    return document['rows']
+
+
+def audit_runtime_switches(script, rows):
+    """The imported module is the truth; reconcile it with the static rows."""
+    table = runtime_switch_table(script)
+    if len(table) != len(rows):
+        raise Unsupported(f'switches runtime drift: the static audit extracted {len(rows)} rows, '
+                          f'the imported module has {len(table)}')
+    for index, ((name, path, test, assertion, _line), row) in enumerate(zip(rows, table)):
+        if row[0] != name:
+            raise Unsupported(f'switches runtime row {index}: name {row[0]!r} differs from the audited {name!r}')
+        if Path(row[1]).resolve() != path:
+            raise Unsupported(f'switches runtime row {index} ({name}): target {row[1]} '
+                              f'differs from the audited {path}')
+        if row[2] != test:
+            raise Unsupported(f'switches runtime row {index} ({name}): test {row[2]!r} '
+                              f'differs from the audited {test!r}')
+        if row[3] != assertion:
+            raise Unsupported(f'switches runtime row {index} ({name}): assertion '
+                              'differs from the audited binding')
+
+
 def host_pump_count(tree, static, name, local):
     """Read this runner's exact occurrence guard, including its wire exception."""
     guards = [node for node in ast.walk(tree) if isinstance(node, ast.Assert)
@@ -1088,27 +1238,13 @@ def extract(script, root):
                 scoped.add(name)
             anchors.append(Anchor(name, static.confined(path), before, count, flags is not None, line, flags or 0, scope))
     # #996: compile-time switch tables count their single switch site per file.
-    switch_seen = set()
-    for row in switch_table_rows(tree, static):
-        for local in static.contexts(row):
-            line = row.lineno
-            name = static.value(row.elts[0], line, local)
-            path = static.target(row.elts[1], line, local)
-            test = static.value(row.elts[2], line, local)
-            assertion = static.value(row.elts[3], line, local)
-            if not isinstance(name, str) or not name:
-                raise Unsupported(f'line {line}: invalid switch name')
-            if name in switch_seen:
-                raise Unsupported(f'line {line}: duplicate switch name: {name}')
-            switch_seen.add(name)
-            if not isinstance(test, str) or not test:
-                raise Unsupported(f'{name}: invalid switch test binding')
-            if not ((isinstance(assertion, str) and assertion)
-                    or (isinstance(assertion, list) and assertion
-                        and all(isinstance(item, str) and item for item in assertion))):
-                raise Unsupported(f'{name}: invalid switch assertion binding')
-            anchors.append(Anchor(name, static.confined(path),
-                                  f'::mutants::on("{name}")', 1, line=line))
+    # fix-r3: the static whitelist stays the fast first gate; the imported
+    # module is the truth for the executed table, so reconcile it here.
+    switch_rows = switch_bindings(tree, static)
+    for name, path, _test, _assertion, line in switch_rows:
+        anchors.append(Anchor(name, path, f'::mutants::on("{name}")', 1, line=line))
+    if switch_rows:
+        audit_runtime_switches(script, switch_rows)
     # Imperative secondary replacements used alongside the declarative tables.
     # Match AST receiver + function scope, then read the existing argument; do
     # not duplicate the source fragment in this checker.
