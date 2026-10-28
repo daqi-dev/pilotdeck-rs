@@ -21,4 +21,4 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/background-create-gate/negative_
 
 六个负控依次编译、跑绑定测试、恢复正控并汇总，任何非 KILLED 非零退出：去掉创建门闩、shell 立即退出、跳过 release/stop/dispose、矩阵模式遗漏。锚点必须唯一；变异通过 `mutating_sources` 持锁，cargo 通过 `run_owned` 和 `wait_for_slot`，必须使用调用方 CARGO_TARGET_DIR。未提交的新金样会被 HEAD 守卫拒绝，此时交协调者提交后执行，不绕过守卫。
 
-同类扫描：exit-statuses 的立即退出/信号/子输出、list-filters 的 echo、max-tasks 的 echo、non-string-command 均走同一个创建门闩。其他命令已有 go 文件门闩或长任务，仍同样约束创建快照。sdk-projections 的 subTick 20ms/ignore-abort 50ms 属另一类 subagent 稳定化窗口，本单只记录，未改变其行为。
+同类扫描：exit-statuses 的立即退出/信号/子输出、list-filters 的 echo、max-tasks 的 echo、non-string-command 均走同一个创建门闩。其他命令已有 go 文件门闩或长任务，仍同样约束创建快照。sdk-projections 的 subTick 20ms/ignore-abort 50ms 窗口由后续 [#957 子代理门闩](../background-subtick-gate/README.md) 消除，沿用原金样和严格断言。

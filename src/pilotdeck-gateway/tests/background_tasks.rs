@@ -65,16 +65,16 @@ fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
     value.get(key).unwrap_or(&UNDEFINED)
 }
 fn text(value: &JsValue) -> String {
-    String::from_utf16_lossy(value.as_string().expect("#956 fixture string").units())
+    String::from_utf16_lossy(value.as_string().expect("#956 #957 fixture string").units())
 }
 fn array(value: &JsValue) -> &[JsValue] {
     match value {
         JsValue::Array(values) => values,
-        other => panic!("#956 fixture array, got {other:?}"),
+        other => panic!("#956 #957 fixture array, got {other:?}"),
     }
 }
 fn number(value: &JsValue) -> f64 {
-    value.as_number().expect("#956 fixture number")
+    value.as_number().expect("#956 #957 fixture number")
 }
 fn object(entries: impl IntoIterator<Item = (&'static str, JsValue)>) -> JsObject {
     let mut object = JsObject::new();
@@ -85,16 +85,16 @@ fn object(entries: impl IntoIterator<Item = (&'static str, JsValue)>) -> JsObjec
 }
 fn wire(value: &JsValue) -> String {
     stringify_json(value)
-        .expect("#956 replay serialization/runtime")
+        .expect("#956 #957 replay serialization/runtime")
         .unwrap_or_default()
 }
 fn section<'a>(name: &str, count: usize) -> &'a [JsValue] {
     let items = array(field(oracle(), name));
-    assert_eq!(items.len(), count, "#956 oracle section {name}");
+    assert_eq!(items.len(), count, "#956 #957 oracle section {name}");
     assert_eq!(
         field(field(oracle(), "counts"), name).as_number(),
         Some(count as f64),
-        "#956 oracle counts.{name}"
+        "#956 #957 oracle counts.{name}"
     );
     items
 }
@@ -104,7 +104,7 @@ fn runtime() -> tokio::runtime::Runtime {
         .worker_threads(2)
         .enable_all()
         .build()
-        .expect("#956 replay serialization/runtime")
+        .expect("#956 #957 replay serialization/runtime")
 }
 
 fn context(fields: JsObject, signal: Option<ToolCancellation>) -> ToolRunContext {
@@ -302,8 +302,10 @@ impl Placeholders {
                     .and_then(|rest| rest.strip_suffix('>'))
                 {
                     return JsValue::from(
-                        self.tasks[index.parse::<usize>().expect("#956 sequence prerequisite")]
-                            .as_str(),
+                        self.tasks[index
+                            .parse::<usize>()
+                            .expect("#956 #957 sequence prerequisite")]
+                        .as_str(),
                     );
                 }
                 if let Some(index) = text
@@ -311,8 +313,10 @@ impl Placeholders {
                     .and_then(|rest| rest.strip_suffix('>'))
                 {
                     return JsValue::from(
-                        self.subs[index.parse::<usize>().expect("#956 sequence prerequisite")]
-                            .as_str(),
+                        self.subs[index
+                            .parse::<usize>()
+                            .expect("#956 #957 sequence prerequisite")]
+                        .as_str(),
                     );
                 }
                 if text.contains("<root>") {
@@ -338,7 +342,7 @@ impl Placeholders {
 }
 
 fn group_alive(pid: u32) -> bool {
-    let pid = rustix::process::Pid::from_raw(pid as i32).expect("#956 task pid");
+    let pid = rustix::process::Pid::from_raw(pid as i32).expect("#956 #957 task pid");
     rustix::process::test_kill_process_group(pid).is_ok()
 }
 
@@ -360,13 +364,13 @@ impl ProcessGroups {
     fn track(&self, pid: u32) {
         self.pids
             .lock()
-            .expect("#956 sequence prerequisite")
+            .expect("#956 #957 sequence prerequisite")
             .insert(pid);
     }
     fn snapshot(&self) -> Vec<u32> {
         self.pids
             .lock()
-            .expect("#956 sequence prerequisite")
+            .expect("#956 #957 sequence prerequisite")
             .iter()
             .copied()
             .collect()
@@ -374,13 +378,18 @@ impl ProcessGroups {
     fn disarm(&self) {
         self.pids
             .lock()
-            .expect("#956 sequence prerequisite")
+            .expect("#956 #957 sequence prerequisite")
             .clear();
     }
 }
 impl Drop for ProcessGroups {
     fn drop(&mut self) {
-        for pid in self.pids.lock().expect("#956 sequence prerequisite").iter() {
+        for pid in self
+            .pids
+            .lock()
+            .expect("#956 #957 sequence prerequisite")
+            .iter()
+        {
             if group_alive(*pid)
                 && let Some(pid) = rustix::process::Pid::from_raw(*pid as i32)
             {
@@ -395,7 +404,7 @@ async fn until(what: &str, mut check: impl FnMut() -> bool) {
     while !check() {
         assert!(
             Instant::now() < deadline,
-            "#956 timed out waiting for {what}"
+            "#956 #957 timed out waiting for {what}"
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -405,32 +414,73 @@ fn task_id(placeholders: &Placeholders, index: &JsValue) -> JsString {
     JsString::from(placeholders.tasks[number(index) as usize].as_str())
 }
 
-/// The subagent body for one fixture behavior.
-fn subagent_run(
-    behavior: &str,
-    release: Option<oneshot::Receiver<()>>,
-) -> pilotdeck_gateway::runtime::background::SubagentRun {
-    let behavior = behavior.to_string();
-    Box::new(move |signal: ToolCancellation| {
-        Box::pin(async move {
-            match behavior.as_str() {
-                "fail" => Err(JsString::from("boom")),
-                "release" => {
-                    let _ = release.expect("#956 release channel").await;
-                    Ok(())
+async fn subagent_bounded<T>(work: impl Future<Output = T>) -> T {
+    tokio::time::timeout(Duration::from_secs(8), work)
+        .await
+        .expect("#957 subagent event deadline")
+}
+
+// Like CreateGate, elapsed time never releases a body. Entry and completion
+// are separate events: cancellation can commit while the body is still held.
+struct SubagentGate {
+    behavior: String,
+    entered: Option<oneshot::Receiver<ToolCancellation>>,
+    release: Option<oneshot::Sender<()>>,
+    signal: Option<ToolCancellation>,
+}
+
+impl SubagentGate {
+    fn new(behavior: &str) -> (Self, pilotdeck_gateway::runtime::background::SubagentRun) {
+        let (enter, entered) = oneshot::channel();
+        let (release, receiver) = oneshot::channel();
+        let gate = Self {
+            behavior: behavior.into(),
+            entered: Some(entered),
+            release: Some(release),
+            signal: None,
+        };
+        let behavior = behavior.to_string();
+        let run: pilotdeck_gateway::runtime::background::SubagentRun = Box::new(move |signal| {
+            Box::pin(async move {
+                let _ = enter.send(signal.clone());
+                match behavior.as_str() {
+                    "fail" => Err(JsString::from("boom")),
+                    "release" | "ignore-abort" => {
+                        receiver.await.expect("#957 explicit body release");
+                        Ok(())
+                    }
+                    "block" => {
+                        signal.cancelled().await;
+                        Err(JsString::from("stopped"))
+                    }
+                    other => panic!("#957 unknown subagent behavior {other}"),
                 }
-                "ignore-abort" => {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    Ok(())
-                }
-                "block" => {
-                    signal.cancelled().await;
-                    Err(JsString::from("stopped"))
-                }
-                other => panic!("#956 unknown subagent behavior {other}"),
-            }
-        })
-    })
+            })
+        });
+        (gate, run)
+    }
+
+    fn release(&mut self) {
+        self.release
+            .take()
+            .expect("#957 release exactly once")
+            .send(())
+            .expect("#957 held body receives release");
+    }
+
+    async fn settle(&mut self, runtime: &BackgroundSubagentRuntime, id: &JsString) {
+        if let Some(entered) = self.entered.take() {
+            self.signal = Some(subagent_bounded(entered).await.expect("#957 body entered"));
+        }
+        if self.behavior == "fail" || self.release.is_none() {
+            // Wait for registration, not a particular status: the unchanged
+            // oracle below must still catch incorrect status/error projections.
+            until("#957 subagent terminal registration", || {
+                runtime.get(id).is_some_and(|task| task.ended_at.is_some())
+            })
+            .await;
+        }
+    }
 }
 
 // A real shell rendezvous reproduces Node's creation-before-exit observation
@@ -449,17 +499,17 @@ impl CreateGate {
             std::process::Command::new("/usr/bin/mkfifo")
                 .arg(&fifo)
                 .status()
-                .expect("#956 create FIFO process")
+                .expect("#956 #957 create FIFO process")
                 .success(),
-            "#956 create FIFO"
+            "#956 #957 create FIFO"
         );
         fs::write(
             &shell,
             include_str!("fixtures/background-create-gate/shell.sh"),
         )
-        .expect("#956 write gated shell");
+        .expect("#956 #957 write gated shell");
         fs::set_permissions(&shell, fs::Permissions::from_mode(0o700))
-            .expect("#956 executable gated shell");
+            .expect("#956 #957 executable gated shell");
         Self {
             fifo,
             shell,
@@ -482,7 +532,7 @@ impl CreateGate {
         // O_NONBLOCK succeeds only when the child really opened its FIFO reader.
         // Polling observes that event; elapsed time never releases the command.
         until(
-            "#956 FIFO reader rendezvous",
+            "#956 #957 FIFO reader rendezvous",
             || match fs::OpenOptions::new()
                 .write(true)
                 .custom_flags(libc::O_NONBLOCK)
@@ -493,7 +543,7 @@ impl CreateGate {
                     true
                 }
                 Err(error) if error.raw_os_error() == Some(libc::ENXIO) => false,
-                Err(error) => panic!("#956 connect FIFO: {error}"),
+                Err(error) => panic!("#956 #957 connect FIFO: {error}"),
             },
         )
         .await;
@@ -502,19 +552,19 @@ impl CreateGate {
     fn release(mut self) {
         self.writer
             .as_mut()
-            .expect("#956 connected FIFO writer")
+            .expect("#956 #957 connected FIFO writer")
             .write_all(b"release\n")
-            .expect("#956 release FIFO");
+            .expect("#956 #957 release FIFO");
     }
 }
 
 async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
     let name = text(field(sequence, "name"));
     let root = scratch_root.join(&name);
-    fs::create_dir(&root).expect("#956 sequence prerequisite");
-    fs::write(root.join("file"), "not a directory\n").expect("#956 sequence prerequisite");
+    fs::create_dir(&root).expect("#956 #957 sequence prerequisite");
+    fs::write(root.join("file"), "not a directory\n").expect("#956 #957 sequence prerequisite");
     fs::set_permissions(root.join("file"), fs::Permissions::from_mode(0o644))
-        .expect("#956 sequence prerequisite");
+        .expect("#956 #957 sequence prerequisite");
 
     let completions = Arc::new(Mutex::new(Vec::new()));
     let options = field(sequence, "options");
@@ -528,7 +578,7 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
             Arc::new(move |event: JsObject| {
                 completions
                     .lock()
-                    .expect("#956 sequence prerequisite")
+                    .expect("#956 #957 sequence prerequisite")
                     .push(JsValue::Object(event))
             })
         }),
@@ -544,7 +594,7 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
         let index = TOOL_NAMES
             .iter()
             .position(|tool| *tool == name)
-            .expect("#956 sequence prerequisite");
+            .expect("#956 #957 sequence prerequisite");
         Arc::clone(&tools[index])
     };
     let mut placeholders = Placeholders {
@@ -553,7 +603,7 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
         subs: Vec::new(),
     };
     let groups = ProcessGroups::new();
-    let mut releases: Vec<Option<oneshot::Sender<()>>> = Vec::new();
+    let mut sub_gates: Vec<SubagentGate> = Vec::new();
 
     for (index, step) in array(field(sequence, "steps")).iter().enumerate() {
         let op = text(field(step, "op"));
@@ -569,7 +619,7 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                 {
                     signal
                         .as_ref()
-                        .expect("#956 sequence prerequisite")
+                        .expect("#956 #957 sequence prerequisite")
                         .cancel();
                 }
                 let mut env = object([
@@ -617,7 +667,10 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                 if tool_name == "task_create"
                     && let Ok(output) = &result
                 {
-                    let data = output.data.as_ref().expect("#956 sequence prerequisite");
+                    let data = output
+                        .data
+                        .as_ref()
+                        .expect("#956 #957 sequence prerequisite");
                     placeholders.tasks.push(text(field(data, "taskId")));
                     if let Some(pid) = field(data, "pid").as_number() {
                         groups.track(pid as u32);
@@ -634,11 +687,11 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                 let total = || {
                     tasks
                         .get_output(&id, &JsValue::Number(0.0), &JsValue::Undefined, None)
-                        .expect("#956 sequence prerequisite")
+                        .expect("#956 #957 sequence prerequisite")
                         .total_bytes
                 };
                 until(&label, || total() >= bytes).await;
-                assert_eq!(total(), bytes, "#956 {label}: exact byte count");
+                assert_eq!(total(), bytes, "#956 #957 {label}: exact byte count");
                 None
             }
             "awaitStatus" => {
@@ -654,7 +707,7 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
             }
             "touch" => {
                 fs::write(root.join(text(field(step, "path"))), "")
-                    .expect("#956 sequence prerequisite");
+                    .expect("#956 #957 sequence prerequisite");
                 None
             }
             "groupGone" => {
@@ -662,7 +715,7 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                 let pid = tasks
                     .get(&id, None)
                     .and_then(|task| task.pid)
-                    .expect("#956 task pid");
+                    .expect("#956 #957 task pid");
                 until(&label, || !group_alive(pid)).await;
                 Some(JsValue::Bool(true))
             }
@@ -674,18 +727,36 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
             "sdkStop" | "sdkList" => {
                 let session = field(step, "sessionKey")
                     .as_string()
-                    .expect("#956 sequence prerequisite")
+                    .expect("#956 #957 sequence prerequisite")
                     .clone();
                 let task = match step.get("task") {
                     Some(value) => placeholders.substitute(value),
                     None => JsValue::Undefined,
                 };
                 let result = if op == "sdkStop" {
-                    stop_background_task_for_sdk(
-                        &resources,
-                        &session,
-                        task.as_string().expect("#956 sequence prerequisite"),
-                    )
+                    let id = task.as_string().expect("#957 SDK task id");
+                    let stop = stop_background_task_for_sdk(&resources, &session, id);
+                    tokio::pin!(stop);
+                    let gated = placeholders
+                        .subs
+                        .iter()
+                        .position(|sub| id.equals_str(sub))
+                        .and_then(|index| sub_gates.get_mut(index))
+                        .filter(|gate| gate.behavior == "ignore-abort" && gate.release.is_some());
+                    subagent_bounded(async {
+                        if let Some(gate) = gated {
+                            let signal = gate.signal.clone().expect("#957 stop follows body entry");
+                            tokio::select! {
+                                result = &mut stop => result,
+                                () = signal.cancelled() => {
+                                    gate.release();
+                                    stop.await
+                                }
+                            }
+                        } else {
+                            stop.await
+                        }
+                    })
                     .await
                 } else {
                     Ok(background_tasks_for_sdk(&resources, &session, &task))
@@ -706,8 +777,8 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
             "subStart" => {
                 let index = placeholders.subs.len();
                 let behavior = text(field(step, "behavior"));
-                let (sender, receiver) = oneshot::channel();
-                releases.push(Some(sender));
+                let (gate, run) = SubagentGate::new(&behavior);
+                sub_gates.push(gate);
                 let task = subagents.start(StartBackgroundSubagentInput {
                     kind: field(step, "kind").as_string().map(|kind| {
                         if kind.equals_str("observer") {
@@ -718,13 +789,13 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                     }),
                     session_id: field(step, "sessionId")
                         .as_string()
-                        .expect("#956 sequence prerequisite")
+                        .expect("#956 #957 sequence prerequisite")
                         .clone(),
                     parent_turn_id: JsString::from(format!("turn-{index}").as_str()),
                     subagent_id: JsString::from(format!("sa-{index}").as_str()),
                     subagent_type: JsString::from("general"),
                     observed_subagent_id: field(step, "observedSubagentId").as_string().cloned(),
-                    run: subagent_run(&behavior, Some(receiver)),
+                    run,
                 });
                 placeholders
                     .subs
@@ -745,11 +816,13 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
             }
             "subRelease" => {
                 let index = number(field(step, "sub")) as usize;
-                let _ = releases[index].take().expect("#956 release once").send(());
+                sub_gates[index].release();
                 None
             }
             "subTick" => {
-                tokio::time::sleep(Duration::from_millis(20)).await;
+                for (gate, id) in sub_gates.iter_mut().zip(&placeholders.subs) {
+                    gate.settle(&subagents, &JsString::from(id.as_str())).await;
+                }
                 let listed = subagents
                     .list(&SubagentListFilter::default())
                     .into_iter()
@@ -768,11 +841,14 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                     .collect();
                 Some(placeholders.apply(&JsValue::Array(listed)))
             }
-            other => panic!("#956 {label}: unknown op {other}"),
+            other => panic!("#956 #957 {label}: unknown op {other}"),
         };
         match actual {
-            Some(actual) => assert_eq!(wire(&actual), wire(expected), "#956 {label}"),
-            None => assert!(expected.is_undefined(), "#956 {label}: unexpected result"),
+            Some(actual) => assert_eq!(wire(&actual), wire(expected), "#956 #957 {label}"),
+            None => assert!(
+                expected.is_undefined(),
+                "#956 #957 {label}: unexpected result"
+            ),
         }
         // The shell cannot finish before the strict creation snapshot above.
         if let Some(gate) = create_gate {
@@ -783,11 +859,11 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
     assert_eq!(
         placeholders.tasks.len() as f64,
         number(field(sequence, "tasks")),
-        "#956 {name}: task count"
+        "#956 #957 {name}: task count"
     );
     if field(sequence, "noDispose").as_bool() != Some(true) {
         for pid in groups.snapshot() {
-            until(&format!("#956 {name}: leftover group {pid}"), || {
+            until(&format!("#956 #957 {name}: leftover group {pid}"), || {
                 !group_alive(pid)
             })
             .await;
@@ -802,18 +878,148 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
             .tasks
             .iter()
             .position(|task| *task == id)
-            .expect("#956 sequence prerequisite")
+            .expect("#956 #957 sequence prerequisite")
     };
     let mut completions = completions
         .lock()
-        .expect("#956 sequence prerequisite")
+        .expect("#956 #957 sequence prerequisite")
         .clone();
     completions.sort_by_key(task_index);
     assert_eq!(
         wire(&placeholders.apply(&JsValue::Array(completions))),
         wire(field(sequence, "completions")),
-        "#956 {name}: completion events"
+        "#956 #957 {name}: completion events"
     );
+}
+
+fn subagent_state(runtime: &BackgroundSubagentRuntime, id: &JsString) -> JsValue {
+    let task = runtime.get(id).expect("#957 registered subagent");
+    JsValue::Object(object([
+        ("status", JsValue::from(task.status.as_str())),
+        ("ended", JsValue::Bool(task.ended_at.is_some())),
+        ("error", task.error.map_or(JsValue::Null, JsValue::String)),
+    ]))
+}
+
+#[test]
+fn subagent_gate_holds_until_release() {
+    runtime().block_on(async {
+        for behavior in ["release", "ignore-abort", "block"] {
+            let (mut gate, run) = SubagentGate::new(behavior);
+            let signal = ToolCancellation::default();
+            let mut body = run(signal.clone());
+            let pending = std::future::poll_fn(|cx| {
+                std::task::Poll::Ready(body.as_mut().poll(cx).is_pending())
+            })
+            .await;
+            assert!(pending, "#957 {behavior} body held before release");
+            if behavior == "ignore-abort" || behavior == "block" {
+                signal.cancel();
+                subagent_bounded(signal.cancelled()).await;
+            }
+            if behavior == "ignore-abort" {
+                let pending = std::future::poll_fn(|cx| {
+                    std::task::Poll::Ready(body.as_mut().poll(cx).is_pending())
+                })
+                .await;
+                assert!(pending, "#957 cancelled body held before release");
+            }
+            if behavior != "block" {
+                gate.release();
+            }
+            assert_eq!(
+                subagent_bounded(body).await,
+                if behavior == "block" {
+                    Err(JsString::from("stopped"))
+                } else {
+                    Ok(())
+                },
+                "#957 {behavior} body outcome"
+            );
+        }
+    });
+}
+
+#[test]
+fn subagent_gate_lifecycle() {
+    let expected = baseline::oracle(include_str!("fixtures/background-subtick-gate/oracle.json"));
+    let cases = array(field(&expected, "cases"));
+    assert_eq!(
+        cases
+            .iter()
+            .map(|case| text(field(case, "behavior")))
+            .collect::<Vec<_>>(),
+        ["release", "fail", "block", "ignore-abort"],
+        "#957 lifecycle matrix coverage"
+    );
+    runtime().block_on(async {
+        for case in cases {
+            let behavior = text(field(case, "behavior"));
+            let resources = BackgroundResources::default();
+            let subagents = &resources.subagents;
+            let (mut gate, run) = SubagentGate::new(&behavior);
+            let session = JsString::from("s1");
+            let task = subagents.start(StartBackgroundSubagentInput {
+                kind: None,
+                session_id: session.clone(),
+                parent_turn_id: JsString::from("turn"),
+                subagent_id: JsString::from("sa"),
+                subagent_type: JsString::from("general"),
+                observed_subagent_id: None,
+                run,
+            });
+            let id = &task.task_id;
+            gate.settle(subagents, id).await;
+            assert!(gate.signal.is_some(), "#957 entry signal captured");
+            let held = subagent_state(subagents, id);
+            if behavior == "release" {
+                gate.release();
+                gate.settle(subagents, id).await;
+            }
+            let stop = stop_background_task_for_sdk(&resources, &session, id);
+            tokio::pin!(stop);
+            let mut cancelled = JsValue::Null;
+            let mut stop_pending = JsValue::Null;
+            if behavior == "ignore-abort" {
+                let pending = std::future::poll_fn(|cx| {
+                    std::task::Poll::Ready(stop.as_mut().poll(cx).is_pending())
+                })
+                .await;
+                assert!(pending, "#957 stop pending while body held");
+                cancelled = subagent_state(subagents, id);
+                stop_pending = JsValue::Bool(pending);
+                gate.release();
+            }
+            let stopped = subagent_bounded(stop).await.expect("#957 SDK stop result");
+            let actual = JsValue::Object(object([
+                ("behavior", JsValue::from(behavior.as_str())),
+                ("start", JsValue::from(task.status.as_str())),
+                ("held", held),
+                ("cancelled", cancelled),
+                ("stopPending", stop_pending),
+                ("stopped", JsValue::Object(stopped)),
+                ("terminal", subagent_state(subagents, id)),
+            ]));
+            assert_eq!(wire(&actual), wire(case), "#957 lifecycle {behavior}");
+        }
+    });
+}
+
+#[test]
+#[ignore = "requires the fixed TS baseline and Node v22.22.0"]
+fn subagent_gate_regenerates_identically() {
+    baseline::regenerates_identically("background-subtick-gate");
+}
+
+#[test]
+fn sdk_projections_replay() {
+    let sequence = section("sequences", 11)
+        .iter()
+        .find(|sequence| text(field(sequence, "name")) == "sdk-projections")
+        .expect("#957 sdk-projections sequence exists");
+    let scratch = scratch::Scratch::new("background-sdk-projections");
+    let root = fs::canonicalize(scratch.path()).expect("#957 SDK scratch root");
+    runtime().block_on(run_sequence(sequence, &root));
 }
 
 #[test]
@@ -821,9 +1027,9 @@ fn dispose_drains_replay() {
     let sequence = section("sequences", 11)
         .iter()
         .find(|sequence| text(field(sequence, "name")) == "dispose-drains")
-        .expect("#956 dispose-drains sequence exists");
+        .expect("#956 #957 dispose-drains sequence exists");
     let scratch = scratch::Scratch::new("background-dispose-drains");
-    let root = fs::canonicalize(scratch.path()).expect("#956 dispose-drains scratch root");
+    let root = fs::canonicalize(scratch.path()).expect("#956 #957 dispose-drains scratch root");
     runtime().block_on(run_sequence(sequence, &root));
 }
 
@@ -831,7 +1037,7 @@ fn dispose_drains_replay() {
 fn creation_gate_lifecycle() {
     let expected = baseline::oracle(include_str!("fixtures/background-create-gate/oracle.json"));
     let scratch = scratch::Scratch::new("background-create-gate");
-    let root = fs::canonicalize(scratch.path()).expect("#956 gate scratch root");
+    let root = fs::canonicalize(scratch.path()).expect("#956 #957 gate scratch root");
     let cases = array(field(&expected, "cases"));
     assert_eq!(
         cases
@@ -839,7 +1045,7 @@ fn creation_gate_lifecycle() {
             .map(|case| text(field(case, "mode")))
             .collect::<Vec<_>>(),
         ["release", "stop", "dispose"],
-        "#956 lifecycle matrix coverage"
+        "#956 #957 lifecycle matrix coverage"
     );
     runtime().block_on(async {
         for (index, case) in cases.iter().enumerate() {
@@ -860,36 +1066,36 @@ fn creation_gate_lifecycle() {
                     context(fields, None),
                 )
                 .await
-                .expect("#956 gated create must succeed");
-            let data = output.data.expect("#956 gated create data");
+                .expect("#956 #957 gated create must succeed");
+            let data = output.data.expect("#956 #957 gated create data");
             let id = field(&data, "taskId")
                 .as_string()
-                .expect("#956 gated task ID")
+                .expect("#956 #957 gated task ID")
                 .clone();
             groups.track(number(field(&data, "pid")) as u32);
             gate.connect().await;
             assert_eq!(
                 field(&data, "status"),
                 field(case, "create"),
-                "#956 gated create snapshot"
+                "#956 #957 gated create snapshot"
             );
             // No token is ever sent on stop/dispose: cancellation must drain a
             // predecessor that will never complete by itself.
-            let held = tasks.get(&id, None).expect("#956 held task exists");
+            let held = tasks.get(&id, None).expect("#956 #957 held task exists");
             assert_eq!(
                 held.status.as_str(),
                 text(field(case, "held")),
-                "#956 held status"
+                "#956 #957 held status"
             );
             assert_eq!(
                 &held.command,
                 field(case, "command"),
-                "#956 original command retained"
+                "#956 #957 original command retained"
             );
-            assert_eq!(held.output_bytes, 0, "#956 no output before release");
+            assert_eq!(held.output_bytes, 0, "#956 #957 no output before release");
             if mode == "release" {
                 gate.release();
-                until("#956 released command completes", || {
+                until("#956 #957 released command completes", || {
                     tasks
                         .get(&id, None)
                         .is_some_and(|task| task.status.as_str() == "completed")
@@ -901,30 +1107,32 @@ fn creation_gate_lifecycle() {
                     tasks.stop(&id, &JsValue::Undefined, None),
                 )
                 .await
-                .expect("#956 stop deadline")
-                .expect("#956 stop blocked command");
+                .expect("#956 #957 stop deadline")
+                .expect("#956 #957 stop blocked command");
             } else {
-                assert_eq!(mode, "dispose", "#956 lifecycle mode");
+                assert_eq!(mode, "dispose", "#956 #957 lifecycle mode");
                 tokio::time::timeout(Duration::from_secs(8), tasks.dispose())
                     .await
-                    .expect("#956 dispose deadline");
+                    .expect("#956 #957 dispose deadline");
             }
-            let task = tasks.get(&id, None).expect("#956 terminal task exists");
+            let task = tasks
+                .get(&id, None)
+                .expect("#956 #957 terminal task exists");
             assert_eq!(
                 task.status.as_str(),
                 text(field(case, "terminal")),
-                "#956 terminal status"
+                "#956 #957 terminal status"
             );
             assert_eq!(
                 task.output_bytes as f64,
                 number(field(case, "outputBytes")),
-                "#956 terminal output bytes"
+                "#956 #957 terminal output bytes"
             );
             tokio::time::timeout(Duration::from_secs(8), tasks.dispose())
                 .await
-                .expect("#956 cleanup deadline");
+                .expect("#956 #957 cleanup deadline");
             for pid in groups.snapshot() {
-                until("#956 gate group exits", || !group_alive(pid)).await;
+                until("#956 #957 gate group exits", || !group_alive(pid)).await;
             }
             groups.disarm();
         }
@@ -978,10 +1186,10 @@ fn sequences_replay() {
             number(field(field(oracle(), "counts"), "steps"))
         ),
         (167.0, 167.0),
-        "#956 sequence step count"
+        "#956 #957 sequence step count"
     );
     let scratch = scratch::Scratch::new("background-tasks");
-    let root = fs::canonicalize(scratch.path()).expect("#956 canonical scratch root");
+    let root = fs::canonicalize(scratch.path()).expect("#956 #957 canonical scratch root");
     let mut ran = Vec::new();
     runtime().block_on(async {
         for sequence in sequences {
@@ -990,7 +1198,7 @@ fn sequences_replay() {
             assert_eq!(
                 darwin_only,
                 DARWIN_ONLY.contains(&name.as_str()),
-                "#956 {name}: darwinOnly"
+                "#956 #957 {name}: darwinOnly"
             );
             if darwin_only && !cfg!(target_os = "macos") {
                 continue;
@@ -1002,7 +1210,7 @@ fn sequences_replay() {
     assert_eq!(
         ran.len(),
         if cfg!(target_os = "macos") { 11 } else { 10 },
-        "#956 sequence coverage"
+        "#956 #957 sequence coverage"
     );
 }
 

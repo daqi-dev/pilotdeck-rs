@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#956 FIFO creation gate controls. Run after committing the candidate.
+"""#956 #957 FIFO creation gate controls. Run after committing the candidate.
 
 Usage: CARGO_TARGET_DIR=... python3 negative_controls.py OUT [mutation ...]
 Every selected mutant compiles first; all results are reported before exit.
@@ -22,27 +22,27 @@ cases = [
     ('remove-create-gate', source,
      '                    let gate = CreateGate::new(&root, index);\n                    gate.configure(&mut env);',
      '                    let gate = CreateGate::new(&root, index);\n                    // mutant: original shell executes before assertion',
-     'dispose_drains_replay', '#956 timed out waiting for #956 FIFO reader rendezvous'),
+     'dispose_drains_replay', '#956 #957 timed out waiting for #956 #957 FIFO reader rendezvous'),
     ('immediate-shell-exit', source,
      'include_str!("fixtures/background-create-gate/shell.sh")',
      '"#!/bin/bash\\nexit 0\\n"',
-     'dispose_drains_replay', '#956 timed out waiting for #956 FIFO reader rendezvous'),
+     'dispose_drains_replay', '#956 #957 timed out waiting for #956 #957 FIFO reader rendezvous'),
     ('skip-release', source,
-     '                gate.release();\n                until("#956 released command completes",',
-     '                drop(gate);\n                until("#956 released command completes",',
-     'creation_gate_lifecycle', '#956 timed out waiting for #956 released command completes'),
+     '                gate.release();\n                until("#956 #957 released command completes",',
+     '                drop(gate);\n                until("#956 #957 released command completes",',
+     'creation_gate_lifecycle', '#956 #957 timed out waiting for #956 #957 released command completes'),
     ('skip-stop', source,
-     '                tokio::time::timeout(\n                    Duration::from_secs(8),\n                    tasks.stop(&id, &JsValue::Undefined, None),\n                )\n                .await\n                .expect("#956 stop deadline")\n                .expect("#956 stop blocked command");',
+     '                tokio::time::timeout(\n                    Duration::from_secs(8),\n                    tasks.stop(&id, &JsValue::Undefined, None),\n                )\n                .await\n                .expect("#956 #957 stop deadline")\n                .expect("#956 #957 stop blocked command");',
      '                // mutant: do not cancel the blocked predecessor',
-     'creation_gate_lifecycle', '#956 terminal status'),
+     'creation_gate_lifecycle', '#956 #957 terminal status'),
     ('skip-dispose', source,
-     '                tokio::time::timeout(Duration::from_secs(8), tasks.dispose())\n                    .await\n                    .expect("#956 dispose deadline");',
+     '                tokio::time::timeout(Duration::from_secs(8), tasks.dispose())\n                    .await\n                    .expect("#956 #957 dispose deadline");',
      '                // mutant: do not dispose the blocked predecessor',
-     'creation_gate_lifecycle', '#956 terminal status'),
+     'creation_gate_lifecycle', '#956 #957 terminal status'),
     ('missing-matrix-mode', oracle,
      '"mode": "stop"',
      '"mode": "release"',
-     'creation_gate_lifecycle', '#956 lifecycle matrix coverage'),
+     'creation_gate_lifecycle', '#956 #957 lifecycle matrix coverage'),
 ]
 
 

@@ -1,0 +1,94 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/sub/BackgroundSubagentRuntime.ts": "52815d8217a4ac8eefe7dde040e0987688181adfb78de79d8ca8732c15d83c07",
+    "src/cli/ProjectRuntimeRegistry.ts": "0df6b0e82be872c2a2d57f85e73136d75865ff1fc2c4ded2e5e5550d7a9353d9"
+  },
+  "node": "v22.22.0",
+  "cases": [
+    {
+      "behavior": "release",
+      "start": "pending",
+      "held": {
+        "status": "running",
+        "ended": false,
+        "error": null
+      },
+      "cancelled": null,
+      "stopPending": null,
+      "stopped": {
+        "stopped": false,
+        "status": "completed"
+      },
+      "terminal": {
+        "status": "completed",
+        "ended": true,
+        "error": null
+      }
+    },
+    {
+      "behavior": "fail",
+      "start": "pending",
+      "held": {
+        "status": "failed",
+        "ended": true,
+        "error": "boom"
+      },
+      "cancelled": null,
+      "stopPending": null,
+      "stopped": {
+        "stopped": false,
+        "status": "failed"
+      },
+      "terminal": {
+        "status": "failed",
+        "ended": true,
+        "error": "boom"
+      }
+    },
+    {
+      "behavior": "block",
+      "start": "pending",
+      "held": {
+        "status": "running",
+        "ended": false,
+        "error": null
+      },
+      "cancelled": null,
+      "stopPending": null,
+      "stopped": {
+        "stopped": true,
+        "status": "cancelled"
+      },
+      "terminal": {
+        "status": "cancelled",
+        "ended": true,
+        "error": null
+      }
+    },
+    {
+      "behavior": "ignore-abort",
+      "start": "pending",
+      "held": {
+        "status": "running",
+        "ended": false,
+        "error": null
+      },
+      "cancelled": {
+        "status": "cancelled",
+        "ended": true,
+        "error": null
+      },
+      "stopPending": true,
+      "stopped": {
+        "stopped": true,
+        "status": "cancelled"
+      },
+      "terminal": {
+        "status": "cancelled",
+        "ended": true,
+        "error": null
+      }
+    }
+  ]
+}
