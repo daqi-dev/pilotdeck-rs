@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import http from 'node:http';
@@ -10,6 +9,7 @@ import dgram from 'node:dgram';
 import child from 'node:child_process';
 import {syncBuiltinESMExports} from 'node:module';
 import {fileURLToPath} from 'node:url';
+import {snapshotFiles} from './file-snapshot.mts';
 const ROOT=path.resolve(process.env.MATRIX_ROOT!);
 const BASE=path.resolve(process.env.PDRS_BASELINE!);
 assert.equal(process.version,'v22.22.0');
@@ -56,7 +56,8 @@ for(const name of selected){
  const releases:any={};const handles:any[]=[],storages:any[]=[],mcps:any[]=[];const gates:any[]=[];
  const gate=(label:string)=>{const g={label,entered:deferred(),release:deferred()};gates.push(g);return g;};
  const createGates=[gate('create-storage-1'),gate('create-storage-2')],drainGate=gate('old-descendants'),loopGate=gate('old-loop'),refreshGate=gate('refresh');
- const fenceGate=gate('fence-boundary');
+ const fenceGate=gate('fence-boundary'),oldDisposeReturn=gate('old-dispose-return');
+ const earlyTwice=process.env.MATRIX_TWICE_RETURN==='early',earlyClose=process.env.MATRIX_CLOSE_RETURN==='early';let fencePublications=0;
  const atBoundary=async(timing:string)=>{if(fence?.[2]===timing){log('fence.boundary',{state:fence[0],event:fence[1],timing});fenceGate.entered.resolve();await fenceGate.release.promise;}};
  const evicted=deferred(),abortSeen=deferred();let holdDrain=false,holdLoop=false,router:any,old:any,oldDisposal:any;
  const hId=(h:any)=>h?handles.indexOf(h)+1:null;
@@ -86,7 +87,7 @@ for(const name of selected){
   s.persistence.load=async()=>{log('persistence.load.begin',{id});if(fence&&id===2)await atBoundary('beforeload');if(!negative&&['resume-load-reject','resume-rollback-reject','resume-release-reject','admission-read-reject'].includes(name)){throw Error('LOAD_BOOM')};if(!negative&&id===2&&name.startsWith('recreate-')&&name.includes('reject'))throw Error('RECREATE_LOAD_BOOM');if(id===2&&name==='recreate-running'&&process.env.MATRIX_WRITER_TIMING==='before-read'){log('probe.before-read.release-old');loopGate.release.resolve();await bounded(oldDisposal.promise,'old drained before replacement read');log('probe.before-read.old-drained');}const r=await load();log('persistence.load.end',{id,result:r});if(fence&&id===2)await atBoundary('afterload');return r;};
   s.projectionCheckpointStore.load=async(key:any)=>{record.entriesAtCheckpoint=s.events.snapshotState();log('checkpoint.load',{id,writer:record.entriesAtCheckpoint});if(name==='resume-checkpoint-reject'&&!negative)throw Error('CHECKPOINT_BOOM');return checkpoint(key);};
   s.restore=async()=>{log('storage.restore.begin',{id});try{const r=await restore();record.restores.push(clone(r));log('storage.restore.end',{id,result:r});return r;}catch(e){log('storage.restore.error',{id,error:err(e)});throw e}};
-  s.dispose=async()=>{record.disposeCalls++;log('storage.dispose.begin',{id});await dispose();record.disposeDone++;log('storage.dispose.end',{id});if(!negative&&(name==='resume-rollback-reject'||name==='recreate-rollback-reject'&&id===2))throw Error('STORAGE_DISPOSE_BOOM')};
+  s.dispose=async()=>{record.disposeCalls++;log('storage.dispose.begin',{id});await dispose();record.disposeDone++;log('storage.dispose.end',{id});if((fence?.[1]==='twice'&&!earlyTwice||fence?.[1]==='close'&&!earlyClose)&&id===1){oldDisposeReturn.entered.resolve();await oldDisposeReturn.release.promise;log('fence.old-dispose-return',{publications:fencePublications});}if(!negative&&(name==='resume-rollback-reject'||name==='recreate-rollback-reject'&&id===2))throw Error('STORAGE_DISPOSE_BOOM')};
   fs.mkdirSync(path.dirname(s.transcriptPath),{recursive:true});
   if(id===1){
    if(name.startsWith('recreate-')||fence){await s.transcript.recordAcceptedInput('session-745','seed-turn',[{role:'user',content:[{type:'text',text:' 已存历史 中文 '}]}]);await s.transcript.recordSessionMetadata('session-745','seed-turn',{title:'原题',titleSource:'user',firstPrompt:' 保留空白 '});await s.flush();}
@@ -104,9 +105,9 @@ for(const name of selected){
  const factory=new ProjectSessionFactory(options);
  const context={sessionKey:'session-745',projectKey:workspace,channelKey:'probe'};
  const observe=(p:Promise<any>,label:string)=>{const state:any={label,status:'pending'};report.results.push(state);return {state,promise:p.then(value=>{state.status='fulfilled';state.handle=hId(value);log('operation.fulfilled',{label,handle:state.handle});return value},e=>{state.status='rejected';state.error=err(e);log('operation.rejected',{label,error:state.error});return null})};};
- const files=()=>{const out:any[]=[];const walk=(p:string)=>{for(const n of fs.readdirSync(p).sort()){const f=path.join(p,n),st=fs.lstatSync(f);if(st.isDirectory()){out.push({path:path.relative(caseDir,f),kind:'directory'});walk(f)}else {const b=fs.readFileSync(f);out.push({path:path.relative(caseDir,f),kind:'file',utf8:b.toString('utf8'),base64:b.toString('base64'),sha256:crypto.createHash('sha256').update(b).digest('hex')});}}};walk(caseDir);return out};
- const snap=async(label:string)=>{await Promise.all(storages.map(r=>r.s.flush()));const state={label,active:clone(active),handles:handles.map((h,i)=>({id:i+1,state:h.state,inFlight:h.inFlight,session:read(()=>stateView(h.session.snapshot())),controllerSameAsFirst:read(()=>h.session.snapshot().abortController===handles[0].session.snapshot().abortController),reload:read(()=>reloadView(h))})),storages:storages.map(r=>({id:r.id,disposeCalls:r.disposeCalls,disposeDone:r.disposeDone,persistenceActive:r.s.persistenceBinding.active,writer:r.s.events.snapshotState(),entriesAtCheckpoint:r.entriesAtCheckpoint,restores:r.restores})),factoryMcp:{state:(factory as any).sessionMcpRuntimes.state,size:(factory as any).sessionMcpRuntimes.size},registry:router?{size:router.agents.size,handle:hId(router.agents.get(context.sessionKey)),hasSession:router.hasSession(context.sessionKey)}:null,results:clone(report.results),files:files()};report.snapshots.push({ordinal:log('snapshot',{label}),...clone(state)});};
- const mkRouter=()=>new SessionRouter({setupSession:async(_c:any,h:any)=>{if(fence&&hId(h)===2)await atBoundary('publish');},createSession:(c:any)=>factory.createSession(c),recreateSession:(c:any,p:any)=>factory.recreateSession(c,p),idleSweepIntervalMs:0,idleSessionTimeoutMs:1e12,now,onSessionEvict:(key:any,reason:any)=>{log('router.evict',{key,reason});if(reason==='dirty_recreate')evicted.resolve();}});
+ const files=(writing=true)=>snapshotFiles(caseDir,storages.map(r=>r.s.projectionCheckpointPath),writing);
+ const snap=async(label:string)=>{await Promise.all(storages.map(r=>r.s.flush()));const state={label,active:clone(active),handles:handles.map((h,i)=>({id:i+1,state:h.state,inFlight:h.inFlight,session:read(()=>stateView(h.session.snapshot())),controllerSameAsFirst:read(()=>h.session.snapshot().abortController===handles[0].session.snapshot().abortController),reload:read(()=>reloadView(h))})),storages:storages.map(r=>({id:r.id,disposeCalls:r.disposeCalls,disposeDone:r.disposeDone,persistenceActive:r.s.persistenceBinding.active,writer:r.s.events.snapshotState(),entriesAtCheckpoint:r.entriesAtCheckpoint,restores:r.restores})),factoryMcp:{state:(factory as any).sessionMcpRuntimes.state,size:(factory as any).sessionMcpRuntimes.size},registry:router?{size:router.agents.size,handle:hId(router.agents.get(context.sessionKey)),hasSession:router.hasSession(context.sessionKey)}:null,results:clone(report.results),files:files(label!=='after-owned-cleanup')};report.snapshots.push({ordinal:log('snapshot',{label}),...clone(state)});};
+ const mkRouter=()=>new SessionRouter({setupSession:async(_c:any,h:any)=>{if(fence&&hId(h)===2)await atBoundary('publish');},createSession:(c:any)=>factory.createSession(c),recreateSession:(c:any,p:any)=>factory.recreateSession(c,p),idleSweepIntervalMs:0,idleSessionTimeoutMs:1e12,now,onSessionEvict:(key:any,reason:any)=>{log('router.evict',{key,reason});if(reason==='dirty_recreate'){evicted.resolve();if(fence?.[1]==='twice'&&++fencePublications===2){log('fence.final-publication');oldDisposeReturn.release.resolve();}}}});
  try{
   if(fence){
    const [state,event,timing]=fence;
@@ -132,6 +133,8 @@ for(const name of selected){
    }else if(event==='close')concurrent=observe(router.close(context.sessionKey),'fence-close');
    else if(event==='shutdown')concurrent=observe(router.shutdown(),'fence-shutdown');
    await snap('fence-event');
+   if(event==='twice'&&earlyTwice||event==='close'&&earlyClose){assert.equal(state,'idle');await bounded(concurrent.promise,'early concurrent returned before first publish');}
+
    // Never means unreleased throughout the measured prefix, not a probe timeout.
    // Release only for deterministic owned cleanup; Rust tests exercise its bound.
    if(state==='quick')loopGate.release.resolve();
@@ -140,6 +143,7 @@ for(const name of selected){
    await snap('fence-before-cleanup');
    loopGate.release.resolve();drainGate.release.resolve();
    await bounded(first.promise,'fence first completed');
+   if(event==='close'){log('fence.first-before-close-return');oldDisposeReturn.release.resolve();}
    if(concurrent)await bounded(concurrent.promise,'fence concurrent completed');
    if(running)await bounded(running.promise,'fence old finished');
    if(oldDisposal)await bounded(oldDisposal.promise,'fence old disposed');
@@ -184,7 +188,7 @@ for(const name of selected){
    // Preserve pre-cleanup leak evidence above, then release orphan storage to end this isolated probe safely.
    for(const r of storages)if(r.s.persistenceBinding.active){log('probe.orphan-storage.cleanup',{id:r.id});await r.s.dispose().catch(()=>{});}report.cleanup={active:clone(active),releases,handles:handles.map(h=>h.state),mcpStops:mcps.map(m=>({id:m.id,stops:m.stops})),storageBindings:storages.map(r=>r.s.persistenceBinding.active)};
   }catch(e){report.cleanupError=err(e);report.status='INVALID';}
-  report.forbidden=clone(forbidden);report.finalFiles=files();
+  report.forbidden=clone(forbidden);report.finalFiles=files(false);
   for(const level of ['warn','error','debug'] as const)console[level]=savedConsole[level];
   fs.writeFileSync(path.join(outDir,name+'.json'),JSON.stringify(report,null,2)+'\n',{flag:'wx'});process.stdout.write(`${report.status} ${name}${report.error?' '+report.error.message:''}\n`);index.push({name,status:report.status});
  }
