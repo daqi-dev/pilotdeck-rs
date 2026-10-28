@@ -254,7 +254,47 @@ class Ledger(unittest.TestCase):
     def test_static_mode_does_not_require_git_history(self):
         (self.root / '.git').rename(self.root / 'saved-git')
         self.check()
+        self.assertEqual(self.check('--print-ledger'),
+                         (ROOT / SPEC / 'accepted-diffs.md').read_bytes(),
+                         '#166 static ledger bytes must remain available without HEAD')
         self.check('--base', self.base, ok=False, reason='cannot verify append-only')
+
+    def test_static_mode_without_history_still_checks_frozen_bytes(self):
+        (self.root / '.git').rename(self.root / 'saved-git')
+        path = self.folder / 'accepted-diffs.md'
+        path.write_bytes(path.read_bytes() + b'\nchanged\n')
+        self.check(ok=False, reason='accepted-diffs.md')
+
+    def test_static_mode_in_checkout_still_rejects_loaded_source_changes(self):
+        path = self.root / 'scripts/gateway-parity/common.py'
+        path.write_bytes(path.read_bytes() + b'\n# changed after commit\n')
+        result = subprocess.run([sys.executable, '-I', str(self.root / CHECKER)],
+                                capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 2,
+                         '#166 checkout static mode must reject loaded source changes: '
+                         + repr(result.stdout + result.stderr))
+        self.assertIn(b'#166 loaded apparatus differs from HEAD', result.stdout,
+                      '#166 checkout static mode must report the provenance refusal')
+
+    def test_static_mode_with_broken_git_or_unborn_head_fails_closed(self):
+        (self.root / '.git').rename(self.root / 'saved-git')
+        marker = self.root / '.git'
+        for kind in ('unborn', 'invalid-file', 'dangling-symlink'):
+            with self.subTest(kind=kind):
+                if kind == 'unborn':
+                    self.git('init', '-b', 'main')
+                elif kind == 'invalid-file':
+                    marker.write_text('gitdir: missing-git-dir\n')
+                else:
+                    marker.symlink_to(self.root / 'missing-git-dir')
+                result = subprocess.run([sys.executable, '-I', str(self.root / CHECKER)],
+                                        capture_output=True, timeout=30)
+                self.assertEqual(result.returncode, 2,
+                                 '#166 damaged checkout metadata must fail closed: '
+                                 + repr(result.stdout + result.stderr))
+                self.assertIn(b'"status": "BLOCKED"', result.stdout,
+                              '#166 damaged checkout metadata must report BLOCKED')
+                marker.rename(self.root / ('saved-' + kind))
 
     def test_legacy_hash_still_rejects_one_byte_change(self):
         path = self.folder / 'accepted-diffs.md'
