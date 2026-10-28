@@ -92,15 +92,20 @@ known_differences.json是TS原值/Rust当前原值/category/test的单一维护�
 每个剩余差异格严格TS断言并独立ignore；共享registry核三处源码的全部336格集合、测试属性、两个cfg(test)模块接线、TS原值、TS≠Rust、ignore集合/理由和函数格ID绑定。三个默认反向守卫按所属路径逐格重放Rust，未将缺失格过滤成通过。
 改变差异表现或修复后仍保留ignore都会失败；不改产品来迁就期望。
 
-`negative_controls.py /fresh/evidence [control...]`临时变异产品源码，要求独占树；使用mutating_sources验证基线（默认HEAD，未提交候选可用`PDRS_NEGATIVE_BASELINE`指定候选树对象）、锁和恢复，
-cargo均经wait_for_slot/run_owned，正控→预期测试断言失败→恢复正控。每项绑定测试名与断言锚点，编译失败不算。
+`negative_controls.py /fresh/evidence [control...]` 使用 #994 共享过渡入口：先由 `mutating_sources` 校验 HEAD，再在 /tmp 源码副本中变异；同树串行。
+调用方必须设置持久且独立的 `CARGO_TARGET_DIR=<树>/_build/negctl-target`（不得使用产品 `_build/cargo-target`），以及两个 `CARGO_PROFILE_{DEV,TEST}_DEBUG=line-tables-only`。
+每项正控、变异和恢复均在同一 target 上先 `cargo test --no-run --message-format=json`，再直接启动 Cargo 返回的二进制。
+编译连续 900 秒无输出才报 INVALID；测试阶段按同一目标/选择的未变异运行耗时 × 5、最低 20 秒定上限，初次基线校准上限 900 秒。
+槽位等待独立限 900 秒；无固定整套预算，逐项预算随变异/选择数累加。每项绑定测试名和该测试 panic 中的断言锚点，编译失败不计杀死。
+全套预计超过 20 分钟时在开发会话仅跑 1–2 个样本，完整执行交协调者提交后在宿主跑，后台套 `sigint-default.py python3 ...`。
+锚点过期/编译失败/运行挂起/错误断言都会记 INVALID 并继续其余行，最终任一非 KILLED 即非零。
 新增background signal/同步取消/未启动/等待完成/done/ended/完成态/错误内容负控，及真实I/O完成源和同步取消结果负控。
 #752 另加错误类型 name 负控：`error-name-network`（From<NetworkFetchError>）、`error-name-body`
 （body Terminated → TypeError）、`error-name-body-aborted`（body Aborted → NetworkFetchError，经默认
 `known_differences_remain_exact_and_ignored` 重放）、`error-name-plain`（plain Error），以及
 `error-name-invalid-url-redirect` 与 `error-name-invalid-url-upgrade` 两处 `Invalid URL` 的 TypeError；
 `lib::` 选择走 `--lib`。
-四组整矩阵负控实际失败格清单在summary.json；逐格关键覆盖见交付negative-coverage.json。
+四组整矩阵的逐格原始观察保存在 `*-negative-run.log`；`summary.json` 记录各变异/选择的状态、编译成功与恢复结果。每次编译/运行的命令、target、限时、耗时和退出码分别保存在阶段 JSON。
 
 `negative_observations.mts <raw.ndjson>`只改内存中的原始记录，每条新增守卫、新源码/依赖项和每个新增矩阵项均有负控；
 每次拒绝变异后重新验证原始完整336格。原始TS文件、金样和记录不被该脚本改写。

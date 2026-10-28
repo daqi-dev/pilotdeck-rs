@@ -20,12 +20,26 @@ ENOSPC 通过替换 Node `fs.promises.appendFile` 在真实 TS 写入调用点�
 Rust `runtime::background::output::oracle_tests::spill_replays_real_ts_oracle` 用同样操作重放；`tests/background_output.rs` 将真实 shell 的 2,220,001 字节输出接入配置目录，并在 dispose 后比较同一 TS 日志金样。`runtime::background::tests::dispose_waits_for_gated_output_write_before_returning` 在 `#[cfg(test)]` 下卡住一次写盘：dispose 在放行前必须保持 pending，放行后返回且原始文件完整、与 TS 摘要一致。`begin_close_rejects_append_before_ring_is_released` 单独约束 begin_close 后、close 前拒绝追加且保留可读 ring。
 
 ```sh
-# 在 /tmp 的独立源码副本中串行变异，绝不写真实 worktree 源码。
-# 副本使用自己目录内的 target，仅编译 pilotdeck-gateway 所需目标。
-# 每次启动前检查 cargo-slots.sh；结束时副本与 target 一起删除。
-timeout 600 python3 src/pilotdeck-gateway/tests/fixtures/background-output/negative.py /abs/negative-output
+# 先提交测试/执行器；源码与被保护测试必须逐字节等于 HEAD。
+# 调用方提供与产品 _build/cargo-target 分离的持久 target。
+CARGO_TARGET_DIR="$PWD/_build/negctl-target" \
+CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_PROFILE_TEST_DEBUG=line-tables-only \
+python3 src/pilotdeck-gateway/tests/fixtures/background-output/negative.py /abs/new-evidence
 ```
 
-负控有总期限 590 秒、首次冷构建最长 300 秒、其余 cargo/test 最长 100 秒、每进程 test-threads=4，超时杀自有进程组。源码变异覆盖 ring ±1、读序、未配置误启用落盘、仅溢出写盘、覆盖旧日志、跳过 flush、禁止目录准备/错误后不重试、缺口标志、close 后仍收输出、dispose 跳过等待、begin_close 未冻结、提前解码磁盘片段、cap 耗尽后误报缺口、close 后拒读磁盘、丢弃 ring 起点 UTF-8 替换字符；编译错误/沙箱错误不计杀死变异。副本与隔离 target 由同一个 TemporaryDirectory 管理，正常退出、异常、SIGTERM 和 KeyboardInterrupt 都会清理；SIGKILL 无法运行清理，但只会遗留隔离副本，不污染本树构建。SIGKILL 后按日志中的 scratch 路径核实所有权再清理。开跑前核对共享磁盘预算，跑完立即删除构建产物。生命周期回归：`python3 -m unittest discover -s src/pilotdeck-gateway/tests/fixtures/background-output -p test_negative.py`。
+#994 过渡执行器把变异放在 /tmp 源码副本；持久 target 由调用方维护，保留依赖与增量编译缓存。
+每项依次正控、变异、恢复，三个阶段都先 `cargo test --no-run --message-format=json`，再直接运行本次 Cargo 返回的测试二进制。
+编译不使用测试墙钟，连续 900 秒没有编译输出才判 INVALID；槽位等待单独限 900 秒。
+第一次未变异运行以 900 秒为校准上限，随后同一目标/测试选择的运行上限为 `max(20 秒, 未变异运行耗时 × 5)`；
+编译、槽位等待不计入该基线，不再使用整套固定 590 秒预算，运行预算随所选变异/测试数累加。
+每个变异后在同一 target 上重编并验证原始源码；编译错误、过期锚点、超时、错位 panic 均记 INVALID，逐项继续并最终非零退出。
+`summary.json` 记录所有变异和选择的 KILLED/SURVIVED/INVALID、编译状态及恢复状态；各阶段原始日志与命令/耗时 JSON 同目录保存。
+
+18 个变异覆盖原有范围。判杀绑定完整测试名和该测试 panic 中的目标消息；文件准备、JSON 解析等前置失败有独立 #994 消息，不能充当目标断言。
+全套预计超过 20 分钟时仅在开发会话运行 1–2 个名字样本，完整执行交协调者宿主；后台运行使用宿主 `sigint-default.py python3 ...`。
+同树仍遵守既有源码守卫的串行约束；无新增 target 锁，Cargo 自己管理持久 target 的构建锁。
+SIGTERM/INT 和异常会回收自有子进程并清理源码副本；SIGKILL 遗留的副本按日志核所有权后清理，持久 target 不自动删除。
+自测：`python3 -m unittest discover -s src/pilotdeck-gateway/tests/fixtures/background-output -p test_negative.py`。
+共享执行器自测/配对负控见 `tests/fixtures/test_negative_adaptive.py` 与 `tests/fixtures/negative-adaptive/negative_controls.py`（后者提交后运行）。
 
 pr2 的 state.json、重启恢复、默认项目/nsjail 配置接线不在本夹具范围。

@@ -1312,7 +1312,7 @@ fn search_response(
         .header("content-type", "application/json")
         .header("retry-after", "0.05")
         .body(body)
-        .unwrap()
+        .expect("#994 network-timing setup")
 }
 
 fn delayed_search(timeout_ms: f64, delay: Duration) -> (WebSearchTool, Arc<Mutex<usize>>) {
@@ -1564,7 +1564,10 @@ async fn web_search_expired_timeout_is_not_replaced_by_a_later_response() {
 /// response before both timers are due.
 async fn poll_pending<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
     std::future::poll_fn(|cx| {
-        assert!(future.as_mut().poll(cx).is_pending(), "must have yielded");
+        assert!(
+            future.as_mut().poll(cx).is_pending(),
+            "must have yielded #994 network-timing assertion"
+        );
         std::task::Poll::Ready(())
     })
     .await;
@@ -2174,11 +2177,12 @@ async fn web_fetch_generic_error_keeps_ts_error_name() {
         fetcher
             .get_url_markdown_content("not a url", None)
             .await
-            .unwrap_err(),
+            .expect_err("#994 network-timing expected error"),
         FetchError::Other {
             name: Some("Error"),
             message: "Invalid URL".into(),
-        }
+        },
+        "#994 network-timing assertion"
     );
 }
 
@@ -2195,7 +2199,7 @@ impl ModelHttpTransport for InvalidLocationTransport {
                     .map_err(|never| -> BodyFailure { match never {} })
                     .boxed(),
             )
-            .unwrap()))
+            .expect("#994 network-timing setup")))
     }
 }
 
@@ -2209,11 +2213,12 @@ async fn web_fetch_invalid_redirect_location_keeps_ts_type_error_name() {
         fetcher
             .get_url_markdown_content("http://example.com/start", None)
             .await
-            .unwrap_err(),
+            .expect_err("#994 network-timing expected error"),
         FetchError::Other {
             name: Some("TypeError"),
             message: "Invalid URL".into(),
-        }
+        },
+        "#994 network-timing assertion"
     );
 }
 
@@ -2537,11 +2542,12 @@ struct HopRetryTransport {
 }
 impl ModelHttpTransport for HopRetryTransport {
     fn send(&self, _: hyper::Request<Full<Bytes>>) -> TransportFuture {
-        *self.calls.lock().unwrap() += 1;
+        *self.calls.lock().expect("#994 network-timing setup") += 1;
         let mut response = search_response(self.status);
-        response
-            .headers_mut()
-            .insert("retry-after", "5".parse().unwrap());
+        response.headers_mut().insert(
+            "retry-after",
+            "5".parse().expect("#994 network-timing setup"),
+        );
         TransportFuture::after(Duration::from_secs(58), Ok(response))
     }
 }
@@ -2570,13 +2576,18 @@ async fn web_fetch_hop_timeout_during_retry_uses_retry_abort_message() {
         })
         .await;
         assert_eq!(
-            result.unwrap_err(),
+            result.expect_err("#994 network-timing expected error"),
             pilotdeck_gateway::runtime::tools::builtin::web::fetcher::FetchError::Other {
                 name: Some("NetworkFetchError"),
                 message: "Network retry aborted.".into(),
-            }
+            },
+            "#994 network-timing assertion"
         );
-        assert_eq!(*calls.lock().unwrap(), 1);
+        assert_eq!(
+            *calls.lock().expect("#994 network-timing setup"),
+            1,
+            "#994 network-timing assertion"
+        );
     }
 }
 

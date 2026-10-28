@@ -102,7 +102,7 @@ impl MatrixTransport {
     fn scripted(&self, request: Request<Full<Bytes>>) -> Scripted {
         let target = request.uri().path().to_string();
         let attempt = {
-            let mut requests = self.requests.lock().unwrap();
+            let mut requests = self.requests.lock().expect("#994 network-timing setup");
             requests.push(target.clone());
             requests
                 .iter()
@@ -151,7 +151,7 @@ impl MatrixTransport {
             if redirect {
                 response = response.header("location", "/next");
             }
-            Ok(response.body(body).unwrap())
+            Ok(response.body(body).expect("#994 network-timing setup"))
         };
         if pending_headers {
             Scripted::Timer(result)
@@ -205,7 +205,9 @@ async fn web(transport: impl ModelHttpTransport + 'static, context: &ToolRunCont
     match fetcher.get_url_markdown_content(URL, Some(context)).await {
         Ok(FetchResult::Fetched { entry, .. }) => ok(entry.content),
         Ok(FetchResult::Redirect { .. }) => panic!("same-origin fixture must follow"),
-        Err(FetchError::Other { name, message }) => error(name, &message.to_utf8().unwrap()),
+        Err(FetchError::Other { name, message }) => {
+            error(name, &message.to_utf8().expect("#994 network-timing setup"))
+        }
         Err(FetchError::Http(error)) => panic!("unexpected status: {error:?}"),
     }
 }
@@ -218,7 +220,11 @@ impl ModelHttpTransport for FollowingTransport {
         let transport = self.0.clone();
         TransportFuture::microtask(async move {
             fetch_redirect::follow(
-                request.uri().to_string().parse().unwrap(),
+                request
+                    .uri()
+                    .to_string()
+                    .parse()
+                    .expect("#994 network-timing setup"),
                 hyper::Method::GET,
                 hyper::HeaderMap::new(),
                 Bytes::new(),
@@ -262,14 +268,14 @@ async fn redirect(
         return match network_fetch(&FollowingTransport(transport), &request, &options).await {
             Err(value) => error_value(&value),
             Ok(mut response) => match response.read_body(1024, Some(context)).await {
-                Ok(bytes) => ok(String::from_utf8(bytes).unwrap()),
+                Ok(bytes) => ok(String::from_utf8(bytes).expect("#994 network-timing setup")),
                 Err(value) => panic!("immediate retry body: {value:?}"),
             },
         };
     }
     let continuation = Arc::new(AtomicBool::new(false));
     let response: Result<Response<ModelBody>, Value> = fetch_redirect::follow(
-        URL.parse().unwrap(),
+        URL.parse().expect("#994 network-timing setup"),
         hyper::Method::GET,
         hyper::HeaderMap::new(),
         Bytes::new(),
@@ -346,7 +352,7 @@ async fn redirect(
         .await
     };
     match body {
-        Ok(bytes) => ok(String::from_utf8(bytes).unwrap()),
+        Ok(bytes) => ok(String::from_utf8(bytes).expect("#994 network-timing setup")),
         Err(fetch_redirect::BodyError::Aborted) => {
             error(Some("AbortError"), "This operation was aborted")
         }
@@ -356,7 +362,10 @@ async fn redirect(
 }
 
 fn error_value(value: &pilotdeck_gateway::runtime::model::http::NetworkFetchError) -> Value {
-    error(Some("NetworkFetchError"), &value.message.to_utf8().unwrap())
+    error(
+        Some("NetworkFetchError"),
+        &value.message.to_utf8().expect("#994 network-timing setup"),
+    )
 }
 
 async fn poll_once<F: Future>(mut future: Pin<&mut F>) -> Option<F::Output> {
@@ -375,10 +384,10 @@ async fn replay(row: &Value, overdue: bool) -> Value {
     if row["path"] == "background" {
         return background_timing::replay(row).await;
     }
-    let phase = row["phase"].as_str().unwrap();
-    let event = row["event"].as_str().unwrap();
-    let path = row["path"].as_str().unwrap();
-    let order = row["order"].as_str().unwrap();
+    let phase = row["phase"].as_str().expect("#994 network-timing setup");
+    let event = row["event"].as_str().expect("#994 network-timing setup");
+    let path = row["path"].as_str().expect("#994 network-timing setup");
+    let order = row["order"].as_str().expect("#994 network-timing setup");
     let timing = &row["timing"];
     let operation_ms = timing["requested"]
         .as_u64()
@@ -390,8 +399,15 @@ async fn replay(row: &Value, overdue: bool) -> Value {
     let parent_first = timing["parentRegisteredFirst"]
         .as_bool()
         .expect("registration order");
-    assert!(operation_ms > 0 && effective_ms > 0 && effective_ms <= operation_ms);
-    assert_eq!(effective_ms, if event == "idle" { 40 } else { 20 });
+    assert!(
+        operation_ms > 0 && effective_ms > 0 && effective_ms <= operation_ms,
+        "#994 network-timing assertion"
+    );
+    assert_eq!(
+        effective_ms,
+        if event == "idle" { 40 } else { 20 },
+        "#994 network-timing assertion"
+    );
     // Drive time from the oracle, but reject drift against the tested contract.
     let expected_requested_ms = if phase.starts_with("retry-") {
         WEB_RETRY.base_delay_ms as u64
@@ -404,7 +420,7 @@ async fn replay(row: &Value, overdue: bool) -> Value {
     };
     assert_eq!(
         operation_ms, expected_requested_ms,
-        "requested duration contract"
+        "requested duration contract #994 network-timing assertion"
     );
     assert_eq!(
         timing["source"],
@@ -416,7 +432,8 @@ async fn replay(row: &Value, overdue: bool) -> Value {
             "fixture-injected watchdog"
         } else {
             "fixture-injected completion"
-        }
+        },
+        "#994 network-timing assertion"
     );
     assert_eq!(
         gap,
@@ -425,9 +442,14 @@ async fn replay(row: &Value, overdue: bool) -> Value {
             "parent-first" => -5,
             "tie-parent-first" | "tie-parent-last" => 0,
             _ => panic!("unknown order"),
-        }
+        },
+        "#994 network-timing assertion"
     );
-    assert_eq!(parent_first, order != "tie-parent-last");
+    assert_eq!(
+        parent_first,
+        order != "tie-parent-last",
+        "#994 network-timing assertion"
+    );
     assert_eq!(
         timing["target"],
         if phase.starts_with("retry-") {
@@ -436,7 +458,8 @@ async fn replay(row: &Value, overdue: bool) -> Value {
             "watchdog"
         } else {
             "completion"
-        }
+        },
+        "#994 network-timing assertion"
     );
     let parent_ms = operation_ms
         .checked_add_signed(gap)
@@ -487,7 +510,7 @@ async fn replay(row: &Value, overdue: bool) -> Value {
         result = poll_once(pending.as_mut()).await;
     }
     let mut result = result.expect("bounded matrix must settle");
-    let requests = requests.lock().unwrap();
+    let requests = requests.lock().expect("#994 network-timing setup");
     result["calls"] = json!(requests.len());
     result["retries"] = json!(
         requests
@@ -504,13 +527,18 @@ async fn check(id: &str) {
 }
 async fn check_mode(id: &str, overdue: bool) {
     baseline::oracle(RAW);
-    let oracle: Value = serde_json::from_str(RAW).unwrap();
-    let rows = oracle["cases"].as_array().unwrap();
-    assert_eq!(rows.len(), 336);
+    let oracle: Value = serde_json::from_str(RAW).expect("#994 network-timing setup");
+    let rows = oracle["cases"]
+        .as_array()
+        .expect("#994 network-timing setup");
+    assert_eq!(rows.len(), 336, "#994 network-timing assertion");
     let row = rows.iter().find(|row| row["id"] == id).expect("matrix id");
     let actual = replay(row, overdue).await;
     println!("{}", json!({"id":id,"ts":row["observable"],"rust":actual}));
-    assert_eq!(actual, row["observable"], "network timing cell: {id}");
+    assert_eq!(
+        actual, row["observable"],
+        "network timing cell: {id} #994 network-timing assertion"
+    );
 }
 
 // The table is the only maintained Rust observation registry. Source attributes
@@ -518,15 +546,15 @@ async fn check_mode(id: &str, overdue: bool) {
 #[tokio::test(start_paused = true)]
 async fn known_differences_remain_exact_and_ignored() {
     baseline::oracle(RAW);
-    let oracle: Value = serde_json::from_str(RAW).unwrap();
+    let oracle: Value = serde_json::from_str(RAW).expect("#994 network-timing setup");
     for entry in registry::validate(&oracle) {
-        let id = entry["id"].as_str().unwrap();
+        let id = entry["id"].as_str().expect("#994 network-timing setup");
         let row = oracle["cases"]
             .as_array()
-            .unwrap()
+            .expect("#994 network-timing setup")
             .iter()
             .find(|r| r["id"] == id)
-            .unwrap();
+            .expect("#994 network-timing setup");
         if !matches!(
             row["path"].as_str(),
             Some("web_fetch" | "fetch_redirect" | "background")
@@ -541,7 +569,10 @@ async fn known_differences_remain_exact_and_ignored() {
         if real_io {
             tokio::time::pause();
         }
-        assert_eq!(actual, entry["rust"], "known difference changed: {id}");
+        assert_eq!(
+            actual, entry["rust"],
+            "known difference changed: {id} #994 network-timing assertion"
+        );
     }
 }
 
@@ -1530,5 +1561,5 @@ async fn background_io_headers_idle_tie_parent_last() {
 
 #[test]
 fn registry_negative_controls_reject_unwired_or_relabelled_cells() {
-    registry::negative_controls(&serde_json::from_str(RAW).unwrap());
+    registry::negative_controls(&serde_json::from_str(RAW).expect("#994 network-timing setup"));
 }

@@ -367,15 +367,18 @@ mod tests {
         store.append(b"accepted");
         let flushed = store.begin_close();
         store.append(b"rejected");
-        assert_eq!(store.total, 8, "begin_close must freeze accepted output");
+        assert_eq!(
+            store.total, 8,
+            "begin_close must freeze accepted output #994 background-output assertion"
+        );
         let slice = store.read_slice(&JsValue::Number(0.0), &JsValue::Undefined);
         assert_eq!(
             slice.content, "accepted",
-            "begin_close must retain the ring"
+            "begin_close must retain the ring #994 background-output assertion"
         );
         flushed.await;
         store.close();
-        assert!(store.chunks.is_empty());
+        assert!(store.chunks.is_empty(), "#994 background-output assertion");
     }
 
     #[test]
@@ -428,27 +431,30 @@ mod oracle_tests {
     async fn spill_replays_real_ts_oracle() {
         tokio::time::timeout(std::time::Duration::from_secs(30), replay(false))
             .await
-            .unwrap();
+            .expect("#994 background-output setup");
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn spill_replays_added_ts_boundary_cases() {
         tokio::time::timeout(std::time::Duration::from_secs(30), replay(true))
             .await
-            .unwrap();
+            .expect("#994 background-output setup");
     }
 
     async fn replay(only_added_cases: bool) {
         let oracle: Value = serde_json::from_str(include_str!(
             "../../../tests/fixtures/background-output/oracle.json"
         ))
-        .unwrap();
+        .expect("#994 background-output setup");
         assert_eq!(
-            oracle["baseline"],
-            "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"
+            oracle["baseline"], "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+            "#994 background-output assertion"
         );
-        for case in oracle["cases"].as_array().unwrap() {
-            let name = case["name"].as_str().unwrap();
+        for case in oracle["cases"]
+            .as_array()
+            .expect("#994 background-output setup")
+        {
+            let name = case["name"].as_str().expect("#994 background-output setup");
             if only_added_cases
                 && !matches!(
                     name,
@@ -462,21 +468,34 @@ mod oracle_tests {
             let scratch = Scratch(
                 std::env::temp_dir().join(format!("pdrs-553-rust-{}", uuid::Uuid::new_v4())),
             );
-            fs::create_dir_all(&scratch.0).unwrap();
+            fs::create_dir_all(&scratch.0).expect("#994 background-output setup");
             let dir = scratch.0.join("output");
             let file = dir.join("task.log");
             let mut store = OutputStore::with_spill(
                 super::super::DEFAULT_MEMORY_BYTES,
-                case["spill"].as_bool().unwrap().then(|| file.clone()),
+                case["spill"]
+                    .as_bool()
+                    .expect("#994 background-output setup")
+                    .then(|| file.clone()),
             );
-            for (index, step) in case["steps"].as_array().unwrap().iter().enumerate() {
+            for (index, step) in case["steps"]
+                .as_array()
+                .expect("#994 background-output setup")
+                .iter()
+                .enumerate()
+            {
                 let mut result = None;
-                match step["op"].as_str().unwrap() {
+                match step["op"].as_str().expect("#994 background-output setup") {
                     "append" => store.append(
                         step["text"]
                             .as_str()
-                            .unwrap()
-                            .repeat(step["repeat"].as_u64().unwrap() as usize)
+                            .expect("#994 background-output setup")
+                            .repeat(
+                                step["repeat"]
+                                    .as_u64()
+                                    .expect("#994 background-output setup")
+                                    as usize,
+                            )
                             .as_bytes(),
                     ),
                     "flush" => store.flush().await,
@@ -486,9 +505,13 @@ mod oracle_tests {
                     }
                     "read" => {
                         let slice = store.read_slice(
-                            &JsValue::Number(step["offset"].as_f64().unwrap()),
+                            &JsValue::Number(
+                                step["offset"]
+                                    .as_f64()
+                                    .expect("#994 background-output setup"),
+                            ),
                             &step.get("cap").map_or(JsValue::Undefined, |n| {
-                                JsValue::Number(n.as_f64().unwrap())
+                                JsValue::Number(n.as_f64().expect("#994 background-output setup"))
                             }),
                         );
                         result = Some(
@@ -504,34 +527,50 @@ mod oracle_tests {
                                         error.raw_os_error(),
                                         Some(libc::ENOENT | libc::ENOTDIR)
                                     ),
-                                    "{error}"
+                                    "{error} #994 background-output assertion"
                                 );
                                 Value::Null
                             }
                         })
                     }
-                    "block" => fs::write(&dir, b"block").unwrap(),
-                    "unblock" => fs::remove_file(&dir).unwrap(),
+                    "block" => fs::write(&dir, b"block").expect("#994 background-output setup"),
+                    "unblock" => fs::remove_file(&dir).expect("#994 background-output setup"),
                     "deny" => {
-                        fs::create_dir(&dir).unwrap();
-                        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+                        fs::create_dir(&dir).expect("#994 background-output setup");
+                        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500))
+                            .expect("#994 background-output setup");
                     }
-                    "allow" => {
-                        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap()
+                    "allow" => fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))
+                        .expect("#994 background-output setup"),
+                    "full" => {
+                        store
+                            .spill
+                            .as_mut()
+                            .expect("#994 background-output setup")
+                            .write_error = true
                     }
-                    "full" => store.spill.as_mut().unwrap().write_error = true,
-                    "healthy" => store.spill.as_mut().unwrap().write_error = false,
+                    "healthy" => {
+                        store
+                            .spill
+                            .as_mut()
+                            .expect("#994 background-output setup")
+                            .write_error = false
+                    }
                     "seed" => {
-                        fs::create_dir(&dir).unwrap();
-                        fs::write(&file, step["text"].as_str().unwrap()).unwrap();
+                        fs::create_dir(&dir).expect("#994 background-output setup");
+                        fs::write(
+                            &file,
+                            step["text"].as_str().expect("#994 background-output setup"),
+                        )
+                        .expect("#994 background-output setup");
                     }
                     "truncate" => OpenOptions::new()
                         .write(true)
                         .open(&file)
-                        .unwrap()
-                        .set_len(step["size"].as_u64().unwrap())
-                        .unwrap(),
-                    "remove" => fs::remove_file(&file).unwrap(),
+                        .expect("#994 background-output setup")
+                        .set_len(step["size"].as_u64().expect("#994 background-output setup"))
+                        .expect("#994 background-output setup"),
+                    "remove" => fs::remove_file(&file).expect("#994 background-output setup"),
                     other => panic!("unknown oracle operation {other}"),
                 }
                 if let Some(result) = result {
@@ -541,18 +580,24 @@ mod oracle_tests {
                         assert_eq!(
                             result["nextOffset"].as_f64(),
                             expected["nextOffset"].as_f64(),
-                            "{name} step {index}: cursor"
+                            "{name} step {index}: cursor #994 background-output oracle comparison"
                         );
                         assert_eq!(
                             result["totalBytes"].as_f64(),
                             expected["totalBytes"].as_f64(),
-                            "{name} step {index}: total"
+                            "{name} step {index}: total #994 background-output oracle comparison"
                         );
                         for key in ["truncated", "bytes", "sha256"] {
-                            assert_eq!(result[key], expected[key], "{name} step {index}: {key}");
+                            assert_eq!(
+                                result[key], expected[key],
+                                "{name} step {index}: {key} #994 background-output oracle comparison"
+                            );
                         }
                     } else {
-                        assert_eq!(&result, expected, "{name} step {index}");
+                        assert_eq!(
+                            &result, expected,
+                            "{name} step {index} #994 background-output oracle comparison"
+                        );
                     }
                 }
             }

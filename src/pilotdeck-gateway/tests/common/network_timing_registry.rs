@@ -15,7 +15,7 @@ const TABLE: &str = include_str!("../fixtures/network-timing/known_differences.j
 pub fn validate(oracle: &Value) -> Vec<Value> {
     validate_parts(
         oracle,
-        &serde_json::from_str(TABLE).unwrap(),
+        &serde_json::from_str(TABLE).expect("#994 network-timing setup"),
         &SOURCES,
         &WIRING,
     )
@@ -33,9 +33,13 @@ fn validate_parts(
         assert_eq!(
             source.matches(&declaration).count(),
             1,
-            "private caller cfg(test) wiring: {name}"
+            "private caller cfg(test) wiring: {name} #994 network-timing assertion"
         );
-        let before = source.split(&declaration).next().unwrap().trim_end();
+        let before = source
+            .split(&declaration)
+            .next()
+            .expect("#994 network-timing setup")
+            .trim_end();
         let previous = before
             .lines()
             .rev()
@@ -44,17 +48,25 @@ fn validate_parts(
             .unwrap_or("");
         assert!(
             !previous.starts_with("#["),
-            "private caller has extra cfg/attribute: {name}"
+            "private caller has extra cfg/attribute: {name} #994 network-timing assertion"
         );
     }
     let mut rows = BTreeMap::new();
-    for row in oracle["cases"].as_array().unwrap() {
+    for row in oracle["cases"]
+        .as_array()
+        .expect("#994 network-timing setup")
+    {
         assert!(
-            rows.insert(row["id"].as_str().unwrap(), row).is_none(),
-            "duplicate oracle id"
+            rows.insert(row["id"].as_str().expect("#994 network-timing setup"), row)
+                .is_none(),
+            "duplicate oracle id #994 network-timing assertion"
         );
     }
-    assert_eq!(rows.len(), 336, "complete timing matrix");
+    assert_eq!(
+        rows.len(),
+        336,
+        "complete timing matrix #994 network-timing assertion"
+    );
     let mut ignored = BTreeMap::new();
     let mut tests = BTreeMap::new();
     for source in sources {
@@ -65,7 +77,10 @@ fn validate_parts(
                 attributes.push(line);
             }
             if line.starts_with("#[ignore") {
-                assert!(reason.is_none(), "duplicate ignore attribute");
+                assert!(
+                    reason.is_none(),
+                    "duplicate ignore attribute #994 network-timing assertion"
+                );
                 reason = Some(
                     line.strip_prefix("#[ignore = \"")
                         .and_then(|s| s.strip_suffix("\"]"))
@@ -76,29 +91,36 @@ fn validate_parts(
                 let name = line
                     .trim_start_matches("async ")
                     .strip_prefix("fn ")
-                    .unwrap()
+                    .expect("#994 network-timing setup")
                     .split('(')
                     .next()
-                    .unwrap();
+                    .expect("#994 network-timing setup");
                 if name == "known_differences_remain_exact_and_ignored" {
                     assert_eq!(
                         attributes,
                         ["#[tokio::test(start_paused = true)]"],
-                        "difference replay guard must be executable"
+                        "difference replay guard must be executable #994 network-timing assertion"
                     );
                 }
                 if let Some(reason) = reason.take() {
                     if name == "network_timing_regenerates_identically" {
-                        assert_eq!(reason, "requires fixed TS baseline and Node v22.22.0");
+                        assert_eq!(
+                            reason, "requires fixed TS baseline and Node v22.22.0",
+                            "#994 network-timing assertion"
+                        );
                     } else {
                         assert!(
                             ignored.insert(name, reason).is_none(),
-                            "duplicate ignored test"
+                            "duplicate ignored test #994 network-timing assertion"
                         );
                     }
                 }
                 if let Some(rest) = source.split(&format!("async fn {name}() {{")).nth(1) {
-                    let body = rest.split("\n}").next().unwrap().trim();
+                    let body = rest
+                        .split("\n}")
+                        .next()
+                        .expect("#994 network-timing setup")
+                        .trim();
                     if let Some(id) = body
                         .strip_prefix("check(\"")
                         .and_then(|s| s.strip_suffix("\").await;"))
@@ -111,18 +133,22 @@ fn validate_parts(
                         assert_eq!(
                             attributes.iter().filter(|a| **a == expected_test).count(),
                             1,
-                            "cell must be an executable test: {id}"
+                            "cell must be an executable test: {id} #994 network-timing assertion"
                         );
                         assert!(
                             attributes
                                 .iter()
                                 .all(|a| *a == expected_test || a.starts_with("#[ignore = ")),
-                            "unexpected cell cfg/attribute: {id}"
+                            "unexpected cell cfg/attribute: {id} #994 network-timing assertion"
                         );
-                        assert_eq!(name, id.replace(['/', '-'], "_"), "cell test/id binding");
+                        assert_eq!(
+                            name,
+                            id.replace(['/', '-'], "_"),
+                            "cell test/id binding #994 network-timing assertion"
+                        );
                         assert!(
                             tests.insert(id.to_owned(), name.to_owned()).is_none(),
-                            "duplicate cell test"
+                            "duplicate cell test #994 network-timing assertion"
                         );
                     }
                 }
@@ -131,95 +157,111 @@ fn validate_parts(
                 attributes.clear();
             }
         }
-        assert!(reason.is_none(), "unbound ignore attribute");
+        assert!(
+            reason.is_none(),
+            "unbound ignore attribute #994 network-timing assertion"
+        );
     }
     assert_eq!(
         tests.keys().map(String::as_str).collect::<BTreeSet<_>>(),
         rows.keys().copied().collect(),
-        "all oracle cells wired exactly once"
+        "all oracle cells wired exactly once #994 network-timing assertion"
     );
     let mut registered = BTreeMap::new();
     let mut ids = BTreeSet::new();
-    for entry in table["cells"].as_array().unwrap() {
-        let id = entry["id"].as_str().unwrap();
-        let name = entry["test"].as_str().unwrap();
-        assert!(ids.insert(id), "duplicate difference id");
+    for entry in table["cells"]
+        .as_array()
+        .expect("#994 network-timing setup")
+    {
+        let id = entry["id"].as_str().expect("#994 network-timing setup");
+        let name = entry["test"].as_str().expect("#994 network-timing setup");
+        assert!(
+            ids.insert(id),
+            "duplicate difference id #994 network-timing assertion"
+        );
         assert_eq!(
             Some(name),
             tests.get(id).map(String::as_str),
-            "ignored cell must assert TS oracle"
+            "ignored cell must assert TS oracle #994 network-timing assertion"
         );
-        let category = &table["categories"][entry["category"].as_str().unwrap()];
+        let category = &table["categories"][entry["category"]
+            .as_str()
+            .expect("#994 network-timing setup")];
         let reason = category["ignoreReason"].as_str().expect("known category");
         assert!(
             registered.insert(name, reason).is_none(),
-            "duplicate difference test"
+            "duplicate difference test #994 network-timing assertion"
         );
         assert_eq!(
             entry["ts"], rows[id]["observable"],
-            "recorded TS observation: {id}"
+            "recorded TS observation: {id} #994 network-timing assertion"
         );
         assert_ne!(
             entry["ts"], entry["rust"],
-            "resolved difference must be unignored: {id}"
+            "resolved difference must be unignored: {id} #994 network-timing assertion"
         );
     }
     assert_eq!(
         ignored, registered,
-        "ignored cells and difference table must match exactly"
+        "ignored cells and difference table must match exactly #994 network-timing assertion"
     );
-    table["cells"].as_array().unwrap().clone()
+    table["cells"]
+        .as_array()
+        .expect("#994 network-timing setup")
+        .clone()
 }
 
 /// In-memory source/table negatives: no source file or frozen oracle is changed.
 #[allow(dead_code)]
 pub fn negative_controls(oracle: &Value) {
-    let table: Value = serde_json::from_str(TABLE).unwrap();
+    let table: Value = serde_json::from_str(TABLE).expect("#994 network-timing setup");
     validate_parts(oracle, &table, &SOURCES, &WIRING);
     let mut count = 0;
-    let mut reject =
-        |label: &str, oracle: &Value, table: &Value, sources: [&str; 3], wiring: [&str; 2]| {
-            let panic =
-                std::panic::catch_unwind(|| validate_parts(oracle, table, &sources, &wiring))
-                    .expect_err(&format!("registry negative was accepted: {label}"));
-            let message = panic
-                .downcast_ref::<String>()
-                .map(String::as_str)
-                .or_else(|| panic.downcast_ref::<&str>().copied())
-                .expect("registry panic text");
-            let anchor = match label.split(':').next().unwrap() {
-                "missing-test" | "wrong-clock" => "cell must be an executable test",
-                "disabled-test" => "unexpected cell cfg/attribute",
-                "extra-ignore" | "missing-difference" => {
-                    "ignored cells and difference table must match exactly"
-                }
-                "wrong-cell" => "cell test/id binding",
-                "missing-wiring" => "private caller cfg(test) wiring",
-                "disabled-wiring" => "private caller has extra cfg/attribute",
-                "difference-ts" => "recorded TS observation",
-                "difference-rust" => "resolved difference must be unignored",
-                "difference-test" => "ignored cell must assert TS oracle",
-                "difference-category" => "known category",
-                "missing-oracle-cell" => "complete timing matrix",
-                "missing-replay-guard" | "disabled-replay-guard" => {
-                    "difference replay guard must be executable"
-                }
-                _ => panic!("unbound registry negative: {label}"),
-            };
-            assert!(
-                message.contains(anchor),
-                "wrong registry panic for {label}: expected {anchor}, got {message}"
-            );
-            validate_parts(
-                &serde_json::from_str(include_str!("../fixtures/network-timing/oracle.json"))
-                    .unwrap(),
-                &serde_json::from_str(TABLE).unwrap(),
-                &SOURCES,
-                &WIRING,
-            );
-            println!("REGISTRY_NEGATIVE {label}: rejected; restored PASS");
-            count += 1;
+    let mut reject = |label: &str,
+                      oracle: &Value,
+                      table: &Value,
+                      sources: [&str; 3],
+                      wiring: [&str; 2]| {
+        let panic = std::panic::catch_unwind(|| validate_parts(oracle, table, &sources, &wiring))
+            .expect_err(&format!("registry negative was accepted: {label}"));
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("registry panic text");
+        let anchor = match label.split(':').next().expect("#994 network-timing setup") {
+            "missing-test" | "wrong-clock" => "cell must be an executable test",
+            "disabled-test" => "unexpected cell cfg/attribute",
+            "extra-ignore" | "missing-difference" => {
+                "ignored cells and difference table must match exactly"
+            }
+            "wrong-cell" => "cell test/id binding",
+            "missing-wiring" => "private caller cfg(test) wiring",
+            "disabled-wiring" => "private caller has extra cfg/attribute",
+            "difference-ts" => "recorded TS observation",
+            "difference-rust" => "resolved difference must be unignored",
+            "difference-test" => "ignored cell must assert TS oracle",
+            "difference-category" => "known category",
+            "missing-oracle-cell" => "complete timing matrix",
+            "missing-replay-guard" | "disabled-replay-guard" => {
+                "difference replay guard must be executable"
+            }
+            _ => panic!("unbound registry negative: {label}"),
         };
+        assert!(
+            message.contains(anchor),
+            "wrong registry panic for {label}: expected {anchor}, got {message} #994 network-timing assertion"
+        );
+        validate_parts(
+            &serde_json::from_str(include_str!("../fixtures/network-timing/oracle.json"))
+                .expect("#994 network-timing setup"),
+            &serde_json::from_str(TABLE).expect("#994 network-timing setup"),
+            &SOURCES,
+            &WIRING,
+        );
+        println!("REGISTRY_NEGATIVE {label}: rejected; restored PASS");
+        count += 1;
+    };
     for (index, id) in [
         "web_fetch/headers/fulfilled/continuation-first",
         "mcp_get/headers/fulfilled/continuation-first",
@@ -262,7 +304,11 @@ pub fn negative_controls(oracle: &Value) {
                 ),
             ),
         ] {
-            assert_eq!(SOURCES[index].matches(&declaration).count(), 1);
+            assert_eq!(
+                SOURCES[index].matches(&declaration).count(),
+                1,
+                "#994 network-timing assertion"
+            );
             let changed = SOURCES[index].replace(&declaration, &replacement);
             let mut sources = SOURCES;
             sources[index] = &changed;
@@ -288,7 +334,11 @@ pub fn negative_controls(oracle: &Value) {
                 "#[tokio::test(start_paused = true)]\n#[cfg(any())]\nasync fn known_differences_remain_exact_and_ignored() {",
             ),
         ] {
-            assert_eq!(SOURCES[index].matches(declaration).count(), 1);
+            assert_eq!(
+                SOURCES[index].matches(declaration).count(),
+                1,
+                "#994 network-timing assertion"
+            );
             let changed = SOURCES[index].replace(declaration, replacement);
             let mut sources = SOURCES;
             sources[index] = &changed;
@@ -323,18 +373,29 @@ pub fn negative_controls(oracle: &Value) {
             wiring,
         );
     }
-    for row in table["cells"].as_array().unwrap().iter().filter(|row| {
-        row["id"].as_str().unwrap().starts_with("mcp_")
-            || row["id"].as_str().unwrap().starts_with("hooks/")
-    }) {
+    for row in table["cells"]
+        .as_array()
+        .expect("#994 network-timing setup")
+        .iter()
+        .filter(|row| {
+            row["id"]
+                .as_str()
+                .expect("#994 network-timing setup")
+                .starts_with("mcp_")
+                || row["id"]
+                    .as_str()
+                    .expect("#994 network-timing setup")
+                    .starts_with("hooks/")
+        })
+    {
         for field in ["ts", "rust", "test", "category"] {
             let mut changed = table.clone();
             let entry = changed["cells"]
                 .as_array_mut()
-                .unwrap()
+                .expect("#994 network-timing setup")
                 .iter_mut()
                 .find(|e| e["id"] == row["id"])
-                .unwrap();
+                .expect("#994 network-timing setup");
             entry[field] = match field {
                 "ts" => Value::Null,
                 "rust" => row["ts"].clone(),
@@ -350,10 +411,16 @@ pub fn negative_controls(oracle: &Value) {
         }
     }
     let mut changed = oracle.clone();
-    changed["cases"].as_array_mut().unwrap().pop();
+    changed["cases"]
+        .as_array_mut()
+        .expect("#994 network-timing setup")
+        .pop();
     reject("missing-oracle-cell", &changed, &table, SOURCES, WIRING);
     let mut changed = table.clone();
-    changed["cells"].as_array_mut().unwrap().pop();
+    changed["cells"]
+        .as_array_mut()
+        .expect("#994 network-timing setup")
+        .pop();
     reject("missing-difference", oracle, &changed, SOURCES, WIRING);
     println!("REGISTRY_NEGATIVE {count} controls PASS");
 }

@@ -543,11 +543,12 @@ mod tests {
     #[test]
     fn web_fetch_upgrade_failure_keeps_ts_type_error_name() {
         assert_eq!(
-            upgrade_url("http://[").unwrap_err(),
+            upgrade_url("http://[").expect_err("#994 network-timing expected error"),
             FetchError::Other {
                 name: Some("TypeError"),
                 message: "Invalid URL".into(),
-            }
+            },
+            "#994 network-timing assertion"
         );
     }
 }

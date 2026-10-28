@@ -5,20 +5,14 @@ Each selected original test passes, the mutated test must fail its bound behavio
 assertion or explicit impossible-branch guard (not compilation), then the same test passes after guarded restore.
 No other writers/cargo are allowed in this worktree during this script.
 """
-import difflib
-import hashlib
-import json
-import os
 import re
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from _shared.negative_control import mutation_suite
+from negative_panic import panic_evidence, named_test_failed
 
 root = Path(__file__).resolve().parents[5]
-out = Path(sys.argv[1]).resolve()
-out.mkdir(parents=True, exist_ok=False)
-baseline = os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
 network = root / 'src/pilotdeck-gateway/src/runtime/network.rs'
 web = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/network.rs'
 fetcher = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/fetcher.rs'
@@ -161,7 +155,8 @@ def assert_required_failure(name, log):
         cell = required_failures[name]
         test = cell.replace('/', '_').replace('-', '_')
         pattern = (r"thread '" + re.escape(test) + r"'[^\n]*\n" +
-                   re.escape('assertion `left == right` failed: network timing cell: ' + cell) + r'\n')
+                   re.escape('assertion `left == right` failed: network timing cell: ' + cell
+                             + ' #994 network-timing assertion') + r'\n')
         assert re.search(pattern, log), (name, 'bound test/anchor must fail', test, cell)
 
 # Case-specific assertion anchors: the mutation must be rejected by the
@@ -176,72 +171,74 @@ failure_anchors = {
     'error-name-invalid-url-upgrade': ('name: None', 'name: Some("TypeError")'),
 }
 
-if sys.argv[2:]:
-    selected = set(sys.argv[2:])
-    cases = [case for case in cases if case[0] in selected]
-    assert len(cases) == len(selected), 'unknown control'
-env = os.environ.copy()
-env['CARGO_TARGET_DIR'] = str(root / '_build/cargo-target')
-
-def save(name, text):
-    with (out / name).open('x') as stream:
-        stream.write(text)
 
 test_source = (root / 'src/pilotdeck-gateway/tests/network_timing.rs').read_text()
 expected_passes = len(re.findall(r'^#\[(?:tokio::)?test(?:\([^\n]*\))?\]', test_source, re.M)) - len(re.findall(r'^#\[ignore(?: = [^\n]*)?\]', test_source, re.M))
 
-def run(name, test):
-    slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
-    save(name + '.slots.log', slot.stdout + slot.stderr)
-    target, _, selection = test.partition('::')
+
+def selection(test):
+    target, _, selected = test.partition('::')
     if target == 'lib':
-        command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
-                   '-p', 'pilotdeck-gateway', '--lib']
+        cargo_target = ('--lib',)
     else:
-        target, selection = (target, selection) if selection else ('network_timing', test)
-        command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
-                   '-p', 'pilotdeck-gateway', '--test', target]
-    command += ['--', '--nocapture', '--test-threads=1'] if test == '*' else [selection, '--', '--exact', '--nocapture', '--test-threads=1']
-    result = run_owned(command, cwd=root, env=env, timeout=300)
+        target, selected = (target, selected) if selected else ('network_timing', test)
+        cargo_target = ('--test', target)
+    arguments = [] if test == '*' else [selected, '--exact']
+    return cargo_target, [*arguments, '--show-output', '--test-threads=1']
+
+
+def passed(result, test):
+    count = expected_passes if test == '*' else 1
+    selected = selection(test)[1][0]
+    return (result.returncode == 0 and f'test result: ok. {count} passed; 0 failed;' in result.stdout
+            and (test == '*' or f'test {selected} ... ok' in result.stdout))
+
+
+def classify(name, result, test):
+    if passed(result, test):
+        return 'SURVIVED', 'bound test still passed'
     log = result.stdout + result.stderr
-    save(name + '.log', 'command: ' + repr(command) + '\n' + log + f'\nexit: {result.returncode}\n')
-    return result.returncode, log
+    bound = (required_failures[name].replace('/', '_').replace('-', '_')
+             if test == '*' else selection(test)[1][0])
+    evidence = panic_evidence(log, bound)
+    log = evidence
+    anchor_ok = all(needle in log for needle in failure_anchors.get(name, ()))
+    if name in failure_anchors:
+        failure_ok = 'assertion `left == right` failed' in log
+    else:
+        failure_ok = (
+            f'left: Other {{ name: Some("NetworkFetchError"), message: {list(map(ord, "wrong outer retry message"))} }}' in log
+            and f'right: Other {{ name: Some("NetworkFetchError"), message: {list(map(ord, "Network retry aborted."))} }}' in log
+            and 'assertion `left == right` failed' in log
+            if test.startswith('web_tools::')
+            else assertion_anchors.get(name, 'assertion `left == right` failed: network timing cell:') in log)
+    raw = result.stdout + result.stderr
+    runtime = (result.returncode == 101 and 'test result: FAILED.' in raw
+               and named_test_failed(raw, bound)
+               and (test == '*' or 'test result: FAILED. 0 passed; 1 failed;' in raw))
+    if runtime and failure_ok and anchor_ok:
+        try:
+            assert_required_failure(name, raw)
+        except AssertionError as error:
+            return 'INVALID', str(error)
+        return 'KILLED', 'bound network timing assertion failed'
+    return 'INVALID', 'missing bound oracle/typed assertion failure'
 
-summary = []
-for name, path, old, new, tests in cases:
-    for index, test in enumerate(tests):
-        code, log = run(f'{name}-{index}-positive', test)
-        assert code == 0 and (f'{expected_passes} passed; 0 failed' if test == '*' else '1 passed; 0 failed') in log, (name, 'positive', code)
-    killed_cells = set()
-    with mutating_sources(root, [path], baseline=baseline) as originals:
-        original = originals[path].decode()
-        assert original.count(old) == 1, (name, 'unique mutation anchor', original.count(old))
-        changed = original.replace(old, new)
-        save(name + '.patch', ''.join(difflib.unified_diff(original.splitlines(True), changed.splitlines(True), fromfile=str(path.relative_to(root)), tofile=str(path.relative_to(root)))))
-        path.write_text(changed)
-        for index, test in enumerate(tests):
-            code, log = run(f'{name}-{index}-negative', test)
-            anchor_ok = all(needle in log for needle in failure_anchors.get(name, ()))
-            if name in failure_anchors:
-                failure_ok = 'assertion `left == right` failed' in log
-            else:
-                failure_ok = (
-                    f'left: Other {{ name: Some("NetworkFetchError"), message: {list(map(ord, "wrong outer retry message"))} }}' in log
-                    and f'right: Other {{ name: Some("NetworkFetchError"), message: {list(map(ord, "Network retry aborted."))} }}' in log
-                    and 'assertion `left == right` failed' in log
-                    if test.startswith('web_tools::')
-                    else assertion_anchors.get(name, 'assertion `left == right` failed: network timing cell:') in log)
-            assert code == 101 and ('test result: FAILED.' in log if test == '*' else f"{test.split('::')[-1]} ..." in log and 'test result: FAILED. 0 passed; 1 failed' in log) and failure_ok and anchor_ok, (name, 'not an oracle/typed assertion failure', code, anchor_ok)
-            assert_required_failure(name, log)
-            for line in log.splitlines():
-                if '{"id":' in line:
-                    row = json.loads(line[line.index('{"id":'):])
-                    if row['ts'] != row['rust']:
-                        killed_cells.add(row['id'])
 
-    for index, test in enumerate(tests):
-        code, log = run(f'{name}-{index}-restored', test)
-        assert code == 0 and (f'{expected_passes} passed; 0 failed' if test == '*' else '1 passed; 0 failed') in log, (name, 'restored', code)
-    summary.append({'name': name, 'tests': tests, 'requiredFailure': required_failures.get(name), 'assertionAnchor': assertion_anchors.get(name, 'assertion `left == right` failed: network timing cell:'), 'killed': True, 'restoredPass': True, 'sourceSha256': hashlib.sha256(original.encode()).hexdigest(), 'killedCells': sorted(killed_cells)})
-    print(f'{name}: {len(tests)} test selections rejected, restored PASS', flush=True)
-save('summary.json', json.dumps(summary, indent=2) + '\n')
+def main():
+    if len(sys.argv) < 2:
+        raise SystemExit('usage: negative_controls.py NEW_OUTPUT_DIR [mutation ...]')
+    requested = sys.argv[2:]
+    selected = [row for row in cases if not requested or row[0] in requested]
+    if requested and (len(selected) != len(requested) or len(set(requested)) != len(requested)):
+        raise SystemExit('unknown/duplicate control')
+    return mutation_suite('network-timing', selected, sys.argv[1], selection, passed, classify,
+                          guarded=[root / 'src/pilotdeck-gateway/tests/network_timing.rs',
+                                   root / 'src/pilotdeck-gateway/tests/web_tools.rs',
+                                   root / 'src/pilotdeck-gateway/tests/common/network_timing_background.rs',
+                                   root / 'src/pilotdeck-gateway/tests/common/network_timing_io.rs',
+                                   root / 'src/pilotdeck-gateway/tests/common/network_timing_registry.rs'])
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

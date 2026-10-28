@@ -3088,7 +3088,8 @@ mod tests {
             let runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
                 disk_spill_dir: Some(scratch.path().to_path_buf()),
                 snapshot_store: Some(Arc::new(
-                    JsonFileBackgroundTaskSnapshotStore::new(snapshot_path.clone()).unwrap(),
+                    JsonFileBackgroundTaskSnapshotStore::new(snapshot_path.clone())
+                        .expect("#994 background-output setup"),
                 )),
                 ..Default::default()
             });
@@ -3102,65 +3103,102 @@ mod tests {
                     kind: JsValue::Undefined,
                 })
                 .await
-                .unwrap();
-            let entry = runtime.find(&task.task_id, None).unwrap();
+                .expect("#994 background-output setup");
+            let entry = runtime
+                .find(&task.task_id, None)
+                .expect("#994 background-output setup");
             entry.wait_done().await;
             // Feed the same input as the real TS configured case, after the
             // process exits so the single write cannot race gate installation.
             let oracle: serde_json::Value = serde_json::from_str(include_str!(
                 "../../tests/fixtures/background-output/oracle.json"
             ))
-            .unwrap();
-            let steps = oracle["cases"][0]["steps"].as_array().unwrap();
+            .expect("#994 background-output setup");
+            let steps = oracle["cases"][0]["steps"]
+                .as_array()
+                .expect("#994 background-output setup");
             let mut bytes = Vec::new();
             for step in steps.iter().take_while(|step| step["op"] != "close") {
                 if step["op"] == "append" {
                     bytes.extend_from_slice(
                         step["text"]
                             .as_str()
-                            .unwrap()
-                            .repeat(step["repeat"].as_u64().unwrap() as usize)
+                            .expect("#994 background-output setup")
+                            .repeat(
+                                step["repeat"]
+                                    .as_u64()
+                                    .expect("#994 background-output setup")
+                                    as usize,
+                            )
                             .as_bytes(),
                     );
                 }
             }
-            let (entered, release) = entry.state.lock().unwrap().output.gate_next_write();
+            let (entered, release) = entry
+                .state
+                .lock()
+                .expect("#994 background-output setup")
+                .output
+                .gate_next_write();
             entry.append(&bytes);
-            entered.await.unwrap();
+            entered.await.expect("#994 background-output setup");
             let path = scratch.path().join("output").join(format!(
                 "{}.log",
                 String::from_utf16_lossy(task.task_id.units())
             ));
-            assert!(!path.exists(), "the accepted write must still be gated");
+            assert!(
+                !path.exists(),
+                "the accepted write must still be gated #994 background-output assertion"
+            );
             let mut dispose = Box::pin(runtime.dispose());
             assert!(
                 tokio::time::timeout(Duration::from_millis(100), &mut dispose)
                     .await
                     .is_err(),
-                "dispose returned before the gated write completed"
+                "dispose returned before the gated write completed #994 background-output assertion"
             );
-            assert!(!path.exists(), "no filesystem write before gate release");
+            assert!(
+                !path.exists(),
+                "no filesystem write before gate release #994 background-output assertion"
+            );
             entry.append(b"rejected after begin_close");
-            assert_eq!(entry.snapshot().output_bytes, bytes.len() as u64);
-            release.send(()).unwrap();
+            assert_eq!(
+                entry.snapshot().output_bytes,
+                bytes.len() as u64,
+                "#994 background-output assertion"
+            );
+            release.send(()).expect("#994 background-output setup");
             dispose.await;
-            let written = std::fs::read(path).unwrap();
-            assert_eq!(written, bytes, "dispose must wait for the complete log");
+            let written = std::fs::read(path).expect("#994 background-output setup");
+            assert_eq!(
+                written, bytes,
+                "dispose must wait for the complete log #994 background-output assertion"
+            );
             use sha2::{Digest, Sha256};
             let expected = &steps
                 .iter()
                 .rev()
                 .find(|step| step["op"] == "disk")
-                .unwrap()["result"];
-            assert_eq!(written.len() as u64, expected["bytes"].as_u64().unwrap());
+                .expect("#994 background-output setup")["result"];
+            assert_eq!(
+                written.len() as u64,
+                expected["bytes"]
+                    .as_u64()
+                    .expect("#994 background-output setup"),
+                "#994 background-output assertion"
+            );
             assert_eq!(
                 format!("{:x}", Sha256::digest(&written)),
-                expected["sha256"].as_str().unwrap()
+                expected["sha256"]
+                    .as_str()
+                    .expect("#994 background-output setup"),
+                "#994 background-output assertion"
             );
             let restored = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
                 disk_spill_dir: Some(scratch.path().to_path_buf()),
                 snapshot_store: Some(Arc::new(
-                    JsonFileBackgroundTaskSnapshotStore::new(snapshot_path).unwrap(),
+                    JsonFileBackgroundTaskSnapshotStore::new(snapshot_path)
+                        .expect("#994 background-output setup"),
                 )),
                 ..Default::default()
             });
@@ -3171,10 +3209,18 @@ mod tests {
                     &JsValue::Number(bytes.len() as f64),
                     None,
                 )
-                .unwrap();
-            assert_eq!(slice.content.as_bytes(), bytes);
-            assert_eq!(slice.total_bytes, bytes.len() as f64);
-            assert!(!slice.truncated);
+                .expect("#994 background-output setup");
+            assert_eq!(
+                slice.content.as_bytes(),
+                bytes,
+                "#994 background-output assertion"
+            );
+            assert_eq!(
+                slice.total_bytes,
+                bytes.len() as f64,
+                "#994 background-output assertion"
+            );
+            assert!(!slice.truncated, "#994 background-output assertion");
             restored.dispose().await;
         })
         .await
