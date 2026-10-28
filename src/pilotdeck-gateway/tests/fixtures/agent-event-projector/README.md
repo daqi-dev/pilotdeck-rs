@@ -95,8 +95,12 @@ cmp /tmp/aep-first/oracle.json /tmp/aep-second/oracle.json
 设置 `PDRS_BASELINE` 时重新核对真实源码。
 
 `negative.py` 在 `/tmp` 的隔离 crate 中逐条改坏 `projector.rs`，要求真实断言转红并
-打印对应 case 名；任一负控未被抓住即退出 1。命令：
+打印对应 case 名。每个选中的变异先 `cargo test --no-run` 确认能编译，再跑绑定测试；
+逐项记 PASS/KILLED/SURVIVED/INVALID 并汇总，任一非 PASS/KILLED 即退出 1。拷贝 crate
+的依赖须与 `tests/common/baseline.rs` 同步（含 `regeneration_masks` 的 serde_json，
+#986）。cargo 使用调用方传入的 `CARGO_TARGET_DIR`，未设置即报错退出。命令：
 
 ```sh
+export CARGO_TARGET_DIR=/absolute/path/to/tree/_build/cargo-target
 python3 src/pilotdeck-gateway/tests/fixtures/agent-event-projector/negative.py /tmp/aep-negative
 ```
