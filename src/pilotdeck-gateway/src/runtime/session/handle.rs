@@ -132,6 +132,17 @@ impl LiveSessionHandle {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
+    #[cfg(test)]
+    pub(super) fn in_flight_for_test(&self) -> usize {
+        usize::from(
+            self.0
+                .progress
+                .lock()
+                .expect("#745 handle progress")
+                .activity,
+        )
+    }
+
     pub fn state(&self) -> HandleState {
         self.0.progress.lock().unwrap().state
     }

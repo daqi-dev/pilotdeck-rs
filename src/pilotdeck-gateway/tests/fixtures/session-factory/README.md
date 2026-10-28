@@ -15,7 +15,7 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib r
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --audit
 ```
 
-91 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
+106 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --compile "$OUT_COMPILE"
@@ -30,7 +30,7 @@ python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.p
 
 `fenceMatrix` 新增 4 个旧状态（idle/quick/never/disposing）×4 事件（recreate/twice/close/shutdown）×3 时机（beforeload/afterload/publish）共48格。publish 门闩在真实 Router setupSession、registry.replace 之前；never 表示测量前缀中未放行的旧 turn，探针仅在清理时解除，不把15秒装置截止当产品结论。Rust每格有完整 `fence_<state>_<event>_<timing>` 测试；never 的后两阶段被 fence 阻断于 load 前，以专用超时、零load/零publish与原文件验证。
 
-租约按 canonical path 跨 factory 协调，并复用既有 `.lock` 文件锁排除其他进程。锁随真实 recorder/store 保留；显式 close 等已受理写完成后释放，不依赖旧 handle clone Drop。recreate 总等待预算复用 `Limits::default().close_timeout`（1秒），storage构造自身耗时不消耗租约等待预算；超时不取消旧 handle 的持有型 drain任务。
+租约按 canonical path 跨 factory 协调，并复用既有 `.lock` 文件锁排除其他进程。锁随真实 recorder/store 保留；显式 close 等已受理写完成后释放，不依赖旧 handle clone Drop。recreate 总等待预算由 `FactoryOptions.writer_fence_timeout` 显式传入；宿主按实际取消策略选择（例如既有 `POST_CANCEL_EXIT_TIMEOUT`），不隐式借用默认 transport close_timeout，storage构造自身耗时不消耗租约等待预算；超时不取消旧 handle 的持有型 drain任务。
 
 `regenerates_identically` 必须执行真实探针，生成器不再接受 `MATRIX_IMPORT_ROOT` 跳过采集。新增金样仍由同一个 `#[ignore]` 守卫逐字节重生成验证。`--audit` 只证明变异文本发生变化、测试存在、失败消息存在；语义非等价与判杀只能由编译和实际测试证明。
 
@@ -41,3 +41,9 @@ TS `getOrCreateActive` 在等待旧 dispose 后读取共享 `cached.handle`，�
 `matrix-diagnostic-severity` 改注入 `warning`：malformed 格的真实 TS 值是 `error`，原 `error→error` 是等价变异。fix-r2 的91项中，新增21项覆盖文件观察和完整矩阵/返回集合；未提交的新文件不得绕过 `mutating_sources`，须提交后在宿主逐项 `--compile` 再完整执行。
 
 `closeReturnOrders` 同样保留 idle/close/beforeload 的两种真实错误：旧关闭先完成时为 `Agent is not registered`，候选先碰到已移除的 scoped registration 时为 `Scoped service is not registered`。主48格的12个 close 格用 storage-dispose 返回门闩固定后一时序，第一候选拒绝后释放；其他事件不复用这个释放条件。shutdown 必须先等待创建完成，不能加入此门闩。
+
+fix-r3 增加真实 TS `prepareDisposal`：第二次 prepare 的 plugin.refresh 钩子先完成旧 session dispose，随后 factory snapshot 拒绝。Rust 同 owner 门闩验证本次相同错误、prepared资源释放、下一次从磁盘resume；不再保留prepare前快照。
+
+48格现在在 Rust 实际 boundary / event / result 构造同形对象，以原始 oracle 行为底稿，只映射 WRITER-FENCE-001-R1 与 RECREATE-DRAIN-001-R1 明列字段。oldInFlight读取真实 handle.activity；旧turn用activity guard建模，fulfilled由活动归还及drain完成验证，非模型turn返回值。first/second 的完整错误和 handle 身份则直接读取真实 factory/owner 返回。registryAfterEvent也读取owner实际缓存；shutdown提前移除与同key排队仍是未批准差异。
+
+writer lease在dispose/rollback一开始被take到局部WriterCloseGuard；guard在正常退出、panic或JoinError路径先同步截断新写，把writer和租约移交独立blocking线程，已受理写完成后才drop租约；runtime不会被commit锁阻塞，runtime已退出仍可清理。release/close钩子的最后写入仍按原顺序保留。panic释放、旧writer退休、下一次create、非默认fence预算与已open_locked store拒绝均有回归和专属变异。FactoryStorage::new必须接未锁store；#589接线仍须解决PersistenceResources已有lease的转移/复用，不得通过跳过锁绕开排他性。

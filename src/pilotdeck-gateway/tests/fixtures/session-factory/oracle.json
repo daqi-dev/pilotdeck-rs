@@ -24343,5 +24343,12 @@
         "reason": null
       }
     }
+  },
+  "prepareDisposal": {
+    "status": "rejected",
+    "error": {
+      "name": "Error",
+      "message": "Session projection driver is disposed."
+    }
   }
 }
