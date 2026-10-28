@@ -19,6 +19,8 @@
 //! target through the tunnel is not repeated here: the CONNECT machinery is
 //! shared with the MCP transport and covered by tests/mcp_proxy.rs.
 
+#[path = "common/exact_receipt.rs"]
+mod exact_receipt;
 #[path = "common/proxy_env.rs"]
 mod proxy_env;
 #[path = "common/scratch.rs"]
@@ -235,7 +237,9 @@ fn run_scenario(
     envs: &[(String, String)],
 ) -> serde_json::Value {
     let result_path = scratch.path().join(format!("{name}-result.json"));
-    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    let mut command = std::process::Command::new(
+        std::env::current_exe().expect("#942 count-proxy test binary path"),
+    );
     command
         .args([
             "--exact",
@@ -253,8 +257,23 @@ fn run_scenario(
     command
         .env("PDRS_COUNT_URL", url)
         .env("PDRS_COUNT_RESULT", &result_path);
-    let status = command.status().expect("spawn count proxy child");
-    assert!(status.success(), "{name}: child failed: {status}");
+    // .output() pipes the streams: the libtest receipt below needs the
+    // per-test lines, and the child writes its real result to the result
+    // file, not stdout.
+    let output = command.output().expect("#942 count proxy child spawn");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // #942: exit 0 alone is not a receipt — a renamed test makes this
+    // `--exact` filter match nothing and libtest still exits 0.
+    assert!(
+        exact_receipt::single_pass(
+            &output.status,
+            "count_transport_uses_environment_proxy",
+            &stdout
+        ),
+        "#942 count-proxy rerun matched no test: {name}: {}\n{stdout}\n{stderr}",
+        output.status
+    );
     serde_json::from_str(&std::fs::read_to_string(&result_path).unwrap()).unwrap()
 }
 

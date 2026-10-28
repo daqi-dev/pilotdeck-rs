@@ -64,6 +64,8 @@ def main():
         parser.error('unknown or duplicate mutations')
     selected = [row for row in cases if not args.mutations or row[0] in args.mutations]
     args.out.mkdir(parents=True, exist_ok=False)
+    # No -q (#942): cargo forwards it to libtest as --quiet, which drops the
+    # per-test lines the shared passed/classify criteria match.
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                '-p', 'pilotdeck-gateway', '--test', 'background_tasks']
     results = []

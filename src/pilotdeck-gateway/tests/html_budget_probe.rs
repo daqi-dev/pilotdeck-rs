@@ -5,6 +5,9 @@ use pilotdeck_gateway::runtime::tools::builtin::web::{
 };
 use std::time::Instant;
 
+#[path = "common/exact_receipt.rs"]
+mod exact_receipt;
+
 fn deep_html(bytes: usize) -> String {
     let unit = "a<br>";
     assert_eq!(bytes % unit.len(), 0);
@@ -69,14 +72,17 @@ fn bounded_peak_rss_is_lower_than_full() {
     let peak = |mode: &str| {
         let output = Command::new("/usr/bin/time")
             .arg("-l")
-            .arg(std::env::current_exe().unwrap())
+            .arg(std::env::current_exe().expect("#942 rss-probe test binary path"))
             .args(["--ignored", "--exact", "probe", "--nocapture"])
             .env("PDRS_PROBE", mode)
             .output()
-            .unwrap();
+            .expect("#942 rss-probe child collect");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // #942: exit 0 alone is not a receipt — a renamed `probe` makes this
+        // `--exact` filter match nothing and libtest still exits 0.
         assert!(
-            output.status.success(),
-            "{}",
+            exact_receipt::single_pass(&output.status, "probe", &stdout),
+            "#942 rss-probe rerun matched no test: {mode}:\n{stdout}{}",
             String::from_utf8_lossy(&output.stderr)
         );
         let stderr = String::from_utf8_lossy(&output.stderr);

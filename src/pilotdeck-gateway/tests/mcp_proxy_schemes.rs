@@ -2,6 +2,8 @@
 //! is isolated in a child (no unsafe process-global environment mutation).
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/exact_receipt.rs"]
+mod exact_receipt;
 use pilotdeck_gateway::runtime::{
     mcp::{
         client::{McpClient, McpClientOptions},
@@ -174,7 +176,9 @@ async fn replays_ts_proxy_schemes() {
             ports["target"]
         );
         let output = dir.join("rust.json");
-        let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+        let mut command = tokio::process::Command::new(
+            std::env::current_exe().expect("#942 proxy-schemes test binary path"),
+        );
         command
             .args(["--exact", "replays_ts_proxy_schemes", "--nocapture"])
             .env("PDRS_SCHEME_CHILD", id)
@@ -202,9 +206,15 @@ async fn replays_ts_proxy_schemes() {
             [&result.stdout[..], &result.stderr[..]].concat(),
         )
         .unwrap();
+        // #942: exit 0 alone is not a receipt — a renamed test makes this
+        // `--exact` filter match nothing and libtest still exits 0.
         assert!(
-            result.status.success(),
-            "{id}: {}",
+            exact_receipt::single_pass(
+                &result.status,
+                "replays_ts_proxy_schemes",
+                &String::from_utf8_lossy(&result.stdout)
+            ),
+            "#942 proxy-schemes rerun matched no test: {id}:\n{}",
             String::from_utf8_lossy(&result.stderr)
         );
         let actual: Value =

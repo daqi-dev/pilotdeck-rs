@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""#273: subprocess --exact reruns must prove the libtest summary, not just exit 0.
+"""#273/#942: subprocess --exact reruns must prove the libtest summary, not just exit 0.
 
 Run after committing the candidate. Never bypass negative_process's HEAD guard.
 Each case either renames the hardcoded --exact filter (or the call-site test
 name that feeds it) so the child binary runs zero tests and still exits 0, or
 switches a worker child to libtest's terse format which drops the per-test
 "test <name> ... ok" line; every bound parent test must then fail at its
-"#273 ... rerun matched no test" assertion.
+"#273 ... rerun matched no test" assertion. The #942 rows hold the remaining
+in-repo rerun sites to the same receipt (bound to their "#942 ..." messages;
+the grep helper is bound to its handshake panic because its receipt is the
+handshake itself, not a libtest summary).
 """
 import argparse
 import difflib
@@ -39,7 +42,44 @@ CARGO_TARGETS = {
         ['-p', 'pilotdeck-gateway', '--test', 'edgeclaw_entries'],
     'concurrent_stage_and_swap_matches_real_ts':
         ['-p', 'pilotdeck-gateway', '--test', 'edgeclaw_snapshots'],
+    # #942: the remaining subprocess --exact rerun sites.
+    'runtime::turn::read::tests::run_events_pathological_depth_last_seq_is_bounded':
+        ['-p', 'pilotdeck-gateway', '--lib'],
+    'runtime::tools::builtin::grep::tests::sigkill_of_the_test_process_leaves_no_fake_rg_orphans':
+        ['-p', 'pilotdeck-gateway', '--lib'],
+    'dump_request_creates_file':
+        ['-p', 'pilotdeck-gateway', '--test', 'dump_request'],
+    'dump_request_write_failure_semantics':
+        ['-p', 'pilotdeck-gateway', '--test', 'dump_request'],
+    'dump_request_write_over_file_size_limit_surfaces_efbig':
+        ['-p', 'pilotdeck-gateway', '--test', 'dump_request'],
+    'dump_request_empty_tmpdir_never_lands_in_cwd':
+        ['-p', 'pilotdeck-gateway', '--test', 'dump_request'],
+    'dump_request_not_triggered_by_complete':
+        ['-p', 'pilotdeck-gateway', '--test', 'dump_request'],
+    'cold_restart_fences_accepted_and_running_without_inventing_unknown_result':
+        ['-p', 'pilotdeck-gateway', '--test', 'a52_fixtures'],
+    'relative_base_normal_cwd':
+        ['-p', 'pilotdeck-gateway', '--test', 'transcript_resolve'],
+    'private_ca_matrix':
+        ['-p', 'pilotdeck-gateway', '--test', 'private_ca'],
+    'replays_ts_proxy_schemes':
+        ['-p', 'pilotdeck-gateway', '--test', 'mcp_proxy_schemes'],
+    'replays_ts_mcp_http_proxy_scenarios':
+        ['-p', 'pilotdeck-gateway', '--test', 'mcp_proxy'],
+    'deleted_process_cwd_fails_turn_environment':
+        ['-p', 'pilotdeck-gateway', '--test', 'hooks_runtime'],
+    'deleted_process_cwd_fails_the_decision':
+        ['-p', 'pilotdeck-gateway', '--test', 'permission'],
+    'count_transport_uses_environment_proxy':
+        ['-p', 'pilotdeck-gateway', '--test', 'count_proxy'],
+    'bounded_peak_rss_is_lower_than_full':
+        ['-p', 'pilotdeck-gateway', '--test', 'html_budget_probe'],
 }
+
+# Bound parents that are themselves #[ignore]d: libtest needs --ignored to
+# select them at all (their rerun children already carry their own --ignored).
+IGNORED_PARENTS = {'bounded_peak_rss_is_lower_than_full'}
 
 
 def main():
@@ -61,6 +101,18 @@ def main():
     entries_source = root / 'src/pilotdeck-gateway/tests/edgeclaw_entries.rs'
     snapshots_source = root / 'src/pilotdeck-gateway/tests/edgeclaw_snapshots.rs'
     traversal_source = root / 'src/pilotdeck-gateway/tests/plugin_traversal.rs'
+    read_source = root / 'src/pilotdeck-gateway/src/runtime/turn/read_tests.rs'
+    grep_source = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/grep.rs'
+    dump_source = root / 'src/pilotdeck-gateway/tests/dump_request.rs'
+    a52_source = root / 'src/pilotdeck-gateway/tests/a52_fixtures.rs'
+    transcript_source = root / 'src/pilotdeck-gateway/tests/transcript_resolve.rs'
+    private_ca_source = root / 'src/pilotdeck-gateway/tests/private_ca.rs'
+    schemes_source = root / 'src/pilotdeck-gateway/tests/mcp_proxy_schemes.rs'
+    mcp_proxy_source = root / 'src/pilotdeck-gateway/tests/mcp_proxy.rs'
+    hooks_source = root / 'src/pilotdeck-gateway/tests/hooks_runtime.rs'
+    permission_source = root / 'src/pilotdeck-gateway/tests/permission.rs'
+    count_source = root / 'src/pilotdeck-gateway/tests/count_proxy.rs'
+    rss_source = root / 'src/pilotdeck-gateway/tests/html_budget_probe.rs'
     env = os.environ.copy()
     env['CARGO_PROFILE_DEV_DEBUG'] = 'line-tables-only'
     env['CARGO_PROFILE_TEST_DEBUG'] = 'line-tables-only'
@@ -115,6 +167,143 @@ def main():
          '"--format=terse",',
          'concurrent_stage_and_swap_matches_real_ts',
          '#273 snapshot worker rerun matched no test'),
+        # ---- #942: the remaining subprocess --exact rerun sites. ----
+        ('lastseq-depth-exact-rename', read_source,
+         'const CHILD: &str = "runtime::turn::read::tests::run_events_pathological_depth_last_seq_child";',
+         'const CHILD: &str = "runtime::turn::read::tests::run_events_pathological_depth_last_seq_child_renamed";',
+         'runtime::turn::read::tests::run_events_pathological_depth_last_seq_is_bounded',
+         '#942 lastseq-depth rerun matched no test'),
+        # The grep helper is SIGKILLed by design, so its "receipt" is the
+        # handshake panic, not a libtest summary of the helper itself.
+        ('grep-helper-exact-rename', grep_source,
+         '"runtime::tools::builtin::grep::tests::orphaned_fake_rg_helper",',
+         '"runtime::tools::builtin::grep::tests::orphaned_fake_rg_helper_renamed",',
+         'runtime::tools::builtin::grep::tests::sigkill_of_the_test_process_leaves_no_fake_rg_orphans',
+         'helper exited before the fake rg handshake'),
+        # run_case is shared by creates_file and disabled_by_default; both
+        # fail at the same receipt assertion, bind the enabled-gate parent.
+        ('dump-enabled-gate-exact-rename', dump_source,
+         '        .args(["--exact", "dump_child", "--ignored", "--nocapture"])\n'
+         '        .env("PDRS_DUMP_PROTOCOL", protocol)',
+         '        .args(["--exact", "dump_child_renamed", "--ignored", "--nocapture"])\n'
+         '        .env("PDRS_DUMP_PROTOCOL", protocol)',
+         'dump_request_creates_file',
+         '#942 dump rerun (enabled gate) matched no test'),
+        ('dump-write-fail-exact-rename', dump_source,
+         '                .args(["--exact", "dump_child", "--ignored", "--nocapture"])\n'
+         '                .env("PDRS_DUMP_PROTOCOL", protocol)',
+         '                .args(["--exact", "dump_child_renamed", "--ignored", "--nocapture"])\n'
+         '                .env("PDRS_DUMP_PROTOCOL", protocol)',
+         'dump_request_write_failure_semantics',
+         '#942 dump rerun (write-fail) matched no test'),
+        ('dump-xfsz-exact-rename', dump_source,
+         '--exact dump_child --ignored --nocapture',
+         '--exact dump_child_renamed --ignored --nocapture',
+         'dump_request_write_over_file_size_limit_surfaces_efbig',
+         '#942 dump rerun (xfsz) matched no test'),
+        ('dump-empty-tmpdir-exact-rename', dump_source,
+         '        .args(["--exact", "dump_child", "--ignored", "--nocapture"])\n'
+         '        .env("PDRS_DUMP_PROTOCOL", "openai")\n'
+         '        .env("PDRS_DUMP_MARKER", &marker)\n'
+         '        .env("PDRS_DUMP_MODE", "ok")\n'
+         '        .env("PILOTDECK_DUMP_REQUEST", "1")\n'
+         '        .env("TMPDIR", "")',
+         '        .args(["--exact", "dump_child_renamed", "--ignored", "--nocapture"])\n'
+         '        .env("PDRS_DUMP_PROTOCOL", "openai")\n'
+         '        .env("PDRS_DUMP_MARKER", &marker)\n'
+         '        .env("PDRS_DUMP_MODE", "ok")\n'
+         '        .env("PILOTDECK_DUMP_REQUEST", "1")\n'
+         '        .env("TMPDIR", "")',
+         'dump_request_empty_tmpdir_never_lands_in_cwd',
+         '#942 dump rerun (empty-tmpdir) matched no test'),
+        ('dump-complete-exact-rename', dump_source,
+         '        .args(["--exact", "dump_child", "--ignored", "--nocapture"])\n'
+         '        .env("PDRS_DUMP_PROTOCOL", "openai")\n'
+         '        .env("PDRS_DUMP_MARKER", &marker)\n'
+         '        .env("PDRS_DUMP_MODE", "complete")',
+         '        .args(["--exact", "dump_child_renamed", "--ignored", "--nocapture"])\n'
+         '        .env("PDRS_DUMP_PROTOCOL", "openai")\n'
+         '        .env("PDRS_DUMP_MARKER", &marker)\n'
+         '        .env("PDRS_DUMP_MODE", "complete")',
+         'dump_request_not_triggered_by_complete',
+         '#942 dump rerun (complete) matched no test'),
+        ('cold-restart-exact-rename', a52_source,
+         '.args(["--exact", "cold_restart_child", "--nocapture"])',
+         '.args(["--exact", "cold_restart_child_renamed", "--nocapture"])',
+         'cold_restart_fences_accepted_and_running_without_inventing_unknown_result',
+         '#942 cold-restart rerun matched no test'),
+        ('transcript-resolve-exact-rename', transcript_source,
+         'matrix("relative-normal", "relative_base_normal_cwd");',
+         'matrix("relative-normal", "relative_base_normal_cwd_renamed");',
+         'relative_base_normal_cwd',
+         '#942 transcript-resolve rerun matched no test'),
+        ('private-ca-exact-rename', private_ca_source,
+         '.args(["--exact", "private_ca_matrix", "--nocapture"])',
+         '.args(["--exact", "private_ca_matrix_renamed", "--nocapture"])',
+         'private_ca_matrix',
+         '#942 private-ca rerun matched no test'),
+        ('proxy-schemes-exact-rename', schemes_source,
+         '.args(["--exact", "replays_ts_proxy_schemes", "--nocapture"])',
+         '.args(["--exact", "replays_ts_proxy_schemes_renamed", "--nocapture"])',
+         'replays_ts_proxy_schemes',
+         '#942 proxy-schemes rerun matched no test'),
+        ('mcp-proxy-exact-rename', mcp_proxy_source,
+         '            .args([\n'
+         '                "--exact",\n'
+         '                "replays_ts_mcp_http_proxy_scenarios",\n'
+         '                "--nocapture",\n'
+         '            ])',
+         '            .args([\n'
+         '                "--exact",\n'
+         '                "replays_ts_mcp_http_proxy_scenarios_renamed",\n'
+         '                "--nocapture",\n'
+         '            ])',
+         'replays_ts_mcp_http_proxy_scenarios',
+         '#942 mcp-proxy rerun matched no test'),
+        ('deleted-cwd-turn-exact-rename', hooks_source,
+         '            .args([\n'
+         '                "--exact",\n'
+         '                "deleted_process_cwd_fails_turn_environment",\n'
+         '                "--nocapture",\n'
+         '            ])',
+         '            .args([\n'
+         '                "--exact",\n'
+         '                "deleted_process_cwd_fails_turn_environment_renamed",\n'
+         '                "--nocapture",\n'
+         '            ])',
+         'deleted_process_cwd_fails_turn_environment',
+         '#942 deleted-cwd turn-environment rerun matched no test'),
+        ('deleted-cwd-decision-exact-rename', permission_source,
+         '            .args([\n'
+         '                "--exact",\n'
+         '                "deleted_process_cwd_fails_the_decision",\n'
+         '                "--nocapture",\n'
+         '            ])',
+         '            .args([\n'
+         '                "--exact",\n'
+         '                "deleted_process_cwd_fails_the_decision_renamed",\n'
+         '                "--nocapture",\n'
+         '            ])',
+         'deleted_process_cwd_fails_the_decision',
+         '#942 deleted-cwd decision rerun matched no test'),
+        ('count-proxy-exact-rename', count_source,
+         '        .args([\n'
+         '            "--exact",\n'
+         '            "count_transport_uses_environment_proxy",\n'
+         '            "--nocapture",\n'
+         '        ])',
+         '        .args([\n'
+         '            "--exact",\n'
+         '            "count_transport_uses_environment_proxy_renamed",\n'
+         '            "--nocapture",\n'
+         '        ])',
+         'count_transport_uses_environment_proxy',
+         '#942 count-proxy rerun matched no test'),
+        ('rss-probe-exact-rename', rss_source,
+         '.args(["--ignored", "--exact", "probe", "--nocapture"])',
+         '.args(["--ignored", "--exact", "probe_renamed", "--nocapture"])',
+         'bounded_peak_rss_is_lower_than_full',
+         '#942 rss-probe rerun matched no test'),
     ]
     if args.mutations:
         selected = set(args.mutations)
@@ -137,6 +326,7 @@ def main():
         result = run_owned([
             'cargo', 'test', '--manifest-path', 'src/Cargo.toml', *CARGO_TARGETS[test],
             '--', '--exact', test, '--nocapture',
+            *(['--ignored'] if test in IGNORED_PARENTS else []),
         ], cwd=root, env=env, timeout=900)
         log = result.stdout + result.stderr
         save(f'{label}.log', log)

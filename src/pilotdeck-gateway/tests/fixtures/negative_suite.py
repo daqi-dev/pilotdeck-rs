@@ -274,6 +274,9 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
     def run(label, row, run_env, *, compile=False):
         slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=600, interval=15)
         _write_new(out / f'{label}.slots.log', slot.stdout + slot.stderr)
+        # No -q: cargo forwards it to libtest as --quiet, and the classifier
+        # needs the named per-test lines even where --format=pretty would have
+        # restored them (#273 fix-r1 lesson, made a standing rule by #942).
         command = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib']
         if compile:
             command += ['--no-run']

@@ -21,6 +21,9 @@ use pilotdeck_protocol::parse_json;
 use serde_json::{Value, json};
 use std::process::Command;
 
+#[path = "common/exact_receipt.rs"]
+mod exact_receipt;
+
 #[derive(Default)]
 struct CaptureTransport(std::sync::Arc<std::sync::Mutex<Vec<Value>>>);
 
@@ -110,7 +113,7 @@ fn run_case(protocol: &str, enabled: Option<&str>) {
             .as_nanos()
     );
     let root = CaseRoot::acquire("run");
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    let mut command = Command::new(std::env::current_exe().expect("#942 dump test binary path"));
     command
         .args(["--exact", "dump_child", "--ignored", "--nocapture"])
         .env("PDRS_DUMP_PROTOCOL", protocol)
@@ -125,9 +128,11 @@ fn run_case(protocol: &str, enabled: Option<&str>) {
     let output = command.output().expect("run isolated dump case");
     let stdout = String::from_utf8(output.stdout).unwrap();
     let stderr = String::from_utf8(output.stderr).unwrap();
+    // #942: exit 0 alone is not a receipt — a renamed `dump_child` makes this
+    // `--exact` filter match nothing and libtest still exits 0.
     assert!(
-        output.status.success(),
-        "{protocol}/{enabled:?}:\n{stdout}\n{stderr}"
+        exact_receipt::single_pass(&output.status, "dump_child", &stdout),
+        "#942 dump rerun (enabled gate) matched no test: {protocol}/{enabled:?}:\n{stdout}\n{stderr}"
     );
     let sent: Value = serde_json::from_str(
         stdout
@@ -315,7 +320,7 @@ fn dump_request_write_failure_semantics() {
                 eprintln!("{protocol}/{kind} write-fail: skipped, euid is 0 (DAC does not apply)");
                 continue;
             };
-            let output = Command::new(std::env::current_exe().unwrap())
+            let output = Command::new(std::env::current_exe().expect("#942 dump test binary path"))
                 .args(["--exact", "dump_child", "--ignored", "--nocapture"])
                 .env("PDRS_DUMP_PROTOCOL", protocol)
                 .env("PDRS_DUMP_MARKER", &marker)
@@ -326,9 +331,10 @@ fn dump_request_write_failure_semantics() {
                 .expect("run isolated dump write-failure case");
             let stdout = String::from_utf8(output.stdout).unwrap();
             let stderr = String::from_utf8(output.stderr).unwrap();
+            // #942: same receipt requirement as `run_case` above.
             assert!(
-                output.status.success(),
-                "{protocol}/{kind} write-fail:\n{stdout}\n{stderr}"
+                exact_receipt::single_pass(&output.status, "dump_child", &stdout),
+                "#942 dump rerun (write-fail) matched no test: {protocol}/{kind}:\n{stdout}\n{stderr}"
             );
             assert!(
                 dump_files_in(&root).is_empty(),
@@ -421,7 +427,10 @@ fn dump_request_write_over_file_size_limit_surfaces_efbig() {
     let output = Command::new("/bin/sh")
         .arg("-c")
         .arg("ulimit -f 1; exec \"$PDRS_CHILD_EXE\" --exact dump_child --ignored --nocapture")
-        .env("PDRS_CHILD_EXE", std::env::current_exe().unwrap())
+        .env(
+            "PDRS_CHILD_EXE",
+            std::env::current_exe().expect("#942 dump test binary path"),
+        )
         .env("PDRS_DUMP_PROTOCOL", "google")
         .env("PDRS_DUMP_MARKER", &marker)
         .env("PDRS_DUMP_MODE", "write-fail")
@@ -431,11 +440,11 @@ fn dump_request_write_over_file_size_limit_surfaces_efbig() {
         .expect("run isolated over-limit dump case");
     let stdout = String::from_utf8(output.stdout).unwrap();
     let stderr = String::from_utf8(output.stderr).unwrap();
-    // Not killed by SIGXFSZ: a signal death has no exit code at all.
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "google/xfsz write-fail (a SIGXFSZ death reports 153 or no code):\n{stdout}\n{stderr}"
+    // Not killed by SIGXFSZ (a signal death has no exit code at all), and the
+    // libtest receipt proves the `--exact dump_child` rerun really ran (#942).
+    assert!(
+        exact_receipt::single_pass(&output.status, "dump_child", &stdout),
+        "#942 dump rerun (xfsz) matched no test (a SIGXFSZ death reports 153 or no code):\n{stdout}\n{stderr}"
     );
     // A signal death alone cannot tell "handler registered" from "the
     // registration failed and degraded": only the degradation note can, so
@@ -501,7 +510,7 @@ fn dump_request_empty_tmpdir_never_lands_in_cwd() {
     );
     let root = CaseRoot::acquire("empty-tmpdir");
     let cwd = CaseRoot::acquire("empty-tmpdir-cwd");
-    let output = Command::new(std::env::current_exe().unwrap())
+    let output = Command::new(std::env::current_exe().expect("#942 dump test binary path"))
         .args(["--exact", "dump_child", "--ignored", "--nocapture"])
         .env("PDRS_DUMP_PROTOCOL", "openai")
         .env("PDRS_DUMP_MARKER", &marker)
@@ -515,7 +524,10 @@ fn dump_request_empty_tmpdir_never_lands_in_cwd() {
         .expect("run isolated empty-TMPDIR dump case");
     let stdout = String::from_utf8(output.stdout).unwrap();
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(output.status.success(), "empty-tmpdir:\n{stdout}\n{stderr}");
+    assert!(
+        exact_receipt::single_pass(&output.status, "dump_child", &stdout),
+        "#942 dump rerun (empty-tmpdir) matched no test:\n{stdout}\n{stderr}"
+    );
     assert!(
         stdout.contains("SENT_BODY="),
         "empty-tmpdir: the send must still run: {stdout}"
@@ -556,7 +568,7 @@ fn dump_request_not_triggered_by_complete() {
             .as_nanos()
     );
     let root = CaseRoot::acquire("complete");
-    let output = Command::new(std::env::current_exe().unwrap())
+    let output = Command::new(std::env::current_exe().expect("#942 dump test binary path"))
         .args(["--exact", "dump_child", "--ignored", "--nocapture"])
         .env("PDRS_DUMP_PROTOCOL", "openai")
         .env("PDRS_DUMP_MARKER", &marker)
@@ -567,7 +579,10 @@ fn dump_request_not_triggered_by_complete() {
         .expect("run isolated complete dump case");
     let stdout = String::from_utf8(output.stdout).unwrap();
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(output.status.success(), "complete:\n{stdout}\n{stderr}");
+    assert!(
+        exact_receipt::single_pass(&output.status, "dump_child", &stdout),
+        "#942 dump rerun (complete) matched no test:\n{stdout}\n{stderr}"
+    );
     assert!(
         stdout.contains("SENT_BODY="),
         "complete() must still send: {stdout}"

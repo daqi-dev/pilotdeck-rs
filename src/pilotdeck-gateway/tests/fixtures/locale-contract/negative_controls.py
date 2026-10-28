@@ -112,6 +112,8 @@ def main():
         raise SystemExit(f'unknown mutations: {sorted(unknown)}')
     env = os.environ.copy()
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only')
+    # No -q (#942): cargo forwards it to libtest as --quiet, which drops the
+    # per-test lines this script's passed/classify criteria match.
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--lib']
     summary = []
 

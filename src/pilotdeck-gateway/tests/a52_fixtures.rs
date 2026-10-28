@@ -1,5 +1,7 @@
 //! A5.2 native regressions. The complete #19 TS-only matrix is deliberately
 //! exercised separately by a52_baseline: it is not a Rust correction oracle.
+#[path = "common/exact_receipt.rs"]
+mod exact_receipt;
 #[path = "common/a52.rs"]
 mod fixture;
 #[path = "common/scratch.rs"]
@@ -537,20 +539,21 @@ fn cold_restart_fences_accepted_and_running_without_inventing_unknown_result() {
         let path = scratch.path().join(format!("{initial}.json"));
         let stdout = scratch.path().join(format!("{initial}.stdout"));
         let stderr = scratch.path().join(format!("{initial}.stderr"));
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "cold_restart_child", "--nocapture"])
-            .env("PDRS_A52_CHILD_PATH", &path)
-            .env("PDRS_A52_CHILD_STATE", initial)
-            .stdout(fs::File::create(&stdout).unwrap())
-            .stderr(fs::File::create(&stderr).unwrap())
-            .spawn()
-            .unwrap();
+        let mut child =
+            Command::new(std::env::current_exe().expect("#942 cold-restart test binary path"))
+                .args(["--exact", "cold_restart_child", "--nocapture"])
+                .env("PDRS_A52_CHILD_PATH", &path)
+                .env("PDRS_A52_CHILD_STATE", initial)
+                .stdout(fs::File::create(&stdout).expect("#942 cold-restart stdout log"))
+                .stderr(fs::File::create(&stderr).expect("#942 cold-restart stderr log"))
+                .spawn()
+                .expect("#942 cold-restart child spawn");
         let pid = child.id();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         // Poll only for process termination; the clock never selects a passing
         // interleaving. Expiry kills/reaps this exact child and fails the test.
         let status = loop {
-            if let Some(status) = child.try_wait().unwrap() {
+            if let Some(status) = child.try_wait().expect("#942 cold-restart child wait") {
                 break status;
             }
             if std::time::Instant::now() >= deadline {
@@ -563,11 +566,14 @@ fn cold_restart_fences_accepted_and_running_without_inventing_unknown_result() {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         };
+        // #942: exit 0 alone is not a receipt — a renamed `cold_restart_child`
+        // makes this `--exact` filter match nothing and libtest still exits 0.
+        // A missing log reads as empty and fails here.
+        let child_stdout = fs::read_to_string(&stdout).unwrap_or_default();
+        let child_stderr = fs::read_to_string(&stderr).unwrap_or_default();
         assert!(
-            status.success(),
-            "{}\n{}",
-            fs::read_to_string(&stdout).unwrap(),
-            fs::read_to_string(&stderr).unwrap()
+            exact_receipt::single_pass(&status, "cold_restart_child", &child_stdout),
+            "#942 cold-restart rerun matched no test: {status}\n{child_stdout}\n{child_stderr}"
         );
         let before: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         let old = &before["records"][0];

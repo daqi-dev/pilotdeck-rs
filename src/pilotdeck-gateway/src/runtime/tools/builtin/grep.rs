@@ -2380,6 +2380,13 @@ mod tests {
         for (shape, _) in ORPHAN_SHAPES {
             std::fs::create_dir(root.join(shape)).expect("fixture dir");
         }
+        // #942: no libtest receipt applies to this child — the test SIGKILLs
+        // the helper on purpose (that kill is the regression under test), so
+        // the helper never completes and prints no `test result:` summary.
+        // The handshake files (pid/ready/term) plus the early-exit panic in
+        // the wait loop below are the receipt: a renamed helper test runs
+        // zero tests, exits 0 immediately, and trips "helper exited before
+        // the fake rg handshake".
         let mut helper =
             std::process::Command::new(std::env::current_exe().expect("test executable"))
                 .args([
