@@ -17,6 +17,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
+    io::AsyncWriteExt,
     net::TcpListener,
     time::{Instant, sleep, timeout},
 };
@@ -986,6 +987,162 @@ async fn sessions_list_accepts_ts_large_frames() {
         assert!(sent, "#983 large-frame response sent completely");
         println!("#983 TS native accepted {frame_bytes} byte single frame");
     }
+}
+
+// Security exception D1-SDK-WS-RESOURCE-LIMIT-001: these values are
+// independent of the product constant so changing the cap cannot move the test.
+async fn resource_limit_connection() -> (
+    Runtime,
+    OwnedChild,
+    tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    Value,
+) {
+    let runtime = Runtime::new();
+    let input = json!({"argv":["sessions","list"],"env":{"PILOTDECK_SDK_AUTH_TOKEN":TOKEN}});
+    let listener = TcpListener::bind(ADDRESS)
+        .await
+        .expect("#983 resource-limit mock bind");
+    let child = spawn(&mut runtime.command(&input), &input);
+    let (socket, request) = timeout(BOUND, async {
+        let (stream, _) = listener.accept().await.expect("#983 resource-limit accept");
+        let mut socket = accept_async(stream)
+            .await
+            .expect("#983 resource-limit upgrade");
+        let hello = socket
+            .next()
+            .await
+            .expect("#983 resource-limit hello exists")
+            .expect("#983 resource-limit hello read");
+        let hello: Value =
+            serde_json::from_str(hello.to_text().expect("#983 resource-limit hello text"))
+                .expect("#983 resource-limit hello JSON");
+        assert_eq!(hello["type"], "hello", "#983 resource-limit hello type");
+        socket
+            .send(Message::Text(
+                json!({"type":"hello_ok","protocolVersion":"1.2",
+                    "serverVersion":"test","serverInfo":{}})
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("#983 resource-limit hello response");
+        let request = socket
+            .next()
+            .await
+            .expect("#983 resource-limit request exists")
+            .expect("#983 resource-limit request read");
+        let request: Value =
+            serde_json::from_str(request.to_text().expect("#983 resource-limit request text"))
+                .expect("#983 resource-limit request JSON");
+        assert_eq!(
+            request["method"], "list_sessions",
+            "#983 resource-limit ordinary RPC reached"
+        );
+        (socket, request)
+    })
+    .await
+    .expect("#983 bounded resource-limit handshake");
+    (runtime, child, socket, request)
+}
+
+fn resource_limit_header(opcode: u8, bytes: u64) -> [u8; 10] {
+    // Server frames are unmasked; the full 64-bit declaration is present,
+    // so rejection cannot be attributed to an incomplete/invalid header.
+    let mut header = [0_u8; 10];
+    header[0] = opcode;
+    header[1] = 127;
+    header[2..].copy_from_slice(&bytes.to_be_bytes());
+    header
+}
+
+fn verify_resource_rejection(output: &std::process::Output, assertion: &str) {
+    println!(
+        "#983 resource limit: code={:?}, signal={:?}, stdout={:?}, stderr={:?}",
+        output.status.code(),
+        output.status.signal(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    verify(
+        output.status.signal().is_none()
+            && output.status.code() == Some(1)
+            && output.stdout.is_empty()
+            && output.stderr == b"Gateway WebSocket closed.\n",
+        assertion,
+    );
+}
+
+async fn reject_declared_frame(bytes: u64) {
+    let _port = PORT.lock().await;
+    let _lock = ParityLock::acquire().await;
+    let (_runtime, child, mut socket, _) = resource_limit_connection().await;
+    timeout(
+        BOUND,
+        socket
+            .get_mut()
+            .write_all(&resource_limit_header(0x81, bytes)),
+    )
+    .await
+    .expect("#983 bounded hostile frame header write")
+    .expect("#983 hostile frame header sent");
+    // Keep TCP open and send no payload. EOF must not stand in for size rejection.
+    let output = collect(child).await;
+    verify_resource_rejection(
+        &output,
+        &format!("#983 hostile frame {bytes} rejected cleanly before payload"),
+    );
+    drop(socket);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn sessions_list_rejects_frame_cap_plus_one_header() {
+    reject_declared_frame(128 * 1024 * 1024 + 1).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn sessions_list_rejects_extreme_frame_header() {
+    reject_declared_frame(1_u64 << 62).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn sessions_list_rejects_fragmented_message_over_cap() {
+    let _port = PORT.lock().await;
+    let _lock = ParityLock::acquire().await;
+    let (_runtime, child, mut socket, request) = resource_limit_connection().await;
+    let raw = json!({"type":"response","id":request["id"],"ok":true,
+        "result":{"sessions":[]}})
+    .to_string();
+    let mut chunk = vec![b' '; 1024 * 1024];
+    assert!(
+        raw.len() < chunk.len(),
+        "#983 fragmented response fits first chunk"
+    );
+    chunk[..raw.len()].copy_from_slice(raw.as_bytes());
+    // 128 non-final 1 MiB frames, then a final one-byte continuation. Every
+    // frame is below the cap; removing only max_message_size returns valid [].
+    let sent = timeout(BOUND, async {
+        for index in 0..128 {
+            let opcode = if index == 0 { 0x01 } else { 0x00 };
+            socket
+                .get_mut()
+                .write_all(&resource_limit_header(opcode, chunk.len() as u64))
+                .await?;
+            socket.get_mut().write_all(&chunk).await?;
+            if index == 0 {
+                chunk.fill(b' ');
+            }
+        }
+        socket.get_mut().write_all(&[0x80, 1, b' ']).await
+    })
+    .await
+    .expect("#983 bounded fragmented response send");
+    let output = collect(child).await;
+    verify_resource_rejection(
+        &output,
+        "#983 fragmented message 134217729 bytes rejected cleanly",
+    );
+    println!("#983 fragmented response send completed={}", sent.is_ok());
+    drop(socket);
 }
 
 // These are protocol regression expectations inferred from TS source; the
