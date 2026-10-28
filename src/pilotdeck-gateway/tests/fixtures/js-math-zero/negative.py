@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 """#947 negative controls: every JS `Math.max` / `Math.min` mirror must fail
-when the shared signed-zero projection is replaced by Rust `f64::max` / `min`.
+when the explicit signed-zero projection is replaced by an order-dependent
+(input-order-dependent) tie.
 
-The anchors are one import/helper line per site.  For the shared helper the
-mutant replaces the explicit zero-tie branch with the platform method, which
-is exactly the regression this issue exists to prevent.  A mutant must first
-compile (`cargo test --no-run`), then the named test must fail on a `#947`
-assertion, then restoring the bytes must make the same test pass again.
+Platform caveat, measured on this host with `rustc 1.99.0`: Rust
+`f64::max(0.0, -0.0)` / `f64::min(0.0, -0.0)` already project the JS sign, so
+a "put back `left.max(right)`" mutant is behaviorally equivalent here and
+would SURVIVE.  The mutants therefore keep the platform method for ordinary
+numbers but make the zero tie pick one input (`left`, or `right` for the
+per-site max helper) instead of the JS-projected value, which is the
+order-dependent behavior the explicit branch exists to remove; the probe
+transcript is
+`_tmp/20261026-issue-947/fix-r0/f64-probe/probe.out`.
+
+The anchors are one import/helper line per site.  A mutant must first compile
+(`cargo test --no-run`), then the named test must fail on a `#947` assertion,
+then restoring the bytes must make the same test pass again.
 
 The control does not stop at the first survivor: it records KILLED / SURVIVED
 / INVALID for every selected case, writes `summary.json`, and exits non-zero
@@ -37,58 +46,75 @@ agent_policy = root / 'src/pilotdeck-agent/src/request_materialization_policy.rs
 
 # (name, source, before, after, exact test)
 cases = [
-    # Shared helper: both explicit tie branches go back to platform max/min.
-    ('shared-max-f64', protocol,
+    # Shared helper: the explicit tie projection becomes order-dependent.
+    ('shared-max-left-tie', protocol,
      '''        return if left.is_sign_negative() && right.is_sign_negative() {
             -0.0
         } else {
             0.0
         };''',
-     '        return left.max(right);',
+     '        return left;',
      'js_math::tests::max_projects_positive_zero_for_every_signed_zero_tie'),
-    ('shared-min-f64', protocol,
+    ('shared-min-left-tie', protocol,
      '''        return if left.is_sign_negative() || right.is_sign_negative() {
             -0.0
         } else {
             0.0
         };''',
-     '        return left.min(right);',
+     '        return left;',
      'js_math::tests::min_projects_negative_zero_for_every_signed_zero_tie'),
-    # Per-site imports: a local f64 helper is what a future refactor would
-    # reintroduce if the site stopped routing through the shared module.
-    ('compaction-f64', compaction,
+    # Per-site imports: a local order-dependent helper is what a future
+    # refactor would reintroduce if the site stopped routing through the
+    # shared module.
+    ('compaction-left-tie', compaction,
      'pub(crate) use pilotdeck_protocol::js_math::{max as js_max, min as js_min};',
-     'pub(crate) fn js_max(left: f64, right: f64) -> f64 { left.max(right) }\n'
-     'pub(crate) fn js_min(left: f64, right: f64) -> f64 { left.min(right) }',
+     'pub(crate) fn js_max(left: f64, right: f64) -> f64 {\n'
+     '    if left == 0.0 && right == 0.0 { right } else { left.max(right) }\n'
+     '}\n'
+     'pub(crate) fn js_min(left: f64, right: f64) -> f64 {\n'
+     '    if left == 0.0 && right == 0.0 { left } else { left.min(right) }\n'
+     '}',
      'runtime::context::compaction::tests::js_math_signed_zero_ties_match_ts'),
-    ('token-accounting-f64', token_accounting,
+    ('token-accounting-left-tie', token_accounting,
      'use pilotdeck_protocol::js_math::{max as js_max, min as js_min};',
-     'fn js_max(left: f64, right: f64) -> f64 { left.max(right) }\n'
-     'fn js_min(left: f64, right: f64) -> f64 { left.min(right) }',
+     'fn js_max(left: f64, right: f64) -> f64 {\n'
+     '    if left == 0.0 && right == 0.0 { right } else { left.max(right) }\n'
+     '}\n'
+     'fn js_min(left: f64, right: f64) -> f64 {\n'
+     '    if left == 0.0 && right == 0.0 { left } else { left.min(right) }\n'
+     '}',
      'runtime::model::token_accounting::tests::js_math_signed_zero_ties_match_ts'),
-    ('recall-f64', recall,
+    ('recall-left-tie', recall,
      'use pilotdeck_protocol::js_math::{max as js_max, min as js_min};',
-     'fn js_max(left: f64, right: f64) -> f64 { left.max(right) }\n'
-     'fn js_min(left: f64, right: f64) -> f64 { left.min(right) }',
+     'fn js_max(left: f64, right: f64) -> f64 {\n'
+     '    if left == 0.0 && right == 0.0 { right } else { left.max(right) }\n'
+     '}\n'
+     'fn js_min(left: f64, right: f64) -> f64 {\n'
+     '    if left == 0.0 && right == 0.0 { left } else { left.min(right) }\n'
+     '}',
      'runtime::memory::edgeclaw::llm::recall::tests::js_math_signed_zero_ties_match_ts'),
-    ('sdk-session-f64', sdk_session,
+    ('sdk-session-left-tie', sdk_session,
      'use pilotdeck_protocol::js_math::min as math_min;',
-     'fn math_min(left: f64, right: f64) -> f64 { left.min(right) }',
+     'fn math_min(left: f64, right: f64) -> f64 {\n'
+     '    if left == 0.0 && right == 0.0 { left } else { left.min(right) }\n'
+     '}',
      'runtime::sdk_session::tests::math_min_signed_zero_ties_match_ts'),
-    ('agent-policy-f64', agent_policy,
+    ('agent-policy-left-tie', agent_policy,
      'use pilotdeck_protocol::js_math::min as js_min;',
-     'fn js_min(left: f64, right: f64) -> f64 { left.min(right) }',
+     'fn js_min(left: f64, right: f64) -> f64 {\n'
+     '    if left == 0.0 && right == 0.0 { left } else { left.min(right) }\n'
+     '}',
      'request_materialization_policy::unit_tests::js_min_signed_zero_ties_match_ts'),
 ]
 
 ASSERTIONS = {
-    'shared-max-f64': '#947 js_math::max tie',
-    'shared-min-f64': '#947 js_math::min tie',
-    'compaction-f64': '#947 compaction js_max tie',
-    'token-accounting-f64': '#947 token_accounting js_max tie',
-    'recall-f64': '#947 recall js_max tie',
-    'sdk-session-f64': '#947 sdk_session math_min tie',
-    'agent-policy-f64': '#947 request_materialization js_min tie',
+    'shared-max-left-tie': '#947 js_math::max tie',
+    'shared-min-left-tie': '#947 js_math::min tie',
+    'compaction-left-tie': '#947 compaction js_max tie',
+    'token-accounting-left-tie': '#947 token_accounting js_max tie',
+    'recall-left-tie': '#947 recall js_max tie',
+    'sdk-session-left-tie': '#947 sdk_session math_min tie',
+    'agent-policy-left-tie': '#947 request_materialization js_min tie',
 }
 
 BASELINE = {
@@ -201,77 +227,71 @@ def run(label, extra, timeout=600):
     return result, log
 
 
-originals = {}
-try:
-    with mutating_sources(root, paths) as originals:
-        # Stale anchors are a harness defect: fail before any compile.
-        check_anchors({path: data.decode() for path, data in originals.items()})
+with mutating_sources(root, paths) as originals:
+    # Stale anchors are a harness defect: fail before any compile.
+    check_anchors({path: data.decode() for path, data in originals.items()})
 
-        # Positive baseline for every affected target, once each.
-        baseline_ok = True
-        for package, (extra, filter) in BASELINE.items():
-            if not any(package_for(case[1]) == package for case in cases):
-                continue
-            result, log = run('baseline-' + package, [*extra, filter])
-            ok = (result is not None and 'test result: ok.' in log
-                  and 'running 0 tests' not in log)
-            if not ok:
-                baseline_ok = False
-                print(f'baseline {package}: FAIL', flush=True)
-                break
-            print(f'baseline {package}: PASS', flush=True)
-        if not baseline_ok:
-            raise RuntimeError('unmutated baseline did not pass; mutants not run')
+    # Positive baseline for every affected target, once each.
+    baseline_ok = True
+    for package, (extra, filter) in BASELINE.items():
+        if not any(package_for(case[1]) == package for case in cases):
+            continue
+        result, log = run('baseline-' + package, [*extra, filter])
+        ok = (result is not None and 'test result: ok.' in log
+              and 'running 0 tests' not in log)
+        if not ok:
+            baseline_ok = False
+            print(f'baseline {package}: FAIL', flush=True)
+            break
+        print(f'baseline {package}: PASS', flush=True)
+    if not baseline_ok:
+        raise RuntimeError('unmutated baseline did not pass; mutants not run')
 
-        for name, path, before, after, test in cases:
-            package = package_for(path)
-            extra, _filter = BASELINE[package]
-            original = originals[path].decode()
-            status, reason = 'INVALID', 'not run'
-            try:
-                # Apply exactly one anchor replacement.
-                changed = original.replace(before, after, 1)
-                if changed == original:
-                    raise RuntimeError('anchor replacement did not change the source')
-                path.write_text(changed)
+    for name, path, before, after, test in cases:
+        package = package_for(path)
+        extra, _filter = BASELINE[package]
+        original = originals[path].decode()
+        status, reason = 'INVALID', 'not run'
+        try:
+            # Apply exactly one anchor replacement.
+            changed = original.replace(before, after, 1)
+            if changed == original:
+                raise RuntimeError('anchor replacement did not change the source')
+            path.write_text(changed)
 
-                # Requirement: every mutant must compile before its test verdict.
-                compiled, compile_log = run(name + '-compile', [*extra, '--no-run'])
-                if compiled is None or compiled.returncode != 0:
-                    reason = 'mutant did not compile; never a kill'
+            # Requirement: every mutant must compile before its test verdict.
+            compiled, compile_log = run(name + '-compile', [*extra, '--no-run'])
+            if compiled is None or compiled.returncode != 0:
+                reason = 'mutant did not compile; never a kill'
+            else:
+                result, log = run(name + '-negative',
+                                  [*extra, test, '--', '--exact', '--nocapture'])
+                status = classify(log, None if result is None else result.returncode)
+                if status == 'KILLED' and (
+                        f'test {test} ... FAILED' not in log
+                        or ASSERTIONS[name] not in log
+                        or 'panicked at' not in log):
+                    status, reason = 'INVALID', 'missing named FAILED / #947 assertion / panic'
                 else:
-                    result, log = run(name + '-negative',
-                                      [*extra, test, '--', '--exact', '--nocapture'])
-                    status = classify(log, None if result is None else result.returncode)
-                    if status == 'KILLED' and (
-                            f'test {test} ... FAILED' not in log
-                            or ASSERTIONS[name] not in log
-                            or 'panicked at' not in log):
-                        status, reason = 'INVALID', 'missing named FAILED / #947 assertion / panic'
-                    else:
-                        reason = 'named assertion failed' if status == 'KILLED' else 'classified'
-            except Exception as error:  # noqa: BLE001
-                status, reason = 'INVALID', f'{type(error).__name__}: {error}'
-            finally:
-                path.write_bytes(originals[path])
-                if path.read_bytes() != originals[path]:
-                    raise RuntimeError(f'restoration failed: {path}')
+                    reason = 'named assertion failed' if status == 'KILLED' else 'classified'
+        except Exception as error:  # noqa: BLE001
+            status, reason = 'INVALID', f'{type(error).__name__}: {error}'
+        finally:
+            path.write_bytes(originals[path])
+            if path.read_bytes() != originals[path]:
+                raise RuntimeError(f'restoration failed: {path}')
 
-            # Restored bytes must pass the same named test.
-            if status == 'KILLED':
-                result, log = run(name + '-restored', [*extra, test, '--', '--exact'])
-                if (result is None or result.returncode != 0
-                        or f'test {test} ... ok' not in log
-                        or 'running 0 tests' in log):
-                    status, reason = 'INVALID', 'restored source did not pass the bound test'
-            results.append({'name': name, 'source': path.relative_to(root).as_posix(),
-                            'test': test, 'status': status, 'reason': reason})
-            write_summary()
-            print(f'{name}: {status}: {reason}', flush=True)
-finally:
-    for path, data in originals.items():
-        path.write_bytes(data)
-        assert path.read_bytes() == data, 'restoration failed: ' + str(path)
+        # Restored bytes must pass the same named test.
+        if status == 'KILLED':
+            result, log = run(name + '-restored', [*extra, test, '--', '--exact'])
+            if (result is None or result.returncode != 0
+                    or f'test {test} ... ok' not in log
+                    or 'running 0 tests' in log):
+                status, reason = 'INVALID', 'restored source did not pass the bound test'
+        results.append({'name': name, 'source': path.relative_to(root).as_posix(),
+                        'test': test, 'status': status, 'reason': reason})
+        write_summary()
+        print(f'{name}: {status}: {reason}', flush=True)
 
 counts = {state: sum(row['status'] == state for row in results)
           for state in ('KILLED', 'SURVIVED', 'INVALID')}
