@@ -498,12 +498,20 @@ fn halved_recipe(rule: &serde_json::Value) -> serde_json::Value {
 /// times the worker process's CPU instead of its own wall clock. The byte
 /// comparison stays inside the worker, and the shared sampler rejects any
 /// run whose single test did not pass, so a wrong or failed conversion can
-/// never masquerade as a timing sample.
+/// never masquerade as a timing sample. Provenance is the parent's job: the
+/// worker parses the already-verified fixture bytes without re-running
+/// `baseline::oracle`, whose per-source git/file checks would be measured as
+/// conversion CPU.
 #[test]
 #[ignore = "#978 isolated CPU sample; invoked by the linear-budget test"]
 fn large_shallow_cpu_worker() {
     let raw = include_str!("fixtures/html-markdown/large-oracle.json");
-    baseline::oracle(raw);
+    // The parent test has already run baseline::oracle once, with the full
+    // provenance check. Re-running it here would put hundreds of git/file
+    // checks inside the CPU sample whenever PDRS_BASELINE is set (macmini:
+    // ~3.8 s of the 5.4 s dense-inline sample; a local probe: ~12 s of a
+    // 12.2 s table sample). The sample must measure conversion, not
+    // provenance, or the 5 s per-sample backstop reds on a slow host.
     let oracle: serde_json::Value = serde_json::from_str(raw).expect("#978 CPU worker oracle JSON");
     let cases = oracle["cases"]
         .as_array()
