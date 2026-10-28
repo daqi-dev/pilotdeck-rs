@@ -37,7 +37,8 @@ use std::{
     collections::BTreeSet,
     fs,
     future::Future,
-    os::unix::fs::PermissionsExt,
+    io::Write,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
@@ -64,16 +65,16 @@ fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
     value.get(key).unwrap_or(&UNDEFINED)
 }
 fn text(value: &JsValue) -> String {
-    String::from_utf16_lossy(value.as_string().expect("fixture string").units())
+    String::from_utf16_lossy(value.as_string().expect("#956 fixture string").units())
 }
 fn array(value: &JsValue) -> &[JsValue] {
     match value {
         JsValue::Array(values) => values,
-        other => panic!("fixture array, got {other:?}"),
+        other => panic!("#956 fixture array, got {other:?}"),
     }
 }
 fn number(value: &JsValue) -> f64 {
-    value.as_number().expect("fixture number")
+    value.as_number().expect("#956 fixture number")
 }
 fn object(entries: impl IntoIterator<Item = (&'static str, JsValue)>) -> JsObject {
     let mut object = JsObject::new();
@@ -83,15 +84,17 @@ fn object(entries: impl IntoIterator<Item = (&'static str, JsValue)>) -> JsObjec
     object
 }
 fn wire(value: &JsValue) -> String {
-    stringify_json(value).unwrap().unwrap_or_default()
+    stringify_json(value)
+        .expect("#956 replay serialization/runtime")
+        .unwrap_or_default()
 }
 fn section<'a>(name: &str, count: usize) -> &'a [JsValue] {
     let items = array(field(oracle(), name));
-    assert_eq!(items.len(), count, "oracle section {name}");
+    assert_eq!(items.len(), count, "#956 oracle section {name}");
     assert_eq!(
         field(field(oracle(), "counts"), name).as_number(),
         Some(count as f64),
-        "oracle counts.{name}"
+        "#956 oracle counts.{name}"
     );
     items
 }
@@ -101,7 +104,7 @@ fn runtime() -> tokio::runtime::Runtime {
         .worker_threads(2)
         .enable_all()
         .build()
-        .unwrap()
+        .expect("#956 replay serialization/runtime")
 }
 
 fn context(fields: JsObject, signal: Option<ToolCancellation>) -> ToolRunContext {
@@ -298,13 +301,19 @@ impl Placeholders {
                     .strip_prefix("<task:")
                     .and_then(|rest| rest.strip_suffix('>'))
                 {
-                    return JsValue::from(self.tasks[index.parse::<usize>().unwrap()].as_str());
+                    return JsValue::from(
+                        self.tasks[index.parse::<usize>().expect("#956 sequence prerequisite")]
+                            .as_str(),
+                    );
                 }
                 if let Some(index) = text
                     .strip_prefix("<sub:")
                     .and_then(|rest| rest.strip_suffix('>'))
                 {
-                    return JsValue::from(self.subs[index.parse::<usize>().unwrap()].as_str());
+                    return JsValue::from(
+                        self.subs[index.parse::<usize>().expect("#956 sequence prerequisite")]
+                            .as_str(),
+                    );
                 }
                 if text.contains("<root>") {
                     // Root substitution never touches lone surrogates in the
@@ -329,7 +338,7 @@ impl Placeholders {
 }
 
 fn group_alive(pid: u32) -> bool {
-    let pid = rustix::process::Pid::from_raw(pid as i32).expect("pid");
+    let pid = rustix::process::Pid::from_raw(pid as i32).expect("#956 task pid");
     rustix::process::test_kill_process_group(pid).is_ok()
 }
 
@@ -349,18 +358,29 @@ impl ProcessGroups {
         }
     }
     fn track(&self, pid: u32) {
-        self.pids.lock().unwrap().insert(pid);
+        self.pids
+            .lock()
+            .expect("#956 sequence prerequisite")
+            .insert(pid);
     }
     fn snapshot(&self) -> Vec<u32> {
-        self.pids.lock().unwrap().iter().copied().collect()
+        self.pids
+            .lock()
+            .expect("#956 sequence prerequisite")
+            .iter()
+            .copied()
+            .collect()
     }
     fn disarm(&self) {
-        self.pids.lock().unwrap().clear();
+        self.pids
+            .lock()
+            .expect("#956 sequence prerequisite")
+            .clear();
     }
 }
 impl Drop for ProcessGroups {
     fn drop(&mut self) {
-        for pid in self.pids.lock().unwrap().iter() {
+        for pid in self.pids.lock().expect("#956 sequence prerequisite").iter() {
             if group_alive(*pid)
                 && let Some(pid) = rustix::process::Pid::from_raw(*pid as i32)
             {
@@ -373,7 +393,10 @@ impl Drop for ProcessGroups {
 async fn until(what: &str, mut check: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(8);
     while !check() {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        assert!(
+            Instant::now() < deadline,
+            "#956 timed out waiting for {what}"
+        );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
@@ -393,7 +416,7 @@ fn subagent_run(
             match behavior.as_str() {
                 "fail" => Err(JsString::from("boom")),
                 "release" => {
-                    let _ = release.expect("release channel").await;
+                    let _ = release.expect("#956 release channel").await;
                     Ok(())
                 }
                 "ignore-abort" => {
@@ -404,18 +427,94 @@ fn subagent_run(
                     signal.cancelled().await;
                     Err(JsString::from("stopped"))
                 }
-                other => panic!("unknown subagent behavior {other}"),
+                other => panic!("#956 unknown subagent behavior {other}"),
             }
         })
     })
 }
 
+// A real shell rendezvous reproduces Node's creation-before-exit observation
+// without changing the command, task projection, or production scheduler.
+struct CreateGate {
+    fifo: PathBuf,
+    shell: PathBuf,
+    writer: Option<fs::File>,
+}
+
+impl CreateGate {
+    fn new(root: &Path, index: usize) -> Self {
+        let fifo = root.join(format!("create-{index}.fifo"));
+        let shell = root.join(format!("create-{index}.sh"));
+        assert!(
+            std::process::Command::new("/usr/bin/mkfifo")
+                .arg(&fifo)
+                .status()
+                .expect("#956 create FIFO process")
+                .success(),
+            "#956 create FIFO"
+        );
+        fs::write(
+            &shell,
+            include_str!("fixtures/background-create-gate/shell.sh"),
+        )
+        .expect("#956 write gated shell");
+        fs::set_permissions(&shell, fs::Permissions::from_mode(0o700))
+            .expect("#956 executable gated shell");
+        Self {
+            fifo,
+            shell,
+            writer: None,
+        }
+    }
+
+    fn configure(&self, env: &mut JsObject) {
+        env.insert(
+            "PILOTDECK_SHELL_PATH".into(),
+            JsValue::from(self.shell.to_string_lossy().as_ref()),
+        );
+        env.insert(
+            "PDRS_CREATE_FIFO".into(),
+            JsValue::from(self.fifo.to_string_lossy().as_ref()),
+        );
+    }
+
+    async fn connect(&mut self) {
+        // O_NONBLOCK succeeds only when the child really opened its FIFO reader.
+        // Polling observes that event; elapsed time never releases the command.
+        until(
+            "#956 FIFO reader rendezvous",
+            || match fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&self.fifo)
+            {
+                Ok(writer) => {
+                    self.writer = Some(writer);
+                    true
+                }
+                Err(error) if error.raw_os_error() == Some(libc::ENXIO) => false,
+                Err(error) => panic!("#956 connect FIFO: {error}"),
+            },
+        )
+        .await;
+    }
+
+    fn release(mut self) {
+        self.writer
+            .as_mut()
+            .expect("#956 connected FIFO writer")
+            .write_all(b"release\n")
+            .expect("#956 release FIFO");
+    }
+}
+
 async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
     let name = text(field(sequence, "name"));
     let root = scratch_root.join(&name);
-    fs::create_dir(&root).unwrap();
-    fs::write(root.join("file"), "not a directory\n").unwrap();
-    fs::set_permissions(root.join("file"), fs::Permissions::from_mode(0o644)).unwrap();
+    fs::create_dir(&root).expect("#956 sequence prerequisite");
+    fs::write(root.join("file"), "not a directory\n").expect("#956 sequence prerequisite");
+    fs::set_permissions(root.join("file"), fs::Permissions::from_mode(0o644))
+        .expect("#956 sequence prerequisite");
 
     let completions = Arc::new(Mutex::new(Vec::new()));
     let options = field(sequence, "options");
@@ -427,7 +526,10 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
         on_completion: Some({
             let completions = completions.clone();
             Arc::new(move |event: JsObject| {
-                completions.lock().unwrap().push(JsValue::Object(event))
+                completions
+                    .lock()
+                    .expect("#956 sequence prerequisite")
+                    .push(JsValue::Object(event))
             })
         }),
         completion_preview_bytes: field(options, "completionPreviewBytes").as_number(),
@@ -439,7 +541,10 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
     };
     let tools = task_tools(Some(tasks.clone()));
     let tool = |name: &str| {
-        let index = TOOL_NAMES.iter().position(|tool| *tool == name).unwrap();
+        let index = TOOL_NAMES
+            .iter()
+            .position(|tool| *tool == name)
+            .expect("#956 sequence prerequisite");
         Arc::clone(&tools[index])
     };
     let mut placeholders = Placeholders {
@@ -454,6 +559,7 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
         let op = text(field(step, "op"));
         let label = format!("{name} step {index} {op}");
         let expected = field(step, "result");
+        let mut create_gate = None;
         let actual: Option<JsValue> = match op.as_str() {
             "tool" => {
                 let signal = (!field(step, "abort").is_undefined()).then(ToolCancellation::default);
@@ -461,7 +567,10 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                     .as_string()
                     .is_some_and(|s| s.equals_str("pre"))
                 {
-                    signal.as_ref().unwrap().cancel();
+                    signal
+                        .as_ref()
+                        .expect("#956 sequence prerequisite")
+                        .cancel();
                 }
                 let mut env = object([
                     ("PATH", JsValue::from("/usr/bin:/bin")),
@@ -481,6 +590,15 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                     JsValue::Undefined => JsValue::from("s1"),
                     value => value.clone(),
                 };
+                // Only successful native starts have an oracle PID. Preserve
+                // synchronous spawn errors and the no-child async error case.
+                if text(field(step, "tool")) == "task_create"
+                    && field(field(expected, "data"), "pid").as_string().is_some()
+                {
+                    let gate = CreateGate::new(&root, index);
+                    gate.configure(&mut env);
+                    create_gate = Some(gate);
+                }
                 let fields = object([
                     ("cwd", placeholders.substitute(&cwd)),
                     ("env", placeholders.substitute(&JsValue::Object(env))),
@@ -499,11 +617,14 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                 if tool_name == "task_create"
                     && let Ok(output) = &result
                 {
-                    let data = output.data.as_ref().unwrap();
+                    let data = output.data.as_ref().expect("#956 sequence prerequisite");
                     placeholders.tasks.push(text(field(data, "taskId")));
                     if let Some(pid) = field(data, "pid").as_number() {
                         groups.track(pid as u32);
                     }
+                }
+                if let Some(gate) = &mut create_gate {
+                    gate.connect().await;
                 }
                 Some(placeholders.apply(&tool_outcome(result)))
             }
@@ -513,11 +634,11 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                 let total = || {
                     tasks
                         .get_output(&id, &JsValue::Number(0.0), &JsValue::Undefined, None)
-                        .unwrap()
+                        .expect("#956 sequence prerequisite")
                         .total_bytes
                 };
                 until(&label, || total() >= bytes).await;
-                assert_eq!(total(), bytes, "{label}: exact byte count");
+                assert_eq!(total(), bytes, "#956 {label}: exact byte count");
                 None
             }
             "awaitStatus" => {
@@ -532,12 +653,16 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                 None
             }
             "touch" => {
-                fs::write(root.join(text(field(step, "path"))), "").unwrap();
+                fs::write(root.join(text(field(step, "path"))), "")
+                    .expect("#956 sequence prerequisite");
                 None
             }
             "groupGone" => {
                 let id = task_id(&placeholders, field(step, "task"));
-                let pid = tasks.get(&id, None).and_then(|task| task.pid).expect("pid");
+                let pid = tasks
+                    .get(&id, None)
+                    .and_then(|task| task.pid)
+                    .expect("#956 task pid");
                 until(&label, || !group_alive(pid)).await;
                 Some(JsValue::Bool(true))
             }
@@ -547,14 +672,21 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                 Some(JsValue::Bool(true))
             }
             "sdkStop" | "sdkList" => {
-                let session = field(step, "sessionKey").as_string().unwrap().clone();
+                let session = field(step, "sessionKey")
+                    .as_string()
+                    .expect("#956 sequence prerequisite")
+                    .clone();
                 let task = match step.get("task") {
                     Some(value) => placeholders.substitute(value),
                     None => JsValue::Undefined,
                 };
                 let result = if op == "sdkStop" {
-                    stop_background_task_for_sdk(&resources, &session, task.as_string().unwrap())
-                        .await
+                    stop_background_task_for_sdk(
+                        &resources,
+                        &session,
+                        task.as_string().expect("#956 sequence prerequisite"),
+                    )
+                    .await
                 } else {
                     Ok(background_tasks_for_sdk(&resources, &session, &task))
                 };
@@ -584,7 +716,10 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                             SubagentKind::Background
                         }
                     }),
-                    session_id: field(step, "sessionId").as_string().unwrap().clone(),
+                    session_id: field(step, "sessionId")
+                        .as_string()
+                        .expect("#956 sequence prerequisite")
+                        .clone(),
                     parent_turn_id: JsString::from(format!("turn-{index}").as_str()),
                     subagent_id: JsString::from(format!("sa-{index}").as_str()),
                     subagent_type: JsString::from("general"),
@@ -610,7 +745,7 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
             }
             "subRelease" => {
                 let index = number(field(step, "sub")) as usize;
-                let _ = releases[index].take().expect("release once").send(());
+                let _ = releases[index].take().expect("#956 release once").send(());
                 None
             }
             "subTick" => {
@@ -633,22 +768,26 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                     .collect();
                 Some(placeholders.apply(&JsValue::Array(listed)))
             }
-            other => panic!("{label}: unknown op {other}"),
+            other => panic!("#956 {label}: unknown op {other}"),
         };
         match actual {
-            Some(actual) => assert_eq!(wire(&actual), wire(expected), "{label}"),
-            None => assert!(expected.is_undefined(), "{label}: unexpected result"),
+            Some(actual) => assert_eq!(wire(&actual), wire(expected), "#956 {label}"),
+            None => assert!(expected.is_undefined(), "#956 {label}: unexpected result"),
+        }
+        // The shell cannot finish before the strict creation snapshot above.
+        if let Some(gate) = create_gate {
+            gate.release();
         }
     }
 
     assert_eq!(
         placeholders.tasks.len() as f64,
         number(field(sequence, "tasks")),
-        "{name}: task count"
+        "#956 {name}: task count"
     );
     if field(sequence, "noDispose").as_bool() != Some(true) {
         for pid in groups.snapshot() {
-            until(&format!("{name}: leftover group {pid}"), || {
+            until(&format!("#956 {name}: leftover group {pid}"), || {
                 !group_alive(pid)
             })
             .await;
@@ -663,15 +802,139 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
             .tasks
             .iter()
             .position(|task| *task == id)
-            .unwrap()
+            .expect("#956 sequence prerequisite")
     };
-    let mut completions = completions.lock().unwrap().clone();
+    let mut completions = completions
+        .lock()
+        .expect("#956 sequence prerequisite")
+        .clone();
     completions.sort_by_key(task_index);
     assert_eq!(
         wire(&placeholders.apply(&JsValue::Array(completions))),
         wire(field(sequence, "completions")),
-        "{name}: completion events"
+        "#956 {name}: completion events"
     );
+}
+
+#[test]
+fn dispose_drains_replay() {
+    let sequence = section("sequences", 11)
+        .iter()
+        .find(|sequence| text(field(sequence, "name")) == "dispose-drains")
+        .expect("#956 dispose-drains sequence exists");
+    let scratch = scratch::Scratch::new("background-dispose-drains");
+    let root = fs::canonicalize(scratch.path()).expect("#956 dispose-drains scratch root");
+    runtime().block_on(run_sequence(sequence, &root));
+}
+
+#[test]
+fn creation_gate_lifecycle() {
+    let expected = baseline::oracle(include_str!("fixtures/background-create-gate/oracle.json"));
+    let scratch = scratch::Scratch::new("background-create-gate");
+    let root = fs::canonicalize(scratch.path()).expect("#956 gate scratch root");
+    let cases = array(field(&expected, "cases"));
+    assert_eq!(
+        cases
+            .iter()
+            .map(|case| text(field(case, "mode")))
+            .collect::<Vec<_>>(),
+        ["release", "stop", "dispose"],
+        "#956 lifecycle matrix coverage"
+    );
+    runtime().block_on(async {
+        for (index, case) in cases.iter().enumerate() {
+            let mode = text(field(case, "mode"));
+            let tasks = BackgroundTaskRuntime::default();
+            let groups = ProcessGroups::new();
+            let mut gate = CreateGate::new(&root, index);
+            let mut env = object([("PATH", JsValue::from("/usr/bin:/bin"))]);
+            gate.configure(&mut env);
+            let fields = object([
+                ("cwd", JsValue::from(root.to_string_lossy().as_ref())),
+                ("sessionId", JsValue::from("s1")),
+                ("env", JsValue::Object(env)),
+            ]);
+            let output = task_tools(Some(tasks.clone()))[0]
+                .execute(
+                    JsValue::Object(object([("command", field(case, "command").clone())])),
+                    context(fields, None),
+                )
+                .await
+                .expect("#956 gated create must succeed");
+            let data = output.data.expect("#956 gated create data");
+            let id = field(&data, "taskId")
+                .as_string()
+                .expect("#956 gated task ID")
+                .clone();
+            groups.track(number(field(&data, "pid")) as u32);
+            gate.connect().await;
+            assert_eq!(
+                field(&data, "status"),
+                field(case, "create"),
+                "#956 gated create snapshot"
+            );
+            // No token is ever sent on stop/dispose: cancellation must drain a
+            // predecessor that will never complete by itself.
+            let held = tasks.get(&id, None).expect("#956 held task exists");
+            assert_eq!(
+                held.status.as_str(),
+                text(field(case, "held")),
+                "#956 held status"
+            );
+            assert_eq!(
+                &held.command,
+                field(case, "command"),
+                "#956 original command retained"
+            );
+            assert_eq!(held.output_bytes, 0, "#956 no output before release");
+            if mode == "release" {
+                gate.release();
+                until("#956 released command completes", || {
+                    tasks
+                        .get(&id, None)
+                        .is_some_and(|task| task.status.as_str() == "completed")
+                })
+                .await;
+            } else if mode == "stop" {
+                tokio::time::timeout(
+                    Duration::from_secs(8),
+                    tasks.stop(&id, &JsValue::Undefined, None),
+                )
+                .await
+                .expect("#956 stop deadline")
+                .expect("#956 stop blocked command");
+            } else {
+                assert_eq!(mode, "dispose", "#956 lifecycle mode");
+                tokio::time::timeout(Duration::from_secs(8), tasks.dispose())
+                    .await
+                    .expect("#956 dispose deadline");
+            }
+            let task = tasks.get(&id, None).expect("#956 terminal task exists");
+            assert_eq!(
+                task.status.as_str(),
+                text(field(case, "terminal")),
+                "#956 terminal status"
+            );
+            assert_eq!(
+                task.output_bytes as f64,
+                number(field(case, "outputBytes")),
+                "#956 terminal output bytes"
+            );
+            tokio::time::timeout(Duration::from_secs(8), tasks.dispose())
+                .await
+                .expect("#956 cleanup deadline");
+            for pid in groups.snapshot() {
+                until("#956 gate group exits", || !group_alive(pid)).await;
+            }
+            groups.disarm();
+        }
+    });
+}
+
+#[test]
+#[ignore = "requires the fixed TS baseline and Node v22.22.0"]
+fn creation_gate_regenerates_identically() {
+    baseline::regenerates_identically("background-create-gate");
 }
 
 /// Sequences that depend on the macOS `/bin/bash` 3.2 diagnostic text; every
@@ -714,10 +977,11 @@ fn sequences_replay() {
             steps as f64,
             number(field(field(oracle(), "counts"), "steps"))
         ),
-        (167.0, 167.0)
+        (167.0, 167.0),
+        "#956 sequence step count"
     );
     let scratch = scratch::Scratch::new("background-tasks");
-    let root = fs::canonicalize(scratch.path()).unwrap();
+    let root = fs::canonicalize(scratch.path()).expect("#956 canonical scratch root");
     let mut ran = Vec::new();
     runtime().block_on(async {
         for sequence in sequences {
@@ -726,7 +990,7 @@ fn sequences_replay() {
             assert_eq!(
                 darwin_only,
                 DARWIN_ONLY.contains(&name.as_str()),
-                "{name}: darwinOnly"
+                "#956 {name}: darwinOnly"
             );
             if darwin_only && !cfg!(target_os = "macos") {
                 continue;
@@ -735,7 +999,11 @@ fn sequences_replay() {
             ran.push(name);
         }
     });
-    assert_eq!(ran.len(), if cfg!(target_os = "macos") { 11 } else { 10 });
+    assert_eq!(
+        ran.len(),
+        if cfg!(target_os = "macos") { 11 } else { 10 },
+        "#956 sequence coverage"
+    );
 }
 
 // ---- Rust-only: project lifecycle --------------------------------------------------
