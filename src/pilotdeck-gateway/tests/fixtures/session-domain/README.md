@@ -18,6 +18,8 @@ cargo test -p pilotdeck-gateway --lib storage::transcript_adapter_tests::
 
 范围：校验与写入；完整 A7.5 reducer、checkpoint 及投影读取 API 未在本单实现。
 
+#743 fix-r3：轻量探针在 baseline 前使用调用方 `CARGO`（未设置则 PATH cargo）查询实际 sysroot，核对其 rustc 与 `RUSTC`（未设置则 cargo 同目录 rustc）的 `-V` 输出；不一致即 INVALID。随后用同一 Cargo 在调用方 target 中执行 gateway `--lib --no-run`，只从本次 JSON `compiler-artifact` 选取 externs，不按 rlib 修改时间猜测。版本查询、依赖构建、每项编译和执行均独立留原始日志；工具链错误不会计为 KILLED。`--compile-only` 对每个变异同时执行轻量 rustc 编译和 `cargo check --tests`，不执行变异测试；全量较长时交协调者串行执行。fix2 的临时源码副本同时携带根 `rust-toolchain.toml`。
+
 修复轮 2（#562）：生成器与 Rust 测试均精确断言 304 场景；增删场景时须同步修改两处计数与本 README，防止金样再生或合并时覆盖静默缩水。每个场景还先断言 entries 与 outcomes 等长，再逐条比较，避免 zip 截断。
 
 修复轮 2 负控：从仓根执行 `CARGO_TARGET_DIR="$PWD/src/target" timeout 600 python3 src/pilotdeck-gateway/tests/fixtures/session-domain/fix2-negative.py`，仍只使用启动器的本树 target。两份 oracle 复制到 `/tmp`，分别通过仅测试可见的 `PDRS_TRANSCRIPT_ADAPTER_ORACLE`、`PDRS_SESSION_DOMAIN_ORACLE` 加载。依次删去各 10 个场景、截短单例 outcomes；状态安装退回 hydrate 之后的源码变异也只写 `/tmp` 的源码副本；副本使用独有包版本 `0.1.0-pdrs222-negative`，在共用 target 时隔离变异产物与原树构建身份。各项必须运行对应测试且因预期断言失败，前后完整金样测试必须全绿。脚本不改工作树、不在本树 `_tmp` 建目录；正常结束、异常和 SIGTERM 均删除临时目录，SIGKILL 只可能留下 `/tmp` 副本。每个子进程限时 240 s、整套父进程限时 580 s，串行运行且最多 4 个测试线程，原始输出打印至 stdout。

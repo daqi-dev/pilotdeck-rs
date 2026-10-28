@@ -103,4 +103,6 @@ def source_copy(root):
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO / path, destination)
     shutil.copyfile(REPO / 'LICENSE', root / 'LICENSE')
+    # rustup must keep the repository toolchain when Cargo runs in /tmp.
+    shutil.copyfile(REPO / 'rust-toolchain.toml', root / 'rust-toolchain.toml')
     return root / 'src'
