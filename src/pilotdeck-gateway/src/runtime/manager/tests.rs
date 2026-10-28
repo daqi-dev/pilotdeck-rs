@@ -656,7 +656,7 @@ fn manager_catalog_matrix_matches_real_ts() {
     };
     assert_eq!(
         matrix.len(),
-        26,
+        29,
         "#934 catalog/writer matrix row count is pinned"
     );
     for row in matrix {
@@ -727,6 +727,41 @@ fn manager_catalog_whitespace_title_is_a_summary() {
         compact_str(item(row, "outcome")),
         "#934 whitespace-only title must stay visible as a summary"
     );
+}
+
+/// #970 r4 P1: TS keeps two blank-title rules on purpose — the fast head/tail
+/// textual path accepts any non-empty string, while the full metadata fallback
+/// requires `!summary?.trim()` (SessionList.ts:251, `readLatestTailSnapshot`
+/// 109-119). The same whitespace-only title therefore hides a session only
+/// when its record sits outside both 64 KiB windows, and a blank later record
+/// never overrides the fast answer. Measured with the real TS generator.
+#[test]
+fn manager_catalog_blank_title_paths_match_real_ts() {
+    let oracle = crate::test_baseline::oracle(ORACLE);
+    for (name, message) in [
+        (
+            "whitespace-title-midfile",
+            "#970 a blank title outside both windows must hide the session like TS",
+        ),
+        (
+            "whitespace-title-reset-midfile",
+            "#970 a blank mid-file title must not override the fast-path summary",
+        ),
+        (
+            "whitespace-tail-snapshot",
+            "#970 a blank tail snapshot title must stay visible via the fast path",
+        ),
+    ] {
+        let row = matrix_row(&oracle, name);
+        let (_scratch, root, result) = run_matrix_row(row);
+        let actual =
+            result.unwrap_or_else(|error| panic!("{message}: catalog list failed: {error:?}"));
+        assert_eq!(
+            compact_str(&normalize_dir(&JsValue::Array(actual), &root)),
+            compact_str(item(row, "outcome")),
+            "{message}"
+        );
+    }
 }
 
 #[test]
@@ -1487,14 +1522,25 @@ fn manager_deep_project_key_returns_range_error_without_aborting() {
         root.clone(),
         root,
     );
-    let error = gateway
-        .sessions(&JsValue::Object(params))
+    // #970: dropping the 30,000-level nesting recurses one frame per level, so
+    // the whole probe (construction, call, and the eventual Drop) runs on a
+    // dedicated large-stack thread instead of the harness's default stack.
+    let probe = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(move || {
+            gateway.sessions(&JsValue::Object(params)).map_err(|error| {
+                (
+                    error.name().to_owned(),
+                    String::from_utf16_lossy(error.message().units()),
+                )
+            })
+        })
+        .expect("#934 spawn the deep projectKey probe thread");
+    let (name, message) = probe
+        .join()
+        .expect("#934 deep projectKey probe thread must not panic")
         .expect_err("#934 deep projectKey must fail with RangeError, not abort");
-    println!(
-        "DEEP={}:{}",
-        error.name(),
-        String::from_utf16_lossy(error.message().units())
-    );
+    println!("DEEP={name}:{message}");
 }
 
 #[test]

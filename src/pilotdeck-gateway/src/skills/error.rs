@@ -165,6 +165,16 @@ impl SkillError {
         }
     }
 
+    /// A JS failure this error shape has no raw passthrough for, so the host
+    /// must answer the call (`JS_HOST_REQUIRED`). Same boundary as
+    /// `session_model`/`config`'s description-phase `Throws` branches.
+    pub(crate) fn host_required() -> Self {
+        Self {
+            requires_host: true,
+            ..Self::raw("Error", "JS_HOST_REQUIRED".into(), JsString::default())
+        }
+    }
+
     /// Gateway method admission (node_io::LOCAL_ERRNOS): an errno the method's
     /// oracle never observed is handed to the host instead of guessed.
     pub(crate) fn admit(self, method: &str) -> Self {

@@ -999,6 +999,92 @@ fn whitespace_only_title_keeps_shared_metadata_session_count() {
     );
 }
 
+/// #970 r4 P1: the shared counting projection keeps TS's two blank-title rules.
+/// A whitespace-only title inside the head window counts the session (fast
+/// path, non-empty), but the same title outside both 64 KiB windows does not:
+/// only the full metadata fallback can see it there, and TS's
+/// `parseSessionInfoFromMetadata` rejects `!summary?.trim()`
+/// (SessionList.ts:251). Measured against real TS
+/// (`_tmp/20261026-issue-970/probes/blank_title_paths.out.txt`).
+#[test]
+fn blank_title_full_scan_keeps_the_ts_trim_rule() {
+    let pad = format!(
+        "{{\"type\":\"other\",\"pad\":\"{}\"}}\n",
+        "x".repeat(70_000)
+    );
+    let mid_only =
+        format!("{pad}{{\"type\":\"session_metadata\",\"metadata\":{{\"title\":\" \"}}}}\n{pad}");
+    assert_eq!(
+        session_has_summary(mid_only.as_bytes()),
+        Ok(false),
+        "#970 a blank title outside both windows must not count as a summary"
+    );
+    let head_blank =
+        format!("{{\"type\":\"session_metadata\",\"metadata\":{{\"title\":\" \"}}}}\n{pad}");
+    assert_eq!(
+        session_has_summary(head_blank.as_bytes()),
+        Ok(true),
+        "#970 a blank title inside the head window must count as a summary"
+    );
+
+    let mut files = MapFiles::default();
+    files
+        .entries
+        .insert(PathBuf::from("/home/projects"), vec![("proj".into(), true)]);
+    files.bytes.insert(
+        PathBuf::from("/home/projects/proj/.cwd"),
+        b"/project\n".to_vec(),
+    );
+    files
+        .stats
+        .insert(PathBuf::from("/project"), directory_stat());
+    files.entries.insert(
+        PathBuf::from("/home/projects/proj/chats"),
+        vec![("mid.jsonl".into(), false), ("head.jsonl".into(), false)],
+    );
+    files.bytes.insert(
+        PathBuf::from("/home/projects/proj/chats/mid.jsonl"),
+        mid_only.into_bytes(),
+    );
+    files.bytes.insert(
+        PathBuf::from("/home/projects/proj/chats/head.jsonl"),
+        head_blank.into_bytes(),
+    );
+    for (name, mtime) in [("mid.jsonl", 234.0), ("head.jsonl", 123.0)] {
+        files.stats.insert(
+            PathBuf::from(format!("/home/projects/proj/chats/{name}")),
+            Stat {
+                directory: false,
+                size: 140_000,
+                birth_ms: 0.0,
+                ctime_ms: 0.0,
+                mtime_ms: mtime,
+            },
+        );
+    }
+    let metadata = Metadata {
+        home: PathBuf::from("/home"),
+        cwd: PathBuf::from("/"),
+        files,
+    };
+    let summary = metadata.summary(
+        "/project",
+        Some("/project"),
+        Some(Path::new("/home/projects/proj")),
+        JsString::from("/project"),
+    );
+    assert_eq!(
+        summary.get("sessionCount").and_then(JsValue::as_number),
+        Some(1.0),
+        "#970 only the head-window blank title may stay in the shared session count"
+    );
+    assert_eq!(
+        summary.get("lastActivity").and_then(JsValue::as_number),
+        Some(123.0),
+        "#970 the hidden mid-file blank title must not contribute lastActivity"
+    );
+}
+
 #[test]
 fn static_fixture_anchor_rejects_rust_rewritten_facts_and_response() {
     let original = fixture();
