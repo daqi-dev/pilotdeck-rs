@@ -60,6 +60,12 @@ pub trait LiveSession: Send + Sync {
     /// Only a fully Disposed handle suppresses subsequent external aborts.
     /// This matches TS AgentHandle.ts:176-179,281-287.
     fn abort(&self, reason: &JsString) -> RuntimeResult;
+    /// Transfer owned writer cleanup before abort can unwind. Keep writes open
+    /// for final lifecycle hooks; the guard retires/drains the writer on Drop.
+    /// Adapters without a factory writer lease have nothing to transfer.
+    fn disposal_guard(&self) -> Option<Box<dyn Send>> {
+        None
+    }
     fn dispose(&self) -> DisposeFuture<'_>;
 }
 
@@ -91,6 +97,10 @@ struct Inner {
 pub struct LiveSessionHandle(Arc<Inner>);
 
 impl LiveSessionHandle {
+    #[cfg(test)]
+    pub(super) fn session_for_test(&self) -> Arc<dyn LiveSession> {
+        self.0.session.clone()
+    }
     #[cfg(test)]
     pub(crate) fn reload_signal_for_test(&self) -> Option<crate::runtime::hooks::Cancellation> {
         self.0.session.reload_signal_for_test()
@@ -266,6 +276,9 @@ impl LiveSessionHandle {
                 handle_progress: &handle.0.progress,
                 outcome: None,
             };
+            // Drop before DisposeGuard publishes completion, including when
+            // abort panics before session.dispose() can take its own guard.
+            let _writer_guard = handle.0.session.disposal_guard();
             // session.abort() is outside the progress lock (no poison risk).
             // Called before the drain wait so the session can begin cancellation.
             let abort_error = if active {

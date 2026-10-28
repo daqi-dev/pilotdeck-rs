@@ -2613,6 +2613,150 @@ async fn recreate_snapshot_rejects_disposal_during_prepare() {
 }
 
 #[tokio::test]
+async fn writer_abort_panic_releases_lease_before_session_dispose() {
+    // Inject only the adapter's abort failure, forwarding the real factory
+    // cleanup capability. Retain the original handle/recorder across recreate.
+    struct AbortPanic(Arc<dyn LiveSession>);
+    impl LiveSession for AbortPanic {
+        fn snapshot(&self) -> JsValue {
+            self.0.snapshot()
+        }
+        fn abort(&self, _: &JsString) -> RuntimeResult {
+            panic!("#745 injected adapter abort panic");
+        }
+        fn disposal_guard(&self) -> Option<Box<dyn Send>> {
+            self.0.disposal_guard()
+        }
+        fn dispose(&self) -> DisposeFuture<'_> {
+            self.0.dispose()
+        }
+    }
+    let h = Harness::new("abort-panic");
+    let original = bounded("abort panic initial", h.factory.create(h.context(), None))
+        .await
+        .expect("#745 abort panic initial factory create");
+    let writer = lock(&h.observed.bindings)[0].recorder.writer().clone();
+    let old = LiveSessionHandle::new(Arc::new(AbortPanic(original.session_for_test())), None);
+    let activity = old.begin_activity().expect("#745 abort panic active turn");
+    let result = bounded("abort panic dispose", old.dispose("test".into())).await;
+    assert!(result.is_err(), "#745 abort panic reports disposal failure");
+    assert_eq!(
+        old.state(),
+        HandleState::Disposed,
+        "#745 abort panic disposed"
+    );
+    let new = bounded("abort panic recreate", h.factory.create(h.context(), None))
+        .await
+        .expect("#745 abort panic replacement not BUSY");
+    assert!(
+        lock(&lock(&h.observed.writer_leases)[0]).is_none(),
+        "#745 abort panic old lease transferred"
+    );
+    let before = writer.snapshot_state();
+    writer
+        .record_session_metadata(
+            &"session-745".into(),
+            &"late".into(),
+            js(r#"{"late":true}"#),
+        )
+        .expect("#745 abort panic retired append resolves");
+    assert_eq!(
+        writer.snapshot_state(),
+        before,
+        "#745 abort panic writer retired"
+    );
+    drop(activity);
+    // The injected abort skipped ordinary session cleanup; release the retained
+    // test adapter's remaining resources after proving writer recovery.
+    original
+        .dispose("cleanup".into())
+        .await
+        .expect("#745 abort panic original cleanup");
+    new.dispose("cleanup".into())
+        .await
+        .expect("#745 abort panic replacement cleanup");
+    h.finish("abort-panic").await;
+}
+
+#[tokio::test]
+async fn writer_fence_rejects_zero_budget() {
+    let h = Harness::new("zero-budget");
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ProjectSessionFactory::new(FactoryOptions {
+            writer_fence_timeout: Duration::ZERO,
+            prepare: h.factory.options.prepare.clone(),
+            create_storage: h.factory.options.create_storage.clone(),
+            admission: None,
+            diagnostic: Arc::new(|_| {}),
+        })
+    }));
+    assert!(rejected.is_err(), "#745 zero fence budget rejected");
+    h.finish("zero-budget").await;
+}
+
+#[tokio::test]
+async fn writer_fence_exhausted_drain_budget_acquires_idle_lease() {
+    let h = Harness::new("exhausted-budget");
+    let old = h.create("exhausted-budget").await;
+    let activity = old
+        .begin_activity()
+        .expect("#745 exhausted budget active turn");
+    tokio::time::pause();
+    let mut creating = Box::pin(h.factory.construct(h.context(), Some(old.clone())));
+    // Poll exactly to the drain wait, then hold the factory caller while the
+    // owned disposal finishes. Both drain completion and deadline are ready
+    // when we resume polling, so remaining writer wait is deterministically zero.
+    let first = std::future::poll_fn(|cx| std::task::Poll::Ready(creating.as_mut().poll(cx))).await;
+    assert!(
+        first.is_pending(),
+        "#745 exhausted budget awaits predecessor"
+    );
+    assert_eq!(
+        old.state(),
+        HandleState::Draining,
+        "#745 exhausted budget drain started"
+    );
+    tokio::time::advance(h.factory.options.writer_fence_timeout).await;
+    tokio::time::resume();
+    drop(activity);
+    bounded("exhausted budget drain", old.dispose("finish".into()))
+        .await
+        .expect("#745 exhausted budget predecessor completes");
+    let path = h.root.join("session-745.jsonl");
+    let lease = bounded(
+        "exhausted budget unlock",
+        acquire_writer(
+            path.clone(),
+            tokio::time::Instant::now() + Duration::from_secs(1),
+        ),
+    )
+    .await
+    .expect("#745 exhausted budget predecessor releases lease");
+    drop(lease);
+    let new = bounded("exhausted budget recreate", creating)
+        .await
+        .expect("#745 exhausted budget still acquires idle writer");
+    // An expired deadline still rejects an occupied lease immediately; try-once
+    // must never become a bypass of exclusivity or an unbounded busy wait.
+    let error = bounded(
+        "exhausted budget busy",
+        acquire_writer(path, tokio::time::Instant::now()),
+    )
+    .await
+    .err()
+    .expect("#745 exhausted budget busy lease rejected");
+    assert_eq!(
+        error.js_error().and_then(|e| e.code.as_deref()),
+        Some("SESSION_WRITER_BUSY"),
+        "#745 exhausted budget busy error code"
+    );
+    new.dispose("cleanup".into())
+        .await
+        .expect("#745 exhausted budget replacement cleanup");
+    h.finish("exhausted-budget").await;
+}
+
+#[tokio::test]
 async fn writer_close_panic_releases_lease() {
     let h = Harness::new("storage-close-panic");
     let old = bounded("panic create", h.factory.create(h.context(), None))
@@ -2659,9 +2803,12 @@ async fn writer_rollback_close_panic_releases_lease() {
         .await
         .expect("#745 rollback storage");
     *lock(&storage.writer_lease) = Some(
-        acquire_writer(storage.recorder.writer().path().to_owned())
-            .await
-            .expect("#745 rollback initial lease"),
+        acquire_writer(
+            storage.recorder.writer().path().to_owned(),
+            tokio::time::Instant::now() + Duration::from_secs(1),
+        )
+        .await
+        .expect("#745 rollback initial lease"),
     );
     storage.close = Arc::new(|| Box::pin(async { panic!("#745 injected rollback close panic") }));
     let storage = Arc::new(storage);
@@ -2836,9 +2983,12 @@ async fn writer_rollback_close_preserves_final_hook() {
         .await
         .expect("#745 final hook storage");
     *lock(&storage.writer_lease) = Some(
-        acquire_writer(storage.recorder.writer().path().to_owned())
-            .await
-            .expect("#745 final hook lease"),
+        acquire_writer(
+            storage.recorder.writer().path().to_owned(),
+            tokio::time::Instant::now() + Duration::from_secs(1),
+        )
+        .await
+        .expect("#745 final hook lease"),
     );
     let writer = storage.recorder.writer().clone();
     storage.close = Arc::new(move || {
@@ -2907,9 +3057,12 @@ async fn writer_panic_cleanup_allows_runtime_progress() {
         },
     );
     *lock(&storage.writer_lease) = Some(
-        acquire_writer(storage.recorder.writer().path().to_owned())
-            .await
-            .expect("#745 panic background lease"),
+        acquire_writer(
+            storage.recorder.writer().path().to_owned(),
+            tokio::time::Instant::now() + Duration::from_secs(1),
+        )
+        .await
+        .expect("#745 panic background lease"),
     );
     storage.close = Arc::new(|| Box::pin(async { panic!("#745 injected background close panic") }));
     let storage = Arc::new(storage);
@@ -2969,7 +3122,10 @@ async fn writer_panic_cleanup_allows_runtime_progress() {
         .expect("#745 panic background append complete");
     let lease = bounded(
         "panic background lease release",
-        acquire_writer(storage.recorder.writer().path().to_owned()),
+        acquire_writer(
+            storage.recorder.writer().path().to_owned(),
+            tokio::time::Instant::now() + Duration::from_secs(1),
+        ),
     )
     .await
     .expect("#745 panic background lease eventually released");

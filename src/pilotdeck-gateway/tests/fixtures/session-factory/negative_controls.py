@@ -28,6 +28,11 @@ prefix = 'runtime::session::factory::tests::'
 cases = [
     ('same-key-concurrent', owner, 'dirty: false,', 'dirty: true,', None, prefix+'same_key_concurrent', '#745 same-key-concurrent conclusion'),
     ('same-key-cached', owner, 'dirty: false,', 'dirty: true,', None, prefix+'same_key_cached', '#745 same-key-cached conclusion'),
+    ('same-key-concurrent-skip-cache', owner, 'if !record.dirty || !self.0.options.factory.can_recreate() {', 'if false {', 'create_active', prefix+'same_key_concurrent', '#745 same-key-concurrent conclusion'),
+    ('same-key-cached-skip-cache', owner, 'if !record.dirty || !self.0.options.factory.can_recreate() {', 'if false {', 'create_active', prefix+'same_key_cached', '#745 same-key-cached conclusion'),
+    ('writer-abort-panic-guard', handle, 'let _writer_guard = handle.0.session.disposal_guard();', 'let _writer_guard = ();', None, prefix+'writer_abort_panic_releases_lease_before_session_dispose', '#745 abort panic replacement not BUSY'),
+    ('writer-zero-budget', factory, '!options.writer_fence_timeout.is_zero(),', 'true,', None, prefix+'writer_fence_rejects_zero_budget', '#745 zero fence budget rejected'),
+    ('writer-expired-budget-skips-try', factory, 'let process = match mutex.clone().try_lock_owned() {', 'if deadline <= tokio::time::Instant::now() { return Err(writer_busy()); }\n    let process = match mutex.clone().try_lock_owned() {', None, prefix+'writer_fence_exhausted_drain_budget_acquires_idle_lease', '#745 exhausted budget still acquires idle writer'),
     ('create-owner-shutdown', owner, 'return Err(RuntimeError::new(message));', 'let _ = message; return Ok(handle);', 'create_active', prefix+'create_owner_shutdown', '#745 create-owner-shutdown conclusion'),
     ('create-factory-dispose', factory, 'self.mcp.dispose().await', 'Ok(())', None, prefix+'create_factory_dispose', '#745 create-factory-dispose MCP stopped'),
     ('create-dispose-before-mcp', factory, 'self.mcp.dispose().await', 'Ok(())', None, prefix+'create_dispose_before_mcp', '#745 create-dispose-before-mcp conclusion'),
