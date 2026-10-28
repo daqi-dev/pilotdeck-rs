@@ -89,11 +89,17 @@ fn run_sessions(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
 }
 
 fn run_settings(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
-    read_connection(argv, env, cwd)?;
+    let connection = read_connection(argv, env, cwd)?;
     match argv.first().map_or("get", String::as_str) {
-        "get" => Err(Failure::Todo(
-            "pilotdeck settings get (SDK resolveSettings)",
-        )),
+        // resolveSettings connects through connectedTransport, so an empty
+        // gatewayUrl fails the shared connectionOptions gate locally, after
+        // the subcommand dispatch (#982 settings-default/get--gateway-empty).
+        "get" => {
+            create_client(&connection)?;
+            Err(Failure::Todo(
+                "pilotdeck settings get (SDK resolveSettings)",
+            ))
+        }
         "set" => {
             let rest = &argv[1..];
             let raw = read_value(rest, "--json")
@@ -107,6 +113,10 @@ fn run_settings(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
             if let Some(message) = json_syntax::parse_error(&raw) {
                 return Err(Failure::Error(format!("Invalid settings JSON: {message}")));
             }
+            // updateSettings validates the settings object (P04) and then the
+            // connectionOptions gate before connecting; the JSON syntax error
+            // above already precedes both (#982 settings-set--gateway-empty).
+            create_client(&connection)?;
             Err(Failure::Todo("pilotdeck settings set (SDK updateSettings)"))
         }
         _ => Err(Failure::Error(
@@ -155,8 +165,10 @@ fn read_connection(argv: &[String], env: &Env, cwd: &Path) -> Result<Connection,
     Ok(Connection { gateway_url })
 }
 
-/// createPilotDeckClient validates options (packages/sdk/src/client.ts:130-135) and
-/// builds the transport without connecting; the token is already non-empty here.
+/// connectionOptions (packages/sdk/src/client.ts:130-135): the local gate shared by
+/// createPilotDeckClient and the resolveSettings/updateSettings transports. It
+/// validates options and builds the transport without connecting; the token is
+/// already non-empty here.
 fn create_client(connection: &Connection) -> Result<(), Failure> {
     if connection.gateway_url.is_empty() {
         return Err(Failure::Error(
@@ -315,7 +327,8 @@ mod tests {
         ] {
             assert_eq!(error_of(run_sdk_cli(&args(values), &env, cwd)), url_error);
         }
-        // settings never builds a client; an empty --gateway-url value is ignored.
+        // The settings subcommand dispatch precedes its connectionOptions gate,
+        // so an unknown leaf still reports usage under an empty URL.
         assert_eq!(
             error_of(run_sdk_cli(&args(&["settings", "nope"]), &env, cwd)),
             "Usage: pilotdeck settings <get|set> ..."
@@ -361,6 +374,48 @@ mod tests {
         assert_eq!(
             error_of(run_sdk_cli(&args(&["settings", "nope"]), &env, cwd)),
             "Usage: pilotdeck settings <get|set> ..."
+        );
+    }
+
+    /// #982: resolveSettings/updateSettings reach the shared connectionOptions
+    /// gate, so an empty gatewayUrl fails locally after the subcommand dispatch
+    /// and (for set) after the JSON syntax check, before any connection.
+    #[test]
+    fn settings_gateway_empty_fails_the_connection_options_gate() {
+        let env = Env::from_pairs(&[
+            ("PILOTDECK_SDK_AUTH_TOKEN", "t"),
+            ("PILOTDECK_SDK_GATEWAY_URL", ""),
+        ]);
+        let cwd = Path::new("/");
+        let url_error = "gatewayUrl and authToken are required; pass them in query options or createPilotDeckClient defaults.";
+        assert_eq!(
+            error_of(run_sdk_cli(&args(&["settings"]), &env, cwd)),
+            url_error,
+            "#982 settings-default--gateway-empty"
+        );
+        assert_eq!(
+            error_of(run_sdk_cli(&args(&["settings", "get"]), &env, cwd)),
+            url_error,
+            "#982 settings-get--gateway-empty"
+        );
+        assert_eq!(
+            error_of(run_sdk_cli(
+                &args(&["settings", "set", "{\"language\":\"zh-CN\"}"]),
+                &env,
+                cwd
+            )),
+            url_error,
+            "#982 settings-set--gateway-empty"
+        );
+        assert_eq!(
+            error_of(run_sdk_cli(&args(&["settings", "set", "{"]), &env, cwd)),
+            "Invalid settings JSON: Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+            "#982 settings-set JSON syntax precedes the connectionOptions gate"
+        );
+        assert_eq!(
+            error_of(run_sdk_cli(&args(&["settings", "bogus"]), &env, cwd)),
+            "Usage: pilotdeck settings <get|set> ...",
+            "#982 settings-unknown--gateway-empty: dispatch precedes the gate"
         );
     }
 }
