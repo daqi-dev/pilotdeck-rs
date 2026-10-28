@@ -1,0 +1,49 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/runtime/commandShell.ts": "b350a9cba14836c78ea4773758ec34d237c7abee4a6df1c207da6f8f92e79918",
+    "src/task/protocol/types.ts": "8e6e5533b01237a3857e33d049866a8d6d26a3c38f4162e6f045178406062d44",
+    "src/task/runtime/BackgroundTaskCompletionEvents.ts": "b1aaf63f66b0e4bb73068b39ca47436044b26271819f2550663955ccb974fabb",
+    "src/task/runtime/BackgroundTaskPort.ts": "e2427f34e8f4492f4868b86588f514875e5ca9b9c052cb16e7278c120bb2e61e",
+    "src/task/runtime/BackgroundTaskRuntime.ts": "fe759de9c68ea65edeaea4791c8377f96ac6de40e5108ea61a78decc7d5b30c4",
+    "src/task/storage/BackgroundTaskSnapshotStore.ts": "f16f114ce7df9645c680df533aa6494b5a9c0ee46dd59134eba3c4e7571b7d8d",
+    "src/task/storage/TaskOutputStore.ts": "eaff03430a2f31a09c0e2672479132c3c9e4459afae2c780e0a968a97da3cd66",
+    "src/tool/execution-world/DetachedShellPort.ts": "4c9da257adbecc26baa1a52a66a1e9dac885bc88cb228ad5671db911d7b0f7d4"
+  },
+  "content": "gated-output-中🙂",
+  "cases": [
+    {
+      "mode": "pending",
+      "before": {
+        "disposed": false,
+        "retained": "gated-output-中🙂"
+      },
+      "after": {
+        "disposed": true,
+        "disk": "gated-output-中🙂"
+      }
+    },
+    {
+      "mode": "ready",
+      "before": {
+        "disposed": true,
+        "retained": ""
+      },
+      "after": {
+        "disposed": true,
+        "disk": "gated-output-中🙂"
+      }
+    },
+    {
+      "mode": "cancelled",
+      "before": {
+        "disposed": false,
+        "retained": "gated-output-中🙂"
+      },
+      "after": {
+        "disposed": true,
+        "disk": null
+      }
+    }
+  ]
+}

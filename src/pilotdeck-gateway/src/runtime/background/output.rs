@@ -410,6 +410,163 @@ mod tests {
 }
 
 #[cfg(test)]
+mod dispose_tests {
+    use super::*;
+    use crate::runtime::background::{
+        BackgroundTaskRuntime, BackgroundTaskRuntimeOptions, Phase, StartTaskSpec,
+    };
+    use std::{future::poll_fn, task::Poll, time::Duration};
+
+    async fn replay(mode: &str) {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let oracle: serde_json::Value = serde_json::from_str(include_str!(
+                "../../../tests/fixtures/background-dispose-flush/oracle.json"
+            ))
+            .expect("#994 dispose-flush setup oracle");
+            let row = oracle["cases"]
+                .as_array()
+                .expect("#994 dispose-flush setup cases")
+                .iter()
+                .find(|row| row["mode"] == mode)
+                .expect("#994 dispose-flush setup matrix cell");
+            let bytes = oracle["content"]
+                .as_str()
+                .expect("#994 dispose-flush setup content")
+                .as_bytes();
+            let scratch = crate::test_scratch::Scratch::new("994-dispose-flush");
+            let runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+                disk_spill_dir: Some(scratch.path().to_path_buf()),
+                // A snapshot store would hide a removed disposal await by
+                // flushing the same write again during final persistence.
+                snapshot_store: None,
+                ..Default::default()
+            });
+            let task = runtime
+                .start(StartTaskSpec {
+                    command: JsValue::from("exit 0"),
+                    cwd: "/".into(),
+                    env: None,
+                    session_id: JsValue::Undefined,
+                    agent_id: JsValue::Undefined,
+                    kind: JsValue::Undefined,
+                })
+                .await
+                .expect("#994 dispose-flush setup start");
+            let entry = runtime
+                .find(&task.task_id, None)
+                .expect("#994 dispose-flush setup entry");
+            entry.wait_done().await;
+            let (entered, release) = {
+                let mut state = entry.state.lock().expect("#994 dispose-flush setup lock");
+                state
+                    .output
+                    .spill
+                    .as_mut()
+                    .expect("#994 dispose-flush setup spill")
+                    .write_error = mode == "cancelled";
+                state.output.gate_next_write()
+            };
+            entry.append(bytes);
+            entered
+                .await
+                .expect("#994 dispose-flush setup gate entered");
+            let mut release = Some(release);
+            if mode == "ready" {
+                release
+                    .take()
+                    .expect("#994 dispose-flush setup ready sender")
+                    .send(())
+                    .expect("#994 dispose-flush setup ready release");
+                let flushed = entry
+                    .state
+                    .lock()
+                    .expect("#994 dispose-flush setup ready lock")
+                    .output
+                    .flush();
+                flushed.await;
+            }
+            // All predecessors (starts, kill_all, entry.done) are settled.
+            // Poll the disposal body itself: the public API spawns this body,
+            // so polling just that API would only observe scheduler latency.
+            let mut disposal = Box::pin(runtime.dispose_now());
+            let disposed = poll_fn(|cx| Poll::Ready(disposal.as_mut().poll(cx).is_ready())).await;
+            assert_eq!(
+                disposed,
+                row["before"]["disposed"]
+                    .as_bool()
+                    .expect("#994 dispose-flush setup expected pending"),
+                "#994 dispose-flush must await gated write without snapshot store"
+            );
+            let retained: Vec<u8> = entry
+                .state
+                .lock()
+                .expect("#994 dispose-flush setup retained lock")
+                .output
+                .chunks
+                .iter()
+                .flatten()
+                .copied()
+                .collect();
+            assert_eq!(
+                retained,
+                row["before"]["retained"]
+                    .as_str()
+                    .expect("#994 dispose-flush setup retained")
+                    .as_bytes(),
+                "#994 dispose-flush ring lifetime"
+            );
+            if let Some(release) = release {
+                // F1 is the never-finishing-predecessor observation: no other
+                // code owns the sender, and the write cannot finish until here.
+                release.send(()).expect("#994 dispose-flush setup release");
+                disposal.await;
+            }
+            assert_eq!(
+                runtime
+                    .inner
+                    .state
+                    .lock()
+                    .expect("#994 dispose-flush setup final lock")
+                    .phase,
+                Phase::Disposed,
+                "#994 dispose-flush final phase"
+            );
+            let path = scratch.path().join("output").join(format!(
+                "{}.log",
+                String::from_utf16_lossy(task.task_id.units())
+            ));
+            let disk = match fs::read_to_string(path) {
+                Ok(bytes) => Some(bytes),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => panic!("#994 dispose-flush setup disk read: {error}"),
+            };
+            assert_eq!(
+                disk.as_deref(),
+                row["after"]["disk"].as_str(),
+                "#994 dispose-flush completed disk bytes"
+            );
+        })
+        .await
+        .expect("#994 dispose-flush setup bounded probe");
+    }
+
+    #[tokio::test]
+    async fn dispose_without_snapshot_waits_for_gated_write() {
+        replay("pending").await;
+    }
+
+    #[tokio::test]
+    async fn dispose_without_snapshot_accepts_completed_write() {
+        replay("ready").await;
+    }
+
+    #[tokio::test]
+    async fn dispose_without_snapshot_waits_for_cancelled_write() {
+        replay("cancelled").await;
+    }
+}
+
+#[cfg(test)]
 mod oracle_tests {
     use super::*;
     use serde_json::{Value, json};

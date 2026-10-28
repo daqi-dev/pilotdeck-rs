@@ -77,6 +77,29 @@ class FailureBindingTests(unittest.TestCase):
             self.assertEqual(negative.classify('threshold-minus-one', result, None)[0], 'INVALID',
                              '#994 unrelated failures cannot count as kills')
 
+    def test_dispose_requires_its_no_snapshot_assertion(self):
+        name = 'x-dispose-no-flush-await'
+        marker = '#994 dispose-flush must await gated write without snapshot store'
+        for message, status in [(marker, 'KILLED'),
+                                ('#994 dispose-flush setup gate entered', 'INVALID'),
+                                ('#994 dispose-flush setup bounded probe', 'INVALID'),
+                                ('#994 dispose-flush completed disk bytes', 'INVALID')]:
+            self.assertEqual(negative.classify(name, self.result(name, message), None)[0],
+                             status, '#994 dispose must bind the no-snapshot pending assertion')
+        for result in (self.result(name, marker, thread='another_test'),
+                       self.result(name, 'wrong panic', extra=marker)):
+            self.assertEqual(negative.classify(name, result, None)[0], 'INVALID',
+                             '#994 dispose rejects unrelated panic/stdout markers')
+
+    def test_dispose_cancelled_write_binding_is_exact(self):
+        name = 'x-dispose-no-flush-await'
+        bound = name + '-cancelled'
+        marker = '#994 dispose-flush must await gated write without snapshot store'
+        self.assertEqual(negative.classify(name, self.result(bound, marker), bound)[0], 'KILLED',
+                         '#994 cancelled write uses its own full test name')
+        self.assertEqual(negative.classify(name, self.result(name, marker), bound)[0], 'INVALID',
+                         '#994 pending test cannot stand in for cancelled test')
+
     def test_runtime_layout_only_accepts_expected_log_failure(self):
         for message, status in [('#994 background-output setup', 'INVALID'),
                                 ('#994 background-output expected runtime log', 'KILLED')]:
