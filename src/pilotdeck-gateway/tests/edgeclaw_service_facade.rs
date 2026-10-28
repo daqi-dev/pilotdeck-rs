@@ -1410,6 +1410,96 @@ fn ts_service_facade_scenarios_match() {
     compare(&oracle, &oracle_js);
 }
 
+/// fix-r7 P1: keep the old `null` cell in its own test. The
+/// `get-nonnumber-maxlines` mutant preserves `Some(JsValue::Null) => 0.0`, so
+/// this test stays green while the dedicated non-number test below must fail
+/// on its own. Body `a\nb\nc`; TS `null <= 0` yields `""`.
+#[test]
+fn service_get_null_max_lines_matches_ts_empty_content() {
+    let (_scratch, service, ids) = max_lines_service("edgeclaw-service-null-maxlines");
+    let actual = service_max_lines_content(&service, &ids, &JsValue::Null);
+    assert_eq!(
+        actual, "",
+        "#775 service.get null maxLines must follow TS ToNumber to zero lines"
+    );
+    service.close().expect("#775 service null maxLines close");
+}
+
+/// fix-r7 P1: the new seven non-number `maxLines` rows get their own binding.
+/// `get(ids, maxLines = 80)` only defaults `undefined`; every other value
+/// reaches `trimContentLines`, whose relational comparisons apply
+/// `ToNumber`. Body `a\nb\nc`, measured on Node v22.22.0 in
+/// `_tmp/20261026-issue-775/fix-r7/probe/ts-maxlines.out`.
+#[test]
+fn service_get_coerces_non_number_max_lines() {
+    let (_scratch, service, ids) = max_lines_service("edgeclaw-service-nonnumber-maxlines");
+    for (value, expected, label) in [
+        (JsValue::Bool(false), "", "false"),
+        (JsValue::Bool(true), "a\n...", "true"),
+        (JsValue::from("1"), "a\n...", "\"1\""),
+        (JsValue::from(""), "", "\"\""),
+        (JsValue::from("abc"), "\n...", "\"abc\""),
+        (JsValue::Number(f64::NAN), "\n...", "NaN"),
+        (JsValue::Number(f64::INFINITY), "a\nb\nc", "Infinity"),
+    ] {
+        let actual = service_max_lines_content(&service, &ids, &value);
+        assert_eq!(
+            actual, expected,
+            "#775 service.get non-number maxLines {label} must follow TS ToNumber"
+        );
+    }
+    service
+        .close()
+        .expect("#775 service nonnumber maxLines close");
+}
+
+/// Shared fixture for the two `maxLines` binding tests: one workspace record
+/// with body `a\nb\nc`. The scratch directory stays alive because the returned
+/// service still opens the temp SQLite/manifest files.
+fn max_lines_service(label: &str) -> (Scratch, EdgeClawMemoryService, JsValue) {
+    let scratch = Scratch::new(label);
+    let home = scratch.path().join("home");
+    fs::create_dir_all(&home).expect("#775 service maxLines home");
+    let mut options = ServiceOptions::new(scratch.path().join("workspace"));
+    options.root_dir = Some(scratch.path().join("root"));
+    let service = service_for(options, &home, None);
+    let mut candidate = JsObject::new();
+    candidate.insert("type".into(), JsValue::from("project"));
+    candidate.insert("scope".into(), JsValue::from("project"));
+    candidate.insert("name".into(), JsValue::from("Service max lines note"));
+    candidate.insert(
+        "description".into(),
+        JsValue::from("service max lines description"),
+    );
+    candidate.insert("body".into(), JsValue::from("a\nb\nc"));
+    let entry = service
+        .repository
+        .workspace_memory
+        .execute("upsertCandidate", &candidate)
+        .expect("#775 service maxLines candidate upsert");
+    let id = entry
+        .get("relativePath")
+        .and_then(JsValue::as_string)
+        .expect("#775 service maxLines relativePath")
+        .clone();
+    let ids = JsValue::Array(vec![JsValue::String(id)]);
+    (scratch, service, ids)
+}
+
+fn service_max_lines_content(
+    service: &EdgeClawMemoryService,
+    ids: &JsValue,
+    max_lines: &JsValue,
+) -> String {
+    let records = service
+        .get(ids, Some(max_lines))
+        .unwrap_or_else(|error| panic!("#775 service.get maxLines {max_lines:?}: {error}"));
+    let record = js_array(&records).first().unwrap_or_else(|| {
+        panic!("#775 service.get returned no record for maxLines {max_lines:?}")
+    });
+    js_text_at(record, "content")
+}
+
 /// fix-r6 P1: the TS-shaped `FileMemoryStore` adapter must not fold a
 /// non-number `maxLines` into the default. `trimContentLines` uses JS
 /// relational comparison (`ToNumber`), measured on Node v22.22.0 in

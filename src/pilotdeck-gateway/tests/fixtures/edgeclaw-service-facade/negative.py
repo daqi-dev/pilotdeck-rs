@@ -81,11 +81,16 @@ ANCHORS = {
     # envelope when the Rust driver re-encodes it.
     'encode-negative-zero': '#775 facade steps for scenario 4 facade-sequence',
     # fix-r5 P2-1: `null` must stay distinct from the `undefined` default 80.
-    'get-null-maxlines': '#775 facade steps for scenario 4 facade-sequence',
+    # fix-r7 P1: bind it to its own witness test so the non-number mutant below
+    # can preserve this cell without the old row substituting for new coverage.
+    'get-null-maxlines':
+        '#775 service.get null maxLines must follow TS ToNumber to zero lines',
     # fix-r6 P1: the TS default only covers `undefined`; every other value is
-    # coerced by `trimContentLines`' relational comparisons. Restoring the old
-    # `as_number().unwrap_or(80)` makes `false` keep the full body.
-    'get-nonnumber-maxlines': '#775 facade steps for scenario 4 facade-sequence',
+    # coerced by `trimContentLines`' relational comparisons. fix-r7 P1: the
+    # mutant keeps `Some(JsValue::Null) => 0.0` and only restores the old
+    # non-number fallback, bound to the dedicated seven-row test.
+    'get-nonnumber-maxlines':
+        '#775 service.get non-number maxLines false must follow TS ToNumber',
     # fix-r6 P1 sibling: the TS-shaped FileMemoryStore adapter has the same rule.
     'file-memory-nonnumber-maxlines':
         '#775 file-memory getMemoryRecordsByIds maxLines false must follow TS ToNumber',
@@ -95,7 +100,8 @@ ANCHORS = {
 }
 
 
-def mutation(name, path, before, after, test=TEST, include_ignored=False):
+def mutation(name, path, before, after, test=TEST, include_ignored=False,
+             witness=None):
     return dict(
         name=name,
         path=path,
@@ -104,6 +110,7 @@ def mutation(name, path, before, after, test=TEST, include_ignored=False):
         test=test,
         anchor=ANCHORS[name],
         include_ignored=include_ignored,
+        witness=witness,
     )
 
 
@@ -264,20 +271,28 @@ MUTANTS = [
         '            } else if false && *number == 0.0 && number.is_sign_negative() {',
     ),
     # fix-r5 P2-1: TS defaults only `undefined`; `null <= 0` yields empty
-    # content and the oracle records that in scenario 4.
+    # content and the oracle records that in scenario 4. fix-r7 P1: bind the
+    # dedicated null test, not the whole facade steps array.
     mutation(
         'get-null-maxlines',
         SERVICE,
         '            Some(value) => super::storage::overview::to_number(value)?,',
         '            Some(JsValue::Null) => 80.0,\n'
         '            Some(value) => super::storage::overview::to_number(value)?,',
+        test='service_get_null_max_lines_matches_ts_empty_content',
     ),
     # fix-r6 P1: restore the old non-number fallback in `service.get`.
+    # fix-r7 P1: keep `Some(JsValue::Null) => 0.0` intact and only replace the
+    # new ToNumber path. The dedicated seven-row test must be the sole killer;
+    # the null witness test must still pass under this mutant.
     mutation(
         'get-nonnumber-maxlines',
         SERVICE,
         '            Some(value) => super::storage::overview::to_number(value)?,',
+        '            Some(JsValue::Null) => 0.0,\n'
         '            Some(value) => value.as_number().unwrap_or(80.0),',
+        test='service_get_coerces_non_number_max_lines',
+        witness='service_get_null_max_lines_matches_ts_empty_content',
     ),
     # fix-r6 P1 sibling: same regression in the FileMemoryStore adapter.
     mutation(
@@ -477,6 +492,12 @@ def main():
                 if not passed(run(f"{mutant['name']}-positive", mutant['test'], mutant['include_ignored']), mutant['test']):
                     record(mutant, 'INVALID', 'positive control did not pass the bound test')
                     continue
+                if mutant['witness'] and not passed(
+                    run(f"{mutant['name']}-witness-positive", mutant['witness'], mutant['include_ignored']),
+                    mutant['witness'],
+                ):
+                    record(mutant, 'INVALID', 'witness test did not pass before mutation')
+                    continue
                 mutated = original.replace(mutant['old'], mutant['new'], 1)
                 status, reason = 'INVALID', ''
                 try:
@@ -484,9 +505,17 @@ def main():
                     # Force Cargo to observe the write even on a filesystem
                     # with coarse mtimes; a cached binary would fake SURVIVED.
                     time.sleep(1.1)
+                    witness_failed = ''
+                    if mutant['witness'] and not passed(
+                        run(f"{mutant['name']}-witness-negative", mutant['witness'], mutant['include_ignored']),
+                        mutant['witness'],
+                    ):
+                        witness_failed = '; witness test failed under mutation'
                     status, reason = classify(
                         run(f"{mutant['name']}-negative", mutant['test'], mutant['include_ignored']), mutant
                     )
+                    if witness_failed:
+                        status, reason = 'INVALID', reason + witness_failed
                 except Exception as error:  # noqa: BLE001 - summarized as INVALID
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
