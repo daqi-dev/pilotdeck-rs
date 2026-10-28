@@ -9,14 +9,22 @@ import sys
 if not sys.flags.isolated:
     raise SystemExit(f'run with -I: python3 -I {__file__}')
 
+import importlib.util
+from pathlib import Path
+
+# The bootstrap itself is also loaded from source by its exact sibling path.
+_bootstrap_path = Path(__file__).resolve().with_name('_bootstrap.py')
+_bootstrap_spec = importlib.util.spec_from_file_location('_cli_parity_bootstrap', _bootstrap_path)
+_bootstrap = importlib.util.module_from_spec(_bootstrap_spec)
+exec(compile(_bootstrap_path.read_bytes(), str(_bootstrap_path), 'exec'), _bootstrap.__dict__)
+_load = _bootstrap.load
+
 import argparse
 from contextlib import contextmanager
 import hashlib
-import importlib.util
 import json
 import math
 import os
-from pathlib import Path
 import selectors
 import shutil
 import signal
@@ -25,37 +33,6 @@ import stat
 import subprocess
 import tempfile
 import time
-
-# Load apparatus modules by explicit path, never sys.path: a same-named package
-# or extension module beside the source would win before the scan (#701 item 3,
-# same defect gateway-parity fix-r6 P1).  Inline on purpose: importing common.py
-# is what this block defends.
-sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-cli-parity-pyc-')
-sys.dont_write_bytecode = True
-
-
-def _load(name, path):
-    path = Path(path).resolve()
-    existing = sys.modules.get(name)
-    existing_file = getattr(existing, '__file__', None)
-    if existing is not None and existing_file and Path(existing_file).resolve() == path:
-        if not isinstance(getattr(existing, '_apparatus_source', None), bytes):
-            raise RuntimeError(f'unverified apparatus module cache: {path}')
-        return existing
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    try:
-        source = path.read_bytes()
-        exec(compile(source, str(path), 'exec'), module.__dict__)
-    except BaseException:
-        sys.modules.pop(name, None)
-        raise
-    module._apparatus_source = source
-    if Path(module.__file__).resolve() != path:
-        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
-    return module
-
 
 _here = Path(__file__).resolve().parent
 _common = _load('common', _here / 'common.py')
