@@ -254,4 +254,4 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
-    run_entry(main)
+    run_entry(main, 'traceback')

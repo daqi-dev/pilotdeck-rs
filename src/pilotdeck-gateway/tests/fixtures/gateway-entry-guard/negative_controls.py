@@ -25,7 +25,7 @@ import unittest
 sys.dont_write_bytecode = True
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-991-negative-pyc-')
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned
+from negative_process import mutating_sources, run_owned, wait_for_slot
 
 ROOT = Path(__file__).resolve().parents[5]
 GUARD = ROOT / 'scripts/gateway-parity/_guard.py'
@@ -40,7 +40,8 @@ MUTATIONS = [
     ('guard-preflight-removed', GUARD,
      '        verify_cli_imports()\n', '        pass  # mutant skips preflight\n'),
     ('guard-preflight-exit-one', GUARD,
-     '        raise SystemExit(2)', '        raise SystemExit(1)'),
+     '        raise SystemExit(2)',
+     '        raise SystemExit(1)'),
     ('guard-preflight-except-narrowed', GUARD,
      "    except (Exception, KeyboardInterrupt) as error:\n"
      "        print(json.dumps({'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))",
@@ -50,18 +51,17 @@ MUTATIONS = [
      '        raise SystemExit(code)\n    raise SystemExit(code)',
      '        raise SystemExit(code)\n    raise SystemExit(0)'),
     ('guard-main-except-narrowed', GUARD,
-     '    except (Exception, KeyboardInterrupt) as error:\n        (status, code), rule = _failure(error)',
-     '    except Exception as error:\n        (status, code), rule = _failure(error)'),
+     '    except (Exception, KeyboardInterrupt) as error:\n        failure = _failure(error, policy, common)',
+     '    except Exception as error:\n        failure = _failure(error, policy, common)'),
     ('guard-cancel-is-fail', GUARD,
      '(PermissionError, TimeoutError, KeyboardInterrupt)',
      '(PermissionError, TimeoutError)'),
     ('guard-evidence-is-blocked', GUARD,
-     "    blocked = (rule == 'APPARATUS_IMPORTS'\n"
-     "               or isinstance(error, (PermissionError, TimeoutError, KeyboardInterrupt)))",
-     '    blocked = True'),
+     '        blocked = isinstance(error, (PermissionError, TimeoutError, KeyboardInterrupt))',
+     '        blocked = True'),
     ('guard-error-rule-lost', GUARD,
-     "    rule = getattr(error, 'rule', None) or 'EVIDENCE'",
-     "    rule = getattr(error, 'rule', None) or 'APPARATUS_IMPORTS'"),
+     "        return {'status': status, 'failure': {'rule': 'EVIDENCE', 'detail': str(error)}}, common.BATCH_EXIT_CODES[status]",
+     "        return {'status': status, 'failure': {'rule': 'APPARATUS_IMPORTS', 'detail': str(error)}}, common.BATCH_EXIT_CODES[status]"),
     ('guard-load-cache-open', GUARD,
      "if not isinstance(getattr(existing, '_apparatus_source', None), bytes):",
      "if False and not isinstance(getattr(existing, '_apparatus_source', None), bytes):"),
@@ -87,8 +87,8 @@ MUTATIONS = [
     ('guard-checkout-env-ignored', GUARD,
      "    if 'GIT_DIR' in os.environ:", "    if False and 'GIT_DIR' in os.environ:"),
     ('entry-main-wrap-restored', BUILD,
-     "if __name__ == '__main__':\n    run_entry(main)",
-     "if __name__ == '__main__':\n    try:\n        run_entry(main)\n"
+     "if __name__ == '__main__':\n    run_entry(main, 'traceback')",
+     "if __name__ == '__main__':\n    try:\n        run_entry(main, 'traceback')\n"
      "    except Exception:\n        raise SystemExit(1)"),
     ('entry-private-verifier-restored', COMPARE,
      'def main():',
@@ -97,6 +97,81 @@ MUTATIONS = [
      '# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)',
      'import sys\nimport argparse\n'
      '# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)'),
+    ('policy-build_proxy-unified', ROOT / 'scripts/gateway-parity/build_proxy.py',
+     "    run_entry(main, 'traceback')",
+     "    run_entry(main, 'ruler')"),
+    ('policy-check_frozen-unified', ROOT / 'scripts/gateway-parity/check_frozen.py',
+     "    run_entry(main, 'traceback')",
+     "    run_entry(main, 'ruler')"),
+    ('policy-check_ruler-unified', ROOT / 'scripts/gateway-parity/check_ruler.py',
+     "    run_entry(main, 'ruler')",
+     "    run_entry(main, 'session')"),
+    ('policy-compare-unified', ROOT / 'scripts/gateway-parity/compare.py',
+     "    run_entry(main, 'traceback')",
+     "    run_entry(main, 'ruler')"),
+    ('policy-observer-unified', ROOT / 'scripts/gateway-parity/observer.py',
+     "    run_entry(main, 'traceback')",
+     "    run_entry(main, 'ruler')"),
+    ('policy-run_round-unified', ROOT / 'scripts/gateway-parity/run_round.py',
+     "    run_entry(main, 'round')",
+     "    run_entry(main, 'ruler')"),
+    ('policy-session_domain-unified', ROOT / 'scripts/gateway-parity/session_domain.py',
+     "    run_entry(main, 'session')",
+     "    run_entry(main, 'ruler')"),
+    ('policy-controls-run_all-unified', ROOT / 'scripts/gateway-parity/controls/run_all.py',
+     "    run_entry(main, 'controls')",
+     "    run_entry(main, 'ruler')"),
+    ('policy-controls-session_domain-unified', ROOT / 'scripts/gateway-parity/controls/session_domain.py',
+     "    run_entry(main, 'traceback')",
+     "    run_entry(main, 'ruler')"),
+    ('guard-round-catches-interrupt', GUARD,
+     '        if isinstance(error, KeyboardInterrupt):',
+     '        if False and isinstance(error, KeyboardInterrupt):'),
+    ('guard-controls-matches-rule-only', GUARD,
+     '        if isinstance(error, common.ApparatusVerificationError):',
+     "        if getattr(error, 'rule', None) == 'APPARATUS_IMPORTS':"),
+    ('guard-ruler-subprocess-timeout-blocked', GUARD,
+     '(PermissionError, TimeoutError, KeyboardInterrupt)',
+     '(PermissionError, TimeoutError, subprocess.TimeoutExpired, KeyboardInterrupt)'),
+    ('guard-round-exit-literal', GUARD,
+     "return {'status': 'BLOCKED', 'error': str(error)}, common.BATCH_EXIT_CODES['FAIL']",
+     "return {'status': 'BLOCKED', 'error': str(error)}, 1"),
+    ('guard-preflight-untrusted-exit-map', GUARD,
+     '        raise SystemExit(2)',
+     "        raise SystemExit(common.BATCH_EXIT_CODES['BLOCKED'])"),
+    ('entry-main-alternate-dispatch', BUILD,
+     "    run_entry(main, 'traceback')",
+     "    run_entry(main, 'traceback')\nelse:\n    pass"),
+    ('entry-new-a2-with-private-dispatch', COMMON,
+     "'controls/run_all.py', 'controls/prerequisites.py', 'driver.mts', 'mock.mjs',",
+     "'controls/run_all.py', 'controls/prerequisites.py', 'driver.mts', 'mock.mjs', 'check_schema.py',"),
+    ('observer-preflight-removed', ROOT / 'scripts/gateway-parity/observer.py',
+     "    run_entry(main, 'traceback')",
+     '    raise SystemExit(main())'),
+    ('observer-preflight-exit-one', ROOT / 'scripts/gateway-parity/observer.py',
+     "    run_entry(main, 'traceback')",
+     "    try:\n        run_entry(main, 'traceback')\n    except SystemExit as error:\n        raise SystemExit(1 if error.code == 2 else error.code)"),
+    ('observer-normal-exit-zero', ROOT / 'scripts/gateway-parity/observer.py',
+     "    run_entry(main, 'traceback')",
+     "    run_entry(lambda: (main(), 0)[1], 'traceback')"),
+    ('entry-suite-parity-lock-bypassed', ROOT / 'src/pilotdeck-gateway/tests/fixtures/negative_process.py',
+     'parity = any(relative.startswith("scripts/gateway-parity/")',
+     'parity = False and any(relative.startswith("scripts/gateway-parity/")'),
+    ('entry-suite-common-not-guarded', Path(__file__).resolve(),
+     '    paths = [COMMON, *dict.fromkeys(row[1] for row in selected)]\n    try:',
+     '    paths = list(dict.fromkeys(row[1] for row in selected))\n    try:'),
+    ('guard-session-exit-literal', GUARD,
+     "return {'status': 'BLOCKED', 'error': str(error)}, common.BATCH_EXIT_CODES['BLOCKED']",
+     "return {'status': 'BLOCKED', 'error': str(error)}, 2"),
+    ('guard-ruler-exit-literal', GUARD,
+     '}, common.BATCH_EXIT_CODES[status]',
+     "}, 2 if status == 'BLOCKED' else 1"),
+    ('guard-controls-exit-literal', GUARD,
+     "'detail': str(error)}}, common.BATCH_EXIT_CODES['BLOCKED']",
+     "'detail': str(error)}}, 2"),
+    ('guard-unknown-policy-ignored', GUARD,
+     "    raise ValueError(f'#991 unknown entry failure policy: {policy}')",
+     '    return None'),
 ]
 
 CHECKS = {
@@ -153,13 +228,88 @@ CHECKS = {
         '#166 checkout metadata must require HEAD'),
     'entry-main-wrap-restored': (
         'ApparatusInputs.test_cli_main_is_only_the_one_guard_call',
-        '#991 __main__ must be exactly run_entry(main)'),
+        '#991 __main__ must be exactly run_entry(main, policy)'),
     'entry-private-verifier-restored': (
         'ApparatusInputs.test_cli_main_is_only_the_one_guard_call',
         '#991 compare.py must alias, not redefine, _verify_cli_imports'),
     'entry-import-before-isolated': (
         'ApparatusInputs.test_a2_entries_share_one_verbatim_path_bootstrap',
         '#991 -I check must precede every other import: compare.py'),
+    'policy-build_proxy-unified': (
+        'ImportIsolation.test_cli_main_failures_preserve_pre_refactor_contract',
+        '#991 every entry must preserve its measured main exception contract'),
+    'policy-check_frozen-unified': (
+        'ImportIsolation.test_cli_main_failures_preserve_pre_refactor_contract',
+        '#991 every entry must preserve its measured main exception contract'),
+    'policy-check_ruler-unified': (
+        'ImportIsolation.test_cli_main_failures_preserve_pre_refactor_contract',
+        '#991 every entry must preserve its measured main exception contract'),
+    'policy-compare-unified': (
+        'ImportIsolation.test_cli_main_failures_preserve_pre_refactor_contract',
+        '#991 every entry must preserve its measured main exception contract'),
+    'policy-observer-unified': (
+        'ImportIsolation.test_cli_main_failures_preserve_pre_refactor_contract',
+        '#991 every entry must preserve its measured main exception contract'),
+    'policy-run_round-unified': (
+        'ImportIsolation.test_cli_main_failures_preserve_pre_refactor_contract',
+        '#991 every entry must preserve its measured main exception contract'),
+    'policy-session_domain-unified': (
+        'ImportIsolation.test_cli_main_failures_preserve_pre_refactor_contract',
+        '#991 every entry must preserve its measured main exception contract'),
+    'policy-controls-run_all-unified': (
+        'ImportIsolation.test_cli_main_failures_preserve_pre_refactor_contract',
+        '#991 every entry must preserve its measured main exception contract'),
+    'policy-controls-session_domain-unified': (
+        'ImportIsolation.test_cli_main_failures_preserve_pre_refactor_contract',
+        '#991 every entry must preserve its measured main exception contract'),
+    'guard-round-catches-interrupt': (
+        'ImportIsolation.test_cli_main_failures_preserve_pre_refactor_contract',
+        '#991 every entry must preserve its measured main exception contract'),
+    'guard-controls-matches-rule-only': (
+        'ImportIsolation.test_cli_main_failures_preserve_pre_refactor_contract',
+        '#991 every entry must preserve its measured main exception contract'),
+    'guard-ruler-subprocess-timeout-blocked': (
+        'ImportIsolation.test_cli_main_failures_preserve_pre_refactor_contract',
+        '#991 every entry must preserve its measured main exception contract'),
+    'guard-round-exit-literal': (
+        'ImportIsolation.test_guard_exit_codes_use_shared_mapping',
+        '#991 guard must use shared exit codes including historical BLOCKED/1'),
+    'guard-preflight-untrusted-exit-map': (
+        'ImportIsolation.test_guard_exit_codes_use_shared_mapping',
+        '#991 untrusted shared mapping must never turn preflight refusal into success'),
+    'entry-main-alternate-dispatch': (
+        'ApparatusInputs.test_cli_main_is_only_the_one_guard_call',
+        '#991 __main__ must have no alternate dispatch'),
+    'entry-new-a2-with-private-dispatch': (
+        'ApparatusInputs.test_cli_main_is_only_the_one_guard_call',
+        '#991 __main__ must be exactly run_entry(main, policy)'),
+    'observer-preflight-removed': (
+        'ImportIsolation.test_cli_dispatch_verifies_before_main',
+        '#166 CLI dispatch must verify HEAD imports before main'),
+    'observer-preflight-exit-one': (
+        'ImportIsolation.test_tools_cli_preflight_errors_are_blocked',
+        '#166 every CLI preflight failure must produce BLOCKED JSON/2'),
+    'observer-normal-exit-zero': (
+        'ImportIsolation.test_tools_cli_dispatch_preserves_exit_codes',
+        '#166 every CLI wrapper must preserve main exit code'),
+    'entry-suite-parity-lock-bypassed': (
+        'AggregationAudit.test_negative_suites_require_parity_lock_and_report_busy_as_invalid',
+        '#166 both negative suites must request parity lock'),
+    'entry-suite-common-not-guarded': (
+        'AggregationAudit.test_residual_mapping_is_rejected_before_import',
+        '#166 common.py must be included in guarded sources'),
+    'guard-session-exit-literal': (
+        'ImportIsolation.test_guard_exit_codes_use_shared_mapping',
+        '#991 guard must use shared exit codes including historical BLOCKED/1'),
+    'guard-ruler-exit-literal': (
+        'ImportIsolation.test_guard_exit_codes_use_shared_mapping',
+        '#991 guard must use shared exit codes including historical BLOCKED/1'),
+    'guard-controls-exit-literal': (
+        'ImportIsolation.test_guard_exit_codes_use_shared_mapping',
+        '#991 guard must use shared exit codes including historical BLOCKED/1'),
+    'guard-unknown-policy-ignored': (
+        'ImportIsolation.test_guard_exit_codes_use_shared_mapping',
+        '#991 guard must use shared exit codes including historical BLOCKED/1'),
 }
 
 
@@ -298,7 +448,9 @@ class LogParsingTests(unittest.TestCase):
 
 
 def run_test(out, label, test, timeout=300):
-    command = [sys.executable, '-I', '-B', str(SAFETY), test, '-v']
+    script = (ROOT / 'src/pilotdeck-gateway/tests/test_metadata_io_driver.py'
+              if test.startswith('AggregationAudit.') else SAFETY)
+    command = [sys.executable, '-I', '-B', str(script), test, '-v']
     result = run_owned(command, cwd=ROOT, timeout=timeout)
     (out / f'{label}.log').write_text(result.stdout + result.stderr)
     return result

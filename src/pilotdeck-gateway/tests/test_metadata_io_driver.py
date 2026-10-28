@@ -1229,7 +1229,7 @@ class AggregationAudit(unittest.TestCase):
         import contextlib
         import json
         import sys
-        for folder in ('gateway-batch', 'session-domain-cleanup'):
+        for folder in ('gateway-batch', 'session-domain-cleanup', 'gateway-entry-guard'):
             with self.subTest(folder=folder), tempfile.TemporaryDirectory() as temp:
                 path = self.fixture / folder / 'negative_controls.py'
                 spec = importlib.util.spec_from_file_location('negative_lock_' + folder, path)
@@ -1264,10 +1264,12 @@ class AggregationAudit(unittest.TestCase):
                         module.pgrep_launcher = lambda: ''
                     code = module.main()
                 self.assertEqual(calls, [True], '#166 both negative suites must request parity lock')
-                self.assertEqual(code, 2, '#166 busy parity lock must exit BLOCKED')
+                self.assertEqual(code, 1 if folder == 'gateway-entry-guard' else 2,
+                                 '#166 busy parity lock must exit nonzero per suite contract')
                 report = json.loads((output / 'summary.json').read_text())
-                rows = report if folder == 'gateway-batch' else report['mutations']
-                key = 'status' if folder == 'gateway-batch' else 'verdict'
+                rows = (report if folder == 'gateway-batch' else
+                        report['controls'] if folder == 'gateway-entry-guard' else report['mutations'])
+                key = 'verdict' if folder == 'session-domain-cleanup' else 'status'
                 self.assertEqual([row[key] for row in rows], ['INVALID', 'INVALID'],
                                  '#166 busy parity lock must mark all selected mutants INVALID')
 
@@ -1277,7 +1279,7 @@ class AggregationAudit(unittest.TestCase):
         import importlib.machinery
         import json
         import sys
-        for folder in ('gateway-batch', 'session-domain-cleanup'):
+        for folder in ('gateway-batch', 'session-domain-cleanup', 'gateway-entry-guard'):
             with self.subTest(folder=folder), tempfile.TemporaryDirectory() as temp:
                 path = self.fixture / folder / 'negative_controls.py'
                 common_path = self.root / 'scripts/gateway-parity/common.py'
@@ -1338,11 +1340,13 @@ class AggregationAudit(unittest.TestCase):
                     self.assertIn(common_path, supplied, '#166 common.py must be included in guarded sources')
                     self.assertEqual(imports, [], '#166 residual mapping must be guarded before import')
                     self.assertIsNone(caught, '#166 source guard must report BLOCKED without traceback')
-                    self.assertEqual(code, 2, '#166 source guard must exit BLOCKED')
+                    self.assertEqual(code, 1 if folder == 'gateway-entry-guard' else 2,
+                                     '#166 source guard must exit BLOCKED (entry-guard uses nonzero failure)')
                     report = json.loads((Path(temp) / 'out/summary.json').read_text())
-                    rows = report if folder == 'gateway-batch' else report['mutations']
-                    field = 'status' if folder == 'gateway-batch' else 'verdict'
-                    detail = 'reason' if folder == 'gateway-batch' else 'detail'
+                    rows = (report if folder == 'gateway-batch' else
+                        report['controls'] if folder == 'gateway-entry-guard' else report['mutations'])
+                    field = 'verdict' if folder == 'session-domain-cleanup' else 'status'
+                    detail = 'detail' if folder == 'session-domain-cleanup' else 'reason'
                     self.assertEqual([row[field] for row in rows], ['INVALID'],
                                      '#166 residue must record INVALID for every selected case')
                     self.assertIn('source baseline mismatch: scripts/gateway-parity/common.py', rows[0][detail],
