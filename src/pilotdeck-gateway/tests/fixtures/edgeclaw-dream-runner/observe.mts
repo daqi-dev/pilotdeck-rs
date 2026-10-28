@@ -227,14 +227,28 @@ async function runCase(baseline, scratch, home, spec) {
       const extractor = new ScriptedExtractor(script);
       const runner = new DreamRewriteRunner(repository, extractor, {logger});
       const {trace} = traceSeed(hashText);
-      const result = await runner['runCategoryDream']({
-        trace,
-        kind: spec.kind,
-        entries: filtered,
-        recordsByPath: new Map(visibleRecords.map((record) => [record.relativePath, record])),
-        ...(projectMeta ? {projectMeta} : {}),
-      });
-      expected.result = jsonSafe(result);
+      let result;
+      let failure;
+      try {
+        result = await runner['runCategoryDream']({
+          trace,
+          kind: spec.kind,
+          entries: filtered,
+          recordsByPath: new Map(visibleRecords.map((record) => [record.relativePath, record])),
+          ...(projectMeta ? {projectMeta} : {}),
+        });
+      } catch (thrown) {
+        if (!spec.expectError) throw thrown;
+        failure = thrown;
+      }
+      if (spec.expectError) {
+        if (failure === undefined) throw new Error(`case ${spec.name} expected runCategoryDream to throw`);
+        // `String(error)` is the TS Error.prototype.toString boundary; the
+        // Rust replay compares the same `name: message` shape (#915).
+        expected.error = String(failure);
+      } else {
+        expected.result = jsonSafe(result);
+      }
       expected.trace = jsonSafe(trace);
       expected.calls = jsonSafe(extractor.calls);
     } else if (spec.method === 'mergeGeneralProjectMetas') {
@@ -271,6 +285,7 @@ async function runCase(baseline, scratch, home, spec) {
       projectMeta: spec.projectMeta,
       ensureMeta: spec.ensureMeta ?? false,
       ...(spec.dropRecords ? {dropRecords: spec.dropRecords} : {}),
+      ...(spec.expectError ? {expectError: true} : {}),
       script,
       startedAt: NOW,
       randomSuffix: SUFFIX,
@@ -495,6 +510,44 @@ async function collectCases(baseline, scratch) {
       {
         method: 'refineDreamCluster',
         result: {summary: 'Model could not synthesize a file.', file: null},
+      },
+    ],
+  });
+
+  await add({
+    name: 'category-refine-error',
+    method: 'runCategoryDream',
+    mode: 'single',
+    kind: 'project',
+    // Two legal clusters. The first (Zeta) loses one record, so the runner
+    // appends a dropped warning and continues; the second (Alpha) refine
+    // throws. TS keeps the live droppedWarnings array inside the plan-output
+    // detail, so the warning must survive the rejection (#915).
+    setup: {
+      candidates: [
+        candidate('project', 'Alpha Plan', 'alpha plan', '## Goal\nShip alpha.\n'),
+        candidate('project', 'Alpha Notes', 'alpha notes', '## Goal\nShip alpha faster.\n'),
+        candidate('project', 'Zeta Plan', 'zeta plan', '## Goal\nShip zeta.\n'),
+        candidate('project', 'Zeta Notes', 'zeta notes', '## Goal\nShip zeta faster.\n'),
+      ],
+    },
+    selection: {type: 'project'},
+    dropRecords: 1,
+    expectError: true,
+    script: [
+      {
+        method: 'planDreamClusters',
+        result: {
+          summary: 'Found two duplicate project clusters.',
+          clusters: [
+            {memberRelativePaths: ['$PROJECT2', '$PROJECT3'], reason: 'duplicate zeta content'},
+            {memberRelativePaths: ['$PROJECT0', '$PROJECT1'], reason: 'duplicate alpha content'},
+          ],
+        },
+      },
+      {
+        method: 'refineDreamCluster',
+        throws: 'fixture refine failed',
       },
     ],
   });

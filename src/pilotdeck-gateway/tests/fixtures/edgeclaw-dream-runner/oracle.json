@@ -2715,6 +2715,454 @@
       }
     },
     {
+      "name": "category-refine-error",
+      "method": "runCategoryDream",
+      "mode": "single",
+      "setup": {
+        "candidates": [
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha Plan",
+            "description": "alpha plan",
+            "body": "## Goal\nShip alpha.\n"
+          },
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha Notes",
+            "description": "alpha notes",
+            "body": "## Goal\nShip alpha faster.\n"
+          },
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Zeta Plan",
+            "description": "zeta plan",
+            "body": "## Goal\nShip zeta.\n"
+          },
+          {
+            "type": "project",
+            "scope": "project",
+            "name": "Zeta Notes",
+            "description": "zeta notes",
+            "body": "## Goal\nShip zeta faster.\n"
+          }
+        ]
+      },
+      "selection": {
+        "type": "project"
+      },
+      "kind": "project",
+      "ensureMeta": false,
+      "dropRecords": 1,
+      "expectError": true,
+      "script": [
+        {
+          "method": "planDreamClusters",
+          "result": {
+            "summary": "Found two duplicate project clusters.",
+            "clusters": [
+              {
+                "memberRelativePaths": [
+                  "Project/zeta-notes-72d78e3db9.md",
+                  "Project/zeta-plan-d541d64dc4.md"
+                ],
+                "reason": "duplicate zeta content"
+              },
+              {
+                "memberRelativePaths": [
+                  "Project/alpha-notes-39eef8668c.md",
+                  "Project/alpha-plan-b6003d6838.md"
+                ],
+                "reason": "duplicate alpha content"
+              }
+            ]
+          }
+        },
+        {
+          "method": "refineDreamCluster",
+          "throws": "fixture refine failed"
+        }
+      ],
+      "startedAt": "2026-10-22T00:00:00.000Z",
+      "randomSuffix": "i",
+      "randoms": [
+        0.25,
+        0.5,
+        0.75,
+        0.125,
+        0.375,
+        0.625,
+        0.875,
+        0.0625,
+        0.1875,
+        0.3125,
+        0.4375,
+        0.5625,
+        0.6875,
+        0.8125,
+        0.9375,
+        0.03125,
+        0.09375,
+        0.15625,
+        0.21875,
+        0.28125
+      ],
+      "expected": {
+        "input": {
+          "kind": "project",
+          "entries": [
+            {
+              "name": "Alpha Notes",
+              "description": "alpha notes",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-notes-39eef8668c.md",
+              "relativePath": "Project/alpha-notes-39eef8668c.md",
+              "absolutePath": "$ROOT/Project/alpha-notes-39eef8668c.md"
+            },
+            {
+              "name": "Alpha Plan",
+              "description": "alpha plan",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-plan-b6003d6838.md",
+              "relativePath": "Project/alpha-plan-b6003d6838.md",
+              "absolutePath": "$ROOT/Project/alpha-plan-b6003d6838.md"
+            },
+            {
+              "name": "Zeta Notes",
+              "description": "zeta notes",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "zeta-notes-72d78e3db9.md",
+              "relativePath": "Project/zeta-notes-72d78e3db9.md",
+              "absolutePath": "$ROOT/Project/zeta-notes-72d78e3db9.md"
+            },
+            {
+              "name": "Zeta Plan",
+              "description": "zeta plan",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "zeta-plan-d541d64dc4.md",
+              "relativePath": "Project/zeta-plan-d541d64dc4.md",
+              "absolutePath": "$ROOT/Project/zeta-plan-d541d64dc4.md"
+            }
+          ],
+          "records": [
+            {
+              "name": "Alpha Notes",
+              "description": "alpha notes",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-notes-39eef8668c.md",
+              "relativePath": "Project/alpha-notes-39eef8668c.md",
+              "absolutePath": "$ROOT/Project/alpha-notes-39eef8668c.md",
+              "content": "## Goal\nShip alpha faster.",
+              "preview": "Goal Ship alpha faster."
+            },
+            {
+              "name": "Alpha Plan",
+              "description": "alpha plan",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "alpha-plan-b6003d6838.md",
+              "relativePath": "Project/alpha-plan-b6003d6838.md",
+              "absolutePath": "$ROOT/Project/alpha-plan-b6003d6838.md",
+              "content": "## Goal\nShip alpha.",
+              "preview": "Goal Ship alpha."
+            },
+            {
+              "name": "Zeta Notes",
+              "description": "zeta notes",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "zeta-notes-72d78e3db9.md",
+              "relativePath": "Project/zeta-notes-72d78e3db9.md",
+              "absolutePath": "$ROOT/Project/zeta-notes-72d78e3db9.md",
+              "content": "## Goal\nShip zeta faster.",
+              "preview": "Goal Ship zeta faster."
+            }
+          ]
+        },
+        "error": "Error: fixture refine failed",
+        "trace": {
+          "dreamTraceId": "dream_trace_17dc607638",
+          "trigger": "manual",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "status": "running",
+          "isNoOp": false,
+          "displayStatus": "Running",
+          "snapshotSummary": {
+            "projectMetaPresent": false,
+            "projectFileCount": 0,
+            "feedbackFileCount": 0,
+            "hasUserProfile": false
+          },
+          "steps": [
+            {
+              "stepId": "dream_trace_17dc607638:step:1",
+              "kind": "project_header_scan",
+              "title": "Project Header Scan",
+              "status": "success",
+              "inputSummary": "4 active project files",
+              "outputSummary": "Loaded 4 project headers for cluster planning.",
+              "details": [
+                {
+                  "key": "project-header-summary",
+                  "label": "Project Header Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "inputFiles",
+                      "value": "4"
+                    },
+                    {
+                      "label": "scannedHeaders",
+                      "value": "4"
+                    },
+                    {
+                      "label": "headerScanLimit",
+                      "value": "200"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-headers",
+                  "label": "Project Headers",
+                  "kind": "list",
+                  "items": [
+                    "Project/alpha-notes-39eef8668c.md | Alpha Notes | 2026-10-22T00:00:00.000Z",
+                    "Project/alpha-plan-b6003d6838.md | Alpha Plan | 2026-10-22T00:00:00.000Z",
+                    "Project/zeta-notes-72d78e3db9.md | Zeta Notes | 2026-10-22T00:00:00.000Z",
+                    "Project/zeta-plan-d541d64dc4.md | Zeta Plan | 2026-10-22T00:00:00.000Z"
+                  ]
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_header_scan",
+                "fallback": "Project Header Scan"
+              }
+            },
+            {
+              "stepId": "dream_trace_17dc607638:step:2",
+              "kind": "project_cluster_plan",
+              "title": "Project Cluster Plan",
+              "status": "success",
+              "inputSummary": "4 project headers",
+              "outputSummary": "Found two duplicate project clusters.",
+              "details": [
+                {
+                  "key": "project-cluster-summary",
+                  "label": "Project Cluster Summary",
+                  "kind": "kv",
+                  "entries": [
+                    {
+                      "label": "plannerClusters",
+                      "value": "2"
+                    },
+                    {
+                      "label": "acceptedClusters",
+                      "value": "2"
+                    },
+                    {
+                      "label": "droppedClusters",
+                      "value": "0"
+                    },
+                    {
+                      "label": "clusterMaxFiles",
+                      "value": "8"
+                    }
+                  ]
+                },
+                {
+                  "key": "project-cluster-plan-output",
+                  "label": "Project Cluster Plan Output",
+                  "kind": "json",
+                  "json": {
+                    "summary": "Found two duplicate project clusters.",
+                    "plannerClusters": [
+                      {
+                        "memberRelativePaths": [
+                          "Project/zeta-notes-72d78e3db9.md",
+                          "Project/zeta-plan-d541d64dc4.md"
+                        ],
+                        "reason": "duplicate zeta content"
+                      },
+                      {
+                        "memberRelativePaths": [
+                          "Project/alpha-notes-39eef8668c.md",
+                          "Project/alpha-plan-b6003d6838.md"
+                        ],
+                        "reason": "duplicate alpha content"
+                      }
+                    ],
+                    "acceptedClusters": [
+                      {
+                        "memberRelativePaths": [
+                          "Project/zeta-notes-72d78e3db9.md",
+                          "Project/zeta-plan-d541d64dc4.md"
+                        ],
+                        "reason": "duplicate zeta content"
+                      },
+                      {
+                        "memberRelativePaths": [
+                          "Project/alpha-notes-39eef8668c.md",
+                          "Project/alpha-plan-b6003d6838.md"
+                        ],
+                        "reason": "duplicate alpha content"
+                      }
+                    ],
+                    "droppedWarnings": [
+                      "Skipped project cluster 1 because fewer than 2 files could be loaded."
+                    ]
+                  }
+                }
+              ],
+              "titleI18n": {
+                "key": "trace.step.project_cluster_plan",
+                "fallback": "Project Cluster Plan"
+              }
+            }
+          ],
+          "mutations": [],
+          "outcome": {
+            "rewrittenProjects": 0,
+            "deletedProjects": 0,
+            "deletedFiles": 0,
+            "profileUpdated": false,
+            "summary": ""
+          }
+        },
+        "calls": [
+          {
+            "method": "planDreamClusters",
+            "input": {
+              "kind": "project",
+              "headers": [
+                {
+                  "relativePath": "Project/alpha-notes-39eef8668c.md",
+                  "name": "Alpha Notes",
+                  "description": "alpha notes",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "relativePath": "Project/alpha-plan-b6003d6838.md",
+                  "name": "Alpha Plan",
+                  "description": "alpha plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "relativePath": "Project/zeta-notes-72d78e3db9.md",
+                  "name": "Zeta Notes",
+                  "description": "zeta notes",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                },
+                {
+                  "relativePath": "Project/zeta-plan-d541d64dc4.md",
+                  "name": "Zeta Plan",
+                  "description": "zeta plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z"
+                }
+              ]
+            }
+          },
+          {
+            "method": "refineDreamCluster",
+            "input": {
+              "kind": "project",
+              "records": [
+                {
+                  "entryId": "Project/alpha-notes-39eef8668c.md",
+                  "relativePath": "Project/alpha-notes-39eef8668c.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Alpha Notes",
+                  "description": "alpha notes",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip alpha faster.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                },
+                {
+                  "entryId": "Project/alpha-plan-b6003d6838.md",
+                  "relativePath": "Project/alpha-plan-b6003d6838.md",
+                  "type": "project",
+                  "scope": "project",
+                  "projectId": "current_project",
+                  "isTmp": false,
+                  "name": "Alpha Plan",
+                  "description": "alpha plan",
+                  "updatedAt": "2026-10-22T00:00:00.000Z",
+                  "content": "## Goal\nShip alpha.",
+                  "project": {
+                    "stage": "",
+                    "decisions": [],
+                    "constraints": [],
+                    "nextSteps": [],
+                    "blockers": [],
+                    "timeline": [],
+                    "notes": []
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "logs": [],
+        "tree": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Alpha Plan](project.meta.md) — alpha plan\n\n## Project Memory\n- [Alpha Notes](Project/alpha-notes-39eef8668c.md) — alpha notes\n- [Alpha Plan](Project/alpha-plan-b6003d6838.md) — alpha plan\n- [Zeta Notes](Project/zeta-notes-72d78e3db9.md) — zeta notes\n- [Zeta Plan](Project/zeta-plan-d541d64dc4.md) — zeta plan\n"
+          },
+          {
+            "relativePath": "Project/alpha-notes-39eef8668c.md",
+            "content": "---\nname: Alpha Notes\ndescription: alpha notes\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip alpha faster.\n"
+          },
+          {
+            "relativePath": "Project/alpha-plan-b6003d6838.md",
+            "content": "---\nname: Alpha Plan\ndescription: alpha plan\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip alpha.\n"
+          },
+          {
+            "relativePath": "Project/zeta-notes-72d78e3db9.md",
+            "content": "---\nname: Zeta Notes\ndescription: zeta notes\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip zeta faster.\n"
+          },
+          {
+            "relativePath": "Project/zeta-plan-d541d64dc4.md",
+            "content": "---\nname: Zeta Plan\ndescription: zeta plan\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Goal\nShip zeta.\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Alpha Plan\ndescription: alpha plan\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nalpha plan\n"
+          }
+        ]
+      }
+    },
+    {
       "name": "merge-basic",
       "method": "mergeGeneralProjectMetas",
       "mode": "general",

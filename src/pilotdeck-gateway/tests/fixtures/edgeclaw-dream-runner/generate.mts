@@ -19,7 +19,7 @@ const sourceSha256 = sourceClosureSha256(baseline, commit, git, [
   `${root}/core/review/dream-review.ts`,
 ]);
 const {cases, clockMs, randoms} = await collect(baseline);
-assert.ok(cases.length >= 16, `only ${cases.length} cases`);
+assert.ok(cases.length >= 21, `only ${cases.length} cases`);
 const oracle = {
   sourceCommit: provenance.ref,
   sourceSha256,

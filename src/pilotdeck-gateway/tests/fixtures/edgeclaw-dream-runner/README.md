@@ -49,11 +49,11 @@ PDRS_BASELINE="$PDRS_BASELINE" cargo test --manifest-path src/Cargo.toml \
 ## 负控
 
 `negative.py` 用 `negative_process.mutating_sources` 锁定并恢复
-`dream/runner.rs`、`_shared/run_scratch.mjs` 与 `observe.mts`，先校验 24 个
+`dream/runner.rs`、`_shared/run_scratch.mjs` 与 `observe.mts`，先校验 26 个
 变异锚点恰好各出现一次（过期报 `STALE ANCHOR` 并退出 2，不冒充
 SURVIVED），再对**本次选中变异的目测试去重**逐个跑未变异源码，任一目标测试
 未通过即拒绝判杀并以 1 退出；逐格只跑该变异绑定的 `#[test]`，要求测试本身
-失败（`test <name> ... FAILED`）且日志出现该格专属的 `#773 ...` 断言消息。
+失败（`test <name> ... FAILED`）且日志出现该格专属的断言消息。
 编译失败、无关 panic、缺专属消息都记 INVALID。每格跑完恢复 baseline 字节，
 最后再核一次；逐项汇总 KILLED/SURVIVED/INVALID，任一非 KILLED 即非零退出。
 cargo 强制使用调用方 `CARGO_TARGET_DIR` 并走 `run_owned` + `wait_for_slot`。
@@ -70,16 +70,22 @@ fix-r3 新增 `category-missing-record`（两个 header、一个 record）与
 `PDRS_RUNNER_SCRATCH`（或 `tmpdir()`）下 `mkdtemp` 独占根，删除复用
 `_shared/generator_guard.mjs` 的 `assertInside` / `removeOwned`。
 
-fix-r1 / fix-r2 / fix-r3 的产品改动在提交前与 HEAD 不一致，`mutating_sources`
-会按设计拒绝；本树只跑 `python3 .../negative.py --check-anchors`，并用手工
-apply/restore 预检每个新变异的编译与样本杀（`_tmp/.../fix-r3/`），全量由协调
-者在宿主提交后跑：
+#915 新增 `category-refine-error`（两个合法 cluster：第一组缺 record 追加
+warning，第二组 refine 抛错）与 `plan-output-error-sync`：变异把同步包进
+`if loop_result.is_ok()`，目标测试在 `#915 plan-output warning
+category-refine-error` 上失败。该变异只改 `runner.rs`，而本单的产品源码相对
+HEAD 未变，所以 `mutating_sources` 可以在未提交的本树直接跑；测试与金样是
+工作树改动，由同一次 cargo 编译读取：
 
 ```sh
 cd <tree>
 export CARGO_TARGET_DIR=<tree>/_build/cargo-target
 python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-dream-runner/negative.py \
-  _tmp/20261026-issue-773/negative-run
+  _tmp/20261026-issue-915/negative-run
 ```
+
+fix-r1 / fix-r2 / fix-r3 的产品改动在提交前与 HEAD 不一致，`mutating_sources`
+会按设计拒绝；那几轮只跑 `--check-anchors` 并用手工 apply/restore 预检，全量由
+协调者在宿主提交后跑。
 
 禁止影子 git、第二份构建目录或任何绕过“源码须等于 baseline”守卫的方式。
