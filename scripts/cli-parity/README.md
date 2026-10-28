@@ -6,14 +6,19 @@ D0-pr1 / Refs #122，仅离线定标。规则先登记于 [normalization](../../
 python3 -I scripts/cli-parity/run_round.py --help
 python3 -I scripts/cli-parity/run_round.py --baseline /absolute/PilotDeck --output _tmp/20261017-d0/calibration
 python3 -I scripts/cli-parity/controls.py --source _tmp/20261017-d0/calibration/ts-1 --output _tmp/20261017-d0/controls
-python3 -I -B -m unittest discover -s scripts/cli-parity -p 'test_*.py' -v
+python3 -I scripts/cli-parity/test_cli_parity.py
 ```
 
 `--baseline > PDRS_BASELINE > 本 checkout resources/PilotDeck`；缺失或源 HEAD 不符为 BLOCKED（exit 2）。不自动安装依赖，不下载二进制。`--rust-bin /absolute/pilotdeck --rust-source /absolute/source-checkout` 可在 TS 自比与负控通过后加测 Rust；比较器必须从这两个参数取得独立预期身份（规范路径、源码 HEAD、二进制 SHA-256），与 Rust 证据逐项相等；来源 side 必须与轮次一致，Node 不可作为 Rust 候选，TS/Rust 身份不能混用。离线 compare.py 比 Rust 时同样必须提供两参数。源码路径仍是操作者的构建来源声明，不声称能从二进制逆推出源码。Rust 轮按发行布局在本轮输出下临时搭 `rust-stage/`（不入库）：`--rust-bin` 复制为 `rust-stage/bin/pilotdeck`，基线 `skills/` 复制为 `rust-stage/skills`（含符号链接即 BLOCKED）；实际执行复制件，身份仍校验原件，复制件哈希必须与原件相同（`round.rust-stage`）；Rust 策略只多放行 `rust-stage/skills` 只读子树，process-exec 只放行复制件，仍读不到基线。省略时不运行 Rust。PASS=0、行为/负控 FAIL=1、装置/环境不具备 BLOCKED=2。
 
 macOS `sandbox-exec` 是本批前置，无裸跑降级参数。TS 与 Rust 各用独立 profile：TS 可读基线与 Homebrew Node 依赖；Rust 只可 exec 自己的候选，可读 runtime、候选自身和系统库，没有 Node exec 或基线读取权限。OpenSSL 统一读取 runtime 内空配置并写入 provenance。沙箱仅允许 runtime 写入，网络（含 loopback/Unix socket）、子进程创建拒绝。独立 OS 会话/进程组与白名单环境运行。TS 公共能力探针确认 Node `os.homedir()` 等于 HOME，测试 runtime 读写、外部哨兵读写与 metadata 拒绝、OpenSSL private/.keepme 拒读、监听/连接拒绝、fork 拒绝；Rust 继承公共能力证据（明确记录 probeProfileSha256），比较器重建并核对更窄的 Rust 实际 policy，另在实际 Rust policy 下测试 Node exec 必须拒绝。`ps` 提供真实进程树，缺任一能力在产品启动前 BLOCKED。已移除全局 file-read-metadata 与 opendirectoryd mach-lookup：metadata 仅限数据白名单及其祖先目录 literal。Seatbelt **不改写 passwd/getpwuid 数据**，如果系统缓存仍能返回 home，探针只记录是否一致；也记录查询拒绝，查询失败不放宽权限。祖先目录对象仍可能暴露存在性/metadata，不开放其子树内容。本批不允许子进程，后续需要子进程的场景须另行扩展隔离契约。
 
-Python 入口在第一条语句断言 `sys.flags.isolated`（守卫前只 `import sys`），随后按显式兄弟路径读取 `_bootstrap.py` 源码，由共享引导设置临时字节码前缀并提供唯一加载器；装置模块一律按显式文件路径 `importlib.util.spec_from_file_location` 加载并断言 `module.__file__`，不再 `sys.path.insert` 或裸名导入，因此同目录同名包/扩展无法顶替（#701 item 3；负控见 `src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/`）。
+Python 入口在第一条语句断言 `sys.flags.isolated` 且装置目录未被重新加入 `sys.path`（守卫前只 `import sys`），随后按显式兄弟路径读取 `_bootstrap.py` 源码，由共享引导设置临时字节码前缀并提供唯一加载器；装置模块一律按显式文件路径 `importlib.util.spec_from_file_location` 加载并断言 `module.__file__`，不再 `sys.path.insert` 或裸名导入，因此显式文件入口下的同目录同名包/扩展无法顶替。只支持上述显式文件测试入口；禁止 `unittest discover`，它会重新插入测试目录，且同名测试包可能在入口守卫执行前就顶替测试文件。隔离负控在私有临时镜像放冒名物，不写实际装置目录（#701 item 3）：
+
+```sh
+python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/negative_controls.py --output _tmp/20261026-issue-701/isolation-controls
+python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/test_negative_controls.py
+```
 
 整个批次持有共享 `/tmp/pdrs-parity.lock`（`.guard` flock + mkdir + pid/timestamp/token），不抢旧锁。每场景 timeout≤60s，整批最多 30 场景，启动前强制场景数×timeout×轮数+300s <2400s；持锁 2280s 硬截止触发清理，预留 lease 释放余量。guard 拒绝符号链接/多硬链接，lock/owner 以 0700/0600 创建，owner 通过目录 fd 排除路径重定向。输出上限 4MiB，超过拒绝记录。超时/取消/错误均清理所拥有进程组；锁是否释放只看「本次启动的进程组是否都已被 stop_group 证实停止」（`LIVE_GROUPS` 为空），与异常类型无关，未证实即保留锁（清理本身有界：TERM→1s→KILL→1s→2s）；从不扫描或杀死用户 PilotDeck。只保存 owned PID 的 ps 行。输出目录限定本 checkout `_tmp/`，拒绝覆盖与路径软链接；场景原件保留，不自动删除工作树。
 

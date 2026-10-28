@@ -5,9 +5,10 @@ import sys
 # -I keeps PYTHONPATH, user site and the script directory out of module
 # resolution.  Without it, exit before importing anything: a same-named stdlib
 # file beside this entry (json.py, pathlib.py, tempfile.py) would otherwise
-# execute before the guard.  ``sys`` is builtin/frozen and already loaded.
-if not sys.flags.isolated:
-    raise SystemExit(f'run with -I: python3 -I {__file__}')
+# execute before the guard. Discover can add the directory back even with
+# -I, so reject that path too. ``sys`` is builtin/frozen and already loaded.
+if not sys.flags.isolated or __file__.rpartition('/')[0] in sys.path:
+    raise SystemExit(f'#701: unsafe import path; run with -I by file: python3 -I {__file__}')
 
 import importlib.util
 from pathlib import Path
