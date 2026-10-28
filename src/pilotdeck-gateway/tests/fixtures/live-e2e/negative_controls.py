@@ -70,8 +70,15 @@ TESTS = {
 ATTACK_ROWS = ('comparator-type-blind', 'comparator-keys-blind',
                'comparator-length-blind', 'report-failure-verified-dropped')
 
-mutations = [
+runtime_cases = [
     ('baseline', None, None, None),
+    # An explicit runtime mutation hook exercises the real TS path without
+    # rewriting a dirty worktree. It is forbidden in the golden generator.
+    ('driver-abort-never-fires', None, None, None),
+]
+
+# Only source replacements belong in the statically checked anchor table.
+mutations = [
     ('mitm-drop-disabled', 'stdio_mitm.py',
      'forward_count = 0 if "drop" in actions else 2 if "duplicate" in actions else 1',
      'forward_count = 1 if "drop" in actions else 2 if "duplicate" in actions else 1'),
@@ -84,9 +91,6 @@ mutations = [
      'forward_count = 2 if direction == "s2h" and frame.get("kind") == "event" else 1'),
     ('driver-tool-payload-forged', 'driver.mts',
      "const text = readFileSync(path, 'utf8');", "const text = 'forged';"),
-    # An explicit runtime mutation hook exercises the real TS path without
-    # rewriting a dirty worktree. It is forbidden in the golden generator.
-    ('driver-abort-never-fires', None, None, None),
     ('driver-home-leaked', 'selftest.py',
      '        "HOME": str(home),', '        "HOME": os.environ.get("HOME", str(home)),'),
     ('mitm-record-stops-on-close', 'stdio_mitm.py',
@@ -114,10 +118,11 @@ mutations = [
      '    except (SelftestError, DeadlineExceeded) as error:\n'
      '        return {"case": name, "failed": str(error)}'),
 ]
+run_rows = runtime_cases + mutations
 selected = sys.argv[2:]
 if selected:
-    mutations = [mutation for mutation in mutations if mutation[0] in selected]
-    assert len(mutations) == len(selected), 'unknown mutation name'
+    run_rows = [row for row in run_rows if row[0] in selected]
+    assert len(run_rows) == len(selected), 'unknown mutation name'
 env = os.environ.copy()
 assert env.get('PDRS_BASELINE'), 'PDRS_BASELINE must point at the read-only TS baseline root'
 assert env.get('CARGO_TARGET_DIR'), '#969 negative: caller must set CARGO_TARGET_DIR'
@@ -221,9 +226,9 @@ def bound_in_report(name, bound):
 
 summary = []
 # Run every mutation before concluding anything; the verdict comes last.
-with mutating_sources(root, sorted({source / filename for _, filename, _, _ in mutations if filename}),
+with mutating_sources(root, sorted({source / filename for _, filename, _, _ in run_rows if filename}),
                       baseline=baseline) as snapshots:
-    for name, filename, old, new in mutations:
+    for name, filename, old, new in run_rows:
         path = source / filename if filename else None
         original = snapshots[path] if path else None
         before = hashlib.sha256(original).hexdigest() if original else None
@@ -305,7 +310,7 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
                                 returncode=rc, bound=TESTS[name][1] if name in TESTS else None))
             (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
             print(f'{name}: {status} ({detail})', flush=True)
-    print(f'{sum(1 for row in summary if row["status"] == "KILLED")}/{len(mutations)} killed; '
+    print(f'{sum(1 for row in summary if row["status"] == "KILLED")}/{len(run_rows)} killed; '
           f'every source restored byte-for-byte', flush=True)
 not_killed = [f'{row["name"]}: {row["status"]} ({row["detail"]})'
               for row in summary if row['status'] != 'KILLED']
