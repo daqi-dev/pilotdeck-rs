@@ -9,6 +9,7 @@ the leader is dead (#528).
 """
 from contextlib import contextmanager, nullcontext
 import fcntl
+import math
 import os
 from pathlib import Path
 import signal
@@ -75,7 +76,37 @@ def _prefer_more(first, second):
     return second if len(second) > len(first) else first
 
 
-def run_owned(command, *, env=None, timeout=900, cwd=None, kill_timeout=KILL_TIMEOUT):
+def _communicate_progress(process, command, timeout, idle_timeout):
+    """Bound silence separately from wall time; retain communicate's raw output.
+
+    Cargo emits diagnostics/artifacts as compilation advances. A slow build
+    can therefore exceed the test deadline without granting a silent/hung
+    compiler unlimited time. Repeated communicate calls accumulate output.
+    """
+    started = progress = time.monotonic()
+    size = 0
+    while True:
+        now = time.monotonic()
+        remaining = idle_timeout - (now - progress)
+        if timeout is not None:
+            remaining = min(remaining, timeout - (now - started))
+        try:
+            return process.communicate(timeout=max(0, min(1, remaining)))
+        except subprocess.TimeoutExpired as error:
+            observed = len(error.output or b'') + len(error.stderr or b'')
+            now = time.monotonic()
+            if observed > size:
+                size, progress = observed, now
+            if ((timeout is not None and now - started >= timeout)
+                    or now - progress >= idle_timeout):
+                raise subprocess.TimeoutExpired(command, timeout or idle_timeout,
+                                                error.output, error.stderr) from error
+
+
+def run_owned(command, *, env=None, timeout=900, cwd=None, kill_timeout=KILL_TIMEOUT,
+              idle_timeout=None):
+    if idle_timeout is not None and (not math.isfinite(idle_timeout) or idle_timeout <= 0):
+        raise ValueError('idle_timeout must be finite and positive')
     # cargo can leave test binaries (and inherited output pipes) behind when
     # killed alone. Do not use `with Popen(...)`: its __exit__ waits forever on
     # a tree that only the group signal can reach.
@@ -83,7 +114,10 @@ def run_owned(command, *, env=None, timeout=900, cwd=None, kill_timeout=KILL_TIM
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True, start_new_session=True)
     try:
-        stdout, stderr = process.communicate(timeout=timeout)
+        if idle_timeout is None:
+            stdout, stderr = process.communicate(timeout=timeout)
+        else:
+            stdout, stderr = _communicate_progress(process, command, timeout, idle_timeout)
     except BaseException as error:
         _kill_group(process)
         stdout, stderr = _collect(process, kill_timeout)

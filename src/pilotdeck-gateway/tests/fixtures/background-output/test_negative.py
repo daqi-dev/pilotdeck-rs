@@ -1,6 +1,5 @@
-# anchor-selfcheck: unsupported unit tests of the mutation runner
-"""Exercise scratch ownership and cleanup without compiling mutant artifacts."""
-import contextlib
+# anchor-selfcheck: unsupported unit tests of the scratch mutation runner
+"""#994 scratch cleanup and exact background failure binding, without cargo."""
 import importlib.util
 import io
 import os
@@ -10,104 +9,80 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _shared import negative_control as control
+
+spec = importlib.util.spec_from_file_location('background_negative', Path(__file__).with_name('negative.py'))
+negative = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(negative)
 
 
 class NegativeLifecycleTests(unittest.TestCase):
     def exercise(self, failure=None):
-        script = Path(__file__).with_name('negative.py')
-        spec = importlib.util.spec_from_file_location('background_negative', script)
-        negative = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(negative)
-        scratch_paths = []
-        processes = []
-        temporary_directory = tempfile.TemporaryDirectory
-        previous_handler = signal.getsignal(signal.SIGTERM)
-        with temporary_directory() as fixture:
-            fixture = Path(fixture)
-            launcher_target = fixture / 'launcher-target'
-            launcher_target.mkdir()
-            sentinel = launcher_target / 'clean-artifact'
-            sentinel.write_bytes(b'clean')
-
-            def make_scratch(**kwargs):
-                directory = temporary_directory(dir=fixture, **kwargs)
-                scratch_paths.append(Path(directory.name))
-                return directory
-
-            def copy_sources(source, destination, **kwargs):
-                # Real source anchors, only the two files needed by this mutation.
-                for relative in ('pilotdeck-gateway/src/runtime/background.rs',
-                                 'pilotdeck-gateway/src/runtime/background/output.rs'):
-                    target = destination / relative
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_bytes((source / relative).read_bytes())
-                if failure == 'copy':
-                    raise OSError('injected copy failure')
-
-            class Process:
-                pid = 123456
-
-                def __init__(self, command, *, cwd, env, stdout, **kwargs):
-                    target = Path(env['CARGO_TARGET_DIR'])
-                    self.owner.assertEqual(target, Path(cwd).parent / 'target')
-                    target.mkdir(exist_ok=True)
-                    (target / 'mutant-artifact').write_bytes(b'mutant')
-                    self.calls = 0
-                    self.index = len(processes)
-                    processes.append(self)
-                    stdout.write('test result: FAILED\n' if self.index == 1 else 'test result: ok\n')
-
-                def wait(self, timeout=None):
-                    self.calls += 1
-                    if self.index == 1 and self.calls == 1:
-                        if failure == 'sigterm':
-                            os.kill(os.getpid(), signal.SIGTERM)
+        with tempfile.TemporaryDirectory() as parent:
+            target = Path(parent) / 'persistent-target'
+            target.mkdir()
+            artifact = target / 'cached-artifact'
+            artifact.write_text('cache')
+            before = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGALRM)}
+            directory = None
+            with patch.dict(os.environ, {'CARGO_TARGET_DIR': str(target)}), redirect_stdout(io.StringIO()):
+                try:
+                    with control.scratch('994-lifecycle', deadline=0) as directory:
+                        (directory / 'source').write_text('copy')
+                        self.assertEqual(control.persistent_environment(directory)['CARGO_TARGET_DIR'],
+                                         str(target.resolve()), '#994 scratch uses caller persistent target')
+                        if failure == 'exception':
+                            raise RuntimeError('injected copy/build error')
                         if failure == 'interrupt':
                             raise KeyboardInterrupt()
-                        if failure == 'wait':
-                            raise RuntimeError('injected wait failure')
-                    return 101 if self.index == 1 else 0
+                        if failure == 'sigterm':
+                            os.kill(os.getpid(), signal.SIGTERM)
+                except (RuntimeError, KeyboardInterrupt, SystemExit):
+                    self.assertIsNotNone(failure, '#994 unexpected lifecycle exception')
+            self.assertIsNotNone(directory, '#994 scratch must be entered')
+            self.assertFalse(directory.exists(), '#994 scratch source copy must be removed')
+            self.assertEqual(artifact.read_text(), 'cache', '#994 target must survive scratch cleanup')
+            self.assertEqual(before, {sig: signal.getsignal(sig) for sig in before},
+                             '#994 restore caller signal handlers')
 
-            Process.owner = self
-            expected = OSError if failure == 'copy' else KeyboardInterrupt if failure in ('sigterm', 'interrupt') else RuntimeError
-            with patch.object(sys, 'argv', [str(script), str(fixture / 'logs'), 'threshold-minus-one']), \
-                 patch.dict(os.environ, {'CARGO_TARGET_DIR': str(launcher_target)}), \
-                 patch.object(negative.tempfile, 'TemporaryDirectory', side_effect=make_scratch), \
-                 patch.object(negative.shutil, 'copytree', side_effect=copy_sources), \
-                 patch.object(negative.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '', '')), \
-                 patch.object(negative.subprocess, 'Popen', Process), \
-                 patch.object(negative.os, 'killpg') as killpg, \
-                 contextlib.redirect_stdout(io.StringIO()):
-                if failure:
-                    with self.assertRaises(expected):
-                        negative.main()
-                else:
-                    negative.main()
-            self.assertEqual(len(scratch_paths), 1)
-            self.assertFalse(scratch_paths[0].exists(), 'scratch and mutant target must be deleted')
-            self.assertEqual(list(launcher_target.iterdir()), [sentinel])
-            self.assertEqual(sentinel.read_bytes(), b'clean')
-            self.assertEqual(signal.getsignal(signal.SIGTERM), previous_handler)
-            if failure in ('wait', 'sigterm', 'interrupt'):
-                killpg.assert_called_once_with(Process.pid, signal.SIGKILL)
-                self.assertEqual(processes[-1].calls, 2, 'interrupted child must be reaped')
+    def test_cleanup_preserves_persistent_target(self):
+        for failure in (None, 'exception', 'interrupt', 'sigterm'):
+            with self.subTest(failure=failure):
+                self.exercise(failure)
 
-    def test_success(self):
-        self.exercise()
 
-    def test_copy_exception(self):
-        self.exercise('copy')
+class FailureBindingTests(unittest.TestCase):
+    def result(self, name, message, *, thread=None, extra=''):
+        test = negative.selection(name)[1][0]
+        return subprocess.CompletedProcess([], 101,
+            f'running 1 test\ntest {test} ... FAILED\n{extra}\n'
+            f"thread '{thread or test}' panicked at example.rs:1:1:\n{message}\n"
+            'test result: FAILED. 0 passed; 1 failed;', '')
 
-    def test_child_exception(self):
-        self.exercise('wait')
+    def test_expected_assertion_kills(self):
+        result = self.result('threshold-minus-one',
+            'assertion `left == right` failed: first step #994 background-output oracle comparison')
+        self.assertEqual(negative.classify('threshold-minus-one', result, None)[0], 'KILLED',
+                         '#994 bound oracle comparison must kill')
 
-    def test_sigterm(self):
-        self.exercise('sigterm')
+    def test_setup_wrong_thread_and_stdout_marker_never_kill(self):
+        marker = '#994 background-output oracle comparison'
+        for result in (self.result('threshold-minus-one', '#994 background-output setup'),
+                       self.result('threshold-minus-one', marker, thread='another_test'),
+                       self.result('threshold-minus-one', 'wrong panic', extra=marker)):
+            self.assertEqual(negative.classify('threshold-minus-one', result, None)[0], 'INVALID',
+                             '#994 unrelated failures cannot count as kills')
 
-    def test_keyboard_interrupt(self):
-        self.exercise('interrupt')
+    def test_runtime_layout_only_accepts_expected_log_failure(self):
+        for message, status in [('#994 background-output setup', 'INVALID'),
+                                ('#994 background-output expected runtime log', 'KILLED')]:
+            self.assertEqual(negative.classify('runtime-layout', self.result('runtime-layout', message), None)[0],
+                             status, '#994 layout must bind expected output file, not setup')
 
 
 if __name__ == '__main__':
-    unittest.main()
+    unittest.main(verbosity=2)

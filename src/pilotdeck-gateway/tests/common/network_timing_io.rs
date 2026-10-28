@@ -38,45 +38,53 @@ struct WireTransport {
 }
 impl ModelHttpTransport for WireTransport {
     fn send(&self, mut request: Request<Full<Bytes>>) -> TransportFuture {
-        assert_eq!(request.uri().host(), Some("fixture.test"));
+        assert_eq!(
+            request.uri().host(),
+            Some("fixture.test"),
+            "#994 network-timing assertion"
+        );
         self.requests
             .lock()
-            .unwrap()
+            .expect("#994 network-timing setup")
             .push(request.uri().path().to_string());
         *request.uri_mut() = format!("{}{path}", self.endpoint, path = request.uri().path())
             .parse()
-            .unwrap();
+            .expect("#994 network-timing setup");
         let (send, receive) = tokio::sync::oneshot::channel();
         let reached = self.reached.clone();
         let idle = self.idle;
-        self.drivers.lock().unwrap().push(tokio::spawn(async move {
-            // Fixture transport has no proxy/config/environment access.
-            let client =
-                hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-                    .build_http();
-            let result = match client.request(request).await {
-                Ok(response) => {
-                    let (parts, body) = response.into_parts();
-                    let bytes = body
-                        .collect()
-                        .await
-                        .expect("loopback complete body")
-                        .to_bytes();
-                    Ok(Response::from_parts(
-                        parts,
-                        Full::new(bytes).map_err(|never| match never {}).boxed(),
-                    ))
+        self.drivers
+            .lock()
+            .expect("#994 network-timing setup")
+            .push(tokio::spawn(async move {
+                // Fixture transport has no proxy/config/environment access.
+                let client = hyper_util::client::legacy::Client::builder(
+                    hyper_util::rt::TokioExecutor::new(),
+                )
+                .build_http();
+                let result = match client.request(request).await {
+                    Ok(response) => {
+                        let (parts, body) = response.into_parts();
+                        let bytes = body
+                            .collect()
+                            .await
+                            .expect("loopback complete body")
+                            .to_bytes();
+                        Ok(Response::from_parts(
+                            parts,
+                            Full::new(bytes).map_err(|never| match never {}).boxed(),
+                        ))
+                    }
+                    Err(_) => Err(TransportFailure {
+                        message: "fetch failed".into(),
+                        cause_code: None,
+                    }),
+                };
+                let _ = send.send(result);
+                if !idle {
+                    reached.set();
                 }
-                Err(_) => Err(TransportFailure {
-                    message: "fetch failed".into(),
-                    cause_code: None,
-                }),
-            };
-            let _ = send.send(result);
-            if !idle {
-                reached.set();
-            }
-        }));
+            }));
         let mut release = self.release.clone();
         TransportFuture::io(async move {
             while !*release.borrow_and_update() {
@@ -120,17 +128,17 @@ async fn child(
         return match network_fetch(&transport, &request, &options).await {
             Err(value) => error_value(&value),
             Ok(mut response) => match response.read_body(1024, Some(&context)).await {
-                Ok(bytes) => ok(String::from_utf8(bytes).unwrap()),
+                Ok(bytes) => ok(String::from_utf8(bytes).expect("#994 network-timing setup")),
                 Err(BodyError::Aborted) => error(Some("AbortError"), "This operation was aborted"),
                 Err(BodyError::Terminated) => error(Some("TypeError"), "terminated"),
                 Err(BodyError::TooLarge) => panic!("small body"),
             },
         };
     }
-    assert_eq!(path, "fetch_redirect");
+    assert_eq!(path, "fetch_redirect", "#994 network-timing assertion");
     let before_abort = Arc::new(AtomicBool::new(false));
     let result = fetch_redirect::follow(
-        URL.parse().unwrap(),
+        URL.parse().expect("#994 network-timing setup"),
         hyper::Method::GET,
         hyper::HeaderMap::new(),
         Bytes::new(),
@@ -177,7 +185,7 @@ async fn child(
     )
     .await
     {
-        Ok(bytes) => ok(String::from_utf8(bytes).unwrap()),
+        Ok(bytes) => ok(String::from_utf8(bytes).expect("#994 network-timing setup")),
         Err(fetch_redirect::BodyError::Aborted) => {
             error(Some("AbortError"), "This operation was aborted")
         }
@@ -188,33 +196,51 @@ fn error_result<T>(name: &str, message: &str) -> Result<T, Value> {
     Err(error(Some(name), message))
 }
 pub(super) async fn replay(row: &Value) -> Value {
-    let path = row["path"].as_str().unwrap().to_owned();
-    let event = row["event"].as_str().unwrap().to_owned();
-    let order = row["order"].as_str().unwrap();
+    let path = row["path"]
+        .as_str()
+        .expect("#994 network-timing setup")
+        .to_owned();
+    let event = row["event"]
+        .as_str()
+        .expect("#994 network-timing setup")
+        .to_owned();
+    let order = row["order"].as_str().expect("#994 network-timing setup");
     let reached = Arc::new(Reached::default());
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
-        .unwrap();
-    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        .expect("#994 network-timing setup");
+    let endpoint = format!(
+        "http://{}",
+        listener.local_addr().expect("#994 network-timing setup")
+    );
     let server = tokio::spawn({
         let reached = reached.clone();
         let event = event.clone();
         async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
+            let (mut stream, _) = listener.accept().await.expect("#994 network-timing setup");
             let mut request = Vec::new();
             while !request.windows(4).any(|v| v == b"\r\n\r\n") {
                 let mut buffer = [0; 1024];
-                let count = stream.read(&mut buffer).await.unwrap();
-                assert!(count > 0, "HTTP request reached real peer");
+                let count = stream
+                    .read(&mut buffer)
+                    .await
+                    .expect("#994 network-timing setup");
+                assert!(
+                    count > 0,
+                    "HTTP request reached real peer #994 network-timing assertion"
+                );
                 request.extend_from_slice(&buffer[..count]);
             }
             if event == "idle" {
                 reached.set();
                 std::future::pending::<()>().await;
             } else if event == "rejected" {
-                stream.write_all(b"not an HTTP response\r\n").await.unwrap();
+                stream
+                    .write_all(b"not an HTTP response\r\n")
+                    .await
+                    .expect("#994 network-timing setup");
             } else {
-                stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 5\r\nconnection: close\r\n\r\nFIRST").await.unwrap();
+                stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 5\r\nconnection: close\r\n\r\nFIRST").await.expect("#994 network-timing setup");
             }
         }
     });
@@ -245,11 +271,15 @@ pub(super) async fn replay(row: &Value) -> Value {
                 future: Box::pin(async move {
                     let value = child(&path, transport, signal, private).await;
                     let result = if value["delivery"] == "throw" {
-                        Err(JsString::from(value["message"].as_str().unwrap()))
+                        Err(JsString::from(
+                            value["message"]
+                                .as_str()
+                                .expect("#994 network-timing setup"),
+                        ))
                     } else {
                         Ok(())
                     };
-                    *observed.lock().unwrap() = Some(value);
+                    *observed.lock().expect("#994 network-timing setup") = Some(value);
                     result
                 }),
             })
@@ -288,8 +318,11 @@ pub(super) async fn replay(row: &Value) -> Value {
         gate.step().await;
         if event == "fulfilled" {
             assert!(
-                observed.lock().unwrap().is_some(),
-                "real fulfilled I/O continuation drained"
+                observed
+                    .lock()
+                    .expect("#994 network-timing setup")
+                    .is_some(),
+                "real fulfilled I/O continuation drained #994 network-timing assertion"
             );
             if let Some(task) = &task {
                 background_timing::registry_settled(&runtime, &task.task_id).await;
@@ -307,30 +340,46 @@ pub(super) async fn replay(row: &Value) -> Value {
         stopped = abort();
         release.send_replace(true);
     }
-    if observed.lock().unwrap().is_none() {
+    if observed
+        .lock()
+        .expect("#994 network-timing setup")
+        .is_none()
+    {
         gate.step().await;
     }
     assert!(
-        observed.lock().unwrap().is_some(),
-        "bounded I/O must settle on completion or parent"
+        observed
+            .lock()
+            .expect("#994 network-timing setup")
+            .is_some(),
+        "bounded I/O must settle on completion or parent #994 network-timing assertion"
     );
-    let mut result = observed.lock().unwrap().take().unwrap();
+    let mut result = observed
+        .lock()
+        .expect("#994 network-timing setup")
+        .take()
+        .expect("#994 network-timing setup");
     if let Some(task) = task {
-        assert!(!bounded(runtime.stop_and_wait(&task.task_id)).await);
-        let task = runtime.get(&task.task_id).unwrap();
-        result["task"] = json!({"status":task.status.as_str(),"error":task.error.map(|e|e.to_utf8().unwrap()),"ended":task.ended_at.is_some(),"stopped":stopped});
+        assert!(
+            !bounded(runtime.stop_and_wait(&task.task_id)).await,
+            "#994 network-timing assertion"
+        );
+        let task = runtime
+            .get(&task.task_id)
+            .expect("#994 network-timing setup");
+        result["task"] = json!({"status":task.status.as_str(),"error":task.error.map(|e|e.to_utf8().expect("#994 network-timing setup")),"ended":task.ended_at.is_some(),"stopped":stopped});
     }
     if let Some(job) = job {
-        let _ = bounded(job).await.unwrap();
+        let _ = bounded(job).await.expect("#994 network-timing setup");
     }
     server.abort();
     let _ = server.await;
-    let handles = std::mem::take(&mut *drivers.lock().unwrap());
+    let handles = std::mem::take(&mut *drivers.lock().expect("#994 network-timing setup"));
     for handle in handles {
         handle.abort();
         let _ = handle.await;
     }
-    let requests = requests.lock().unwrap();
+    let requests = requests.lock().expect("#994 network-timing setup");
     result["calls"] = json!(requests.len());
     result["retries"] = json!(requests.iter().filter(|p| p.as_str() == "/start").count() - 1);
     result
