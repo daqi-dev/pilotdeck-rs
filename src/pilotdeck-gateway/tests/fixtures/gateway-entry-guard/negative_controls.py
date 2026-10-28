@@ -13,11 +13,14 @@ lease; this file itself must be committed before it can run (HEAD baseline).
 Use: python3 -I -B .../negative_controls.py --output <new directory>.
 """
 import argparse
-import importlib.util
+import io
 import json
 from pathlib import Path
+import re
+import subprocess
 import sys
 import tempfile
+import unittest
 
 sys.dont_write_bytecode = True
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-991-negative-pyc-')
@@ -91,8 +94,9 @@ MUTATIONS = [
      'def main():',
      'def _verify_cli_imports():\n    return None\n\n\ndef main():'),
     ('entry-import-before-isolated', COMPARE,
-     'import sys\n\nif not sys.flags.isolated:',
-     'import sys\nimport argparse\n\nif not sys.flags.isolated:'),
+     '# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)',
+     'import sys\nimport argparse\n'
+     '# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)'),
 ]
 
 CHECKS = {
@@ -112,8 +116,8 @@ CHECKS = {
         'ImportIsolation.test_ruler_work_signals_are_blocked_after_lease_release',
         '#166 fix-r10 work signals must return BLOCKED/2/EVIDENCE after lease release'),
     'guard-cancel-is-fail': (
-        'ImportIsolation.test_ruler_work_signals_are_blocked_after_lease_release',
-        '#166 fix-r10 work signals must return BLOCKED/2/EVIDENCE after lease release'),
+        'ImportIsolation.test_ruler_late_validation_errors_are_distinct_from_evidence_failures',
+        '#166 ruler late validation errors are BLOCKED/2/APPARATUS_IMPORTS; evidence stays exit 1'),
     'guard-evidence-is-blocked': (
         'ImportIsolation.test_ruler_late_validation_errors_are_distinct_from_evidence_failures',
         '#166 ruler late validation errors are BLOCKED/2/APPARATUS_IMPORTS; evidence stays exit 1'),
@@ -166,21 +170,131 @@ def publish(path, value):
     tmp.replace(path)
 
 
+def single_test(log):
+    return len(re.findall(r'^Ran 1 test in [0-9.]+s$', log, re.MULTILINE)) == 1
+
+
 def passed(result, test):
     log = result.stdout + result.stderr
-    return (result.returncode == 0 and f'{test} (' in log and '... ok' in log
-            and 'Ran 1 test' in log and 'OK' in log and 'skipped' not in log)
+    method = test.rsplit('.', 1)[-1]
+    return (result.returncode == 0
+            and f'{method} (__main__.{test}) ... ok' in log.splitlines()
+            and single_test(log) and log.rstrip().endswith('\nOK')
+            and 'skipped' not in log)
 
 
 def classify(result, test, message):
     log = result.stdout + result.stderr
-    method = test.split('.')[-1]
+    method = test.rsplit('.', 1)[-1]
     if passed(result, test):
         return 'SURVIVED', 'bound test passed the mutant'
-    if (result.returncode != 0 and f'FAIL: {method}' in log and message in log
-            and 'ERROR:' not in log):
-        return 'KILLED', message
+    if (result.returncode != 1 or not single_test(log)
+            or not re.search(r'^FAILED \(failures=[1-9][0-9]*\)\s*\Z', log, re.MULTILINE)
+            or 'ERROR:' in log):
+        return 'INVALID', 'missing normal single-test assertion failure'
+    # unittest -v prints the method twice; subTest descriptions follow the
+    # full name. Only this test's own AssertionError may supply the marker.
+    header = re.compile(
+        rf'FAIL: {re.escape(method)} \(__main__\.{re.escape(test)}\)(?: \(.*\))?')
+    separator = '\n' + '-' * 70 + '\n'
+    for block in log.split('\n' + '=' * 70 + '\n')[1:]:
+        title, found, body = block.partition(separator)
+        if not found or not header.fullmatch(title):
+            continue
+        body = body.split(separator, 1)[0]
+        assertion = re.search(r'^AssertionError: (.*)', body, re.MULTILINE | re.DOTALL)
+        if assertion and message in assertion.group(1):
+            return 'KILLED', message
     return 'INVALID', 'missing bound assertion (anchor, compile or wrong failure)'
+
+
+class LogParsingTests(unittest.TestCase):
+    """Exercise real unittest formatting without touching apparatus sources."""
+
+    TEST = 'Probe.test_bound'
+    MESSAGE = '#991 parser probe assertion'
+
+    def probe(self, *, fail=False, subtests=False):
+        def bound(case):
+            if subtests:
+                for value in range(2):
+                    with case.subTest(value=value):
+                        case.assertEqual('a\nb\nc', 'a\nd\nc', self.MESSAGE)
+            elif fail:
+                case.fail(self.MESSAGE)
+        probe = type('Probe', (unittest.TestCase,),
+                     {'__module__': '__main__', 'test_bound': bound})
+        stream = io.StringIO()
+        outcome = unittest.TextTestRunner(stream=stream, verbosity=2).run(probe('test_bound'))
+        return subprocess.CompletedProcess([], int(not outcome.wasSuccessful()), '', stream.getvalue())
+
+    def test_accepts_real_verbose_pass(self):
+        result = self.probe()
+        self.assertTrue(passed(result, self.TEST), '#991 real verbose pass must match')
+        self.assertEqual(classify(result, self.TEST, self.MESSAGE)[0], 'SURVIVED',
+                         '#991 bound pass must survive')
+
+    def test_rejects_other_test_success(self):
+        result = self.probe()
+        for old, new in [('test_bound', 'test_other'), ('test_bound (', 'test_other ('),
+                         ('__main__.Probe', '__main__.Other'),
+                         ('__main__', 'other_module'),
+                         ('.test_bound)', '.test_bound_extra)')]:
+            with self.subTest(replacement=new):
+                wrong = subprocess.CompletedProcess([], 0, '', result.stderr.replace(old, new))
+                self.assertFalse(passed(wrong, self.TEST),
+                                 '#991 another method or qualified name must not pass')
+
+    def test_requires_single_unskipped_success(self):
+        result = self.probe()
+        for old, new in [('Ran 1 test', 'Ran 11 tests'), ('Ran 1 test', 'No tests'),
+                         ('\nOK\n', '\nNOT OK\n'), ('... ok', "... skipped 'reason'")]:
+            with self.subTest(replacement=new):
+                wrong = subprocess.CompletedProcess([], 0, '', result.stderr.replace(old, new))
+                self.assertFalse(passed(wrong, self.TEST), '#991 pass requires one unskipped OK')
+        skipped = subprocess.CompletedProcess([], 0, 'skipped\n', result.stderr)
+        self.assertFalse(passed(skipped, self.TEST), '#991 skip diagnostics must not pass')
+        result.returncode = 1
+        self.assertFalse(passed(result, self.TEST), '#991 nonzero exit must not pass')
+
+    def test_accepts_bound_assertions_and_subtests(self):
+        for subtests in (False, True):
+            with self.subTest(subtests=subtests):
+                self.assertEqual(classify(self.probe(fail=True, subtests=subtests),
+                                          self.TEST, self.MESSAGE)[0], 'KILLED',
+                                 '#991 bound AssertionError including multiline subTest must kill')
+
+    def test_rejects_wrong_failure_identity_or_message(self):
+        result = self.probe(fail=True)
+        for old, new in [('FAIL: test_bound (', 'FAIL: test_other ('),
+                         ('__main__.Probe', '__main__.Other'),
+                         ('__main__', 'other_module'),
+                         ('.test_bound)', '.test_bound_extra)'),
+                         ('AssertionError: ' + self.MESSAGE, 'AssertionError: unrelated')]:
+            with self.subTest(replacement=new):
+                # A marker outside the bound assertion cannot rescue it.
+                wrong = subprocess.CompletedProcess([], 1, self.MESSAGE + '\n',
+                                                     result.stderr.replace(old, new))
+                self.assertEqual(classify(wrong, self.TEST, self.MESSAGE)[0], 'INVALID',
+                                 '#991 failure must bind both names and its own assertion message')
+        source_echo = result.stderr.replace('AssertionError: ' + self.MESSAGE,
+                                           '    self.fail(' + repr(self.MESSAGE) + ')\n'
+                                           'AssertionError: unrelated')
+        wrong = subprocess.CompletedProcess([], 1, '', source_echo)
+        self.assertEqual(classify(wrong, self.TEST, self.MESSAGE)[0], 'INVALID',
+                         '#991 traceback source echo is not an assertion message')
+
+    def test_rejects_abnormal_failure(self):
+        result = self.probe(fail=True)
+        for old, new in [('Ran 1 test', 'Ran 11 tests'), ('FAILED (failures=1)', ''),
+                         ('FAIL: ', 'ERROR: '), ('AssertionError:', 'RuntimeError:')]:
+            with self.subTest(replacement=new):
+                wrong = subprocess.CompletedProcess([], 1, '', result.stderr.replace(old, new))
+                self.assertEqual(classify(wrong, self.TEST, self.MESSAGE)[0], 'INVALID',
+                                 '#991 wrong count, missing summary or unrelated error is invalid')
+        result.returncode = -2
+        self.assertEqual(classify(result, self.TEST, self.MESSAGE)[0], 'INVALID',
+                         '#991 signal exit must not kill')
 
 
 def run_test(out, label, test, timeout=300):
@@ -216,11 +330,15 @@ def main():
     parser.add_argument('--output', type=Path, help='new evidence directory')
     parser.add_argument('--only', action='append')
     parser.add_argument('--check-anchors', action='store_true')
+    parser.add_argument('--self-test', action='store_true', help='test unittest log binding only')
     args = parser.parse_args()
+    if args.self_test:
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(LogParsingTests)
+        return int(not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful())
     if args.check_anchors:
         return check_anchors()
     if args.output is None:
-        parser.error('--output is required unless --check-anchors is used')
+        parser.error('--output is required unless --check-anchors or --self-test is used')
     known = [row[0] for row in MUTATIONS]
     if args.only and (set(args.only) - set(known) or len(args.only) != len(set(args.only))):
         print('unknown or duplicate --only mutation', file=sys.stderr)
