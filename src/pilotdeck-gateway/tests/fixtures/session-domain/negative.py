@@ -42,7 +42,6 @@ checks = [
  ('queue-claim', 'if !truthy(claim) ||'),
  ('queue-fifo', 'if at != Some(0)'),
  ('closed-turn', 'if turn.closed {'),
- ('step-matching', 'if turn.open_step.is_none()'),
  ('step-increase', 'if !safe_integer(step) ||'),
  ('context-duplicate', 'if turn.context_recorded'),
  ('context-order', 'if turn.model_requested {', 0),
@@ -57,7 +56,6 @@ checks = [
  ('inbox-insert', 'if !truthy(field(entry, "message"))'),
  ('inbox-cancel', 'if current == Some("claimed")'),
  ('inbox-claim', 'if current != Some("pending")'),
- ('inbox-discard', 'if !matches!(current, Some("pending" | "claimed"))'),
  ('plan-value', 'if !matches!(plan, JsValue::Null)'),
  ('plan-progress', 'if !trimmed(tool)'),
  ('todos-metadata', 'if !(text_is(field(entry, "mode"), "markdown")'),
@@ -71,6 +69,11 @@ checks = [
 ]
 
 replacements = [
+  # Preserve the Some prerequisites of product unwraps. Disable only step
+  # matching, and reject a valid claimed discard, so the golden comparison
+  # fails instead of an unrelated missing-value panic (#743 fix-r4).
+  ('step-matching', 'if turn.open_step.is_none()\n        || field(entry, "step").as_number() != turn.open_step.map(|n| n as f64)', 'if turn.open_step.is_none()'),
+  ('inbox-discard', 'if !matches!(current, Some("pending" | "claimed"))', 'if !matches!(current, Some("pending"))'),
   ('null-entry-property', 'let kind = call_id(entry, "type")?', 'let kind = field(entry, "type")'),
   ('discard-undefined-lookup', '|| !same_id(queued_turn, id)\n', '|| pending.is_none_or(|at| !same_id(&next.queue[at].1, id))\n'),
   ('claim-undefined-lookup', 'if !truthy(claim) || !same_id(queued_turn, id)', 'if !truthy(claim) || at.is_none_or(|at| !same_id(&next.queue[at].1, id))'),
