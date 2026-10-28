@@ -104,8 +104,15 @@ class DocumentTests(unittest.TestCase):
 
     def test_document_shapes_and_matching_negative_controls(self):
         for command in (
+                'python -I scripts/cli-parity/run_round.py',
                 'python3 -I scripts/cli-parity/run_round.py',
                 'python3.13 -I scripts/cli-parity/run_round.py',
+                'python3.13t -I scripts/cli-parity/run_round.py',
+                '/usr/bin/python3 -I scripts/cli-parity/run_round.py',
+                '/python3 -I scripts/cli-parity/run_round.py',
+                './venv/bin/python -I scripts/cli-parity/run_round.py',
+                '"/opt/python bin/python3.13" -I scripts/cli-parity/run_round.py',
+                "'/opt/python bin/python3.13' -I scripts/cli-parity/run_round.py",
                 'python3 -I "$PWD/scripts/cli-parity/run_round.py"',
                 "python3 -I 'scripts/cli-parity/run_round.py'",
                 '${PY} -I "${ROOT}/scripts/cli-parity/run_round.py"',

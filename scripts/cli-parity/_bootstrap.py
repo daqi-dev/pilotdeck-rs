@@ -1,13 +1,19 @@
 """Shared source-only loader for the CLI parity apparatus (#701)."""
 import sys
 
+import atexit
 import importlib.util
 from pathlib import Path
+import shutil
 import tempfile
 
-# Always compile apparatus source, never reuse adjacent bytecode. Keep stdlib
-# cache writes outside the apparatus too, including standalone entry startup.
-sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-cli-parity-pyc-')
+# Always compile apparatus source, never reuse adjacent bytecode. Redirect
+# stdlib cache reads too: dont_write_bytecode only disables writes. Entries
+# re-exec this module, so keep the owned directory on sys for process-wide reuse.
+if not hasattr(sys, '_cli_parity_pycache_prefix'):
+    sys._cli_parity_pycache_prefix = tempfile.mkdtemp(prefix='pdrs-cli-parity-pyc-')
+    atexit.register(shutil.rmtree, sys._cli_parity_pycache_prefix, ignore_errors=True)
+sys.pycache_prefix = sys._cli_parity_pycache_prefix
 sys.dont_write_bytecode = True
 
 
@@ -40,4 +46,3 @@ def load(name, path):
     if Path(module.__file__).resolve() != path:
         raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
     return module
-

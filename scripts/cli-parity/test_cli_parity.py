@@ -307,9 +307,13 @@ _load = _bootstrap.load
 
 def documented_invocations(source):
     """Yield shell argv and physical start line, including continued commands."""
+    python = r'python(?:\d+(?:\.\d+)*[a-z]?)?'
+    variable = r'\$(?:\{[A-Za-z_]\w*\}|[A-Za-z_]\w*)'
     invocation = re.compile(
-        r'''(?<![\w])["']?(?:python3(?:\.\d+)*|\$(?:\{[A-Za-z_]\w*\}|[A-Za-z_]\w*))'''
-        r'''["']?[ \t]+(?P<args>[^`\n;&|]+)''')
+        rf'''(?<![\w/.-])(?:"(?:[^"`\n;&|]*/)?{python}"|'''
+        rf"'(?:[^'`\n;&|]*/)?{python}'|"
+        rf'''(?:[^\s`"';&|]*/)?{python}|["']?{variable}["']?)'''
+        r'''[ \t]+(?P<args>[^`\n;&|]+)''')
     logical, start = '', 1
     for number, line in enumerate(source.splitlines(), 1):
         if not logical:
@@ -343,6 +347,54 @@ def isolated_file_options(options):
 
 class BootstrapTests(unittest.TestCase):
     """#701 item 3: entries reject same-directory imposters before loading one."""
+
+    def test_apparatus_inventory_matches_directory(self):
+        registered = {name for name in ENTRY_FILES + APPARATUS_FILES + MIRROR_FILES
+                      if name.endswith('.py')}
+        actual = {path.name for path in SCRIPT.glob('*.py') if path.is_file()}
+        self.assertEqual(actual, registered,
+                         '#701: Python apparatus inventory must match actual directory files')
+
+    def test_bootstrap_cache_is_singleton_and_cleaned_on_exit(self):
+        for ending, expected_exit in (('', 0), ('raise SystemExit(7)', 7),
+                                      ('raise RuntimeError("#701 exit probe")', 1)):
+            with self.subTest(ending=ending), tempfile.TemporaryDirectory(prefix='d0-cache-') as temp:
+                holder = Path(temp).resolve()
+                bootstrap = holder / '_bootstrap.py'
+                shutil.copy2(SCRIPT / '_bootstrap.py', bootstrap)
+                probe = holder / 'probe.py'
+                probe.write_text('''\
+import json
+from pathlib import Path
+import sys
+import tempfile
+
+tempfile.tempdir = str(Path(__file__).parent)
+path = Path(__file__).with_name('_bootstrap.py')
+prefixes = []
+for _ in range(3):
+    exec(compile(path.read_bytes(), str(path), 'exec'), {'__file__': str(path)})
+    prefixes.append(sys.pycache_prefix)
+print(json.dumps({'prefixes': prefixes, 'dontWrite': sys.dont_write_bytecode,
+                  'directories': [str(p) for p in path.parent.glob('pdrs-cli-parity-pyc-*')]}),
+      flush=True)
+''' + ending + '\n')
+                result = subprocess.run([sys.executable, '-I', str(probe)],
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, expected_exit,
+                                 '#701: bootstrap cache probe must reach its intended exit: ' + result.stderr)
+                report = json.loads(result.stdout)
+                self.assertTrue(report['dontWrite'], '#701: bootstrap must disable bytecode writes')
+                self.assertEqual(len(report['prefixes']), 3,
+                                 '#701: bootstrap cache probe must execute three loads')
+                prefix = report['prefixes'][0]
+                self.assertIsInstance(prefix, str, '#701: bootstrap must use a private cache prefix')
+                self.assertEqual(report['prefixes'], [prefix] * 3,
+                                 '#701: repeated bootstrap loads must reuse one cache directory')
+                self.assertEqual(report['directories'], [prefix],
+                                 '#701: bootstrap must allocate exactly one private cache directory')
+                self.assertFalse(Path(prefix).exists(),
+                                 '#701: bootstrap cache directory must be removed on process exit')
 
     def test_isolated_guard_is_the_first_statement(self):
         for name in ENTRY_FILES:
