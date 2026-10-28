@@ -274,6 +274,8 @@ pub struct SdkMcpConfig {
     options: SdkMcpConfigOptions,
     /// JS `Map<string, Map<...>>` insertion order.
     servers: Mutex<ServerTable>,
+    #[cfg(test)]
+    servers_probe: Mutex<Option<concurrency::LockProbe>>,
     overrides: Mutex<OverrideTable>,
     /// Generated `PermissionRule` objects, kept by identity with the ask array.
     rules: Mutex<RuleTable>,
@@ -284,6 +286,8 @@ impl SdkMcpConfig {
         Self {
             options,
             servers: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            servers_probe: Mutex::new(None),
             overrides: Mutex::new(Vec::new()),
             rules: Mutex::new(Vec::new()),
         }
@@ -320,6 +324,9 @@ impl SdkMcpConfig {
         let added: Vec<JsString>;
         let removed: Vec<JsString>;
         {
+            #[cfg(test)]
+            let mut servers = self.lock_servers_for_test("set");
+            #[cfg(not(test))]
             let mut servers = lock(&self.servers);
             let session_index = servers
                 .iter()
@@ -471,6 +478,9 @@ impl SdkMcpConfig {
             .unwrap_or(JsValue::Undefined);
         let enabled = input.get("enabled").cloned().unwrap_or(JsValue::Undefined);
         {
+            #[cfg(test)]
+            let mut servers = self.lock_servers_for_test("toggle");
+            #[cfg(not(test))]
             let mut servers = lock(&self.servers);
             let server = servers
                 .iter_mut()
@@ -667,6 +677,9 @@ impl SdkMcpConfig {
     /// repopulated with its shared project entry deleted (#347 fix-r1). The
     /// function has no callbacks, so no lock is ever held across one.
     pub fn clear_sdk_session_state(&self, session_key: &JsValue) {
+        #[cfg(test)]
+        let mut servers = self.lock_servers_for_test("clear");
+        #[cfg(not(test))]
         let mut servers = lock(&self.servers);
         servers.retain(|(key, _)| !same_key(key, session_key));
         if let JsValue::String(key) = session_key {
@@ -1213,6 +1226,10 @@ fn disabled_message(server_name: &JsValue) -> Result<JsString, SdkMcpError> {
 fn range_error(_: js_value::StackOverflow) -> SdkMcpError {
     SdkMcpError::plain("RangeError", js_value::StackOverflow::MESSAGE)
 }
+
+#[cfg(test)]
+#[path = "../../../tests/fixtures/sdk-mcp-p2/concurrency.rs"]
+mod concurrency;
 
 #[cfg(test)]
 mod tests {

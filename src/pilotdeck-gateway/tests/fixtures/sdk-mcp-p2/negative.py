@@ -10,24 +10,16 @@ assertion message it must turn red; the kill check runs that test with
 `--exact` and accepts the message only inside the test's own panic block,
 so a failing sibling with a shared filter suffix or message can never
 count (fix-r1, review P1-4). A mutant that does not compile is INVALID, one
-whose test stays green is SURVIVED, and a stale anchor (count != 1) aborts
-the run. Every mutant is compile-verified (`cargo check --tests`) before
+whose test stays green is SURVIVED, and a stale anchor (count != 1) is
+INVALID without skipping later mutants. Every mutant is compile-verified (`cargo check --tests`) before
 its test runs. The executor runs ALL mutations, restoring each source
 byte-for-byte, then summarizes; any non-KILLED result exits nonzero.
 
-The two boundary mutants (`clear-commit-boundary` / `set-commit-boundary`)
-are killed by matrix-cell tests that consume the bounded-window outcome and
-confirm the in-window completion before opening the other gate, so the two
-writes' order is pinned by the gates instead of thread wakeup order
-(#347 fix-r2, review P1). #347 fix-r3 (review P1): those tests now record a
-start marker as the second operation's first statement and only open the
-window once it is confirmed, so an expired window is lock-wait evidence
-rather than a timing guess; the `-delayed` mutants re-run each boundary
-mutant with the spawned operation's start delayed past the window (the
-"not yet scheduled" interleaving the review showed could let it through) and
-must still die with the same bound message, while the matching `-control`
-entries apply the same delay with no mutation and must stay green (the delay
-alone must not break the fixed shape).
+The boundary mutants bind the actual try_lock outcome in the cfg(test)
+SDK unit module. Delayed rows pause AFTER the start marker and BEFORE the
+real acquisition probe. Both Acquired and WouldBlock are reported; no sleep
+or is_finished observation is accepted as contention evidence. Controls use
+the same post-marker delay without the product mutation.
 
 Run post-commit from a clean tree (the mutation guard requires the gateway
 product sources to equal HEAD):
@@ -42,14 +34,16 @@ wrong; the review's synthetic sibling-failure log must classify as False.
 The caller must export CARGO_TARGET_DIR; this script error-exits without it.
 """
 import difflib
-import hashlib
 import json
 import os
+import subprocess
+import time
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import passed
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime'
@@ -139,22 +133,12 @@ MUTATIONS = [
      "#347 the read keeps the set call's insertion order"),
     # ── #347 fix-r1 (review P1-1): the clear/set critical section ──────────
     ('clear-commit-boundary', 'mcp/sdk.rs',
-     'let mut servers = lock(&self.servers);\n'
-     '        servers.retain(|(key, _)| !same_key(key, session_key));\n'
-     '        if let JsValue::String(key) = session_key {\n'
-     '            lock(&self.overrides).retain(|(existing, _)| existing != key);\n'
-     '            lock(&self.rules).retain(|(existing, _)| existing != key);\n'
-     '        }\n'
-     '        self.options.projects.delete(session_key);\n'
+     'self.options.projects.delete(session_key);\n'
      '        drop(servers);',
-     'lock(&self.servers).retain(|(key, _)| !same_key(key, session_key));\n'
-     '        if let JsValue::String(key) = session_key {\n'
-     '            lock(&self.overrides).retain(|(existing, _)| existing != key);\n'
-     '            lock(&self.rules).retain(|(existing, _)| existing != key);\n'
-     '        }\n'
+     'drop(servers);\n'
      '        self.options.projects.delete(session_key);',
-     '--test=sdk_mcp', 'clear_and_set_commits_share_one_critical_section',
-     'the shared session→project entry must not lag the server table'),
+     '--lib', 'runtime::mcp::sdk::concurrency::clear_and_set_commits_share_one_critical_section',
+     '#347 fix-r4b cell3 must observe WouldBlock at the real servers lock'),
     ('set-commit-boundary', 'mcp/sdk.rs',
      'self.options.projects.set(&session_key, project_root);\n'
      '        }\n'
@@ -162,8 +146,66 @@ MUTATIONS = [
      '}\n'
      '        self.options.projects.set(&session_key, project_root);\n'
      '        (self.options.close_session)(session_key, "sdk_mcp_servers_changed").await?;',
-     '--test=sdk_mcp', 'set_commit_cannot_outlive_the_shared_table_write',
-     'the clear must not leave the commit\'s shared-table entry behind'),
+     '--lib', 'runtime::mcp::sdk::concurrency::set_commit_cannot_outlive_the_shared_table_write',
+     '#347 fix-r4b cell4 must observe WouldBlock at the real servers lock'),
+    ('set-read-window-unlocked', 'mcp/sdk.rs',
+     '            let mut next: Vec<(JsString, ServerEntry)> = Vec::new();\n            let mut errors: Vec<(JsString, &\'static str)> = Vec::new();\n            for (name, config) in own_entries(input.get("servers")) {\n                if reserved.iter().any(|existing| existing == &name) {\n                    errors.push((name, RESERVED_NAME));\n                    continue;\n                }\n                match check_config(&name, &config, self.options.environment.as_ref())? {\n                    ConfigCheck::Valid => {\n                        // TS calls `structuredClone(config)` for every accepted\n                        // entry; both it and the later `JSON.stringify(value)`\n                        // go through the shared wire-depth bound, including\n                        // new names.\n                        json_text(&config)?;\n                        let enabled = current\n                            .iter()\n                            .find(|(existing, _)| existing == &name)\n                            .map(|(_, entry)| entry.enabled.clone())\n                            .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))\n                            .unwrap_or(JsValue::Bool(true));\n                        next.push((\n                            name,\n                            ServerEntry {\n                                config: config.clone(),\n                                enabled,\n                            },\n                        ));\n                    }\n                    ConfigCheck::Diagnostic(message) => errors.push((name, message)),\n                }\n            }\n            if !errors.is_empty() {\n                return Ok(set_result(&[], &[], &errors));\n            }\n\n            let mut added_names: Vec<JsString> = Vec::new();\n            for (name, value) in &next {\n                // TS serializes every next entry, so a new name cannot skip\n                // the check that an existing name already performs.\n                let value_text = json_text(&server_value(value))?;\n                let changed = match current.iter().find(|(existing, _)| existing == name) {\n                    None => true,\n                    Some((_, previous)) => value_text != json_text(&server_value(previous))?,\n                };\n                if changed {\n                    added_names.push(name.clone());\n                }\n            }\n            added = added_names;\n            removed = current\n                .iter()\n                .filter(|(name, _)| !next.iter().any(|(candidate, _)| candidate == name))\n                .map(|(name, _)| name.clone())\n                .collect();\n\n',
+     '            drop(servers);\n            let mut next: Vec<(JsString, ServerEntry)> = Vec::new();\n            let mut errors: Vec<(JsString, &\'static str)> = Vec::new();\n            for (name, config) in own_entries(input.get("servers")) {\n                if reserved.iter().any(|existing| existing == &name) {\n                    errors.push((name, RESERVED_NAME));\n                    continue;\n                }\n                match check_config(&name, &config, self.options.environment.as_ref())? {\n                    ConfigCheck::Valid => {\n                        // TS calls `structuredClone(config)` for every accepted\n                        // entry; both it and the later `JSON.stringify(value)`\n                        // go through the shared wire-depth bound, including\n                        // new names.\n                        json_text(&config)?;\n                        let enabled = current\n                            .iter()\n                            .find(|(existing, _)| existing == &name)\n                            .map(|(_, entry)| entry.enabled.clone())\n                            .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))\n                            .unwrap_or(JsValue::Bool(true));\n                        next.push((\n                            name,\n                            ServerEntry {\n                                config: config.clone(),\n                                enabled,\n                            },\n                        ));\n                    }\n                    ConfigCheck::Diagnostic(message) => errors.push((name, message)),\n                }\n            }\n            if !errors.is_empty() {\n                return Ok(set_result(&[], &[], &errors));\n            }\n\n            let mut added_names: Vec<JsString> = Vec::new();\n            for (name, value) in &next {\n                // TS serializes every next entry, so a new name cannot skip\n                // the check that an existing name already performs.\n                let value_text = json_text(&server_value(value))?;\n                let changed = match current.iter().find(|(existing, _)| existing == name) {\n                    None => true,\n                    Some((_, previous)) => value_text != json_text(&server_value(previous))?,\n                };\n                if changed {\n                    added_names.push(name.clone());\n                }\n            }\n            added = added_names;\n            removed = current\n                .iter()\n                .filter(|(name, _)| !next.iter().any(|(candidate, _)| candidate == name))\n                .map(|(name, _)| name.clone())\n                .collect();\n\n            let mut servers = lock(&self.servers);\n',
+     '--lib', 'runtime::mcp::sdk::concurrency::set_and_toggle_do_not_lose_updates',
+     '#347 fix-r4b toggle must observe WouldBlock at the real servers lock'),
+    ('ts-cell3-servers-corrupted', '../../tests/fixtures/sdk-mcp-p2/oracle.json',
+     '    {\n      "id": "clear-then-set",\n      "events": [\n        "clear.servers",\n        "clear.return",\n        "second.set"\n      ],\n      "servers": true,\n      "projects": true,\n      "enabled": true,\n      "names": [\n        "b"\n      ],\n      "projectRoot": "/pdrs-fixture/project"\n    }',
+     '    {\n      "id": "clear-then-set",\n      "events": [\n        "clear.servers",\n        "clear.return",\n        "second.set"\n      ],\n      "servers": false,\n      "projects": true,\n      "enabled": true,\n      "names": [\n        "b"\n      ],\n      "projectRoot": "/pdrs-fixture/project"\n    }',
+     '--lib', 'runtime::mcp::sdk::concurrency::clear_and_set_commits_share_one_critical_section',
+     '#347 fix-r4b clear-then-set TS servers'),
+    ('ts-cell3-projects-corrupted', '../../tests/fixtures/sdk-mcp-p2/oracle.json',
+     '    {\n      "id": "clear-then-set",\n      "events": [\n        "clear.servers",\n        "clear.return",\n        "second.set"\n      ],\n      "servers": true,\n      "projects": true,\n      "enabled": true,\n      "names": [\n        "b"\n      ],\n      "projectRoot": "/pdrs-fixture/project"\n    }',
+     '    {\n      "id": "clear-then-set",\n      "events": [\n        "clear.servers",\n        "clear.return",\n        "second.set"\n      ],\n      "servers": true,\n      "projects": false,\n      "enabled": true,\n      "names": [\n        "b"\n      ],\n      "projectRoot": "/pdrs-fixture/project"\n    }',
+     '--lib', 'runtime::mcp::sdk::concurrency::clear_and_set_commits_share_one_critical_section',
+     '#347 fix-r4b clear-then-set TS projects'),
+    ('ts-cell3-enabled-corrupted', '../../tests/fixtures/sdk-mcp-p2/oracle.json',
+     '    {\n      "id": "clear-then-set",\n      "events": [\n        "clear.servers",\n        "clear.return",\n        "second.set"\n      ],\n      "servers": true,\n      "projects": true,\n      "enabled": true,\n      "names": [\n        "b"\n      ],\n      "projectRoot": "/pdrs-fixture/project"\n    }',
+     '    {\n      "id": "clear-then-set",\n      "events": [\n        "clear.servers",\n        "clear.return",\n        "second.set"\n      ],\n      "servers": true,\n      "projects": true,\n      "enabled": false,\n      "names": [\n        "b"\n      ],\n      "projectRoot": "/pdrs-fixture/project"\n    }',
+     '--lib', 'runtime::mcp::sdk::concurrency::clear_and_set_commits_share_one_critical_section',
+     '#347 fix-r4b clear-then-set TS enabled'),
+    ('ts-cell3-names-corrupted', '../../tests/fixtures/sdk-mcp-p2/oracle.json',
+     '    {\n      "id": "clear-then-set",\n      "events": [\n        "clear.servers",\n        "clear.return",\n        "second.set"\n      ],\n      "servers": true,\n      "projects": true,\n      "enabled": true,\n      "names": [\n        "b"\n      ],\n      "projectRoot": "/pdrs-fixture/project"\n    }',
+     '    {\n      "id": "clear-then-set",\n      "events": [\n        "clear.servers",\n        "clear.return",\n        "second.set"\n      ],\n      "servers": true,\n      "projects": true,\n      "enabled": true,\n      "names": [\n        "wrong"\n      ],\n      "projectRoot": "/pdrs-fixture/project"\n    }',
+     '--lib', 'runtime::mcp::sdk::concurrency::clear_and_set_commits_share_one_critical_section',
+     '#347 fix-r4b clear-then-set TS exact names'),
+    ('ts-cell3-projectRoot-corrupted', '../../tests/fixtures/sdk-mcp-p2/oracle.json',
+     '    {\n      "id": "clear-then-set",\n      "events": [\n        "clear.servers",\n        "clear.return",\n        "second.set"\n      ],\n      "servers": true,\n      "projects": true,\n      "enabled": true,\n      "names": [\n        "b"\n      ],\n      "projectRoot": "/pdrs-fixture/project"\n    }',
+     '    {\n      "id": "clear-then-set",\n      "events": [\n        "clear.servers",\n        "clear.return",\n        "second.set"\n      ],\n      "servers": true,\n      "projects": true,\n      "enabled": true,\n      "names": [\n        "b"\n      ],\n      "projectRoot": "/wrong"\n    }',
+     '--lib', 'runtime::mcp::sdk::concurrency::clear_and_set_commits_share_one_critical_section',
+     '#347 fix-r4b clear-then-set TS project root'),
+    ('start-error-swallowed', '../../tests/fixtures/sdk-mcp-p2/concurrency.rs',
+     '.unwrap_or_else(|e| panic!("#347 fix-r4b {cell} start missing: {e}"))',
+     '.unwrap_or(ProbeEvent::Started)',
+     '--lib', 'runtime::mcp::sdk::concurrency::missing_observations_fail_closed',
+     '#347 fix-r4b missing observation must identify its stage'),
+    ('competition-error-swallowed', '../../tests/fixtures/sdk-mcp-p2/concurrency.rs',
+     '.unwrap_or_else(|e| panic!("#347 fix-r4b {cell} competition missing: {e}"))',
+     '.unwrap_or(ProbeEvent::WouldBlock)',
+     '--lib', 'runtime::mcp::sdk::concurrency::missing_observations_fail_closed',
+     '#347 fix-r4b missing observation must fail closed'),
+    ('acquired-reported-blocked', '../../tests/fixtures/sdk-mcp-p2/concurrency.rs',
+     'Ok(guard) => {\n                let _ = probe.sender.send(ProbeEvent::Acquired);',
+     'Ok(guard) => {\n                let _ = probe.sender.send(ProbeEvent::WouldBlock);',
+     '--lib', 'runtime::mcp::sdk::concurrency::acquired_probe_retains_the_real_guard',
+     '#347 fix-r4b unlocked probe must report Acquired'),
+    ('poisoned-reported-blocked', '../../tests/fixtures/sdk-mcp-p2/concurrency.rs',
+     'Err(TryLockError::Poisoned(error)) => {\n                let _ = probe.sender.send(ProbeEvent::Acquired);',
+     'Err(TryLockError::Poisoned(error)) => {\n                let _ = probe.sender.send(ProbeEvent::WouldBlock);',
+     '--lib', 'runtime::mcp::sdk::concurrency::acquired_probe_retains_the_real_guard',
+     '#347 fix-r4b unlocked probe must report Acquired'),
+    ('unwind-release-disabled', '../../tests/fixtures/sdk-mcp-p2/concurrency.rs',
+     'release_gate(gate);', 'let _ = gate;',
+     '--lib', 'runtime::mcp::sdk::concurrency::unwinding_releases_the_predecessor',
+     '#347 fix-r4b unwind predecessor task failed'),
+    ('cancel-release-disabled', '../../tests/fixtures/sdk-mcp-p2/concurrency.rs',
+     'release_gate(gate);', 'let _ = gate;',
+     '--lib', 'runtime::mcp::sdk::concurrency::cancellation_releases_the_predecessor',
+     '#347 fix-r4b cancelled predecessor task failed'),
     # ── #347③ the shared session→project table ────────────────────────────
     ('registry-skips-shared-write', 'sdk_session/registry.rs',
      'self.projects\n'
@@ -226,55 +268,43 @@ MUTATIONS = [
      '#401 the DOMException text is preserved'),
 ]
 
-# The test file the delayed rows below patch (relative to `source`, like
-# the product anchors above).
-TEST_REL = '../../tests/sdk_mcp.rs'
+# Each delayed row changes the delay parameter that the real lock probe
+# consumes after emitting Started. Full test names bind the cfg(test) module.
+TEST_REL = '../../tests/fixtures/sdk-mcp-p2/concurrency.rs'
 TEST_FILE = (source / TEST_REL).resolve()
-
-# #347 fix-r3 (review P1): delayed re-runs of the two boundary mutants. Each
-# row patches the test file to sleep 3s — past the 2s completion window —
-# before the spawned operation's start marker, i.e. exactly the "clear/set
-# not yet scheduled" interleaving under which the pre-fix-r3 tests let both
-# mutants through; the row also names the product mutation it must be run
-# with. Kill predicate unchanged: the same bound message must appear in the
-# same test's own panic block.
 MUTANTS = [
-    ('clear-commit-boundary-delayed', '../../tests/sdk_mcp.rs',
-     'set_started.record();',
-     'tokio::time::sleep(Duration::from_secs(3)).await;\n'
-     '        set_started.record();',
+    ('clear-commit-boundary-delayed', '../../tests/fixtures/sdk-mcp-p2/concurrency.rs',
+     'clear_set_cell(Duration::ZERO).await;',
+     'clear_set_cell(Duration::from_secs(3)).await;',
      'clear-commit-boundary',
-     'clear_and_set_commits_share_one_critical_section',
-     'the shared session→project entry must not lag the server table'),
-    ('set-commit-boundary-delayed', '../../tests/sdk_mcp.rs',
-     'clear_started.record();',
-     'std::thread::sleep(Duration::from_secs(3));\n'
-     '        clear_started.record();',
+     'runtime::mcp::sdk::concurrency::clear_and_set_commits_share_one_critical_section',
+     '#347 fix-r4b cell3 must observe WouldBlock at the real servers lock'),
+    ('set-commit-boundary-delayed', '../../tests/fixtures/sdk-mcp-p2/concurrency.rs',
+     'set_clear_cell(Duration::ZERO).await;',
+     'set_clear_cell(Duration::from_secs(3)).await;',
      'set-commit-boundary',
-     'set_commit_cannot_outlive_the_shared_table_write',
-     "the clear must not leave the commit's shared-table entry behind"),
+     'runtime::mcp::sdk::concurrency::set_commit_cannot_outlive_the_shared_table_write',
+     '#347 fix-r4b cell4 must observe WouldBlock at the real servers lock'),
+    ('set-read-window-unlocked-delayed', '../../tests/fixtures/sdk-mcp-p2/concurrency.rs',
+     'toggle_cell(Duration::ZERO, true).await;',
+     'toggle_cell(Duration::from_secs(3), true).await;',
+     'set-read-window-unlocked',
+     'runtime::mcp::sdk::concurrency::set_and_toggle_do_not_lose_updates',
+     '#347 fix-r4b toggle must observe WouldBlock at the real servers lock'),
 ]
-
-# #347 fix-r3: the paired positive controls — the same 3s start delay with
-# no product mutation. The delayed start must not break the fixed shape, or
-# the delayed mutants above would prove nothing (a false kill). These must
-# come back green.
 CONTROLS = [
-    ('cell3-delayed-control', '../../tests/sdk_mcp.rs',
-     'set_started.record();',
-     'tokio::time::sleep(Duration::from_secs(3)).await;\n'
-     '        set_started.record();',
-     'clear_and_set_commits_share_one_critical_section'),
-    ('cell4-delayed-control', '../../tests/sdk_mcp.rs',
-     'clear_started.record();',
-     'std::thread::sleep(Duration::from_secs(3));\n'
-     '        clear_started.record();',
-     'set_commit_cannot_outlive_the_shared_table_write'),
-    ('toggle-delayed-control', '../../tests/sdk_mcp.rs',
-     'toggle_started.record();',
-     'tokio::time::sleep(Duration::from_secs(3)).await;\n'
-     '        toggle_started.record();',
-     'set_and_toggle_do_not_lose_updates'),
+    ('cell3-delayed-control', '../../tests/fixtures/sdk-mcp-p2/concurrency.rs',
+     'clear_set_cell(Duration::ZERO).await;',
+     'clear_set_cell(Duration::from_secs(3)).await;',
+     'runtime::mcp::sdk::concurrency::clear_and_set_commits_share_one_critical_section'),
+    ('cell4-delayed-control', '../../tests/fixtures/sdk-mcp-p2/concurrency.rs',
+     'set_clear_cell(Duration::ZERO).await;',
+     'set_clear_cell(Duration::from_secs(3)).await;',
+     'runtime::mcp::sdk::concurrency::set_commit_cannot_outlive_the_shared_table_write'),
+    ('toggle-delayed-control', '../../tests/fixtures/sdk-mcp-p2/concurrency.rs',
+     'toggle_cell(Duration::ZERO, true).await;',
+     'toggle_cell(Duration::from_secs(3), true).await;',
+     'runtime::mcp::sdk::concurrency::set_and_toggle_do_not_lose_updates'),
 ]
 
 
@@ -391,219 +421,140 @@ def classify_selftest(log):
 
 def main():
     if len(sys.argv) >= 2 and sys.argv[1] == '--classify-selftest':
-        log = Path(sys.argv[2]).read_text() if len(sys.argv) > 2 \
-            else SELFTEST_SIBLING_LOG
-        sys.exit(0 if classify_selftest(log) else 1)
-    selected = sys.argv[2:]
-    mutations = MUTATIONS
-    delayed = MUTANTS
-    controls = CONTROLS
-    if selected:
-        mutations = [m for m in MUTATIONS if m[0] in selected]
-        delayed = [m for m in MUTANTS if m[0] in selected]
-        controls = [m for m in CONTROLS if m[0] in selected]
-        unknown = set(selected) - ({m[0] for m in mutations}
-                                   | {m[0] for m in delayed}
-                                   | {m[0] for m in controls})
-        assert not unknown, f'unknown mutation name(s): {sorted(unknown)}'
-    by_name = {m[0]: m for m in MUTATIONS}
+        log = Path(sys.argv[2]).read_text() if len(sys.argv) > 2 else SELFTEST_SIBLING_LOG
+        return 0 if classify_selftest(log) else 1
     if not os.environ.get('CARGO_TARGET_DIR'):
-        sys.exit('CARGO_TARGET_DIR must be exported by the caller '
-                 '(the shared slot-aware build tree)')
+        sys.exit('CARGO_TARGET_DIR must be exported by the caller')
     env = os.environ.copy()
     env.setdefault('CARGO_PROFILE_DEV_DEBUG', 'line-tables-only')
     env.setdefault('CARGO_PROFILE_TEST_DEBUG', 'line-tables-only')
-    out = Path(sys.argv[1]).resolve()
+    sample = sys.argv[1] == '--bounded-sample'
+    compile_only = sys.argv[1] == '--compile-only'
+    offset = 2 if sample or compile_only else 1
+    out = Path(sys.argv[offset]).resolve()
     out.mkdir(parents=True, exist_ok=False)
-    check_command = ['cargo', 'check', '--manifest-path', 'src/Cargo.toml',
-                     '-p', 'pilotdeck-gateway', '--tests']
-    results = []
-    product_paths = {source / filename for _, filename, *_ in mutations}
-    for entry in delayed:
-        product_paths.add(source / by_name[entry[4]][1])
-    paths = sorted(product_paths)
-    if delayed or controls:
-        paths.append(TEST_FILE)
-    with mutating_sources(root, paths) as snapshots:
-        for name, filename, old, new, target, test, message in mutations:
-            path = source / filename
-            original = snapshots[path]
-            before = hashlib.sha256(original).hexdigest()
-            content = original.decode()
-            count = content.count(old)
-            if count != 1:
-                results.append(dict(name=name, status='INVALID',
-                                    reason=f'stale anchor: count {count} != 1'))
-                print(f'{name}: INVALID stale anchor count {count}', flush=True)
-                continue
-            changed = content.replace(old, new, 1)
-            (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(
-                content.splitlines(True), changed.splitlines(True),
-                fromfile=filename, tofile=filename)))
-            try:
-                # Compile first: a mutant that does not build is INVALID, not
-                # evidence.
-                wait_for_slot(root / 'scripts/cargo-slots.sh')
-                path.write_text(changed)
-                check = run_owned(check_command, cwd=root, env=env, timeout=900)
-                (out / f'{name}.check.log').write_text(check.stdout + check.stderr)
-                if check.returncode != 0:
-                    results.append(dict(name=name, status='INVALID',
-                                        reason='mutant does not compile'))
-                    print(f'{name}: INVALID does not compile', flush=True)
-                    continue
-                wait_for_slot(root / 'scripts/cargo-slots.sh')
-                result = run_owned(
-                    ['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
-                     '-p', 'pilotdeck-gateway', target, '--',
-                     '--exact', test],
-                    cwd=root, env=env, timeout=900)
-                log = result.stdout + result.stderr
-                (out / f'{name}.log').write_text(log)
-                hit = killed(log, result.returncode, test, message)
-                results.append(dict(
-                    name=name,
-                    status='KILLED' if hit else 'SURVIVED',
-                    reason='' if hit else
-                    'rc={}; tagged message not in the test\'s own panic block'.format(
-                        result.returncode),
-                    message=message,
-                    sourceSha256=before,
-                ))
-                print(f'{name}: {"KILLED" if hit else "SURVIVED"}', flush=True)
-            finally:
-                path.write_bytes(original)
-                assert hashlib.sha256(path.read_bytes()).hexdigest() == before
-        # #347 fix-r3: the delayed boundary mutants — product mutation plus a
-        # test-file patch that delays the second operation's start past the
-        # window. Same compile-then-run discipline and the same kill
-        # predicate as above.
-        for name, _test_rel, test_old, test_new, base, test, message in delayed:
-            entry = by_name[base]
-            filename, old, new, target = entry[1], entry[2], entry[3], entry[4]
-            path = source / filename
-            original = snapshots[path]
-            before = hashlib.sha256(original).hexdigest()
-            test_original = snapshots[TEST_FILE]
-            test_before = hashlib.sha256(test_original).hexdigest()
-            content = original.decode()
-            test_content = test_original.decode()
-            count = content.count(old)
-            test_count = test_content.count(test_old)
-            if count != 1 or test_count != 1:
-                results.append(dict(name=name, status='INVALID',
-                                    reason=f'stale anchor: product {count}, '
-                                           f'test {test_count}'))
-                print(f'{name}: INVALID stale anchor product {count} '
-                      f'test {test_count}', flush=True)
-                continue
-            changed = content.replace(old, new, 1)
-            test_changed = test_content.replace(test_old, test_new, 1)
-            (out / f'{name}.patch').write_text(
-                ''.join(difflib.unified_diff(
-                    content.splitlines(True), changed.splitlines(True),
-                    fromfile=filename, tofile=filename))
-                + ''.join(difflib.unified_diff(
-                    test_content.splitlines(True), test_changed.splitlines(True),
-                    fromfile='tests/sdk_mcp.rs', tofile='tests/sdk_mcp.rs')))
-            try:
-                wait_for_slot(root / 'scripts/cargo-slots.sh')
-                path.write_text(changed)
-                TEST_FILE.write_text(test_changed)
-                check = run_owned(check_command, cwd=root, env=env, timeout=900)
-                (out / f'{name}.check.log').write_text(check.stdout + check.stderr)
-                if check.returncode != 0:
-                    results.append(dict(name=name, status='INVALID',
-                                        reason='delayed mutant does not compile'))
-                    print(f'{name}: INVALID does not compile', flush=True)
-                    continue
-                wait_for_slot(root / 'scripts/cargo-slots.sh')
-                result = run_owned(
-                    ['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
-                     '-p', 'pilotdeck-gateway', target, '--',
-                     '--exact', test],
-                    cwd=root, env=env, timeout=900)
-                log = result.stdout + result.stderr
-                (out / f'{name}.log').write_text(log)
-                hit = killed(log, result.returncode, test, message)
-                results.append(dict(
-                    name=name,
-                    status='KILLED' if hit else 'SURVIVED',
-                    reason='' if hit else
-                    'rc={}; tagged message not in the test\'s own panic block'.format(
-                        result.returncode),
-                    message=message,
-                    sourceSha256=before,
-                ))
-                print(f'{name}: {"KILLED" if hit else "SURVIVED"}', flush=True)
-            finally:
-                path.write_bytes(original)
-                TEST_FILE.write_bytes(test_original)
-                assert hashlib.sha256(path.read_bytes()).hexdigest() == before
-                assert hashlib.sha256(TEST_FILE.read_bytes()).hexdigest() \
-                    == test_before
-        # #347 fix-r3: the paired controls — the same start delay with no
-        # product mutation must leave the tests green.
-        for name, _test_rel, test_old, test_new, test in controls:
-            test_original = snapshots[TEST_FILE]
-            test_before = hashlib.sha256(test_original).hexdigest()
-            test_content = test_original.decode()
-            test_count = test_content.count(test_old)
-            if test_count != 1:
-                results.append(dict(name=name, status='INVALID',
-                                    reason=f'stale anchor: test {test_count}'))
-                print(f'{name}: INVALID stale anchor test {test_count}',
-                      flush=True)
-                continue
-            test_changed = test_content.replace(test_old, test_new, 1)
-            (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(
-                test_content.splitlines(True), test_changed.splitlines(True),
-                fromfile='tests/sdk_mcp.rs', tofile='tests/sdk_mcp.rs')))
-            try:
-                wait_for_slot(root / 'scripts/cargo-slots.sh')
-                TEST_FILE.write_text(test_changed)
-                check = run_owned(check_command, cwd=root, env=env, timeout=900)
-                (out / f'{name}.check.log').write_text(check.stdout + check.stderr)
-                if check.returncode != 0:
-                    results.append(dict(name=name, status='INVALID',
-                                        reason='control patch does not compile'))
-                    print(f'{name}: INVALID does not compile', flush=True)
-                    continue
-                wait_for_slot(root / 'scripts/cargo-slots.sh')
-                result = run_owned(
-                    ['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
-                     '-p', 'pilotdeck-gateway', '--test=sdk_mcp', '--',
-                     '--exact', test],
-                    cwd=root, env=env, timeout=900)
-                log = result.stdout + result.stderr
-                (out / f'{name}.log').write_text(log)
-                ok = (result.returncode == 0 and f'{test} ... ok' in log
-                      and 'test result: ok' in log)
-                results.append(dict(
-                    name=name,
-                    status='CONTROL-OK' if ok else 'CONTROL-FAILED',
-                    reason='' if ok else f'rc={result.returncode}',
-                ))
-                print(f'{name}: {"CONTROL-OK" if ok else "CONTROL-FAILED"}',
-                      flush=True)
-            finally:
-                TEST_FILE.write_bytes(test_original)
-                assert hashlib.sha256(TEST_FILE.read_bytes()).hexdigest() \
-                    == test_before
-        # Written after the loop (fix-r1, review boundary #3): the last
-        # mutant skipping the tail must not truncate the evidence.
-        (out / 'summary.json').write_text(
-            json.dumps(results, ensure_ascii=False, indent=2) + '\n')
-    unexpected = [result for result in results
-                  if result['status'] not in ('KILLED', 'CONTROL-OK')]
-    print(f'{len(results) - len(unexpected)}/{len(results)} as expected; '
-          f'every source restored byte-for-byte', flush=True)
-    if unexpected:
-        for result in unexpected:
-            print(f"{result['name']}: {result['status']} {result.get('reason', '')}",
-                  flush=True)
-        sys.exit(1)
+    selected = set(sys.argv[offset + 1:])
+    command = ['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway']
+    check_command = ['cargo', 'check', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--tests']
 
+    def run(label, argv, timeout=900):
+        wait_for_slot(root / 'scripts/cargo-slots.sh')
+        try:
+            result = run_owned(argv, cwd=root, env=env, timeout=timeout)
+        except subprocess.TimeoutExpired as error:
+            raw = ''
+            for stream in (error.output, error.stderr):
+                raw += stream.decode(errors='replace') if isinstance(stream, bytes) else stream or ''
+            (out / f'{label}.log').write_text(raw + '\nINVALID: process timeout\n')
+            raise
+        (out / f'{label}.log').write_text(result.stdout + result.stderr)
+        return result
+
+    # Reuse the shared exact-one-test success predicate. Keep this catalog's
+    # executor for multi-file mutations, integration/lib targets and compile
+    # preflight; its panic-block kill predicate is stricter than run_cases.
+    results = []
+    def record(name, status, reason, **extra):
+        results.append(dict(name=name, status=status, reason=reason, **extra))
+        (out / 'summary.json').write_text(json.dumps(results, ensure_ascii=False, indent=2) + '\n')
+        print(f'{name}: {status}: {reason}', flush=True)
+
+    # No source mutation: an intentionally unreleased gate exercises the same
+    # toggle path and the runtime's real destructor in an owned subprocess.
+    if sample:
+        test = 'runtime::mcp::sdk::concurrency::unreleased_predecessor_fails_boundedly'
+        message = '#347 fix-r4b toggle predecessor task failed'
+        try:
+            run('sample-compile', command + ['--lib', '--no-run']).check_returncode()
+            start = time.monotonic()
+            result = run('sample', command + ['--lib', test, '--', '--exact', '--ignored'], timeout=45)
+            elapsed = round(time.monotonic() - start, 3)
+            hit = killed(result.stdout + result.stderr, result.returncode, test, message)
+            record('unreleased-predecessor', 'KILLED' if hit else 'INVALID',
+                   'bounded tagged failure' if hit else 'missing bound failure',
+                   elapsedSeconds=elapsed, test=test, message=message)
+        except Exception as error:
+            record('unreleased-predecessor', 'INVALID', str(error))
+        return int(any(row['status'] != 'KILLED' for row in results))
+
+    # Normalize the declarative catalog; mutations may affect product + test.
+    by_name = {row[0]: row for row in MUTATIONS}
+    jobs = []
+    for name, filename, old, new, target, test, message in MUTATIONS:
+        jobs.append((name, [(source / filename, old, new)], target, test, message, False))
+    for name, filename, old, new, base, test, message in MUTANTS:
+        _, product, before, after, target, _, _ = by_name[base]
+        jobs.append((name, [(source / product, before, after), (source / filename, old, new)], target, test, message, False))
+    for name, filename, old, new, test in CONTROLS:
+        jobs.append((name, [(source / filename, old, new)], '--lib', test, '', True))
+    if selected:
+        unknown = selected - {row[0] for row in jobs}
+        if unknown:
+            sys.exit(f'unknown mutation names: {sorted(unknown)}')
+        jobs = [row for row in jobs if row[0] in selected]
+    paths = sorted({path for _, edits, *_ in jobs for path, _, _ in edits})
+    try:
+        with mutating_sources(root, paths) as snapshots:
+            for name, edits, target, test, message, control in jobs:
+                status, reason, start = 'INVALID', '', time.monotonic()
+                changed = {}
+                try:
+                    for path, old, new in edits:
+                        content = snapshots[path].decode()
+                        count = content.count(old)
+                        if count != 1:
+                            raise ValueError(f'stale anchor {path}: {count} != 1')
+                        changed[path] = content.replace(old, new, 1)
+                    argv = command + [target, test, '--', '--exact']
+                    if not compile_only and not passed(run(name + '-positive', argv), test):
+                        raise ValueError('positive bound test did not pass')
+                    patch = []
+                    for path, content in changed.items():
+                        original = snapshots[path].decode()
+                        patch.extend(difflib.unified_diff(original.splitlines(True), content.splitlines(True), fromfile=str(path), tofile=str(path)))
+                        path.write_text(content)
+                    (out / f'{name}.patch').write_text(''.join(patch))
+                    # Every mutant must compile, even when another one failed.
+                    run(name + '-check', check_command).check_returncode()
+                    if compile_only:
+                        status, reason = 'COMPILED', 'runtime not requested'
+                    else:
+                        result = run(name, argv)
+                        if control:
+                            status = 'CONTROL-OK' if passed(result, test) else 'INVALID'
+                            reason = 'delayed positive control' if status == 'CONTROL-OK' else 'control failed'
+                        elif killed(result.stdout + result.stderr, result.returncode, test, message):
+                            status, reason = 'KILLED', 'exact test and dedicated panic message'
+                        elif passed(result, test):
+                            status, reason = 'SURVIVED', 'bound test still passed'
+                        else:
+                            status, reason = 'INVALID', 'wrong panic, missing test, or build/process failure'
+                except Exception as error:
+                    status, reason = 'INVALID', f'{type(error).__name__}: {error}'
+                finally:
+                    for path, _, _ in edits:
+                        path.write_bytes(snapshots[path])
+                        if path.read_bytes() != snapshots[path]:
+                            raise RuntimeError(f'restoration failed: {path}')
+                if not compile_only:
+                    try:
+                        if not passed(run(name + '-restored', command + [target, test, '--', '--exact']), test):
+                            status, reason = 'INVALID', reason + '; restored test failed'
+                    except Exception as error:
+                        status, reason = 'INVALID', reason + f'; restored: {error}'
+                record(name, status, reason, test=test, message=message, elapsedSeconds=round(time.monotonic()-start, 3))
+    except Exception as error:
+        # An unsafe source baseline/restoration stops writes, but accounts for
+        # every job so it cannot silently truncate the requested suite.
+        for row in results:
+            row.update(status='INVALID', reason=row['reason'] + f'; source guard: {error}')
+        for name, _, _, test, message, _ in jobs[len(results):]:
+            record(name, 'INVALID', f'source guard: {error}', test=test, message=message)
+        (out / 'summary.json').write_text(json.dumps(results, ensure_ascii=False, indent=2) + '\n')
+    good = {'COMPILED'} if compile_only else {'KILLED', 'CONTROL-OK'}
+    unexpected = [row for row in results if row['status'] not in good]
+    print(f'{len(results)-len(unexpected)}/{len(results)} as expected; KILLED/SURVIVED/INVALID recorded for every selected mutation', flush=True)
+    return int(not results or bool(unexpected))
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
