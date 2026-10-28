@@ -20,6 +20,7 @@ root = Path(__file__).resolve().parents[5]
 transport = root / 'src/pilotdeck-cli/src/sdk/transport.rs'
 sessions = root / 'src/pilotdeck-cli/src/sdk/sessions.rs'
 sdk = root / 'src/pilotdeck-cli/src/sdk.rs'
+lease_tests = root / 'src/pilotdeck-cli/tests/sdk_sessions_list_exit.rs'
 MATRIX = 'sessions_list_matches_ts_matrix'
 LIFECYCLE = 'sessions_list_transport_boundaries'
 oracle = root / 'src/pilotdeck-cli/tests/fixtures/sdk-sessions-list/oracle.json'
@@ -52,6 +53,23 @@ mutations = [
     ('pong-payload', transport, '.flush()', '.send(Message::Pong(vec![0].into()))', LIFECYCLE, '#983 exact pong wrong-id-and-ping'),
     ('codec-number-order', sessions, 'let raw = stringify_json(value)', 'let raw = stringify_json(&JsValue::Null)', MATRIX, '#983 TS output and exit sessions-default--argv'),
     ('original-extraction', oracle, '"nodeVersion": "v22.22.0"', '"nodeVersion": "v0.0.0"', 'sessions_list_oracle_regenerates_identically', '#983 identical extraction from original TS records'),
+    ('lease-no-wait', lease_tests, 'if !waiting {', 'if !waiting { return Err(error); } if !waiting {', 'parity_lock_waits_for_predecessor', '#983 occupied lease waits before acquisition'),
+    ('lease-timeout-kind', lease_tests, 'io::ErrorKind::TimedOut,', 'io::ErrorKind::Other,', 'parity_lock_times_out_without_reclaiming', '#983 occupied lease fails explicitly at deadline'),
+    ('lease-late-acquisition', lease_tests, 'if waiting && Instant::now() >= deadline {', 'if waiting && Instant::now() >= deadline && path.exists() {', 'parity_lock_does_not_acquire_after_deadline', '#983 expired waiter cannot acquire released lease'),
+    ('lease-owner-publish', lease_tests, '"pid": std::process::id(),', '"pid": 0,', 'parity_lock_publishes_and_releases_owned_lease', '#983 parity lease publishes complete ownership'),
+    ('lease-owned-release', lease_tests, 'fs::remove_dir(&self.path)?;', 'if false { fs::remove_dir(&self.path)?; }', 'parity_lock_publishes_and_releases_owned_lease', '#983 parity lease releases owned directory'),
+    ('lease-owner-check', lease_tests, '&& fs::read(self.path.join("owner.json"))? == self.owner', '&& !fs::read(self.path.join("owner.json"))?.is_empty()', 'parity_lock_preserves_replaced_owner', '#983 changed ownership prevents lease release'),
+    ('lease-directory-check', lease_tests, '(metadata.dev(), metadata.ino()) == self.identity', 'metadata.dev() == self.identity.0', 'parity_lock_preserves_replaced_directory', '#983 changed directory identity prevents lease release'),
+    ('lease-guard-check', lease_tests, 'guard.try_lock().map_err(io::Error::from)?;', 'let _ = guard.try_lock().map_err(io::Error::from);', 'parity_lock_guard_wait_is_bounded', '#983 occupied guard shares acquisition deadline'),
+    ('lease-cancel-reservation', lease_tests, 'tokio::time::sleep_until(', 'fs::write(path.join("owner.json"), b"wrong waiter")?; tokio::time::sleep_until(', 'parity_lock_cancelled_wait_preserves_owner', '#983 cancelled waiter preserves predecessor ownership'),
+    ('lease-release-retry', lease_tests, 'if error.kind() == io::ErrorKind::WouldBlock', 'if error.kind() == io::ErrorKind::Other', 'parity_lock_release_waits_for_guard', '#983 release retries a briefly occupied guard'),
+    ('lease-release-deadline', lease_tests, 'std::time::Instant::now() + Duration::from_secs(2)', 'std::time::Instant::now() + Duration::from_secs(0)', 'parity_lock_release_guard_deadline_is_bounded', '#983 release guard exhausts bounded retry before failure'),
+    ('lease-guard-stable', lease_tests, 'fs::remove_dir(&self.path)?;', 'fs::remove_dir(&self.path)?; let mut name = self.path.as_os_str().to_owned(); name.push(".guard"); fs::remove_file(Path::new(&name))?;', 'parity_lock_publishes_and_releases_owned_lease', '#983 parity guard inode remains stable'),
+    ('lease-owner-timestamp', lease_tests, 'std::time::SystemTime::now()', 'std::time::UNIX_EPOCH', 'parity_lock_publishes_and_releases_owned_lease', '#983 parity lease publishes complete ownership'),
+    ('lease-owner-token', lease_tests, 'uuid::Uuid::new_v4().simple().to_string()', '"invalid".to_owned()', 'parity_lock_publishes_and_releases_owned_lease', '#983 parity lease publishes complete ownership'),
+    ('lease-guard-hardlink', lease_tests, 'metadata.nlink() != 1', 'metadata.nlink() == 0', 'parity_lock_rejects_guard_hardlinks', '#983 parity guard rejects multiple hardlinks'),
+    ('lease-guard-symlink', lease_tests, 'libc::O_NOFOLLOW | libc::O_NONBLOCK', 'libc::O_NONBLOCK', 'parity_lock_rejects_guard_symlinks', '#983 parity guard rejects symlinks'),
+    ('lease-guard-type', lease_tests, '!metadata.is_file()', 'metadata.is_dir()', 'parity_lock_rejects_guard_fifo', '#983 parity guard rejects nonregular files'),
 ]
 
 
