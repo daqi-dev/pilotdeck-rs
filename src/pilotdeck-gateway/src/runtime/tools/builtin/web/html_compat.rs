@@ -875,25 +875,6 @@ mod tests {
         html
     }
 
-    fn cpu_duration(sample: &serde_json::Value) -> Option<Duration> {
-        if sample["exit"].as_i64()? != 0 {
-            return None;
-        }
-        let results: Vec<_> = sample["stdout"]
-            .as_str()?
-            .lines()
-            .filter(|line| line.starts_with("test result:"))
-            .collect();
-        if results.len() != 1 || !results[0].starts_with("test result: ok. 1 passed; 0 failed;") {
-            return None;
-        }
-        let seconds = sample["cpu_seconds"].as_f64()?;
-        if !seconds.is_finite() || seconds <= 0.0 {
-            return None;
-        }
-        Duration::try_from_secs_f64(seconds).ok()
-    }
-
     #[test]
     fn cpu_sample_requires_completed_work_and_ignores_preemption() {
         let valid = serde_json::json!({
@@ -901,7 +882,7 @@ mod tests {
             "stdout": "test result: ok. 1 passed; 0 failed; 0 ignored;\n"
         });
         crate::negative_assert_eq!(
-            cpu_duration(&valid),
+            timing::cpu_duration(&valid),
             Some(Duration::from_millis(250)),
             "#978 CPU sample excludes preemption"
         );
@@ -923,7 +904,7 @@ mod tests {
             let mut invalid = valid.clone();
             invalid[key] = value;
             crate::negative_assert!(
-                cpu_duration(&invalid).is_none(),
+                timing::cpu_duration(&invalid).is_none(),
                 "#978 CPU sample requires completed work"
             );
         }
@@ -949,69 +930,15 @@ mod tests {
         );
     }
 
-    const CPU_SAMPLER: &str = r#""""Measure one isolated Rust HTML test's CPU work, excluding host preemption."""
-import json
-import resource
-import sys
-import time
-import subprocess
-
-
-def main():
-    before = resource.getrusage(resource.RUSAGE_CHILDREN)
-    started = time.monotonic()
-    # Keep the worker in the caller's process group, so an outer timeout also
-    # reaps it. subprocess.run kills and waits for this child on its own timeout.
-    result = subprocess.run(sys.argv[1:], capture_output=True, text=True,
-                            timeout=600, check=False)
-    after = resource.getrusage(resource.RUSAGE_CHILDREN)
-    print(json.dumps({
-        "cpu_seconds": (after.ru_utime - before.ru_utime)
-                       + (after.ru_stime - before.ru_stime),
-        "wall_seconds": time.monotonic() - started,
-        "exit": result.returncode,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
-    }))
-
-
-if __name__ == "__main__":
-    main()
-"#;
-
     fn timed_rewrite(mib: usize) -> Duration {
-        // This algorithm test measures computation, not scheduler wait. A
-        // separate libtest worker excludes CPU spent by parallel sibling tests.
-        // Sample count and the original scaling threshold remain unchanged.
-        let worker = "runtime::tools::builtin::web::html_compat::tests::deep_frame_cpu_worker";
-        let result = std::process::Command::new("python3")
-            .arg("-c")
-            .arg(CPU_SAMPLER)
-            .arg(std::env::current_exe().expect("#978 CPU worker executable"))
-            .args([
-                "--exact",
-                worker,
-                "--ignored",
-                "--nocapture",
-                "--test-threads=1",
-            ])
-            .env("PDRS_HTML_CPU_MIB", mib.to_string())
-            .env("PYTHONDONTWRITEBYTECODE", "1")
-            .output()
-            .expect("#978 CPU sampler spawn");
-        assert!(
-            result.status.success(),
-            "#978 CPU sampler exit: {}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-        let sample: serde_json::Value =
-            serde_json::from_slice(&result.stdout).expect("#978 CPU sampler JSON");
-        let elapsed = crate::test_negative_receipt::expect_some(
-            cpu_duration(&sample),
-            "#978 CPU worker completed",
-        );
-        eprintln!("#978 CPU sample {mib} MiB: {sample}");
-        elapsed
+        // This algorithm test measures computation, not scheduler wait. The
+        // shared timing helper spawns this binary's ignored worker through
+        // the #978 CPU sampler; sample count and the original scaling
+        // threshold remain unchanged.
+        timing::cpu_time_isolated(
+            "runtime::tools::builtin::web::html_compat::tests::deep_frame_cpu_worker",
+            &[("PDRS_HTML_CPU_MIB", mib.to_string())],
+        )
     }
 
     #[test]

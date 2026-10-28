@@ -6,7 +6,8 @@
 //! the same shape and check the scaling ratio (the fastest run for the
 //! two-size callers, the median of the paired ratios for the 8x reparented
 //! pair); the callers keep a loose absolute cap as the constant-factor
-//! backstop.
+//! backstop. Callers that must stay red-free on a loaded host (#978) sample
+//! the CPU seconds of an isolated worker process instead of the wall clock.
 
 use std::time::Duration;
 
@@ -202,6 +203,94 @@ pub fn assert_within_per_sample_cap(label: &str, full: Duration, samples: usize)
         full.as_secs_f64() < budget,
         "{label}: took {full:?} (fastest of {samples}), per-sample budget {budget}s"
     );
+}
+
+/// CPU seconds of one completed isolated worker sample (#978), or `None`
+/// when the worker did not finish exactly one green test. Preemption inflates
+/// wall time, not CPU time, so a loaded host cannot redden a ratio judged on
+/// these durations; the sampler still refuses incomplete work.
+pub fn cpu_duration(sample: &serde_json::Value) -> Option<Duration> {
+    if sample["exit"].as_i64()? != 0 {
+        return None;
+    }
+    let results: Vec<_> = sample["stdout"]
+        .as_str()?
+        .lines()
+        .filter(|line| line.starts_with("test result:"))
+        .collect();
+    if results.len() != 1 || !results[0].starts_with("test result: ok. 1 passed; 0 failed;") {
+        return None;
+    }
+    let seconds = sample["cpu_seconds"].as_f64()?;
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return None;
+    }
+    Duration::try_from_secs_f64(seconds).ok()
+}
+
+/// Measure one isolated Rust HTML test's CPU work, excluding host preemption.
+const CPU_SAMPLER: &str = r#""""Measure one isolated Rust HTML test's CPU work, excluding host preemption."""
+import json
+import resource
+import sys
+import time
+import subprocess
+
+
+def main():
+    before = resource.getrusage(resource.RUSAGE_CHILDREN)
+    started = time.monotonic()
+    # Keep the worker in the caller's process group, so an outer timeout also
+    # reaps it. subprocess.run kills and waits for this child on its own timeout.
+    result = subprocess.run(sys.argv[1:], capture_output=True, text=True,
+                            timeout=600, check=False)
+    after = resource.getrusage(resource.RUSAGE_CHILDREN)
+    print(json.dumps({
+        "cpu_seconds": (after.ru_utime - before.ru_utime)
+                       + (after.ru_stime - before.ru_stime),
+        "wall_seconds": time.monotonic() - started,
+        "exit": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }))
+
+
+if __name__ == "__main__":
+    main()
+"#;
+
+/// Run one `#[ignore]`d worker test of this same test binary as a separate
+/// process and return the CPU seconds it consumed (#978). An algorithm test
+/// measures computation, not scheduler wait, and the separate worker also
+/// excludes CPU spent by parallel sibling tests. The caller's sample count
+/// and growth thresholds stay unchanged.
+pub fn cpu_time_isolated(worker: &str, env: &[(&str, String)]) -> Duration {
+    let result = std::process::Command::new("python3")
+        .arg("-c")
+        .arg(CPU_SAMPLER)
+        .arg(std::env::current_exe().expect("#978 CPU worker executable"))
+        .args([
+            "--exact",
+            worker,
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .envs(env.iter().map(|(key, value)| (*key, value.as_str())))
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .output()
+        .expect("#978 CPU sampler spawn");
+    assert!(
+        result.status.success(),
+        "#978 CPU sampler exit: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let sample: serde_json::Value =
+        serde_json::from_slice(&result.stdout).expect("#978 CPU sampler JSON");
+    let elapsed = cpu_duration(&sample)
+        .unwrap_or_else(|| panic!("#978 CPU worker did not complete one green test: {sample}"));
+    eprintln!("#978 CPU sample {worker}: {sample}");
+    elapsed
 }
 
 /// The 8x pair judges the median of five paired ratios. Two preempted large
