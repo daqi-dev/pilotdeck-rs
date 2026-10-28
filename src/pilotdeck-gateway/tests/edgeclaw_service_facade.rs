@@ -709,12 +709,8 @@ fn run_scenario(
         clock: Some(clock),
         now_ms: Some(now_ms),
         random_token: Some(random_token),
-        math_random: None,
-        transport: None,
-        runtime: None,
-        logger: None,
         llm_config: Some(JsValue::Object(config)),
-        dream_tail_gate: None,
+        ..ServiceDependencies::default()
     };
     let service = EdgeClawMemoryService::with_dependencies(options, dependencies)
         .unwrap_or_else(|error| panic!("#775 construct {name}: {error}"));
@@ -975,12 +971,9 @@ fn service_for_token(
             clock: Some(Arc::new(|| NOW.to_owned())),
             now_ms: Some(Arc::new(|| NOW_MS)),
             random_token: Some(Arc::new(move || JsString::from(token.as_str()))),
-            math_random: None,
-            transport: None,
-            runtime: None,
             logger,
             llm_config: Some(JsValue::Object(config)),
-            dream_tail_gate: None,
+            ..ServiceDependencies::default()
         },
     )
     .expect("#775 construct test service")
@@ -1622,12 +1615,8 @@ fn session_clear_keeps_other_pending_capture() {
             clock: Some(Arc::new(|| NOW.to_owned())),
             now_ms: Some(Arc::new(|| NOW_MS)),
             random_token: Some(Arc::new(|| JsString::from("token"))),
-            math_random: None,
-            transport: None,
-            runtime: None,
-            logger: None,
             llm_config: Some(JsValue::Object(config)),
-            dream_tail_gate: None,
+            ..ServiceDependencies::default()
         },
     )
     .expect("#775 construct session-clear service");
@@ -1752,6 +1741,9 @@ fn run_node(command: &mut Command, scratch: &Path) {
         }
         if start.elapsed() > Duration::from_secs(180) {
             let _ = child.kill();
+            // Reap before panicking (same bounded-child rule as the
+            // orchestration verify helper).
+            let _ = child.wait();
             panic!("#775 verify.mts timed out");
         }
         std::thread::sleep(Duration::from_millis(25));

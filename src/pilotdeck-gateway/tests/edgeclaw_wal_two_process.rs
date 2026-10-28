@@ -8,8 +8,10 @@
 //!
 //!   1. the parent service's `captureTurn` fails immediately (~1 ms) with
 //!      `database is locked` — `node:sqlite` keeps `busy_timeout` at 0;
-//!   2. reads (`listMemoryEntries`) keep working — WAL readers are not
-//!      blocked by another process's write lock;
+//!   2. reads (`repository.listPendingSessionKeys`, a real `control.sqlite`
+//!      query — not the file-entry `listMemoryEntries` facade) keep working
+//!      and finish bounded — WAL readers are not blocked by another
+//!      process's write lock;
 //!   3. once the other process releases, the same write succeeds.
 //!
 //! This test reproduces exactly that with a second Rust process (this test
@@ -32,7 +34,7 @@ use std::{
     fs,
     io::Write,
     process::{Command, Stdio},
-    sync::Arc,
+    sync::{Arc, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -110,17 +112,19 @@ fn cross_process_wal_writer_blocks_service_writes_like_ts() {
     let config = build_llm_config_with(Some(&llm), None, &|_| None);
     let mut options = ServiceOptions::new(dir.join("workspace"));
     options.root_dir = Some(dir.join("root"));
-    let service = EdgeClawMemoryService::with_dependencies(
-        options,
-        ServiceDependencies {
-            home: Some(dir.join("home")),
-            clock: Some(Arc::new(|| NOW.to_owned())),
-            now_ms: Some(Arc::new(|| NOW_MS)),
-            llm_config: Some(config),
-            ..ServiceDependencies::default()
-        },
-    )
-    .expect("#776 wal-two-process construct test service");
+    let service = Arc::new(
+        EdgeClawMemoryService::with_dependencies(
+            options,
+            ServiceDependencies {
+                home: Some(dir.join("home")),
+                clock: Some(Arc::new(|| NOW.to_owned())),
+                now_ms: Some(Arc::new(|| NOW_MS)),
+                llm_config: Some(config),
+                ..ServiceDependencies::default()
+            },
+        )
+        .expect("#776 wal-two-process construct test service"),
+    );
 
     // Baseline: the write path works before another process holds the lock.
     let messages = messages();
@@ -169,11 +173,36 @@ fn cross_process_wal_writer_blocks_service_writes_like_ts() {
          (busy_timeout 0), took {elapsed:?}"
     );
 
-    // 2) WAL readers are not blocked by the writer's lock.
-    service
-        .repository
-        .list_memory_entries(&JsObject::new())
-        .expect("#776 wal-two-process: reads must keep working under the write lock");
+    // 2) WAL readers are not blocked by the writer's lock. This must be a
+    // real `control.sqlite` query, not the file-entry facade: s0 was written
+    // before the lock and must still be returned as a pending session while
+    // another process holds the WAL write lock. A dedicated thread plus a
+    // bounded receive proves the read completes instead of hanging.
+    let (pending_tx, pending_rx) = mpsc::channel();
+    let reader = service.clone();
+    let read_handle = thread::spawn(move || {
+        let result = reader
+            .repository
+            .storage
+            .list_pending_session_keys(30, None)
+            .map_err(|error| error.to_string());
+        let _ = pending_tx.send(result);
+    });
+    let pending = pending_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("#776 wal-two-process: the locked-DB read must finish bounded")
+        .expect(
+            "#776 wal-two-process: the pending s0 session must still be readable \
+             under the write lock",
+        );
+    assert_eq!(
+        pending,
+        vec!["s0".to_string()],
+        "#776 wal-two-process: the pending s0 session content changed under the write lock"
+    );
+    read_handle
+        .join()
+        .expect("#776 wal-two-process: the pending-session reader thread panicked");
 
     // 3) Release the child's lock; the same write must then succeed.
     let mut stdin = child

@@ -520,7 +520,9 @@ impl EdgeClawMemoryService {
                     .install_last_dream_snapshot(&stage.snapshot, &metadata)?;
                 // Test seam: park between install and replace while the tail
                 // scope is held (the tail-race regression proves the other
-                // thread's install cannot slip in here).
+                // thread's install cannot slip in here). Test builds only:
+                // production has no injectable field (fix-r3 P1-1).
+                #[cfg(test)]
                 if let Some(gate) = &self.dream_tail_gate {
                     gate();
                 }

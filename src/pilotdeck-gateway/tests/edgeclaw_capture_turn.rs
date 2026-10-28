@@ -489,6 +489,9 @@ fn run_node(command: &mut Command, scratch: &Path) {
         }
         if start.elapsed() > Duration::from_secs(90) {
             let _ = child.kill();
+            // Reap the killed child before failing; a zombie keeps the output
+            // files open and hides the timeout from later cleanup.
+            let _ = child.wait();
             panic!("verify.mts timed out");
         }
         std::thread::sleep(Duration::from_millis(20));

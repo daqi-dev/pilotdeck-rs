@@ -19,9 +19,16 @@ real TS` assertion are INVALID. Without mutant names it runs the full set;
 names are for debugging one binding.
 
 fix-r1: `dream-tail-scope` is bound to the two-thread tail-race regression
-(`edgeclaw_dream_tail_race.rs`) instead of the oracle replay — its anchor is
-that test's own dedicated panic message. `storage/snapshots.rs` joined the
-guarded source set for the rollback-result mutant.
+instead of the oracle replay — its anchor is that test's own dedicated panic
+message. `storage/snapshots.rs` joined the guarded source set for the
+rollback-result mutant.
+
+fix-r3: the tail-race regression moved to `tests/common/dream_tail_race.rs`
+and is compiled into the library test binary (`--lib`), because the
+`dream_tail_gate` seam is now `#[cfg(test)]`. `flush-preempt-mark-consumed`
+binds the concurrent flush cell's `capturedSessions == 2` assertion, and
+`wal-read-becomes-write` binds the real `control.sqlite` reader assertion.
+`heartbeat/indexer.rs` joined the guarded source set.
 """
 import json
 import os
@@ -42,12 +49,20 @@ ORCHESTRATION = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/servic
 DREAM_RUN = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/dream/run.rs'
 SNAPSHOTS = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/snapshots.rs'
 STORAGE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage.rs'
+INDEXER = (ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/'
+           'heartbeat/indexer.rs')
 TEST = 'rust_matches_ts_oracle'
 TEST_FILE = 'pilotdeck-gateway/tests/edgeclaw_service_orchestration.rs'
-# fix-r1 P1-1: the dream success tail's shared root operation scope is bound to
-# its own two-thread regression, not to the oracle replay.
-TAIL_RACE_TEST = 'dream_tail_cannot_interleave_across_threads'
-TAIL_RACE_FILE = 'pilotdeck-gateway/tests/edgeclaw_dream_tail_race.rs'
+# fix-r3 P1-1: `dream_tail_gate` is `#[cfg(test)]`, so an integration test can
+# no longer reach it; the two-thread regression is compiled into the library
+# test binary (`--lib`) and its full module path is the libtest filter.
+TAIL_RACE_TEST = 'dream_tail_race::dream_tail_cannot_interleave_across_threads'
+# rustc records the `#[path]` relative to `src/lib.rs`; classify matches the
+# repository-relative suffix so an exact `src/../` spelling is not required.
+TAIL_RACE_FILE = 'tests/common/dream_tail_race.rs'
+# fix-r3 P1-2: a deterministic parked-flush cell whose second flush asserts
+# the business outcome (`capturedSessions == 2`), not the session filter.
+FLUSH_CONCURRENT_TEST = 'flush_second_completes_when_first_never_does'
 # fix-r1 P1-6: the cross-process same-DB WAL cell's Rust acceptance test.
 WAL_TWO_PROCESS_TEST = 'cross_process_wal_writer_blocks_service_writes_like_ts'
 WAL_TWO_PROCESS_FILE = 'pilotdeck-gateway/tests/edgeclaw_wal_two_process.rs'
@@ -119,10 +134,20 @@ ANCHORS = {
     # write-lock failure must be immediate; a 5s wait fails the elapsed bound.
     'wal-busy-timeout':
         '#776 wal-two-process: the locked write must fail immediately',
+    # fix-r3 P1-2: consuming s1 before its LLM await makes the concurrent
+    # flush see only s2; the second flush's `capturedSessions` drops to 1.
+    'flush-preempt-mark-consumed':
+        '#776 flush-never-released: the second flush did not process both sessions',
+    # fix-r3 P1-3: if the pending-session read starts a write transaction it
+    # hits the other process's WAL write lock instead of returning s0.
+    'wal-read-becomes-write':
+        '#776 wal-two-process: the pending s0 session must still be readable '
+        'under the write lock',
 }
 
 
-def mutation(name, path, before, after, *, test=TEST, test_file=TEST_FILE):
+def mutation(name, path, before, after, *, test=TEST, test_file=TEST_FILE,
+             suite='test'):
     return dict(
         name=name,
         path=path,
@@ -131,6 +156,7 @@ def mutation(name, path, before, after, *, test=TEST, test_file=TEST_FILE):
         test=test,
         anchor=ANCHORS[name],
         test_file=test_file,
+        suite=suite,
     )
 
 
@@ -280,6 +306,51 @@ MUTANTS = [
         '        let _tail_scope = ();\n',
         test=TAIL_RACE_TEST,
         test_file=TAIL_RACE_FILE,
+        suite='lib',
+    ),
+    mutation(
+        'flush-preempt-mark-consumed',
+        INDEXER,
+        '''            let sessions = self
+                .repository
+                .storage
+                .list_unindexed_l0_by_session(&session_key)?;
+            self.fire(HeartbeatStage::AfterListUnindexed, &session_key);
+            if sessions.is_empty() {
+                continue;
+            }
+''',
+        '''            let sessions = self
+                .repository
+                .storage
+                .list_unindexed_l0_by_session(&session_key)?;
+            self.fire(HeartbeatStage::AfterListUnindexed, &session_key);
+            if sessions.is_empty() {
+                continue;
+            }
+            // Mutation: consume the batch before the LLM await.
+            let preempted: Vec<String> = sessions
+                .iter()
+                .map(|session| session.l0_index_id.clone())
+                .collect();
+            self.repository.storage.mark_l0_indexed(&preempted)?;
+''',
+        test=FLUSH_CONCURRENT_TEST,
+    ),
+    mutation(
+        'wal-read-becomes-write',
+        STORAGE,
+        '''        if preferred.is_empty() {
+            let conn = self.conn()?;
+''',
+        '''        if preferred.is_empty() {
+            let conn = self.conn()?;
+            // Mutation: the read path starts a write transaction.
+            conn.execute_batch("BEGIN IMMEDIATE")?;
+            conn.execute_batch("ROLLBACK")?;
+''',
+        test=WAL_TWO_PROCESS_TEST,
+        test_file=WAL_TWO_PROCESS_FILE,
     ),
     mutation(
         'wal-busy-timeout',
@@ -311,7 +382,10 @@ def classify(result, mutant):
         result.returncode != 0
         and 'test result: FAILED' in log
         and f"test {mutant['test']} ... FAILED" in log
-        and f"panicked at {mutant['test_file']}:" in log
+        and any(
+            'panicked at ' in line and mutant['test_file'] in line
+            for line in log.splitlines()
+        )
         and mutant['anchor'] in log
     ):
         return 'KILLED', 'bound test failed at its named assertion'
@@ -346,8 +420,11 @@ def main():
             'cargo', 'test', '--offline', '--locked',
             '--manifest-path', str(ROOT / 'src/Cargo.toml'),
             '-p', 'pilotdeck-gateway',
-            '--test', Path(mutant['test_file']).stem,
         ]
+        if mutant['suite'] == 'lib':
+            command.append('--lib')
+        else:
+            command += ['--test', Path(mutant['test_file']).stem]
         args = ['--', mutant['test'], '--exact', '--nocapture']
         with (output / f'{label}.log').open('w') as log:
             gate = wait_for_slot(ROOT / 'scripts/cargo-slots.sh')
@@ -381,7 +458,7 @@ def main():
     try:
         with mutating_sources(
             ROOT,
-            [ORCHESTRATION, DREAM_RUN, SNAPSHOTS, STORAGE],
+            [ORCHESTRATION, DREAM_RUN, SNAPSHOTS, STORAGE, INDEXER],
             baseline='HEAD',
         ) as snapshots:
             for mutant in selected:
@@ -395,17 +472,22 @@ def main():
                         f"anchor appears {occurrences} times, expected exactly once",
                     )
                     continue
-                if not passed(run(f"{mutant['name']}-positive", mutant), mutant['test']):
-                    record(mutant, 'INVALID', 'positive control did not pass the bound test')
-                    continue
-                mutated = original.replace(mutant['old'], mutant['new'], 1)
                 status, reason = 'INVALID', ''
                 try:
-                    path.write_text(mutated)
-                    # Force Cargo to observe the write even on a filesystem
-                    # with coarse mtimes; a cached binary would fake SURVIVED.
-                    time.sleep(1.1)
-                    status, reason = classify(run(f"{mutant['name']}-negative", mutant), mutant)
+                    if not passed(
+                        run(f"{mutant['name']}-positive", mutant), mutant['test']
+                    ):
+                        status = 'INVALID'
+                        reason = 'positive control did not pass the bound test'
+                    else:
+                        mutated = original.replace(mutant['old'], mutant['new'], 1)
+                        path.write_text(mutated)
+                        # Force Cargo to observe the write even on a filesystem
+                        # with coarse mtimes; a cached binary would fake SURVIVED.
+                        time.sleep(1.1)
+                        status, reason = classify(
+                            run(f"{mutant['name']}-negative", mutant), mutant
+                        )
                 except Exception as error:  # noqa: BLE001 - summarized as INVALID
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
@@ -413,14 +495,35 @@ def main():
                     time.sleep(1.1)
                     if path.read_text() != original:
                         raise RuntimeError(f'byte restoration failed: {path}')
-                if not passed(run(f"{mutant['name']}-restored", mutant), mutant['test']):
-                    status, reason = 'INVALID', reason + '; restored test did not pass'
+                try:
+                    if not passed(
+                        run(f"{mutant['name']}-restored", mutant), mutant['test']
+                    ):
+                        status, reason = (
+                            'INVALID', reason + '; restored test did not pass'
+                        )
+                except Exception as error:  # noqa: BLE001 - keep summarizing
+                    status, reason = (
+                        'INVALID', reason + f'; restored: {type(error).__name__}: {error}'
+                    )
                 record(mutant, status, reason)
     except SourceBaselineError as error:
         # The new orchestration file is not in HEAD yet: refuse, never fake a
         # status. 提交后由协调者在宿主跑.
         for mutant in selected[len(results):]:
             record(mutant, 'INVALID', f'source guard: {error}')
+        counts = {
+            state: sum(row['status'] == state for row in results)
+            for state in ('KILLED', 'SURVIVED', 'INVALID')
+        }
+        print(f'summary: KILLED={counts["KILLED"]}, SURVIVED={counts["SURVIVED"]}, '
+              f'INVALID={counts["INVALID"]}', flush=True)
+        return 3
+    except Exception as error:  # noqa: BLE001 - never stop before summarizing
+        # Timeout, restore failure or any unexpected runner error: account for
+        # every remaining mutant instead of aborting on the first one.
+        for mutant in selected[len(results):]:
+            record(mutant, 'INVALID', f'runner error: {type(error).__name__}: {error}')
         counts = {
             state: sum(row['status'] == state for row in results)
             for state in ('KILLED', 'SURVIVED', 'INVALID')
