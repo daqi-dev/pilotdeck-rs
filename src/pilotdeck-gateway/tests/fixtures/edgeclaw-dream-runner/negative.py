@@ -191,6 +191,26 @@ mutations = [
      '    return await collectCases(baseline, scratch.owned);',
      "    return await collectCases(baseline, '/tmp/pdrs-dream-runner-observe');",
      'scratch_root_is_run_exclusive'),
+    # 26. #915: the warning backfill only runs on the Ok exit, so a later
+    #     cluster's refine error still leaves the plan-output detail stale.
+    ('plan-output-error-sync', runner,
+     '''        sync_plan_output_warnings(
+            trace,
+            plan_step_index,
+            &concat(&[&kind_label, &"-cluster-plan-output".into()]),
+            &dropped_warnings,
+        );
+        loop_result?;''',
+     '''        if loop_result.is_ok() {
+            sync_plan_output_warnings(
+                trace,
+                plan_step_index,
+                &concat(&[&kind_label, &"-cluster-plan-output".into()]),
+                &dropped_warnings,
+            );
+        }
+        loop_result?;''',
+     'category_refine_error'),
 ]
 
 fragments = {
@@ -219,6 +239,7 @@ fragments = {
     'observe-fixed-scratch': '#773 dream-runner observe must allocate its scratch through createRunScratch',
     'run-scratch-parent-delete': '#773 remove refused: the run parent must not be removed',
     'observe-fixed-path-retained-allocator': '#773 dream-runner observe must not use the shared fixed stage path',
+    'plan-output-error-sync': '#915 plan-output warning category-refine-error',
 }
 
 if '--check-anchors' in sys.argv:
@@ -265,14 +286,18 @@ def failure_is_bound(log, fragment, test):
 
 
 killed, survived, invalid = [], [], []
-# Derive the snapshot set from the mutation table itself. A hand-written list
-# went stale when fix-r3 added mutants for _shared/run_scratch.mjs and
-# observe.mts: mutating_sources only snapshotted runner.rs, so the first
-# `originals[path]` lookup raised KeyError and every later mutant was skipped.
-mutation_targets = list(dict.fromkeys(case[1] for case in mutations))
+# Derive the snapshot set from the *selected* mutation table itself. A
+# hand-written list went stale when fix-r3 added mutants for
+# _shared/run_scratch.mjs and observe.mts: mutating_sources only snapshotted
+# runner.rs, so the first `originals[path]` lookup raised KeyError and every
+# later mutant was skipped. Selecting the paths here also keeps a
+# NEGATIVE_ONLY run usable while an unrelated, not-yet-committed fixture file
+# is being edited; a full run still snapshots and checks every target.
+selected = [case for case in mutations if not only or case[0] in only]
+mutation_targets = list(dict.fromkeys(case[1] for case in selected))
 with mutating_sources(root, mutation_targets, baseline=baseline) as originals:
     stale = []
-    for name, path, before, _after, _test in mutations:
+    for name, path, before, _after, _test in selected:
         count = originals[path].decode().count(before)
         if count != 1:
             stale.append((name, path.relative_to(root).as_posix(), count))
@@ -288,7 +313,6 @@ with mutating_sources(root, mutation_targets, baseline=baseline) as originals:
     # mutation. Checking one fixed test let an unrelated pre-existing failure
     # in a selected mutant's target satisfy the bound message and be counted
     # as KILLED. Run each selected target test once, deduplicated.
-    selected = [case for case in mutations if not only or case[0] in only]
     target_tests = list(dict.fromkeys(case[4] for case in selected))
     baseline_log = []
     baseline_failures = []
@@ -307,9 +331,7 @@ with mutating_sources(root, mutation_targets, baseline=baseline) as originals:
               + ', '.join(baseline_failures))
         sys.exit(1)
 
-    for name, path, before, after, test in mutations:
-        if only and name not in only:
-            continue
+    for name, path, before, after, test in selected:
         try:
             source = originals[path].decode()
             path.write_text(source.replace(before, after))

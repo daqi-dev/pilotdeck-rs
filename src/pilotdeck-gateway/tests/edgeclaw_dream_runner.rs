@@ -5,7 +5,8 @@
 //! `runProjectMetaReview` call against a scripted extractor, and compares the
 //! final memory tree, mutation list, trace, call inputs and return value.
 //! One `#[test]` per case keeps every negative control bound to a unique
-//! `#773 ...` assertion instead of an earlier sibling.
+//! assertion instead of an earlier sibling; `category-refine-error` is the
+//! #915 error-exit case and carries the `#915 ...` tag.
 #[path = "common/baseline.rs"]
 mod baseline;
 
@@ -15,7 +16,7 @@ use pilotdeck_gateway::runtime::memory::edgeclaw::{
         helpers::create_dream_trace,
         runner::{
             CategoryDreamResult, DreamEnvironment, DreamExtractor, DreamLogger, DreamRewriteRunner,
-            GeneralProjectMergeResult, MetaReviewResult,
+            DreamRunnerError, GeneralProjectMergeResult, MetaReviewResult,
         },
     },
     llm::transport::LlmError,
@@ -393,6 +394,10 @@ fn find_case<'a>(oracle: &'a JsValue, name: &str) -> &'a JsValue {
 }
 
 fn replay(name: &str) {
+    replay_with_issue(name, "#773");
+}
+
+fn replay_with_issue(name: &str, issue: &str) {
     let oracle = oracle();
     let case = find_case(&oracle, name);
     let scratch = std::env::temp_dir().join(format!("pdrs-773-{name}-{}", uuid::Uuid::new_v4()));
@@ -431,34 +436,34 @@ fn replay(name: &str) {
             &general,
             clock.clone(),
         )
-        .unwrap_or_else(|error| panic!("#773 external store build {name}: {error}"));
+        .unwrap_or_else(|error| panic!("{issue} external store build {name}: {error}"));
         repository
             .storage
             .set_pipeline_state("workspaceDir", &JsValue::String(workspace.clone().into()))
-            .unwrap_or_else(|error| panic!("#773 external workspace state {name}: {error}"));
+            .unwrap_or_else(|error| panic!("{issue} external workspace state {name}: {error}"));
         let store = repository.get_file_memory_store();
         if let Some(metas) = external.get("metas") {
             for meta in array(metas) {
                 store
                     .execute("upsertProjectMeta", object(meta))
-                    .unwrap_or_else(|error| panic!("#773 external meta {name}: {error}"));
+                    .unwrap_or_else(|error| panic!("{issue} external meta {name}: {error}"));
             }
         }
         if let Some(candidates) = external.get("candidates") {
             for candidate in array(candidates) {
                 store
                     .execute("upsertCandidate", object(candidate))
-                    .unwrap_or_else(|error| panic!("#773 external candidate {name}: {error}"));
+                    .unwrap_or_else(|error| panic!("{issue} external candidate {name}: {error}"));
             }
         }
         repository
             .close()
-            .unwrap_or_else(|error| panic!("#773 external close {name}: {error}"));
+            .unwrap_or_else(|error| panic!("{issue} external close {name}: {error}"));
     }
     let repository = EdgeClawFileStores::with_workspace_clock(
         &db, &memory, &global, &workspace, &general, clock,
     )
-    .unwrap_or_else(|error| panic!("#773 store build {name}: {error}"));
+    .unwrap_or_else(|error| panic!("{issue} store build {name}: {error}"));
     let store = repository.get_file_memory_store();
 
     if let Some(setup) = case.get("setup").and_then(JsValue::as_object) {
@@ -466,14 +471,14 @@ fn replay(name: &str) {
             for meta in array(metas) {
                 store
                     .execute("upsertProjectMeta", object(meta))
-                    .unwrap_or_else(|error| panic!("#773 seed meta {name}: {error}"));
+                    .unwrap_or_else(|error| panic!("{issue} seed meta {name}: {error}"));
             }
         }
         if let Some(candidates) = setup.get("candidates") {
             for candidate in array(candidates) {
                 store
                     .execute("upsertCandidate", object(candidate))
-                    .unwrap_or_else(|error| panic!("#773 seed candidate {name}: {error}"));
+                    .unwrap_or_else(|error| panic!("{issue} seed candidate {name}: {error}"));
             }
         }
     }
@@ -483,7 +488,7 @@ fn replay(name: &str) {
     {
         store
             .execute("ensureProjectMeta", &JsObject::new())
-            .unwrap_or_else(|error| panic!("#773 seed meta {name}: {error}"));
+            .unwrap_or_else(|error| panic!("{issue} seed meta {name}: {error}"));
     }
 
     let steps: Vec<JsObject> = case
@@ -512,11 +517,15 @@ fn replay(name: &str) {
     let suffix = JsString::from(string_field(case, "randomSuffix"));
     let mut trace = create_dream_trace(&JsString::from("manual"), &started_at, &suffix);
     let method = string_field(case, "method");
-    let expected = case.get("expected").expect("#773 case expected");
+    let expected = case
+        .get("expected")
+        .unwrap_or_else(|| panic!("{issue} case expected"));
 
     let actual_result = if method == "runCategoryDream" {
         let kind = JsString::from(string_field(case, "kind"));
-        let selection = case.get("selection").expect("#773 selection");
+        let selection = case
+            .get("selection")
+            .unwrap_or_else(|| panic!("{issue} selection"));
         let entry_type = string_field(selection, "type");
         let mut options = JsObject::new();
         options.insert(
@@ -528,7 +537,7 @@ fn replay(name: &str) {
         options.insert("limit".into(), JsValue::Number(5000.0));
         let entries_value = repository
             .list_memory_entries(&options)
-            .unwrap_or_else(|error| panic!("#773 input entries {name}: {error}"));
+            .unwrap_or_else(|error| panic!("{issue} input entries {name}: {error}"));
         let entries: Vec<JsObject> = array(&entries_value)
             .iter()
             .filter(|entry| {
@@ -551,7 +560,7 @@ fn replay(name: &str) {
         } else {
             repository
                 .get_memory_records_by_ids(&ids, 5000.0)
-                .unwrap_or_else(|error| panic!("#773 input records {name}: {error}"))
+                .unwrap_or_else(|error| panic!("{issue} input records {name}: {error}"))
         };
         let records: Vec<JsObject> = array(&records_value)
             .iter()
@@ -579,10 +588,10 @@ fn replay(name: &str) {
                 }
                 store
                     .execute("getProjectMeta", &lookup)
-                    .unwrap_or_else(|error| panic!("#773 input meta {name}: {error}"))
+                    .unwrap_or_else(|error| panic!("{issue} input meta {name}: {error}"))
                     .as_object()
                     .cloned()
-                    .unwrap_or_else(|| panic!("#773 input meta {name} missing"))
+                    .unwrap_or_else(|| panic!("{issue} input meta {name} missing"))
             });
         let mut input = JsObject::new();
         input.insert("kind".into(), JsValue::String(kind.clone()));
@@ -599,79 +608,172 @@ fn replay(name: &str) {
         }
         equal(
             &clean_paths(&js(input), &memory.to_string_lossy()),
-            expected.get("input").expect("#773 expected input"),
-            &format!("#773 input {name}"),
+            expected
+                .get("input")
+                .unwrap_or_else(|| panic!("{issue} expected input")),
+            &format!("{issue} input {name}"),
         );
-        let result = futures_block_on(runner.run_category_dream(
+        let expected_error = expected.get("error").filter(|value| !value.is_undefined());
+        let outcome = futures_block_on(runner.run_category_dream(
             &mut trace,
             &kind,
             &entries,
             &records,
             project_meta.as_ref(),
-        ))
-        .unwrap_or_else(|error| panic!("#773 result {name}: {error}"));
-        category_value(&result)
+        ));
+        match (outcome, expected_error) {
+            (Ok(result), None) => Some(category_value(&result)),
+            (Err(error), Some(expected_error)) => {
+                equal(
+                    &JsValue::String(error_js_string(&error)),
+                    expected_error,
+                    &format!("{issue} error {name}"),
+                );
+                None
+            }
+            (Ok(_), Some(_)) => panic!("{issue} expected error {name}"),
+            (Err(error), None) => panic!("{issue} result {name}: {error}"),
+        }
     } else if method == "mergeGeneralProjectMetas" {
         let result = futures_block_on(runner.merge_general_project_metas(&mut trace))
-            .unwrap_or_else(|error| panic!("#773 result {name}: {error}"));
-        merge_value(&result)
+            .unwrap_or_else(|error| panic!("{issue} result {name}: {error}"));
+        Some(merge_value(&result))
     } else if method == "runProjectMetaReview" {
         let id = case
             .get("projectMeta")
             .map(text)
-            .unwrap_or_else(|| panic!("#773 projectMeta {name}"));
+            .unwrap_or_else(|| panic!("{issue} projectMeta {name}"));
         let mut lookup = JsObject::new();
         if id != "current" {
             lookup.insert("projectId".into(), JsValue::String(id.into()));
         }
         let project_meta = store
             .execute("getProjectMeta", &lookup)
-            .unwrap_or_else(|error| panic!("#773 result meta {name}: {error}"))
+            .unwrap_or_else(|error| panic!("{issue} result meta {name}: {error}"))
             .as_object()
             .cloned()
-            .unwrap_or_else(|| panic!("#773 result meta {name} missing"));
+            .unwrap_or_else(|| panic!("{issue} result meta {name} missing"));
         let result = futures_block_on(runner.run_project_meta_review(&mut trace, &project_meta))
-            .unwrap_or_else(|error| panic!("#773 result {name}: {error}"));
-        meta_value(&result)
+            .unwrap_or_else(|error| panic!("{issue} result {name}: {error}"));
+        Some(meta_value(&result))
     } else {
-        panic!("#773 unknown method {method}")
+        panic!("{issue} unknown method {method}")
     };
 
-    equal(
-        &clean_paths(&actual_result, &memory.to_string_lossy()),
-        expected.get("result").expect("#773 expected result"),
-        &format!("#773 result {name}"),
-    );
+    if let Some(actual_result) = &actual_result {
+        equal(
+            &clean_paths(actual_result, &memory.to_string_lossy()),
+            expected
+                .get("result")
+                .unwrap_or_else(|| panic!("{issue} expected result")),
+            &format!("{issue} result {name}"),
+        );
+    } else {
+        assert!(
+            expected.get("result").is_none(),
+            "{issue} error case {name} must not carry an expected result",
+        );
+        // The plan-output detail is the only place the dropped warning lives
+        // after the second cluster's refine rejects (#915). Assert it at its
+        // exact array position before the whole-trace comparison so a missing
+        // error-path sync fails on this dedicated message.
+        let plan_key = format!("{}-cluster-plan-output", string_field(case, "kind"));
+        let expected_warnings = plan_output_warnings(
+            expected
+                .get("trace")
+                .unwrap_or_else(|| panic!("{issue} expected trace")),
+            &plan_key,
+        );
+        equal(
+            &JsValue::Array(plan_output_warnings(&js(trace.clone()), &plan_key)),
+            &JsValue::Array(expected_warnings),
+            &format!("{issue} plan-output warning {name}"),
+        );
+    }
     equal(
         &clean_paths(&js(trace), &memory.to_string_lossy()),
-        expected.get("trace").expect("#773 expected trace"),
-        &format!("#773 trace {name}"),
+        expected
+            .get("trace")
+            .unwrap_or_else(|| panic!("{issue} expected trace")),
+        &format!("{issue} trace {name}"),
     );
     let calls = extractor
         .state
         .lock()
-        .expect("#773 extractor state lock")
+        .unwrap_or_else(|_| panic!("{issue} extractor state lock"))
         .calls
         .clone();
     equal(
         &JsValue::Array(calls),
-        expected.get("calls").expect("#773 expected calls"),
-        &format!("#773 calls {name}"),
+        expected
+            .get("calls")
+            .unwrap_or_else(|| panic!("{issue} expected calls")),
+        &format!("{issue} calls {name}"),
     );
     let logs = JsValue::Array(logger.warnings().into_iter().map(JsValue::String).collect());
     equal(
         &logs,
-        expected.get("logs").expect("#773 expected logs"),
-        &format!("#773 logs {name}"),
+        expected
+            .get("logs")
+            .unwrap_or_else(|| panic!("{issue} expected logs")),
+        &format!("{issue} logs {name}"),
     );
     let mut files = vec![];
     tree(store.get_root_dir(), "", &mut files);
     equal(
         &JsValue::Array(files),
-        expected.get("tree").expect("#773 expected tree"),
-        &format!("#773 tree {name}"),
+        expected
+            .get("tree")
+            .unwrap_or_else(|| panic!("{issue} expected tree")),
+        &format!("{issue} tree {name}"),
     );
     let _ = fs::remove_dir_all(&scratch);
+}
+
+/// `String(error)` for the `DreamRunnerError` union: LLM errors use the
+/// `Error.prototype.toString` shape, memory errors fall back to `Display`.
+fn error_js_string(error: &DreamRunnerError) -> JsString {
+    match error {
+        DreamRunnerError::Llm(error) => error.js_string(),
+        DreamRunnerError::Memory(error) => JsString::from(error.to_string()),
+    }
+}
+
+/// `droppedWarnings` inside the named plan-output json detail. TS stores the
+/// live array there, so an error exit must leave the same units behind.
+fn plan_output_warnings(trace: &JsValue, key: &str) -> Vec<JsValue> {
+    let Some(JsValue::Array(steps)) = trace.get("steps") else {
+        return vec![];
+    };
+    for step in steps {
+        let Some(step) = step.as_object() else {
+            continue;
+        };
+        let Some(JsValue::Array(details)) = step.get("details") else {
+            continue;
+        };
+        for detail in details {
+            let Some(detail) = detail.as_object() else {
+                continue;
+            };
+            if !detail
+                .get("key")
+                .and_then(JsValue::as_string)
+                .is_some_and(|value| value.equals_str(key))
+            {
+                continue;
+            }
+            return match detail
+                .get("json")
+                .and_then(JsValue::as_object)
+                .and_then(|json| json.get("droppedWarnings"))
+            {
+                Some(JsValue::Array(warnings)) => warnings.clone(),
+                _ => vec![],
+            };
+        }
+    }
+    vec![]
 }
 
 /// Minimal block_on for the async runner without pulling a new dev-dependency.
@@ -716,6 +818,10 @@ fn category_missing_record() {
 #[test]
 fn category_refine_null() {
     replay("category-refine-null");
+}
+#[test]
+fn category_refine_error() {
+    replay_with_issue("category-refine-error", "#915");
 }
 #[test]
 fn merge_basic() {
