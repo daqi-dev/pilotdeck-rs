@@ -42,9 +42,10 @@ def scratch(label):
 
 
 def environment(root):
-    target = Path(os.environ['CARGO_TARGET_DIR']).resolve()
-    assert target == SRC / 'target', f'wrong build directory: {target}'
-    env = dict(os.environ, CARGO_PROFILE_DEV_DEBUG='0', CARGO_PROFILE_TEST_DEBUG='0',
+    if not os.environ.get('CARGO_TARGET_DIR'):
+        raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
+    env = dict(os.environ, CARGO_PROFILE_DEV_DEBUG=os.environ.get('CARGO_PROFILE_DEV_DEBUG', 'line-tables-only'),
+               CARGO_PROFILE_TEST_DEBUG=os.environ.get('CARGO_PROFILE_TEST_DEBUG', 'line-tables-only'),
                CARGO_INCREMENTAL='0', RUSTC_WRAPPER='', TMPDIR=str(root))
     for key in ('PDRS_RECORDER_ORACLE', 'PDRS_SESSION_DOMAIN_ORACLE',
                 'PDRS_TRANSCRIPT_ADAPTER_ORACLE'):

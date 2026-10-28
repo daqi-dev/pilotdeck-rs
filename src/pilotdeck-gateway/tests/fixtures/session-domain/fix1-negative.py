@@ -12,7 +12,8 @@ from negative_process import mutating_sources
 
 REPO = Path(__file__).resolve().parents[5]
 SRC = REPO / 'src'
-assert Path(os.environ['CARGO_TARGET_DIR']).resolve() == SRC / 'target'
+if not os.environ.get('CARGO_TARGET_DIR'):
+    raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
 OUT = REPO / '_tmp/20261023-issue-222-domain-log/fix1-negative'
 OUT.mkdir(parents=True, exist_ok=True)
 ADAPTER = SRC / 'pilotdeck-gateway/src/storage/transcript_adapter.rs'
@@ -34,7 +35,7 @@ with mutating_sources(REPO, [ADAPTER]) as snapshots:
         slot = subprocess.run([str(REPO / 'scripts/cargo-slots.sh')], timeout=10, capture_output=True, text=True)
         (OUT / f'{name}-slots.log').write_text(slot.stdout + slot.stderr)
         assert slot.returncode == 0, 'no cargo slot; rerun later'
-        env = dict(os.environ, CARGO_PROFILE_DEV_DEBUG='0', CARGO_PROFILE_TEST_DEBUG='0', CARGO_INCREMENTAL='0')
+        env = dict(os.environ, CARGO_PROFILE_DEV_DEBUG=os.environ.get('CARGO_PROFILE_DEV_DEBUG', 'line-tables-only'), CARGO_PROFILE_TEST_DEBUG=os.environ.get('CARGO_PROFILE_TEST_DEBUG', 'line-tables-only'), CARGO_INCREMENTAL='0')
         with (OUT / f'{name}.log').open('w') as log:
             child = subprocess.Popen(['cargo', 'test', '-p', 'pilotdeck-gateway', '--lib', test, '--', '--exact', '--nocapture'], cwd=SRC, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             try:

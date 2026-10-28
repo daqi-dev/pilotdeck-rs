@@ -11,20 +11,20 @@ from _negative_common import mutate, check_mutations
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
-lazy = 'host = async { host_factory(request.identity.clone(), recorder.clone()).await } => host?,'
+lazy = 'host = async { host_factory(request.identity.clone(), recorder.clone(), signal).await } => host?,'
 # pr5f added a second select in submit. Bind the whole factory select exactly
 # once; neither the client gate nor its cancellation priority is mutated.
-factory_select = """                let (client, inner, lease, manifest, interaction_events, prompt_hooks) = tokio::select! {
+factory_select = """                let (client, inner, lease, manifest, interaction_events, prompt_hooks, lifecycle) = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => {
                         return Ok(ExecuteResult::Aborted { terminal: None });
                     }
                     // select constructs every branch before polling; keep the
                     // factory call lazy so a pre-cancel never creates resources.
-                    host = async { host_factory(request.identity.clone(), recorder.clone()).await } => host?,
+                    host = async { host_factory(request.identity.clone(), recorder.clone(), signal).await } => host?,
                 };"""
 mutations = [
-    ('eager-factory', lazy, 'host = host_factory(request.identity.clone(), recorder.clone()) => host?,'),
+    ('eager-factory', lazy, 'host = host_factory(request.identity.clone(), recorder.clone(), signal) => host?,'),
     ('factory-before-cancel', factory_select,
      factory_select.replace(lazy, '').replace('biased;', 'biased; ' + lazy)),
     ('ignore-factory-cancel', factory_select,
