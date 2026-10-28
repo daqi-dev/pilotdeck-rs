@@ -53,55 +53,69 @@ source = root / 'src/pilotdeck-gateway/src/runtime'
 #  must go red inside that test's own panic block)
 MUTATIONS = [
     # ── #347① projectKey ─────────────────────────────────────────────────
-    ('project-key-nonstring-fallback', 'mcp/sdk.rs',
-     'Some(value) => Err(SdkMcpError::type_error_with_code(\n'
-     '            "ERR_INVALID_ARG_TYPE",\n'
-     '            format!(\n'
-     '                "The \\"paths[0]\\" argument must be of type string. Received {}",\n'
-     '                crate::metadata::argument_received(value)'
-     '.unwrap_or_else(|| "[Object]".into())\n'
-     '            ),\n'
-     '        )),',
+    ('project-key-nonstring-fallback',
+     'mcp/sdk.rs',
+     'Some(value) => {\n            let received = match crate::metadata::argument_received(value) {\n                crate::metadata::ArgumentReceived::Text(received) => received,\n                crate::metadata::ArgumentReceived::Throws { .. } => "[Object]".into(),\n            };\n            Err(SdkMcpError::type_error_with_code(\n                "ERR_INVALID_ARG_TYPE",\n                crate::metadata::invalid_arg_type_message("paths[0]", &received),\n            ))\n        }',
      'Some(_) => Ok(None),',
-     '--test=sdk_mcp', 'non_string_project_key_throws_the_node_type_error',
+     '--test=sdk_mcp',
+     'non_string_project_key_throws_the_node_type_error',
      '#347 a non-string projectKey must reject setMcpServersForSdk'),
-    ('project-key-message-text', 'mcp/sdk.rs',
-     'must be of type string. Received {}',
-     'must be a string. Received {}',
-     '--test=sdk_mcp', 'non_string_project_key_throws_the_node_type_error',
+    ('project-key-message-text',
+     'mcp/sdk.rs',
+     'crate::metadata::invalid_arg_type_message("paths[0]", &received)',
+     'crate::metadata::invalid_arg_type_message("paths[1]", &received)',
+     '--test=sdk_mcp',
+     'non_string_project_key_throws_the_node_type_error',
      '#347 number projectKey message'),
-    ('project-key-code-dropped', 'mcp/sdk.rs',
-     'Some(value) => Err(SdkMcpError::type_error_with_code(\n'
-     '            "ERR_INVALID_ARG_TYPE",\n'
-     '            format!(',
-     'Some(value) => Err(SdkMcpError::type_error(\n'
-     '            format!(',
-     '--test=sdk_mcp', 'non_string_project_key_throws_the_node_type_error',
-     "projectKey keeps Node's error code"),
+    ('project-key-code-dropped',
+     'mcp/sdk.rs',
+     'Err(SdkMcpError::type_error_with_code(\n                "ERR_INVALID_ARG_TYPE",',
+     'Err(SdkMcpError::type_error(',
+     '--test=sdk_mcp',
+     'non_string_project_key_throws_the_node_type_error',
+     "#347 fix-r1 number projectKey keeps Node's error code"),
+    ('project-key-utf16-lossy',
+     'mcp/sdk.rs',
+     'crate::metadata::ArgumentReceived::Text(received) => received,',
+     'crate::metadata::ArgumentReceived::Text(received) => String::from_utf16_lossy(received.units()).into(),',
+     '--test=sdk_mcp',
+     'project_key_preserves_utf16_and_registered_throw_approximation',
+     '#347 fix-r5b surrogate set preserves received units or registered approximation'),
+    ('project-key-throws-rewritten',
+     'mcp/sdk.rs',
+     'crate::metadata::ArgumentReceived::Throws { .. } => "[Object]".into(),',
+     'crate::metadata::ArgumentReceived::Throws { message, .. } => message,',
+     '--test=sdk_mcp',
+     'project_key_preserves_utf16_and_registered_throw_approximation',
+     '#347 fix-r5b primitive-constructor set preserves received units or registered approximation'),
     ('null-key-throws', 'mcp/sdk.rs',
      'None | Some(JsValue::Undefined) | Some(JsValue::Null) => Ok(None),',
      'None | Some(JsValue::Undefined) => Ok(None),',
      '--test=sdk_mcp', 'nullish_project_key_keeps_the_fallback_project',
      '#347 null projectKey must fall back'),
-    # ── #347 fix-r1 (review P1-3): the constructor `name` projections ──────
-    ('constructor-name-object-fallback', '../metadata.rs',
-     'Some(name) => format!(\n'
-     '                    "an instance of {}",\n'
-     '                    String::from_utf16(&crate::js_value::to_string_units_checked(name)'
-     '.ok()?)\n'
-     '                        .ok()?\n'
-     '                ),',
-     'Some(_) => "[Object]".into(),',
-     '--test=sdk_mcp', 'constructor_name_shapes_project_the_node_received_text',
-     'name-object set message must match Node\'s String(name) conversion'),
-    ('constructor-name-empty-string', '../metadata.rs',
-     'Some(name) => format!(\n'
-     '                    "an instance of {}",',
-     'Some(JsValue::String(name)) if name.is_empty() => "[Object]".into(),\n'
-     '                Some(name) => format!(\n'
-     '                    "an instance of {}",',
-     '--test=sdk_mcp', 'constructor_name_shapes_project_the_node_received_text',
-     'name-empty-string set message must match Node\'s String(name) conversion'),
+    # Object-name conversion is covered by manager-gateway/negative_controls.py
+    # projectkey-name-explained-by-object (#934); empty string still needs its own row.
+    ('constructor-name-empty-string',
+     '../metadata.rs',
+     'let name = constructor.get("name").unwrap_or(&undefined);',
+     'let name = constructor.get("name").unwrap_or(&undefined);\n                    if matches!(name, JsValue::String(s) if s.is_empty()) {\n                        return Text("[Object]".into());\n                    }',
+     '--test=sdk_mcp',
+     'constructor_name_shapes_project_the_node_received_text',
+     "#347 fix-r1 name-empty-string set message must match Node's String(name) conversion"),
+    ('dispatch-received-utf16-lossy',
+     '../dispatch.rs',
+     'crate::metadata::invalid_arg_type_message("paths[0]", &received)\n                                .to_utf8()',
+     'Ok::<String, ()>(String::from_utf16_lossy(crate::metadata::invalid_arg_type_message("paths[0]", &received).units()))',
+     '--lib',
+     'dispatch::tests::describe_project_unrepresentable_received_text_forwards',
+     '#347 fix-r5b surrogate must forward without rewriting the Node error'),
+    ('dispatch-received-throws-rewritten',
+     '../dispatch.rs',
+     'let crate::metadata::ArgumentReceived::Text(received) =\n                            crate::metadata::argument_received(root)\n                        else {\n                            return Route::Forward;\n                        };',
+     'let received = match crate::metadata::argument_received(root) {\n                            crate::metadata::ArgumentReceived::Text(received) => received,\n                            crate::metadata::ArgumentReceived::Throws { .. } => "[Object]".into(),\n                        };',
+     '--lib',
+     'dispatch::tests::describe_project_unrepresentable_received_text_forwards',
+     '#347 fix-r5b primitive-constructor must forward without rewriting the Node error'),
     # ── #347② clear + read entries ────────────────────────────────────────
     ('clear-keeps-servers', 'mcp/sdk.rs',
      'servers.retain(|(key, _)| !same_key(key, session_key));',
