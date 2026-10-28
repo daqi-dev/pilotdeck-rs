@@ -61,6 +61,8 @@ struct Observed {
     mcp: AtomicUsize,
     bindings: Mutex<Vec<SessionBinding>>,
     published: AtomicUsize,
+    diagnostics: Mutex<Vec<Diagnostic>>,
+    checkpoints: Mutex<Vec<(usize, WriterState)>>,
 }
 impl Observed {
     fn event(&self, value: impl Into<String>) {
@@ -122,7 +124,9 @@ impl Harness {
                 if name == "create-dispose-before-mcp" {
                     gate.wait().await;
                 }
+                obs.event("mcp.construct");
                 let registration = mcp.register("session-745", Arc::new(Mcp(obs.clone())))?;
+                obs.event("mcp.start");
                 obs.mcp.fetch_add(1, Ordering::SeqCst);
                 resources.push(move || Box::pin(async move { registration.dispose().await }));
                 let host: HostBuilder = Box::new(move |binding| {
@@ -182,13 +186,41 @@ impl Harness {
                     || (id == 2
                         && ["recreate-read-reject", "recreate-rollback-reject"].contains(&name));
                 if fail {
-                    storage.load =
-                        Arc::new(|| Box::pin(async { Err(RuntimeError::new("LOAD_BOOM")) }));
+                    storage.load = Arc::new(move || {
+                        Box::pin(async move {
+                            Err(RuntimeError::new(if name.starts_with("recreate-") {
+                                "RECREATE_LOAD_BOOM"
+                            } else {
+                                "LOAD_BOOM"
+                            }))
+                        })
+                    });
                 }
-                if name == "resume-checkpoint-reject" {
-                    storage.load_checkpoint =
-                        Arc::new(|| Box::pin(async { Err(RuntimeError::new("CHECKPOINT_BOOM")) }));
+                if name == "recreate-running-before-read" && id == 2 {
+                    let load = storage.load.clone();
+                    storage.load = Arc::new(move || {
+                        let load = load.clone();
+                        let gate = gate.clone();
+                        Box::pin(async move {
+                            gate.wait().await;
+                            (load)().await
+                        })
+                    });
                 }
+                let checkpoint_obs = obs.clone();
+                let writer = storage.recorder.writer().clone();
+                storage.load_checkpoint = Arc::new(move || {
+                    let obs = checkpoint_obs.clone();
+                    let state = writer.snapshot_state();
+                    Box::pin(async move {
+                        lock(&obs.checkpoints).push((id, state));
+                        if name == "resume-checkpoint-reject" {
+                            Err(RuntimeError::new("CHECKPOINT_BOOM"))
+                        } else {
+                            Ok(())
+                        }
+                    })
+                });
                 let close = storage.close.clone();
                 let close_obs = obs.clone();
                 storage.close = Arc::new(move || {
@@ -200,7 +232,7 @@ impl Harness {
                         if name == "resume-rollback-reject"
                             || (id == 2 && name == "recreate-rollback-reject")
                         {
-                            Err(RuntimeError::new("DISPOSE_BOOM"))
+                            Err(RuntimeError::new("STORAGE_DISPOSE_BOOM"))
                         } else {
                             Ok(())
                         }
@@ -220,7 +252,10 @@ impl Harness {
                     },
                 ) as Admission
             }),
-            diagnostic: Arc::new(move |d| diagnostic_obs.event(d.code)),
+            diagnostic: Arc::new(move |d| {
+                diagnostic_obs.event(d.code);
+                lock(&diagnostic_obs.diagnostics).push(d.clone());
+            }),
         }));
         let mut options = SessionOwnerOptions::new(factory.clone());
         options.idle_sweep_interval_ms = 0;
@@ -302,34 +337,133 @@ fn fixture(name: &str) -> serde_json::Value {
         .expect("#745 fixture cell")
         .clone()
 }
+fn ts_snapshot<'a>(ts: &'a serde_json::Value, label: &str) -> &'a serde_json::Value {
+    ts["snapshots"]
+        .as_array()
+        .expect("#745 oracle snapshots")
+        .iter()
+        .find(|s| s["label"] == label)
+        .expect("#745 oracle snapshot label")
+}
+fn transcript_bytes<'a>(ts: &'a serde_json::Value, field: &str) -> &'a str {
+    ts[field]
+        .as_array()
+        .expect("#745 oracle files")
+        .iter()
+        .find(|f| {
+            f["path"]
+                .as_str()
+                .is_some_and(|p| p.ends_with("session-745.jsonl"))
+        })
+        .expect("#745 oracle transcript")["utf8"]
+        .as_str()
+        .expect("#745 oracle transcript bytes")
+}
+fn seed_transcript(h: &Harness, ts: &serde_json::Value, field: &str) {
+    let bytes = transcript_bytes(ts, field);
+    let initial: String = bytes.lines().take(2).map(|s| format!("{s}\n")).collect();
+    std::fs::write(
+        h.root.join("session-745.jsonl"),
+        if ts["label"] == "before-recreate" {
+            &initial
+        } else {
+            bytes
+        },
+    )
+    .expect("#745 write original transcript bytes");
+}
+fn writer_json(state: &WriterState) -> serde_json::Value {
+    serde_json::json!({"sequence":state.sequence,"lastEntryId":state.last_entry_id.as_ref().map(|s|String::from_utf16_lossy(s.units()))})
+}
+fn assert_oracle_error(name: &str, error: &RuntimeError, ts: &serde_json::Value) {
+    let expected = &ts["results"]
+        .as_array()
+        .expect("#745 oracle results")
+        .iter()
+        .find(|r| r["status"] == "rejected")
+        .expect("#745 oracle rejected result")["error"];
+    assert_eq!(
+        error.message, expected["message"],
+        "#745 {name} exact error oracle"
+    );
+    let causes: Vec<_> = error.causes.iter().map(|e| e.message.as_str()).collect();
+    let expected_causes: Vec<_> = expected["errors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|e| e["message"].as_str().expect("#745 oracle cause message"))
+        .collect();
+    assert_eq!(causes, expected_causes, "#745 {name} exact causes oracle");
+    assert_eq!(
+        error.js_error().and_then(|e| e.code.as_deref()),
+        expected["code"].as_str(),
+        "#745 {name} error code oracle"
+    );
+}
+fn assert_oracle_handle(name: &str, handle: &LiveSessionHandle, expected: &serde_json::Value) {
+    let reload = handle
+        .reload_snapshot()
+        .unwrap_or_else(|e| panic!("#745 {name} oracle reload: {e}"));
+    let actual = json_value(&handle.snapshot());
+    assert_eq!(
+        handle
+            .reload_signal_for_test()
+            .expect("#745 actual reload controller")
+            .is_aborted(),
+        expected["session"]["abortController"]["aborted"]
+            .as_bool()
+            .expect("#745 oracle controller"),
+        "#745 {name} controller oracle"
+    );
+    for key in ["messages", "status", "currentTurnId"] {
+        assert_eq!(
+            actual[key], expected["session"][key],
+            "#745 {name} session {key} oracle"
+        );
+    }
+    for (key, value) in [
+        ("usage", JsValue::Object(reload.state.usage)),
+        (
+            "permissionDenials",
+            JsValue::Array(reload.state.permission_denials),
+        ),
+        ("messages", JsValue::Array(reload.state.messages)),
+    ] {
+        assert_eq!(
+            json_value(&value),
+            expected["reload"]["state"][key],
+            "#745 {name} reload {key} oracle"
+        );
+    }
+    assert_eq!(
+        json_value(&JsValue::Object(reload.state.metadata)),
+        expected["reload"]["metadata"],
+        "#745 {name} metadata oracle"
+    );
+    assert_eq!(
+        writer_json(&reload.transcript_writer_state),
+        expected["reload"]["transcriptWriterState"],
+        "#745 {name} writer oracle"
+    );
+    // The loop starts without a stdio seed; real checkpoint timing is probed separately.
+    assert_eq!(
+        json_value(&JsValue::Object(
+            crate::host::modules::tool_context::serialize_seed_state(&reload.file_state)
+        )),
+        expected["reload"]["fileState"],
+        "#745 {name} file state oracle"
+    );
+}
 async fn matrix(name: &'static str) {
     let ts = fixture(name);
     assert_eq!(ts["status"], "OBSERVED", "#745 {name} TS observation");
     let h = Harness::new(name);
-    if name == "resume-valid" {
-        // Import exactly the metadata transcript observed by the TS probe.
-        let files = ts["finalFiles"]
-            .as_array()
-            .expect("#745 resume-valid files");
-        let transcript = files
-            .iter()
-            .find(|f| {
-                f["path"]
-                    .as_str()
-                    .is_some_and(|p| p.ends_with("session-745.jsonl"))
-            })
-            .expect("#745 resume-valid transcript");
-        std::fs::write(
-            h.root.join("session-745.jsonl"),
-            transcript["utf8"]
-                .as_str()
-                .expect("#745 resume-valid bytes"),
-        )
-        .expect("#745 resume-valid write");
+    if name == "resume-valid" || name == "resume-checkpoint-reject" || name == "resume-malformed" {
+        seed_transcript(&h, &ts, "finalFiles");
     }
-    if name == "resume-malformed" {
-        std::fs::write(h.root.join("session-745.jsonl"), "{broken}\n")
-            .expect("#745 malformed fixture");
+    if name.starts_with("recreate-") {
+        let before = ts_snapshot(&ts, "before-recreate");
+        seed_transcript(&h, before, "files");
     }
     if name == "resume-eisdir" {
         std::fs::create_dir(h.root.join("session-745.jsonl")).expect("#745 eisdir fixture");
@@ -355,10 +489,11 @@ async fn matrix(name: &'static str) {
             } else if name == "create-owner-shutdown" {
                 let shutdown = h.owner.shutdown();
                 h.gate.open();
-                assert!(
-                    bounded(name, first).await.is_err(),
-                    "#745 create-owner-shutdown conclusion"
-                );
+                let error = bounded(name, first)
+                    .await
+                    .err()
+                    .expect("#745 create-owner-shutdown conclusion");
+                assert_oracle_error(name, &error, &ts);
                 bounded(name, shutdown)
                     .await
                     .expect("#745 owner shutdown completes");
@@ -389,10 +524,26 @@ async fn matrix(name: &'static str) {
                 .await
                 .expect("#745 early dispose");
             h.gate.open();
-            assert!(
-                bounded(name, first).await.is_err(),
-                "#745 create-dispose-before-mcp conclusion"
-            );
+            let error = bounded(name, first)
+                .await
+                .err()
+                .expect("#745 create-dispose-before-mcp conclusion");
+            assert_oracle_error(name, &error, &ts);
+            for event in ["mcp.construct", "mcp.start", "mcp.stop"] {
+                assert_eq!(
+                    lock(&h.observed.events)
+                        .iter()
+                        .filter(|e| *e == event)
+                        .count(),
+                    ts["timeline"]
+                        .as_array()
+                        .expect("#745 MCP timeline")
+                        .iter()
+                        .filter(|e| e["type"] == event)
+                        .count(),
+                    "#745 {name} MCP {event}"
+                );
+            }
             assert_eq!(h.leases(), 0, "#745 create-dispose-before-mcp cleanup");
             assert!(
                 !lock(&h.observed.events)
@@ -457,7 +608,7 @@ async fn matrix(name: &'static str) {
                             .iter()
                             .map(|e| e.message.as_str())
                             .collect::<Vec<_>>(),
-                        vec!["LOAD_BOOM", "DISPOSE_BOOM"],
+                        vec!["LOAD_BOOM", "STORAGE_DISPOSE_BOOM"],
                         "#745 resume-rollback-reject conclusion"
                     );
                 } else if name == "resume-eisdir" {
@@ -481,6 +632,7 @@ async fn matrix(name: &'static str) {
                         "#745 {name} conclusion"
                     );
                 }
+                assert_oracle_error(name, &error, &ts);
                 assert!(
                     ordered(&lock(&h.observed.events), "close.1", "release.1"),
                     "#745 {name} rollback order"
@@ -491,15 +643,18 @@ async fn matrix(name: &'static str) {
         name if name.starts_with("recreate-") => {
             let old = h.create(name).await;
             let binding = lock(&h.observed.bindings)[0].clone();
-            binding
-                .recorder
-                .writer()
-                .record_session_metadata(
-                    &"session-745".into(),
-                    &"seed".into(),
-                    js(r#"{"title":"原题","firstPrompt":" 中文 "}"#),
-                )
-                .expect("#745 seed durable metadata");
+            if name == "recreate-running" {
+                for line in transcript_bytes(ts_snapshot(&ts, "before-recreate"), "files")
+                    .lines()
+                    .skip(2)
+                {
+                    binding
+                        .recorder
+                        .writer()
+                        .record_entry(&js(line))
+                        .expect("#745 running transcript replay");
+                }
+            }
             let activity = if name == "recreate-draining" {
                 Some(old.begin_activity().expect("#745 predecessor activity"))
             } else {
@@ -533,13 +688,24 @@ async fn matrix(name: &'static str) {
                             .iter()
                             .map(|e| e.message.as_str())
                             .collect::<Vec<_>>(),
-                        vec!["LOAD_BOOM", "DISPOSE_BOOM"],
+                        vec!["RECREATE_LOAD_BOOM", "STORAGE_DISPOSE_BOOM"],
                         "#745 recreate-rollback-reject conclusion"
                     );
                 } else {
                     assert_eq!(
-                        error.message, "LOAD_BOOM",
+                        error.message, "RECREATE_LOAD_BOOM",
                         "#745 recreate-read-reject conclusion"
+                    );
+                }
+                assert_oracle_error(name, &error, &ts);
+                assert!(
+                    ordered(&lock(&h.observed.events), "prepare.2", "release.2"),
+                    "#745 {name} replacement lease acquired and released"
+                );
+                if name == "recreate-disposed" {
+                    assert!(
+                        !lock(&h.observed.events).iter().any(|e| e == "storage.2"),
+                        "#745 recreate-disposed no new storage"
                     );
                 }
                 if name != "recreate-disposed" {
@@ -583,7 +749,7 @@ async fn matrix(name: &'static str) {
                     )
                     .expect("#745 predecessor late write");
                 assert_eq!(
-                    state.transcript_writer_state.sequence, 1,
+                    state.transcript_writer_state.sequence, 5,
                     "#745 recreate-running captured writer"
                 );
                 assert_eq!(
@@ -591,8 +757,13 @@ async fn matrix(name: &'static str) {
                         .expect("#745 successor snapshot")
                         .transcript_writer_state
                         .sequence,
-                    1,
+                    5,
                     "#745 recreate-running independent writer"
+                );
+                assert_oracle_handle(
+                    name,
+                    &new,
+                    &ts_snapshot(&ts, "replacement-ready")["handles"][1],
                 );
                 drop(turn);
                 drop(activity);
@@ -658,6 +829,7 @@ async fn matrix(name: &'static str) {
                         "#745 recreate-idle conclusion"
                     );
                 }
+                assert_oracle_handle(name, &new, &ts_snapshot(&ts, "result")["handles"][1]);
                 let reload = new.reload_snapshot().expect("#745 replacement reload");
                 assert_eq!(
                     reload.state.metadata.get("title"),
@@ -665,12 +837,58 @@ async fn matrix(name: &'static str) {
                     "#745 {name} metadata"
                 );
                 assert_eq!(
-                    reload.transcript_writer_state.sequence, 1,
+                    reload.transcript_writer_state.sequence, 2,
                     "#745 {name} writer"
                 );
             }
         }
         _ => panic!("#745 unknown matrix cell {name}"),
+    }
+    if let Some(handle) = h.owner.current_handle(&"session-745".into())
+        && handle.state() == HandleState::Active
+        && !name.starts_with("recreate-")
+    {
+        assert_oracle_handle(name, &handle, &ts_snapshot(&ts, "result")["handles"][0]);
+    }
+    let expected_checkpoint = &ts_snapshot(&ts, "result")["storages"][0]["entriesAtCheckpoint"];
+    if !expected_checkpoint.is_null() {
+        let checkpoints = lock(&h.observed.checkpoints);
+        let checkpoint = &checkpoints
+            .iter()
+            .find(|(id, _)| *id == 1)
+            .expect("#745 checkpoint observed")
+            .1;
+        assert_eq!(
+            writer_json(checkpoint),
+            *expected_checkpoint,
+            "#745 {name} checkpoint writer oracle"
+        );
+    }
+    if name == "resume-missing" || name == "resume-malformed" {
+        let expected = ts_snapshot(&ts, "result")["storages"][0]["restores"][0]["diagnostics"]
+            .as_array()
+            .expect("#745 diagnostics oracle");
+        let actual = lock(&h.observed.diagnostics);
+        assert_eq!(
+            actual.len(),
+            expected.len(),
+            "#745 {name} diagnostic count oracle"
+        );
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert_eq!(
+                serde_json::json!({"code":actual.code,"severity":actual.severity,"line":actual.line}),
+                serde_json::json!({"code":expected["code"],"severity":expected["severity"],"line":expected["line"]}),
+                "#745 {name} diagnostic fields oracle"
+            );
+        }
+        if name == "resume-malformed" {
+            assert_eq!(
+                std::fs::read_to_string(h.root.join("session-745.jsonl"))
+                    .expect("#745 malformed bytes read"),
+                transcript_bytes(&ts, "finalFiles"),
+                "#745 resume-malformed original bytes oracle"
+            );
+        }
     }
     h.finish(name).await;
 }
@@ -865,6 +1083,18 @@ async fn reload_retains_saved_files_until_turn_terminal() {
         "#745 file state at terminal conclusion"
     );
     checkpoint.allow_read_files(&["later-turn.txt".into()]);
+    assert!(
+        turn.next()
+            .await
+            .expect("#745 completed stream next")
+            .is_none(),
+        "#745 completed stream exhausted"
+    );
+    assert_eq!(
+        lock(&saved).allowed_read_files,
+        Some(vec!["seed.txt".into()]),
+        "#745 completed stream next cannot publish later state"
+    );
     drop(turn);
     assert_eq!(
         lock(&saved).allowed_read_files,
@@ -982,6 +1212,18 @@ async fn unpolled_turn_does_not_publish_file_state() {
             js(r#"{"sessionId":"session-745","turnId":"turn"}"#),
         )
         .expect("#745 unpolled submit");
+    lock(&h.observed.bindings)[0]
+        .checkpoint
+        .allow_read_files(&["in-progress.txt".into()]);
+    assert!(
+        session
+            .reload_snapshot()
+            .expect("#745 in-progress reload")
+            .file_state
+            .allowed_read_files
+            .is_none(),
+        "#745 in-progress checkpoint not published"
+    );
     drop(turn);
     let seed = session
         .reload_snapshot()
@@ -1190,4 +1432,403 @@ async fn reload_retries_concurrent_append() {
         .await
         .expect("#745 concurrent writer close");
     h.finish("reload-version").await;
+}
+
+fn oracle_document() -> serde_json::Value {
+    serde_json::from_str(include_str!(
+        "../../../tests/fixtures/session-factory/oracle.json"
+    ))
+    .expect("#745 complete oracle JSON")
+}
+fn oracle_seed(value: &serde_json::Value) -> SeedState {
+    crate::host::modules::tool_context::parse_seed_state(&js(&value.to_string()))
+        .expect("#745 oracle seed parse")
+        .expect("#745 oracle seed present")
+}
+fn seed_json(seed: &SeedState) -> serde_json::Value {
+    json_value(&JsValue::Object(
+        crate::host::modules::tool_context::serialize_seed_state(seed),
+    ))
+}
+#[tokio::test]
+async fn reload_file_state_matches_ts_timing() {
+    struct Terminal(bool);
+    impl LiveTurn for Terminal {
+        fn next(&mut self) -> super::super::SessionNext<'_> {
+            let first = std::mem::replace(&mut self.0, false);
+            Box::pin(async move { Ok(first.then(|| js(r#"{"type":"turn_completed"}"#))) })
+        }
+    }
+    let oracle = oracle_document();
+    let ts = &oracle["fileTiming"];
+    let saved = Arc::new(Mutex::new(oracle_seed(&ts["initial"])));
+    let checkpoint = HostToolCheckpoint::new(Some(&oracle_seed(&ts["terminal"])), &[])
+        .expect("#745 terminal checkpoint");
+    let mut turn = OwnedTurn {
+        turn: Box::new(Terminal(true)),
+        checkpoint: checkpoint.clone(),
+        saved: saved.clone(),
+        started: Arc::new(AtomicBool::new(true)),
+        finished: false,
+    };
+    assert_eq!(
+        seed_json(&lock(&saved)),
+        ts["running"],
+        "#745 running saved seed oracle"
+    );
+    assert!(
+        turn.next()
+            .await
+            .expect("#745 seed terminal poll")
+            .is_some(),
+        "#745 seed terminal event"
+    );
+    assert_eq!(
+        seed_json(&lock(&saved)),
+        ts["terminal"],
+        "#745 terminal seed oracle"
+    );
+    checkpoint.allow_read_files(&["late.txt".into()]);
+    assert!(
+        turn.next()
+            .await
+            .expect("#745 seed exhausted poll")
+            .is_none(),
+        "#745 seed stream exhausted"
+    );
+    assert_eq!(
+        seed_json(&lock(&saved)),
+        ts["after"],
+        "#745 post-terminal seed oracle"
+    );
+    drop(turn);
+    assert_eq!(
+        seed_json(&lock(&saved)),
+        ts["after"],
+        "#745 dropped terminal seed oracle"
+    );
+}
+
+// Characterization of the independently observed TS defect, not a safety acceptance.
+// P0 remains blocked on the coordinator's alignment/fence decision.
+async fn writer_interleaving(before_read: bool) {
+    let name = if before_read {
+        "recreate-running-before-read"
+    } else {
+        "writer-after-publish"
+    };
+    let h = Harness::new(name);
+    let ts = fixture("recreate-running");
+    seed_transcript(&h, ts_snapshot(&ts, "before-recreate"), "files");
+    let old = h.create(name).await;
+    let binding = lock(&h.observed.bindings)[0].clone();
+    for line in transcript_bytes(ts_snapshot(&ts, "before-recreate"), "files")
+        .lines()
+        .skip(2)
+    {
+        binding
+            .recorder
+            .writer()
+            .record_entry(&js(line))
+            .expect("#745 interleaving pending replay");
+    }
+    let turn = old
+        .submit(
+            js(r#"{"type":"text","text":"pending input"}"#),
+            js(r#"{"sessionId":"session-745","turnId":"turn-old"}"#),
+        )
+        .expect("#745 interleaving old submit");
+    let draining = old.dispose("explicit-old-drain".into());
+    let mut creation = tokio::spawn(h.factory.create(h.context(), Some(old.clone())));
+    let early = if before_read {
+        bounded(name, h.gate.entered()).await;
+        None
+    } else {
+        Some(
+            bounded(name, &mut creation)
+                .await
+                .expect("#745 interleaving new task")
+                .expect("#745 interleaving new handle"),
+        )
+    };
+    for line in transcript_bytes(&ts, "finalFiles").lines().skip(5) {
+        binding
+            .recorder
+            .writer()
+            .record_entry(&js(line))
+            .expect("#745 interleaving old terminal replay");
+    }
+    drop(turn);
+    bounded(name, draining)
+        .await
+        .expect("#745 interleaving old drained");
+    let new = if let Some(new) = early {
+        new
+    } else {
+        h.gate.open();
+        bounded(name, &mut creation)
+            .await
+            .expect("#745 interleaving new task")
+            .expect("#745 interleaving new handle")
+    };
+    let oracle = oracle_document();
+    let expected = oracle["writerInterleavings"]
+        .as_array()
+        .expect("#745 writer oracle rows")
+        .iter()
+        .find(|r| {
+            r["name"]
+                == if before_read {
+                    "before-read"
+                } else {
+                    "after-publish"
+                }
+        })
+        .expect("#745 writer oracle timing");
+    assert_eq!(
+        writer_json(
+            &new.reload_snapshot()
+                .expect("#745 interleaving reload")
+                .transcript_writer_state
+        ),
+        expected["replacementWriter"],
+        "#745 interleaving restored writer oracle"
+    );
+    {
+        let observed = lock(&h.observed.checkpoints);
+        assert_eq!(
+            writer_json(
+                &observed
+                    .iter()
+                    .find(|(id, _)| *id == 2)
+                    .expect("#745 interleaving checkpoint observed")
+                    .1
+            ),
+            expected["entriesAtCheckpoint"],
+            "#745 interleaving read timing oracle"
+        );
+    }
+    let mut turn = new
+        .submit(
+            js(r#"{"type":"text","text":"replacement input"}"#),
+            js(r#"{"sessionId":"session-745","turnId":"turn-new"}"#),
+        )
+        .expect("#745 interleaving new submit");
+    let failure = bounded(name, async {
+        loop {
+            match turn.next().await {
+                Ok(Some(_)) => {}
+                Ok(None) => panic!("#745 interleaving expected unavailable native host"),
+                Err(e) => break e,
+            }
+        }
+    })
+    .await;
+    assert!(
+        failure.message.contains("native"),
+        "#745 interleaving new turn reached host"
+    );
+    drop(turn);
+    // Native has no host transport in this crate. Exercise the real replacement
+    // writer after that dispatch; TS supplemental probe runs a complete new turn.
+    lock(&h.observed.bindings)[1]
+        .recorder
+        .writer()
+        .record_session_metadata(
+            &"session-745".into(),
+            &"turn-new".into(),
+            js(r#"{"title":"replacement"}"#),
+        )
+        .expect("#745 interleaving replacement durable append");
+    bounded(name, new.dispose("test".into()))
+        .await
+        .expect("#745 interleaving new dispose");
+    let error = bounded(name, h.factory.create(h.context(), None))
+        .await
+        .err()
+        .expect("#745 interleaving duplicate sequence must reject resume");
+    assert!(
+        error
+            .message
+            .contains("Session event sequence must increase strictly"),
+        "#745 interleaving sequence failure oracle: {}",
+        error.message
+    );
+    assert_eq!(
+        expected["error"]["code"], "sequence_not_increasing",
+        "#745 TS corruption oracle"
+    );
+    h.finish(name).await;
+}
+#[tokio::test]
+async fn recreate_running_before_read() {
+    writer_interleaving(true).await;
+}
+#[tokio::test]
+async fn recreate_running_after_publish_resume() {
+    writer_interleaving(false).await;
+}
+
+#[tokio::test]
+async fn recreate_preserves_snapshot_seed_and_uses_durable_state() {
+    struct Previous(ReloadSnapshot);
+    impl LiveSession for Previous {
+        fn snapshot(&self) -> JsValue {
+            JsValue::Null
+        }
+        fn reload_snapshot(&self) -> Result<ReloadSnapshot, RuntimeError> {
+            Ok(self.0.clone())
+        }
+        fn abort(&self, _: &JsString) -> RuntimeResult {
+            Ok(())
+        }
+        fn dispose(&self) -> DisposeFuture<'_> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+    let h = Harness::new("snapshot-seed");
+    let ts = fixture("recreate-idle");
+    seed_transcript(&h, ts_snapshot(&ts, "before-recreate"), "files");
+    let old = h.create("snapshot-seed").await;
+    let mut reload = old
+        .reload_snapshot()
+        .expect("#745 snapshot seed old reload");
+    let oracle = oracle_document();
+    let memory = &oracle["memoryOnly"];
+    reload.state.messages = array(&js(&memory["injected"]["messages"].to_string()))
+        .expect("#745 injected messages")
+        .to_vec();
+    reload.state.usage = spread(&js(&memory["injected"]["usage"].to_string()));
+    reload.state.permission_denials =
+        array(&js(&memory["injected"]["permissionDenials"].to_string()))
+            .expect("#745 injected denials")
+            .to_vec();
+    reload.file_state = oracle_seed(&oracle["fileState"]);
+    let previous = LiveSessionHandle::new(Arc::new(Previous(reload)), None);
+    let new = bounded(
+        "snapshot-seed",
+        h.factory.create(h.context(), Some(previous)),
+    )
+    .await
+    .expect("#745 snapshot seed recreate");
+    old.abort(&"old controller only".into())
+        .expect("#745 old abort");
+    let state = new
+        .reload_snapshot()
+        .expect("#745 snapshot seed new reload");
+    assert_eq!(
+        json_value(&JsValue::Array(state.state.messages)),
+        memory["actual"]["messages"],
+        "#745 memory-only messages follow durable oracle"
+    );
+    assert_eq!(
+        json_value(&JsValue::Object(state.state.usage)),
+        memory["actual"]["usage"],
+        "#745 memory-only usage follows durable oracle"
+    );
+    assert_eq!(
+        json_value(&JsValue::Array(state.state.permission_denials)),
+        memory["actual"]["permissionDenials"],
+        "#745 memory-only denials follow durable oracle"
+    );
+    assert_eq!(
+        seed_json(&state.file_state),
+        oracle["fileState"],
+        "#745 recreated file seed oracle"
+    );
+    let view = json_value(&new.snapshot());
+    assert_eq!(
+        view["status"], memory["actual"]["status"],
+        "#745 replacement ignores old abort"
+    );
+    assert_eq!(
+        view["currentTurnId"], memory["actual"]["currentTurnId"],
+        "#745 replacement fresh current turn"
+    );
+    bounded("snapshot-seed", new.dispose("test".into()))
+        .await
+        .expect("#745 snapshot seed dispose");
+    h.finish("snapshot-seed").await;
+}
+
+#[tokio::test]
+async fn recreate_controller_is_independent_of_actual_predecessor() {
+    let h = Harness::new("controller");
+    let old = h.create("controller").await;
+    let old_signal = old
+        .reload_signal_for_test()
+        .expect("#745 predecessor controller");
+    old_signal.abort();
+    let new = bounded(
+        "controller",
+        h.factory.create(h.context(), Some(old.clone())),
+    )
+    .await
+    .expect("#745 controller recreate");
+    let fresh = new
+        .reload_signal_for_test()
+        .expect("#745 replacement controller");
+    let ts = fixture("recreate-running");
+    let expected = &ts_snapshot(&ts, "replacement-ready")["handles"][1];
+    assert!(
+        old_signal.is_aborted(),
+        "#745 predecessor controller aborted"
+    );
+    assert_eq!(
+        fresh.is_aborted(),
+        expected["session"]["abortController"]["aborted"],
+        "#745 replacement controller independent oracle"
+    );
+    old_signal.abort();
+    assert!(
+        !fresh.is_aborted(),
+        "#745 old controller cannot abort replacement"
+    );
+    bounded("controller", new.dispose("test".into()))
+        .await
+        .expect("#745 controller new dispose");
+    h.finish("controller").await;
+}
+
+#[tokio::test]
+async fn production_owner_cancelled_create_close_and_shutdown() {
+    let h = Harness::new("create-cancelled");
+    let creating = h.owner.get_or_create(h.context());
+    bounded("owner create entered", h.gate.entered()).await;
+    let closing = h.owner.close(&"session-745".into());
+    drop(creating);
+    drop(closing);
+    let shutdown = h.owner.shutdown();
+    h.gate.open();
+    bounded("owner cancellation drain", shutdown)
+        .await
+        .expect("#745 owner cancellation shutdown");
+    assert!(
+        h.owner.current_handle(&"session-745".into()).is_none(),
+        "#745 owner cancellation removed handle"
+    );
+    assert_eq!(h.leases(), 0, "#745 owner cancellation lease cleanup");
+    assert_eq!(
+        lock(&h.observed.events)
+            .iter()
+            .filter(|e| *e == "close.1")
+            .count(),
+        1,
+        "#745 owner cancellation closes storage exactly once"
+    );
+    let writer = lock(&h.observed.bindings)[0].recorder.writer().clone();
+    let before = writer.snapshot_state();
+    writer
+        .record_session_metadata(
+            &"session-745".into(),
+            &"after-close".into(),
+            js(r#"{"title":"late"}"#),
+        )
+        .expect("#745 closed writer append acknowledged");
+    assert_eq!(
+        writer.snapshot_state(),
+        before,
+        "#745 owner cancellation writer cannot append"
+    );
+    h.finish("owner cancellation").await;
 }

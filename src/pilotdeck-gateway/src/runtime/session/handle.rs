@@ -21,6 +21,11 @@ pub trait LiveTurn: Send {
 /// Implementations own the real session writer and its resources. No default
 /// no-op implementation is supplied for unavailable providers.
 pub trait LiveSession: Send + Sync {
+    /// Test-only observation of the actual reload controller, not a fabricated ID.
+    #[cfg(test)]
+    fn reload_signal_for_test(&self) -> Option<crate::runtime::hooks::Cancellation> {
+        None
+    }
     /// Runtime reload is a fallible capability, separate from the public view.
     fn reload_snapshot(&self) -> Result<super::factory::ReloadSnapshot, RuntimeError> {
         Err(RuntimeError::new(
@@ -81,6 +86,10 @@ struct Inner {
 pub struct LiveSessionHandle(Arc<Inner>);
 
 impl LiveSessionHandle {
+    #[cfg(test)]
+    pub(crate) fn reload_signal_for_test(&self) -> Option<crate::runtime::hooks::Cancellation> {
+        self.0.session.reload_signal_for_test()
+    }
     /// Draining handles remain readable until the underlying session is disposed.
     pub fn reload_snapshot(&self) -> Result<super::factory::ReloadSnapshot, RuntimeError> {
         self.0.session.reload_snapshot()

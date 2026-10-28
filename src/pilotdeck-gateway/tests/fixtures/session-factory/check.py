@@ -110,7 +110,7 @@ def semantics(d):
         new = s['handles'][1]['reload']
         require(new == old, 'recreate-full-reload-snapshot-equal')
         require(new['state']['status'] == 'idle' and 'currentTurnId' not in new['state'], 'recreate-idle-no-current-turn')
-        require(new['fileState'] == {'readFiles': [['seed.txt', 7]], 'writtenFiles': []}, 'file-state-marker')
+        require(new['fileState'] == {}, 'initial-stdio-file-state')
         constructors = entries(d, 'loop.construct')
         require(constructors[1]['data']['seedState'] == old['fileState'], 'factory-passes-seed-state-to-loop')
         require(s['active']['project'] == [2] and s['active']['mcp'] == [2], 'old-release-keeps-replacement-resources')
