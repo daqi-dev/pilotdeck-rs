@@ -519,7 +519,8 @@ async fn real_ts_memory_bundle_oracle() {
             .and_then(JsValue::as_object)
             .unwrap()
             .len(),
-        3
+        728,
+        "#303 exact import closure source count"
     );
     assert_eq!(
         oracle

@@ -121,7 +121,8 @@ async fn parse_hook_output_matches_real_ts() {
             .expect("source hashes")
             .entries()
             .len(),
-        25
+        650,
+        "#303 exact import closure source count"
     );
     let cases = array(field(&oracle, "parse"));
     assert_eq!(cases.len(), 52);
