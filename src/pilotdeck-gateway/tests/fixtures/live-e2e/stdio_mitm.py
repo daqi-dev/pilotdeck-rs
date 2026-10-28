@@ -1,0 +1,313 @@
+#!/usr/bin/env python3
+# anchor-selfcheck: unsupported stdio middleman fixture, no mutation definitions
+"""Deterministic stdio middleman between a sidecar host and the real sidecar.
+
+The host speaks Module Protocol NDJSON on our stdin/stdout; we spawn the real
+sidecar (tsx CLI) as a child, record every observed frame to a jsonl log, and
+apply a declarative injection plan before delivery. Injection points are
+declared as "the Nth frame matching <filter>" (1-based, counted per direction),
+so a plan is deterministic and reproducible across runs.
+
+Usage:
+  stdio_mitm.py --log <frames.jsonl> [--plan <plan.json>] [--summary <summary.json>] -- <command> [args...]
+
+plan.json: {"injections": [
+  {"action": "drop"|"duplicate"|"early_final",
+   "direction": "s2h"|"h2s", "kind": "request"|"response"|"event",
+   "final": false,        # optional filter on event frames
+   "nth": 2}]}            # 1-based index among matching frames
+
+The protocol is full-duplex (cancel/ack/module_call responses travel h2s while
+events travel s2h), so each direction is pumped by its own thread; frame
+observation and plan state are serialized by one lock. A host that closes our
+stdout early (for example right after accepting an injected premature final)
+must not stop recording: s2h keeps logging until the child is reaped.
+
+Child ownership: the sidecar runs in its own process group. On host-side EOF we
+mirror stdin EOF to the child and wait bounded for its own exit; SIGTERM/SIGKILL
+escalation covers a child stuck on module calls to a host that is already gone.
+"""
+import argparse
+import json
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+# Bounded child reaping. The sidecar normally exits by itself once stdin ends;
+# these are the escalation bounds, not the expected path.
+CHILD_TERM_GRACE_SECONDS = 10
+
+MATCH_ACTIONS = ("drop", "duplicate", "early_final")
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--log", required=True, help="frame log jsonl path")
+    parser.add_argument("--plan", help="injection plan json path (omitted = passthrough)")
+    parser.add_argument("--summary", help="injection hit summary json path")
+    parser.add_argument("command", nargs=argparse.REMAINDER, help="-- <command> [args...]")
+    args = parser.parse_args(argv)
+    if not args.command or args.command[0] != "--":
+        parser.error("command must start with --")
+    if len(args.command) < 2:
+        parser.error("command after -- must not be empty")
+    return args
+
+
+def load_plan(path):
+    if path is None:
+        return {"injections": []}
+    with open(path, "r", encoding="utf-8") as handle:
+        plan = json.load(handle)
+    injections = plan.get("injections")
+    if not isinstance(injections, list):
+        raise SystemExit(f"#969 mitm: plan 'injections' must be a list: {path}")
+    for index, injection in enumerate(injections):
+        if not isinstance(injection, dict):
+            raise SystemExit(f"#969 mitm: injection #{index} must be an object: {path}")
+        action = injection.get("action")
+        if action not in MATCH_ACTIONS:
+            raise SystemExit(f"#969 mitm: injection #{index} has unknown action {action!r}")
+        if injection.get("direction") not in ("s2h", "h2s"):
+            raise SystemExit(f"#969 mitm: injection #{index} needs direction s2h|h2s")
+        if injection.get("kind") not in ("request", "response", "event"):
+            raise SystemExit(f"#969 mitm: injection #{index} needs kind request|response|event")
+        nth = injection.get("nth")
+        if not isinstance(nth, int) or nth < 1:
+            raise SystemExit(f"#969 mitm: injection #{index} needs 1-based nth")
+    return {"injections": injections}
+
+
+def frame_matches(frame, direction, injection):
+    if direction != injection["direction"]:
+        return False
+    if frame.get("kind") != injection["kind"]:
+        return False
+    if "final" in injection and bool(frame.get("final")) != bool(injection["final"]):
+        return False
+    return True
+
+
+def synthesize_terminal(session_id, turn_id):
+    """A minimal valid AgentTurnResult payload for a premature final frame.
+
+    The TS client's readFinalTerminal path accepts exactly this shape for
+    outcome=completed; the marker stopReason makes the injected terminal
+    distinguishable from any real sidecar terminal.
+    """
+    now = "2026-10-26T00:00:00.000Z"
+    return {
+        "result": {
+            "type": "success",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "stopReason": "mitm_premature_final",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": now,
+            "completedAt": now,
+        },
+        "messages": [],
+    }
+
+
+class Mitm:
+    def __init__(self, plan, log_path, summary_path):
+        self.injections = [
+            {"spec": injection, "seen": 0, "fired": False, "matched_index": None}
+            for injection in plan["injections"]
+        ]
+        self.log = open(log_path, "w", encoding="utf-8")
+        self.summary_path = summary_path
+        self.index = 0
+        # Session/turn identity for synthesized terminals, captured from the
+        # host's execute request observed on h2s.
+        self.session_id = None
+        self.turn_id = None
+        self.forward_out_open = True
+        self.lock = threading.Lock()
+
+    def note_control_frame(self, frame):
+        if frame.get("kind") == "request" and frame.get("method") == "execute":
+            self.session_id = frame.get("sessionId")
+            self.turn_id = frame.get("turnId")
+
+    def actions_for(self, frame, direction):
+        """Return the rewrite actions for one observed frame, mutating state."""
+        matched = []
+        for entry in self.injections:
+            if entry["fired"] or not frame_matches(frame, direction, entry["spec"]):
+                continue
+            entry["seen"] += 1
+            if entry["seen"] != entry["spec"]["nth"]:
+                continue
+            entry["fired"] = True
+            entry["matched_index"] = self.index
+            matched.append(entry["spec"]["action"])
+        return matched
+
+    def rewrite(self, frame, actions):
+        if "early_final" in actions:
+            if not self.session_id or not self.turn_id:
+                raise SystemExit(
+                    "#969 mitm: early_final injection fired before an execute "
+                    "request was observed; no session/turn identity to synthesize")
+            frame = dict(frame)
+            frame["final"] = True
+            frame["outcome"] = "completed"
+            frame["eventType"] = "agent.execute.completed"
+            frame["payload"] = synthesize_terminal(self.session_id, self.turn_id)
+        return frame
+
+    def observe(self, frame, direction):
+        """Record one observed frame and return (forward_count, line)."""
+        with self.lock:
+            self.index += 1
+            self.note_control_frame(frame)
+            actions = self.actions_for(frame, direction)
+            frame = self.rewrite(frame, actions)
+            forward_count = 0 if "drop" in actions else 2 if "duplicate" in actions else 1
+            if not self.forward_out_open:
+                forward_count = 0
+            record = {
+                "index": self.index,
+                "dir": direction,
+                "action": actions,
+                "delivered": forward_count > 0,
+                "frame": frame,
+            }
+            self.log.write(json.dumps(record, ensure_ascii=False) + "\n")
+            self.log.flush()
+            return forward_count, json.dumps(frame, ensure_ascii=False) + "\n"
+
+    def close_log(self):
+        self.log.close()
+        if self.summary_path:
+            summary = {
+                "frames": self.index,
+                "injections": [
+                    {
+                        "spec": entry["spec"],
+                        "fired": entry["fired"],
+                        "matchedIndex": entry["matched_index"],
+                    }
+                    for entry in self.injections
+                ],
+            }
+            with open(self.summary_path, "w", encoding="utf-8") as handle:
+                json.dump(summary, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+
+    def unfired(self):
+        return [entry for entry in self.injections if not entry["fired"]]
+
+
+def kill_child_group(process):
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return
+    deadline = time.monotonic() + CHILD_TERM_GRACE_SECONDS
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            return
+        time.sleep(0.05)
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        process.wait(timeout=CHILD_TERM_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def parse_frame(line, source):
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"#969 mitm: {source} line is not JSON: {error}: {line[:200]!r}")
+
+
+def main(argv):
+    args = parse_args(argv)
+    plan = load_plan(args.plan)
+    mitm = Mitm(plan, args.log, args.summary)
+    # The sidecar child owns its own process group so reaping is bounded even
+    # when the host is gone first.
+    child = subprocess.Popen(
+        args.command[1:],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=None,
+        bufsize=1,
+        text=True,
+        start_new_session=True,
+    )
+
+    def pump_host_to_sidecar():
+        for line in sys.stdin:
+            frame = parse_frame(line, "host")
+            forward_count, encoded = mitm.observe(frame, "h2s")
+            for _ in range(forward_count):
+                try:
+                    child.stdin.write(encoded)
+                    child.stdin.flush()
+                except (BrokenPipeError, ValueError):
+                    return
+        # Host closed our stdin: mirror it so the child can finish its turn.
+        try:
+            child.stdin.close()
+        except (BrokenPipeError, ValueError):
+            pass
+
+    def pump_sidecar_to_host():
+        for line in child.stdout:
+            frame = parse_frame(line, "sidecar")
+            forward_count, encoded = mitm.observe(frame, "s2h")
+            for _ in range(forward_count):
+                try:
+                    sys.stdout.write(encoded)
+                    sys.stdout.flush()
+                except BrokenPipeError:
+                    # The host is gone (for example it accepted a premature
+                    # final and closed). Keep recording, stop delivering.
+                    with mitm.lock:
+                        mitm.forward_out_open = False
+                    return
+
+    def terminate(_signum, _frame):
+        # A signal aimed at us must still reap the child group. Returning (not
+        # exiting) lets the pumps finish and the summary be written.
+        if child.poll() is None:
+            kill_child_group(child)
+
+    signal.signal(signal.SIGTERM, terminate)
+    signal.signal(signal.SIGINT, terminate)
+
+    host_thread = threading.Thread(target=pump_host_to_sidecar, daemon=True)
+    host_thread.start()
+    try:
+        pump_sidecar_to_host()
+        child.stdout.close()
+    finally:
+        if child.poll() is None:
+            kill_child_group(child)
+        else:
+            child.wait()
+        host_thread.join(timeout=5)
+        unfired = mitm.unfired()
+        mitm.close_log()
+    if unfired:
+        specs = [entry["spec"] for entry in unfired]
+        print(f"#969 mitm: declared injections never matched a frame: {specs}", file=sys.stderr)
+        return 3
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
