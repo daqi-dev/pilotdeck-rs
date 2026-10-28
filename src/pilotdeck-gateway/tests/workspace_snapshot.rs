@@ -32,7 +32,10 @@ use std::{
     collections::{HashMap, HashSet},
     ffi::OsString,
     fs, io,
-    os::unix::{ffi::OsStringExt, fs::symlink},
+    os::unix::{
+        ffi::OsStringExt,
+        fs::{PermissionsExt, symlink},
+    },
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -244,10 +247,17 @@ fn tree_bytes<'a>(
 /// generate.mts recordTree: lstat semantics (symlinks are rows, not followed),
 /// dirs recurse, rows sorted by path in UTF-16 order (the JS `<` the generator
 /// sorts with). A restore target tree is user content: pass an empty `dynamic`
-/// so nothing is projected.
-fn record_tree(root: &Path, dir: &str, dynamic: &HashSet<String>) -> Vec<JsValue> {
+/// so nothing is projected. `staging` is the one private path the TS view has
+/// no row for — `<snapshot_root>/.staging`; pass `None` for every other root
+/// (a restore target above all), so unexpected rows stay in the comparison.
+fn record_tree(
+    root: &Path,
+    dir: &str,
+    dynamic: &HashSet<String>,
+    staging: Option<&Path>,
+) -> Vec<JsValue> {
     let mut rows: Vec<(String, JsValue)> = Vec::new();
-    walk_tree(root, root, dir, dynamic, &mut rows);
+    walk_tree(root, root, dir, dynamic, staging, &mut rows);
     rows.sort_by(|left, right| utf16_cmp(&left.0, &right.0));
     rows.into_iter().map(|(_, row)| row).collect()
 }
@@ -256,21 +266,25 @@ fn walk_tree(
     directory: &Path,
     dir: &str,
     dynamic: &HashSet<String>,
+    staging: Option<&Path>,
     rows: &mut Vec<(String, JsValue)>,
 ) {
     let Ok(entries) = fs::read_dir(directory) else {
         return;
     };
     for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = directory.join(entry.file_name());
         // #293 fix-r3: the root-level `.staging` parent is the Rust-side
         // private area (TS has none — the same registered boundary the
-        // provider walk skips), and the oracle tree is the TS view. Its
-        // emptiness is asserted by `no_temporaries` instead.
-        if directory == root && name == ".staging" {
+        // provider walk skips), and the oracle tree is the TS view. #293
+        // fix-r4 (r4 review P1-2): the exception is that one exact path,
+        // never "any `.staging` at the recorded root" — a restore target is
+        // user content, so a `.staging` residue there must reach the
+        // comparison instead of being skipped. Emptiness is asserted by
+        // `no_temporaries` instead.
+        if staging == Some(path.as_path()) {
             continue;
         }
-        let path = directory.join(entry.file_name());
         let Ok(info) = fs::symlink_metadata(&path) else {
             continue;
         };
@@ -298,7 +312,7 @@ fn walk_tree(
                     ("kind", JsValue::from("dir")),
                 ]),
             ));
-            walk_tree(root, &path, dir, dynamic, rows);
+            walk_tree(root, &path, dir, dynamic, staging, rows);
         } else {
             let bytes = fs::read(&path).unwrap();
             let projected = tree_bytes(&rel, &bytes, dir, dynamic);
@@ -331,35 +345,62 @@ fn non_utf8_names_writable(dir: &Path) -> bool {
     writable
 }
 
-fn no_temporaries(directory: &Path) {
-    for entry in fs::read_dir(directory).unwrap().flatten() {
+/// Collect every temporary-artifact violation under `directory`. `staging` is
+/// the snapshot root's `.staging` (#293 fix-r3 persistent staging parent: the
+/// fix-r2 code removed it best-effort on every settle, which raced another
+/// round's create_dir_all into a permanent `_FAILED.json`) — it stays, and must
+/// hold no leftover round directory (uuid staging dirs and `.tmp-` files
+/// alike). #293 fix-r4 (r4 review P1-2): it is the only excused `.staging`; a
+/// `.staging` anywhere else — one a buggy restore leaves in its target, say —
+/// is residue and is reported like any other temporary.
+fn temporaries(directory: &Path, staging: &Path, problems: &mut Vec<String>) {
+    for entry in fs::read_dir(directory)
+        .unwrap_or_else(|error| panic!("#293 list {}: {error}", directory.display()))
+        .flatten()
+    {
         let name = entry.file_name().to_string_lossy().into_owned();
         let path = directory.join(entry.file_name());
-        // `.staging` is the #293 fix-r3 persistent staging parent: the fix-r2
-        // code removed it best-effort on every settle, which raced another
-        // round's create_dir_all into a permanent `_FAILED.json`. It stays
-        // now, and must hold no leftover round directory (uuid staging dirs
-        // and `.tmp-` files alike).
         if name == ".staging" {
-            let leftovers: Vec<String> = fs::read_dir(&path)
-                .expect("#293 fix-r3 the staging parent is listable")
-                .flatten()
-                .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                .collect();
-            assert!(
-                leftovers.is_empty(),
-                "#293 fix-r3 leftover staging directories: {leftovers:?}"
-            );
+            if path == staging {
+                let leftovers: Vec<String> = fs::read_dir(&path)
+                    .unwrap_or_else(|error| {
+                        panic!("#293 fix-r3 the staging parent is listable: {error}")
+                    })
+                    .flatten()
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect();
+                if !leftovers.is_empty() {
+                    problems.push(format!(
+                        "#293 fix-r3 leftover staging directories: {leftovers:?}"
+                    ));
+                }
+            } else {
+                problems.push(format!(
+                    "#293 fix-r4 .staging outside the snapshot root is residue: {}",
+                    path.display()
+                ));
+            }
             continue;
         }
-        assert!(!name.contains(".tmp-"), "leftover temporary {name}");
+        if name.contains(".tmp-") {
+            problems.push(format!("leftover temporary {name}"));
+        }
         if fs::symlink_metadata(&path)
             .map(|info| info.is_dir())
             .unwrap_or(false)
         {
-            no_temporaries(&path);
+            temporaries(&path, staging, problems);
         }
     }
+}
+fn no_temporaries(directory: &Path, staging: &Path) {
+    let mut problems = Vec::new();
+    temporaries(directory, staging, &mut problems);
+    assert!(
+        problems.is_empty(),
+        "#293 temporaries under {}: {problems:?}",
+        directory.display()
+    );
 }
 /// generate.mts tick: wait for the millisecond to change so consecutive
 /// captures get comparable, strictly newer createdAt values.
@@ -1515,6 +1556,189 @@ fn orphan_committed_marker_without_a_manifest_recaptures() {
     );
 }
 
+/// #293 fix-r4 (registered divergence A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001
+/// -R3, manifest leg; r4 review P1-1): a `_COMMITTED` marker beside a
+/// manifest this process cannot read is not a commit. `list()` reads every
+/// manifest it lists (its own `fs::read` fails on a permission-000 regular
+/// file), so the early exit reports Committed only over a manifest in that
+/// same readable state; the round recaptures and republishes a readable
+/// manifest over the unreadable one instead. Skipped under root, where
+/// chmod cannot take the read permission away (probed, not assumed).
+#[test]
+fn committed_marker_with_unreadable_manifest_republishes() {
+    let run = Scratch::new();
+    let snapshot_root = run.0.join("snapshots");
+    let workspace = run.0.join("ws");
+    fs::create_dir_all(&workspace).expect("#293 fix-r4 create the workspace");
+    fs::write(workspace.join("only.txt"), b"x\n").expect("#293 fix-r4 seed the workspace");
+    // Root probe: under root the mode bits do not make a file unreadable, and
+    // this regression cannot run there.
+    let probe = run.0.join("root-probe");
+    fs::write(&probe, b"").expect("#293 fix-r4 write the root probe");
+    fs::set_permissions(&probe, fs::Permissions::from_mode(0o0))
+        .expect("#293 fix-r4 drop the probe's permissions");
+    if fs::read(&probe).is_ok() {
+        eprintln!(
+            "committed_marker_with_unreadable_manifest_republishes: skipped, \
+             running as root (chmod cannot make the manifest unreadable)"
+        );
+        return;
+    }
+    let partitions = snapshot_root.join("workspaces/w/sessions/s/snapshots");
+    let partition = partitions.join(sha256_hex(b"s\0t1\0pre_user"));
+    fs::create_dir_all(&partition).expect("#293 fix-r4 create the planted partition");
+    // An unreadable regular manifest (a foreign writer's plant, or residue
+    // some other round left behind) beside a committed marker.
+    fs::write(
+        partition.join("manifest.json"),
+        "{\n  \"snapshotId\": \"stale\"\n}\n",
+    )
+    .expect("#293 fix-r4 plant the unreadable manifest");
+    fs::set_permissions(
+        partition.join("manifest.json"),
+        fs::Permissions::from_mode(0o0),
+    )
+    .expect("#293 fix-r4 drop the manifest's permissions");
+    fs::write(partition.join("_COMMITTED"), b"").expect("#293 fix-r4 plant the committed marker");
+
+    let input = WorkspaceSnapshotInput {
+        workspace_id: "w".into(),
+        session_id: "s".into(),
+        turn_id: "t1".into(),
+        run_id: "run-r4".into(),
+        workspace_dir: workspace.to_string_lossy().into_owned(),
+        workspace_stable: None,
+        failure_kind: None,
+        failure_reason: None,
+    };
+    let config = WorkspaceSnapshotConfig {
+        root: run.0.to_string_lossy().into_owned(),
+        snapshot_root: snapshot_root.to_string_lossy().into_owned(),
+    };
+
+    // The marker over an unreadable manifest must not short-circuit: the
+    // round recaptures and republishes a complete, readable snapshot.
+    let recorder = ContentAddressedWorkspaceSnapshotRecorder::new(config.clone());
+    let result = recorder
+        .capture_pre_user(&input)
+        .expect("#293 fix-r4 the round over the unreadable manifest returns a result");
+    assert_eq!(
+        result.state,
+        SnapshotState::Committed,
+        "#293 fix-r4 an unreadable manifest must not short-circuit: the round recaptured"
+    );
+    assert_eq!(
+        result.manifest_path.as_deref(),
+        Some(partition.join("manifest.json").to_string_lossy().as_ref()),
+        "#293 fix-r4 the recaptured round reports the shared manifest path"
+    );
+    let manifest = fs::read_to_string(partition.join("manifest.json"))
+        .expect("#293 fix-r4 the republished manifest is readable");
+    assert!(
+        manifest.contains("\"runId\": \"run-r4\"") && !manifest.contains("stale"),
+        "#293 fix-r4 the republish replaced the unreadable manifest: {manifest}"
+    );
+    assert!(
+        partition.join("_COMMITTED").is_file(),
+        "#293 fix-r4 the republish refreshed the committed marker"
+    );
+    let listed = create_workspace_snapshot_provider(config)
+        .list()
+        .expect("#293 fix-r4 the provider lists the republished snapshot");
+    assert_eq!(
+        listed.len(),
+        1,
+        "#293 fix-r4 the recaptured snapshot is the only listed one: {listed:?}"
+    );
+}
+
+/// #293 fix-r4 (r4 review P1-2): the private staging area is exactly
+/// `<snapshot_root>/.staging`. A restore target is user content: the tree
+/// comparison used to skip a `.staging` at any recorded root and the
+/// temporaries check excused an empty one anywhere, so a buggy restore
+/// leaving an empty `.staging` in its target passed both. The target tree
+/// must record it, the temporaries check must report it, and only the
+/// snapshot root's own staging stays private (skipped by the tree, required
+/// empty by the check).
+#[test]
+fn restore_target_staging_is_residue_not_private() {
+    let run = Scratch::new();
+    let snapshot_root = run.0.join("snapshots");
+    let workspace = run.0.join("ws");
+    fs::create_dir_all(&workspace).expect("#293 fix-r4 create the workspace");
+    fs::write(workspace.join("only.txt"), b"x\n").expect("#293 fix-r4 seed the workspace");
+    let staging = snapshot_root.join(".staging");
+    let input = WorkspaceSnapshotInput {
+        workspace_id: "w".into(),
+        session_id: "s".into(),
+        turn_id: "t1".into(),
+        run_id: "run-r4".into(),
+        workspace_dir: workspace.to_string_lossy().into_owned(),
+        workspace_stable: None,
+        failure_kind: None,
+        failure_reason: None,
+    };
+    let config = WorkspaceSnapshotConfig {
+        root: run.0.to_string_lossy().into_owned(),
+        snapshot_root: snapshot_root.to_string_lossy().into_owned(),
+    };
+
+    let committed = ContentAddressedWorkspaceSnapshotRecorder::new(config.clone())
+        .capture_pre_user(&input)
+        .expect("#293 fix-r4 the round commits");
+    assert_eq!(
+        committed.state,
+        SnapshotState::Committed,
+        "#293 fix-r4 the round commits"
+    );
+    let target = run.0.join("restored");
+    let restored = create_workspace_snapshot_provider(config)
+        .restore(&committed.snapshot_id, &target.to_string_lossy())
+        .expect("#293 fix-r4 the restore runs");
+    assert!(
+        restored.restored,
+        "#293 fix-r4 the restore restored the target"
+    );
+    // Positive: a settled run holds no temporaries anywhere.
+    let mut clean = Vec::new();
+    temporaries(&run.0, &staging, &mut clean);
+    assert!(
+        clean.is_empty(),
+        "#293 fix-r4 a settled run holds no temporaries: {clean:?}"
+    );
+    // The residue under test: an empty `.staging` inside the restore target.
+    fs::create_dir_all(target.join(".staging"))
+        .expect("#293 fix-r4 plant the empty staging residue in the restore target");
+    let dir_text = run.0.to_string_lossy().into_owned();
+    // The target tree records it: only the snapshot root's own `.staging` is
+    // skipped.
+    let rows = record_tree(&target, &dir_text, &HashSet::new(), None);
+    let recorded = rows
+        .iter()
+        .find(|row| s(field(row, "path")) == ".staging")
+        .map(|row| s(field(row, "kind")));
+    assert_eq!(
+        recorded.as_deref(),
+        Some("dir"),
+        "#293 fix-r4 the target tree records the restore target's .staging: {rows:?}"
+    );
+    // The snapshot root's own `.staging` stays private in the oracle tree.
+    let root_rows = record_tree(&snapshot_root, &dir_text, &HashSet::new(), Some(&staging));
+    assert!(
+        root_rows
+            .iter()
+            .all(|row| s(field(row, "path")) != ".staging"),
+        "#293 fix-r4 only the snapshot root's own .staging is private: {root_rows:?}"
+    );
+    // The temporaries check reports the restore target's `.staging`.
+    let mut problems = Vec::new();
+    temporaries(&run.0, &staging, &mut problems);
+    assert!(
+        problems.iter().any(|problem| problem.contains(".staging")),
+        "#293 fix-r4 the temporaries check flags the restore target's .staging: {problems:?}"
+    );
+}
+
 /// #293 fix-r3 (A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R3): `.staging` is a
 /// long-lived parent. No settle path may remove it: a best-effort removal
 /// racing another round's `create_dir_all` (which creates the parent, then
@@ -1925,7 +2149,7 @@ fn replay_scenario(scenario: &JsValue) {
                         Err(error) => thrown_json(&error, &mask, &dir_text),
                     },
                 );
-                target_tree = Some(record_tree(&target, &dir_text, &HashSet::new()));
+                target_tree = Some(record_tree(&target, &dir_text, &HashSet::new(), None));
             }
             other => panic!("{context}: unknown op {other}"),
         }
@@ -1950,14 +2174,14 @@ fn replay_scenario(scenario: &JsValue) {
         }
     }
 
-    let tree = record_tree(&root, &dir_text, &dynamic);
+    let tree = record_tree(&root, &dir_text, &dynamic, Some(&root.join(".staging")));
     assert_same(
         &JsValue::Array(tree),
         field(scenario, "tree"),
         &format!("{name} snapshot tree"),
         &dynamic,
     );
-    no_temporaries(&dir);
+    no_temporaries(&dir, &root.join(".staging"));
 }
 
 // ------------------------------------------------------------ env config
@@ -2094,6 +2318,7 @@ fn rust_reads_ts_written_snapshots() {
             &target,
             &scratch.0.to_string_lossy(),
             &HashSet::new(),
+            None,
         )),
         field(cross, "restoreTargetTree"),
         "cross restore tree",
@@ -2118,7 +2343,7 @@ fn rust_reads_ts_written_snapshots() {
         result.manifest_path,
         Some(expected_path.to_string_lossy().into_owned())
     );
-    no_temporaries(&scratch.0);
+    no_temporaries(&scratch.0, &root.join(".staging"));
 }
 
 // ------------------------------------------- reverse cross: TS verifies Rust
@@ -2178,7 +2403,7 @@ fn real_ts_verifies_rust_written_snapshots() {
     eprintln!("{}", String::from_utf8_lossy(&output.stderr));
     assert!(output.status.success(), "TS --verify-rust failed");
     assert!(stdout.contains("PASS"), "missing PASS marker");
-    no_temporaries(&scratch.0);
+    no_temporaries(&scratch.0, &root.join(".staging"));
 }
 
 /// Negative control for the projection rule itself: only the recorder's

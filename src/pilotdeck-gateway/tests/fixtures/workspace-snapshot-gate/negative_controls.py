@@ -10,7 +10,10 @@ and the summary exits nonzero on anything but KILLED.
 Every bound failure point is deterministic (a missing directory, a planted
 manifest.json directory, a held seam): no mode-000 dependency, so the controls
 also fail identically under root (fix-r2, boundary#1: the old root refusal
-and its indistinguishable exit code are gone with the EACCES tests).
+and its indistinguishable exit code are gone with the EACCES tests). One
+fix-r4 exception: `early-exit-unreadable-manifest` binds a permission-000
+manifest, and its test skips under root (chmod cannot make the manifest
+unreadable there), so that control needs a non-root run.
 
 Because `mutating_sources` proves the tree equals HEAD, this must run after
 the #293 patch is committed; a pre-commit working tree is refused on purpose.
@@ -83,8 +86,24 @@ FALLBACK_MANIFEST = """            fs::rename(&staged_manifest, &paths.manifest_
                 two_path_message(&e, "rename", &staged_manifest, &paths.manifest_path).to_string()
             })?;
 """
-# fix-r3: the committed early-exit requires the manifest as a file too.
-EARLY_EXIT = """        if exists(&paths.committed_path) && paths.manifest_path.is_file() {
+# fix-r3/fix-r4: the committed early-exit — the marker plus a manifest in
+# `list()`'s own readable state (fix-r4: `fs::read`, not mere file presence).
+EARLY_EXIT = """        if exists(&paths.committed_path) && fs::read(&paths.manifest_path).is_ok() {
+"""
+# fix-r4 (r4 review P1-2): the tree comparison's one private path —
+# `<snapshot_root>/.staging`, never "any .staging at the recorded root".
+TREE_STAGING = """        if staging == Some(path.as_path()) {
+            continue;
+        }
+"""
+# fix-r4 (r4 review P1-2): the temporaries check's residue arm — a `.staging`
+# outside the snapshot root is reported, not excused.
+TEMPORARIES_RESIDUE = """            } else {
+                problems.push(format!(
+                    "#293 fix-r4 .staging outside the snapshot root is residue: {}",
+                    path.display()
+                ));
+            }
 """
 # fix-r3: no settle path may remove the shared .staging parent (P1-B race).
 FAILURE_CLEANUP = """fn failure_cleanup(staging: &Path) {
@@ -195,6 +214,37 @@ MUTATIONS = [
 """,
      ["--test", "workspace_snapshot", "orphan_committed_marker"],
      "#293 fix-r3 the republished manifest is readable"),
+    # fix-r4 (P1-1): the manifest leg of the early exit is readability in
+    # `list()`'s own terms (fs::read), not mere file presence. Reverting to
+    # the structural is_file() check resurrects the false Committed over a
+    # permission-000 manifest; the unreadable-manifest test must catch it at
+    # the republished-manifest read. Needs a non-root run (see the module
+    # docstring).
+    ("early-exit-unreadable-manifest", LIB, EARLY_EXIT,
+     """        if exists(&paths.committed_path) && paths.manifest_path.is_file() {
+""",
+     ["--test", "workspace_snapshot", "committed_marker_with_unreadable"],
+     "#293 fix-r4 the republished manifest is readable"),
+    # fix-r4 (P1-2): the tree comparison's staging exception is the exact
+    # snapshot-root path. Widening it back to "any .staging at the recorded
+    # root" hides a restore target's .staging residue from the comparison;
+    # the target-tree assertion must catch it.
+    ("tree-skips-target-staging", TEST, TREE_STAGING,
+     """        if directory == root && path.ends_with(".staging") {
+            let _ = staging;
+            continue;
+        }
+""",
+     ["--test", "workspace_snapshot", "restore_target_staging"],
+     "#293 fix-r4 the target tree records the restore target's .staging"),
+    # fix-r4 (P1-2): the temporaries check's residue arm. Dropping the report
+    # excuses an empty .staging anywhere again; the same test's temporaries
+    # assertion must catch it.
+    ("temporaries-excuse-any-staging", TEST, TEMPORARIES_RESIDUE,
+     """            }
+""",
+     ["--test", "workspace_snapshot", "restore_target_staging"],
+     "#293 fix-r4 the temporaries check flags the restore target's .staging"),
     # fix-r3 (P1-B): the failure cleanup must not remove the shared .staging
     # parent — a removal races another round's create_dir_all into a
     # permanent _FAILED.json. The parent-survival test must catch the

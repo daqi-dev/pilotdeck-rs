@@ -832,8 +832,7 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
         // workspaceSnapshot.ts:225-231: committed and failed snapshots return
         // from the markers without rescanning the workspace. #293 fix-r3
         // (registered divergence A6.6-SNAPSHOT-CLEANUP-OWNERSHIP-001-R3): a
-        // committed snapshot additionally requires its manifest to be
-        // present as a file, the same structural fact `list()` needs — the
+        // committed snapshot additionally requires its manifest — the
         // marker is the commit point and lands last, so a marker without a
         // manifest (the fix-r2 fallback residue, or a foreign writer's
         // plant) is not committed: the round recaptures and republishes
@@ -841,7 +840,12 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
         // early-exits on the marker alone, but its own write order
         // (manifest first, `_COMMITTED` last) never leaves that residue
         // (probe-c c6); this only diverges on hand-planted partitions.
-        if exists(&paths.committed_path) && paths.manifest_path.is_file() {
+        // #293 fix-r4 (r4 review P1-1): "present" reads in `list()`'s own
+        // terms — the same `fs::read` its walk performs (an unreadable
+        // manifest's descriptor is unusable there), so a permission-denied
+        // or otherwise unreadable manifest beside a marker is not committed
+        // either; the round republishes a readable one over it.
+        if exists(&paths.committed_path) && fs::read(&paths.manifest_path).is_ok() {
             return Ok(WorkspaceSnapshotResult {
                 snapshot_id,
                 phase,
