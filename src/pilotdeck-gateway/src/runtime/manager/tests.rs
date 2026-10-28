@@ -364,13 +364,33 @@ fn replay_error(value: &JsValue) -> ManagerError {
     ManagerError::with_message(name, code, message)
 }
 
+/// UTF-16-preserving marker substitution. Lossy conversion would turn a lone
+/// surrogate into U+FFFD before the comparison, hiding P1-3 regressions.
+fn replace_units(units: &[u16], needle: &[u16], replacement: &[u16]) -> JsString {
+    let mut out = Vec::with_capacity(units.len());
+    let mut index = 0;
+    while index < units.len() {
+        if needle.len() <= units.len() - index && units[index..].starts_with(needle) {
+            out.extend_from_slice(replacement);
+            index += needle.len();
+        } else {
+            out.push(units[index]);
+            index += 1;
+        }
+    }
+    JsString::from_utf16(out)
+}
+
 fn replace_dir(value: &JsValue, root: &Path) -> JsValue {
     match value {
-        JsValue::String(text) => {
-            let text =
-                String::from_utf16_lossy(text.units()).replace("<dir>", &root.to_string_lossy());
-            JsValue::from(text.as_str())
-        }
+        JsValue::String(text) => JsValue::String(replace_units(
+            text.units(),
+            "<dir>".encode_utf16().collect::<Vec<_>>().as_slice(),
+            root.to_string_lossy()
+                .encode_utf16()
+                .collect::<Vec<_>>()
+                .as_slice(),
+        )),
         JsValue::Array(items) => {
             JsValue::Array(items.iter().map(|item| replace_dir(item, root)).collect())
         }
@@ -387,11 +407,14 @@ fn replace_dir(value: &JsValue, root: &Path) -> JsValue {
 
 fn normalize_dir(value: &JsValue, root: &Path) -> JsValue {
     match value {
-        JsValue::String(text) => {
-            let text = String::from_utf16_lossy(text.units())
-                .replace(&root.to_string_lossy().to_string(), "<dir>");
-            JsValue::from(text.as_str())
-        }
+        JsValue::String(text) => JsValue::String(replace_units(
+            text.units(),
+            root.to_string_lossy()
+                .encode_utf16()
+                .collect::<Vec<_>>()
+                .as_slice(),
+            "<dir>".encode_utf16().collect::<Vec<_>>().as_slice(),
+        )),
         JsValue::Array(items) => {
             JsValue::Array(items.iter().map(|item| normalize_dir(item, root)).collect())
         }
@@ -423,7 +446,7 @@ fn manager_sessions_matches_real_ts_projection() {
     };
     assert_eq!(
         operations.len(),
-        24,
+        27,
         "#934 manager gateway fixture operation count is pinned"
     );
     let mut methods = 0;
@@ -494,7 +517,7 @@ fn manager_sessions_matches_real_ts_projection() {
         );
         methods += 1;
     }
-    assert_eq!(methods, 24, "#934 every oracle operation is replayed");
+    assert_eq!(methods, 27, "#934 every oracle operation is replayed");
 }
 
 #[test]
@@ -562,6 +585,15 @@ fn set_mtime(path: &Path, millis: f64) {
         .expect("#934 set matrix mtime");
 }
 
+fn set_mtime_ns(path: &Path, nanos: u64) {
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("#934 open matrix file for nanosecond mtime");
+    file.set_modified(UNIX_EPOCH + Duration::from_nanos(nanos))
+        .expect("#934 set matrix nanosecond mtime");
+}
+
 fn session_ids(value: &JsValue) -> Vec<String> {
     match value {
         JsValue::Array(items) => items
@@ -572,6 +604,49 @@ fn session_ids(value: &JsValue) -> Vec<String> {
     }
 }
 
+fn matrix_row<'a>(oracle: &'a JsValue, name: &str) -> &'a JsValue {
+    match item(oracle, "matrix") {
+        JsValue::Array(rows) => rows
+            .iter()
+            .find(|row| text(item(row, "name")) == name)
+            .unwrap_or_else(|| panic!("#934 oracle matrix row {name} is missing")),
+        _ => panic!("#934 oracle matrix must be an array"),
+    }
+}
+
+/// Materialize one oracle matrix row into a fresh scratch tree and list it.
+fn run_matrix_row(row: &JsValue) -> (Scratch, PathBuf, Result<Vec<JsValue>, ManagerError>) {
+    let scratch = Scratch::new();
+    let root = scratch.project();
+    let home = scratch.home();
+    let chat = scratch.chat();
+    if let JsValue::Array(files) = item(row, "files") {
+        for file in files {
+            let path = chat.join(text(item(file, "name")));
+            fs::write(&path, text(item(file, "content"))).expect("#934 write matrix transcript");
+            match file.get("mtimeNs") {
+                Some(ns) => set_mtime_ns(
+                    &path,
+                    text(ns)
+                        .parse()
+                        .expect("#934 matrix mtimeNs must be an integer string"),
+                ),
+                None => set_mtime(&path, number(item(file, "mtime"))),
+            }
+        }
+    }
+    let catalog =
+        TranscriptSessionCatalog::new(Arc::new(adapter_for(Arc::new(TestStore::default()), chat)));
+    let input = SessionCatalogListInput {
+        project_root: root.clone(),
+        pilot_home: home,
+        limit: item(row, "limit").as_number(),
+        offset: item(row, "offset").as_number(),
+        include_internal: matches!(item(row, "includeInternal"), JsValue::Bool(true)),
+    };
+    (scratch, root, catalog.list(&input))
+}
+
 #[test]
 fn manager_catalog_matrix_matches_real_ts() {
     let oracle = crate::test_baseline::oracle(ORACLE);
@@ -580,41 +655,117 @@ fn manager_catalog_matrix_matches_real_ts() {
         _ => panic!("#934 oracle matrix must be an array"),
     };
     assert!(
-        matrix.len() >= 14,
+        matrix.len() >= 21,
         "#934 catalog/writer matrix covers the P1 fix rows"
     );
     for row in matrix {
         let name = text(item(row, "name"));
-        let scratch = Scratch::new();
-        let root = scratch.project();
-        let home = scratch.home();
-        let chat = scratch.chat();
-        if let JsValue::Array(files) = item(row, "files") {
-            for file in files {
-                let path = chat.join(text(item(file, "name")));
-                fs::write(&path, text(item(file, "content")))
-                    .expect("#934 write matrix transcript");
-                set_mtime(&path, number(item(file, "mtime")));
+        let (_scratch, root, result) = run_matrix_row(row);
+        match row.get("error") {
+            Some(expected) => {
+                let error = match result {
+                    Err(error) => error,
+                    Ok(_) => panic!("#934 catalog matrix {name} must reject like real TS"),
+                };
+                assert_eq!(
+                    compact_str(&normalize_dir(&error.as_json(), &root)),
+                    compact_str(expected),
+                    "#934 catalog matrix error differs from real TS at {name}"
+                );
+            }
+            None => {
+                let actual = result.expect("#934 matrix catalog list must succeed");
+                assert_eq!(
+                    compact_str(&normalize_dir(&JsValue::Array(actual), &root)),
+                    compact_str(item(row, "outcome")),
+                    "#934 catalog matrix differs from real TS at {name}"
+                );
             }
         }
-        let catalog = TranscriptSessionCatalog::new(Arc::new(adapter_for(
-            Arc::new(TestStore::default()),
-            chat.clone(),
-        )));
-        let input = SessionCatalogListInput {
-            project_root: root.clone(),
-            pilot_home: home,
-            limit: item(row, "limit").as_number(),
-            offset: item(row, "offset").as_number(),
-            include_internal: matches!(item(row, "includeInternal"), JsValue::Bool(true)),
-        };
-        let actual = catalog
-            .list(&input)
-            .expect("#934 matrix catalog list must succeed");
+    }
+}
+
+#[test]
+fn manager_catalog_mtime_matches_node_millisecond_rounding() {
+    let oracle = crate::test_baseline::oracle(ORACLE);
+    for name in ["mtime-submillisecond-up", "mtime-submillisecond-carry"] {
+        let row = matrix_row(&oracle, name);
+        let (_scratch, root, result) = run_matrix_row(row);
+        let actual = result.expect("#934 sub-millisecond mtime catalog list");
         assert_eq!(
             compact_str(&normalize_dir(&JsValue::Array(actual), &root)),
             compact_str(item(row, "outcome")),
-            "#934 catalog matrix differs from real TS at {name}"
+            "#934 sub-millisecond mtime must round like Node getTime"
+        );
+    }
+}
+
+#[test]
+fn manager_catalog_same_mtime_orders_by_name() {
+    let oracle = crate::test_baseline::oracle(ORACLE);
+    for name in ["same-mtime-name-order", "same-mtime-pagination"] {
+        let row = matrix_row(&oracle, name);
+        let (_scratch, root, result) = run_matrix_row(row);
+        let actual = result.expect("#934 same-mtime catalog list");
+        assert_eq!(
+            compact_str(&normalize_dir(&JsValue::Array(actual), &root)),
+            compact_str(item(row, "outcome")),
+            "#934 same-mtime sessions must keep Node readdir name order"
+        );
+    }
+}
+
+#[test]
+fn manager_catalog_preserves_lone_surrogates() {
+    let oracle = crate::test_baseline::oracle(ORACLE);
+    for (name, message) in [
+        (
+            "surrogate-fast-title",
+            "#934 fast metadata title must keep lone surrogate units",
+        ),
+        (
+            "surrogate-prompt",
+            "#934 prompt text must keep lone surrogate units",
+        ),
+        (
+            "surrogate-metadata-fallback",
+            "#934 metadata fallback title must keep lone surrogate units",
+        ),
+    ] {
+        let row = matrix_row(&oracle, name);
+        let (_scratch, root, result) = run_matrix_row(row);
+        let actual = result.expect("#934 lone-surrogate catalog list");
+        assert_eq!(
+            compact_str(&normalize_dir(&JsValue::Array(actual), &root)),
+            compact_str(item(row, "outcome")),
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn manager_catalog_propagates_metadata_syntax_errors() {
+    let oracle = crate::test_baseline::oracle(ORACLE);
+    for (name, message) in [
+        (
+            "bad-escape-title",
+            "#934 invalid metadata title escape must reject like TS SyntaxError",
+        ),
+        (
+            "bad-escape-createdAt",
+            "#934 invalid createdAt escape must reject like TS SyntaxError",
+        ),
+    ] {
+        let row = matrix_row(&oracle, name);
+        let (_scratch, root, result) = run_matrix_row(row);
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("{message}"),
+        };
+        assert_eq!(
+            compact_str(&normalize_dir(&error.as_json(), &root)),
+            compact_str(item(row, "error")),
+            "{message}"
         );
     }
 }
@@ -1073,6 +1224,7 @@ fn manager_catalog_filters_internal_before_reading() {
         Arc::new(TestStore::default()),
         chat.clone(),
     )));
+    super::file_catalog::reset_read_paths();
     let default = catalog
         .list(&SessionCatalogListInput {
             project_root: root.clone(),
@@ -1091,6 +1243,11 @@ fn manager_catalog_filters_internal_before_reading() {
         text(item(&default[0], "summary")),
         "normal prompt",
         "#934 an internal compact boundary must not disturb the normal session"
+    );
+    assert_eq!(
+        super::file_catalog::recorded_read_paths(),
+        vec![normal.clone()],
+        "#934 internal sessions must be filtered before any file read"
     );
 
     let included = catalog

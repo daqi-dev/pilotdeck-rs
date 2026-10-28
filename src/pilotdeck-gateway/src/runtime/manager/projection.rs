@@ -316,15 +316,21 @@ impl<R: ManagerProjectResolver> ManagerProjection<R> {
             // rejected by Node's validateString before the catalog is called.
             JsValue::String(text) => text.units().to_vec(),
             other => {
-                // Reuse the gateway's existing Node `util.inspect` wording.
+                // Reuse the gateway's Node `util.inspect`/`ToString` wording.
+                // The description is UTF-16 so a lone surrogate in
+                // `constructor.name` reaches the wire unchanged; `[Object]` is
+                // the `inspect(value, { depth: -1 })` fallback for the exotic
+                // shapes where Node throws a different TypeError first.
                 let received = metadata::argument_received(other)
-                    .unwrap_or_else(|| "an instance of Object".into());
-                return Err(ManagerError::new(
+                    .unwrap_or_else(|| JsString::from("[Object]"));
+                let mut message = "The \"paths[0]\" argument must be of type string. Received "
+                    .encode_utf16()
+                    .collect::<Vec<_>>();
+                message.extend_from_slice(received.units());
+                return Err(ManagerError::with_message(
                     "TypeError",
                     Some("ERR_INVALID_ARG_TYPE".into()),
-                    format!(
-                        "The \"paths[0]\" argument must be of type string. Received {received}"
-                    ),
+                    JsString::from_utf16(message),
                 ));
             }
         };
