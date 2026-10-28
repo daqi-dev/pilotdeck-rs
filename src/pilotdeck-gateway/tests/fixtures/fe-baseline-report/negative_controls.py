@@ -16,7 +16,7 @@ negative is applied to a copy of the FIRST old-side profile report, the other
 reports are passed through by path, and loadReportPair's distinct-file guard
 still applies. There is no cargo, no listen, no Chrome.
 
-Positive control (the #61 acceptance), fix-r3: only the real reconcile output
+Positive control (the #61 acceptance), fix-r4: only the real reconcile output
 is trusted — there is no second, hand-written accounting here (fix-r1's
 independent Python scan drifted from accounting.mjs's strict comparisons and
 accepted corrupted originals). ``assess_pristine`` reads the pristine run's own
@@ -34,9 +34,14 @@ reasons, execution floors, stale-comparison positioning). Everything else —
 an unknown or empty error text, a renamed class, an A-rewrite variant, the
 ``Report must attest config.forbidOnly=true`` attestation, a raw Playwright
 ``report.errors`` message — is an accounting defect and FAILs the positive
-control; the acceptance is the identity ledger, not a green verdict.
+control; the acceptance is the identity ledger, not a green verdict. Before
+any whitelist classification, all six raw reports must independently attest
+an empty ``errors`` array. This source check is mandatory even for a message
+copied verbatim from a producer-generated behavioural error. Only after that
+check can the real reconcile output's whitelist entries be attributed to
+accounting.mjs / baseline-stale.mjs rather than to Playwright input errors.
 
-Twelve report-level negatives, each bound to one target identity picked from
+Fourteen report-level negatives, each bound to one target identity picked from
 the pristine reconciliation as the first old-side registration that is PASS in
 every profile, is outside the fixed skip allowlist, and never triggers any
 negative marker in the pristine verdict (the new side honestly stays red on
@@ -54,15 +59,20 @@ its missing surfaces, so it cannot supply a passing target):
   a-rewrite-one         insert an ``[A:``-titled clone spec                  -> ``report 1: A rewrite result never credits this ledger (A-class has its own account): <mutant caseId>``
   forbid-only-one       flip the report copy's ``config.forbidOnly``         -> ``report 1: Report must attest config.forbidOnly=true``
   playwright-errors-one append a message to the copy's ``errors``            -> ``report 1: #61 injected playwright-level error``
+  playwright-errors-behavioral-prefix-one inject a behavioural-looking raw error -> dedicated raw-source failure
+  playwright-errors-behavioral-copy-one copy a complete producer error into raw errors -> dedicated raw-source failure
 
 ``caseId`` is the ledger identity ``JSON.stringify([file, full title])``
 exactly as accounting.mjs builds it. The three retry negatives exist because
 accounting.mjs rejects attempts with a strict ``retry !== undefined &&
 retry !== 0`` (a null or boolean retry is a retried attempt, not a clean one);
-the kill judgement consumes only the real accounting verdict. A row is KILLED
+the ledger kill judgement consumes the real accounting verdict. A row is KILLED
 only when the reconcile exit code is non-zero and its old-side errors contain
 the identity-scoped marker prefixed by ``report 1: `` (the mutated original)
-and that exact marker was absent from the pristine verdict. Every negative
+and that exact marker was absent from the pristine verdict. For the two source
+negatives, absence is checked on ``assess_pristine``'s exact raw error
+diagnostic instead: the copied producer marker already exists in the pristine
+ledger, so its presence alone never counts as a kill. Every negative
 runs to completion; the summary records KILLED / SURVIVED / INVALID with a
 reason and the process exits non-zero unless the positive control holds and
 every negative is KILLED.
@@ -110,6 +120,8 @@ UNKNOWN_IDENTITY_SUFFIX = "#61-unknown-result-one"
 # mutant; accounting.mjs carries Playwright-level report errors into the
 # verdict verbatim (error.message), so this exact text is the marker.
 PLAYWRIGHT_ERROR_MESSAGE = "#61 injected playwright-level error"
+BEHAVIORAL_ERROR_MESSAGE = "behavioral failure #61 raw-report-errors ledger corruption"
+RAW_ERROR_NEGATIVES = ("playwright_behavioral_prefix", "playwright_behavioral_copy")
 
 # The honest-red classes of the real accounting, as a WHITELIST (fix-r3): an
 # error text that is none of these is an accounting defect and fails the
@@ -120,7 +132,8 @@ PLAYWRIGHT_ERROR_MESSAGE = "#61 injected playwright-level error"
 # pair-level stale-comparison positioning, which the pristine honest-red run
 # legitimately carries). Behavioural red is not a ledger defect; everything
 # else — including the A-rewrite variant, the forbidOnly attestation and raw
-# Playwright report.errors messages — is.
+# Playwright report.errors messages — is. This whitelist is only consulted
+# after all six raw errors arrays pass the independent source check below.
 BEHAVIORAL_RED = (
     "behavioral failure ",
     "NOT_RUN_PENDING_ORCHESTRATION ",
@@ -147,6 +160,8 @@ NEGATIVES = [
     ("a-rewrite-one", "a_rewrite"),
     ("forbid-only-one", "forbid_only"),
     ("playwright-errors-one", "playwright_errors"),
+    ("playwright-errors-behavioral-prefix-one", "playwright_behavioral_prefix"),
+    ("playwright-errors-behavioral-copy-one", "playwright_behavioral_copy"),
 ]
 
 
@@ -155,9 +170,8 @@ def usage(stream=sys.stderr):
           "--new <new-report-1.json> [...]", file=stream)
     print("  <out-dir>  must not exist; per-run logs, mutated copies and summary.json land there",
           file=stream)
-    print("  --old      at least one real old-side Playwright JSON original (repeat per profile "
-          "or space-separate)", file=stream)
-    print("  --new      at least one real new-side Playwright JSON original", file=stream)
+    print("  --old      three real old-side Playwright JSON originals (one per profile)", file=stream)
+    print("  --new      three real new-side Playwright JSON originals (one per profile)", file=stream)
     print("example (worktree root, after --suite baseline --profiles staffdeck,minimal,replacement):",
           file=stream)
     print("  python3 src/pilotdeck-gateway/tests/fixtures/fe-baseline-report/negative_controls.py \\",
@@ -197,7 +211,37 @@ def is_behavioral_red(error):
     return body.startswith(BEHAVIORAL_RED)
 
 
-def assess_pristine(result, exit_code):
+def raw_error_failure(side, index, errors):
+    """Exact source diagnostic, shared by the assessment and report negatives."""
+    return f"#61 raw report.errors {side} report {index}: {len(errors)} error(s): {errors[:2]!r}"
+
+
+def assess_raw_reports(raw_reports):
+    """Six originals, checked independently of every behavioural error text."""
+    failures = []
+    if not isinstance(raw_reports, dict):
+        return ["#61 raw reports must contain old/new originals"]
+    for side in ("old", "new"):
+        reports = raw_reports.get(side)
+        if not isinstance(reports, list) or len(reports) != 3:
+            failures.append(f"#61 raw reports {side}: expected three profile originals")
+        if not isinstance(reports, list):
+            continue
+        for index, report in enumerate(reports, 1):
+            errors = report.get("errors") if isinstance(report, dict) else None
+            if not isinstance(errors, list):
+                failures.append(f"#61 raw report.errors {side} report {index}: not an array")
+            elif errors:
+                failures.append(raw_error_failure(side, index, errors))
+    return failures
+
+
+def load_raw_reports(old_reports, new_reports):
+    return {side: [json.loads(path.read_text(encoding="utf-8")) for path in paths]
+            for side, paths in (("old", old_reports), ("new", new_reports))}
+
+
+def assess_pristine(result, exit_code, raw_reports):
     """Fail-closed assessment of a real ``run.mjs --reconcile`` result.
 
     Returns a list of failures; empty means the pristine identity ledger
@@ -208,10 +252,13 @@ def assess_pristine(result, exit_code):
     inventory is 72, never that all 72 ran), an exit code disagreeing with
     the reported status, a status outside the real reconcile's own enum, or
     any non-behavioural accounting error on either side or at the pair
-    level."""
-    failures = []
+    level. The six raw report.errors arrays are checked before classification:
+    only zero raw errors establishes that whitelist entries came from the
+    real reconcile producer (accounting.mjs:89 is its sole raw-error input)."""
+    failures = assess_raw_reports(raw_reports)
+    producer_only = not failures
     if not isinstance(result, dict):
-        return [f"result.json is not an object: {type(result).__name__}"]
+        return [*failures, f"result.json is not an object: {type(result).__name__}"]
     registration = result.get("registration")
     if not isinstance(registration, dict):
         failures.append(f"result.json has no registration object: {registration!r}")
@@ -249,7 +296,7 @@ def assess_pristine(result, exit_code):
             if not isinstance(denominator, int) or denominator != EXPECTED_REGISTRATION:
                 failures.append(f"{path} denominator {denominator!r} != "
                                 f"{EXPECTED_REGISTRATION} registered identities")
-        defects = [error for error in errors if not is_behavioral_red(error)]
+        defects = [error for error in errors if not producer_only or not is_behavioral_red(error)]
         if defects:
             failures.append(f"{path} reports non-behavioural accounting error(s): "
                             f"{defects[:2]} ({len(defects)} total)")
@@ -284,7 +331,7 @@ def find_target(report, spec_file, title):
     return None, None
 
 
-def apply_negative(report, spec_file, title, kind):
+def apply_negative(report, spec_file, title, kind, behavioral_error=None):
     """Corrupt the loaded report copy; returns (reason, expected old-side
     marker). The marker is the identity-scoped accounting error, without the
     ``report 1: `` prefix the caller adds."""
@@ -343,6 +390,12 @@ def apply_negative(report, spec_file, title, kind):
         # into the accounting verdict verbatim; the marker is the message.
         report.setdefault("errors", []).append({"message": PLAYWRIGHT_ERROR_MESSAGE})
         return "", PLAYWRIGHT_ERROR_MESSAGE
+    if kind in RAW_ERROR_NEGATIVES:
+        message = BEHAVIORAL_ERROR_MESSAGE if kind == "playwright_behavioral_prefix" else behavioral_error
+        if not isinstance(message, str) or not message:
+            return "#61 raw-error negative has no complete producer error to copy", ""
+        report.setdefault("errors", []).append({"message": message})
+        return "", message
     return f"unknown negative kind {kind!r}", ""
 
 
@@ -364,7 +417,11 @@ def run_reconcile(tag, old_reports, new_reports, out_dir):
         command += ["--old-report", str(report)]
     for report in new_reports:
         command += ["--new-report", str(report)]
-    finished = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=900)
+    try:
+        finished = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=900)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {"tag": tag, "exit": None, "errors": [],
+                "invalid": f"#61 reconcile did not finish: {error!r}"}
     (out_dir / f"{tag}.stdout.log").write_text(finished.stdout, encoding="utf-8")
     (out_dir / f"{tag}.stderr.log").write_text(finished.stderr, encoding="utf-8")
     try:
@@ -429,7 +486,8 @@ def main():
         record("pristine", "INVALID", pristine["invalid"])
         (out_dir / "summary.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
         return 1
-    failures = assess_pristine(pristine["result"], pristine["exit"])
+    raw_reports = load_raw_reports(old_reports, new_reports)
+    failures = assess_pristine(pristine["result"], pristine["exit"], raw_reports)
     if failures:
         record("pristine", "FAIL", "; ".join(failures))
     else:
@@ -463,6 +521,12 @@ def main():
         return 1
     identity = case_id(*target)
     record("target", "PASS", f"bound to {identity}")
+    # Copy the producer's complete, unprefixed text from the mutated profile;
+    # matching a pre-existing ledger error is deliberately not a kill signal.
+    profiles = pristine["result"]["accounting"]["old"].get("profiles", [])
+    behavioral_error = next((error for error in profiles[0].get("errors", [])
+                             if isinstance(error, str) and error.startswith("behavioral failure ")),
+                            None) if profiles else None
 
     for name, kind in NEGATIVES:
         mutant_dir = out_dir / name
@@ -471,13 +535,18 @@ def main():
         copy.write_text(json.dumps(json.loads(old_reports[0].read_text(encoding="utf-8")),
                                    ensure_ascii=False, indent=1), encoding="utf-8")
         report = json.loads(copy.read_text(encoding="utf-8"))
-        reason, marker = apply_negative(report, target[0], target[1], kind)
+        reason, marker = apply_negative(report, target[0], target[1], kind, behavioral_error)
         if reason:
             record(name, "INVALID", reason)
             continue
         copy.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
         expected = f"report 1: {marker}"
-        if any(expected in error for error in pristine["errors"]):
+        raw_negative = kind in RAW_ERROR_NEGATIVES
+        source_marker = raw_error_failure("old", 1, report["errors"]) if raw_negative else ""
+        if raw_negative and source_marker in failures:
+            record(name, "INVALID", f"source marker {source_marker!r} already appears in the pristine assessment")
+            continue
+        if not raw_negative and any(expected in error for error in pristine["errors"]):
             record(name, "INVALID", f"marker {expected!r} already appears in the pristine verdict")
             continue
         verdict = run_reconcile(name, [copy, *old_reports[1:]], new_reports, out_dir)
@@ -486,6 +555,15 @@ def main():
             continue
         if verdict["exit"] == 0:
             record(name, "SURVIVED", f"real accounting stayed green despite {kind}")
+        elif raw_negative:
+            assessment = assess_pristine(verdict["result"], verdict["exit"],
+                                         load_raw_reports([copy, *old_reports[1:]], new_reports))
+            if expected not in verdict["old_errors"]:
+                record(name, "INVALID", f"#61 raw-error negative did not reach producer: {expected!r}")
+            elif source_marker not in assessment:
+                record(name, "SURVIVED", f"#61 raw-error source rejection absent for {kind}")
+            else:
+                record(name, "KILLED", source_marker)
         elif not any(expected in error for error in verdict["old_errors"]):
             record(name, "SURVIVED", f"exit {verdict['exit']} without the identity-scoped marker {expected!r}")
         else:
