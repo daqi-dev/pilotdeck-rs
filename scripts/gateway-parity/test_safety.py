@@ -1073,9 +1073,8 @@ class ImportIsolation(unittest.TestCase):
         dispatch = compile(ast.get_source_segment(source, blocks[0]), entry.__file__, 'exec')
         for route in ('ruler', 'prerequisites'):
             for stage in ('load', 'verify', 'work'):
-                for error_type in (ValueError, OSError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt):
-                    if stage == 'work' and error_type not in (ValueError, OSError):
-                        continue
+                for error_type in (ValueError, OSError, RuntimeError, subprocess.SubprocessError,
+                                   PermissionError, TimeoutError, KeyboardInterrupt):
                     with self.subTest(route=route, stage=stage, error=error_type.__name__), ExitStack() as stack:
                         held = False
                         reached = []
@@ -1126,11 +1125,187 @@ class ImportIsolation(unittest.TestCase):
                             summary = json.loads(output.getvalue())
                         except ValueError as error:
                             self.fail(message + ': invalid JSON: ' + str(error))
-                        self.assertEqual((summary.get('status'), code), ('BLOCKED', 1 if stage == 'work' else 2), message)
+                        expected = ('FAIL', 1) if (stage == 'work' and error_type not in
+                                                           (PermissionError, TimeoutError, KeyboardInterrupt)) else ('BLOCKED', 2)
+                        self.assertEqual((summary.get('status'), code), expected, message)
                         self.assertEqual(summary.get('failure', {}).get('rule'),
-                                         None if stage == 'work' else 'APPARATUS_IMPORTS', message + ': rule')
+                                         'EVIDENCE' if stage == 'work' else 'APPARATUS_IMPORTS', message + ': rule')
                         self.assertEqual(errors.getvalue(), '', message + ': no traceback')
                         self.assertFalse(held, message + ': lease released')
+
+    def test_ruler_cargo_preflight_is_blocked_before_collection(self):
+        from contextlib import ExitStack, contextmanager, redirect_stdout
+        import io
+        message = '#166 fix-r10 cargo preflight must return BLOCKED/2/CARGO_CONFIG before collection'
+        entry = _load('ruler_cargo_error_entry', common.SCRIPT / 'check_ruler.py')
+        for shared_code in (2, 17):
+            with self.subTest(shared_code=shared_code), ExitStack() as stack:
+                held = False
+                @contextmanager
+                def recorded_lock(*args):
+                    nonlocal held
+                    held = True
+                    try:
+                        yield
+                    finally:
+                        held = False
+                stack.enter_context(patch.object(entry, 'install_shutdown', lambda: None))
+                stack.enter_context(patch.object(entry, 'parity_lock', recorded_lock))
+                stack.enter_context(patch.object(entry, 'cargo_config_problems', return_value=['controlled']))
+                collect = stack.enter_context(patch.object(entry, 'run_round'))
+                shared = stack.enter_context(patch.object(entry.common, 'aggregate_status',
+                                                          return_value=('BLOCKED', shared_code)))
+                stack.enter_context(patch.object(sys, 'argv', ['check_ruler', '--output', str(self.folder / 'out')]))
+                output = stack.enter_context(redirect_stdout(io.StringIO()))
+                try:
+                    code = entry.main()
+                    report = json.loads(output.getvalue())
+                except (Exception, KeyboardInterrupt) as error:
+                    self.fail('#166 fix-r10 cargo setup/execution error; invalid control: ' + repr(error))
+                self.assertEqual((report.get('status'), code), ('BLOCKED', shared_code), message)
+                self.assertEqual(report.get('failure', {}).get('rule'), 'CARGO_CONFIG', message)
+                self.assertIn('controlled', report.get('failure', {}).get('detail', ''), message)
+                self.assertEqual(collect.call_count, 0, message)
+                self.assertEqual([call.args for call in shared.call_args_list], [('BLOCKED',)], message)
+                self.assertFalse(held, message + ': lease released')
+
+    def test_ruler_work_signals_are_blocked_after_lease_release(self):
+        import signal
+        message = '#166 fix-r10 work signals must return BLOCKED/2/EVIDENCE after lease release'
+        # A fresh interpreter receives a real signal at an exact main() hook;
+        # no polling or external signal-file race. Each child has a 15s bound.
+        program = r'''
+import ast, importlib.util, json, os, signal, sys
+from contextlib import contextmanager
+from pathlib import Path
+from types import SimpleNamespace
+path, folder, phase, signum = sys.argv[1:]
+spec = importlib.util.spec_from_file_location('ruler_signal_entry', path)
+entry = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(entry)
+held = False
+@contextmanager
+def lease(*args):
+    global held
+    held = True
+    try:
+        yield
+    finally:
+        held = False
+        print('released', file=sys.stderr)
+def cancel(*args):
+    print('hook=' + phase + ';held=' + str(held), file=sys.stderr, flush=True)
+    os.kill(os.getpid(), int(signum))
+    raise AssertionError('signal did not interrupt hook')
+checks = 0
+def hashes():
+    global checks
+    checks += 1
+    if checks == 2 and phase == 'postverify':
+        cancel()
+    return {}
+real_save = entry.save
+def save(path, value):
+    if path.name == 'ruler.json' and phase == 'save':
+        cancel()
+    real_save(path, value)
+entry.parity_lock = lease
+entry.cargo_config_problems = lambda: []
+entry.baseline_dependency_hashes = lambda *a: {}
+entry.apparatus_hashes = hashes
+entry.digest = lambda *a: 'audit'
+entry.run_round = cancel if phase == 'collect' else lambda *a: None
+entry.compare = cancel if phase == 'compare' else lambda *a: {'status': 'PASS', 'failures': []}
+entry.save = save
+entry._load = lambda *a: SimpleNamespace(run_controls=cancel if phase == 'controls' else lambda *a: {
+    'cases': {}, 'prerequisites': {'passed': True, 'inputSha256': {}, 'auditSha256': 'audit'}})
+entry._verify_cli_imports = lambda: None
+source = Path(path).read_text()
+block, = [node for node in ast.parse(source).body if isinstance(node, ast.If)
+          and ast.unparse(node.test) == "__name__ == '__main__'"]
+sys.argv = ['check_ruler', '--output', folder]
+exec(compile(ast.get_source_segment(source, block), path, 'exec'),
+     dict(entry.__dict__, __name__='__main__'))
+'''
+        for phase in ('collect', 'compare', 'controls', 'postverify', 'save'):
+            for signum in (signal.SIGINT, signal.SIGTERM):
+                with self.subTest(phase=phase, signal=signum):
+                    try:
+                        result = subprocess.run([sys.executable, '-I', '-B', '-',
+                            str(common.SCRIPT / 'check_ruler.py'),
+                            str(self.folder / (phase + str(signum))), phase, str(signum)],
+                            input=program, capture_output=True, text=True, timeout=15)
+                    except (Exception, KeyboardInterrupt) as error:
+                        self.fail('#166 fix-r10 signal child startup/timeout; invalid control: ' + repr(error))
+                    hook = f'hook={phase};held=True\n'
+                    self.assertIn(hook, result.stderr, '#166 fix-r10 signal hook not reached; invalid control')
+                    if result.returncode != 2 and 'KeyboardInterrupt' not in result.stderr:
+                        self.fail('#166 fix-r10 unrelated child failure; invalid control: ' + result.stderr)
+                    self.assertEqual(result.returncode, 2, message + ': cancellation escaped')
+                    try:
+                        report = json.loads(result.stdout)
+                    except ValueError as error:
+                        self.fail('#166 fix-r10 invalid signal JSON; invalid control: ' + str(error))
+                    self.assertEqual(result.stderr, hook + 'released\n', message)
+                    self.assertEqual(report.get('status'), 'BLOCKED', message)
+                    self.assertEqual(report.get('failure', {}).get('rule'), 'EVIDENCE', message)
+
+    def test_standalone_controls_late_validation_is_blocked(self):
+        from contextlib import ExitStack, redirect_stdout, redirect_stderr
+        import ast
+        import io
+        message = '#166 fix-r10 standalone late imports must return BLOCKED/2/APPARATUS_IMPORTS only'
+        entry = _load('standalone_controls_error_entry', common.SCRIPT / 'controls/run_all.py')
+        prerequisites = entry.prerequisites_module
+        source = Path(entry.__file__).read_text()
+        blocks = [node for node in ast.parse(source).body if isinstance(node, ast.If)
+                  and ast.unparse(node.test) == "__name__ == '__main__'"]
+        self.assertEqual(len(blocks), 1, message + ': dispatch anchor')
+        dispatch = compile(ast.get_source_segment(source, blocks[0]), entry.__file__, 'exec')
+        for route in ('offline', 'source'):
+            for stage in ('load', 'verify', 'work'):
+                for error_type in (ValueError, OSError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt):
+                    with self.subTest(route=route, stage=stage, error=error_type.__name__), ExitStack() as stack:
+                        reached = []
+                        def refuse(*args, **kwargs):
+                            reached.append(stage)
+                            raise error_type('controlled ' + stage)
+                        def work(*args):
+                            prerequisites.module_at('standalone_late_probe', common.SCRIPT / 'common.py')
+                            return refuse()
+                        # Keep the real module_at wrapping and real dispatch; only
+                        # source/services work and HEAD preflight are test hooks.
+                        stack.enter_context(patch.object(entry.common, 'verify_loaded_apparatus', lambda: None))
+                        stack.enter_context(patch.object(entry, 'run_prerequisites', side_effect=work))
+                        stack.enter_context(patch.object(entry, 'run_controls', side_effect=work))
+                        stack.enter_context(patch.object(prerequisites, '_load', return_value=SimpleNamespace(),
+                                                        side_effect=refuse if stage == 'load' else None))
+                        stack.enter_context(patch.object(prerequisites, '_verify_cli_imports',
+                                                        side_effect=refuse if stage == 'verify' else None))
+                        stack.enter_context(patch.object(sys, 'argv', ['run_all', '--output', str(self.folder / 'out'),
+                            *(['--offline'] if route == 'offline' else ['--source', str(self.folder / 'source')])]))
+                        output = stack.enter_context(redirect_stdout(io.StringIO()))
+                        errors = stack.enter_context(redirect_stderr(io.StringIO()))
+                        code = escaped = None
+                        try:
+                            exec(dispatch, dict(entry.__dict__, __name__='__main__', _verify_cli_imports=lambda: None))
+                        except SystemExit as error:
+                            code = error.code
+                        except (Exception, KeyboardInterrupt) as error:
+                            escaped = error
+                        self.assertEqual(reached, [stage], message + ': real module_at reached')
+                        if stage == 'work':
+                            self.assertIs(type(escaped), error_type, message + ': ordinary work not promoted')
+                            self.assertEqual(output.getvalue(), '', message)
+                        else:
+                            self.assertIsNone(escaped, message + ': escaped ' + repr(escaped))
+                            try:
+                                report = json.loads(output.getvalue())
+                            except ValueError as error:
+                                self.fail('#166 fix-r10 invalid standalone JSON; invalid control: ' + str(error))
+                            self.assertEqual((report.get('status'), code), ('BLOCKED', 2), message)
+                            self.assertEqual(report.get('failure', {}).get('rule'), 'APPARATUS_IMPORTS', message)
+                        self.assertEqual(errors.getvalue(), '', message + ': no traceback')
 
     def test_ruler_summary_uses_shared_status_without_changing_pending_review(self):
         from contextlib import ExitStack, nullcontext, redirect_stdout
@@ -1140,56 +1315,61 @@ class ImportIsolation(unittest.TestCase):
         entry = _load('ruler_summary_entry', common.SCRIPT / 'check_ruler.py')
         gates = ('self_compare', 'positive_controls', 'prerequisite_controls',
                  'same_bad_rejected', 'proxy_parity')
-        for failed_gate in (None, *gates):
-            with self.subTest(failed_gate=failed_gate), ExitStack() as stack:
-                path = self.folder / (failed_gate or 'all-green')
-                for index, label in enumerate(('ts1', 'ts2', 'ts3', 'ts4', 'ts5', 'proxy')):
-                    common.save(path / label / 'run.json', {
-                        'apparatusSha256': {}, 'baselineDepsSha256': {},
-                        'side': 'rust' if label == 'proxy' else 'ts', 'label': label})
-                    common.save(path / label / 'processes.json', [{
-                        'name': 'gateway', 'pid': 100 if failed_gate == 'self_compare' else 100 + index}])
-                cases = {name: {'passed': failed_gate != 'same_bad_rejected', 'bothSides': True}
-                         for name in ('both-sides-bad', 'corrupt-fingerprint', 'both-bad-disk',
-                                      'both-bad-http', 'both-bad-wire-metadata')}
-                cases['positive'] = {'passed': failed_gate != 'positive_controls'}
-                controls = SimpleNamespace(run_controls=lambda *a: {
-                    'cases': cases, 'prerequisites': {
-                        'passed': failed_gate != 'prerequisite_controls',
-                        'inputSha256': {}, 'auditSha256': 'audit'}})
-                for attr, value in [('install_shutdown', lambda: None),
-                                    ('parity_lock', lambda *a: nullcontext()),
-                                    ('cargo_config_problems', lambda: []),
-                                    ('apparatus_hashes', lambda: {}),
-                                    ('baseline_dependency_hashes', lambda *a: {}),
-                                    ('digest', lambda *a: 'audit'),
-                                    ('_load', lambda *a: controls),
-                                    ('_verify_cli_imports', lambda: None),
-                                    ('compare', lambda a, b: {
-                                        'status': 'FAIL' if failed_gate == 'proxy_parity' and b.name == 'proxy' else 'PASS',
-                                        'failures': []})]:
-                    stack.enter_context(patch.object(entry, attr, value))
-                stack.enter_context(patch.object(entry, 'run_round',
-                                                side_effect=AssertionError('#166 fix-r9b unexpected live round; invalid test setup')))
-                shared = stack.enter_context(patch.object(entry.common, 'aggregate_status',
-                                                          wraps=common.aggregate_status))
-                stack.enter_context(patch.object(sys, 'argv', ['check_ruler', '--output', str(path)]))
-                output = stack.enter_context(redirect_stdout(io.StringIO()))
-                try:
-                    code = entry.main()
-                    report = json.loads(output.getvalue())
-                    saved = json.loads((path / 'ruler.json').read_text())
-                except (Exception, KeyboardInterrupt) as error:
-                    self.fail('#166 fix-r9b main/report execution error; not a contract kill: ' + repr(error))
-                expected = ('PENDING_REVIEW', 2) if failed_gate is None else ('FAIL', 1)
-                self.assertEqual((report.get('status'), code), expected, message)
-                self.assertEqual(saved, report, message + ': persisted report')
-                self.assertIsNone(report.get('independent_review'), message + ': review remains pending')
-                self.assertEqual([report.get(gate) for gate in gates],
-                                 [gate != failed_gate for gate in gates], message + ': real gates exercised')
-                self.assertEqual(shared.call_args_list, [
-                    call(*('PASS' if gate != failed_gate else 'FAIL' for gate in gates)),
-                    call('BLOCKED' if failed_gate is None else 'FAIL')], message + ': shared status and exit')
+        for sentinel in (None, 17):
+            for failed_gate in (None, *gates):
+                with self.subTest(failed_gate=failed_gate, sentinel=sentinel), ExitStack() as stack:
+                    path = self.folder / str(sentinel) / (failed_gate or 'all-green')
+                    for index, label in enumerate(('ts1', 'ts2', 'ts3', 'ts4', 'ts5', 'proxy')):
+                        common.save(path / label / 'run.json', {
+                            'apparatusSha256': {}, 'baselineDepsSha256': {},
+                            'side': 'rust' if label == 'proxy' else 'ts', 'label': label})
+                        common.save(path / label / 'processes.json', [{
+                            'name': 'gateway', 'pid': 100 if failed_gate == 'self_compare' else 100 + index}])
+                    cases = {name: {'passed': failed_gate != 'same_bad_rejected', 'bothSides': True}
+                             for name in ('both-sides-bad', 'corrupt-fingerprint', 'both-bad-disk',
+                                          'both-bad-http', 'both-bad-wire-metadata')}
+                    cases['positive'] = {'passed': failed_gate != 'positive_controls'}
+                    controls = SimpleNamespace(run_controls=lambda *a: {
+                        'cases': cases, 'prerequisites': {
+                            'passed': failed_gate != 'prerequisite_controls',
+                            'inputSha256': {}, 'auditSha256': 'audit'}})
+                    for attr, value in [('install_shutdown', lambda: None),
+                                        ('parity_lock', lambda *a: nullcontext()),
+                                        ('cargo_config_problems', lambda: []),
+                                        ('apparatus_hashes', lambda: {}),
+                                        ('baseline_dependency_hashes', lambda *a: {}),
+                                        ('digest', lambda *a: 'audit'),
+                                        ('_load', lambda *a: controls),
+                                        ('_verify_cli_imports', lambda: None),
+                                        ('compare', lambda a, b: {
+                                            'status': 'FAIL' if failed_gate == 'proxy_parity' and b.name == 'proxy' else 'PASS',
+                                            'failures': []})]:
+                        stack.enter_context(patch.object(entry, attr, value))
+                    stack.enter_context(patch.object(entry, 'run_round',
+                                                    side_effect=AssertionError('#166 fix-r9b unexpected live round; invalid test setup')))
+                    aggregate = common.aggregate_status
+                    shared = stack.enter_context(patch.object(entry.common, 'aggregate_status',
+                        side_effect=lambda *states: (aggregate(*states)[0], sentinel)
+                        if sentinel is not None else aggregate(*states)))
+                    stack.enter_context(patch.object(sys, 'argv', ['check_ruler', '--output', str(path)]))
+                    output = stack.enter_context(redirect_stdout(io.StringIO()))
+                    try:
+                        code = entry.main()
+                        report = json.loads(output.getvalue())
+                        saved = json.loads((path / 'ruler.json').read_text())
+                    except (Exception, KeyboardInterrupt) as error:
+                        self.fail('#166 fix-r9b main/report execution error; not a contract kill: ' + repr(error))
+                    expected = ('PENDING_REVIEW', 2) if failed_gate is None else ('FAIL', 1)
+                    if sentinel is not None:
+                        expected = (expected[0], sentinel)
+                    self.assertEqual((report.get('status'), code), expected, message)
+                    self.assertEqual(saved, report, message + ': persisted report')
+                    self.assertIsNone(report.get('independent_review'), message + ': review remains pending')
+                    self.assertEqual([report.get(gate) for gate in gates],
+                                     [gate != failed_gate for gate in gates], message + ': real gates exercised')
+                    self.assertEqual(shared.call_args_list, [
+                        call(*('PASS' if gate != failed_gate else 'FAIL' for gate in gates)),
+                        call('BLOCKED' if failed_gate is None else 'FAIL')], message + ': shared status and exit')
 
     def test_main_code_is_verified_after_entry_disk_restore(self):
         from types import ModuleType
