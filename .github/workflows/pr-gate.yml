@@ -5,10 +5,12 @@ name: pr-gate
 # 设为分支保护必需检查属仓库设置，由协调者在本文件合入后另做（CLAUDE.md 第 14 条范围内）。
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
 
 jobs:
   pr-gate:
+    # 10-29：草稿（首次推送即开、早跑 CI）尚未贴结果块，判必红、只制造噪声；转 ready 时由 ready_for_review 触发。
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
