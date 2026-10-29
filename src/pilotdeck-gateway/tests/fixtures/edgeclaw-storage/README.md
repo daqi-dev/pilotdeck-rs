@@ -5,6 +5,11 @@
 SQLite 版本 3.51.2；Rust 侧 `rusqlite 0.39.0` + `bundled` 编译 3.51.3（见
 RESULT「依赖与 SQLite 版本」）。
 
+> #979：Node 的 `node:sqlite` 在 Homebrew 构建下链接共享 `libsqlite3`，写库版本随宿主
+> 升级（本机 3.53.2，macmini 3.50.4），而 `process.versions.sqlite` 是编译期版本
+> （3.51.2）。数据库头 offset 96 的写者版本只作提示、不参与语义：
+> `_shared/sqlite_bytes.mjs` 只把这 4 字节规范到 3.51.2，其余字节仍逐字对拍。
+
 ## 文件
 
 - `generate.mts`：生成器。先用 `baseline_source_guard.mjs` 校验基线 HEAD、

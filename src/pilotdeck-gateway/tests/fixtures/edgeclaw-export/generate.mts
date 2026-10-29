@@ -8,6 +8,7 @@ import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
 import { bindBaseline } from '../_shared/generator_guard.mjs';
+import { canonicalSqliteBase64 } from '../_shared/sqlite_bytes.mjs';
 import {configs,expand,openRepos,invoke,fileTree,freezeClock,stepClock,observe} from './observe.mts';
 assert.ok(process.env.PDRS_BASELINE);assert.ok(process.argv[2]);
 const baseline=resolve(process.env.PDRS_BASELINE!);const out=resolve(process.argv[2]!);
@@ -118,7 +119,7 @@ const seedSnapshot=(repo:string,afterOverride?:string)=>{
 seedSnapshot('target');
 seedSnapshot('beta','wrong-version');
 const seedFiles=fileTree(root);
-const databases=configs.map(c=>({id:c.id,base64:readFileSync(join(root,'workspaces',c.id,'control.sqlite')).toString('base64')}));
+const databases=configs.map(c=>({id:c.id,base64:canonicalSqliteBase64(join(root,'workspaces',c.id,'control.sqlite'))}));
 const bundle=(extra:any)=>({formatVersion:'clawxmemory-memory-snapshot.v4',scope:'current_project',files:[],...extra});
 const ops:any[]=[
   {method:'mode'},{repo:'target',method:'mode'},{repo:'general',method:'mode'},

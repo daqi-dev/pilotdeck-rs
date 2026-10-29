@@ -30,6 +30,11 @@ list/count (`core/storage/sqlite.ts:1495-1775` and its helpers), built like
 - Mixed-error import inputs (duplicate path + invalid record, legacy path +
   missing content) pin the `files.map(...)`-before-duplicate-check error
   precedence.
+
+> #979: the SQLite writer-version field (header offset 96) in the embedded `.db`
+> base64 is canonicalised to 3.51.2 by `_shared/sqlite_bytes.mjs`; every other
+> database byte is still compared exactly.
+
 - The Rust replay (`tests/edgeclaw_export.rs`) restores the TS databases and
   file tree (or re-seeds everything through the Rust implementation) and
   compares every observation and the final tree.

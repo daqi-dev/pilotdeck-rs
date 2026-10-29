@@ -7,6 +7,10 @@
 
 `generate.mts` 调真实 `MemoryRepository` 创建数据库和文件，逐步记录返回值、完整文件树、
 SQL schema、L0 与 pipeline 行。`oracle.json` 的数据库 base64 和期望值均由真实 TS 产出。
+> #979: the SQLite writer-version field (header offset 96) in the embedded `.db`
+> base64 is canonicalised to 3.51.2 by `_shared/sqlite_bytes.mjs`; every other
+> database byte is still compared exactly.
+
 复用 snapshots 的磁盘观测与固定时钟；只归一化临时根、SQL updated_at，保留完整 JSON 文本
 及字段顺序、文件内容、错误类别和 SQL 原文。固定 Node v22.22.0、locale en-US。
 
