@@ -2787,7 +2787,12 @@ async fn writer_fence_exhausted_drain_budget_acquires_idle_lease() {
         .begin_activity()
         .expect("#745 exhausted budget active turn");
     tokio::time::pause();
-    let mut creating = Box::pin(h.factory.construct(h.context(), Some(old.clone())));
+    let mut disposal_failure = None;
+    let mut creating = Box::pin(h.factory.construct(
+        h.context(),
+        Some(old.clone()),
+        &mut disposal_failure,
+    ));
     // Poll exactly to the drain wait, then hold the factory caller while the
     // owned disposal finishes. Both drain completion and deadline are ready
     // when we resume polling, so remaining writer wait is deterministically zero.
@@ -4001,4 +4006,471 @@ async fn recreation_retry_after_seed_error_retains_drained_seed() {
 #[tokio::test]
 async fn recreation_retry_rejects_disposed_predecessor_with_active_turn() {
     drained_seed_case(false, false, Some("guard-panic")).await;
+}
+
+struct RetryFaultSession {
+    inner: Arc<dyn LiveSession>,
+    mode: &'static str,
+    gate: Arc<Gate>,
+    snapshots: AtomicUsize,
+}
+impl LiveSession for RetryFaultSession {
+    fn snapshot(&self) -> JsValue {
+        self.inner.snapshot()
+    }
+    fn reload_snapshot(&self) -> Result<ReloadSnapshot, RuntimeError> {
+        self.inner.reload_snapshot()
+    }
+    fn draining_reload_snapshot(&self) -> Result<ReloadSnapshot, RuntimeError> {
+        let read = self.snapshots.fetch_add(1, Ordering::SeqCst);
+        if self.mode == "slow-snapshot" && read == 1 {
+            // advance changes the clock before its cooperative yield. Poll once
+            // in this synchronous callback; prove the clock really moved.
+            let before = tokio::time::Instant::now();
+            let mut advance = Box::pin(tokio::time::advance(Duration::from_secs(6)));
+            let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+            let _ = advance.as_mut().poll(&mut cx);
+            assert_eq!(
+                tokio::time::Instant::now() - before,
+                Duration::from_secs(6),
+                "#1022 r2 slow snapshot advances virtual clock"
+            );
+        }
+        self.inner.draining_reload_snapshot()
+    }
+    fn abort(&self, reason: &JsString) -> RuntimeResult {
+        self.inner.abort(reason)
+    }
+    fn disposal_guard(&self) -> Option<Box<dyn Send>> {
+        if self.mode == "guard-panic" {
+            panic!("#1022 r2 injected guard panic");
+        }
+        if self.mode == "guard-drop-panic" {
+            struct PanicOnDrop {
+                _writer: Option<Box<dyn Send>>,
+            }
+            impl Drop for PanicOnDrop {
+                fn drop(&mut self) {
+                    panic!("#1022 r2 injected writer guard drop panic");
+                }
+            }
+            return Some(Box::new(PanicOnDrop {
+                _writer: self.inner.disposal_guard(),
+            }));
+        }
+        self.inner.disposal_guard()
+    }
+    fn dispose(&self) -> DisposeFuture<'_> {
+        Box::pin(async move {
+            if self.mode == "dispose-panic" {
+                panic!("#1022 r2 injected dispose panic");
+            }
+            if self.mode == "error" {
+                self.gate.wait().await;
+            }
+            self.inner.dispose().await?;
+            if self.mode == "error" {
+                return Err(RuntimeError::new("DISPOSE_1022"));
+            }
+            Ok(())
+        })
+    }
+}
+struct RetryInitialFactory {
+    initial: Mutex<Option<LiveSessionHandle>>,
+    factory: Arc<ProjectSessionFactory>,
+}
+impl SessionFactory for RetryInitialFactory {
+    fn can_recreate(&self) -> bool {
+        true
+    }
+    fn create(
+        &self,
+        context: SessionContext,
+        previous: Option<LiveSessionHandle>,
+    ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+        if let Some(initial) = lock(&self.initial).take() {
+            return Box::pin(async move { Ok(initial) });
+        }
+        self.factory.create(context, previous)
+    }
+}
+async fn retry_fault(
+    h: &Harness,
+    mode: &'static str,
+) -> (LiveSessionHandle, LiveSessionHandle, Arc<Gate>) {
+    let original = followup_bounded("r2 initial", h.factory.create(h.context(), None))
+        .await
+        .expect("#1022 r2 initial factory session");
+    let gate = Gate::new();
+    let old = LiveSessionHandle::new(
+        Arc::new(RetryFaultSession {
+            inner: original.session_for_test(),
+            mode,
+            gate: gate.clone(),
+            snapshots: AtomicUsize::new(0),
+        }),
+        None,
+    );
+    (old, original, gate)
+}
+
+async fn retry_idle_panic(mode: &'static str) {
+    let h = Harness::new("r2-idle-panic");
+    let (old, original, _) = retry_fault(&h, mode).await;
+    for _ in 0..2 {
+        let result = followup_bounded(
+            "r2 idle panic",
+            h.factory.create(h.context(), Some(old.clone())),
+        )
+        .await;
+        assert_eq!(
+            lock(&h.observed.events)
+                .iter()
+                .filter(|e| e.starts_with("storage."))
+                .count(),
+            1,
+            "#1022 r2 panic predecessor never creates replacement storage"
+        );
+        assert_eq!(
+            result
+                .err()
+                .expect("#1022 r2 idle panic refuses replacement")
+                .message,
+            "Agent session dispose task panicked.",
+            "#1022 r2 idle panic remains visible"
+        );
+        assert!(
+            !old.recreation_drained(),
+            "#1022 r2 panic is not normal drain"
+        );
+    }
+    assert_eq!(
+        old.state(),
+        HandleState::Disposed,
+        "#1022 r2 panic terminal handle state"
+    );
+    // A guard panic precedes writer transfer; a dispose panic follows it.
+    assert_eq!(
+        lock(&lock(&h.observed.writer_leases)[0]).is_some(),
+        mode == "guard-panic",
+        "#1022 r2 panic writer ownership is observed"
+    );
+    original
+        .dispose("explicit cleanup".into())
+        .await
+        .expect("#1022 r2 panic original cleanup");
+    let new = followup_bounded(
+        "r2 panic retired writer",
+        h.factory.create(h.context(), None),
+    )
+    .await
+    .expect("#1022 r2 explicit retirement permits independent writer");
+    new.dispose("cleanup".into())
+        .await
+        .expect("#1022 r2 panic new cleanup");
+    h.finish("r2-idle-panic").await;
+}
+#[tokio::test]
+async fn recreation_idle_guard_panic_cannot_skip_drain() {
+    retry_idle_panic("guard-panic").await;
+}
+#[tokio::test]
+async fn recreation_idle_dispose_panic_cannot_skip_drain() {
+    retry_idle_panic("dispose-panic").await;
+}
+
+async fn retry_cancelled_error(via_owner: bool, after_send: bool) {
+    let h = Harness::new("r2-cancelled-error");
+    let (old, _original, gate) = retry_fault(&h, "error").await;
+    let owner = if via_owner {
+        let mut options = SessionOwnerOptions::new(Arc::new(RetryInitialFactory {
+            initial: Mutex::new(Some(old.clone())),
+            factory: h.factory.clone(),
+        }));
+        options.idle_sweep_interval_ms = 0;
+        let owner = SessionOwner::new(options);
+        owner
+            .get_or_create(h.context())
+            .await
+            .expect("#1022 r2 owner initial");
+        assert!(
+            owner.mark_session_dirty(&h.context().session_key, "r2"),
+            "#1022 r2 owner dirty"
+        );
+        Some(owner)
+    } else {
+        None
+    };
+    let mut sent = owner.as_ref().map_or_else(
+        || h.factory.creation_sent.subscribe(),
+        SessionOwner::creations_sent_for_test,
+    );
+    let expected_sent = *sent.borrow() + 1;
+    let create = || match &owner {
+        Some(owner) => owner.get_or_create(h.context()),
+        None => h.factory.create(h.context(), Some(old.clone())),
+    };
+    let mut waiting = create();
+    let poll = std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx))).await;
+    assert!(poll.is_pending(), "#1022 r2 error caller waits for gate");
+    followup_bounded("r2 disposal gate", gate.entered()).await;
+    if after_send {
+        gate.open();
+        followup_bounded(
+            "r2 error sent",
+            sent.wait_for(|count| *count >= expected_sent),
+        )
+        .await
+        .expect("#1022 r2 result actually sent before receiver cancellation");
+        drop(waiting);
+    } else {
+        drop(waiting);
+        gate.open();
+        followup_bounded(
+            "r2 abandoned error sent",
+            sent.wait_for(|count| *count >= expected_sent),
+        )
+        .await
+        .expect("#1022 r2 cancelled caller completes before retry");
+    }
+    let error = followup_bounded("r2 error replay", create())
+        .await
+        .err()
+        .expect("#1022 r2 cancelled caller cleanup error must be replayed");
+    let oracle: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/session-disposal-retry/oracle.json"
+    ))
+    .expect("#1022 r2 TS oracle JSON");
+    assert_eq!(
+        error.message, oracle["rows"][3]["error"]["message"],
+        "#1022 r2 retained error aggregate"
+    );
+    assert_eq!(
+        error
+            .causes
+            .first()
+            .expect("#1022 r2 disposal cause")
+            .causes
+            .first()
+            .expect("#1022 r2 nested disposal cause")
+            .message,
+        "DISPOSE_1022",
+        "#1022 r2 original cleanup error"
+    );
+    assert_eq!(
+        lock(&h.observed.bindings).len(),
+        1,
+        "#1022 r2 error replay cannot publish replacement"
+    );
+    let new = followup_bounded("r2 acknowledged retry", create())
+        .await
+        .expect("#1022 r2 consumed cleanup error allows retry");
+    assert!(!new.same_identity(&old), "#1022 r2 replacement identity");
+    assert_eq!(
+        lock(&h.observed.events)
+            .iter()
+            .filter(|e| *e == "close.1")
+            .count(),
+        1,
+        "#1022 r2 old storage closes once"
+    );
+    if let Some(owner) = owner {
+        owner.shutdown().await.expect("#1022 r2 owner cleanup");
+    } else {
+        new.dispose("cleanup".into())
+            .await
+            .expect("#1022 r2 direct cleanup");
+    }
+    h.finish("r2-cancelled-error").await;
+}
+#[tokio::test]
+async fn recreation_cancelled_factory_error_is_replayed() {
+    retry_cancelled_error(false, false).await;
+}
+#[tokio::test]
+async fn recreation_unconsumed_factory_error_is_replayed() {
+    retry_cancelled_error(false, true).await;
+}
+#[tokio::test]
+async fn recreation_cancelled_owner_error_is_replayed() {
+    retry_cancelled_error(true, false).await;
+}
+#[tokio::test]
+async fn recreation_unconsumed_owner_error_is_replayed() {
+    retry_cancelled_error(true, true).await;
+}
+
+#[tokio::test]
+async fn writer_busy_budget_excludes_drained_snapshot() {
+    let h = Harness::with_fence_timeout("r2-slow-snapshot", Duration::from_secs(5));
+    let (old, _, _) = retry_fault(&h, "slow-snapshot").await;
+    let held = Arc::new(Mutex::new(None));
+    let blocker = held.clone();
+    let observation = Arc::new(Mutex::new(None));
+    let observe = observation.clone();
+    let create_storage = h.factory.options.create_storage.clone();
+    let factory = ProjectSessionFactory::new(FactoryOptions {
+        writer_busy_wait_timeout: Duration::from_secs(5),
+        prepare: h.factory.options.prepare.clone(),
+        create_storage: Arc::new(move |context| {
+            let storage = create_storage(context);
+            let blocker = blocker.clone();
+            let observe = observe.clone();
+            Box::pin(async move {
+                let storage = storage.await?;
+                let lease = acquire_writer(
+                    storage.recorder.writer().path().to_owned(),
+                    tokio::time::Instant::now() + Duration::from_secs(5),
+                )
+                .await?;
+                *lock(&observe) = Some(writer_wait_observation(
+                    tokio::sync::OwnedMutexGuard::mutex(&lease._process),
+                ));
+                *lock(&blocker) = Some(lease);
+                Ok(storage)
+            })
+        }),
+        admission: None,
+        diagnostic: Arc::new(|_| {}),
+    });
+    tokio::time::pause();
+    let waiting = tokio::spawn(factory.create(h.context(), Some(old)));
+    // Keep the test runnable while blocking filesystem work completes, so the
+    // paused clock cannot auto-advance to the writer's timeout.
+    let wait_state = followup_bounded("r2 process lock entered", async {
+        loop {
+            if let Some(observation) = lock(&observation).as_ref() {
+                let state = observation.load(Ordering::SeqCst);
+                if state != 0 {
+                    break state;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert_eq!(
+        wait_state, 1,
+        "#1022 r2 slow snapshot retains busy writer wait budget"
+    );
+    assert!(
+        !waiting.is_finished(),
+        "#1022 r2 occupied writer still waits"
+    );
+    tokio::time::advance(Duration::from_secs(1)).await;
+    drop(lock(&held).take());
+    tokio::time::resume();
+    let new = followup_bounded("r2 snapshot retry", waiting)
+        .await
+        .expect("#1022 r2 snapshot worker")
+        .expect("#1022 r2 slow snapshot retains busy writer wait budget");
+    new.dispose("cleanup".into())
+        .await
+        .expect("#1022 r2 snapshot cleanup");
+    h.finish("r2-slow-snapshot").await;
+}
+#[test]
+#[ignore = "requires fixed TS baseline and Node v22.22.0"]
+fn disposal_retry_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("session-disposal-retry");
+}
+
+#[tokio::test]
+async fn recreation_old_error_waiter_cannot_clear_new_error() {
+    struct FailsInOrder {
+        initial: Mutex<Option<LiveSessionHandle>>,
+        calls: Arc<AtomicUsize>,
+    }
+    impl SessionFactory for FailsInOrder {
+        fn can_recreate(&self) -> bool {
+            true
+        }
+        fn create(
+            &self,
+            _: SessionContext,
+            _: Option<LiveSessionHandle>,
+        ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+            if let Some(handle) = lock(&self.initial).take() {
+                return Box::pin(async move { Ok(handle) });
+            }
+            let id = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            Box::pin(async move { Err(RuntimeError::new(format!("FAILURE_{id}"))) })
+        }
+    }
+    let h = Harness::new("r2-error-identity");
+    let initial = h
+        .factory
+        .create(h.context(), None)
+        .await
+        .expect("#1022 r2 identity initial");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut options = SessionOwnerOptions::new(Arc::new(FailsInOrder {
+        initial: Mutex::new(Some(initial)),
+        calls: calls.clone(),
+    }));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    owner
+        .get_or_create(h.context())
+        .await
+        .expect("#1022 r2 identity cache");
+    assert!(
+        owner.mark_session_dirty(&h.context().session_key, "r2"),
+        "#1022 r2 identity dirty"
+    );
+    let old_waiter = owner.get_or_create(h.context());
+    followup_bounded("r2 identity first sent", async {
+        while calls.load(Ordering::SeqCst) != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    let first = owner
+        .get_or_create(h.context())
+        .await
+        .err()
+        .expect("#1022 r2 identity replay first");
+    assert_eq!(
+        first.message, "FAILURE_1",
+        "#1022 r2 identity first failure"
+    );
+    let new_waiter = owner.get_or_create(h.context());
+    followup_bounded("r2 identity second sent", async {
+        while calls.load(Ordering::SeqCst) != 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert_eq!(
+        old_waiter
+            .await
+            .err()
+            .expect("#1022 r2 identity old waiter")
+            .message,
+        "FAILURE_1",
+        "#1022 r2 identity old error retained"
+    );
+    drop(new_waiter);
+    let second = owner
+        .get_or_create(h.context())
+        .await
+        .err()
+        .expect("#1022 r2 identity replay second");
+    assert_eq!(
+        second.message, "FAILURE_2",
+        "#1022 r2 old waiter cannot acknowledge newer failure"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "#1022 r2 replay avoids new creation"
+    );
+    owner.shutdown().await.expect("#1022 r2 identity cleanup");
+    h.finish("r2-error-identity").await;
+}
+
+#[tokio::test]
+async fn recreation_idle_guard_drop_panic_cannot_skip_drain() {
+    retry_idle_panic("guard-drop-panic").await;
 }

@@ -124,6 +124,13 @@ struct Record {
     context: SessionContext,
     last_used: i64,
     dirty: bool,
+    unreported_creation_error: Option<Arc<RuntimeError>>,
+}
+
+#[derive(Clone)]
+struct CreationOutcome {
+    outcome: Result<LiveSessionHandle, RuntimeError>,
+    unreported_error: Option<Arc<RuntimeError>>,
 }
 
 struct Pending {
@@ -154,12 +161,19 @@ struct Inner {
     turns: SessionTurns,
     options: SessionOwnerOptions,
     stopped: watch::Sender<bool>,
+    #[cfg(test)]
+    creation_sent: watch::Sender<usize>,
 }
 
 #[derive(Clone)]
 pub struct SessionOwner(Arc<Inner>);
 
 impl SessionOwner {
+    #[cfg(test)]
+    pub(super) fn creations_sent_for_test(&self) -> watch::Receiver<usize> {
+        self.0.creation_sent.subscribe()
+    }
+
     pub fn new(options: SessionOwnerOptions) -> Self {
         let interval = options.idle_sweep_interval_ms;
         let owner = Self(Arc::new(Inner {
@@ -167,6 +181,8 @@ impl SessionOwner {
             turns: SessionTurns::default(),
             options,
             stopped: watch::channel(false).0,
+            #[cfg(test)]
+            creation_sent: watch::channel(0).0,
         }));
         if interval > 0 {
             let weak = Arc::downgrade(&owner.0);
@@ -208,14 +224,64 @@ impl SessionOwner {
         track(&mut state, context.project_key.clone(), completion);
         let (result, completion) = watch::channel(None);
         let owner = self.clone();
+        let receiver_owner = self.clone();
+        let key = context.session_key.clone();
         tokio::spawn(async move {
             let _exclusive = ticket.enter().await;
-            let outcome = owner.create_active(context).await;
-            result.send_replace(Some(outcome));
+            let pending = owner
+                .0
+                .state
+                .lock()
+                .unwrap()
+                .records
+                .get(&context.session_key)
+                .and_then(|record| record.unreported_creation_error.clone());
+            let outcome = if let Some(error) = &pending {
+                Err((**error).clone())
+            } else {
+                owner.create_active(context.clone()).await
+            };
+            // The factory waiter is this detached worker, not the public
+            // caller. Retain an error on the old record until that caller
+            // consumes it, including send-success/receiver-drop races.
+            let unreported_error = if pending.is_some() {
+                // A concurrent waiter may already have acknowledged this token.
+                // Replaying it must not put it back into the record.
+                pending
+            } else if let Err(error) = &outcome {
+                let mut state = owner.0.state.lock().unwrap();
+                state.records.get_mut(&context.session_key).map(|record| {
+                    let error = Arc::new(error.clone());
+                    record.unreported_creation_error = Some(error.clone());
+                    error
+                })
+            } else {
+                None
+            };
+            result.send_replace(Some(Ok(CreationOutcome {
+                outcome,
+                unreported_error,
+            })));
+            #[cfg(test)]
+            owner.0.creation_sent.send_modify(|count| *count += 1);
             // Failed creation is reported to its caller, not a shutdown error.
             done.send_replace(Some(Ok(())));
         });
-        Box::pin(wait_result(completion))
+        Box::pin(async move {
+            let delivered = wait_result(completion).await?;
+            if let Some(error) = delivered.unreported_error {
+                let mut state = receiver_owner.0.state.lock().unwrap();
+                if let Some(record) = state.records.get_mut(&key)
+                    && record
+                        .unreported_creation_error
+                        .as_ref()
+                        .is_some_and(|pending| Arc::ptr_eq(pending, &error))
+                {
+                    record.unreported_creation_error = None;
+                }
+            }
+            delivered.outcome
+        })
     }
 
     async fn create_active(
@@ -308,6 +374,7 @@ impl SessionOwner {
                         last_used: (self.0.options.now_ms)(),
                         // TS SessionRouter.ts:144-166 clears dirty after replace, including marks during recreation.
                         dirty: false,
+                        unreported_creation_error: None,
                     },
                 );
                 None
