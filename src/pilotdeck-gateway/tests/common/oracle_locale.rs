@@ -32,6 +32,74 @@ fn idle_limit_for(load: f64, cpus: usize) -> Duration {
         .unwrap_or(STARTUP_LIMIT)
 }
 
+/// #978: one bounded load-sample execution. The sample runs before the locale
+/// child and its 180 s supervisor exist, so a sampler that never exits must be
+/// stopped here rather than holding the spawn: the wait is capped by `limit`,
+/// and an expired child is killed and reaped before the caller falls back to
+/// the base budget.
+#[cfg(unix)]
+enum Sampled {
+    Finished(Output),
+    TimedOut { pid: u32 },
+    Failed,
+}
+
+/// #978: wait bound for one macOS `sysctl` load sample. Two candidate paths are
+/// tried, so the sampling phase costs at most two of these bounds.
+#[cfg(target_os = "macos")]
+const SAMPLE_LIMIT: Duration = Duration::from_secs(2);
+
+#[cfg(unix)]
+fn sample_bounded(mut command: std::process::Command, limit: Duration) -> Sampled {
+    // Negative control only: a mutant that removes the wait bound must be
+    // observable, so it widens the deadline instead of rewriting the source.
+    let limit = if pilotdeck_gateway::mutants::on("locale-sampler-unbounded") {
+        Duration::from_secs(24 * 60 * 60)
+    } else {
+        limit
+    };
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(_) => return Sampled::Failed,
+    };
+    let pid = child.id();
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Ok(None) => {
+                // Bounded wait expired: kill and reap here, so no sampler
+                // survives the fallback decision and no PID is left to Drop.
+                let _ = child.kill();
+                let _ = child.wait();
+                return Sampled::TimedOut { pid };
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Sampled::Failed;
+            }
+        }
+    }
+    match child.wait_with_output() {
+        Ok(output) => Sampled::Finished(output),
+        Err(_) => Sampled::Failed,
+    }
+}
+
+/// #978: the single fallback rule for every unusable sample: no load keeps the
+/// base budget (`idle_limit_for` treats 0.0 as the non-adaptive base).
+fn sampled_budget(load: Option<f64>, cpus: usize) -> Duration {
+    idle_limit_for(load.unwrap_or(0.0), cpus)
+}
+
 /// One-minute load average, read without `unsafe` (the workspace forbids it).
 /// Any failure is reported as `None`, which falls back to the base budget.
 #[cfg(target_os = "linux")]
@@ -41,15 +109,22 @@ fn load_average() -> Option<f64> {
 }
 
 #[cfg(target_os = "macos")]
+fn parse_load(output: &Output) -> Option<f64> {
+    if !output.status.success() {
+        return None;
+    }
+    let text = std::str::from_utf8(&output.stdout).ok()?;
+    text.split_whitespace().nth(1)?.parse().ok()
+}
+
+#[cfg(target_os = "macos")]
 fn load_average() -> Option<f64> {
     for program in ["/usr/sbin/sysctl", "sysctl"] {
-        if let Ok(output) = std::process::Command::new(program)
-            .args(["-n", "vm.loadavg"])
-            .output()
-            && output.status.success()
-            && let Ok(text) = String::from_utf8(output.stdout)
-            && let Some(value) = text.split_whitespace().nth(1)
-            && let Ok(load) = value.parse()
+        let mut command = std::process::Command::new(program);
+        command.args(["-n", "vm.loadavg"]);
+        // A stuck sampler times out, is reaped, and the next path is tried.
+        if let Sampled::Finished(output) = sample_bounded(command, SAMPLE_LIMIT)
+            && let Some(load) = parse_load(&output)
         {
             return Some(load);
         }
@@ -69,7 +144,7 @@ fn idle_limit() -> Duration {
         .map(|count| count.get())
         .unwrap_or(0);
     let load = load_average();
-    let limit = idle_limit_for(load.unwrap_or(0.0), cpus);
+    let limit = sampled_budget(load, cpus);
     eprintln!("#978 locale child: adaptive idle={limit:?} load={load:?} cpus={cpus}");
     limit
 }
