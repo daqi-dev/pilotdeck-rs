@@ -7,9 +7,40 @@ executes (no copy, no second implementation) and drives it with a temporary
 lease and stub "calibrate" scripts. The real /tmp/pdrs-parity.lock is never
 touched.
 """
+import os
 import sys
 
-if not sys.flags.isolated:
+# #1023 fix-r2 P2-1: -I alone is not enough. unittest discovery reinserts the
+# fixture directory, and a caller can also insert the frozen B2 apparatus
+# directory; with either on sys.path a same-named stdlib module beside it would
+# execute before the first non-boot import. Reject every spelling of this
+# fixture, its tests/fixtures parent, and scripts/ui-server-parity by
+# (device, inode), not by string: a case-insensitive alias shares the inode
+# while realpath keeps the spellings distinct. ``os`` has been frozen since
+# CPython 3.11, so importing it here cannot be shadowed from that directory.
+_boot_dir = os.path.dirname(os.path.realpath(__file__))
+_boot_parent = os.path.dirname(_boot_dir)
+_boot_root = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.dirname(_boot_parent))))
+_boot_roots = (_boot_dir, _boot_parent,
+               os.path.join(_boot_root, 'scripts', 'ui-server-parity'))
+
+
+def _boot_reinserted(entries):
+    for entry in entries:
+        candidate = entry or os.curdir
+        if not os.path.isdir(candidate):
+            continue
+        for root in _boot_roots:
+            try:
+                if os.path.samefile(candidate, root):
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+if not sys.flags.isolated or _boot_reinserted(sys.path):
     raise SystemExit(f'run with -I: python3 -I {__file__}')
 
 import tempfile
@@ -275,6 +306,113 @@ class LockGateControls(unittest.TestCase):
                          '#209 calibrate.sh must not release on every EXIT')
         self.assertIn("<<'PY'", text,
                       '#209 calibrate.sh must execute the gated supervisor')
+
+
+GUARD_RAISE = "    raise SystemExit(f'run with -I: python3 -I {__file__}')"
+
+
+def guard_prefix(disable=False):
+    """The real entry guard bytes, up to the first non-boot import."""
+    text = Path(__file__).read_text()
+    prefix = text[:text.index('\nimport tempfile\n')]
+    if disable:
+        if prefix.count(GUARD_RAISE) != 1:
+            raise AssertionError('#1023-10: the guard raise anchor is stale')
+        prefix = prefix.replace(GUARD_RAISE, '    pass  # control: guard disabled', 1)
+    return prefix
+
+
+def guarded_probe(disable=False):
+    return (guard_prefix(disable)
+            + '\nimport unittest\n\n\nclass Probe(unittest.TestCase):\n'
+              '    def test_runs(self):\n'
+              '        pass\n\n\n'
+              "if __name__ == '__main__':\n"
+              '    unittest.main()\n')
+
+
+class EntryGuardTests(unittest.TestCase):
+    """#1023 fix-r2 P2-1: discovery/reinsertion is rejected before tempfile."""
+
+    here = Path(__file__).resolve().parent
+
+    def run_discover(self, directory):
+        return subprocess.run(
+            [sys.executable, '-I', '-B', '-m', 'unittest', 'discover',
+             '-s', str(directory), '-p', 'test_zz_probe.py'],
+            capture_output=True, text=True, timeout=60)
+
+    def run_reinserted(self, path_dir, entry):
+        probe = ('import runpy, sys\n'
+                 'sys.path.insert(0, sys.argv[1])\n'
+                 'runpy.run_path(sys.argv[2], run_name="probe")\n')
+        return subprocess.run(
+            [sys.executable, '-I', '-B', '-c', probe, str(path_dir), str(entry)],
+            capture_output=True, text=True, timeout=60)
+
+    def test_discovery_reinsertion_is_rejected_before_tempfile(self):
+        marker = '#1023-10: discovery reinsertion must be rejected by the entry guard'
+        with tempfile.TemporaryDirectory(prefix='b2-guard-') as temp:
+            probe = Path(temp) / 'probe'
+            probe.mkdir()
+            target = probe / 'test_zz_probe.py'
+            target.write_text(guarded_probe())
+            closed = self.run_discover(probe)
+            self.assertEqual(closed.returncode, 1, marker + f': rc={closed.returncode}')
+            self.assertIn('run with -I', closed.stdout + closed.stderr, marker)
+            # Paired control: with just the raise disabled the identical probe
+            # must import and run, proving the rejection was the guard.
+            target.write_text(guarded_probe(disable=True))
+            opened = self.run_discover(probe)
+            self.assertEqual(opened.returncode, 0,
+                             marker + ' control: '
+                             + (opened.stdout + opened.stderr)[-500:])
+            self.assertIn('Ran 1 test', opened.stdout + opened.stderr,
+                          marker + ' control: the probe itself must run')
+
+    def test_mixed_spelling_reinsertion_is_rejected(self):
+        marker = '#1023-10: a mixed-spelling reinsertion must be rejected'
+        with tempfile.TemporaryDirectory(prefix='b2-guard-') as temp:
+            holder = Path(temp) / 'a' / 'b' / 'fixture'
+            holder.mkdir(parents=True)
+            entry = holder / 'entry.py'
+            entry.write_text(guard_prefix() + "\nprint('REACHED')\n")
+            link = Path(temp) / 'linked'
+            link.symlink_to(holder, target_is_directory=True)
+            cases = [('sys.path real, entry symlink', holder, link / 'entry.py')]
+            alias = holder.with_name(holder.name.upper())
+            if alias.is_dir():
+                try:
+                    same = os.path.samefile(alias, holder)
+                except OSError:
+                    same = False
+                if same:
+                    cases.append(('sys.path case alias, entry real', alias, entry))
+                    cases.append(('sys.path real, entry case alias', holder,
+                                  alias / 'entry.py'))
+            for label, path_dir, entry_path in cases:
+                with self.subTest(case=label):
+                    result = self.run_reinserted(path_dir, entry_path)
+                    self.assertEqual(result.returncode, 1,
+                                     marker + f' [{label}] rc={result.returncode}')
+                    self.assertIn('run with -I', result.stderr, marker + f' [{label}]')
+            real = Path(__file__).resolve()
+            for label, path_dir in (
+                    ('fixture directory', self.here),
+                    ('B2 apparatus directory',
+                     self.here.parents[4] / 'scripts/ui-server-parity')):
+                with self.subTest(case=label):
+                    result = self.run_reinserted(path_dir, real)
+                    self.assertEqual(result.returncode, 1, marker + f' [{label}]')
+                    self.assertIn('run with -I', result.stderr, marker + f' [{label}]')
+            # Paired control: the same alias probe must run once the raise is
+            # gone, so the assertions above measure the guard, not runpy.
+            entry.write_text(guard_prefix(disable=True) + "\nprint('REACHED')\n")
+            opened = self.run_reinserted(holder, link / 'entry.py')
+            self.assertEqual(opened.returncode, 0,
+                             marker + ' control: ' + opened.stderr[-500:])
+            self.assertIn('REACHED', opened.stdout,
+                          marker + ' control: the alias must reach the file')
 
 
 if __name__ == '__main__':

@@ -12,7 +12,9 @@ committed (``mutating_sources`` refuses files that differ from HEAD by design;
 Evidence goes in a new output folder. No cargo is involved, so no
 CARGO_TARGET_DIR is required. Run all mutants to completion; any non-KILLED
 row is a nonzero exit (a stale anchor or a broken run is INVALID, never
-SURVIVED).
+SURVIVED). Each bound run also holds the machine-wide cli-parity lease
+(``/tmp/pdrs-parity.lock``) that a real round already holds, so the pinned
+28999 bind cannot race a sibling driver (fix-r2 concurrency P1).
 
 Kill criterion (the shared negative_panic standard, applied to unittest
 output): the *named* test must have failed at its own assertion — its FAIL
@@ -29,17 +31,21 @@ import sys as _boot_sys
 # non-isolated launch and any reinsertion of this directory or tests/fixtures
 # (unittest discover does exactly that) before importing anything else, so a
 # same-named module next to this file can never execute as a bootstrap.
-# Both sides of the comparison must be realpaths. abspath keeps a POSIX
-# double-slash prefix (``//Users/...``) while the sys.path side normalises it,
-# so an aliased entry point slipped through the guard (fix-r1 P1-1).
+# Directory identity is compared by (device, inode), never by spelling.
+# realpath normalises ``//`` and symlinks but keeps the caller's case, so on a
+# case-insensitive volume a ``/users/...`` entry matched no realpath string and
+# slipped through (fix-r2 P1-1); ``normcase`` cannot fix POSIX aliases either.
 _boot_dir = _boot_os.path.dirname(_boot_os.path.realpath(__file__))
-_boot_roots = {_boot_dir, _boot_os.path.dirname(_boot_dir)}
+_boot_roots = (_boot_dir, _boot_os.path.dirname(_boot_dir))
 if not _boot_sys.flags.isolated or any(
-        _boot_os.path.realpath(entry or _boot_os.curdir) in _boot_roots
+        _boot_os.path.isdir(entry or _boot_os.curdir)
+        and any(_boot_os.path.samefile(entry or _boot_os.curdir, root)
+                for root in _boot_roots)
         for entry in _boot_sys.path):
     raise SystemExit(f'#1023: unsafe import path; run with -I by file: python3 -I {__file__}')
 
 import argparse
+from contextlib import ExitStack, contextmanager
 import hashlib
 import importlib.util
 import json
@@ -77,6 +83,59 @@ compare = root / 'scripts/cli-parity/compare.py'
 run_round = root / 'scripts/cli-parity/run_round.py'
 mock_gateway = root / 'scripts/cli-parity/mock_gateway.mjs'
 isolation_probe = root / 'scripts/cli-parity/isolation_probe.mjs'
+
+# The real cli-parity driver serialises a whole round on this same mkdir lease
+# (common.py: LOCK = /tmp/pdrs-parity.lock). Loading common.py by explicit path
+# gives the negative control the identical contract. It is loaded lazily: the
+# entry-guard tests run copies of this driver outside the checkout (only
+# --help), where the apparatus tree does not exist.
+_lease_common = None
+
+
+def lease_module():
+    """Load scripts/cli-parity/common.py once, for the shared lease contract.
+
+    Bytecode writing is off so no __pycache__ appears next to the apparatus.
+    Only the lease helpers are used: MOCK_PORT is re-read from the possibly
+    mutated source by ``pinned_mock_port``.
+    """
+    global _lease_common
+    if _lease_common is None:
+        sys.dont_write_bytecode = True
+        spec = importlib.util.spec_from_file_location(
+            'cli_parity_lease', root / 'scripts/cli-parity/common.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _lease_common = module
+    return _lease_common
+
+
+@contextmanager
+def machine_parity_lock(timeout=90, interval=0.5, lock=None):
+    """Hold the machine-wide cli-parity lease for one whole bound test.
+
+    ``wait_for_port_free`` is check-then-use: a sibling worktree's driver or a
+    real ``run_round`` can bind 28999 between the probe and the child's own
+    bind (fix-r2 concurrency P1). ``run_round.main`` already holds this exact
+    lease for a whole round, so taking it turns the wait into mutual exclusion.
+    Bounded: a lease that never comes free raises a named INVALID after
+    ``timeout`` seconds instead of running into a foreign bind.
+    """
+    common = lease_module()
+    config = {'lock': lock} if lock is not None else {}
+    deadline = time.monotonic() + timeout
+    with ExitStack() as stack:
+        while True:
+            try:
+                stack.enter_context(common.parity_lock(**config))
+                break
+            except common.Blocked:
+                if time.monotonic() >= deadline:
+                    target = lock if lock is not None else common.LOCK
+                    raise RuntimeError(
+                        f'#1023-9: {target} still held after {timeout}s; no bound run started')
+                time.sleep(interval)
+        yield
 
 
 def pinned_mock_port():
@@ -418,18 +477,22 @@ def wait_for_port_free(port, timeout=30, interval=0.1):
 
 
 def run_test(out, label, test):
-    # A stale listener on the pinned port makes the bound test fail in setUp,
-    # which the judge would record as INVALID (not a product observation).
-    wait_for_port_free(pinned_mock_port())
-    # -X pycache_prefix pins this invocation's bytecode cache to a fresh
-    # directory: a pyc left next to a (restored) source can otherwise be
-    # executed as the mutant whenever its recorded mtime and size match the
-    # restored file — same-second, same-size mutants do exactly that, and a
-    # "positive" or "restored" control would then judge mutant bytecode.
-    with tempfile.TemporaryDirectory(prefix='negctl-pycache-') as pycache:
-        result = run_owned([sys.executable, '-I', '-X', f'pycache_prefix={pycache}',
-                            'scripts/cli-parity/test_cli_parity.py', test],
-                           cwd=root, timeout=600)
+    # Hold the machine lease across the WHOLE child run, not only the probe:
+    # the port probe alone can be overtaken before the child binds 28999.
+    with machine_parity_lock():
+        # A stale listener on the pinned port makes the bound test fail in
+        # setUp, which the judge would record as INVALID (not a product
+        # observation).
+        wait_for_port_free(pinned_mock_port())
+        # -X pycache_prefix pins this invocation's bytecode cache to a fresh
+        # directory: a pyc left next to a (restored) source can otherwise be
+        # executed as the mutant whenever its recorded mtime and size match the
+        # restored file — same-second, same-size mutants do exactly that, and a
+        # "positive" or "restored" control would then judge mutant bytecode.
+        with tempfile.TemporaryDirectory(prefix='negctl-pycache-') as pycache:
+            result = run_owned([sys.executable, '-I', '-X', f'pycache_prefix={pycache}',
+                                'scripts/cli-parity/test_cli_parity.py', test],
+                               cwd=root, timeout=600)
     (out / f'{label}.log').write_text(result.stdout + result.stderr)
     return result
 

@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
 """Five mutations of a complete real TS recording; no synthetic calibration fallback."""
 import sys
+import os
 
 # -I keeps PYTHONPATH, user site and the script directory out of module
 # resolution.  Without it, exit before importing anything: a same-named stdlib
 # file beside this entry (json.py, pathlib.py, tempfile.py) would otherwise
 # execute before the guard. Discover can add the directory back even with
-# -I, so reject that path too. ``sys`` is builtin/frozen and already loaded.
-if not sys.flags.isolated or __file__.rpartition('/')[0] in sys.path:
+# -I, so reject that path too. Both boot imports are safe: ``sys`` is builtin
+# and ``os`` has been frozen since CPython 3.11, so neither can be shadowed
+# from the reinserted directory.
+# The directory is identified by (device, inode), not by its spelling: a
+# case-insensitive alias or a mixed ``//``/symlink form names this very
+# directory while the raw string differs (fix-r2 GLM sibling P1).
+_boot_dir = os.path.dirname(os.path.realpath(__file__))
+_boot_reinserted = any(
+    os.path.isdir(entry or os.curdir)
+    and os.path.samefile(entry or os.curdir, _boot_dir)
+    for entry in sys.path)
+if not sys.flags.isolated or _boot_reinserted:
     raise SystemExit(f'#701: unsafe import path; run with -I by file: python3 -I {__file__}')
 
 import importlib.util

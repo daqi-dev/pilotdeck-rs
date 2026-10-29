@@ -15,17 +15,20 @@ import sys as _boot_sys
 # #1023: same guard as the driver. -I keeps this directory and tests/fixtures
 # out of module resolution; a reinsertion (unittest discover) is rejected
 # before any local or stdlib module is imported.
-# Realpath both sides: an abspath keeps a ``//`` entry-point alias while the
-# sys.path side normalises it, which let a reinserted fixture directory pass
-# (fix-r1 P1-1).
+# Directory identity is compared by (device, inode), never by spelling: a
+# case-insensitive volume resolves a differently cased sys.path entry to this
+# very directory while realpath keeps both spellings distinct, so the r1
+# string comparison let a reinsertion through (fix-r2 P1-1).
 _boot_dir = _boot_os.path.dirname(_boot_os.path.realpath(__file__))
-_boot_roots = {_boot_dir, _boot_os.path.dirname(_boot_dir)}
+_boot_roots = (_boot_dir, _boot_os.path.dirname(_boot_dir))
 if not _boot_sys.flags.isolated or any(
-        _boot_os.path.realpath(entry or _boot_os.curdir) in _boot_roots
+        _boot_os.path.isdir(entry or _boot_os.curdir)
+        and any(_boot_os.path.samefile(entry or _boot_os.curdir, root)
+                for root in _boot_roots)
         for entry in _boot_sys.path):
     raise SystemExit(f'#1023: unsafe import path; run with -I by file: python3 -I {__file__}')
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import hashlib
 import importlib.util
 import json
@@ -384,6 +387,7 @@ FAILED (failures=1)
              patch.object(negative_controls, 'mock_gateway', copies[4]), \
              patch.object(negative_controls, 'isolation_probe', copies[5]), \
              patch.object(negative_controls, 'mutating_sources', fake_mutating_sources), \
+             patch.object(negative_controls, 'machine_parity_lock', nullcontext), \
              patch.object(negative_controls, 'run_owned', fake_run_owned), \
              patch.object(sys, 'argv', ['negative_controls.py', str(out), name]):
             with self.assertRaises(SystemExit) as caught:
@@ -422,16 +426,39 @@ class IsolationGuardTests(unittest.TestCase):
     def entry(self, name):
         return self.here / name
 
-    def run_reinserted(self, name, directory):
-        # The exact shape unittest discover produces: the start directory is
-        # inserted into sys.path and the module is loaded from a path.
+    def run_reinserted(self, name, path_dir, entry_dir=None):
+        # The shape unittest discover produces: the start directory is inserted
+        # into sys.path and the module is loaded from a path. The two spellings
+        # are separate on purpose: the remaining bypass only shows when sys.path
+        # and ``__file__`` name the same directory differently.
+        entry_dir = path_dir if entry_dir is None else entry_dir
         probe = ('import runpy, sys\n'
                  'sys.path.insert(0, sys.argv[1])\n'
                  'runpy.run_path(sys.argv[2], run_name="__main__")\n')
         return subprocess.run(
-            [sys.executable, '-I', '-c', probe, str(directory),
-             str(Path(directory) / name), '--help'],
+            [sys.executable, '-I', '-c', probe, str(path_dir),
+             str(Path(entry_dir) / name), '--help'],
             capture_output=True, text=True, timeout=30)
+
+    @staticmethod
+    def case_alias(directory):
+        """Another spelling of the same directory when the volume ignores case.
+
+        Default APFS resolves ``FIXTURE`` to ``fixture``, so the alias names
+        the same inode while realpath keeps the two spellings distinct. On a
+        case-sensitive volume the alias does not exist: return None and skip
+        instead of pretending the case family was exercised.
+        """
+        directory = Path(directory)
+        alias = directory.with_name(directory.name.upper())
+        if alias == directory or not alias.is_dir():
+            return None
+        try:
+            if not _boot_os.path.samefile(alias, directory):
+                return None
+        except OSError:
+            return None
+        return alias
 
     def deep_mirror(self, temp):
         """A mirror deep enough for the driver's parents[5] root under /tmp.
@@ -460,19 +487,32 @@ class IsolationGuardTests(unittest.TestCase):
             path.write_text(text.replace(old, new, 1))
 
     def test_driver_and_test_reject_a_reinserted_fixture_directory(self):
-        path_cases = [('plain path', str(self.here))]
-        alias = '/' + str(self.here)
-        self.assertTrue(alias.startswith('//'),
-                        '#1023-5: the POSIX double-slash alias must keep its prefix')
-        path_cases.append(('double-slash alias', alias))
+        # Every case names the same directory; only the spelling differs. The
+        # "mixed" rows are the r1 bypass: a raw/realpath string comparison saw
+        # two different strings for one directory (fix-r2 P1-1).
+        path_cases = [('plain path', self.here, self.here)]
+        slash = Path('/' + str(self.here))
+        self.assertTrue(slash.is_dir(),
+                        '#1023-5: the POSIX double-slash alias must resolve')
+        path_cases.append(('double-slash alias', slash, slash))
+        path_cases.append(('mixed double-slash sys.path', slash, self.here))
+        path_cases.append(('mixed double-slash entry', self.here, slash))
+        case = self.case_alias(self.here)
+        if case is not None:
+            # A case-sensitive volume cannot spell this alias at all, so the
+            # family is skipped there; the plain/symlink/mixed rows still run.
+            path_cases.append(('mixed case sys.path', case, self.here))
+            path_cases.append(('mixed case entry', self.here, case))
         with tempfile.TemporaryDirectory(prefix='negctl-1023-') as temp:
             link = Path(temp) / 'linked-fixture'
             link.symlink_to(self.here, target_is_directory=True)
-            path_cases.append(('symlinked fixture dir', str(link)))
-            for label, directory in path_cases:
+            path_cases.append(('symlinked fixture dir', link, link))
+            path_cases.append(('mixed symlink sys.path', link, self.here))
+            path_cases.append(('mixed symlink entry', self.here, link))
+            for label, path_dir, entry_dir in path_cases:
                 for name in ('negative_controls.py', 'test_negative_controls.py'):
                     with self.subTest(entry=name, path=label):
-                        result = self.run_reinserted(name, directory)
+                        result = self.run_reinserted(name, path_dir, entry_dir)
                         self.assertEqual(
                             result.returncode, 1,
                             f'#1023-5: {name} via {label}: a reinserted fixture dir must be rejected')
@@ -480,18 +520,26 @@ class IsolationGuardTests(unittest.TestCase):
                             '#1023: unsafe import path', result.stderr,
                             f'#1023-5: {name} via {label}: the guard itself must reject, '
                             'not a later import error')
-            # Paired control: with the guard's raise disabled, the same probe
-            # must start. That proves the assertions above measure the guard,
-            # not an unrelated failure of runpy or argparse.
-            holder, control = self.deep_mirror(temp)
+            # Paired control: with the guard's raise disabled, the same probe —
+            # including the mixed case spelling — must start. That proves the
+            # assertions above measure the guard, not an unrelated runpy/argparse
+            # failure, and that the mixed spelling really reaches the directory.
+            _holder, control = self.deep_mirror(temp)
             self.disable_guard(control, '#1023-5')
+            control_cases = [(control, control)]
+            control_case = self.case_alias(control)
+            if control_case is not None:
+                control_cases.append((control_case, control))
+                control_cases.append((control, control_case))
             for name in ('negative_controls.py', 'test_negative_controls.py'):
-                with self.subTest(entry=name, control='guard disabled'):
-                    result = self.run_reinserted(name, control)
-                    self.assertEqual(
-                        result.returncode, 0,
-                        f'#1023-5 control: removing the guard must let the reinserted {name} '
-                        f'start: {result.stderr}')
+                for path_dir, entry_dir in control_cases:
+                    with self.subTest(entry=name, control='guard disabled',
+                                      spelling=str(path_dir)):
+                        result = self.run_reinserted(name, path_dir, entry_dir)
+                        self.assertEqual(
+                            result.returncode, 0,
+                            f'#1023-5 control: removing the guard must let the reinserted {name} '
+                            f'start: {result.stderr}')
 
     def run_nonisolated(self, entry):
         # A direct script launch puts the script directory on sys.path, so the
@@ -579,6 +627,43 @@ class IsolationGuardTests(unittest.TestCase):
             listener.close()
         self.assertIsNone(negative_controls.wait_for_port_free(port, timeout=2),
                           '#1023-8: a released port must be admitted')
+
+
+class MachineLeaseTests(unittest.TestCase):
+    """#1023 fix-r2 concurrency P1: a bound run holds the shared machine lease."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='negctl-lease-')
+        self.addCleanup(self.temp.cleanup)
+        self.lock = Path(self.temp.name) / 'parity.lock'
+
+    def test_bound_run_lease_times_out_on_a_stale_owner(self):
+        # The predecessor never finishes: the wait is bounded, and the row must
+        # become a named INVALID rather than run into a foreign bind.
+        with negative_controls.lease_module().parity_lock(self.lock):
+            with self.assertRaises(
+                    RuntimeError,
+                    msg='#1023-9: a held lease must never admit the bound run'):
+                with negative_controls.machine_parity_lock(
+                        timeout=0.2, interval=0.02, lock=self.lock):
+                    self.fail('#1023-9: the bound run started while the lease was held')
+
+    def test_bound_run_lease_is_held_then_released(self):
+        with negative_controls.machine_parity_lock(
+                timeout=2, interval=0.02, lock=self.lock):
+            self.assertTrue(self.lock.is_dir(),
+                            '#1023-9: the lease must be held for the whole child run')
+        self.assertFalse(self.lock.exists(),
+                         '#1023-9: a finished bound run must release the lease')
+
+    def test_bound_run_lease_is_released_on_cancellation(self):
+        with self.assertRaises(KeyboardInterrupt,
+                               msg='#1023-9: cancellation must propagate'):
+            with negative_controls.machine_parity_lock(
+                    timeout=2, interval=0.02, lock=self.lock):
+                raise KeyboardInterrupt('#1023-9: cancel the bound run')
+        self.assertFalse(self.lock.exists(),
+                         '#1023-9: cancellation must release the lease')
 
 
 if __name__ == '__main__':

@@ -17,13 +17,16 @@ summary, and exit nonzero unless every row is KILLED.
 import os as _boot_os
 import sys as _boot_sys
 
-# Realpath both sides; abspath preserved a ``//`` entry-point alias while the
-# sys.path side normalised it, so a reinserted fixture directory was admitted
-# (fix-r1 P1-1).
+# Directory identity is compared by (device, inode), never by spelling.
+# realpath normalises ``//`` and symlinks but keeps the caller's case, so on a
+# case-insensitive volume a differently cased sys.path entry still pointed at
+# this directory and was admitted (fix-r2 P1-1).
 _boot_dir = _boot_os.path.dirname(_boot_os.path.realpath(__file__))
-_boot_roots = {_boot_dir, _boot_os.path.dirname(_boot_dir)}
+_boot_roots = (_boot_dir, _boot_os.path.dirname(_boot_dir))
 if not _boot_sys.flags.isolated or any(
-        _boot_os.path.realpath(entry or _boot_os.curdir) in _boot_roots
+        _boot_os.path.isdir(entry or _boot_os.curdir)
+        and any(_boot_os.path.samefile(entry or _boot_os.curdir, root)
+                for root in _boot_roots)
         for entry in _boot_sys.path):
     raise SystemExit(f'#1023: unsafe import path; run with -I by file: python3 -I {__file__}')
 
@@ -181,11 +184,46 @@ def row_discover(root):
     return closed, 'discover-guard', '#1023-3:'
 
 
+def alias_reinsertion(root):
+    """#1023 fix-r2 P2: the guard bytes must reject alias spellings of itself."""
+    text = Path(__file__).read_text()
+    head = text[:text.index('\nimport argparse\n')]
+    base = root / 'alias' / 'apparatus'
+    base.mkdir(parents=True)
+    (base / 'entry.py').write_text(head + "\nprint('REACHED')\n")
+    link = root / 'alias' / 'linked'
+    link.symlink_to(base, target_is_directory=True)
+    forms = [(base, link / 'entry.py'), (link, base / 'entry.py')]
+    case = base.with_name(base.name.upper())
+    if case.is_dir() and _boot_os.path.samefile(case, base):
+        forms += [(base, case / 'entry.py'), (case, base / 'entry.py')]
+    probe = ('import runpy, sys\n'
+             'sys.path.insert(0, sys.argv[1])\n'
+             'runpy.run_path(sys.argv[2], run_name="probe")\n')
+    for path_dir, entry in forms:
+        closed = subprocess.run(
+            [sys.executable, '-I', '-c', probe, str(path_dir), str(entry)],
+            cwd=root, capture_output=True, text=True, timeout=60)
+        if closed.returncode != 1 or 'unsafe import path' not in closed.stderr:
+            raise AssertionError(
+                f'guarded alias {path_dir} / {entry} was admitted: rc={closed.returncode}')
+    (base / 'entry.py').write_text(
+        head.replace('if not _boot_sys.flags.isolated or any(', 'if False and any(', 1)
+        + "\nprint('REACHED')\n")
+    opened = subprocess.run(
+        [sys.executable, '-I', '-c', probe, str(base), str(link / 'entry.py')],
+        cwd=root, capture_output=True, text=True, timeout=60)
+    if opened.returncode != 0 or 'REACHED' not in opened.stdout:
+        raise AssertionError('disabling the guard did not admit the alias probe')
+    return closed, 'alias-reinsertion', '#1023-11:'
+
+
 ROWS = {
     'readme-discover': row_readme,
     'entry-guard-removed': row_guard,
     'main-removed': row_main,
     'discover-guard-removed': row_discover,
+    'alias-reinsertion': alias_reinsertion,
 }
 
 
@@ -204,8 +242,8 @@ def main():
                 copy_apparatus(root)
                 try:
                     result, test, marker = action(root)
-                    if name == 'discover-guard-removed':
-                        status, reason = ('KILLED', 'guard rejected discover and the unguarded probe ran')
+                    if name in ('discover-guard-removed', 'alias-reinsertion'):
+                        status, reason = ('KILLED', 'guard rejected the probe and the unguarded probe ran')
                     else:
                         status, reason = classify(result, test, marker)
                     log = (result.stdout or '') + (result.stderr or '')
