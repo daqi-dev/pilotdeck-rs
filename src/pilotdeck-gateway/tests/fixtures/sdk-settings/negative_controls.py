@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""#1029 HEAD-only controls: --check | [--compile-only] NEW_OUTPUT_DIR [mutation ...].
+Requires caller CARGO_TARGET_DIR; refuses uncommitted/new sources. Every mutant
+compiles, gets a nonce-bound verdict, restores, and reruns its exact positive.
+"""
+import difflib
+import json
+import os
+from pathlib import Path
+import sys
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import ReceiptRun, judge, passed
+
+root = Path(__file__).resolve().parents[5]
+settings = root / 'src/pilotdeck-cli/src/sdk/settings.rs'
+sdk = root / 'src/pilotdeck-cli/src/sdk.rs'
+tests = root / 'src/pilotdeck-cli/tests/sdk_settings_exit.rs'
+fixture = root / 'src/pilotdeck-cli/tests/fixtures/sdk-settings'
+oracle = fixture / 'oracle.json'
+source = fixture / 'source.json'
+MATRIX = 'settings_matches_ts_matrix'
+LOCAL = 'settings_local_preflight_matches_ts_matrix'
+REGENERATE = 'settings_oracle_regenerates_identically'
+mutations = [
+    ('dispatch', sdk, 'Some("settings") => run_settings(&argv[1..], env, cwd),', 'Some("setting") => run_settings(&argv[1..], env, cwd),', MATRIX, '#1029 expected gateway lifecycle settings-default--argv'),
+    ('default', sdk, 'map_or("get", String::as_str)', 'map_or("unknown", String::as_str)', MATRIX, '#1029 expected gateway lifecycle settings-default--argv'),
+    ('get-method', settings, '"resolve_settings", json!({})', '"wrong_settings", json!({})', MATRIX, '#1029 hello and request wire settings-default--argv'),
+    ('set-method', settings, '"update_settings",', '"wrong_settings",', MATRIX, '#1029 hello and request wire settings-set--argv'),
+    ('json-precedence', sdk, 'read_value(rest, "--json")', 'read_value(rest, "--wrong-json")', MATRIX, '#1029 expected gateway lifecycle settings-set--json-flag-precedence'),
+    ('positional-join', sdk, 'positional(rest).join(" ")', 'positional(rest).join("")', LOCAL, '#1029 TS output and exit settings-set--missing-h'),
+    ('empty-json', sdk, 'if raw.is_empty() {', 'if false && raw.is_empty() {', LOCAL, '#1029 TS output and exit settings-set--stdin-text'),
+    ('syntax-message', sdk, 'Invalid settings JSON: {message}', 'Bad settings JSON: {message}', LOCAL, '#1029 TS output and exit settings-set--missing-h'),
+    ('null-validation', settings, '!matches!(settings, JsValue::Object(_))', '!matches!(settings, JsValue::Object(_) | JsValue::Null)', LOCAL, '#1029 preflight never connects settings-set--json-value-569'),
+    ('array-validation', settings, '!matches!(settings, JsValue::Object(_))', '!matches!(settings, JsValue::Object(_) | JsValue::Array(_))', LOCAL, '#1029 preflight never connects settings-set--json-value-570'),
+    ('scalar-validation', settings, '!matches!(settings, JsValue::Object(_))', '!matches!(settings, JsValue::Object(_) | JsValue::Number(_))', LOCAL, '#1029 preflight never connects settings-set--json-value-571'),
+    ('object-message', settings, 'updateSettings settings must be an object.', 'settings must be an object.', LOCAL, '#1029 TS output and exit settings-set--json-value-569'),
+    ('source', settings, '"source":"localSettings"', '"source":"wrongSource"', MATRIX, '#1029 hello and request wire settings-set--argv'),
+    ('whole-object', settings, '"settings":settings', '"settings":{}', MATRIX, '#1029 hello and request wire settings-set--argv'),
+    ('json-rounding', settings, 'serde_json::from_str(&encoded)', 'serde_json::from_str(raw)', MATRIX, '#1029 expected gateway lifecycle settings-extra--set-js-numbers'),
+    ('empty-url-gate', sdk, '        "get" => {\n            create_client(&connection)?;', '        "get" => {\n            if false { create_client(&connection)?; }', LOCAL, '#1029 TS output and exit settings-default--gateway-empty'),
+    ('full-result', settings, 'stringify_json(&result)', 'stringify_json(result.get("settings").unwrap_or(&JsValue::Null))', MATRIX, '#1029 TS output and exit settings-default--argv'),
+    ('undefined-output', settings, 'unwrap_or_else(|| "undefined".into())', 'unwrap_or_else(|| "null".into())', MATRIX, '#1029 TS output and exit settings-extra--get-missing'),
+    ('pretty-output', settings, 'stdout_line(&json_pretty(&raw));', 'stdout_line(&if false { json_pretty(&raw) } else { raw.clone() });', MATRIX, '#1029 TS output and exit settings-default--argv'),
+    ('fixed-ack', settings, 'stdout_line("{\\"updated\\":true}");', 'stdout_line("{\\"updated\\":false}");', MATRIX, '#1029 TS output and exit settings-set--argv'),
+    ('no-local-write', settings, 'stdout_line("{\\"updated\\":true}");', 'std::fs::write(std::path::Path::new(&std::env::var("PILOT_HOME").unwrap_or_default()).join("settings.json"), b"{}").map_err(|e| Failure::Error(e.to_string()))?; stdout_line("{\\"updated\\":true}");', MATRIX, '#1029 complete disk unchanged settings-set--argv'),
+    ('coverage', tests, 'cases.len() == 191', 'cases.len() == 190', MATRIX, '#1029 157 registered cells plus 34 live settings boundary cells'),
+    ('oracle-drift', oracle, '"nodeVersion": "v22.22.0"', '"nodeVersion": "v0.0.0"', REGENERATE, '#1029 identical TS fixture sdk-settings'),
+    ('source-drift', source, '"raw/node-version.stdout.bin": "v22.22.0\\n"', '"raw/node-version.stdout.bin": "v0.0.0\\n"', REGENERATE, '#1029 identical TS fixture sdk-settings'),
+]
+
+def check(row):
+    count = row[1].read_text().count(row[2])
+    if count != 1 or row[2] == row[3]:
+        raise ValueError(f'{row[0]}: stale anchor count={count}, expected 1')
+
+
+def main():
+    args = sys.argv[1:]
+    if args == ['--check']:
+        failures = []
+        for row in mutations:
+            try:
+                check(row)
+            except Exception as error:
+                failures.append(str(error))
+        print('\n'.join(failures) if failures else f'#1029 {len(mutations)} anchors checked')
+        return int(bool(failures))
+    compile_only = '--compile-only' in args
+    args = [arg for arg in args if arg not in ('--compile-only',)]
+    if not args:
+        raise SystemExit('usage: --check | [--compile-only] NEW_OUTPUT_DIR [mutation ...]')
+    selected = [row for row in mutations if not args[1:] or row[0] in args[1:]]
+    if not selected or (args[1:] and len(selected) != len(args[1:])):
+        raise SystemExit('unknown/duplicate mutation selection')
+    env = dict(os.environ)
+    if not env.get('CARGO_TARGET_DIR'):
+        raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
+    env.pop(ReceiptRun.ENV, None)
+    env.pop(ReceiptRun.PARENT_ENV, None)
+    out = Path(args[0]).resolve()
+    out.mkdir(parents=True, exist_ok=False)
+    command = ['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-cli','--test','sdk_settings_exit']
+
+    def run(label, test, run_env, compile=False):
+        slots = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=600, interval=15)
+        (out / f'{label}.slots.log').write_text(slots.stdout + slots.stderr)
+        argv = command + (['--no-run'] if compile else [test,'--','--exact','--include-ignored','--show-output','--test-threads=1'])
+        result = run_owned(argv,cwd=root,env=run_env,timeout=900)
+        (out / f'{label}.stdout').write_text(result.stdout)
+        (out / f'{label}.stderr').write_text(result.stderr)
+        return result
+
+    guarded = [*sorted((root / 'src/pilotdeck-cli/src').rglob('*.rs')),
+               root / 'src/pilotdeck-cli/Cargo.toml', root / 'src/Cargo.lock', Path(__file__).resolve(),
+               tests, *sorted(fixture.glob('*.*')),
+               Path(__file__).resolve().parents[1] / 'negative_process.py',
+               Path(__file__).resolve().parents[1] / 'negative_suite.py']
+    results = []
+    for name,path,old,new,test,assertion in selected:
+        item = dict(name=name,test=test,status='INVALID',reason='not run',compiled=False)
+        try:
+            check((name,path,old,new,test,assertion))
+            with mutating_sources(root,guarded) as originals:
+                original = originals[path].decode()
+                try:
+                    if not compile_only and not passed(run(name+'-positive',test,env),test):
+                        raise RuntimeError('positive bound test failed')
+                    changed = original.replace(old,new,1)
+                    (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(original.splitlines(True),changed.splitlines(True),fromfile=str(path.relative_to(root)),tofile=str(path.relative_to(root)))))
+                    path.write_text(changed)
+                    if run(name+'-compile',test,env,compile=True).returncode != 0:
+                        raise RuntimeError('mutant compile failed; not evidence')
+                    item['compiled'] = True
+                    if compile_only:
+                        item.update(status='COMPILED',reason='mutant no-run passed')
+                    else:
+                        receipt = ReceiptRun(out,name+'-negative',[(test,assertion)])
+                        result = run(name+'-negative',test,receipt.environment(env))
+                        killed,reason,_ = judge(result,'',[(test,assertion)],receipt)
+                        item.update(status='KILLED' if killed else ('SURVIVED' if passed(result,test) else 'INVALID'),reason=reason)
+                finally:
+                    path.write_bytes(originals[path])
+                    if path.read_bytes() != originals[path]:
+                        raise RuntimeError('restoration mismatch')
+                if not compile_only and not passed(run(name+'-restored',test,env),test):
+                    item.update(status='INVALID',reason=item['reason']+'; restored bound test failed')
+        except Exception as error:
+            item.update(status='INVALID',reason=f'{type(error).__name__}: {error}')
+        results.append(item)
+        print(f'{name}: {item["status"]}: {item["reason"]}',flush=True)
+    counts = {status:sum(row['status']==status for row in results) for status in ['KILLED','SURVIVED','INVALID','COMPILED']}
+    (out / 'summary.json').write_text(json.dumps(dict(controls=results,counts=counts),indent=2)+'\n')
+    print(json.dumps(counts),flush=True)
+    return int(any(row['status'] != ('COMPILED' if compile_only else 'KILLED') for row in results))
+
+if __name__ == '__main__':
+    sys.exit(main())
