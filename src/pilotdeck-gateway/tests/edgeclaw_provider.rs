@@ -453,55 +453,106 @@ async fn check_cell(name: &str) {
         .expect("#777 matrix signal did not arrive");
     assert_eq!(observed, *cell, "#777 provider cell {name}");
 }
-macro_rules! cell {
-    ($test:ident,$name:literal) => {
-        #[tokio::test(start_paused = true)]
-        async fn $test() {
-            check_cell($name).await;
-        }
+// The same entries emit the test functions and their coverage denominator.
+// Removing an entry therefore cannot silently leave the oracle unexercised.
+macro_rules! cells {
+    ($($test:ident => $name:literal),+ $(,)?) => {
+        const REGISTERED_CELLS: &[&str] = &[$($name),+];
+        $(
+            #[tokio::test(start_paused = true)]
+            async fn $test() {
+                check_cell($name).await;
+            }
+        )+
     };
 }
-cell!(none_resolve, "none-resolve");
-cell!(none_reject, "none-reject");
-cell!(none_empty, "none-empty");
-cell!(none_capture, "none-capture");
-cell!(none_errored, "none-errored");
-cell!(none_capture_error, "none-capture-error");
-cell!(none_save_error, "none-save-error");
-cell!(none_save_missing, "none-save-missing");
-cell!(none_overwrite, "none-overwrite");
-cell!(none_reverse, "none-reverse");
-cell!(none_capture_inflight, "none-capture-inflight");
-cell!(none_resolve_in_capture, "none-resolve-in-capture");
-cell!(none_timeout_late, "none-timeout-late");
-cell!(none_abort_late, "none-abort-late");
-cell!(none_never_abort, "none-never-abort");
-cell!(none_dispose_late, "none-dispose-late");
-cell!(pending_resolve, "pending-resolve");
-cell!(pending_reject, "pending-reject");
-cell!(pending_empty, "pending-empty");
-cell!(pending_capture, "pending-capture");
-cell!(pending_errored, "pending-errored");
-cell!(pending_capture_error, "pending-capture-error");
-cell!(pending_save_error, "pending-save-error");
-cell!(pending_save_missing, "pending-save-missing");
-cell!(pending_overwrite, "pending-overwrite");
-cell!(pending_reverse, "pending-reverse");
-cell!(pending_capture_inflight, "pending-capture-inflight");
-cell!(pending_resolve_in_capture, "pending-resolve-in-capture");
-cell!(pending_timeout_late, "pending-timeout-late");
-cell!(pending_abort_late, "pending-abort-late");
-cell!(pending_never_abort, "pending-never-abort");
-cell!(pending_dispose_late, "pending-dispose-late");
-cell!(sessions, "sessions");
-cell!(empty_precedence, "empty-precedence");
-cell!(context_fallback, "context-fallback");
-cell!(explicit_options, "explicit-options");
-cell!(pre_aborted, "pre-aborted");
-cell!(direct_pre_aborted, "direct-pre-aborted");
-cell!(clock_boundaries, "clock-boundaries");
-cell!(malformed_context, "malformed-context");
-cell!(malformed_capture, "malformed-capture");
+cells! {
+    none_resolve => "none-resolve",
+    none_reject => "none-reject",
+    none_empty => "none-empty",
+    none_capture => "none-capture",
+    none_errored => "none-errored",
+    none_capture_error => "none-capture-error",
+    none_save_error => "none-save-error",
+    none_save_missing => "none-save-missing",
+    none_overwrite => "none-overwrite",
+    none_reverse => "none-reverse",
+    none_capture_inflight => "none-capture-inflight",
+    none_resolve_in_capture => "none-resolve-in-capture",
+    none_timeout_late => "none-timeout-late",
+    none_abort_late => "none-abort-late",
+    none_never_abort => "none-never-abort",
+    none_dispose_late => "none-dispose-late",
+    pending_resolve => "pending-resolve",
+    pending_reject => "pending-reject",
+    pending_empty => "pending-empty",
+    pending_capture => "pending-capture",
+    pending_errored => "pending-errored",
+    pending_capture_error => "pending-capture-error",
+    pending_save_error => "pending-save-error",
+    pending_save_missing => "pending-save-missing",
+    pending_overwrite => "pending-overwrite",
+    pending_reverse => "pending-reverse",
+    pending_capture_inflight => "pending-capture-inflight",
+    pending_resolve_in_capture => "pending-resolve-in-capture",
+    pending_timeout_late => "pending-timeout-late",
+    pending_abort_late => "pending-abort-late",
+    pending_never_abort => "pending-never-abort",
+    pending_dispose_late => "pending-dispose-late",
+    sessions => "sessions",
+    empty_precedence => "empty-precedence",
+    context_fallback => "context-fallback",
+    explicit_options => "explicit-options",
+    pre_aborted => "pre-aborted",
+    direct_pre_aborted => "direct-pre-aborted",
+    clock_boundaries => "clock-boundaries",
+    malformed_context => "malformed-context",
+    malformed_capture => "malformed-capture",
+}
+
+#[test]
+fn oracle_scenario_count() {
+    let oracle: Value = serde_json::from_str(ORACLE).expect("#777 denominator oracle JSON");
+    let scenarios = oracle["scenarios"]
+        .as_array()
+        .expect("#777 denominator scenarios array");
+    let expected_count = if pilotdeck_gateway::mutants::on("provider-oracle-count") {
+        40
+    } else {
+        41
+    };
+    assert_eq!(
+        scenarios.len(),
+        expected_count,
+        "#777 oracle scenario count"
+    );
+
+    let mut registered = REGISTERED_CELLS.to_vec();
+    if pilotdeck_gateway::mutants::on("provider-missing-cell") {
+        registered.pop();
+    }
+    if pilotdeck_gateway::mutants::on("provider-wrong-cell") {
+        *registered
+            .first_mut()
+            .expect("#777 denominator registered cell") = "unregistered-cell";
+    }
+    let unique = registered.iter().collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(unique.len(), 41, "#777 Rust cell registration count");
+    let mut oracle_names = scenarios
+        .iter()
+        .map(|cell| {
+            cell["spec"]["name"]
+                .as_str()
+                .expect("#777 denominator scenario name")
+        })
+        .collect::<Vec<_>>();
+    registered.sort_unstable();
+    oracle_names.sort_unstable();
+    assert_eq!(
+        registered, oracle_names,
+        "#777 Rust cell registrations match oracle"
+    );
+}
 
 #[tokio::test]
 async fn resolver_adapter() {

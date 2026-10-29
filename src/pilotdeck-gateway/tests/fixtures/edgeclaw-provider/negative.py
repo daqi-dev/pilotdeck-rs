@@ -16,8 +16,13 @@ from _shared import mutant_switch
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/provider.rs'
+TESTS = ROOT / 'src/pilotdeck-gateway/tests/edgeclaw_provider.rs'
+FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 PREFIX = 'runtime::memory::edgeclaw::provider::'
 switches = [
+    ('provider-oracle-count', TESTS, 'tests::oracle_scenario_count', '#777 oracle scenario count'),
+    ('provider-missing-cell', TESTS, 'tests::oracle_scenario_count', '#777 Rust cell registration count'),
+    ('provider-wrong-cell', TESTS, 'tests::oracle_scenario_count', '#777 Rust cell registrations match oracle'),
     ('provider-sync-capture', SOURCE, 'sync_turn_tests::sync_capture_defers_completion', '#777 capture must finish before retrieval continuation'),
     ('provider-nonreentrant', SOURCE, 'sync_turn_tests::capture_callback_can_reenter_provider', '#777 same-thread capture callback can reenter provider'),
     ('provider-lazy-service', SOURCE, 'tests::native_service_starts_before_immediate_close', '#777 real LLM skipped'),
@@ -43,10 +48,19 @@ GUARDED = [SOURCE,
     ROOT / 'src/pilotdeck-gateway/src/runtime/context/memory.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/service/mod.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/recall.rs',
-    ROOT / 'src/pilotdeck-gateway/tests/edgeclaw_provider.rs',
+    TESTS,
+    ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/mod.rs',
+    ROOT / 'src/pilotdeck-gateway/src/lib.rs',
+    ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
+    FIXTURES / '_shared/mutant_switch.py',
+    FIXTURES / 'negative_suite.py',
+    FIXTURES / 'negative_process.py',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml', ROOT / 'src/Cargo.toml', ROOT / 'src/Cargo.lock',
     Path(__file__).with_name('oracle.json'), Path(__file__),
+    Path(__file__).with_name('generate.mts'),
+    Path(__file__).with_name('observe.mts'),
+    Path(__file__).with_name('verify.mts'),
 ]
 
 
