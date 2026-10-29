@@ -77,6 +77,10 @@ digest = common.digest
 install_shutdown = common.install_shutdown
 parity_lock = common.verified_parity_lock
 save = common.save
+# #209 E1: the shared lease is released only after this run's process groups
+# are proven stopped.  Reuse the A2 primitives instead of a second registry.
+deferred_signals = common.deferred_signals
+unblock_child_signals = common.unblock_child_signals
 compare_module = _load('compare', common.SCRIPT / 'compare.py')
 wire_frame = compare_module.wire_frame
 observer_module = _load('observer', common.SCRIPT / 'observer.py')
@@ -495,6 +499,103 @@ def cleanup_status(audit):
             else CLEANUP_UNVERIFIED_STATUS)
 
 
+def _cleanup_fixture(child, audit, leader_state, output):
+    """Attempt every cleanup step; the caller proves absence before release.
+
+    Runs inside ``run_fixture``'s deferred-signal window.  It never discards
+    the group registration itself: only the caller, after this returns and
+    ``child.returncode``/``cleanupBlocked`` show the leader is settled, may
+    remove the pgid from ``common.LIVE_GROUPS`` (#209 E1).
+    """
+    held = HeldProcessGroup(child)
+    if leader_state == 'RUNNING':
+        # The leader is still alive, so its pid is the pgid directly.
+        # Every signal goes through the single ownership entry: it
+        # re-checks waitid(WNOWAIT) immediately before sending and
+        # refuses once the pid may have been reused.  Keep waiting
+        # without reaping until the probe has run on a zombie.
+        outcome, detail = held.send(signal.SIGTERM)
+        if outcome == 'refused':
+            audit['cleanupBlocked'] = f'group signal refused: leader state {detail}'
+        elif outcome == 'error':
+            audit['cleanupBlocked'] = detail
+        leader_state = wait_exit_unreaped(child.pid, 5)
+        if leader_state == 'RUNNING':
+            outcome, detail = held.send(signal.SIGKILL)
+            if outcome == 'refused':
+                audit['cleanupBlocked'] = f'group signal refused: leader state {detail}'
+            elif outcome == 'error':
+                audit['cleanupBlocked'] = detail
+            leader_state = wait_exit_unreaped(child.pid, 5)
+        if leader_state == 'RUNNING':
+            audit['cleanupBlocked'] = 'launcher did not exit after SIGKILL'
+    if leader_state == 'EXITED':
+        # ps is only a census; the group probe is the independent cleanup
+        # proof and the only input to processTreeCleanup.  It reaps the
+        # leader last, after every signal has been sent.
+        try:
+            audit['processGroupProbe'] = probe_process_group(child)
+        except (OSError, subprocess.SubprocessError) as error:
+            audit['cleanupBlocked'] = f'group probe raised: {error}'
+            audit['processGroupProbe'] = {
+                'pgid': child.pid, 'status': CLEANUP_NOT_VERIFIED,
+                'reason': f'group probe raised: {type(error).__name__}: {error}'}
+        audit['processTreeCleanup'] = audit['processGroupProbe']['status']
+    else:
+        audit['processTreeCleanup'] = CLEANUP_NOT_VERIFIED
+        audit.setdefault('processGroupProbe', {
+            'pgid': child.pid, 'status': CLEANUP_NOT_VERIFIED,
+            'reason': 'leader was not an unreaped exited child; '
+                      'ownership unprovable, no signal sent'})
+    if any(s['status'] == 'BLOCKED' for s in audit['processSnapshots']):
+        audit['psCensus'] = 'BLOCKED'
+    elif audit['processSnapshots']:
+        audit['psCensus'] = 'SAMPLED'
+    else:
+        audit['psCensus'] = 'NOT_SAMPLED'
+    # Fixture evidence is read only after the group was probed and
+    # reaped; a truncated/missing launch.json must not skip cleanup.
+    # Never signal a bare pid after the leader's identity was lost.
+    # The entry re-checks waitid(WNOWAIT) and refuses unless the
+    # leader is still RUNNING, so the reap-state guard lives in one
+    # place (the signal entry) instead of every caller.
+    if child.returncode is None:
+        outcome, detail = held.kill_leader(signal.SIGKILL)
+        if outcome == 'error':
+            audit['cleanupBlocked'] = detail
+        elif outcome == 'refused' and detail != 'EXITED':
+            # An unreaped zombie leader is already stopped; only a refused
+            # kill for any other state (reaped/unsupported) loses ownership.
+            audit['cleanupBlocked'] = f'leader kill refused: state {detail}'
+    if child.returncode is None:
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            audit['cleanupBlocked'] = 'launcher survived SIGKILL'
+        except ChildProcessError:
+            audit['cleanupBlocked'] = 'launcher was reaped by someone else'
+    launch = output / 'six-cells/launch.json'
+    audit['launcherAndFixtureReaped'] = False
+    try:
+        if child.poll() is not None and launch.is_file():
+            fixture = read(launch)
+            audit['launcherAndFixtureReaped'] = fixture.get('childReaped') is True
+            fixture_command = fixture.get('command')
+            if (isinstance(fixture_command, list) and fixture_command
+                    and all(isinstance(part, str) for part in fixture_command)):
+                audit['fixtureProcess'] = {
+                    'pid': fixture.get('childPid'), 'ppid': child.pid,
+                    'argv': fixture_command,
+                    'executableSha256': digest(Path(fixture_command[0]))}
+            else:
+                audit['fixtureReadError'] = 'launch.json command missing/invalid'
+        elif not launch.is_file():
+            audit['fixtureReadError'] = 'launch.json missing'
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        audit['launcherAndFixtureReaped'] = False
+        audit['fixtureReadError'] = f'{type(error).__name__}: {error}'
+
+
 def run_fixture(output, baseline, command=None):
     # ``command`` is a test seam for the cleanup controls; production always
     # launches the frozen A5.2a fixture.
@@ -508,8 +609,14 @@ def run_fixture(output, baseline, command=None):
     leader_state = 'RUNNING'
     try:
         with (output / 'launcher.log').open('w') as log:
-            child = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                     start_new_session=True)
+            # Spawn and registration share one deferred-signal window (#209 E1):
+            # a signal delivered between Popen and the in-memory ownership record
+            # must not leave a group the shared lock cannot account for.
+            with deferred_signals():
+                child = subprocess.Popen(command, cwd=ROOT, stdout=log,
+                                         stderr=subprocess.STDOUT, start_new_session=True,
+                                         preexec_fn=unblock_child_signals)
+                common.LIVE_GROUPS.add(child.pid)
             audit['pid'] = child.pid
             audit['pgid'] = child.pid
             deadline = time.monotonic() + 1250
@@ -543,97 +650,47 @@ def run_fixture(output, baseline, command=None):
             if leader_state == 'REAPED' and 'leaderReapState' not in audit:
                 audit['leaderReapState'] = 'ALREADY_REAPED'
     finally:
-        if child is not None:
-            held = HeldProcessGroup(child)
-            if leader_state == 'RUNNING':
-                # The leader is still alive, so its pid is the pgid directly.
-                # Every signal goes through the single ownership entry: it
-                # re-checks waitid(WNOWAIT) immediately before sending and
-                # refuses once the pid may have been reused.  Keep waiting
-                # without reaping until the probe has run on a zombie.
-                outcome, detail = held.send(signal.SIGTERM)
-                if outcome == 'refused':
-                    audit['cleanupBlocked'] = f'group signal refused: leader state {detail}'
-                elif outcome == 'error':
-                    audit['cleanupBlocked'] = detail
-                leader_state = wait_exit_unreaped(child.pid, 5)
-                if leader_state == 'RUNNING':
-                    outcome, detail = held.send(signal.SIGKILL)
-                    if outcome == 'refused':
-                        audit['cleanupBlocked'] = f'group signal refused: leader state {detail}'
-                    elif outcome == 'error':
-                        audit['cleanupBlocked'] = detail
-                    leader_state = wait_exit_unreaped(child.pid, 5)
-                if leader_state == 'RUNNING':
-                    audit['cleanupBlocked'] = 'launcher did not exit after SIGKILL'
-            if leader_state == 'EXITED':
-                # ps is only a census; the group probe is the independent cleanup
-                # proof and the only input to processTreeCleanup.  It reaps the
-                # leader last, after every signal has been sent.
-                try:
-                    audit['processGroupProbe'] = probe_process_group(child)
-                except (OSError, subprocess.SubprocessError) as error:
-                    audit['cleanupBlocked'] = f'group probe raised: {error}'
-                    audit['processGroupProbe'] = {
-                        'pgid': child.pid, 'status': CLEANUP_NOT_VERIFIED,
-                        'reason': f'group probe raised: {type(error).__name__}: {error}'}
-                audit['processTreeCleanup'] = audit['processGroupProbe']['status']
-            else:
+        # Cleanup is the one window where an interrupt must not abandon the
+        # remaining groups: defer SIGINT/SIGTERM until the audit is settled.
+        with deferred_signals():
+            try:
+                if child is not None:
+                    _cleanup_fixture(child, audit, leader_state, output)
+            except BaseException as error:
+                # A cleanup helper failed before it could publish a status: keep
+                # the group registered and make the report non-PASS.  Signals are
+                # already deferred; re-raise cancellation after the audit is saved.
+                audit['cleanupBlocked'] = (
+                    f'cleanup raised: {type(error).__name__}: {error}')
                 audit['processTreeCleanup'] = CLEANUP_NOT_VERIFIED
                 audit.setdefault('processGroupProbe', {
-                    'pgid': child.pid, 'status': CLEANUP_NOT_VERIFIED,
-                    'reason': 'leader was not an unreaped exited child; '
-                              'ownership unprovable, no signal sent'})
-            if any(s['status'] == 'BLOCKED' for s in audit['processSnapshots']):
-                audit['psCensus'] = 'BLOCKED'
-            elif audit['processSnapshots']:
-                audit['psCensus'] = 'SAMPLED'
-            else:
-                audit['psCensus'] = 'NOT_SAMPLED'
-            try:
-                # Fixture evidence is read only after the group was probed and
-                # reaped; a truncated/missing launch.json must not skip cleanup.
-                # Never signal a bare pid after the leader's identity was lost.
-                # The entry re-checks waitid(WNOWAIT) and refuses unless the
-                # leader is still RUNNING, so the reap-state guard lives in one
-                # place (the signal entry) instead of every caller.
-                if child.returncode is None:
-                    outcome, detail = held.kill_leader(signal.SIGKILL)
-                    if outcome == 'error':
-                        audit['cleanupBlocked'] = detail
-                    elif outcome == 'refused':
-                        audit['cleanupBlocked'] = f'leader kill refused: state {detail}'
-                if child.returncode is None:
-                    try:
-                        child.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        audit['cleanupBlocked'] = 'launcher survived SIGKILL'
-                    except ChildProcessError:
-                        audit['cleanupBlocked'] = 'launcher was reaped by someone else'
-                if child.returncode is not None:
-                    audit['exitCode'] = child.returncode
-                    audit['status'] = 'DONE' if child.returncode == 0 else 'FAIL'
-                launch = output / 'six-cells/launch.json'
-                audit['launcherAndFixtureReaped'] = False
-                try:
-                    if child.poll() is not None and launch.is_file():
-                        fixture = read(launch)
-                        audit['launcherAndFixtureReaped'] = fixture.get('childReaped') is True
-                        fixture_command = fixture.get('command')
-                        if (isinstance(fixture_command, list) and fixture_command
-                                and all(isinstance(part, str) for part in fixture_command)):
-                            audit['fixtureProcess'] = {
-                                'pid': fixture.get('childPid'), 'ppid': child.pid,
-                                'argv': fixture_command,
-                                'executableSha256': digest(Path(fixture_command[0]))}
-                        else:
-                            audit['fixtureReadError'] = 'launch.json command missing/invalid'
-                    elif not launch.is_file():
-                        audit['fixtureReadError'] = 'launch.json missing'
-                except (OSError, ValueError, KeyError, TypeError) as error:
-                    audit['launcherAndFixtureReaped'] = False
-                    audit['fixtureReadError'] = f'{type(error).__name__}: {error}'
+                    'pgid': child.pid if child is not None else None,
+                    'status': CLEANUP_NOT_VERIFIED,
+                    'reason': audit['cleanupBlocked']})
+                if not isinstance(error, (OSError, subprocess.SubprocessError,
+                                          ValueError, KeyError, TypeError)):
+                    raise
             finally:
+                if child is not None:
+                    if child.returncode is not None:
+                        audit['exitCode'] = child.returncode
+                        audit['status'] = 'DONE' if child.returncode == 0 else 'FAIL'
+                    verified = (audit.get('processTreeCleanup') == CLEANUP_VERIFIED
+                                and child.returncode is not None
+                                and not audit.get('cleanupBlocked'))
+                    if audit.get('processTreeCleanup') == CLEANUP_VERIFIED and not verified:
+                        # A verified probe still needs a reaped leader and no
+                        # cleanup error before the shared lock may be released.
+                        audit['processTreeCleanup'] = CLEANUP_NOT_VERIFIED
+                        audit['cleanupBlocked'] = (audit.get('cleanupBlocked')
+                                                   or 'leader not reaped')
+                    audit['allStopped'] = verified
+                    if verified:
+                        common.LIVE_GROUPS.discard(child.pid)
+                    audit['ownedGroupsRemaining'] = sorted(common.LIVE_GROUPS)
+                else:
+                    audit['allStopped'] = not common.LIVE_GROUPS
+                    audit['ownedGroupsRemaining'] = sorted(common.LIVE_GROUPS)
                 save(output / 'launch.json', audit)
     return audit
 
@@ -925,6 +982,8 @@ def main():
                     report['status'] = overall
                     report['executionStatus'] = overall
                     report['cleanupStatus'] = audit['processTreeCleanup']
+                    if audit.get('ownedGroupsRemaining'):
+                        report['cleanupPending'] = audit['ownedGroupsRemaining']
                     report['topology'] = 'ts-in-process-controlled'
                     report['acceptanceStatus'] = 'NOT_RUN'
                     report['calibrationStatus'] = 'OBSERVED'

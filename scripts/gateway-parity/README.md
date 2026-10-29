@@ -152,7 +152,7 @@ CI/shell 调用方也不会把它当通过。
 必须让 `aggregation-audit` 报出登记点未走共享函数的专属失败。
 A5.3 的白名单变更须由协调者完成双评审、哈希登记后再合并。
 
-#209 A2 锁加固：锁获取时先发布 `cleanupPending: true`，成功退出才删除锁；因此 SIGKILL/OOM 或后续清理记录写入失败也不留下可自动接管的空标记。启动到登记、整批清理和进入释放 guard 之前挂起 SIGINT/SIGTERM，子进程 exec 前解除继承掩码。只有本次登记的进程组全部有界清理并证实消失，才释放本 owner 的共享锁；kill/wait/probe 失败保留登记并把 `cleanupPending` 更新成组列表，gateway 不自动接管该记录，须协调者核实后回收。每组等待上限为 TERM 3s + KILL 3s + reap 3s + 最终探测 2s，整批串行；SIGKILL 不能被屏蔽，只有遗留锁标记，不承诺当场清理。进程登记保护覆盖 A2 run_round/check_ruler；E1 `session_domain.run_fixture` 仍用自身 held-group 清理且未接入 `LIVE_GROUPS`，异常退出的共享锁门控与 A1/cli/ui 等姊妹接管规则都须 #209 续办，前置于下一次全量对拍/定标。锁协议保留既有 `.guard` 的 flock + owner 目录，未单边改成与姊妹装置不兼容的锁。
+#209 A2 锁加固：锁获取时先发布 `cleanupPending: true`，成功退出才删除锁；因此 SIGKILL/OOM 或后续清理记录写入失败也不留下可自动接管的空标记。启动到登记、整批清理和进入释放 guard 之前挂起 SIGINT/SIGTERM，子进程 exec 前解除继承掩码。只有本次登记的进程组全部有界清理并证实消失，才释放本 owner 的共享锁；kill/wait/probe 失败保留登记并把 `cleanupPending` 更新成组列表，gateway 不自动接管该记录，须协调者核实后回收。每组等待上限为 TERM 3s + KILL 3s + reap 3s + 最终探测 2s，整批串行；SIGKILL 不能被屏蔽，只有遗留锁标记，不承诺当场清理。进程登记保护覆盖 A2 run_round/check_ruler；#209 E1 起 `session_domain.run_fixture` 也把本次 `start_new_session` 的 pgid 记入 `common.LIVE_GROUPS`，spawn+登记与 finally 清理都在 `deferred_signals()` 内，只有自身 `probe_process_group` 返回 `VERIFIED`、leader 已回收且无 `cleanupBlocked` 才移除登记；未证实则锁 finally 写 `owner.json.cleanupPending` 并保留租约，规则与 A1/cli/ui 姊妹装置相同。E1 的行为正控与源码负控见 `src/pilotdeck-gateway/tests/fixtures/session-domain-lock-release/`。锁协议保留既有 `.guard` 的 flock + owner 目录，未单边改成与姊妹装置不兼容的锁。
 
 #909：CI 的 Node 前置条件由实际运行的 `test_metadata_io_driver.EnvironmentControls` 逐 job 检查；冻结 prerequisites 不再用跨 job 的首个 setup/npm 文本索引冒充证明。四个 Node job 各有删除、后移和条件 setup 的配对负控。
 
