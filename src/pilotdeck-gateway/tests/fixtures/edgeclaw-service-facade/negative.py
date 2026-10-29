@@ -357,7 +357,9 @@ def classifier_self_test():
                 f'test {VERIFY} ... FAILED\n'
                 'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; '
                 '0 filtered out;\n'
-                f'panicked at {TEST_FILE}:1580:5:\n'
+                # Real libtest header: the shared judge reads the named test's own
+                # `thread '<name>' panicked at` block (#818), never a bare line.
+                f"thread '{VERIFY}' panicked at {TEST_FILE}:1580:5:\n"
                 '#775 verify.mts failed\n'
                 f'stdout:\n\nstderr:\n{stderr_body}\n'
             ),
