@@ -171,6 +171,8 @@ UNSUPPORTED_SIGNALS = {
     'edgeclaw-service-facade/test_switch_negative.py': set(),
     # #1036: same shape as the facade runner's self-tests — no mutation table.
     'edgeclaw-service-orchestration/test_switch_negative.py': set(),
+    # #1019 fix-r1: same shape as the orchestration runner's self-tests.
+    'session-adopt/test_switch_negative.py': set(),
 }
 REGEX_SCRIPTS = {'background-panic/negative_controls.py'}
 IMPLICIT = {

@@ -165,6 +165,9 @@ fn error_outcome(error: &RecorderError) -> JsValue {
         RecorderError::State(_)
         | RecorderError::Store(_)
         | RecorderError::ProjectionUnavailable(_) => ("Error", None),
+        // Rust-side fence handoff rejection (#1019); TS has no equivalent and
+        // no oracle fixture exercises it — keep the Error shape.
+        RecorderError::Retired(_) => ("Error", None),
         RecorderError::Domain { code, .. } => ("SessionDomainValidationError", Some(*code)),
         RecorderError::Envelope { code, .. } => ("SessionEventValidationError", Some(*code)),
         RecorderError::Type(_) => ("TypeError", None),

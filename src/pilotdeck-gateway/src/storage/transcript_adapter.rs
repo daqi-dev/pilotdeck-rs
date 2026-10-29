@@ -50,6 +50,11 @@ pub enum AdapterError {
     Domain { code: &'static str, message: String },
     /// Recovery/list projection outside the currently ported read surface.
     ProjectionUnavailable(String),
+    /// #1019 fence handoff: this writer's ledger fence moved to the session
+    /// factory, so appends through it (any Arc clone) are rejected instead of
+    /// forking the sequence chain. Rust-side composition constraint; TS has no
+    /// fence and its `close()` is a silent no-op, not a rejection.
+    Retired(String),
     /// Error from the host store, propagated unchanged (TS rethrows it).
     Store(LedgerError),
 }
@@ -62,6 +67,7 @@ impl fmt::Display for AdapterError {
             Self::Domain { message, .. } | Self::ProjectionUnavailable(message) => {
                 f.write_str(message)
             }
+            Self::Retired(message) => f.write_str(message),
             Self::Store(error) => error.fmt(f),
         }
     }
@@ -86,6 +92,7 @@ impl From<RecorderError> for AdapterError {
             RecorderError::Range(message) => Self::Range(message),
             RecorderError::ProjectionUnavailable(message) => Self::ProjectionUnavailable(message),
             RecorderError::State(message) => Self::ProjectionUnavailable(message),
+            RecorderError::Retired(message) => Self::Retired(message),
             RecorderError::Store(error) => Self::Store(error),
         }
     }
@@ -158,7 +165,8 @@ pub struct JsonlTranscriptStore {
     /// Only project-owned session stores opt into the shared ledger fence.
     /// The store is retained by every Arc<TranscriptWriter> clone, so the
     /// fence spans generations until #1019's holder moves it out (`take_fence`)
-    /// into the factory's writer lease.
+    /// into the factory's writer lease — which also retires that writer, so a
+    /// retained clone cannot keep appending past the handoff.
     owner: Mutex<Option<LedgerLock>>,
     /// A project-owned store serves one canonical transcript; diagnostics keep
     /// the original spelling supplied when that writer acquired its fence.
@@ -534,6 +542,11 @@ pub struct TranscriptWriter {
     layout: SubagentLayout,
     inner: Mutex<WriterInner>,
     closed: AtomicBool,
+    /// #1019 fence handoff: set when this writer's ledger fence moved to the
+    /// session factory. Every Arc clone shares the flag, so a stale holder's
+    /// append is rejected at write time instead of forking the sequence chain
+    /// under the factory's replacement writer.
+    retired: AtomicBool,
     #[cfg(test)]
     pub(crate) test_sources: Mutex<Option<(RecorderClock, RecorderUuid)>>,
 }
@@ -551,6 +564,7 @@ impl TranscriptWriter {
             #[cfg(test)]
             test_sources: Mutex::new(None),
             closed: AtomicBool::new(false),
+            retired: AtomicBool::new(false),
             inner: Mutex::new(WriterInner {
                 sequence: 0,
                 last_entry_id: None,
@@ -692,6 +706,25 @@ impl TranscriptWriter {
     pub fn begin_close(&self) {
         self.closed.store(true, Ordering::SeqCst);
     }
+    /// #1019 fence handoff: retire this writer when its ledger fence moves to
+    /// the session factory (`SessionRecording::into_storage`). Setting the
+    /// shared flag invalidates every Arc clone at once; acquiring the commit
+    /// lock once afterwards drains an in-flight append before the handoff
+    /// observes the log, so the factory's replacement writer restores a
+    /// quiescent chain. Unlike `close`, later appends are a typed rejection.
+    pub(crate) fn retire(&self) {
+        self.retired.store(true, Ordering::SeqCst);
+        drop(self.lock());
+    }
+    fn check_retired(&self) -> Result<(), AdapterError> {
+        if self.retired.load(Ordering::SeqCst) {
+            return Err(AdapterError::Retired(
+                "#1019 this session writer handed its ledger fence to the session factory and can no longer append"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
     /// JsonlTranscriptWriter.close: later appends resolve without writing,
     /// and close waits for any append that already acquired the commit lock.
     pub fn close(&self) {
@@ -765,10 +798,12 @@ impl TranscriptWriter {
     /// TS recordEntry → SessionRuntime.appendRecorded: the caller's envelope is
     /// kept and validated against the current state.
     pub fn record_entry(&self, entry: &JsValue) -> AdapterResult<()> {
+        self.check_retired()?;
         if self.closed.load(Ordering::SeqCst) {
             return Ok(());
         }
         let mut inner = self.lock();
+        self.check_retired()?;
         if self.closed.load(Ordering::SeqCst) {
             return Ok(());
         }
@@ -808,10 +843,12 @@ impl TranscriptWriter {
         sources: impl FnOnce() -> Result<(String, String), E>,
         validate: impl FnOnce(&DomainState, &JsValue) -> Result<DomainState, E>,
     ) -> Result<(), E> {
+        self.check_retired()?;
         if self.closed.load(Ordering::SeqCst) {
             return Ok(());
         }
         let mut inner = self.lock();
+        self.check_retired()?;
         if self.closed.load(Ordering::SeqCst) {
             return Ok(());
         }

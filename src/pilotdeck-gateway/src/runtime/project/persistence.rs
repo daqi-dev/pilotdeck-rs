@@ -174,11 +174,18 @@ impl SessionRecording {
     /// Transfer this recording to the session factory's writer lease (#1019):
     /// the store keeps serving reads and appends, while its ledger fence
     /// leaves the store so the factory can own and release it with the
-    /// writer drain. A memory-only recording has no fence to transfer.
+    /// writer drain. A memory-only recording has no fence to transfer. The
+    /// handoff also retires this recording's writer (draining any in-flight
+    /// append first): every retained `Arc` clone shares the retirement, so a
+    /// stale holder's append is a typed rejection instead of a second sequence
+    /// cache forking the chain under the factory's replacement writer.
     pub(crate) fn into_storage(
         self,
     ) -> (Arc<dyn TranscriptStore>, TranscriptKey, Option<LedgerLock>) {
         let fence = self.locked.as_ref().and_then(|store| store.take_fence());
+        if !crate::mutants::on("adopt-clone-not-retired") {
+            self.recorder.writer().retire();
+        }
         (self.store, self.key, fence)
     }
 }

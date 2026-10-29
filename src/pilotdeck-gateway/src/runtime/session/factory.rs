@@ -132,6 +132,16 @@ impl Drop for WriterCloseGuard {
         let writer = self.writer.clone();
         let lease = self._lease.take();
         let close = move || {
+            // #1019 test pin: only the lease-holding close thread consults the
+            // gate, and it does so before releasing the fence and process
+            // mutex, so a pinned test observes the exact window after the
+            // handle is disposed but before another writer may open.
+            #[cfg(test)]
+            if lease.is_some()
+                && let Some(gate) = take_close_thread_gate(writer.path())
+            {
+                let _ = gate.recv_timeout(std::time::Duration::from_secs(30));
+            }
             writer.close();
             drop(lease);
         };
@@ -220,6 +230,10 @@ async fn open_and_adopt(
     plan: RecordingPlan,
     deadline: tokio::time::Instant,
 ) -> Result<Arc<FactoryStorage>, RuntimeError> {
+    // The opener's path spelling (pre-canonicalization) is the one the host
+    // supplied, so its non-BUSY storage failures report the Node code and
+    // message for that path — the same contract the unlocked reader keeps.
+    let supplied = plan.transcript_path.clone();
     let canonical = tokio::task::spawn_blocking(move || {
         crate::storage::canonical_transcript_path(&plan.transcript_path)
     })
@@ -244,6 +258,12 @@ async fn open_and_adopt(
                     crate::storage::recorder::RecorderError::Store(
                         crate::storage::LedgerError::Io(ref io),
                     ) if io.kind() == std::io::ErrorKind::WouldBlock => writer_busy(),
+                    // mutant: adopt-store-error-untyped
+                    crate::storage::recorder::RecorderError::Store(store_error)
+                        if !crate::mutants::on("adopt-store-error-untyped") =>
+                    {
+                        storage_error(store_error, &supplied)
+                    }
                     error => RuntimeError::new(error.to_string()),
                 }
             }
@@ -299,6 +319,27 @@ fn writer_wait_observation(mutex: &Arc<WriterMutex>) -> Arc<std::sync::atomic::A
             observers.insert(key, Arc::downgrade(&observer));
             observer
         })
+}
+// #1019 lifecycle tests pin a draining close thread at the exact window after
+// the handle is disposed but before its writer lease (flock, then process
+// mutex) is released. Only the lease-holding close thread consults the gate,
+// so which guard spawned which thread cannot unpin the window. Keyed by the
+// writer's path, so parallel tests on their own temporary paths cannot steal
+// each other's gates; the thread takes (consumes) the gate before closing,
+// and the 30s bound turns a forgotten test release into a timeout instead of
+// a hung suite.
+#[cfg(test)]
+static CLOSE_THREAD_GATES: OnceLock<Mutex<HashMap<PathBuf, std::sync::mpsc::Receiver<()>>>> =
+    OnceLock::new();
+#[cfg(test)]
+fn install_close_thread_gate(path: &Path) -> std::sync::mpsc::Sender<()> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    lock(CLOSE_THREAD_GATES.get_or_init(Mutex::default)).insert(path.to_path_buf(), receiver);
+    sender
+}
+#[cfg(test)]
+fn take_close_thread_gate(path: &Path) -> Option<std::sync::mpsc::Receiver<()>> {
+    lock(CLOSE_THREAD_GATES.get_or_init(Mutex::default)).remove(path)
 }
 
 async fn acquire_process_writer(
@@ -650,12 +691,18 @@ impl ProjectSessionFactory {
                 return Err(error);
             }
         };
-        // A recording's fence transfer uses the pre-construction deadline:
-        // like `create_storage` itself, the opener's file IO spends no
-        // writer-wait budget; only its preceding path resolution does.
+        // A recording's fence transfer re-bases its deadline after
+        // `create_storage` (whose slow snapshot is not a writer wait): the
+        // opener's file IO spends no writer-wait budget; only its preceding
+        // path resolution does. (mutant: adopt-deadline-not-rebased)
+        let adopt_deadline = if crate::mutants::on("adopt-deadline-not-rebased") {
+            deadline
+        } else {
+            tokio::time::Instant::now() + writer_wait_remaining
+        };
         let (storage, adopted) = match storage {
             SessionStorage::Unlocked(storage) => (Arc::new(storage), false),
-            SessionStorage::Recording(plan) => match open_and_adopt(plan, deadline).await {
+            SessionStorage::Recording(plan) => match open_and_adopt(plan, adopt_deadline).await {
                 Ok(storage) => (storage, true),
                 Err(error) => {
                     let _ = prepared.resources.release().await;
