@@ -5,6 +5,9 @@ use pilotdeck_gateway::runtime::tools::builtin::web::{
 };
 use std::time::Instant;
 
+// The only caller is the macOS-only RSS probe below; on other targets the
+// module is compiled out or `single_pass` would be dead code under -D warnings.
+#[cfg(target_os = "macos")]
 #[path = "common/exact_receipt.rs"]
 mod exact_receipt;
 
