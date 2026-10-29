@@ -33,39 +33,9 @@ const URL: &str = "ws://127.0.0.1:28999/ws";
 const BOUND: Duration = Duration::from_secs(15);
 static PORT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-// Bind the negative verdict to the current libtest and exact assertion; arbitrary
-// server/CLI text cannot forge a kill. Uses negative_suite.ReceiptRun's protocol.
-fn verify(condition: bool, assertion: &str) {
-    if condition {
-        return;
-    }
-    if let Ok(config) = std::env::var("PDRS_NEGATIVE_RECEIPTS") {
-        let config: Value = serde_json::from_str(&config).expect("#1058 receipt configuration");
-        let thread = std::thread::current();
-        let name = thread.name().expect("#1058 named test");
-        for target in config["targets"].as_array().expect("#1058 receipt targets") {
-            if target["test"] == name && target["assertion"] == assertion {
-                let path = Path::new(target["path"].as_str().expect("#1058 receipt path"));
-                let temporary = path.with_extension("tmp");
-                let mut receipt = fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&temporary)
-                    .expect("#1058 fresh receipt");
-                receipt
-                    .write_all(
-                        config["nonce"]
-                            .as_str()
-                            .expect("#1058 receipt nonce")
-                            .as_bytes(),
-                    )
-                    .expect("#1058 receipt write");
-                fs::rename(temporary, path).expect("#1058 atomic receipt publication");
-            }
-        }
-    }
-    panic!("{assertion}");
-}
+#[path = "common/negative_receipt.rs"]
+mod negative_receipt;
+use negative_receipt::verify;
 
 struct Runtime(PathBuf);
 impl Runtime {
@@ -438,14 +408,31 @@ async fn replay(
     mut stdin: Option<std::process::ChildStdin>,
     pid: u32,
 ) {
-    let mut sockets = BTreeMap::new();
+    let mut sockets =
+        BTreeMap::<u64, tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>>::new();
     let mut ids = BTreeMap::<String, String>::new();
     let mut run_ids = BTreeMap::<String, String>::new();
     let mut checks = Vec::new();
     for row in case["wire"].as_array().expect("#1058 wire rows") {
         let connection = row["connection"].as_u64().expect("#1058 connection number");
         if row["kind"] == "connection" {
-            let (stream, _) = listener.accept().await.expect("#1058 owned mock accept");
+            let accepted = if connection == 2 {
+                let control = sockets.get_mut(&1).expect("#1058 live control socket");
+                // The TS wire opens a query socket before any further control
+                // traffic. Observe premature close/reuse immediately, so these
+                // mutations cannot earn a kill receipt from a timeout.
+                tokio::select! {
+                    accepted = listener.accept() => accepted,
+                    unexpected = control.next() => {
+                        eprintln!("#1058 control traffic before query: {unexpected:?}");
+                        verify(false, "#1058 expected second connection");
+                        Err(io::Error::other("#1058 missing query connection"))
+                    }
+                }
+            } else {
+                listener.accept().await
+            };
+            let (stream, _) = accepted.expect("#1058 owned mock accept");
             let socket = accept_async(stream).await.expect("#1058 WS upgrade");
             sockets.insert(connection, socket);
             continue;
@@ -637,9 +624,9 @@ async fn run_case(case: &Value) {
         let mock = replay(listener.expect("#1058 observed mock"), case, stdin, pid);
         let ((), output) = tokio::join!(
             async {
-                verify(
+                assert!(
                     timeout(BOUND, mock).await.is_ok(),
-                    "#1058 expected gateway lifecycle",
+                    "#1058 mock timed out; not a negative-control kill",
                 );
             },
             collect(child)
@@ -704,6 +691,27 @@ async fn run_channel_and_two_connections() {
     run_case(&case("run--flag-combined")).await;
 }
 #[tokio::test(flavor = "current_thread")]
+async fn run_token_file_reaches_gateway() {
+    let _port = PORT.lock().await;
+    let _lease = ParityLock::acquire().await;
+    // Node v22.22.0 runSdkCli with the same token-file input, no mock listener:
+    // exit 1, empty stdout, and these stderr bytes after the registered warning.
+    // Keep the mock-success input/disk from the full TS run--token-file capture.
+    let mut input = case("run--token-file");
+    input["input"]["mockGateway"] = json!(false);
+    input["connections"] = json!(0);
+    input["wire"] = json!([]);
+    input["stdout"] = json!("");
+    input["stderr"] = json!("Gateway connection failed.\n");
+    input["exit"] = json!(1);
+    // Fail before invoking the CLI if an uncooperative listener owns this port.
+    let listener = TcpListener::bind(ADDRESS)
+        .await
+        .expect("#1058 refusal port must be unoccupied");
+    drop(listener);
+    run_case(&input).await;
+}
+#[tokio::test(flavor = "current_thread")]
 async fn run_argv_does_not_wait_for_stdin() {
     let _port = PORT.lock().await;
     let _lease = ParityLock::acquire().await;
@@ -715,6 +723,12 @@ async fn run_argv_does_not_wait_for_stdin() {
 #[ignore = "requires Node v22.22.0; extracts real checked-in host captures"]
 fn run_oracle_regenerates_identically() {
     regenerates_identically("sdk-run");
+}
+
+#[test]
+#[ignore = "requires Node v22.22.0 and the pinned TS SDK; direct validation probes"]
+fn run_validation_oracle_regenerates_identically() {
+    regenerates_identically("sdk-run-validation");
 }
 
 // Targeted regressions for the supplemental Node function-probe cells. The

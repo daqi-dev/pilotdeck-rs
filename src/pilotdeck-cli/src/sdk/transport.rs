@@ -239,24 +239,9 @@ impl Transport {
             }
             match string_field(&frame, "type").as_deref() {
                 Some("event") => {
-                    let sequence = frame
-                        .get("seq")
-                        .and_then(JsValue::as_number)
-                        .filter(|seq| seq.is_finite() && *seq >= 0.0 && seq.fract() == 0.0)
-                        .ok_or_else(|| {
-                            error(&format!(
-                                "Gateway event sequence must be a non-negative integer for {id}."
-                            ))
-                        })?;
-                    if sequence <= self.stream_sequence {
+                    let Some(sequence) = next_sequence(&frame, id, self.stream_sequence)? else {
                         continue;
-                    }
-                    if sequence != self.stream_sequence + 1.0 {
-                        return Err(error(&format!(
-                            "Gateway event sequence gap for {id}: expected {}, received {sequence}.",
-                            self.stream_sequence + 1.0
-                        )));
-                    }
+                    };
                     self.stream_sequence = sequence;
                     return Ok(Some((
                         frame.get("event").cloned().unwrap_or(JsValue::Undefined),
@@ -281,6 +266,28 @@ impl Transport {
         // Cleanup never replaces the original RPC/stream error.
         close_socket(&mut self.socket).await;
     }
+}
+
+fn next_sequence(frame: &JsValue, id: &str, previous: f64) -> Result<Option<f64>, Failure> {
+    let sequence = frame
+        .get("seq")
+        .and_then(JsValue::as_number)
+        .filter(|seq| seq.is_finite() && *seq >= 0.0 && seq.fract() == 0.0)
+        .ok_or_else(|| {
+            error(&format!(
+                "Gateway event sequence must be a non-negative integer for {id}."
+            ))
+        })?;
+    if sequence <= previous {
+        return Ok(None);
+    }
+    if sequence != previous + 1.0 {
+        return Err(error(&format!(
+            "Gateway event sequence gap for {id}: expected {}, received {sequence}.",
+            previous + 1.0
+        )));
+    }
+    Ok(Some(sequence))
 }
 
 async fn close_socket(mut socket: &mut Socket) {
@@ -366,4 +373,39 @@ pub(super) fn string_field(value: &JsValue, name: &str) -> Option<String> {
         .get(name)?
         .as_string()
         .map(|text| String::from_utf16_lossy(text.units()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_negative_receipt::verify;
+
+    #[test]
+    fn stream_sequence_matches_ts_boundaries() {
+        let oracle: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/sdk-run-validation/oracle.json"
+        ))
+        .expect("#1058 sequence validation oracle");
+        for case in oracle["sequences"].as_array().expect("#1058 sequence rows") {
+            let input = &case["input"];
+            let frame = parse_json(&input.to_string()).expect("#1058 sequence frame JSON");
+            let result = next_sequence(
+                &frame,
+                "validation",
+                input["previous"].as_f64().expect("#1058 previous sequence"),
+            );
+            let actual = match result {
+                Ok(sequence) => json!({"sequence":sequence.map(|n| n as i64)}),
+                Err(Failure::Error(message)) => json!({"error":message}),
+                Err(other) => json!({"unexpected":format!("{other:?}")}),
+            };
+            if actual != case["output"] {
+                eprintln!(
+                    "#1058 sequence {}: {actual}, expected {}",
+                    input["name"], case["output"]
+                );
+            }
+            verify(actual == case["output"], "#1058 stream sequence validation");
+        }
+    }
 }

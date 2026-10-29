@@ -8,12 +8,6 @@ use serde_json::json;
 use std::io::{IsTerminal, Read};
 use transport::{Transport, string_field};
 
-// Compile-time mutation points: production always uses these values. The HEAD-
-// guarded negative runner changes one constant, compiles, and runs its target.
-const READ_STDIN: bool = true;
-const SECOND_CONNECTION: bool = true;
-const SUBMIT_CHANNEL: &str = "api_server";
-
 pub(super) fn run(argv: &[String], connection: &Connection) -> Result<u8, Failure> {
     if argv
         .iter()
@@ -56,14 +50,10 @@ async fn run_connected(argv: &[String], connection: &Connection) -> Result<u8, F
                 "A prompt is required, or provide it through stdin.".into(),
             ));
         }
-        if SECOND_CONNECTION {
-            let mut query = Transport::connect(connection, "pilotdeck-cli", true).await?;
-            let result = query_turn(&mut query, argv, &session, &prompt, project).await;
-            query.close().await;
-            result
-        } else {
-            query_turn(&mut control, argv, &session, &prompt, project).await
-        }
+        let mut query = Transport::connect(connection, "pilotdeck-cli", true).await?;
+        let result = query_turn(&mut query, argv, &session, &prompt, project).await;
+        query.close().await;
+        result
     }
     .await;
     control.close().await;
@@ -76,7 +66,7 @@ fn read_prompt(argv: &[String]) -> Result<String, Failure> {
     if !prompt.is_empty() {
         return Ok(prompt.to_owned());
     }
-    if READ_STDIN && !std::io::stdin().is_terminal() {
+    if !std::io::stdin().is_terminal() {
         let mut bytes = Vec::new();
         std::io::stdin()
             .read_to_end(&mut bytes)
@@ -124,7 +114,7 @@ async fn query_turn(
             "submit_turn",
             SubmitTurn {
                 session_key: session,
-                channel_key: SUBMIT_CHANNEL,
+                channel_key: "api_server",
                 project_key: project,
                 message: prompt,
                 can_prompt: false,
@@ -170,6 +160,10 @@ async fn resolve_model(
     let catalog = query
         .request("model_catalog_list", json!({"projectKey":project}))
         .await?;
+    select_model(&catalog, model)
+}
+
+fn select_model(catalog: &JsValue, model: &str) -> Result<ModelOverride, Failure> {
     let candidates = catalog.get("items").and_then(array).unwrap_or(&[]);
     let matches: Vec<_> = candidates
         .iter()
@@ -243,5 +237,41 @@ fn array(value: &JsValue) -> Option<&[JsValue]> {
     match value {
         JsValue::Array(values) => Some(values),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_negative_receipt::verify;
+
+    #[test]
+    fn model_resolution_matches_ts_boundaries() {
+        let oracle: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/sdk-run-validation/oracle.json"
+        ))
+        .expect("#1058 model validation oracle");
+        for case in oracle["models"].as_array().expect("#1058 model rows") {
+            let input = &case["input"];
+            let catalog =
+                pilotdeck_protocol::parse_json(&json!({"items":input["items"]}).to_string())
+                    .expect("#1058 model catalog JSON");
+            let result = select_model(
+                &catalog,
+                input["model"].as_str().expect("#1058 requested model"),
+            );
+            let actual = match result {
+                Ok(value) => json!({"value":value}),
+                Err(Failure::Error(message)) => json!({"error":message}),
+                Err(other) => json!({"unexpected":format!("{other:?}")}),
+            };
+            if actual != case["output"] {
+                eprintln!(
+                    "#1058 model {}: {actual}, expected {}",
+                    input["name"], case["output"]
+                );
+            }
+            verify(actual == case["output"], "#1058 model resolution bytes");
+        }
     }
 }
