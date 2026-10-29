@@ -738,16 +738,23 @@ impl LiveTurnStream {
         }
         if durable_wire {
             if crate::mutants::on("live-durable-before-yield") {
-                return self
-                    .begin_recording(
-                        RecordingAction::Durable(
-                            event.get("message").cloned().unwrap_or(JsValue::Undefined),
-                        ),
-                        event,
-                        false,
-                        receipt,
-                    )
-                    .await;
+                // Reverse only callback/yield order. Durable transitions emit
+                // no event, so retain their normal Null sentinel while settling.
+                self.begin_recording(
+                    RecordingAction::Durable(
+                        event.get("message").cloned().unwrap_or(JsValue::Undefined),
+                    ),
+                    JsValue::Null,
+                    false,
+                    receipt,
+                )
+                .await?;
+                return Ok(self
+                    .recording
+                    .as_ref()
+                    .and_then(Recording::callback_error)
+                    .is_none()
+                    .then_some(event));
             }
             self.pending_durable = Some((
                 event.get("message").cloned().unwrap_or(JsValue::Undefined),
@@ -934,6 +941,8 @@ impl LiveTurnStream {
         ) {
             if let Some(mut result) = fields.get("result").and_then(JsValue::as_object).cloned()
                 && let Some(mut message) = result.get("finalMessage").cloned()
+                && (super::submit::truthy(&message)
+                    || crate::mutants::on("live-terminal-falsy-final"))
             {
                 mark_module_message(&mut message, module)?;
                 result.insert("finalMessage".into(), message);
@@ -1785,6 +1794,110 @@ pub(crate) fn test_recorder() -> Arc<Recorder> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_message_boundaries_match_ts() {
+        let oracle = crate::test_baseline::oracle(include_str!(
+            "../../../tests/fixtures/live-e2e/terminal-boundaries/oracle.json"
+        ));
+        let JsValue::Array(cases) = oracle.get("cases").expect("#748 terminal cases") else {
+            panic!("#748 terminal cases array");
+        };
+        let mut cases = cases.clone();
+        if crate::mutants::on("live-terminal-case-inventory") {
+            cases.pop();
+        }
+        let mut names: Vec<_> = cases
+            .iter()
+            .map(|case| {
+                case.get("name")
+                    .and_then(JsValue::as_string)
+                    .expect("#748 terminal case name")
+                    .to_utf8()
+                    .expect("#748 terminal case UTF-8 name")
+            })
+            .collect();
+        let mut expected_names: Vec<_> = ["success", "aborted"]
+            .into_iter()
+            .flat_map(|outcome| {
+                [
+                    "missing",
+                    "final-null",
+                    "final-false",
+                    "final-0",
+                    "final-\"\"",
+                    "final-valid",
+                    "messages-valid",
+                ]
+                .map(|name| format!("{outcome}/{name}"))
+            })
+            .collect();
+        names.sort();
+        expected_names.sort();
+        crate::negative_assert_eq!(
+            names,
+            expected_names,
+            "#748 exact terminal boundary inventory"
+        );
+        let input =
+            parse_json(r#"{"type":"text","text":"boundary"}"#).expect("#748 terminal input");
+        let options =
+            parse_json(r#"{"sessionId":"s","turnId":"t"}"#).expect("#748 terminal options");
+        let (request, input) =
+            parse_execute_request(&input, &options, vec![]).expect("#748 terminal request");
+        let integrity = Arc::new(StreamIntegrity::new());
+        *integrity.module_id.lock().expect("#748 terminal module") = Some("fixture".into());
+        let turn = LiveTurnStream {
+            execution: None,
+            result: None,
+            events: mpsc::channel(1).1,
+            identity: request.identity,
+            input,
+            integrity,
+            delivered: StreamIntegrity::new(),
+            active: None,
+            recording_ready: oneshot::channel().1,
+            recording: None,
+            pending_event: None,
+            pending_durable: None,
+            callback_cancel: None,
+            accepted: false,
+            preflight: 0,
+            execute_ready: None,
+            recorded: std::collections::VecDeque::new(),
+        };
+        for case in cases {
+            let actual = turn
+                .completed_event(case.get("input").expect("#748 terminal case input"))
+                .map(|event| {
+                    crate::metadata::object([
+                        (
+                            "result",
+                            event.get("result").cloned().expect("#748 terminal result"),
+                        ),
+                        (
+                            "messages",
+                            event
+                                .get("messages")
+                                .cloned()
+                                .expect("#748 terminal messages"),
+                        ),
+                    ])
+                })
+                .map_err(|error| JsValue::from(error.message.as_str()));
+            let expected = match case.get("error") {
+                Some(error) => Err(error.clone()),
+                None => Ok(case.get("output").cloned().expect("#748 terminal output")),
+            };
+            crate::negative_assert_eq!(actual, expected, "#748 TS terminal message boundary");
+        }
+    }
+
+    #[test]
+    #[ignore = "requires fixed TS baseline and Node v22.22.0"]
+    fn terminal_boundaries_regenerate_identically() {
+        crate::test_baseline::regenerates_identically("live-e2e/terminal-boundaries");
+    }
 
     fn event_of(event_type: &str) -> JsValue {
         parse_json(&format!(r#"{{"type":"{event_type}"}}"#)).unwrap()
