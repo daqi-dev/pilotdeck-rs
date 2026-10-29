@@ -355,6 +355,10 @@ const definitions = [
   }
 ];
 definitions.push({axis:'set-deep-object',argv:['settings','set','{"nested":'+ '['.repeat(160)+'0'+']'.repeat(160)+'}'],result:{updated:true}});
+definitions.push(
+  {axis:'set-request-literal',argv:['settings','set','{"value":"<request>","id":"<request>","nested":{"id":"<request>"}}'],result:{id:'<request>',value:'<request>'}},
+  {axis:'get-request-literal',argv:['settings','get'],result:{id:'<request>',value:'<request>',nested:{id:'<request>'}}},
+);
 const captures = [];
 function snapshot(root) {
   const entries = {};

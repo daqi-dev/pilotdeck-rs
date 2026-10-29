@@ -42,6 +42,37 @@ pub(super) async fn request_with_version(
     request_inner(connection, method, params, client_version, true).await
 }
 
+async fn send_hello(
+    socket: &mut Socket,
+    connection: &Connection,
+    client_version: &str,
+    settings_order: bool,
+) -> Result<(), Failure> {
+    if settings_order {
+        send(
+            socket,
+            SettingsHelloFrame {
+                kind: "hello",
+                protocol_version: pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,
+                client_name: "sdk",
+                client_version,
+                token: &connection.auth_token,
+            },
+        )
+        .await?;
+    } else {
+        send(
+            socket,
+            json!({
+                "type": "hello", "protocolVersion": pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION, "clientName": "sdk",
+                "clientVersion": client_version, "token": connection.auth_token,
+            }),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 async fn request_inner(
     connection: &Connection,
     method: &str,
@@ -65,28 +96,7 @@ async fn request_inner(
     .map_err(|_| error("Gateway connection failed."))?;
     let result = async {
         timeout(CONNECT_TIMEOUT, async {
-            if settings_order {
-                send(
-                    &mut socket,
-                    SettingsHelloFrame {
-                        kind: "hello",
-                        protocol_version: pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,
-                        client_name: "sdk",
-                        client_version,
-                        token: &connection.auth_token,
-                    },
-                )
-                .await?;
-            } else {
-                send(
-                    &mut socket,
-                    json!({
-                        "type": "hello", "protocolVersion": pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION, "clientName": "sdk",
-                        "clientVersion": client_version, "token": connection.auth_token,
-                    }),
-                )
-                .await?;
-            }
+            send_hello(&mut socket, connection, client_version, settings_order).await?;
             loop {
                 if string_field(&receive(&mut socket).await?, "type").as_deref() == Some("hello_ok")
                 {
@@ -104,13 +114,23 @@ async fn request_inner(
             if settings_order {
                 send(
                     &mut socket,
-                    SettingsRequestFrame { kind: "request", request_id: &id, method, params },
+                    SettingsRequestFrame {
+                        kind: "request",
+                        request_id: &id,
+                        method,
+                        params,
+                    },
                 )
                 .await?;
             } else {
                 send(
                     &mut socket,
-                    RequestFrame { kind: "request", id: &id, method, params },
+                    RequestFrame {
+                        kind: "request",
+                        id: &id,
+                        method,
+                        params,
+                    },
                 )
                 .await?;
             }

@@ -253,6 +253,7 @@ async fn replay(listener: TcpListener, case: &Value, pid: u32) {
     let (stream, _) = listener.accept().await.expect("#983 owned mock accept");
     let mut socket = accept_async(stream).await.expect("#983 WS upgrade");
     let mut id = String::new();
+    let mut wire_checks = Vec::new();
     for row in case["wire"].as_array().expect("#983 wire rows") {
         if row["kind"] == "receive" {
             let message = socket
@@ -287,23 +288,28 @@ async fn replay(listener: TcpListener, case: &Value, pid: u32) {
                     ),
                 );
             }
-            verify(
+            wire_checks.push((
                 frame == row["frame"],
-                &format!(
+                format!(
                     "#983 hello and request wire {}",
                     case["input"]["id"].as_str().expect("#983 cell id")
                 ),
-            );
+            ));
         } else {
             let raw = row["raw"]
                 .as_str()
                 .expect("#983 original wire JSON")
-                .replace("<request>", &id);
+                .replacen("\"id\":\"<request>\"", &format!("\"id\":\"{id}\""), 1);
             socket
                 .send(Message::Text(raw.into()))
                 .await
                 .expect("#983 mock response");
         }
+    }
+    // Finish the deterministic reply barrier before reporting a wire mismatch.
+    // A bad hello must not strand the child waiting for hello_ok (or its RPC).
+    for (matches, assertion) in wire_checks {
+        verify(matches, &assertion);
     }
     let signal = case["input"]["signal"].as_str();
     let rejected = case["input"]["acceptToken"] != case["input"]["env"]["PILOTDECK_SDK_AUTH_TOKEN"]
