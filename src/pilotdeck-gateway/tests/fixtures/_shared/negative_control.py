@@ -15,6 +15,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+import pending_reanchor as pending
 
 REPO = Path(__file__).resolve().parents[5]
 SRC = REPO / 'src'
@@ -229,7 +230,7 @@ class CargoTests:
         return result
 
 
-def mutation_suite(label, rows, output, selection, passed, classify, *, guarded=()):
+def mutation_suite(label, rows, output, selection, passed, classify, *, guarded=(), script=None):
     """HEAD-guarded scratch mutations; account for every row, including errors.
 
     rows: (name, real source path, old, new, selections). Source writes are only
@@ -242,16 +243,18 @@ def mutation_suite(label, rows, output, selection, passed, classify, *, guarded=
     interrupted = None
 
     def publish():
-        counts = {state: sum(row['status'] == state for row in records)
-                  for state in ('KILLED', 'SURVIVED', 'INVALID')}
+        counts = pending.counts(records)
         # Atomic replacement also makes interrupted summaries readable.
-        pending = output / 'summary.json.tmp'
-        pending.write_text(json.dumps({'controls': records, 'counts': counts}, indent=2) + '\n')
-        pending.replace(output / 'summary.json')
+        temporary = output / 'summary.json.tmp'
+        temporary.write_text(json.dumps({'controls': records, 'counts': counts}, indent=2) + '\n')
+        temporary.replace(output / 'summary.json')
         return counts
 
     try:
+        registrations = pending.for_script(REPO, script)
         paths = list(dict.fromkeys([*(row[1] for row in rows), *guarded]))
+        if registrations:
+            paths.append(REPO / pending.FIXTURES / pending.REGISTRY)
         with mutating_sources(REPO, paths) as snapshots:
             with scratch(label, deadline=0) as directory:
                 env = persistent_environment(directory)
@@ -262,6 +265,13 @@ def mutation_suite(label, rows, output, selection, passed, classify, *, guarded=
                 for name, path, old, new, tests in rows:
                     item = dict(name=name, status='INVALID', reason='not run',
                                 compiled=False, restoredPass=False, selections=[])
+                    entry = pending.match(registrations, name)
+                    if entry is not None:
+                        item.update(status=pending.SKIPPED, reason=entry.reason())
+                        records.append(item)
+                        publish()
+                        print(f'{name}: {pending.SKIPPED}: {entry.reason()}', flush=True)
+                        continue
                     original = snapshots[path]
                     copied = directory / path.relative_to(REPO)
                     try:

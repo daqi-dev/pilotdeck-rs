@@ -33,6 +33,7 @@ fn negative_fixture_anchors_and_checker_controls() {
             "negative-restore/test_restore.py",
             &["--negative-controls"][..],
         ),
+        ("pending-reanchor/test_controls.py", &[][..]),
         // CI prepares the TS baseline after cargo test. This explicit mode still
         // lists missing launcher prerequisites; local invocation is strict.
         ("anchor_selfcheck.py", &["--anchors-only"][..]),
