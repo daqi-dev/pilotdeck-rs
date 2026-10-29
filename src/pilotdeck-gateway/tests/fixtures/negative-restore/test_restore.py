@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # anchor-selfcheck: unsupported #1037 temporary-file runner fault injection, no product mutations
-"""Exercise the real three suite entrypoints without cargo, Node, or Git writes.
+"""Exercise four real suite entrypoints without cargo or product source writes.
 
---negative-controls replaces each imported invalidate_completed with a no-op
-in memory, runs every mutant, and requires the same regression tests to fail.
+Only the real guard tests write Git state, inside the existing temporary fixture.
+
+--negative-controls compiles Python mutants in memory, runs every mutant, and
+requires the exact regression tests to fail at their dedicated assertions.
 The simulated source guard only owns TemporaryDirectory files; it is never a
 replacement for the HEAD guard when running product mutations.
 """
@@ -16,12 +18,18 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import ModuleType
 import unittest
 from unittest.mock import patch
 
 FIXTURES = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(FIXTURES))
+import negative_process
+import negative_suite
+from test_negative_process import MutatingSources
+
+PROCESS = negative_process
 
 
 def load_suite(name):
@@ -73,6 +81,8 @@ class RestoreTests(unittest.TestCase):
             calls = []
             completed = []
             injected = False
+            mutation_index = None
+            mutation_entries = 0
             write_bytes = Path.write_bytes
             invalidate = module.invalidate_completed
 
@@ -99,13 +109,17 @@ class RestoreTests(unittest.TestCase):
 
             def restore(path, data):
                 nonlocal injected
-                if (fault == 'mid-restore' and not injected and path == paths[1]
-                        and data == snapshots[path] and len(calls) == (2 if compile_only else 5)):
+                if (fault == 'mid-restore' and not injected and mutation_entries == 2
+                        and path == paths[mutation_index] and data == snapshots[path]):
                     injected = True
                     raise OSError('#1037 injected mid restore failure')
                 return write_bytes(path, data)
 
             def process(index, stage):
+                nonlocal mutation_index, mutation_entries
+                if stage == 'negative':
+                    mutation_index = index
+                    mutation_entries += 1
                 row, path = selected[index], paths[index]
                 old, new = (row[2], row[3]) if compile_only else (row['old'], row['new'])
                 expected = snapshots[path]
@@ -160,6 +174,8 @@ class RestoreTests(unittest.TestCase):
             expected_calls = (0 if fault == 'enter' else (2 if compile_only else 5)
                               if fault == 'mid-restore' else len(selected) * (1 if compile_only else 3))
             self.assertEqual(len(calls), expected_calls, '#1037 fault must occur at the requested execution point')
+            if fault == 'mid-restore':
+                self.assertTrue(injected, '#1037 second mutation restore fault must be injected')
             for path, data in snapshots.items():
                 self.assertEqual(path.read_bytes(), data, '#1037 temporary sources must be restored')
             success = 'COMPILED' if compile_only else 'KILLED'
@@ -214,6 +230,20 @@ class McpRestoreTests(RestoreTests):
     def test_compile_failure_continues(self):
         self.exercise('compile-failure')
 
+    def test_run_cases_failure_reaches_main(self):
+        module = MODULES[self.suite_name]
+        with tempfile.TemporaryDirectory(prefix='pdrs-1037-main-') as directory:
+            output = Path(directory) / 'evidence'
+            with patch.object(module, 'audit'), \
+                    patch.object(module, 'compile_controls', return_value=True) as compiled, \
+                    patch.object(module, 'run_cases', return_value=1) as run, \
+                    patch.dict(os.environ, {'CARGO_TARGET_DIR': str(Path(directory) / 'unused')}), \
+                    patch.object(sys, 'argv', ['negative.py', str(output)]):
+                code = module.main()
+            self.assertEqual(compiled.call_count, 1, '#1037 MCP main must run compile controls')
+            self.assertEqual(run.call_count, 1, '#1037 MCP main must reach run_cases')
+            self.assertEqual(code, 1, '#1037 MCP main must propagate run_cases failure')
+
 
 class MasksRestoreTests(RestoreTests):
     suite_name = 'regeneration-masks'
@@ -223,50 +253,245 @@ class NodeRestoreTests(RestoreTests):
     suite_name = 'node-provenance'
 
 
-TEST_CLASSES = (McpRestoreTests, MasksRestoreTests, NodeRestoreTests)
+class RealGuardTests(unittest.TestCase):
+    def exercise(self, fault):
+        # The existing tiny git fixture has no Rust workspace/build directory.
+        # Patch IO only; execute the actual guard's enter/finally/verification.
+        with tempfile.TemporaryDirectory(prefix='pdrs-1037-real-') as directory:
+            root, target = MutatingSources.repo(directory)
+            original = target.read_bytes()
+            raw_write, raw_read, raw_head = Path.write_bytes, Path.read_bytes, PROCESS._head_bytes
+            restoring = False
+            injected = False
+
+            def write(path, data):
+                nonlocal restoring, injected
+                if path == target and data == original:
+                    restoring = True
+                    if fault == 'write':
+                        injected = True
+                        raise OSError('#1037 real restore write failure')
+                return raw_write(path, data)
+
+            def read(path):
+                nonlocal injected
+                if fault == 'readback' and restoring and path == target:
+                    injected = True
+                    return b'wrong readback'
+                return raw_read(path)
+
+            def head(actual_root, relative, baseline):
+                nonlocal injected
+                if fault == 'head' and restoring:
+                    injected = True
+                    return b'wrong HEAD'
+                return raw_head(actual_root, relative, baseline)
+
+            error = None
+            try:
+                with patch.object(Path, 'write_bytes', write), patch.object(Path, 'read_bytes', read), \
+                        patch.object(PROCESS, '_head_bytes', head):
+                    try:
+                        with PROCESS.mutating_sources(root, [target], lock_timeout=0.1):
+                            target.write_bytes(b'// mutant\n')
+                    except (OSError, RuntimeError) as caught:
+                        error = caught
+                self.assertEqual(injected, fault is not None, '#1037 real guard fault injection must execute')
+                if fault:
+                    expected = {'write': (OSError, '#1037 real restore write failure'),
+                                'readback': (RuntimeError, 'restore failed: source.rs'),
+                                'head': (RuntimeError, 'restored source.rs does not match HEAD')}[fault]
+                    self.assertIsInstance(error, expected[0], f'#1037 real guard must reject {fault} failure')
+                    self.assertEqual(str(error), expected[1], '#1037 real guard must report the injected failure')
+                else:
+                    self.assertIsNone(error, '#1037 healthy real guard must not raise')
+                if fault != 'write':
+                    self.assertEqual(target.read_bytes(), original, '#1037 real guard restores actual bytes')
+            finally:
+                raw_write(target, original)
+
+    def test_restore_write_failure(self):
+        self.exercise('write')
+
+    def test_restore_readback_mismatch(self):
+        self.exercise('readback')
+
+    def test_restore_head_mismatch(self):
+        self.exercise('head')
+
+    def test_healthy(self):
+        self.exercise(None)
+
+
+class SharedInvalidationTests(unittest.TestCase):
+    def test_optional_compiled_key(self):
+        rows = [dict(status='KILLED', reason='prior'),
+                dict(status='COMPILED', reason='', compiled=True),
+                dict(status='INVALID', reason='compile failed', compiled=False)]
+        negative_suite.invalidate_completed(rows, 'source guard: failure')
+        self.assertNotIn('compiled', rows[0], '#1037 invalidation must not add absent compiled keys')
+        self.assertEqual([row['compiled'] for row in rows[1:]], [False, False],
+                         '#1037 shared invalidation must revoke compiled flags')
+        self.assertEqual([row['status'] for row in rows], ['INVALID'] * 3,
+                         '#1037 shared invalidation must invalidate every row')
+        self.assertEqual([row['reason'] for row in rows],
+                         ['prior; source guard: failure', '; source guard: failure',
+                          'compile failed; source guard: failure'],
+                         '#1037 shared invalidation must preserve prior reasons')
+
+
+SESSION_SOURCE = (FIXTURES / 'session-factory/negative_controls.py').read_text()
+
+
+class SessionFactoryTests(unittest.TestCase):
+    def test_guard_exit_revokes_compiled(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-1037-session-') as directory:
+            root = Path(directory).resolve()
+            source = root / 'src/pilotdeck-gateway/src/runtime/session/owner.rs'
+            source.parent.mkdir(parents=True)
+            source.write_text('dirty: false,')
+            output = root / 'evidence'
+            calls = []
+
+            @contextlib.contextmanager
+            def guard(actual_root, paths):
+                self.assertEqual(actual_root, root, '#1037 session guard must own temporary root')
+                self.assertEqual(paths, [source], '#1037 session guard must own only temporary source')
+                yield {source: b'dirty: false,'}
+                self.assertEqual(source.read_text(), 'dirty: false,', '#1037 session restores before guard exit')
+                raise RuntimeError('#1037 session guard exit failure')
+
+            def run(*_args, **_kwargs):
+                calls.append(source.read_text())
+                return subprocess.CompletedProcess([], 0, '', '')
+
+            script = root / 'src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py'
+            with patch.object(negative_process, 'mutating_sources', guard), \
+                    patch.object(negative_process, 'run_owned', run), \
+                    patch.object(negative_process, 'wait_for_slot', return_value=subprocess.CompletedProcess([], 0, '', '')), \
+                    patch.dict(os.environ, {'CARGO_TARGET_DIR': str(root / 'unused'), 'PDRS_BASELINE': str(root / 'unused-ts')}), \
+                    patch.object(sys, 'argv', ['negative_controls.py', '--compile', str(output), 'same-key-concurrent']), \
+                    patch.object(sys, 'path', [str(FIXTURES / 'turn-runner'), *sys.path]), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit, msg='#1037 session entry must return a status') as caught:
+                    exec(compile(SESSION_SOURCE, str(script), 'exec'), {'__file__': str(script), '__name__': '__main__'})
+            rows = json.loads((output / 'summary.json').read_text())['controls']
+            self.assertEqual(calls, ['dirty: true,'], f'#1037 session compile must observe its mutation: {rows}')
+            self.assertEqual(caught.exception.code, 1, '#1037 session guard failure must exit nonzero')
+            self.assertEqual(len(rows), 1, '#1037 session must report the selected row')
+            self.assertEqual(rows[0]['status'], 'INVALID', '#1037 session guard must invalidate completed row')
+            self.assertFalse(rows[0]['compiled'], '#1037 session guard must revoke compiled flag')
+            self.assertIn('#1037 session guard exit failure', rows[0]['reason'], '#1037 session must preserve guard reason')
+
+
+TEST_CLASSES = (McpRestoreTests, MasksRestoreTests, NodeRestoreTests, RealGuardTests,
+                SharedInvalidationTests, SessionFactoryTests)
 
 
 def tests(test_class):
     return unittest.defaultTestLoader.loadTestsFromTestCase(test_class)
 
 
+def changed_source(path, old, new):
+    source = path.read_text()
+    if source.count(old) != 1:
+        raise ValueError(f'#1037 stale Python anchor; expected exactly one: {old!r}')
+    source = source.replace(old, new, 1)
+    compile(source, str(path), 'exec')
+    return source
+
+
+def mutated_module(path, old, new):
+    module = ModuleType(path.stem)
+    module.__file__ = str(path)
+    exec(compile(changed_source(path, old, new), str(path), 'exec'), module.__dict__)
+    return module
+
+
+@contextlib.contextmanager
+def shared_mutation(old, new):
+    mutant = mutated_module(FIXTURES / 'negative_suite.py', old, new)
+    with patch.object(negative_suite, 'invalidate_completed', mutant.invalidate_completed), \
+            patch.object(MODULES['mcp-http-encoding'], 'invalidate_completed', mutant.invalidate_completed):
+        yield
+
+
 def negative_controls():
+    row_message = '#1037 row status must preserve only valid completed results'
+    exit_tests = ('test_guard_exit_restore', 'test_guard_exit_verify', 'test_mid_restore')
+    variants = []
+    for cls in (McpRestoreTests, MasksRestoreTests, NodeRestoreTests):
+        variants.append((cls.suite_name + '-invalidation-noop', (cls,),
+                         {(cls, test): row_message for test in exit_tests},
+                         lambda cls=cls: patch.object(MODULES[cls.suite_name], 'invalidate_completed', lambda *_: None)))
+    variants.extend([
+        ('mcp-compile-status-always-green', (McpRestoreTests,),
+         {(McpRestoreTests, 'test_compile_failure_continues'): row_message},
+         lambda: patch.dict(MODULES, {'mcp-http-encoding': mutated_module(
+             FIXTURES / 'mcp-http-encoding/negative.py',
+             "status='COMPILED' if run.returncode == 0 else 'INVALID'", "status='COMPILED'")})),
+        ('mcp-run-cases-status-swallowed', (McpRestoreTests,),
+         {(McpRestoreTests, 'test_run_cases_failure_reaches_main'): '#1037 MCP main must propagate run_cases failure'},
+         lambda: patch.dict(MODULES, {'mcp-http-encoding': mutated_module(
+             FIXTURES / 'mcp-http-encoding/negative.py',
+             'return int(not compiled or status != 0)', 'return int(not compiled)')})),
+        ('shared-compiled-not-revoked', (McpRestoreTests, SharedInvalidationTests, SessionFactoryTests),
+         {(McpRestoreTests, test): '#1037 guard failure must revoke every compiled flag' for test in exit_tests}
+         | {(SharedInvalidationTests, 'test_optional_compiled_key'): '#1037 shared invalidation must revoke compiled flags',
+            (SessionFactoryTests, 'test_guard_exit_revokes_compiled'): '#1037 session guard must revoke compiled flag'},
+         lambda: shared_mutation("row['compiled'] = False", "row['compiled'] = row['compiled']")),
+        ('shared-adds-absent-compiled-key', (SharedInvalidationTests,),
+         {(SharedInvalidationTests, 'test_optional_compiled_key'): '#1037 invalidation must not add absent compiled keys'},
+         lambda: shared_mutation("if 'compiled' in row:", 'if True:')),
+        ('session-invalidation-noop', (SessionFactoryTests,),
+         {(SessionFactoryTests, 'test_guard_exit_revokes_compiled'): '#1037 session guard failure must exit nonzero'},
+         lambda: patch.dict(globals(), {'SESSION_SOURCE': changed_source(
+             FIXTURES / 'session-factory/negative_controls.py',
+             "    invalidate_completed(results, f'source guard: {error}')", '    pass')})),
+    ])
+    for label, test, old, new in [
+        ('write', 'test_restore_write_failure',
+         '                    path.write_bytes(snapshot[path])',
+         '                    try:\n                        path.write_bytes(snapshot[path])\n                    except OSError:\n                        pass'),
+        ('readback', 'test_restore_readback_mismatch',
+         'raise RuntimeError(f"restore failed: {relative}")', 'pass'),
+        ('head', 'test_restore_head_mismatch',
+         'raise RuntimeError(\n                            f"restored {relative} does not match {baseline}")', 'pass'),
+    ]:
+        variants.append(('real-guard-' + label + '-failure-swallowed', (RealGuardTests,),
+                         {(RealGuardTests, test): f'#1037 real guard must reject {label} failure'},
+                         lambda old=old, new=new: patch.dict(globals(), {'PROCESS': mutated_module(
+                             FIXTURES / 'negative_process.py', old, new)})))
+
     results = []
-    variants = [(test_class, False) for test_class in TEST_CLASSES] + [(McpRestoreTests, True)]
-    for test_class, status_mutant in variants:
-        name = test_class.suite_name
-        mutation = name + ('-compile-status-always-green' if status_mutant else '-invalidation-noop')
+    for mutation, classes, failures, prepare in variants:
+        expected = {cls(method).id(): message for (cls, method), message in failures.items()}
         try:
-            # Python-only mutants: all replacements stay in memory, no source edits.
-            source = (FIXTURES / name / 'negative.py').read_text()
-            expected = {'test_guard_exit_restore', 'test_guard_exit_verify', 'test_mid_restore'}
-            if status_mutant:
-                anchor = "status='COMPILED' if run.returncode == 0 else 'INVALID'"
-                if source.count(anchor) != 1:
-                    raise ValueError('#1037 stale compile-status anchor; expected exactly one')
-                source = source.replace(anchor, "status='COMPILED'", 1)
-                mutant = load_suite(name)
-                exec(compile(source, name, 'exec'), mutant.__dict__)
-                replacement = patch.dict(MODULES, {name: mutant})
-                expected = {'test_compile_failure_continues'}
-            else:
-                compile(source, name, 'exec')
-                replacement = patch.object(MODULES[name], 'invalidate_completed', new=lambda *_: None)
+            # Every replacement is compiled before execution. No source file is
+            # changed; arbitrary errors, timeouts, and wrong assertions are INVALID.
             stream = io.StringIO()
-            with replacement:
-                result = unittest.TextTestRunner(stream=stream, verbosity=2).run(tests(test_class))
+            runner = unittest.TextTestRunner(stream=stream, verbosity=2)
+            baseline = runner.run(unittest.TestSuite(tests(cls) for cls in classes))
+            with prepare():
+                result = runner.run(unittest.TestSuite(tests(cls) for cls in classes))
+            restored = runner.run(unittest.TestSuite(tests(cls) for cls in classes))
             print(stream.getvalue(), end='')
-            observed = {test._testMethodName for test, _ in result.failures}
-            killed = (result.testsRun == tests(test_class).countTestCases() and not result.errors and observed == expected
-                      and all('#1037 row status must preserve only valid completed results' in trace
-                              for _, trace in result.failures))
+            observed = {test.id(): trace for test, trace in result.failures}
+            healthy = baseline.wasSuccessful() and restored.wasSuccessful()
+            killed = (healthy and result.testsRun == sum(tests(cls).countTestCases() for cls in classes)
+                      and not result.errors and observed.keys() == expected.keys()
+                      and all(message in observed[test] for test, message in expected.items()))
             results.append({'mutation': mutation,
-                            'status': 'KILLED' if killed else 'SURVIVED' if result.wasSuccessful() else 'INVALID',
-                            'reason': f'expected failures={sorted(expected)}, observed={sorted(observed)}'})
+                            'status': 'KILLED' if killed else 'SURVIVED' if healthy and result.wasSuccessful() else 'INVALID',
+                            'baseline': baseline.wasSuccessful(), 'restored': restored.wasSuccessful(),
+                            'tests': expected, 'observed': sorted(observed),
+                            'reason': 'exact bound assertions failed' if killed else 'bound failure mismatch'})
         except Exception as error:
-            results.append({'mutation': mutation, 'status': 'INVALID',
+            results.append({'mutation': mutation, 'status': 'INVALID', 'tests': expected,
                             'reason': f'{type(error).__name__}: {error}'})
     print(json.dumps(results, indent=2))
+    print('summary: ' + ', '.join(f'{status}={sum(row["status"] == status for row in results)}'
+                                 for status in ('KILLED', 'SURVIVED', 'INVALID')))
     return int(any(row['status'] != 'KILLED' for row in results))
 
 

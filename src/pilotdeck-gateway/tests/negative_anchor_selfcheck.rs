@@ -5,6 +5,7 @@ use std::process::Command;
 fn python_output(mut command: Command, script: &Path, args: &[&str]) -> Result<String, String> {
     let output = command
         .arg("-I")
+        .arg("-B")
         .arg(script)
         .args(args)
         .output()
@@ -28,6 +29,10 @@ fn negative_fixture_anchors_and_checker_controls() {
     for (script, args) in [
         ("test_anchor_selfcheck.py", &[][..]),
         ("negative-restore/test_restore.py", &[][..]),
+        (
+            "negative-restore/test_restore.py",
+            &["--negative-controls"][..],
+        ),
         // CI prepares the TS baseline after cargo test. This explicit mode still
         // lists missing launcher prerequisites; local invocation is strict.
         ("anchor_selfcheck.py", &["--anchors-only"][..]),
