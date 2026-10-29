@@ -1,4 +1,4 @@
-//! sessions default/list; messages retains its preflight until D1-P03.
+//! sessions default/list and complete message history through ordinary SDK RPCs.
 use super::{create_client, positional, read_connection, read_value, transport};
 use crate::{Failure, paths::Env, stdout_line};
 use pilotdeck_protocol::{JsValue, stringify_json};
@@ -39,17 +39,42 @@ pub(super) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
             Ok(0)
         }
         "messages" => {
-            if positional(&argv[1..])
-                .first()
-                .is_none_or(|id| id.is_empty())
-            {
+            let ids = positional(&argv[1..]);
+            let Some(session_id) = ids.first().filter(|id| !id.is_empty()) else {
                 return Err(Failure::Error(
                     "Usage: pilotdeck sessions messages <session-id>".into(),
                 ));
+            };
+            let mut message_params = json!({"sessionKey": session_id});
+            if let Some(project_key) = read_value(argv, "--project") {
+                message_params["projectKey"] = project_key.into();
             }
-            Err(Failure::Todo(
-                "pilotdeck sessions messages (SDK sessions.messages)",
-            ))
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| Failure::Error(e.to_string()))?;
+            let result = runtime.block_on(transport::request(
+                &connection,
+                "read_session_messages",
+                message_params,
+            ))?;
+            let nullish_kind = match &result {
+                JsValue::Null => Some("null"),
+                JsValue::Undefined => Some("undefined"),
+                _ => None,
+            };
+            if let Some(kind) = nullish_kind {
+                return Err(Failure::Error(format!(
+                    "Cannot read properties of {kind} (reading 'messages')"
+                )));
+            }
+            let empty_messages = JsValue::Array(Vec::new());
+            let messages = match result.get("messages") {
+                None | Some(JsValue::Null | JsValue::Undefined) => &empty_messages,
+                Some(messages) => messages,
+            };
+            stdout_line(&pretty_json(messages)?);
+            Ok(0)
         }
         _ => Err(Failure::Error(
             "Usage: pilotdeck sessions <list|messages> ...".into(),
