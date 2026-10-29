@@ -32,8 +32,9 @@ pub trait LiveSession: Send + Sync {
             "Agent session runtime reload is unavailable.",
         ))
     }
-    /// During owned disposal the adapter may already reject ordinary reload,
-    /// while its storage and saved file seed are still held by the drain task.
+    /// Factory recreation retains this source through owned disposal and its
+    /// completion, when the adapter already rejects ordinary reload. The final
+    /// seed must remain readable while the factory retains the predecessor.
     fn draining_reload_snapshot(&self) -> Result<super::factory::ReloadSnapshot, RuntimeError> {
         self.reload_snapshot()
     }
@@ -121,6 +122,18 @@ impl LiveSessionHandle {
         } else {
             self.0.session.draining_reload_snapshot()
         }
+    }
+
+    /// Only factory recreation calls this after its successful owned drain.
+    /// The adapter is disposed, but the retained reload source still owns the
+    /// final saved seed. Eligibility was checked before disposal started.
+    pub(super) fn drained_file_state(
+        &self,
+    ) -> Result<crate::host::modules::tool_context::SeedState, RuntimeError> {
+        self.0
+            .session
+            .draining_reload_snapshot()
+            .map(|s| s.file_state)
     }
 
     pub fn new(session: Arc<dyn LiveSession>, lease: Option<RuntimeLease>) -> Self {
@@ -282,7 +295,13 @@ impl LiveSessionHandle {
             // session.abort() is outside the progress lock (no poison risk).
             // Called before the drain wait so the session can begin cancellation.
             let abort_error = if active {
-                handle.0.session.abort(&reason).err()
+                // Like TS AgentHandle.finishDispose, an abort failure does not
+                // skip the active-run drain or the ordinary resource disposer.
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    handle.0.session.abort(&reason)
+                }))
+                .unwrap_or_else(|_| Err(RuntimeError::new("Agent session abort panicked.")))
+                .err()
             } else {
                 None
             };
@@ -601,7 +620,7 @@ mod tests {
         struct AbortPanicSession;
         impl LiveSession for AbortPanicSession {
             fn snapshot(&self) -> JsValue {
-                parse_json("{}").unwrap()
+                parse_json("{}").expect("#1022 abort handle snapshot")
             }
             fn abort(&self, _reason: &JsString) -> RuntimeResult {
                 panic!("simulated session.abort() panic");
@@ -611,15 +630,33 @@ mod tests {
             }
         }
         let handle = LiveSessionHandle::new(Arc::new(AbortPanicSession), None);
-        let activity = handle.begin_activity().unwrap();
+        let activity = handle
+            .begin_activity()
+            .expect("#1022 abort handle activity");
         let disposal = handle.dispose("boom".into());
         drop(activity);
         let error = tokio::time::timeout(std::time::Duration::from_secs(3), disposal)
             .await
-            .expect("abort panic must still deliver the disposal result")
-            .unwrap_err();
-        assert_eq!(error.message, "Agent session dispose task panicked.");
-        assert_eq!(handle.state(), HandleState::Disposed);
+            .expect("#1022 abort panic must deliver disposal result")
+            .expect_err("#1022 abort handle error");
+        assert_eq!(
+            error.message, "Failed to dispose agent handle.",
+            "#1022 abort panic aggregate"
+        );
+        assert_eq!(
+            error
+                .causes
+                .first()
+                .expect("#1022 abort handle cause")
+                .message,
+            "Agent session abort panicked.",
+            "#1022 abort panic cause"
+        );
+        assert_eq!(
+            handle.state(),
+            HandleState::Disposed,
+            "#1022 abort handle disposed"
+        );
     }
 
     /// A panic from session.dispose() must also deliver the guarded result.

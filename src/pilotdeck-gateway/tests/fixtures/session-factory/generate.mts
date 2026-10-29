@@ -7,6 +7,7 @@ import {assertBaseline,baselineSourceHashes} from '../_shared/baseline.mts';
 import {normalize} from './normalize.mts';
 import {observations} from './projections.mts';
 import {fileStateTiming} from './file-state.mts';
+import {followups} from './followups.mts';
 const here=path.dirname(fileURLToPath(import.meta.url));
 const output=path.resolve(process.argv[2]);
 const base=path.resolve(process.env.PDRS_BASELINE!);
@@ -23,6 +24,7 @@ const cases=JSON.parse(fs.readFileSync(path.join(root,'raw/index.json'),'utf8'))
 assert.equal(cases.length,20);
 const extra=await observations(base);
 const fileTiming=await fileStateTiming(base,output);
+const followupCases=await followups(base,output);
 const supplemental=(name:string,env:Record<string,string>,cell:string)=>{
  process.stdout.write(execFileSync(process.execPath,['--import',path.join(base,'node_modules/tsx/dist/loader.mjs'),path.join(here,'probe.mts'),cell],{env:{...process.env,PDRS_BASELINE:base,MATRIX_ROOT:output,MATRIX_OUTPUT:name,TSX_DISABLE_CACHE:'1',...env},encoding:'utf8',timeout:120000}));
  const report=JSON.parse(fs.readFileSync(path.join(output,name,cell+'.json'),'utf8'));
@@ -75,5 +77,5 @@ const memory=supplemental('memory-only',{MATRIX_MEMORY_ONLY:'1'},'recreate-idle'
 const memoryOnly={injected:memory.timeline.find((e:any)=>e.type==='injected.reload').data.state,
  actual:memory.snapshots.find((s:any)=>s.label==='result').handles[1].session};
 assert.notDeepEqual(memoryOnly.actual.messages,memoryOnly.injected.messages);
-fs.writeFileSync(path.join(output,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,node:process.version,cases,...extra,fileTiming,writerInterleavings,fenceMatrix,twiceReturnOrders,closeReturnOrders,memoryOnly,prepareDisposal},null,2)+'\n',{flag:'wx'});
+fs.writeFileSync(path.join(output,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,node:process.version,cases,...extra,fileTiming,writerInterleavings,fenceMatrix,twiceReturnOrders,closeReturnOrders,memoryOnly,prepareDisposal,followups:followupCases},null,2)+'\n',{flag:'wx'});
 console.log('PASS: factory fixture', cases.length, 'cells and',extra.projections.length,'projection probes');
