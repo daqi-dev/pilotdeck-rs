@@ -152,10 +152,92 @@ class SchemataTests(unittest.TestCase):
             with patch.object(runner, 'run_owned', side_effect=process), \
                  patch.object(runner, 'wait_for_slot', return_value=SimpleNamespace(stdout='', stderr='')), \
                  patch.object(runner, 'artifact', return_value=Path(__file__).resolve()):
-                self.assertEqual(runner.run(out, [ts, rust], {}), 1)
+                self.assertEqual(runner.run(out, [ts, rust], {},
+                                            requested=[ts['name'], rust['name']]), 1)
             rows = json.loads((out / 'summary.json').read_text())['controls']
             self.assertEqual([row['status'] for row in rows], ['INVALID', 'KILLED'])
             self.assertIn('Node v22.22.0', rows[0]['reason'])
+
+    def test_denominator_drift_fails_the_whole_suite(self):
+        # #996 fix-r5 review P1: the facade entry has its own run(), so the r4
+        # denominator check inside the shared run() never saw it; a main()
+        # that drops a declared row at runtime used to publish the shrunken
+        # suite as an all-KILLED success. The declared denominator is the
+        # checker's static extraction of negative.py, never the runtime
+        # legacy.MUTANTS the executed rows could already have shrunk.
+        full = list(runner.legacy.MUTANTS)
+        by_name = {row['name']: row for row in full}
+        dropped = full[0]['name']
+
+        def process(command, **kwargs):
+            if command[:2] == ['git', 'rev-parse']:
+                return SimpleNamespace(returncode=0, stdout='test-head\n', stderr='')
+            if command[0] == 'cargo':
+                return SimpleNamespace(returncode=0, stdout='build fixture', stderr='')
+            if command[0] == 'node':
+                return SimpleNamespace(returncode=0, stdout='v22.22.0\n', stderr='')
+            selector = kwargs['env'].get('PDRS_MUTANT')
+            named = command[1][len(runner.PREFIX):]
+            if selector is None:
+                return result(named, 'ok')
+            row = by_name[selector]
+            # The bound test dies on its own anchor; a witness stays green.
+            return result(named, 'FAILED' if named == row['test'] else 'ok', row['anchor'])
+
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.object(runner, 'run_owned', side_effect=process), \
+                patch.object(runner, 'wait_for_slot',
+                             return_value=SimpleNamespace(stdout='', stderr='')), \
+                patch.object(runner, 'artifact', return_value=Path(__file__).resolve()):
+            def suite(selected, **kwargs):
+                out = Path(temp) / kwargs.pop('label')
+                out.mkdir()
+                with patch.object(runner.legacy, 'MUTANTS', selected):
+                    code = runner.run(out, selected, {}, **kwargs)
+                return code, json.loads((out / 'summary.json').read_text())
+
+            # The review's exact shape: the runtime table loses its first row.
+            code, document = suite(full[1:], label='missing')
+            self.assertEqual(code, 1, '#996 r5 a dropped declared row must fail '
+                                      'the whole facade suite')
+            self.assertEqual(document['counts'],
+                             {'KILLED': 0, 'SURVIVED': 0, 'INVALID': len(full) - 1},
+                             '#996 r5 the drifted run must count every row INVALID')
+            reasons = [row['reason'] for row in document['controls']]
+            self.assertTrue(all('switch denominator drift' in reason for reason in reasons),
+                            '#996 r5 every drifted row must name the denominator check')
+            self.assertTrue(any(f'missing=[{dropped!r}]' in reason for reason in reasons),
+                            f'#996 r5 the drift must list the missing {dropped}')
+            # A matching full denominator keeps the whole suite green.
+            code, document = suite(full, label='clean')
+            self.assertEqual(code, 0, '#996 r5 a matching denominator must stay green')
+            self.assertEqual(document['counts'],
+                             {'KILLED': len(full), 'SURVIVED': 0, 'INVALID': 0},
+                             '#996 r5 a matching denominator must keep every row KILLED')
+            # An explicit selection is its own denominator.
+            code, document = suite(full[:1], requested=[full[0]['name']], label='subset')
+            self.assertEqual(code, 0, '#996 r5 an explicit selection is its own denominator')
+            self.assertEqual(document['counts'], {'KILLED': 1, 'SURVIVED': 0, 'INVALID': 0},
+                             '#996 r5 an explicit selection must stay KILLED')
+            # A requested name beyond the declared table cannot hide behind it.
+            code, document = suite(full[:1], requested=['forged'], label='beyond')
+            self.assertEqual(code, 1, '#996 r5 a requested name outside the declaration '
+                                      'must fail the whole suite')
+            self.assertIn("extra=['forged']", document['controls'][0]['reason'],
+                          '#996 r5 the beyond-declaration drift must list the switch')
+
+            # main() must wire the user's requested subset into the check.
+            out = Path(temp) / 'main-subset'
+            argv = [str(Path(runner.__file__).resolve()), str(out), full[0]['name'],
+                    full[1]['name']]
+            with patch.object(sys, 'argv', argv), \
+                    patch.dict(os.environ, {'CARGO_TARGET_DIR': str(temp)}):
+                code = runner.main()
+            document = json.loads((out / 'summary.json').read_text())
+            self.assertEqual(code, 0, '#996 r5 main() must pass the requested subset '
+                                      'to the denominator check')
+            self.assertEqual(document['counts'], {'KILLED': 2, 'SURVIVED': 0, 'INVALID': 0},
+                             '#996 r5 a two-name request must run exactly two rows')
 
     def test_summary_is_complete_and_atomic(self):
         import time

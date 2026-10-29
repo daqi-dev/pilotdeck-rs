@@ -19,6 +19,8 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import classify, passed
+from _shared.mutant_switch import enforce_denominator
+import anchor_selfcheck
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/mutants.rs'
@@ -124,6 +126,12 @@ def main():
             row.update(status='INVALID', reason=str(error))
         for name, *_ in MUTATIONS[len(results):]:
             results.append(dict(name=name, status='INVALID', reason='source guard: ' + str(error)))
+    # #996 fix-r5: the same post-execution denominator as the switch
+    # executors; a MUTATIONS table shrunk at runtime must not publish a
+    # shorter success. The declared source is this script's static table,
+    # never the runtime list the loop could already have shrunk.
+    enforce_denominator(ROOT, Path(__file__), results, (),
+                        declared=anchor_selfcheck.static_mutant_names(Path(__file__), ROOT))
     publish()
     for row in results:
         print(f"{row['name']}: {row['status']}: {row['reason']}")
