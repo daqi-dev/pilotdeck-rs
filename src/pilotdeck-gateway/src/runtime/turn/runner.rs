@@ -320,6 +320,34 @@ impl TurnRunner {
         }
         Ok((self, vec![event]))
     }
+    /// Await the sidecar's post-yield durable callback before polling its successor.
+    pub async fn durable_message(mut self, message: JsValue) -> Transition {
+        self.require(Phase::Accepted)?;
+        let kind = match classify_durable_message(&message) {
+            Ok(kind) => kind,
+            Err(error) => {
+                self.callback_error = Some(error);
+                return Ok((self, vec![]));
+            }
+        };
+        let written = message.clone();
+        if let Err(error) = self
+            .io(move |r, s, t| {
+                let draft = object([("type", kind.into()), ("message", written)]);
+                Ok(r.writer().record_session_event(
+                    s,
+                    t,
+                    draft.as_object().expect("durable draft").clone(),
+                )?)
+            })
+            .await
+        {
+            self.callback_error = Some(error.to_string());
+            return Ok((self, vec![]));
+        }
+        self.messages.push(message);
+        Ok((self, vec![]))
+    }
     pub async fn complete(mut self, result: JsValue) -> Transition {
         self.require(Phase::Accepted)?;
         if result.get("sessionId") != Some(&JsValue::String(self.session.clone()))
@@ -476,3 +504,34 @@ impl TurnRunner {
 #[cfg(test)]
 #[path = "runner_tests.rs"]
 mod tests;
+
+/// Preserve the TS property-read/Array.some classification before any write.
+pub(crate) fn classify_durable_message(message: &JsValue) -> Result<&'static str, String> {
+    fn readable(value: &JsValue, key: &str) -> Result<(), String> {
+        let kind = match value {
+            JsValue::Undefined => "undefined",
+            JsValue::Null => "null",
+            _ => return Ok(()),
+        };
+        Err(format!(
+            "Cannot read properties of {kind} (reading '{key}')"
+        ))
+    }
+    readable(message, "role")?;
+    if message.get("role") == Some(&"assistant".into()) {
+        return Ok("assistant_message");
+    }
+    let undefined = JsValue::Undefined;
+    let content = message.get("content").unwrap_or(&undefined);
+    readable(content, "some")?;
+    let JsValue::Array(blocks) = content else {
+        return Err("message.content.some is not a function".into());
+    };
+    for block in blocks {
+        readable(block, "type")?;
+        if block.get("type") == Some(&"tool_result".into()) {
+            return Ok("tool_result_message");
+        }
+    }
+    Ok("durable_message")
+}

@@ -40,6 +40,7 @@ else:
         while read().get('method') != 'cancel':
             pass
     result = dict(type='aborted' if cancelled else 'success', sessionId=request['sessionId'], turnId=request['turnId'], stopReason='aborted_streaming' if cancelled else 'completed', turns=1)
-    event(1, dict(result=result, messages=request['payload']['messages']), True, 'cancelled' if cancelled else 'completed')
+    event(1, dict(type='turn_completed', sessionId=request['sessionId'], turnId=request['turnId'], result=result))
+    event(2, dict(result=result, messages=request['payload']['messages']), True, 'cancelled' if cancelled else 'completed')
 while True:
     read()

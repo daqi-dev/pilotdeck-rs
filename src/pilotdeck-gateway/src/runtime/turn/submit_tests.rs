@@ -460,6 +460,13 @@ impl SubmitHostServices for Services {
                     .unwrap()
                     .push(json!({"op":"status", "status":json(status), "wire":stringify_json(status).unwrap().unwrap()}));
             }
+            if self.session.setup["statusRecordGate"] == true
+                && field(status, "event") == &JsValue::from("context_budget")
+            {
+                self.session.log.host("status_waiting");
+                self.prepare.wait().await;
+                self.session.log.host("status_released");
+            }
             if self.session.setup["statusRecordFailure"] == true {
                 Err(SubmitError::new("RECORD", "injected status record failure"))
             } else {
@@ -796,6 +803,55 @@ async fn replay_case(case: &Value) {
         }
     }
     consumer.await.unwrap();
+    if setup["statusRecordGate"] == true {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !log
+                .host
+                .lock()
+                .expect("#748 pending status log")
+                .iter()
+                .any(|call| call == "status_waiting")
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("#748 status callback entered");
+        assert!(
+            !log.host
+                .lock()
+                .expect("#748 pending status log")
+                .iter()
+                .any(|call| call == "status_released"),
+            "#748 status still pending at turn completion"
+        );
+        assert!(
+            !owner.has_active_turn(&"s".into()),
+            "#748 pending status cannot retain admission"
+        );
+        assert!(
+            log.visible
+                .lock()
+                .expect("#748 completed event log")
+                .iter()
+                .any(|event| event["type"] == "turn_completed"),
+            "#748 pending status cannot delay terminal"
+        );
+        services.prepare.open();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !log
+                .host
+                .lock()
+                .expect("#748 released status log")
+                .iter()
+                .any(|call| call == "status_released")
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("#748 status callback cleanup");
+    }
     // InProcessGateway releases the attachment lease in the pump finally
     // (:1767-1773) before afterTurnCompleted (:1850) — including the timeout
     // takeover, where the outer finally only `void`s the pump. Measured by
@@ -1045,4 +1101,16 @@ fn real_ts_utf16_preflight() {
             }
         }
     }
+}
+
+#[tokio::test]
+async fn pending_context_budget_status_cannot_hold_turn_completion() {
+    let case = json!({"name":"pending-context-budget", "orderOnly":true,
+        "setup":{"statusRecordGate":true}, "steps":["observe","accept","terminal","end"], "results":[],
+        "native":[{"type":"turn_started"},{"type":"input_accepted"},
+            {"type":"context_budget","snapshot":{"tokens":0,"maxContextTokens":128000,"reservedOutputTokens":0,"totalContextTokens":128000,"canContinue":true}},
+            {"type":"turn_completed","result":{"type":"success","stopReason":"completed","usage":{}}}]});
+    tokio::time::timeout(Duration::from_secs(5), replay_case(&case))
+        .await
+        .expect("#748 pending status bounded turn");
 }

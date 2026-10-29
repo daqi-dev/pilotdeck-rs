@@ -1,0 +1,306 @@
+{
+  "active": false,
+  "events": [
+    {
+      "runId": "run-drop",
+      "type": "turn_started"
+    },
+    {
+      "runId": "run-drop",
+      "type": "input_accepted"
+    },
+    {
+      "model": "mock-model",
+      "provider": "live-e2e",
+      "runId": "run-drop",
+      "type": "model_request_started"
+    },
+    {
+      "detail": {
+        "code": "agent_invalid_state",
+        "message": "Sidecar event sequence mismatch: expected 1, got 2.",
+        "scope": "turn",
+        "severity": "error",
+        "source": "agent",
+        "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+        "visible": true
+      },
+      "event": "turn_failed",
+      "runId": "run-drop",
+      "type": "agent_status"
+    },
+    {
+      "code": "agent_invalid_state",
+      "message": "Sidecar event sequence mismatch: expected 1, got 2.",
+      "recoverable": false,
+      "runId": "run-drop",
+      "type": "error"
+    },
+    {
+      "finishReason": "model_error",
+      "runId": "run-drop",
+      "type": "turn_completed",
+      "usage": {}
+    }
+  ],
+  "modelCalls": 1,
+  "record": {
+    "acceptedAt": "2026-10-26T00:00:00.000Z",
+    "lastSeq": 6,
+    "ownerPid": "<PID>",
+    "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"LIVE_E2E_TEXT\",\"sessionKey\":\"live-e2e-session\"}",
+    "result": {
+      "finishReason": "model_error",
+      "runId": "run-drop",
+      "type": "turn_completed",
+      "usage": {}
+    },
+    "revision": 7,
+    "runId": "run-drop",
+    "sessionKey": "live-e2e-session",
+    "state": "completed",
+    "updatedAt": "2026-10-26T00:00:00.000Z"
+  },
+  "registryEvents": [
+    {
+      "event": {
+        "runId": "run-drop",
+        "type": "turn_started"
+      },
+      "seq": 1
+    },
+    {
+      "event": {
+        "runId": "run-drop",
+        "type": "input_accepted"
+      },
+      "seq": 2
+    },
+    {
+      "event": {
+        "model": "mock-model",
+        "provider": "live-e2e",
+        "runId": "run-drop",
+        "type": "model_request_started"
+      },
+      "seq": 3
+    },
+    {
+      "event": {
+        "detail": {
+          "code": "agent_invalid_state",
+          "message": "Sidecar event sequence mismatch: expected 1, got 2.",
+          "scope": "turn",
+          "severity": "error",
+          "source": "agent",
+          "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+          "visible": true
+        },
+        "event": "turn_failed",
+        "runId": "run-drop",
+        "type": "agent_status"
+      },
+      "seq": 4
+    },
+    {
+      "event": {
+        "code": "agent_invalid_state",
+        "message": "Sidecar event sequence mismatch: expected 1, got 2.",
+        "recoverable": false,
+        "runId": "run-drop",
+        "type": "error"
+      },
+      "seq": 5
+    },
+    {
+      "event": {
+        "finishReason": "model_error",
+        "runId": "run-drop",
+        "type": "turn_completed",
+        "usage": {}
+      },
+      "seq": 6
+    }
+  ],
+  "scenario": "drop",
+  "toolEntered": false,
+  "toolResults": [],
+  "transcript": [
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-1",
+      "parentEntryId": null,
+      "sequence": 1,
+      "sessionId": "live-e2e-session",
+      "turnId": "run-drop",
+      "type": "turn_started"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-2",
+      "messages": [
+        {
+          "content": [
+            {
+              "text": "LIVE_E2E_TEXT",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "metadata": {
+        "allowPlanModeTools": false,
+        "runMode": "agent"
+      },
+      "parentEntryId": "entry-1",
+      "sequence": 2,
+      "sessionId": "live-e2e-session",
+      "turnId": "run-drop",
+      "type": "accepted_input"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-3",
+      "parentEntryId": "entry-2",
+      "sequence": 3,
+      "sessionId": "live-e2e-session",
+      "step": 1,
+      "turnId": "run-drop",
+      "type": "step_started"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-4",
+      "parentEntryId": "entry-3",
+      "request": {
+        "messages": [
+          {
+            "content": [
+              {
+                "text": "LIVE_E2E_TEXT",
+                "type": "text"
+              }
+            ],
+            "role": "user"
+          }
+        ],
+        "model": "mock-model",
+        "provider": "live-e2e",
+        "stream": true,
+        "systemPrompt": "You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.\nOperate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.\n\nDocumentation lookup policy:\nWhen implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. State any remaining uncertainty and proceed conservatively.\n\nParallel delegation policy:\nWhen the agent tool is available and the task contains two or more independent, repetitive, or separable workstreams, prefer launching multiple subagents in the same assistant message instead of waiting for one to finish before starting the next. Good parallel candidates include inspecting multiple files/modules, researching independent APIs, checking several artifacts, or comparing alternatives. Do not parallelize tasks that write to the same files, depend on another subagent's output, require shared ordering, or need user approval between steps. Give each subagent a self-contained prompt, distinct scope, and expected output. After all sibling results return, synthesize them yourself and decide the next step.\n\nReusable script workflow:\nWhen code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.\n\nPermission mode: default — write/shell tools require explicit approval.\n\n<user-context>\ncwd: <CASE>/sandbox\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \"foo.html\", not an absolute path like \"/home/user/foo.html\". If the user explicitly provides a path, respect their choice.\nmodel: live-e2e/mock-model\npermission_mode: default\nrun_mode: agent\nplatform: darwin\nnode: v22.22.0\n</user-context>\n\n<environment>\nnow: 2026-10-26\n</environment>",
+        "tools": [
+          {
+            "description": "Reads a file from the current workspace. You can access workspace files directly by using this tool.\nIf the User provides a path to a file, assume that path is valid as long as it resolves inside the current workspace. It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n- The file_path parameter may be a workspace-relative path or an absolute path, but it must resolve inside the current workspace\n- If the user asks you to send or share a file, use send_attachment instead of read_file; do not inspect arbitrary binary files before sending them\n- By default, offset is 1 and the tool reads from the beginning of the file\n- You can optionally specify offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n- Results are returned using cat -n format, with line numbers starting at 1\n- For image files, screenshots, extracted video frames, and PDFs, use this tool to inspect the visual/document content directly\n- When the current model supports image input, image files are returned as model-visible image content\n- When the current model supports PDF input, small PDF files are returned as model-visible PDF content. When specific PDF pages are requested, pages are rendered as model-visible images if the model supports image input\n- Do not manually base64-encode local images/PDFs or route them through another vision/document API unless read_file reports that the current model cannot read that content\n- When the current model does not support the required modality, reading the file returns a text notice explaining that the current model cannot read it\n- For large PDFs, provide the pages parameter to validate specific page ranges (e.g., pages: \"1-5\"). Maximum 20 pages per request\n- This tool can read Jupyter notebooks (.ipynb files) and returns a text rendering of notebook cells and outputs\n- This tool can only read files, not directories\n- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents\n- If a previous tool result says it was persisted, truncated, or preview-only, read the file_path shown in that notice with read_file",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "file_path": {
+                  "description": "The relative or absolute path to the file to read. The path must resolve inside the current workspace.",
+                  "type": "string"
+                },
+                "limit": {
+                  "description": "The number of lines to read. Only provide if the file is too large to read at once.",
+                  "type": "integer"
+                },
+                "offset": {
+                  "description": "The 1-based line number to start reading from. Only provide if the file is too large to read at once.",
+                  "type": "integer"
+                },
+                "pages": {
+                  "description": "Page range for PDF files (e.g., \"1-5\", \"3\", \"10-20\"). Only applicable to PDF files. Maximum 20 pages per request.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "file_path"
+              ],
+              "type": "object"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      "sequence": 4,
+      "sessionId": "live-e2e-session",
+      "step": 1,
+      "turnId": "run-drop",
+      "type": "model_request"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-5",
+      "event": {
+        "model": "mock-model",
+        "provider": "live-e2e",
+        "providerBaseUrl": "http://127.0.0.1:<PORT>/v1",
+        "requestFingerprint": "<REQUEST-SHA256-VERIFIED>",
+        "type": "request_started"
+      },
+      "parentEntryId": "entry-4",
+      "sequence": 5,
+      "sessionId": "live-e2e-session",
+      "step": 1,
+      "turnId": "run-drop",
+      "type": "model_stream_event"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-6",
+      "outcome": "failed",
+      "parentEntryId": "entry-5",
+      "sequence": 6,
+      "sessionId": "live-e2e-session",
+      "step": 1,
+      "turnId": "run-drop",
+      "type": "step_completed"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-7",
+      "parentEntryId": "entry-6",
+      "result": {
+        "completedAt": "2026-10-26T00:00:00.000Z",
+        "errors": [
+          {
+            "code": "agent_invalid_state",
+            "message": "Sidecar event sequence mismatch: expected 1, got 2."
+          }
+        ],
+        "permissionDenials": [],
+        "sessionId": "live-e2e-session",
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "stopReason": "model_error",
+        "turnId": "run-drop",
+        "turns": 0,
+        "type": "error",
+        "usage": {}
+      },
+      "sequence": 7,
+      "sessionId": "live-e2e-session",
+      "turnId": "run-drop",
+      "type": "turn_result"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "detail": {
+        "code": "agent_invalid_state",
+        "message": "Sidecar event sequence mismatch: expected 1, got 2.",
+        "scope": "turn",
+        "severity": "error",
+        "source": "agent",
+        "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+        "visible": true
+      },
+      "entryId": "entry-8",
+      "event": "turn_failed",
+      "kind": "error",
+      "parentEntryId": "entry-7",
+      "sequence": 8,
+      "sessionId": "live-e2e-session",
+      "text": "Sidecar event sequence mismatch: expected 1, got 2.",
+      "turnId": "run-drop",
+      "type": "agent_status_message"
+    }
+  ]
+}

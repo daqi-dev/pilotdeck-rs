@@ -1,0 +1,210 @@
+{
+  "active": false,
+  "events": [
+    {
+      "runId": "run-duplicate",
+      "type": "turn_started"
+    },
+    {
+      "runId": "run-duplicate",
+      "type": "input_accepted"
+    },
+    {
+      "model": "mock-model",
+      "provider": "live-e2e",
+      "runId": "run-duplicate",
+      "type": "model_request_started"
+    },
+    {
+      "detail": {
+        "code": "agent_invalid_state",
+        "message": "Sidecar event sequence mismatch: expected 1, got 0.",
+        "scope": "turn",
+        "severity": "error",
+        "source": "agent",
+        "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+        "visible": true
+      },
+      "event": "turn_failed",
+      "runId": "run-duplicate",
+      "type": "agent_status"
+    },
+    {
+      "code": "agent_invalid_state",
+      "message": "Sidecar event sequence mismatch: expected 1, got 0.",
+      "recoverable": false,
+      "runId": "run-duplicate",
+      "type": "error"
+    },
+    {
+      "finishReason": "model_error",
+      "runId": "run-duplicate",
+      "type": "turn_completed",
+      "usage": {}
+    }
+  ],
+  "modelCalls": 0,
+  "record": {
+    "acceptedAt": "2026-10-26T00:00:00.000Z",
+    "lastSeq": 6,
+    "ownerPid": "<PID>",
+    "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"LIVE_E2E_TEXT\",\"sessionKey\":\"live-e2e-session\"}",
+    "result": {
+      "finishReason": "model_error",
+      "runId": "run-duplicate",
+      "type": "turn_completed",
+      "usage": {}
+    },
+    "revision": 7,
+    "runId": "run-duplicate",
+    "sessionKey": "live-e2e-session",
+    "state": "completed",
+    "updatedAt": "2026-10-26T00:00:00.000Z"
+  },
+  "registryEvents": [
+    {
+      "event": {
+        "runId": "run-duplicate",
+        "type": "turn_started"
+      },
+      "seq": 1
+    },
+    {
+      "event": {
+        "runId": "run-duplicate",
+        "type": "input_accepted"
+      },
+      "seq": 2
+    },
+    {
+      "event": {
+        "model": "mock-model",
+        "provider": "live-e2e",
+        "runId": "run-duplicate",
+        "type": "model_request_started"
+      },
+      "seq": 3
+    },
+    {
+      "event": {
+        "detail": {
+          "code": "agent_invalid_state",
+          "message": "Sidecar event sequence mismatch: expected 1, got 0.",
+          "scope": "turn",
+          "severity": "error",
+          "source": "agent",
+          "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+          "visible": true
+        },
+        "event": "turn_failed",
+        "runId": "run-duplicate",
+        "type": "agent_status"
+      },
+      "seq": 4
+    },
+    {
+      "event": {
+        "code": "agent_invalid_state",
+        "message": "Sidecar event sequence mismatch: expected 1, got 0.",
+        "recoverable": false,
+        "runId": "run-duplicate",
+        "type": "error"
+      },
+      "seq": 5
+    },
+    {
+      "event": {
+        "finishReason": "model_error",
+        "runId": "run-duplicate",
+        "type": "turn_completed",
+        "usage": {}
+      },
+      "seq": 6
+    }
+  ],
+  "scenario": "duplicate",
+  "toolEntered": false,
+  "toolResults": [],
+  "transcript": [
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-1",
+      "parentEntryId": null,
+      "sequence": 1,
+      "sessionId": "live-e2e-session",
+      "turnId": "run-duplicate",
+      "type": "turn_started"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-2",
+      "messages": [
+        {
+          "content": [
+            {
+              "text": "LIVE_E2E_TEXT",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "metadata": {
+        "allowPlanModeTools": false,
+        "runMode": "agent"
+      },
+      "parentEntryId": "entry-1",
+      "sequence": 2,
+      "sessionId": "live-e2e-session",
+      "turnId": "run-duplicate",
+      "type": "accepted_input"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-3",
+      "parentEntryId": "entry-2",
+      "result": {
+        "completedAt": "2026-10-26T00:00:00.000Z",
+        "errors": [
+          {
+            "code": "agent_invalid_state",
+            "message": "Sidecar event sequence mismatch: expected 1, got 0."
+          }
+        ],
+        "permissionDenials": [],
+        "sessionId": "live-e2e-session",
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "stopReason": "model_error",
+        "turnId": "run-duplicate",
+        "turns": 0,
+        "type": "error",
+        "usage": {}
+      },
+      "sequence": 3,
+      "sessionId": "live-e2e-session",
+      "turnId": "run-duplicate",
+      "type": "turn_result"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "detail": {
+        "code": "agent_invalid_state",
+        "message": "Sidecar event sequence mismatch: expected 1, got 0.",
+        "scope": "turn",
+        "severity": "error",
+        "source": "agent",
+        "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+        "visible": true
+      },
+      "entryId": "entry-4",
+      "event": "turn_failed",
+      "kind": "error",
+      "parentEntryId": "entry-3",
+      "sequence": 4,
+      "sessionId": "live-e2e-session",
+      "text": "Sidecar event sequence mismatch: expected 1, got 0.",
+      "turnId": "run-duplicate",
+      "type": "agent_status_message"
+    }
+  ]
+}

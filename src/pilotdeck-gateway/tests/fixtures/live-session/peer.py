@@ -65,6 +65,13 @@ def success_final(sequence):
         final=True, outcome="completed")
 
 
+def complete_success(sequence):
+    # Real AgentLoop emits this suppressed completion before its final frame.
+    send_event(sequence, dict(type="turn_completed", sessionId=session, turnId=turn,
+                             result=dict(type="success")))
+    send(success_final(sequence + 1))
+
+
 if mode in ("live-payload", "live-manifest"):
     send_event(0, dict(type="model_request_started", sessionId=session, turnId=turn,
                       receivedPayload=execute["payload"]))
@@ -72,13 +79,14 @@ if mode in ("live-payload", "live-manifest"):
         send_event(1, dict(type="agent_status", sessionId=session, turnId=turn,
                           event="manifest", kind="status", text="payload observed",
                           receivedPayload=execute["payload"]))
-    send(success_final(2 if mode == "live-manifest" else 1))
+    complete_success(2 if mode == "live-manifest" else 1)
 elif mode == "live-tail":
     from pathlib import Path
     Path(sys.argv[2], "report.txt").write_text("hello matrix\n")
     send_event(0, dict(type="tool_result", sessionId=session, turnId=turn,
         result=dict(type="success", toolCallId="write-1", toolName="write_file", content=[], data=dict(filePath="report.txt"))))
-    send(agent_event(1, dict(result=dict(type="success", sessionId=session, turnId=turn,
+    send_event(1, dict(type="turn_completed", sessionId=session, turnId=turn, result=dict(type="success")))
+    send(agent_event(2, dict(result=dict(type="success", sessionId=session, turnId=turn,
         stopReason="completed", turns=1, finalMessage=dict(role="assistant", content=[dict(type="text",text="done")])),
         messages=messages), final=True, outcome="completed"))
 elif mode == "live-interaction":
@@ -100,7 +108,7 @@ elif mode == "live-interaction":
     drained = call("turn", dict(operation="drain_or_close_steer"))
     send_event(0, dict(type="agent_status", sessionId=session, turnId=turn,
                       event="ports-tested", kind="status", text="all four", observed=drained))
-    send(success_final(1))
+    complete_success(1)
 elif mode == "live-fresh-router":
     call_index = 0
 
@@ -137,7 +145,7 @@ elif mode == "live-fresh-router":
                                     oldPreparationError=old.get("error", {}).get("message"), model=prepared,
                                     stream=streamed, budget=budget, context=context,
                                     capability=capability, plan=plan)))
-    send(success_final(1))
+    complete_success(1)
 elif mode == "live-normal":
     send_event(0, dict(type="model_event", sessionId=session, turnId=turn,
                       event=dict(type="text_delta", text="hello")))
@@ -182,7 +190,7 @@ elif mode == "live-max-turns":
         messages=messages), final=True, outcome="failed"))
 elif mode == "live-cancel-pending":
     send_event(0, dict(type="model_request_started", sessionId=session, turnId=turn))
-    send(success_final(1))
+    complete_success(1)
 elif mode == "live-cancel-pending-failure":
     send_event(0, dict(type="model_request_started", sessionId=session, turnId=turn))
     send_event(1, dict(type="turn_failed", sessionId=session, turnId=turn,
@@ -196,18 +204,18 @@ elif mode == "live-cancel-pending-failure":
 elif mode == "live-cancel-blocked-model-event":
     send_event(0, dict(type="model_event", sessionId=session, turnId=turn,
                       event=dict(type="text_delta", text="blocked")))
-    send(success_final(1))
+    complete_success(1)
 elif mode == "live-cancel-queued-turn-failed":
     send_event(0, dict(type="model_request_started", sessionId=session, turnId=turn))
     send_event(1, dict(type="turn_failed", sessionId=session, turnId=turn,
                       error=dict(code="agent_model_error",
                                  message="Model request failed.")))
-    send(success_final(2))
+    complete_success(2)
 elif mode == "live-cancel-slow-consumer":
     send_event(0, dict(type="model_event", sessionId=session, turnId=turn,
                       event=dict(type="text_delta", text="queued")))
     send_event(1, dict(type="model_request_started", sessionId=session, turnId=turn))
-    send(success_final(2))
+    complete_success(2)
 elif mode == "live-cancel-slow-consumer-failure":
     send_event(0, dict(type="model_event", sessionId=session, turnId=turn,
                       event=dict(type="text_delta", text="queued")))
@@ -220,12 +228,12 @@ elif mode == "live-cancel-slow-consumer-failure":
                               message="Model request failed.")]),
         messages=messages), final=True, outcome="failed"))
 elif mode == "live-missing-loop-prefix":
-    send(success_final(0))
+    complete_success(0)
 elif mode == "live-failed-then-success":
     send_event(0, dict(type="turn_failed", sessionId=session, turnId=turn,
                       error=dict(code="agent_model_error",
                                  message="Model request failed.")))
-    send(success_final(1))
+    complete_success(1)
 elif mode == "live-failed-then-max-turns":
     send_event(0, dict(type="turn_failed", sessionId=session, turnId=turn,
                       error=dict(code="agent_model_error",

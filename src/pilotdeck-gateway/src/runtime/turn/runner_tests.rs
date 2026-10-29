@@ -886,3 +886,77 @@ fn oracle_consumers_exist() {
         }
     }
 }
+
+#[tokio::test]
+async fn durable_classification_rejects_malformed_before_writing() {
+    // Node v22.22.0 classifyDurableMessageEntry probe, #748 raw evidence.
+    let cells = [
+        (
+            JsValue::Undefined,
+            "Cannot read properties of undefined (reading 'role')",
+        ),
+        (
+            JsValue::Null,
+            "Cannot read properties of null (reading 'role')",
+        ),
+        (
+            parse_json(r#"{"role":"user","content":null}"#).expect("#748 classification JSON"),
+            "Cannot read properties of null (reading 'some')",
+        ),
+        (
+            parse_json(r#"{"role":"user","content":3}"#).expect("#748 classification JSON"),
+            "message.content.some is not a function",
+        ),
+        (
+            parse_json(r#"{"role":"user","content":[null]}"#).expect("#748 classification JSON"),
+            "Cannot read properties of null (reading 'type')",
+        ),
+    ];
+    for (message, error) in cells {
+        let fixture = Fixture::new("", 0);
+        let (runner, _) = fixture
+            .runner()
+            .start()
+            .await
+            .expect("#748 start durable classification");
+        let (runner, _) = runner
+            .accept(input())
+            .await
+            .expect("#748 accept durable classification");
+        let before =
+            fs::read(&fixture.key.transcript_path).expect("#748 transcript before bad message");
+        let (runner, events) = runner
+            .durable_message(message)
+            .await
+            .expect("#748 malformed callback handled");
+        assert_eq!(
+            runner.callback_error.as_deref(),
+            Some(error),
+            "#748 TS durable classification error"
+        );
+        assert!(events.is_empty(), "#748 failed callback emits no message");
+        assert_eq!(
+            fs::read(&fixture.key.transcript_path).expect("#748 transcript after bad message"),
+            before,
+            "#748 malformed callback cannot write"
+        );
+    }
+    for (json, expected) in [
+        (
+            r#"{"role":"assistant","content":null}"#,
+            "assistant_message",
+        ),
+        (
+            r#"{"role":"user","content":[{"type":"tool_result"},null]}"#,
+            "tool_result_message",
+        ),
+        (r#"{"role":"user","content":[]}"#, "durable_message"),
+    ] {
+        assert_eq!(
+            classify_durable_message(&parse_json(json).expect("#748 valid message JSON"))
+                .expect("#748 valid classification"),
+            expected,
+            "#748 TS classification short circuit"
+        );
+    }
+}

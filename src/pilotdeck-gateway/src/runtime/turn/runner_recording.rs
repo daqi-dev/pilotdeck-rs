@@ -118,6 +118,7 @@ pub enum RecordingAction {
     SubmitPrompt(super::AgentInput, crate::host::Cancellation),
     LoopFailed(JsValue),
     Status(JsValue),
+    Durable(JsValue),
     Complete(JsValue),
     Fail(JsValue),
 }
@@ -183,6 +184,7 @@ impl Recording {
                 }
                 RecordingAction::LoopFailed(error) => runner.loop_failed(error).await,
                 RecordingAction::Status(event) => runner.loop_status(event).await,
+                RecordingAction::Durable(message) => runner.durable_message(message).await,
                 RecordingAction::Complete(result) => runner.complete(result).await,
                 RecordingAction::Fail(error) => runner.fail(error).await,
             }

@@ -445,6 +445,9 @@ pub(super) async fn run(
                         }
                         next_sequence += 1.0;
                         // TS:680 suppresses the non-authoritative turn_completed projection.
+                        if !event.final_event && text_is(event.payload.get("type"), "turn_completed") {
+                            handler.observe_loop_completion(raw.get("payload").expect("validated event payload"));
+                        }
                         if !event.final_event && text_is(event.payload.get("type"), "turn_completed") { continue; }
                         // Lifecycle validation after the wire checks and the
                         // suppression above, before the application queue: a

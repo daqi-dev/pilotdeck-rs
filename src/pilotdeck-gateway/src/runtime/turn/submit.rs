@@ -1089,6 +1089,21 @@ impl TurnSubmitter {
                         field(input, "modelSelection").clone(),
                     );
                 }
+                if is(&event, "type", "context_budget") {
+                    let status = object([
+                        ("event", "context_budget".into()),
+                        ("kind", "status".into()),
+                        ("text", "context_budget".into()),
+                        ("detail", event.clone()),
+                    ]);
+                    // InProcessGateway does not await this best-effort callback:
+                    // a stalled status store must not stall the turn or cancellation.
+                    let host = self.host.clone();
+                    let run = run.clone();
+                    tokio::spawn(async move {
+                        let _ = host.record_failure(&run, &status).await;
+                    });
+                }
                 publisher.gateway_event(event);
             }
             if let Some(guard) = &mut failure_guard

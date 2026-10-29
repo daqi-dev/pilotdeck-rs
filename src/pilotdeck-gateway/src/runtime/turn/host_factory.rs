@@ -204,6 +204,7 @@ pub struct TurnHostFactory {
     limits: Limits,
     expected_module_id: Option<JsString>,
     ports: Arc<PortsFactory>,
+    agent_config: Option<JsObject>,
 }
 
 impl TurnHostFactory {
@@ -220,7 +221,14 @@ impl TurnHostFactory {
             limits,
             expected_module_id,
             ports: Arc::new(ports),
+            agent_config: None,
         }
+    }
+
+    /// Bind the session's explicit serialized AgentRuntimeConfig.
+    pub fn with_agent_config(mut self, config: JsObject) -> Self {
+        self.agent_config = Some(config);
+        self
     }
 
     /// Build the production `LiveSession` over this factory. The registry must
@@ -242,12 +250,18 @@ impl TurnHostFactory {
             ports
         });
         let close_timeout = self.limits.close_timeout;
+        let agent_config = self.agent_config.clone();
         let factory = Arc::new(self);
-        LiveSessionAdapter::with_interaction(recorder, history, move |identity, recorder| {
-            let factory = factory.clone();
-            Box::pin(async move { factory.create(&identity, recorder).await })
-        })
-        .with_close_timeout(close_timeout)
+        let session =
+            LiveSessionAdapter::with_interaction(recorder, history, move |identity, recorder| {
+                let factory = factory.clone();
+                Box::pin(async move { factory.create(&identity, recorder).await })
+            })
+            .with_close_timeout(close_timeout);
+        match agent_config {
+            Some(config) => session.with_agent_config(config),
+            None => session,
+        }
     }
 
     /// Acquire one generation lease and prepare a lazy sidecar connection. Unsupported

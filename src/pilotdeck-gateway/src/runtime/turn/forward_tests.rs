@@ -253,6 +253,10 @@ impl Fixture {
                             }
                         }
                     }
+                    handler.observe_loop_completion(&crate::metadata::object([(
+                        "result",
+                        result.clone(),
+                    )]));
                     Ok(ExecuteResult::Terminal(wire(
                         &crate::metadata::object([
                             ("result", result),

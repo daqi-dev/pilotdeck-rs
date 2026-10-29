@@ -1409,9 +1409,16 @@ async fn close_drains_stderr_exit_tail_before_aborting_pump() {
         .err()
         .unwrap();
     assert_eq!(error.kind, HostErrorKind::Protocol);
-    assert!(error.message.contains("EXIT-STDERR-TAIL"), "{error}");
-    assert!(!error.message.contains("discarded-prefix"));
-    assert!(error.message.split("stderr: ").nth(1).unwrap().len() <= 64);
+    assert!(error.diagnostic.contains("EXIT-STDERR-TAIL"), "{error}");
+    assert!(!error.diagnostic.contains("discarded-prefix"));
+    assert!(
+        !error.diagnostic.is_empty(),
+        "#748 child diagnostic retained"
+    );
+    assert!(
+        error.diagnostic.len() <= 64,
+        "#748 diagnostic remains bounded"
+    );
 }
 
 #[tokio::test]

@@ -1,0 +1,135 @@
+{
+  "active": false,
+  "events": [
+    {
+      "runId": "run-early-final",
+      "type": "turn_started"
+    },
+    {
+      "runId": "run-early-final",
+      "type": "input_accepted"
+    },
+    {
+      "model": "mock-model",
+      "provider": "live-e2e",
+      "runId": "run-early-final",
+      "type": "model_request_started"
+    },
+    {
+      "finishReason": "mitm_premature_final",
+      "runId": "run-early-final",
+      "type": "turn_completed",
+      "usage": {}
+    }
+  ],
+  "modelCalls": 0,
+  "record": {
+    "acceptedAt": "2026-10-26T00:00:00.000Z",
+    "lastSeq": 4,
+    "ownerPid": "<PID>",
+    "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"LIVE_E2E_TEXT\",\"sessionKey\":\"live-e2e-session\"}",
+    "result": {
+      "finishReason": "mitm_premature_final",
+      "runId": "run-early-final",
+      "type": "turn_completed",
+      "usage": {}
+    },
+    "revision": 5,
+    "runId": "run-early-final",
+    "sessionKey": "live-e2e-session",
+    "state": "completed",
+    "updatedAt": "2026-10-26T00:00:00.000Z"
+  },
+  "registryEvents": [
+    {
+      "event": {
+        "runId": "run-early-final",
+        "type": "turn_started"
+      },
+      "seq": 1
+    },
+    {
+      "event": {
+        "runId": "run-early-final",
+        "type": "input_accepted"
+      },
+      "seq": 2
+    },
+    {
+      "event": {
+        "model": "mock-model",
+        "provider": "live-e2e",
+        "runId": "run-early-final",
+        "type": "model_request_started"
+      },
+      "seq": 3
+    },
+    {
+      "event": {
+        "finishReason": "mitm_premature_final",
+        "runId": "run-early-final",
+        "type": "turn_completed",
+        "usage": {}
+      },
+      "seq": 4
+    }
+  ],
+  "scenario": "early-final",
+  "toolEntered": false,
+  "toolResults": [],
+  "transcript": [
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-1",
+      "parentEntryId": null,
+      "sequence": 1,
+      "sessionId": "live-e2e-session",
+      "turnId": "run-early-final",
+      "type": "turn_started"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-2",
+      "messages": [
+        {
+          "content": [
+            {
+              "text": "LIVE_E2E_TEXT",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "metadata": {
+        "allowPlanModeTools": false,
+        "runMode": "agent"
+      },
+      "parentEntryId": "entry-1",
+      "sequence": 2,
+      "sessionId": "live-e2e-session",
+      "turnId": "run-early-final",
+      "type": "accepted_input"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-3",
+      "parentEntryId": "entry-2",
+      "result": {
+        "completedAt": "2026-10-26T00:00:00.000Z",
+        "permissionDenials": [],
+        "sessionId": "live-e2e-session",
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "stopReason": "mitm_premature_final",
+        "turnId": "run-early-final",
+        "turns": 1,
+        "type": "success",
+        "usage": {}
+      },
+      "sequence": 3,
+      "sessionId": "live-e2e-session",
+      "turnId": "run-early-final",
+      "type": "turn_result"
+    }
+  ]
+}

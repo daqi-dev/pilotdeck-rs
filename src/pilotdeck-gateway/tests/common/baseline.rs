@@ -437,6 +437,21 @@ pub(crate) fn compare_companion_files(
     committed: &Path,
 ) -> Result<(), String> {
     let names = companion_names(fixture, committed)?;
+    let (generated_root, committed_root) = if fixture == "live-e2e" {
+        let roots = (generated.join("expected"), committed.join("expected"));
+        for root in [&roots.0, &roots.1] {
+            if !fs::symlink_metadata(root)
+                .map_err(|error| format!("#748 expected directory: {error}"))?
+                .file_type()
+                .is_dir()
+            {
+                return Err("#748 expected must be a regular directory".into());
+            }
+        }
+        roots
+    } else {
+        (generated.to_path_buf(), committed.to_path_buf())
+    };
     let pids = if fixture == "run-registry" {
         let read_pid = |root: &Path| -> Result<Option<u32>, String> {
             let bytes = fs::read(root.join("oracle.json"))
@@ -448,7 +463,7 @@ pub(crate) fn compare_companion_files(
         (None, None)
     };
     for name in names {
-        let path = generated.join(&name);
+        let path = generated_root.join(&name);
         let kind = fs::symlink_metadata(&path)
             .map_err(|error| format!("missing companion {name}: {error}"))?
             .file_type();
@@ -456,7 +471,7 @@ pub(crate) fn compare_companion_files(
             return Err(format!("companion {name} must be a regular file"));
         }
         let actual = fs::read(path).map_err(|error| format!("read companion {name}: {error}"))?;
-        let expected = fs::read(committed.join(&name))
+        let expected = fs::read(committed_root.join(&name))
             .map_err(|error| format!("read committed companion {name}: {error}"))?;
         regeneration_masks::compare(fixture, &name, &actual, &expected, pids)
             .map_err(|error| format!("companion {name} differs from committed bytes: {error}"))?;
@@ -467,6 +482,15 @@ pub(crate) fn compare_companion_files(
 #[allow(dead_code)]
 pub(crate) fn companion_names(fixture: &str, committed: &Path) -> Result<Vec<String>, String> {
     let fixed: &[&str] = match fixture {
+        "live-e2e" => &[
+            "text.json",
+            "tool.json",
+            "cancel-stream.json",
+            "cancel-tool.json",
+            "drop.json",
+            "duplicate.json",
+            "early-final.json",
+        ],
         "interaction-events" => &["source.json"],
         "interaction-permission" => &["source.json", "profiles.json", "hooks.json"],
         "stats-dateparse" => &["local-profiles.json"],
