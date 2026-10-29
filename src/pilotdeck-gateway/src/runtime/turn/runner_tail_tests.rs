@@ -138,9 +138,8 @@ fn checkpoint(f: &Fixture, tail: &SessionTail, row: &JsValue, label: &str) {
         "#742 tail checkpoint disk {label}"
     );
 }
-async fn replay(name: &str) {
-    let row = row(name);
-    let config = field(&row, "config");
+async fn replay(name: &str, row: &JsValue) {
+    let config = field(row, "config");
     let mode = |key| config.get(key).map(string).unwrap_or_default();
     let title = mode("title");
     let suggestion = mode("suggestion");
@@ -246,7 +245,7 @@ async fn replay(name: &str) {
     for index in 0..if listing == "two" { 2 } else { 1 } {
         let turn = format!("turn-{}", index + 1);
         let raw = if index == 0 {
-            field(&row, "input").clone()
+            field(row, "input").clone()
         } else {
             object([
                 ("type", "text".into()),
@@ -254,7 +253,7 @@ async fn replay(name: &str) {
             ])
         };
         let options = if index == 0 {
-            field(&row, "submitOptions").clone()
+            field(row, "submitOptions").clone()
         } else {
             json(r#"{"modelSelection":{"mode":"model","provider":"probe","model":"second-model"}}"#)
         };
@@ -284,7 +283,7 @@ async fn replay(name: &str) {
             bounded(title_entered.cancelled()).await;
         }
         if index == 0 {
-            checkpoint(&f, &tail, &row, "main-held");
+            checkpoint(&f, &tail, row, "main-held");
         }
         if ["before", "failure", "port-failure"].contains(&title.as_str()) {
             title_gate.add_permits(1);
@@ -389,7 +388,7 @@ async fn replay(name: &str) {
             let next = recording.settle();
             tokio::pin!(next);
             tokio::select! {biased;out=&mut next=>panic!("#742 tail suggestion holds terminal: {:?}",out.map(|v|v.len())),_=suggestion_entered.cancelled()=>{}}
-            checkpoint(&f, &tail, &row, "suggestion-held");
+            checkpoint(&f, &tail, row, "suggestion-held");
             if title == "during-suggestion" {
                 title_gate.add_permits(1);
                 title_done(&tail).await;
@@ -425,7 +424,7 @@ async fn replay(name: &str) {
             "#742 tail title must not retain turn lease"
         );
         if index == 0 {
-            checkpoint(&f, &tail, &row, "before-late-title");
+            checkpoint(&f, &tail, row, "before-late-title");
         }
         if ["after", "abort-ignored", "abort-after", "dispose"].contains(&title.as_str()) {
             if title == "abort-after" {
@@ -440,17 +439,17 @@ async fn replay(name: &str) {
     }
     assert_eq!(
         stringify_json(&JsValue::Array(events)),
-        stringify_json(field(&row, "events")),
+        stringify_json(field(row, "events")),
         "#742 tail event bytes {name}"
     );
     assert_eq!(
         f.disk(),
-        string(field(&row, "transcript")),
+        string(field(row, "transcript")),
         "#742 tail transcript bytes {name}"
     );
     assert_eq!(
         tail.snapshot(),
-        *field(&row, "metadata"),
+        *field(row, "metadata"),
         "#742 tail final metadata {name}"
     );
     if let Some(signal) = title_signal.lock().expect("#742 tail signal lock").as_ref() {
@@ -474,7 +473,11 @@ macro_rules! case {
     ($id:ident,$name:literal) => {
         #[tokio::test]
         async fn $id() {
-            bounded(replay($name)).await;
+            // #1043: the oracle provenance check (650-source closure, one git
+            // call per source under PDRS_BASELINE) is not part of the gate
+            // budget; `bounded` keeps bounding only the replayed async work.
+            let row = row($name);
+            bounded(replay($name, &row)).await;
         }
     };
 }
