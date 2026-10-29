@@ -4,6 +4,8 @@
 
 先设 `PDRS_BASELINE` 指向固定 TS baseline（oracle 的 sourceCommit/sourceSha256 校验），设调用方独占 `CARGO_TARGET_DIR`，Node 必须 v22.22.0；两个 Cargo debug profile 均设 `line-tables-only`。不读取用户 PilotDeck home，不需要 provider key。
 
+`live_e2e` 的 Rust/TS 用例目录保留在 Cargo 提供的 `CARGO_TARGET_TMPDIR`（通常为 `$CARGO_TARGET_DIR/tmp`），每次使用独立 UUID 叶目录；无需预建仓内 `_tmp`。目录根/独占命名回归无需 TS，运行 `cargo test -p pilotdeck-gateway --test live_e2e case_directories_use_cargo_tmpdir`；对应提交后负控为 `tests/fixtures/live-e2e-tmpdir/negative_controls.py <全新输出目录>`，须传入 `CARGO_TARGET_DIR`。
+
 - 宿主全验：`python3 -B tests/fixtures/live-e2e/run_host.py <全新输出目录>`（在 gateway crate 目录运行或使用完整脚本路径）。其 cargo `--test` 清单包含 `live_e2e` 和 `generator_provenance`，后者执行 ignored 的七格重生成守卫。
 - 独立生成：`node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" tests/fixtures/live-e2e/generate.mts <全新输出目录>`。
 - 独立自检：`python3 -B tests/fixtures/live-e2e/selftest.py <全新输出目录>`。
