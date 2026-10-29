@@ -2,12 +2,13 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {mkdtempSync,mkdirSync,readFileSync,realpathSync,rmSync,writeFileSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,realpathSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
 import { bindBaseline } from '../_shared/generator_guard.mjs';
+import { canonicalSqliteBase64 } from '../_shared/sqlite_bytes.mjs';
 import {runConcurrent} from './concurrency.mts';
 import {source,scenarios,freezeClock,open,seed,disk,observe,writable,auditIds,auditIdBatches} from './observe.mts';
 assert.equal(process.version,'v22.22.0');assert.equal(Intl.DateTimeFormat().resolvedOptions().locale,'en-US');assert.ok(process.env.PDRS_BASELINE);assert.ok(process.argv[2]);
@@ -18,7 +19,7 @@ const provenance=bindBaseline({ baseline: baseline, commit: commit, gitExecutabl
 const scratch=mkdtempSync(join(tmpdir(),'pdrs-entries-'));process.env.HOME=join(scratch,'home');freezeClock();
 const {MemoryRepository}=await import(pathToFileURL(join(baseline,source)).href);
 const cases=[];
-for(const scenario of scenarios){const root=join(scratch,scenario.name);mkdirSync(root,{recursive:true});const r=open(MemoryRepository,root,scenario.general);seed(r);r.close();const seedDisk=disk(root),database=readFileSync(join(root,'control.sqlite')).toString('base64');const observations=observe(MemoryRepository,root,scenario);if(scenario.name.endsWith('-fail'))assert.ok(observations.at(-1).result?.error,scenario.name+' did not exercise its failure');cases.push({...scenario,seedDisk,database,observations});writable(root);}
+for(const scenario of scenarios){const root=join(scratch,scenario.name);mkdirSync(root,{recursive:true});const r=open(MemoryRepository,root,scenario.general);seed(r);r.close();const seedDisk=disk(root),database=canonicalSqliteBase64(join(root,'control.sqlite'));const observations=observe(MemoryRepository,root,scenario);if(scenario.name.endsWith('-fail'))assert.ok(observations.at(-1).result?.error,scenario.name+' did not exercise its failure');cases.push({...scenario,seedDisk,database,observations});writable(root);}
 const concurrent=await runConcurrent(MemoryRepository,baseline,join(scratch,'concurrent'));
 const idAudit=auditIds(MemoryRepository,join(scratch,'id-audit'));
 const idBatchAudit=auditIdBatches(MemoryRepository,join(scratch,'id-batches'));

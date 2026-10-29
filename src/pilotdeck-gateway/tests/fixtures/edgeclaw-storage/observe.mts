@@ -5,8 +5,9 @@
 // A6.6-pr10a. The Rust suite mirrors this function against `EdgeClawStorage`;
 // keys are compared after canonical sorting, arrays keep their order.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { canonicalSqliteBase64 } from '../_shared/sqlite_bytes.mjs';
 
 export const DEFAULTS = {
   reasoningMode: 'answer_first',
@@ -235,7 +236,7 @@ export function readDbBase64(dbPath: string): string {
   }
   assert.equal(existsSync(`${dbPath}-wal`), false, `WAL not checkpointed: ${dbPath}-wal`);
   assert.equal(existsSync(`${dbPath}-shm`), false, `SHM left behind: ${dbPath}-shm`);
-  return readFileSync(dbPath).toString('base64');
+  return canonicalSqliteBase64(dbPath);
 }
 
 function withDatabase<T>(dbPath: string, run: (db: any) => T): T {

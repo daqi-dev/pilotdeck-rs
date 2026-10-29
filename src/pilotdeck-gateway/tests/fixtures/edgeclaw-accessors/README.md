@@ -14,6 +14,10 @@
 临时 HOME 在导入 TS 前注入，绝不使用真实 `~/.pilotdeck`。
 初始数据库不包含临时目录字符串；JSON 中的临时根路径映射为 `$ROOT`。
 
+> #979: the SQLite writer-version field (header offset 96) in the embedded `.db`
+> base64 is canonicalised to 3.51.2 by `_shared/sqlite_bytes.mjs`; every other
+> database byte is still compared exactly.
+
 覆盖：close/重复 close、关闭后 SQL 与文件 accessor、accessor 对象身份；
 默认目录、single/general 模式及重开切换；空目录、普通文件、损坏库、
 同 workspace 排除、general workspace 排除、外部 workspace 路径变化、目录移除；

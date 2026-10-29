@@ -15,6 +15,10 @@
 43 个场景、338 次顺序观测；每次比较返回值、故障是否命中、含空目录与符号链接的文件树、
 文件内容、SQLite schema、全部 L0 行和 pipeline 行。种子 `.db` 是 TS 关闭真实数据库后读取的
 原始字节（base64）。包含 project/feedback/user、无关 pipeline 行与需保留的 L0 行。
+> #979: the SQLite writer-version field (header offset 96) in the embedded `.db`
+> base64 is canonicalised to 3.51.2 by `_shared/sqlite_bytes.mjs`; every other
+> database byte is still compared exactly.
+
 
 覆盖项包括：四种 dream status、空值/错误类型/空白过滤与原字符串保留、中文/重音排序、
 MEMORY.md 不参与版本、global 版本独立防漂移、stage SQL 隔离、双向 rollback、可选 metadata、

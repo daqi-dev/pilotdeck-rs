@@ -25,6 +25,10 @@ import { DatabaseSync } from 'node:sqlite';
 import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
 import { bindBaseline } from '../_shared/generator_guard.mjs';
 import {
+  CANONICAL_SQLITE_VERSION,
+  assertSupportedSqliteVersion,
+} from '../_shared/sqlite_bytes.mjs';
+import {
   DEFAULTS,
   OTHER_DEFAULTS,
   dumpRows,
@@ -70,10 +74,18 @@ const { MemoryRepository } = await import(
   pathToFileURL(join(baseline, SQLITE_TS)).href
 );
 
-assert.match(
-  process.versions.sqlite ?? '',
-  /^3\.51\./,
-  `baseline Node must use a 3.51.x SQLite, got ${process.versions.sqlite}`,
+// #979: the database header records the SQLite writer version, and Homebrew's
+// Node links `node:sqlite` against a shared libsqlite3 whose version moves
+// independently of Node. Validate that both the compile-time and runtime
+// versions stay in the verified file-format series, then record only the
+// canonical value; `readDbBase64` rewrites exactly the four header bytes.
+const sqliteProbe = new DatabaseSync(':memory:');
+const runtimeSqlite = sqliteProbe.prepare('SELECT sqlite_version() AS version').get().version;
+sqliteProbe.close();
+assertSupportedSqliteVersion(process.versions.sqlite, 'compile-time SQLite');
+assertSupportedSqliteVersion(runtimeSqlite, 'runtime SQLite');
+console.log(
+  `sqlite compile-time ${process.versions.sqlite}; runtime ${runtimeSqlite}; canonical ${CANONICAL_SQLITE_VERSION}`,
 );
 
 const root = mkdtempSync(join(tmpdir(), 'pdrs-edgeclaw-storage-'));
@@ -1111,7 +1123,7 @@ const oracle = {
   sourceCommit: provenance.ref,
   sourceSha256,
   nodeVersion: process.version,
-  sqliteVersion: process.versions.sqlite,
+  sqliteVersion: CANONICAL_SQLITE_VERSION,
   tsRead,
   empty,
   migration,

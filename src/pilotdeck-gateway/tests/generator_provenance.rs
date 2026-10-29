@@ -22,6 +22,24 @@ fn builtin_tools_glob_transport_keeps_exit_and_error_paths() {
 }
 
 #[test]
+fn sqlite_byte_canonicaliser_is_version_insensitive_and_content_strict() {
+    let output = baseline::node_command()
+        .arg("--test")
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/_shared/sqlite_bytes.test.mjs"
+        ))
+        .output()
+        .expect("#979 run SQLite byte canonicaliser tests");
+    assert!(
+        output.status.success(),
+        "#979 SQLite byte canonicaliser failed:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn provider_timing_deadlines_reject_wrong_order() {
     use baseline::regeneration_masks::validate_provider_timing;
     use serde_json::{Value, json};

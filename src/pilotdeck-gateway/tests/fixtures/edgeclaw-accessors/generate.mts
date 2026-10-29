@@ -8,6 +8,7 @@ import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
 import { bindBaseline } from '../_shared/generator_guard.mjs';
+import { canonicalSqliteBase64 } from '../_shared/sqlite_bytes.mjs';
 import {configs,expand,openRepos,invoke,fileTree,clean,freezeClock,observe} from './observe.mts';
 assert.ok(process.env.PDRS_BASELINE);assert.ok(process.argv[2]);
 const baseline=resolve(process.env.PDRS_BASELINE!);const out=resolve(process.argv[2]!);
@@ -69,7 +70,7 @@ mkdirSync(join(root,'workspaces','bad','memory'),{recursive:true});writeFileSync
 writeFileSync(join(root,'workspaces','plain'),'not a directory');
 const seedFiles=fileTree(root).filter((e:any)=>e.relativePath!=='workspaces/bad/control.sqlite');
 seedFiles.push({relativePath:'workspaces/bad/control.sqlite',content:'not sqlite'});
-const databases=configs.map(c=>({id:c.id,base64:readFileSync(join(root,'workspaces',c.id,'control.sqlite')).toString('base64')}));
+const databases=configs.map(c=>({id:c.id,base64:canonicalSqliteBase64(join(root,'workspaces',c.id,'control.sqlite'))}));
 const extBeta=`external-project:${createHash('sha1').update('/fixture/Beta::current_project').digest('hex').slice(0,10)}`;
 const ops:any[]=[{method:'state',input:'$ROOT/home/.pilotdeck'},{repo:'general',method:'state',input:'$ROOT/home/.pilotdeck'},
 {method:'mode'},{method:'roots'},{method:'accessorIdentity'},{repo:'defaults',method:'mode'},{repo:'defaults',method:'roots'},{repo:'defaults',method:'listReadableProjectCatalog'},{repo:'alpha',method:'mode'},{repo:'alpha',method:'listReadableProjectCatalog'},
