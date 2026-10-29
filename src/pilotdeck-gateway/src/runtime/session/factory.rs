@@ -743,7 +743,16 @@ impl LiveSession for OwnedSession {
         self.adapter.reload_signal_for_test()
     }
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
-        let turn = self.adapter.submit(input, options)?;
+        // AgentSession owns session identity; submit options only identify the turn.
+        let mut options = options
+            .as_object()
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("#748 session submit options must be an object"))?;
+        options.insert(
+            "sessionId".into(),
+            JsValue::String(self.reload_source.session_id.clone()),
+        );
+        let turn = self.adapter.submit(input, JsValue::Object(options))?;
         Ok(Box::new(OwnedTurn {
             turn,
             checkpoint: self.checkpoint.clone(),

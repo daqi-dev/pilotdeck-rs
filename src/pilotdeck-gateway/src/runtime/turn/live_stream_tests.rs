@@ -164,6 +164,7 @@ fn stream(
         recording_ready: oneshot::channel().1,
         recording: None,
         pending_event: None,
+        pending_durable: None,
         callback_cancel: None,
         accepted: false,
         preflight: 0,
@@ -416,6 +417,7 @@ async fn next_streams_payloads_with_backpressure_and_projects_final_once() {
             for event in &sent {
                 deliver(&handler, event, false).await?;
             }
+            handler.observe_loop_completion(&final_terminal);
             deliver(&handler, &final_terminal, true).await?;
             handler.dispose().await?;
             Ok(ExecuteResult::Terminal(wire(&final_terminal, true)))
@@ -569,6 +571,7 @@ async fn event_after_the_authoritative_terminal_fails_closed() {
             async move {
                 deliver(&handler, &started, false).await?;
                 deliver(&handler, &accepted, false).await?;
+                handler.observe_loop_completion(&terminal);
                 deliver(&handler, &terminal, true).await?;
                 Ok(ExecuteResult::Terminal(wire(&terminal, true)))
             }
@@ -2948,6 +2951,8 @@ async fn live_input_reads_current_history_on_every_submit() {
         let messages = completed
             .get("messages")
             .expect("#741k input fixture setup");
+        let mut message = message;
+        mark_module_message(&mut message, &"fixture".into()).expect("#748 valid history message");
         assert_eq!(
             messages,
             &JsValue::Array(vec![
@@ -4079,5 +4084,85 @@ impl LiveTurn for TurnOnly {
                 return Ok(Some(event));
             }
         })
+    }
+}
+
+#[tokio::test]
+async fn bound_malformed_durable_messages_fail_before_yield_and_persist_terminal() {
+    for raw in [
+        r#"{"type":"assistant_message"}"#,
+        r#"{"type":"tool_results_projected","message":{"role":"user","content":null}}"#,
+    ] {
+        let recorder = test_recorder();
+        let (tx, rx) = mpsc::channel(1);
+        drop(tx);
+        let integrity = Arc::new(StreamIntegrity::new());
+        *integrity
+            .module_id
+            .lock()
+            .expect("#748 bound module identity") = Some("fixture".into());
+        let mut turn = stream(
+            Box::pin(async { Ok(ExecuteResult::Aborted { terminal: None }) }),
+            rx,
+            integrity,
+        );
+        let runner = TurnRunner::new(
+            recorder.clone(),
+            test_lease(),
+            "session".into(),
+            "turn".into(),
+        );
+        let (runner, _) = runner.start().await.expect("#748 malformed fixture start");
+        let (runner, _) = runner
+            .accept(turn.input.clone())
+            .await
+            .expect("#748 malformed fixture accept");
+        turn.recording = Some(Recording::new(runner, Arc::new(())));
+        turn.accepted = true;
+        turn.callback_cancel = Some(Cancellation::default());
+        let (receipt, ack) = oneshot::channel();
+        assert!(
+            turn.record_event(
+                parse_json(raw).expect("#748 bad wire JSON"),
+                false,
+                true,
+                Some(receipt)
+            )
+            .await
+            .expect("#748 bad wire handled")
+            .is_none(),
+            "#748 malformed message never yielded"
+        );
+        let mut terminal = None;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = turn.next().await.expect("#748 malformed failure stream") {
+                assert_ne!(
+                    event.get("type"),
+                    Some(&"assistant_message".into()),
+                    "#748 malformed message not forwarded"
+                );
+                if event.get("type") == Some(&"turn_completed".into()) {
+                    terminal = event.get("result").cloned();
+                }
+            }
+        })
+        .await
+        .expect("#748 malformed bounded close");
+        assert!(ack.await.is_err(), "#748 bad durable callback cannot ACK");
+        assert_eq!(
+            terminal.as_ref().and_then(|r| r.get("type")),
+            Some(&"error".into()),
+            "#748 bad wire gets failure terminal"
+        );
+        let rows =
+            std::fs::read_to_string(recorder.writer().path()).expect("#748 bad wire transcript");
+        assert_eq!(
+            rows.lines()
+                .map(|line| parse_json(line).expect("#748 bad wire row"))
+                .filter(|row| row.get("type") == Some(&"turn_result".into()))
+                .count(),
+            1,
+            "#748 bad wire failure durable once"
+        );
     }
 }

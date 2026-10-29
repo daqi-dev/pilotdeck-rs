@@ -644,3 +644,47 @@ async fn native_replacement_commit_is_best_effort() {
     assert_eq!(port.finalize_calls.load(Ordering::SeqCst), 2);
     assert_eq!(port.warns.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn prepare_preserves_explicit_plan_mode_and_false_override() {
+    let fake = Arc::new(Fake::default());
+    let host = make_host(&fake);
+    for (fields, mode, allow) in [
+        (vec![], "agent", false),
+        (vec![("mode", "plan".into())], "plan", true),
+        (
+            vec![("mode", "plan".into()), ("runMode", "invalid".into())],
+            "agent",
+            true,
+        ),
+        (
+            vec![("mode", "plan".into()), ("runMode", "".into())],
+            "plan",
+            true,
+        ),
+        (
+            vec![
+                ("mode", "plan".into()),
+                ("runMode", "agent".into()),
+                ("allowPlanModeTools", JsValue::Bool(false)),
+            ],
+            "agent",
+            false,
+        ),
+    ] {
+        let prepared = host
+            .prepare(&fake.input(&fields), &run())
+            .await
+            .expect("#748 prepare option defaults");
+        assert_eq!(
+            prepared.options.get("runMode"),
+            Some(&JsValue::from(mode)),
+            "#748 submit run mode defaults"
+        );
+        assert_eq!(
+            prepared.options.get("allowPlanModeTools"),
+            Some(&JsValue::Bool(allow)),
+            "#748 submit explicit false survives"
+        );
+    }
+}

@@ -216,6 +216,8 @@ pub struct HostError {
     pub last_applied_sequence: Option<f64>,
     /// Module wire details, separate from transport/execution progress.
     pub module_error: Option<Box<ModuleError>>,
+    /// Bounded child stderr retained for diagnostics, never projected as protocol text.
+    pub diagnostic: String,
 }
 impl HostError {
     pub fn new(kind: HostErrorKind, message: impl Into<String>) -> Self {
@@ -226,6 +228,7 @@ impl HostError {
             stream_id: None,
             last_applied_sequence: None,
             module_error: None,
+            diagnostic: String::new(),
         }
     }
     fn protocol(message: impl Into<String>) -> Self {
@@ -241,7 +244,11 @@ impl fmt::Display for HostError {
             f,
             "{:?} (accepted={}, stream_id={:?}, last_applied_sequence={:?}): {}",
             self.kind, self.accepted, self.stream_id, self.last_applied_sequence, self.message
-        )
+        )?;
+        if !self.diagnostic.is_empty() {
+            write!(f, " stderr: {}", self.diagnostic)?;
+        }
+        Ok(())
     }
 }
 impl std::error::Error for HostError {}
@@ -341,6 +348,9 @@ pub trait HostHandler: Send + Sync + 'static {
     fn event(&self, _event: JsValue) -> HostFuture<()> {
         Box::pin(async { Ok(()) })
     }
+    /// Observe the validated, suppressed loop completion without publishing or ACKing it.
+    fn observe_loop_completion(&self, _payload: &JsValue) {}
+
     /// Synchronous lifecycle validation, called on the execution driver task
     /// after an event passed wire identity/sequence/payload validation and the
     /// host suppressed a non-authoritative turn_completed, but before it is
@@ -597,7 +607,7 @@ impl HostClient {
 fn append_diagnostic(error: &mut HostError, connection: &Connection) {
     let stderr = connection.diagnostic();
     if !stderr.is_empty() {
-        error.message.push_str(&format!(" stderr: {stderr}"));
+        error.diagnostic = stderr;
     }
 }
 

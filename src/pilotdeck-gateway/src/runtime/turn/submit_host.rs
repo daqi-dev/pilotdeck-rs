@@ -259,11 +259,42 @@ impl SubmitHost for GatewaySubmitHost {
                 )
                 .await?;
             let model_selection = self.services.resolve_model_selection(input).await?;
+            let plan = field(input, "mode") == &JsValue::from("plan");
             Ok(PreparedTurn {
                 model_selection,
                 input: agent_input,
                 options: crate::metadata::object([
                     ("turnId", JsValue::String(run.run_id.clone())),
+                    (
+                        "runMode",
+                        match field(input, "runMode") {
+                            JsValue::Null | JsValue::Undefined => {
+                                if plan {
+                                    "plan"
+                                } else {
+                                    "agent"
+                                }
+                            }
+                            JsValue::String(mode) if mode.equals_str("") => {
+                                if plan {
+                                    "plan"
+                                } else {
+                                    "agent"
+                                }
+                            }
+                            JsValue::String(mode) if mode.equals_str("plan") => "plan",
+                            _ => "agent",
+                        }
+                        .into(),
+                    ),
+                    (
+                        "allowPlanModeTools",
+                        input
+                            .get("allowPlanModeTools")
+                            .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+                            .cloned()
+                            .unwrap_or(JsValue::Bool(plan)),
+                    ),
                     (
                         "execution",
                         crate::metadata::object([

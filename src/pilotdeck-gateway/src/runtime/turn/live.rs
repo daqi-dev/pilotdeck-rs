@@ -75,6 +75,7 @@ pub struct InteractionHost {
 pub struct LiveSessionAdapter {
     host_factory: Arc<TurnHostFactory>,
     close_timeout: std::time::Duration,
+    agent_config: Option<JsObject>,
     tail: Option<Arc<super::runner::tail::SessionTail>>,
     recorder: Arc<Recorder>,
     history: Arc<dyn Fn() -> Vec<JsValue> + Send + Sync>,
@@ -112,6 +113,7 @@ impl LiveSessionAdapter {
     ) -> Self {
         Self {
             close_timeout: crate::host::Limits::default().close_timeout,
+            agent_config: None,
             tail: None,
             recorder,
             history: Arc::new(history),
@@ -130,6 +132,12 @@ impl LiveSessionAdapter {
     /// model and file collection capabilities remain unavailable.
     pub fn with_tail(mut self, tail: Arc<super::runner::tail::SessionTail>) -> Self {
         self.tail = Some(tail);
+        self
+    }
+
+    /// Session-owned serialized AgentRuntimeConfig for the real sidecar.
+    pub fn with_agent_config(mut self, config: JsObject) -> Self {
+        self.agent_config = Some(config);
         self
     }
 
@@ -152,6 +160,7 @@ impl LiveSessionAdapter {
     ) -> Self {
         Self {
             close_timeout: crate::host::Limits::default().close_timeout,
+            agent_config: None,
             tail: None,
             recorder,
             history: Arc::new(history),
@@ -230,6 +239,11 @@ impl LiveSession for LiveSessionAdapter {
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         // Invalid requests must not occupy the session's active turn slot.
         let (mut request, mut input) = parse_execute_request(&input, &options, vec![])?;
+        if let Some(config) = &self.agent_config {
+            request
+                .payload
+                .insert("agent".into(), JsValue::Object(config.clone()));
+        }
         let cancellation = Cancellation::default();
         let signal = crate::runtime::hooks::Cancellation::new();
         {
@@ -329,8 +343,11 @@ impl LiveSession for LiveSessionAdapter {
                     forwarding: Arc::default(),
                     callback_cancel: Some(cancellation.clone()),
                 });
+                let client_integrity = handler.integrity.clone();
                 let client: HostFuture<HostClient> = Box::pin(async move {
                     let client = client.await?;
+                    *client_integrity.module_id.lock().unwrap() =
+                        Some(client.binding().module_id.clone());
                     reload_execution.store(true, std::sync::atomic::Ordering::SeqCst);
                     Ok(client)
                 });
@@ -365,6 +382,7 @@ impl LiveSession for LiveSessionAdapter {
             recording_ready,
             recording: None,
             pending_event: None,
+            pending_durable: None,
             accepted: false,
             preflight: 0,
             execute_ready: Some(execute_ready),
@@ -484,6 +502,7 @@ pub(super) struct LiveTurnStream {
     recording: Option<Recording>,
     // A cancelled next drops only its borrow, never the transition or payload.
     pending_event: Option<(JsValue, bool, StatusReceipt)>,
+    pending_durable: Option<(JsValue, StatusReceipt)>,
     callback_cancel: Option<Cancellation>,
     accepted: bool,
     preflight: u8,
@@ -499,6 +518,16 @@ impl LiveTurn for LiveTurnStream {
                     if let Some(event) = self.settle_recording().await? {
                         return Ok(Some(event));
                     }
+                    continue;
+                }
+                if let Some((message, receipt)) = self.pending_durable.take() {
+                    self.begin_recording(
+                        RecordingAction::Durable(message),
+                        JsValue::Null,
+                        false,
+                        receipt,
+                    )
+                    .await?;
                     continue;
                 }
                 if let Some(error) = self.recording.as_ref().and_then(Recording::callback_error) {
@@ -657,10 +686,10 @@ impl LiveTurnStream {
 
     async fn record_event(
         &mut self,
-        event: JsValue,
+        mut event: JsValue,
         terminal: bool,
         wire: bool,
-        receipt: StatusReceipt,
+        mut receipt: StatusReceipt,
     ) -> Result<Option<JsValue>, RuntimeError> {
         if !terminal {
             self.delivered.observe_source(&event, wire)?;
@@ -672,6 +701,40 @@ impl LiveTurnStream {
             && let Some(runner) = self.recording.as_mut().and_then(Recording::runner_mut)
         {
             runner.observe_tool_result(event.get("result").unwrap_or(&JsValue::Undefined));
+        }
+        let durable_wire = wire
+            && self.integrity.module_id.lock().unwrap().is_some()
+            && self.recording.is_some()
+            && event
+                .get("type")
+                .and_then(JsValue::as_string)
+                .is_some_and(|kind| {
+                    kind.equals_str("assistant_message")
+                        || kind.equals_str("tool_results_projected")
+                });
+        if durable_wire {
+            let message = event.get("message").cloned().unwrap_or(JsValue::Undefined);
+            if super::runner::classify_durable_message(&message).is_err() {
+                // Never expose malformed payloads. The owned durable transition
+                // records its callback error, then the next poll joins the host
+                // and commits the ordinary failure terminal before releasing.
+                self.pending_durable = Some((message, receipt.take()));
+                return Ok(None);
+            }
+        }
+        if let (Some(module), JsValue::Object(fields)) = (
+            self.integrity.module_id.lock().unwrap().as_ref(),
+            &mut event,
+        ) && let Some(mut message) = fields.get("message").cloned()
+        {
+            mark_module_message(&mut message, module)?;
+            fields.insert("message".into(), message);
+        }
+        if durable_wire {
+            self.pending_durable = Some((
+                event.get("message").cloned().unwrap_or(JsValue::Undefined),
+                receipt.take(),
+            ));
         }
         let action = match event.get("type").and_then(JsValue::as_string) {
             Some(kind) if kind.equals_str("turn_started") => Some(RecordingAction::Start),
@@ -752,6 +815,9 @@ impl LiveTurnStream {
         if let Some(receipt) = receipt {
             let _ = receipt.send(());
         }
+        if events.is_empty() && event == JsValue::Null && !terminal {
+            return Ok(None);
+        }
         if event.get("type") == Some(&"turn_failed".into()) {
             // Preserve the loop event (including timeline/extensions), while the
             // runner contributes only its optional durable failure status.
@@ -809,15 +875,22 @@ impl LiveTurnStream {
                 // a success final); keep this second, fail-closed gate so the
                 // cancellation exit cannot hide it.
                 self.integrity.observe_terminal(outcome)?;
+                if outcome.is_some_and(|kind| kind.equals_str("success"))
+                    && !*self.integrity.loop_completed.lock().unwrap()
+                {
+                    return Err(RuntimeError::new(
+                        "Sidecar success final arrived before loop completion.",
+                    ));
+                }
                 Ok(Some(self.completed_event(
                     terminal.get("payload").unwrap_or(&JsValue::Undefined),
-                )))
+                )?))
             }
             Ok(ExecuteResult::Aborted { terminal }) => {
                 self.integrity.observe_aborted()?;
                 self.delivered.observe_aborted()?;
                 let terminal = terminal.unwrap_or_else(|| self.aborted_result());
-                Ok(Some(self.completed_event(&terminal)))
+                Ok(Some(self.completed_event(&terminal)?))
             }
             Ok(ExecuteResult::Rejected(error)) => Err(RuntimeError {
                 message: "Turn execution rejected.".into(),
@@ -834,7 +907,27 @@ impl LiveTurnStream {
         }
     }
 
-    fn completed_event(&self, terminal: &JsValue) -> JsValue {
+    fn completed_event(&self, terminal: &JsValue) -> Result<JsValue, RuntimeError> {
+        let mut terminal = terminal.clone();
+        if let (Some(module), JsValue::Object(fields)) = (
+            self.integrity.module_id.lock().unwrap().as_ref(),
+            &mut terminal,
+        ) {
+            if let Some(mut result) = fields.get("result").and_then(JsValue::as_object).cloned()
+                && let Some(mut message) = result.get("finalMessage").cloned()
+            {
+                mark_module_message(&mut message, module)?;
+                result.insert("finalMessage".into(), message);
+                fields.insert("result".into(), JsValue::Object(result));
+            }
+            if let Some(JsValue::Array(messages)) = fields.get("messages") {
+                let mut messages = messages.clone();
+                for message in &mut messages {
+                    mark_module_message(message, module)?;
+                }
+                fields.insert("messages".into(), JsValue::Array(messages));
+            }
+        }
         let mut event = JsObject::new();
         event.insert("type".into(), "turn_completed".into());
         event.insert(
@@ -859,7 +952,7 @@ impl LiveTurnStream {
                 .cloned()
                 .unwrap_or(JsValue::Undefined),
         );
-        JsValue::Object(event)
+        Ok(JsValue::Object(event))
     }
 
     fn aborted_result(&self) -> JsValue {
@@ -1277,8 +1370,14 @@ impl StreamHandler {
                     // receipt in LiveTurn across cancelled next() borrows.
                     let (receipt, recorded) = if record_status
                         && wire
-                        && event.get("type") == Some(&"agent_status".into())
-                    {
+                        && event
+                            .get("type")
+                            .and_then(JsValue::as_string)
+                            .is_some_and(|kind| {
+                                kind.equals_str("agent_status")
+                                    || kind.equals_str("assistant_message")
+                                    || kind.equals_str("tool_results_projected")
+                            }) {
                         let (send, receive) = oneshot::channel();
                         (Some(send), Some(receive))
                     } else {
@@ -1331,6 +1430,12 @@ impl StreamHandler {
 impl HostHandler for StreamHandler {
     fn module_call(&self, call: JsValue) -> HostFuture<JsObject> {
         self.forward(self.inner.module_call(call), None, None, true, false)
+    }
+
+    fn observe_loop_completion(&self, payload: &JsValue) {
+        self.inner.observe_loop_completion(payload);
+        *self.integrity.loop_completed.lock().unwrap() =
+            payload.get("result").and_then(|r| r.get("type")) == Some(&"success".into());
     }
 
     fn validate_event(&self, payload: &JsValue) -> Result<EventGuard, HostError> {
@@ -1421,6 +1526,8 @@ struct StreamIntegrity {
     state: Mutex<IntegrityState>,
     host_error: Mutex<Option<String>>,
     wire_events: Mutex<usize>,
+    loop_completed: Mutex<bool>,
+    module_id: Mutex<Option<JsString>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1437,6 +1544,8 @@ impl StreamIntegrity {
             state: Mutex::new(IntegrityState::Initial),
             host_error: Mutex::default(),
             wire_events: Mutex::new(0),
+            loop_completed: Mutex::new(false),
+            module_id: Mutex::default(),
         }
     }
 
@@ -1546,8 +1655,9 @@ fn parse_execute_request(
     // Extract required fields from input/options
     let session_id = extract_string(options, "sessionId")?;
     let turn_id = extract_string(options, "turnId")?;
-    let run_id = extract_string(options, "runId").unwrap_or_else(|_| turn_id.clone());
-    let operation_id = extract_string(options, "operationId").unwrap_or_else(|_| "default".into());
+    let execution = options.get("execution").unwrap_or(options);
+    let run_id = extract_string(execution, "runId").unwrap_or_else(|_| turn_id.clone());
+    let operation_id = extract_string(execution, "operationId").unwrap_or_else(|_| turn_id.clone());
     let request_id = extract_string(options, "requestId").unwrap_or_else(|_| "default".into());
 
     let synthetic = match options.get("syntheticMessages") {
@@ -1581,8 +1691,14 @@ fn parse_execute_request(
                 turn_id,
             },
             payload,
-            idempotency_key: None,
-            operation_deadline: None,
+            idempotency_key: execution
+                .get("idempotencyKey")
+                .and_then(JsValue::as_string)
+                .cloned(),
+            operation_deadline: execution
+                .get("operationDeadline")
+                .and_then(JsValue::as_string)
+                .cloned(),
         },
         input,
     ))
@@ -1601,8 +1717,33 @@ fn extract_string(obj: &JsValue, key: &str) -> Result<JsString, RuntimeError> {
     }
 }
 
+fn mark_module_message(message: &mut JsValue, module: &JsString) -> Result<(), RuntimeError> {
+    let kind = super::runner::classify_durable_message(message).map_err(RuntimeError::new)?;
+    if kind != "durable_message"
+        && let JsValue::Object(message) = message
+    {
+        let mut metadata = message
+            .get("metadata")
+            .and_then(JsValue::as_object)
+            .cloned()
+            .unwrap_or_default();
+        metadata.insert("moduleId".into(), JsValue::String(module.clone()));
+        message.insert("metadata".into(), JsValue::Object(metadata));
+    }
+    Ok(())
+}
+
 fn map_host_error(error: HostError) -> RuntimeError {
-    RuntimeError::new(format!("Host execution failed: {}", error.message))
+    if error.kind == HostErrorKind::Protocol
+        && (error
+            .message
+            .starts_with("Sidecar event sequence mismatch:")
+            || error.message == "Sidecar success final arrived before loop completion.")
+    {
+        RuntimeError::new(error.message)
+    } else {
+        RuntimeError::new(format!("Host execution failed: {}", error.message))
+    }
 }
 
 #[cfg(test)]

@@ -648,6 +648,12 @@ async fn live_session_shares_recorder_and_reads_current_history() {
             Some(&"success".into()),
             "#741k every history turn must execute successfully in its own sidecar"
         );
+        let mut previous = previous.as_object().expect("#748 history object").clone();
+        previous.insert(
+            "metadata".into(),
+            parse_json(r#"{"moduleId":"fixture"}"#).expect("#748 module ownership"),
+        );
+        let previous = JsValue::Object(previous);
         assert_eq!(
             completed.get("messages"),
             Some(&JsValue::Array(vec![

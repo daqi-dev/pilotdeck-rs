@@ -79,7 +79,10 @@ if mode == "hold":
         time.sleep(1)
 send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=0, final=False,
           **identity, payload=dict(type="model_request_started", sessionId=session, turnId=turn)))
-send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=1, final=True,
+send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=1, final=False,
+          **identity, payload=dict(type="turn_completed", sessionId=session, turnId=turn,
+                                  result=dict(type="success", sessionId=session, turnId=turn))))
+send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=2, final=True,
           outcome="completed", **identity,
           payload=dict(result=dict(type="success", sessionId=session, turnId=turn,
                                   stopReason="completed", turns=1), messages=messages)))

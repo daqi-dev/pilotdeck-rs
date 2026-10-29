@@ -941,3 +941,75 @@ fn regeneration_masks_reject_invalid_numbers_duplicates_and_bad_tail_changes() {
 }
 
 regeneration!(live_session_regenerates_identically, "live-session");
+
+regeneration!(live_e2e_regenerates_identically, "live-e2e");
+
+#[test]
+fn live_e2e_companions_reject_missing_corrupt_and_symlink() {
+    use std::{fs, path::Path};
+    let committed = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/live-e2e");
+    let root = std::env::temp_dir().join(format!("pdrs-748-companions-{}", uuid::Uuid::new_v4()));
+    let output = root.join("expected");
+    fs::create_dir_all(&output).expect("#748 companion test directory");
+    let names =
+        baseline::companion_names("live-e2e", &committed).expect("#748 fixed companion inventory");
+    assert_eq!(names.len(), 7, "#748 all seven companion files");
+    for name in &names {
+        fs::write(
+            output.join(name),
+            fs::read(committed.join("expected").join(name)).expect("#748 read genuine companion"),
+        )
+        .expect("#748 companion test input");
+    }
+    let check = || baseline::compare_companion_files("live-e2e", &root, &committed);
+    check().expect("#748 exact companion positive");
+    for name in &names {
+        let path = output.join(name);
+        let original = fs::read(&path).expect("#748 owned companion original");
+        fs::remove_file(&path).expect("#748 remove test companion");
+        assert!(
+            check()
+                .expect_err("#748 missing companion rejected")
+                .contains(name),
+            "#748 missing companion diagnostic"
+        );
+        fs::write(&path, b"corrupt").expect("#748 corrupt test companion");
+        assert!(
+            check()
+                .expect_err("#748 corrupt companion rejected")
+                .contains("differs"),
+            "#748 full companion bytes"
+        );
+        fs::remove_file(&path).expect("#748 remove corrupt test companion");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(committed.join("expected").join(name), &path)
+                .expect("#748 symlink test companion");
+            assert!(
+                check()
+                    .expect_err("#748 symlink companion rejected")
+                    .contains("regular file"),
+                "#748 companion file ownership"
+            );
+            fs::remove_file(&path).expect("#748 remove test symlink");
+        }
+        fs::write(&path, original).expect("#748 restore companion");
+        check().expect("#748 restored companion positive");
+    }
+    #[cfg(unix)]
+    {
+        fs::rename(&output, root.join("saved")).expect("#748 move owned companion directory");
+        std::os::unix::fs::symlink(root.join("saved"), &output)
+            .expect("#748 symlink expected directory");
+        assert!(
+            check()
+                .expect_err("#748 directory symlink rejected")
+                .contains("regular directory"),
+            "#748 companion directory ownership"
+        );
+        fs::remove_file(&output).expect("#748 remove test directory symlink");
+        fs::rename(root.join("saved"), &output).expect("#748 restore companion directory");
+        check().expect("#748 restored directory positive");
+    }
+    fs::remove_dir_all(root).expect("#748 remove owned companion test directory");
+}

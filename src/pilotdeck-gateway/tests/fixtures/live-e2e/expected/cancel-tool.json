@@ -1,0 +1,529 @@
+{
+  "active": false,
+  "events": [
+    {
+      "runId": "run-cancel-tool",
+      "type": "turn_started"
+    },
+    {
+      "runId": "run-cancel-tool",
+      "type": "input_accepted"
+    },
+    {
+      "model": "mock-model",
+      "provider": "live-e2e",
+      "runId": "run-cancel-tool",
+      "type": "model_request_started"
+    },
+    {
+      "blockingRatio": 0,
+      "displayUsed": 0,
+      "effectiveTotal": 128000,
+      "maxContextTokens": 128000,
+      "ratio": 0,
+      "reservedOutputTokens": 0,
+      "runId": "run-cancel-tool",
+      "state": "ok",
+      "total": 128000,
+      "type": "context_budget",
+      "used": 0,
+      "warningRatio": 0
+    },
+    {
+      "model": "mock-model",
+      "provider": "live-e2e",
+      "runId": "run-cancel-tool",
+      "source": "default",
+      "type": "model_selection_changed"
+    },
+    {
+      "argsPreview": "{\"file_path\":\"<CASE>/sandbox/tool-target.txt\"}",
+      "name": "read_file",
+      "runId": "run-cancel-tool",
+      "timeline": {
+        "id": "tool:call-live-e2e-read",
+        "order": 0,
+        "revision": 2,
+        "turnId": "run-cancel-tool",
+        "version": 1
+      },
+      "toolCallId": "call-live-e2e-read",
+      "type": "tool_call_started"
+    },
+    {
+      "finishReason": "aborted_streaming",
+      "runId": "run-cancel-tool",
+      "type": "turn_completed",
+      "usage": {}
+    }
+  ],
+  "modelCalls": 1,
+  "record": {
+    "acceptedAt": "2026-10-26T00:00:00.000Z",
+    "lastSeq": 7,
+    "ownerPid": "<PID>",
+    "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"LIVE_E2E_CANCEL_TOOL <CASE>/sandbox/tool-target.txt\",\"sessionKey\":\"live-e2e-session\"}",
+    "result": {
+      "finishReason": "aborted_streaming",
+      "runId": "run-cancel-tool",
+      "type": "turn_completed",
+      "usage": {}
+    },
+    "revision": 8,
+    "runId": "run-cancel-tool",
+    "sessionKey": "live-e2e-session",
+    "state": "aborted",
+    "updatedAt": "2026-10-26T00:00:00.000Z"
+  },
+  "registryEvents": [
+    {
+      "event": {
+        "runId": "run-cancel-tool",
+        "type": "turn_started"
+      },
+      "seq": 1
+    },
+    {
+      "event": {
+        "runId": "run-cancel-tool",
+        "type": "input_accepted"
+      },
+      "seq": 2
+    },
+    {
+      "event": {
+        "model": "mock-model",
+        "provider": "live-e2e",
+        "runId": "run-cancel-tool",
+        "type": "model_request_started"
+      },
+      "seq": 3
+    },
+    {
+      "event": {
+        "blockingRatio": 0,
+        "displayUsed": 0,
+        "effectiveTotal": 128000,
+        "maxContextTokens": 128000,
+        "ratio": 0,
+        "reservedOutputTokens": 0,
+        "runId": "run-cancel-tool",
+        "state": "ok",
+        "total": 128000,
+        "type": "context_budget",
+        "used": 0,
+        "warningRatio": 0
+      },
+      "seq": 4
+    },
+    {
+      "event": {
+        "model": "mock-model",
+        "provider": "live-e2e",
+        "runId": "run-cancel-tool",
+        "source": "default",
+        "type": "model_selection_changed"
+      },
+      "seq": 5
+    },
+    {
+      "event": {
+        "argsPreview": "{\"file_path\":\"<CASE>/sandbox/tool-target.txt\"}",
+        "name": "read_file",
+        "runId": "run-cancel-tool",
+        "timeline": {
+          "id": "tool:call-live-e2e-read",
+          "order": 0,
+          "revision": 2,
+          "turnId": "run-cancel-tool",
+          "version": 1
+        },
+        "toolCallId": "call-live-e2e-read",
+        "type": "tool_call_started"
+      },
+      "seq": 6
+    },
+    {
+      "event": {
+        "finishReason": "aborted_streaming",
+        "runId": "run-cancel-tool",
+        "type": "turn_completed",
+        "usage": {}
+      },
+      "seq": 7
+    }
+  ],
+  "scenario": "cancel-tool",
+  "toolEntered": true,
+  "toolResults": [
+    {
+      "completedAt": "2026-10-26T00:00:00.000Z",
+      "content": [
+        {
+          "text": "TOOL_ERROR[tool_aborted][read_file][retry_later]\nSummary: File reading was aborted.\nEvidence:\n- File reading was aborted.\nOriginal error:\nFile reading was aborted.\nNext actions:\n1. Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default.",
+          "type": "text"
+        }
+      ],
+      "error": {
+        "code": "tool_aborted",
+        "message": "File reading was aborted."
+      },
+      "metadata": {
+        "recovery": {
+          "failureClass": "retry_later",
+          "nextActions": [
+            "Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default."
+          ],
+          "originalError": "File reading was aborted.",
+          "salientEvidence": [
+            "File reading was aborted."
+          ],
+          "summary": "File reading was aborted."
+        }
+      },
+      "startedAt": "2026-10-26T00:00:00.000Z",
+      "toolCallId": "call-live-e2e-read",
+      "toolName": "read_file",
+      "type": "error"
+    }
+  ],
+  "transcript": [
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-1",
+      "parentEntryId": null,
+      "sequence": 1,
+      "sessionId": "live-e2e-session",
+      "turnId": "run-cancel-tool",
+      "type": "turn_started"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-2",
+      "messages": [
+        {
+          "content": [
+            {
+              "text": "LIVE_E2E_CANCEL_TOOL <CASE>/sandbox/tool-target.txt",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "metadata": {
+        "allowPlanModeTools": false,
+        "runMode": "agent"
+      },
+      "parentEntryId": "entry-1",
+      "sequence": 2,
+      "sessionId": "live-e2e-session",
+      "turnId": "run-cancel-tool",
+      "type": "accepted_input"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "detail": {
+        "blockingRatio": 0,
+        "displayUsed": 0,
+        "effectiveTotal": 128000,
+        "maxContextTokens": 128000,
+        "ratio": 0,
+        "reservedOutputTokens": 0,
+        "runId": "run-cancel-tool",
+        "state": "ok",
+        "total": 128000,
+        "type": "context_budget",
+        "used": 0,
+        "warningRatio": 0
+      },
+      "entryId": "entry-3",
+      "event": "context_budget",
+      "kind": "status",
+      "parentEntryId": "entry-2",
+      "sequence": 3,
+      "sessionId": "live-e2e-session",
+      "text": "context_budget",
+      "turnId": "run-cancel-tool",
+      "type": "agent_status_message"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-4",
+      "parentEntryId": "entry-3",
+      "sequence": 4,
+      "sessionId": "live-e2e-session",
+      "step": 1,
+      "turnId": "run-cancel-tool",
+      "type": "step_started"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-5",
+      "parentEntryId": "entry-4",
+      "request": {
+        "messages": [
+          {
+            "content": [
+              {
+                "text": "LIVE_E2E_CANCEL_TOOL <CASE>/sandbox/tool-target.txt",
+                "type": "text"
+              }
+            ],
+            "role": "user"
+          }
+        ],
+        "model": "mock-model",
+        "provider": "live-e2e",
+        "stream": true,
+        "systemPrompt": "You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.\nOperate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.\n\nDocumentation lookup policy:\nWhen implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. State any remaining uncertainty and proceed conservatively.\n\nParallel delegation policy:\nWhen the agent tool is available and the task contains two or more independent, repetitive, or separable workstreams, prefer launching multiple subagents in the same assistant message instead of waiting for one to finish before starting the next. Good parallel candidates include inspecting multiple files/modules, researching independent APIs, checking several artifacts, or comparing alternatives. Do not parallelize tasks that write to the same files, depend on another subagent's output, require shared ordering, or need user approval between steps. Give each subagent a self-contained prompt, distinct scope, and expected output. After all sibling results return, synthesize them yourself and decide the next step.\n\nReusable script workflow:\nWhen code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.\n\nPermission mode: default — write/shell tools require explicit approval.\n\n<user-context>\ncwd: <CASE>/sandbox\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \"foo.html\", not an absolute path like \"/home/user/foo.html\". If the user explicitly provides a path, respect their choice.\nmodel: live-e2e/mock-model\npermission_mode: default\nrun_mode: agent\nplatform: darwin\nnode: v22.22.0\n</user-context>\n\n<environment>\nnow: 2026-10-26\n</environment>",
+        "tools": [
+          {
+            "description": "Reads a file from the current workspace. You can access workspace files directly by using this tool.\nIf the User provides a path to a file, assume that path is valid as long as it resolves inside the current workspace. It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n- The file_path parameter may be a workspace-relative path or an absolute path, but it must resolve inside the current workspace\n- If the user asks you to send or share a file, use send_attachment instead of read_file; do not inspect arbitrary binary files before sending them\n- By default, offset is 1 and the tool reads from the beginning of the file\n- You can optionally specify offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n- Results are returned using cat -n format, with line numbers starting at 1\n- For image files, screenshots, extracted video frames, and PDFs, use this tool to inspect the visual/document content directly\n- When the current model supports image input, image files are returned as model-visible image content\n- When the current model supports PDF input, small PDF files are returned as model-visible PDF content. When specific PDF pages are requested, pages are rendered as model-visible images if the model supports image input\n- Do not manually base64-encode local images/PDFs or route them through another vision/document API unless read_file reports that the current model cannot read that content\n- When the current model does not support the required modality, reading the file returns a text notice explaining that the current model cannot read it\n- For large PDFs, provide the pages parameter to validate specific page ranges (e.g., pages: \"1-5\"). Maximum 20 pages per request\n- This tool can read Jupyter notebooks (.ipynb files) and returns a text rendering of notebook cells and outputs\n- This tool can only read files, not directories\n- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents\n- If a previous tool result says it was persisted, truncated, or preview-only, read the file_path shown in that notice with read_file",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "file_path": {
+                  "description": "The relative or absolute path to the file to read. The path must resolve inside the current workspace.",
+                  "type": "string"
+                },
+                "limit": {
+                  "description": "The number of lines to read. Only provide if the file is too large to read at once.",
+                  "type": "integer"
+                },
+                "offset": {
+                  "description": "The 1-based line number to start reading from. Only provide if the file is too large to read at once.",
+                  "type": "integer"
+                },
+                "pages": {
+                  "description": "Page range for PDF files (e.g., \"1-5\", \"3\", \"10-20\"). Only applicable to PDF files. Maximum 20 pages per request.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "file_path"
+              ],
+              "type": "object"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      "sequence": 5,
+      "sessionId": "live-e2e-session",
+      "step": 1,
+      "turnId": "run-cancel-tool",
+      "type": "model_request"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-6",
+      "event": {
+        "model": "mock-model",
+        "provider": "live-e2e",
+        "providerBaseUrl": "http://127.0.0.1:<PORT>/v1",
+        "requestFingerprint": "<REQUEST-SHA256-VERIFIED>",
+        "type": "request_started"
+      },
+      "parentEntryId": "entry-5",
+      "sequence": 6,
+      "sessionId": "live-e2e-session",
+      "step": 1,
+      "turnId": "run-cancel-tool",
+      "type": "model_stream_event"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-7",
+      "event": {
+        "role": "assistant",
+        "type": "message_start"
+      },
+      "parentEntryId": "entry-6",
+      "sequence": 7,
+      "sessionId": "live-e2e-session",
+      "step": 1,
+      "turnId": "run-cancel-tool",
+      "type": "model_stream_event"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-8",
+      "event": {
+        "id": "call-live-e2e-read",
+        "name": "read_file",
+        "type": "tool_call_start"
+      },
+      "parentEntryId": "entry-7",
+      "sequence": 8,
+      "sessionId": "live-e2e-session",
+      "step": 1,
+      "turnId": "run-cancel-tool",
+      "type": "model_stream_event"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-9",
+      "event": {
+        "delta": "{\"file_path\":\"<CASE>/sandbox/tool-target.txt\"}",
+        "id": "call-live-e2e-read",
+        "type": "tool_call_delta"
+      },
+      "parentEntryId": "entry-8",
+      "sequence": 9,
+      "sessionId": "live-e2e-session",
+      "step": 1,
+      "turnId": "run-cancel-tool",
+      "type": "model_stream_event"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-10",
+      "event": {
+        "toolCall": {
+          "id": "call-live-e2e-read",
+          "input": {
+            "file_path": "<CASE>/sandbox/tool-target.txt"
+          },
+          "name": "read_file"
+        },
+        "type": "tool_call_end",
+        "wasRepaired": false
+      },
+      "parentEntryId": "entry-9",
+      "sequence": 10,
+      "sessionId": "live-e2e-session",
+      "step": 1,
+      "turnId": "run-cancel-tool",
+      "type": "model_stream_event"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-11",
+      "event": {
+        "finishReason": "tool_call",
+        "type": "message_end"
+      },
+      "parentEntryId": "entry-10",
+      "sequence": 11,
+      "sessionId": "live-e2e-session",
+      "step": 1,
+      "turnId": "run-cancel-tool",
+      "type": "model_stream_event"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-12",
+      "message": {
+        "content": [
+          {
+            "id": "call-live-e2e-read",
+            "input": {
+              "file_path": "<CASE>/sandbox/tool-target.txt"
+            },
+            "name": "read_file",
+            "raw": {
+              "choices": [
+                {
+                  "delta": {},
+                  "finish_reason": "tool_calls",
+                  "index": 0
+                }
+              ],
+              "created": 1792972800,
+              "id": "chatcmpl-live-e2e",
+              "model": "mock-model",
+              "object": "chat.completion.chunk"
+            },
+            "timeline": {
+              "id": "tool:call-live-e2e-read",
+              "order": 0,
+              "revision": 2,
+              "turnId": "run-cancel-tool",
+              "version": 1
+            },
+            "type": "tool_call"
+          }
+        ],
+        "metadata": {
+          "model": "mock-model",
+          "moduleId": "pilotdeck-agent-loop"
+        },
+        "role": "assistant"
+      },
+      "parentEntryId": "entry-11",
+      "sequence": 12,
+      "sessionId": "live-e2e-session",
+      "turnId": "run-cancel-tool",
+      "type": "assistant_message"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-13",
+      "outcome": "aborted",
+      "parentEntryId": "entry-12",
+      "sequence": 13,
+      "sessionId": "live-e2e-session",
+      "step": 1,
+      "turnId": "run-cancel-tool",
+      "type": "step_completed"
+    },
+    {
+      "createdAt": "2026-10-26T00:00:00.000Z",
+      "entryId": "entry-14",
+      "parentEntryId": "entry-13",
+      "result": {
+        "completedAt": "2026-10-26T00:00:00.000Z",
+        "finalMessage": {
+          "content": [
+            {
+              "id": "call-live-e2e-read",
+              "input": {
+                "file_path": "<CASE>/sandbox/tool-target.txt"
+              },
+              "name": "read_file",
+              "raw": {
+                "choices": [
+                  {
+                    "delta": {},
+                    "finish_reason": "tool_calls",
+                    "index": 0
+                  }
+                ],
+                "created": 1792972800,
+                "id": "chatcmpl-live-e2e",
+                "model": "mock-model",
+                "object": "chat.completion.chunk"
+              },
+              "timeline": {
+                "id": "tool:call-live-e2e-read",
+                "order": 0,
+                "revision": 2,
+                "turnId": "run-cancel-tool",
+                "version": 1
+              },
+              "type": "tool_call"
+            }
+          ],
+          "metadata": {
+            "model": "mock-model",
+            "moduleId": "pilotdeck-agent-loop"
+          },
+          "role": "assistant"
+        },
+        "permissionDenials": [],
+        "sessionId": "live-e2e-session",
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "stopReason": "aborted_streaming",
+        "turnId": "run-cancel-tool",
+        "turns": 1,
+        "type": "aborted",
+        "usage": {}
+      },
+      "sequence": 14,
+      "sessionId": "live-e2e-session",
+      "turnId": "run-cancel-tool",
+      "type": "turn_result"
+    }
+  ]
+}
