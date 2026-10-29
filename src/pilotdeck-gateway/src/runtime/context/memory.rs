@@ -188,7 +188,8 @@ fn tool_result_text(block: &JsValue) -> Result<JsString, String> {
     Ok(JsString::from_utf16(units))
 }
 
-pub(super) async fn build(
+/// Build one memory attachment with the resolver's timeout and parent signal.
+pub async fn build(
     resolver: &dyn MemoryResolver,
     mut input: MemoryRetrieveInput,
     parent: Option<&Cancellation>,

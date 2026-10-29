@@ -537,6 +537,10 @@ regeneration!(
 );
 regeneration!(edgeclaw_storage_regenerates_identically, "edgeclaw-storage");
 regeneration!(edgeclaw_text_regenerates_identically, "edgeclaw-text");
+regeneration!(
+    edgeclaw_provider_regenerates_identically,
+    "edgeclaw-provider"
+);
 
 #[test]
 fn regeneration_layout_rejects_missing_ambiguous_and_symlink_outputs() {
