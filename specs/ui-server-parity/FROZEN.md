@@ -11,6 +11,12 @@
 > 守卫执行，属尺子 P0 级旁路。新增 `#1023-11` 运行时回归（三种场景 × 22 入口，伪造模块
 > 用标记文件证明未执行）与 `os-preflight-removed` 负控。判分/比较语义未变；本轮仅重登记
 > 上述 22 行哈希。
+> **2026-10-30 fix-r5**（#1023，AI 代批，待人复核）：`test_frozen.py` 的 `#1023-11`
+> 回归由空转夹具改为真实注入（`-X frozen_modules=off`、卸载 `sys.modules['os']`、
+> 真实 forge 目录上 `sys.path`、独立传标记文件），并加配对控制：删掉预检的同一入口
+> 必须执行伪造 `os.py`（标记文件出现），正式入口必须精确命中预检且无标记。另新增
+> 6 个 fixture 守卫的 os 预检与装置目录重插入回归。22 个入口、判分/比较语义与阈值
+> 未变；仅重登记 `test_frozen.py` 一行。
 > **2026-10-14 重新冻结**（AI 代批，待人复核）。PR #93（#59 路由审批门与白名单、#80 反代 WS 四项、#88/#89 P2）改动装置后重新定标：main eb2f2c7，仓外 detached checkout，同一 UTC 日 20 遍 TS 参考池 + 5 遍 TS 计分 + 1 遍 proxy；TS 十对 10/10、proxy PASS（7 个 WS 握手无 Date、下行 close 各一）、26 遍时钟 PASS、无重采 / REFUSED / 近似测量。两家评审（GLM、Claude）均「无 P0/P1，可冻结」。上一版冻结（PR #90，批次 7d28f0de）随装置变更失效。Rust 路由豁免审批须为 human-approvers.txt 白名单身份（与本冻结记录的代批规则不同，见 acceptance.md）。
 > 定标命令及重采规则：`scripts/ui-server-parity/README.md`；不得借历史 replay 定标。
 > 冻结时由协调者补定标证据与两家评审路径、替换下方审批及依据占位，再移除首行「待定标」。`Approved-By:` 接受具名人或「AI 代批，待人复核（协调者）」，并必须有 `Approval-Basis:` 记明定标报告路径和两家评审路径。冻结后变更需遵循 CLAUDE.md §五。
@@ -64,7 +70,7 @@ cc6e3a2be2497e900bd55e6fbce0d8c874c663288502cbdcbd8ff8b8bb919cb1  ../../scripts/
 fce6b194ea7ac70698fcc957e5064a2f51633852ed6adeb298d65529f0ac2976  ../../scripts/ui-server-parity/test_chat_driver.mjs
 d796d56ee40603bd9f9c0ef9c735eb118867b722ec57cc0e57b8cf1245bd36b6  ../../scripts/ui-server-parity/test_compare.py
 17b60d89802f87ec968354ed5d34969498a906b264fcff3dab9781e8215341c7  ../../scripts/ui-server-parity/test_coverage.py
-a8e4a0e9812cd72ab0f9a246bb3cf4562f13971ee34d35f7f6a67ed30a19513f  ../../scripts/ui-server-parity/test_frozen.py
+0d19757e5cca65a9217a9308e548e2ff730e63e14bcb4b7712c53fd687193b45  ../../scripts/ui-server-parity/test_frozen.py
 43a7089678997c03dea57219faf29a67b8325c98078ac4696e788b760bb98a5b  ../../scripts/ui-server-parity/test_multimodal.py
 6bcc00d4e369a0374d8366110f849ed79f212e0f0bdfe9848372953150418f40  ../../scripts/ui-server-parity/test_recording.py
 9ccf2a7fef528fdfecea33b8c9dc0c9cbd2982f09631b6fe2f3e377dca122d5e  ../../scripts/ui-server-parity/verify_auth.mjs

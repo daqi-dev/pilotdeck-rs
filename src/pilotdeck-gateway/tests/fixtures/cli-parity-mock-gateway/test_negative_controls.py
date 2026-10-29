@@ -22,10 +22,18 @@ import os as _boot_os
 # very directory while realpath keeps both spellings distinct, so the r1
 # string comparison let a reinsertion through (fix-r2 P1-1).
 _boot_dir = _boot_os.path.dirname(_boot_os.path.realpath(__file__))
-_boot_roots = (_boot_dir, _boot_os.path.dirname(_boot_dir))
+# The apparatus this driver exercises is also a boot-time import
+# surface: a caller can insert scripts/cli-parity and shadow a stdlib
+# module before any check (GLM r4 sibling P2-2).
+_boot_root = _boot_os.path.dirname(_boot_os.path.dirname(
+    _boot_os.path.dirname(_boot_os.path.dirname(
+        _boot_os.path.dirname(_boot_dir)))))
+_boot_roots = (_boot_dir, _boot_os.path.dirname(_boot_dir),
+               _boot_os.path.join(_boot_root, 'scripts', 'cli-parity'))
 if not _boot_sys.flags.isolated or any(
         _boot_os.path.isdir(entry or _boot_os.curdir)
-        and any(_boot_os.path.samefile(entry or _boot_os.curdir, root)
+        and any(_boot_os.path.isdir(root)
+                and _boot_os.path.samefile(entry or _boot_os.curdir, root)
                 for root in _boot_roots)
         for entry in _boot_sys.path):
     raise SystemExit(f'#1023: unsafe import path; run with -I by file: python3 -I {__file__}')
@@ -42,6 +50,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -246,6 +255,18 @@ class UnittestBlocksTests(unittest.TestCase):
         bodies = bound_failure_bodies(blocks, 'ContractTests.test_gateway_probe')
         self.assertEqual(len(bodies), 1)
         self.assertIn('#933-4:', '\n'.join(bodies[0]))
+
+    def test_short_description_before_the_traceback_is_skipped(self):
+        described = KILLED_LOG.replace(
+            '----------------------------------------------------------------------\n'
+            'Traceback',
+            'fix-r5: a verbose short description.\n'
+            '----------------------------------------------------------------------\n'
+            'Traceback', 1)
+        self.assertNotEqual(described, KILLED_LOG)
+        blocks = unittest_blocks(described)
+        self.assertEqual(len(blocks), 1)
+        self.assertIn('AssertionError: ', '\n'.join(blocks[0][3]))
 
     def test_bound_bodies_reject_a_lookalike_test(self):
         bodies = bound_failure_bodies(unittest_blocks(OTHER_TEST_LOG),
@@ -663,15 +684,65 @@ class MachineLeaseTests(unittest.TestCase):
         self.assertFalse(self.lock.exists(),
                          '#1023-9: a finished bound run must release the lease')
 
+    @staticmethod
+    def _stack_names(thread):
+        """Function names on a live thread's stack (caller must be running)."""
+        frame = sys._current_frames().get(thread.ident)
+        names = []
+        while frame is not None:
+            names.append(frame.f_code.co_name)
+            frame = frame.f_back
+        return names
+
+    def _wait_until_competing(self, thread, marker):
+        """Wait until the caller is inside parity_lock's acquisition.
+
+        ``deadline_set`` already proved the deadline exists; this proves the
+        caller actually started competing for the lease before the holder may
+        release it (fix-r5 Codex P1-2: the old timer could fire before the
+        deadline was even computed).
+        """
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            names = self._stack_names(thread)
+            if 'machine_parity_lock' in names and 'parity_lock' in names:
+                return True
+            time.sleep(0.001)
+        return False
+
     def test_bound_run_lease_late_arrival_does_not_start_bound_run(self):
         marker = ('#1023-9: a lease released after the deadline must not start '
                   'the bound run')
+        guard_path = self.lock.with_name(self.lock.name + '.guard')
         acquired = threading.Event()
         release = threading.Event()
         started = []
-        timer = None
+        errors = []
 
-        guard_path = self.lock.with_name(self.lock.name + '.guard')
+        class Clock:
+            """Deterministic monotonic clock for machine_parity_lock only.
+
+            The first read establishes the deadline at 0.0; every later read
+            is past it, so the post-acquisition re-check necessarily sees a
+            late lease. A real timer could fire before the caller established
+            its deadline, which is the false failure Codex P1-2 reported.
+            """
+            def __init__(self):
+                self.reads = 0
+                self.deadline_set = threading.Event()
+
+            def monotonic(self):
+                self.reads += 1
+                if self.reads == 1:
+                    self.deadline_set.set()
+                    return 0.0
+                return 1000.0
+
+            def sleep(self, seconds):
+                raise AssertionError(
+                    marker + ': the late arrival must block in flock, not poll')
+
+        clock = Clock()
 
         def holder():
             # Hold only the .guard flock, without creating the lease directory:
@@ -682,31 +753,98 @@ class MachineLeaseTests(unittest.TestCase):
                 acquired.set()
                 release.wait(5)
 
-        thread = threading.Thread(target=holder, daemon=True)
-        thread.start()
-        try:
-            self.assertTrue(acquired.wait(5),
-                            marker + ': the sibling never acquired the lease')
-            # The sibling releases only after the caller's deadline, so the
-            # blocking flock returns late instead of raising Blocked.
-            timer = threading.Timer(0.3, release.set)
-            timer.start()
+        def caller():
             try:
                 with negative_controls.machine_parity_lock(
                         timeout=0.05, interval=0.005, lock=self.lock):
                     started.append(True)
-            except RuntimeError as error:
-                self.assertIn('released after the', str(error),
-                              marker + f': wrong rejection: {error}')
-            else:
-                self.fail(marker + ': the bound run started after the deadline')
+            except BaseException as error:
+                errors.append(error)
+
+        original_time = negative_controls.time
+        thread = threading.Thread(target=holder, daemon=True)
+        caller_thread = threading.Thread(target=caller, daemon=True)
+        thread.start()
+        try:
+            self.assertTrue(acquired.wait(5),
+                            marker + ': the sibling never acquired the lease')
+            negative_controls.time = clock
+            caller_thread.start()
+            self.assertTrue(clock.deadline_set.wait(5),
+                            marker + ': the caller never established its deadline')
+            self.assertTrue(
+                self._wait_until_competing(caller_thread, marker),
+                marker + ': the caller never started competing for the lease')
+            release.set()
+            caller_thread.join(5)
+            self.assertFalse(caller_thread.is_alive(),
+                             marker + ': the caller did not return after the release')
         finally:
             release.set()
+            caller_thread.join(5)
+            negative_controls.time = original_time
             thread.join(5)
-            if timer is not None:
-                timer.join()
+        self.assertEqual(len(errors), 1,
+                         marker + f': the late lease must raise once, got {errors!r}')
+        self.assertIsInstance(errors[0], RuntimeError,
+                              marker + f': wrong rejection: {errors[0]!r}')
+        self.assertIn('released after the', str(errors[0]),
+                      marker + f': wrong rejection: {errors[0]}')
         self.assertEqual(started, [], marker + ': no bound run may start')
         self.assertFalse(self.lock.exists(), marker + ': a late lease must be released')
+
+    def test_bound_run_lease_blocks_on_a_live_guard_then_proceeds(self):
+        """Real flock: a live guard blocks the caller, release lets it proceed."""
+        marker = '#1023-9: a live guard must block the caller until it is released'
+        guard_path = self.lock.with_name(self.lock.name + '.guard')
+        acquired = threading.Event()
+        release = threading.Event()
+        started = []
+        errors = []
+
+        def holder():
+            with open(guard_path, 'w+') as guard:
+                fcntl.flock(guard, fcntl.LOCK_EX)
+                acquired.set()
+                release.wait(5)
+
+        def caller():
+            try:
+                with negative_controls.machine_parity_lock(
+                        timeout=5, interval=0.005, lock=self.lock):
+                    started.append(True)
+            except BaseException as error:
+                errors.append(error)
+
+        thread = threading.Thread(target=holder, daemon=True)
+        caller_thread = threading.Thread(target=caller, daemon=True)
+        thread.start()
+        try:
+            self.assertTrue(acquired.wait(5),
+                            marker + ': the sibling never acquired the flock')
+            caller_thread.start()
+            self.assertTrue(
+                self._wait_until_competing(caller_thread, marker),
+                marker + ': the caller never reached the acquisition')
+            # Still holding the flock: the caller must remain blocked for a
+            # measurable interval, not merely not-yet-scheduled.
+            time.sleep(0.1)
+            self.assertEqual(started, [],
+                             marker + ': the bound run started while the flock was held')
+            self.assertEqual(errors, [],
+                             marker + f': the waiting caller raised early: {errors!r}')
+            release.set()
+            caller_thread.join(5)
+            self.assertFalse(caller_thread.is_alive(),
+                             marker + ': the caller did not proceed after the release')
+        finally:
+            release.set()
+            caller_thread.join(5)
+            thread.join(5)
+        self.assertEqual(errors, [], marker + f': the bound run failed: {errors!r}')
+        self.assertEqual(started, [True],
+                         marker + ': the released lease must admit the bound run')
+        self.assertFalse(self.lock.exists(), marker + ': the lease must be released')
 
     def test_bound_run_lease_is_released_on_cancellation(self):
         with self.assertRaises(KeyboardInterrupt,

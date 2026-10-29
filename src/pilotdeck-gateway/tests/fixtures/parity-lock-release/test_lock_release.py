@@ -50,6 +50,7 @@ import tempfile
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-b2-lock-pyc-')
 sys.dont_write_bytecode = True
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -325,6 +326,24 @@ def guard_prefix(disable=False):
     return prefix
 
 
+def without_preflight(source):
+    """The same guard bytes with the os-preload preflight block removed.
+
+    Paired control for the forged-os probes: if a mutant already disabled the
+    block, the source is returned unchanged, so its next ``import os`` still
+    reaches the forge directory.
+    """
+    tree = ast.parse(source)
+    node = next((statement for statement in tree.body
+                 if isinstance(statement, ast.If)
+                 and 'version_info' in ast.unparse(statement.test)), None)
+    if node is None:
+        return source
+    lines = source.splitlines(keepends=True)
+    del lines[node.lineno - 1:node.end_lineno]
+    return ''.join(lines)
+
+
 def guarded_probe(disable=False):
     return (guard_prefix(disable)
             + '\nimport unittest\n\n\nclass Probe(unittest.TestCase):\n'
@@ -374,47 +393,88 @@ class EntryGuardTests(unittest.TestCase):
                           marker + ' control: the probe itself must run')
 
     def test_guard_requires_preloaded_os(self):
+        """fix-r4 GLM P1: import os may only run after its preload is proved.
+
+        fix-r5 Codex P1-1: the forged os.py must be provably reachable. The
+        probe unloads ``os`` and puts the real forge directory on sys.path
+        under ``-X frozen_modules=off``; the paired control removes exactly the
+        preflight from the same guard bytes and requires the marker. Keep this
+        probe and control pair in sync with ``scripts/cli-parity/
+        test_cli_parity.py`` (#701) and ``scripts/ui-server-parity/
+        test_frozen.py`` (#1023-11).
+        """
         marker = '#1023-10: the guard must reject an unfrozen or unloaded os before importing it'
         preload = 'os must be preloaded from CPython 3.11+ frozen modules'
         forged = ('import sys\n'
                   'with open(sys.argv[2], "w") as stream:\n'
                   '    stream.write("forged os executed")\n'
                   'raise RuntimeError("forged os module executed")\n')
+        # sys.argv: [1] entry, [2] marker, [3] forge. ``os`` is unloaded only
+        # after the source was read and compiled, then the real forge directory
+        # is put on sys.path: a guard that imports os first executes forge/os.py.
+        probe = ('import sys\n'
+                 'entry, marker, forge = sys.argv[1], sys.argv[2], sys.argv[3]\n'
+                 'source = open(entry, "rb").read()\n'
+                 'code = compile(source, entry, "exec")\n'
+                 'del sys.modules["os"]\n'
+                 'sys.path.insert(0, forge)\n'
+                 'exec(code, {"__file__": entry, "__name__": "__main__"})\n')
         version_probe = ('import sys\n'
-                         'entry, marker, staged = sys.argv[1], sys.argv[2], sys.argv[3]\n'
+                         'entry, marker, forge = sys.argv[1], sys.argv[2], sys.argv[3]\n'
                          'source = open(entry, "rb").read()\n'
+                         'code = compile(source, entry, "exec")\n'
                          'sys.version_info = (3, 10, 0, "final", 0)\n'
-                         'sys.path.insert(0, staged)\n'
-                         'exec(compile(source, entry, "exec"), '
-                         '{"__file__": entry, "__name__": "__main__"})\n')
-        unloaded_probe = ('import sys\n'
-                          'entry, marker, staged = sys.argv[1], sys.argv[2], sys.argv[3]\n'
-                          'source = open(entry, "rb").read()\n'
-                          'del sys.modules["os"]\n'
-                          'sys.path.insert(0, staged)\n'
-                          'exec(compile(source, entry, "exec"), '
-                          '{"__file__": entry, "__name__": "__main__"})\n')
+                         'del sys.modules["os"]\n'
+                         'sys.path.insert(0, forge)\n'
+                         'exec(code, {"__file__": entry, "__name__": "__main__"})\n')
+
         with tempfile.TemporaryDirectory(prefix='b2-osguard-') as temp:
             holder = Path(temp)
             staged = holder / 'entry.py'
             staged.write_text(guard_prefix() + "\nprint('REACHED')\n")
+            control = holder / 'control.py'
+            control.write_text(without_preflight(staged.read_text()))
             forge = holder / 'forge'
             forge.mkdir()
             (forge / 'os.py').write_text(forged)
             marker_path = holder / 'forged.marker'
-            for label, probe in (('version', version_probe), ('unloaded', unloaded_probe)):
+            scenarios = (('frozen-modules-off', probe),
+                         ('version-below-3-11', version_probe))
+            for label, case_probe in scenarios:
+                base = [sys.executable, '-I', '-X', 'frozen_modules=off',
+                        '-c', case_probe]
                 with self.subTest(probe=label):
                     marker_path.unlink(missing_ok=True)
                     result = subprocess.run(
-                        [sys.executable, '-I', '-c', probe, str(staged),
-                         str(marker_path), str(forge)],
+                        base + [str(staged), str(marker_path), str(forge)],
                         capture_output=True, text=True, timeout=60)
+                    output = result.stdout + result.stderr
                     self.assertEqual(
                         result.returncode, 1,
-                        marker + f' [{label}] rc={result.returncode}: ' + result.stderr[-300:])
-                    self.assertIn(preload, result.stdout + result.stderr, marker + f' [{label}]')
-                    self.assertFalse(marker_path.exists(),
-                                     marker + f' [{label}]: the forged os.py executed')
+                        marker + f' [{label}] rc={result.returncode}: ' + output[-300:])
+                    self.assertIn(
+                        preload, output,
+                        marker + f' [{label}] the preflight must reject before '
+                        'importing os: ' + output[-300:])
+                    self.assertFalse(
+                        marker_path.exists(),
+                        marker + f' [{label}]: the forged os.py executed')
+                    # Paired control: removing exactly the preflight from the same
+                    # bytes must execute the same forged module; without this arm
+                    # the marker check above could stay vacuously true.
+                    marker_path.unlink(missing_ok=True)
+                    control_result = subprocess.run(
+                        base + [str(control), str(marker_path), str(forge)],
+                        capture_output=True, text=True, timeout=60)
+                    control_output = control_result.stdout + control_result.stderr
+                    self.assertTrue(
+                        marker_path.exists(),
+                        marker + f' [{label}] control: removing the preflight must '
+                        'execute the forged os.py: ' + control_output[-300:])
+                    self.assertIn(
+                        'forged os module executed', control_output,
+                        marker + f' [{label}] control: the forged module must be the '
+                        'failure: ' + control_output[-300:])
 
     def test_mixed_spelling_reinsertion_is_rejected(self):
         marker = '#1023-10: a mixed-spelling reinsertion must be rejected'
@@ -435,7 +495,7 @@ class EntryGuardTests(unittest.TestCase):
                 if same:
                     spellings.append(('sys.path case alias, entry real', alias, entry))
                     spellings.append(('sys.path real, entry case alias', holder,
-                                  alias / 'entry.py'))
+                                      alias / 'entry.py'))
             for label, path_dir, entry_path in spellings:
                 with self.subTest(case=label):
                     result = self.run_reinserted(path_dir, entry_path)
@@ -474,6 +534,122 @@ class EntryGuardTests(unittest.TestCase):
                              marker + ' control: ' + opened.stderr[-500:])
             self.assertIn('REACHED', opened.stdout,
                           marker + ' control: the alias must reach the file')
+
+
+FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
+# fix-r5 GLM P2-2/P2-3: every fixture guard must prove its os preload and must
+# reject the apparatus directory it exercises. The entries are also the
+# boot-time import surfaces a caller can reinsert.
+FIXTURE_BOOTSTRAPS = (
+    ('cli-parity-isolation/negative_controls.py', 'scripts/cli-parity'),
+    ('cli-parity-isolation/test_negative_controls.py', 'scripts/cli-parity'),
+    ('cli-parity-mock-gateway/negative_controls.py', 'scripts/cli-parity'),
+    ('cli-parity-mock-gateway/test_negative_controls.py', 'scripts/cli-parity'),
+    ('parity-lock-release/test_lock_release.py', 'scripts/ui-server-parity'),
+    ('ui-server-parity-isolation/negative_controls.py', 'scripts/ui-server-parity'),
+)
+
+
+class FixtureBootstrapTests(unittest.TestCase):
+    """fix-r5 GLM P2-2/P2-3: each fixture guard is proved, not assumed."""
+
+    def test_fixture_drivers_require_preloaded_os(self):
+        marker = ('#1023-12: every fixture driver must reject an unloaded os '
+                  'before importing it')
+        preload = 'os must be preloaded from CPython 3.11+ frozen modules'
+        forger = ('import sys\n'
+                  'with open(sys.argv[2], "w") as stream:\n'
+                  '    stream.write("forged os executed")\n'
+                  'raise RuntimeError("forged os module executed")\n')
+        probe = ('import sys\n'
+                 'entry, marker, forge = sys.argv[1], sys.argv[2], sys.argv[3]\n'
+                 'source = open(entry, "rb").read()\n'
+                 'code = compile(source, entry, "exec")\n'
+                 'del sys.modules["os"]\n'
+                 'sys.path.insert(0, forge)\n'
+                 'exec(code, {"__file__": entry, "__name__": "__main__"})\n')
+        with tempfile.TemporaryDirectory(prefix='fixture-osguard-') as temp:
+            holder = Path(temp)
+            for relative, _apparatus in FIXTURE_BOOTSTRAPS:
+                entry = FIXTURES / relative
+                label = relative.replace('/', '__')
+                control = holder / ('control-' + label)
+                control.write_text(without_preflight(entry.read_text()))
+                forge = holder / ('forge-' + label)
+                forge.mkdir()
+                (forge / 'os.py').write_text(forger)
+                marker_path = holder / (label + '.marker')
+                base = [sys.executable, '-I', '-X', 'frozen_modules=off', '-c', probe]
+                with self.subTest(fixture=relative):
+                    marker_path.unlink(missing_ok=True)
+                    result = subprocess.run(
+                        base + [str(entry), str(marker_path), str(forge)],
+                        capture_output=True, text=True, timeout=60)
+                    output = result.stdout + result.stderr
+                    self.assertEqual(
+                        result.returncode, 1,
+                        marker + f' [{relative}] rc={result.returncode}: '
+                        + output[-300:])
+                    self.assertIn(
+                        preload, output,
+                        marker + f' [{relative}] the preflight must reject '
+                        'before importing os: ' + output[-300:])
+                    self.assertFalse(
+                        marker_path.exists(),
+                        marker + f' [{relative}] the forged os.py executed')
+                    # Paired control: removing exactly the preflight from the
+                    # same bytes must execute the same forged module.
+                    marker_path.unlink(missing_ok=True)
+                    control_result = subprocess.run(
+                        base + [str(control), str(marker_path), str(forge)],
+                        capture_output=True, text=True, timeout=60)
+                    control_output = control_result.stdout + control_result.stderr
+                    self.assertTrue(
+                        marker_path.exists(),
+                        marker + f' [{relative}] control: removing the preflight '
+                        'must execute the forged os.py: ' + control_output[-300:])
+                    self.assertIn(
+                        'forged os module executed', control_output,
+                        marker + f' [{relative}] control: the forged module must '
+                        'be the failure: ' + control_output[-300:])
+
+    def test_fixture_drivers_reject_a_reinserted_apparatus_directory(self):
+        marker = ('#1023-13: a reinserted apparatus directory must be rejected '
+                  'by the fixture guard')
+        probe = ('import sys\n'
+                 'entry, path_dir = sys.argv[1], sys.argv[2]\n'
+                 'source = open(entry, "rb").read()\n'
+                 'sys.path.insert(0, path_dir)\n'
+                 'sys.argv = [entry, "--help"]\n'
+                 'exec(compile(source, entry, "exec"), '
+                 '{"__file__": entry, "__name__": "__main__"})\n')
+        with tempfile.TemporaryDirectory(prefix='fixture-reinsert-') as temp:
+            neutral = Path(temp)
+            for relative, apparatus in FIXTURE_BOOTSTRAPS:
+                entry = FIXTURES / relative
+                with self.subTest(fixture=relative):
+                    result = subprocess.run(
+                        [sys.executable, '-I', '-c', probe, str(entry),
+                         str(ROOT / apparatus)],
+                        capture_output=True, text=True, timeout=30)
+                    self.assertEqual(
+                        result.returncode, 1,
+                        marker + f' [{relative}] rc={result.returncode}: '
+                        + result.stderr[-300:])
+                    rejection = ('unsafe import path', 'run with -I')
+                    self.assertTrue(
+                        any(text in result.stderr for text in rejection),
+                        marker + f' [{relative}] the guard itself must reject: '
+                        + result.stderr[-300:])
+                    # Paired control: a neutral directory must pass the guard,
+                    # proving the rejection above is the apparatus root.
+                    control = subprocess.run(
+                        [sys.executable, '-I', '-c', probe, str(entry),
+                         str(neutral)],
+                        capture_output=True, text=True, timeout=30)
+                    self.assertFalse(
+                        any(text in control.stderr for text in rejection),
+                        marker + f' [{relative}] control: a neutral path was rejected')
 
 
 if __name__ == '__main__':

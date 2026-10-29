@@ -38,10 +38,18 @@ import os as _boot_os
 # case-insensitive volume a ``/users/...`` entry matched no realpath string and
 # slipped through (fix-r2 P1-1); ``normcase`` cannot fix POSIX aliases either.
 _boot_dir = _boot_os.path.dirname(_boot_os.path.realpath(__file__))
-_boot_roots = (_boot_dir, _boot_os.path.dirname(_boot_dir))
+# The apparatus this driver exercises is also a boot-time import
+# surface: a caller can insert scripts/cli-parity and shadow a stdlib
+# module before any check (GLM r4 sibling P2-2).
+_boot_root = _boot_os.path.dirname(_boot_os.path.dirname(
+    _boot_os.path.dirname(_boot_os.path.dirname(
+        _boot_os.path.dirname(_boot_dir)))))
+_boot_roots = (_boot_dir, _boot_os.path.dirname(_boot_dir),
+               _boot_os.path.join(_boot_root, 'scripts', 'cli-parity'))
 if not _boot_sys.flags.isolated or any(
         _boot_os.path.isdir(entry or _boot_os.curdir)
-        and any(_boot_os.path.samefile(entry or _boot_os.curdir, root)
+        and any(_boot_os.path.isdir(root)
+                and _boot_os.path.samefile(entry or _boot_os.curdir, root)
                 for root in _boot_roots)
         for entry in _boot_sys.path):
     raise SystemExit(f'#1023: unsafe import path; run with -I by file: python3 -I {__file__}')
@@ -122,12 +130,15 @@ def machine_parity_lock(timeout=90, interval=0.5, lock=None):
     real ``run_round`` can bind 28999 between the probe and the child's own
     bind (fix-r2 concurrency P1). ``run_round.main`` already holds this exact
     lease for a whole round, so taking it turns the wait into mutual exclusion.
-    Bounded: a lease that never comes free raises a named INVALID after
-    ``timeout`` seconds instead of running into a foreign bind. The blocking
-    ``flock`` can return arbitrarily late, so the deadline is re-checked after
-    acquisition: a lease that only arrives after the deadline is released and
-    becomes the same named INVALID without starting the bound test (fix-r4
-    Codex P1-1, this-PR part).
+    The directory wait is bounded: a lease directory that never comes free
+    raises a named INVALID after ``timeout`` seconds instead of running into a
+    foreign bind. The underlying ``lock_guard`` flock has no timeout, so a live
+    sibling that holds only ``<lock>.guard`` can block this call indefinitely
+    (boundary r4 P2-2; the bounded acquisition belongs with the shared lease in
+    #1064). The blocking ``flock`` can also return arbitrarily late, so the
+    deadline is re-checked after acquisition: a lease that only arrives after
+    the deadline is released and becomes the same named INVALID without
+    starting the bound test (fix-r4 Codex P1-1, this-PR part).
     """
     lease = lease_module()
     config = {'lock': lock} if lock is not None else {}
@@ -420,11 +431,16 @@ def unittest_blocks(log):
         header = BLOCK_HEADER.match(line)
         if not header:
             continue
+        # A verbose single-test run prints the test's short description (its
+        # docstring) between the header and the first separator. Start the
+        # body after that separator so the traceback is not skipped.
         start = index + 1
-        if start < len(lines) and lines[start] == SEPARATOR:
+        while start < len(lines) and lines[start] != SEPARATOR:
             start += 1
+        if start >= len(lines):
+            continue
         body = []
-        for later in lines[start:]:
+        for later in lines[start + 1:]:
             if later == SEPARATOR:
                 break
             body.append(later)
