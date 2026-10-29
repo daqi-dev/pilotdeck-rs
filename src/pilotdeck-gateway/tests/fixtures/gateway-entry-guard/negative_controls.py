@@ -354,28 +354,35 @@ def single_test(log):
     return len(re.findall(r'^Ran 1 test in [0-9.]+s$', log, re.MULTILINE)) == 1
 
 
+def descriptions(test):
+    owner, method = test.rsplit('.', 1)
+    # Accept both observed unittest layouts, retaining the exact module,
+    # class and method identity in either layout (#1060).
+    return (f'{method} (__main__.{test})', f'{method} (__main__.{owner})')
+
+
 def passed(result, test):
     log = result.stdout + result.stderr
-    method = test.rsplit('.', 1)[-1]
     return (result.returncode == 0
-            and f'{method} (__main__.{test}) ... ok' in log.splitlines()
+            and any(description + ' ... ok' in log.splitlines()
+                    for description in descriptions(test))
             and single_test(log) and log.rstrip().endswith('\nOK')
             and 'skipped' not in log)
 
 
 def classify(result, test, message):
     log = result.stdout + result.stderr
-    method = test.rsplit('.', 1)[-1]
     if passed(result, test):
         return 'SURVIVED', 'bound test passed the mutant'
     if (result.returncode != 1 or not single_test(log)
             or not re.search(r'^FAILED \(failures=[1-9][0-9]*\)\s*\Z', log, re.MULTILINE)
             or 'ERROR:' in log):
         return 'INVALID', 'missing normal single-test assertion failure'
-    # unittest -v prints the method twice; subTest descriptions follow the
-    # full name. Only this test's own AssertionError may supply the marker.
+    # subTest descriptions follow either layout. Only this test's own
+    # AssertionError may supply the marker.
+    names = '|'.join(re.escape(name) for name in descriptions(test))
     header = re.compile(
-        rf'FAIL: {re.escape(method)} \(__main__\.{re.escape(test)}\)(?: \(.*\))?')
+        rf'FAIL: (?:{names})(?: \(.*\))?')
     separator = '\n' + '-' * 70 + '\n'
     for block in log.split('\n' + '=' * 70 + '\n')[1:]:
         title, found, body = block.partition(separator)
@@ -393,6 +400,17 @@ class LogParsingTests(unittest.TestCase):
 
     TEST = 'Probe.test_bound'
     MESSAGE = '#991 parser probe assertion'
+    # Independent descriptions recorded on local CPython 3.14.3 / 3.9.6;
+    # never derive these expectations from descriptions().
+    DESCRIPTIONS = ('test_bound (__main__.Probe.test_bound)',
+                    'test_bound (__main__.Probe)')
+
+    def formatted_results(self, result):
+        for description in self.DESCRIPTIONS:
+            log = result.stderr
+            for observed in self.DESCRIPTIONS:
+                log = log.replace(observed, description)
+            yield subprocess.CompletedProcess([], result.returncode, result.stdout, log)
 
     def probe(self, *, fail=False, subtests=False):
         def bound(case):
@@ -414,16 +432,25 @@ class LogParsingTests(unittest.TestCase):
         self.assertEqual(classify(result, self.TEST, self.MESSAGE)[0], 'SURVIVED',
                          '#991 bound pass must survive')
 
+    def test_accepts_both_verbose_pass_formats(self):
+        for result in self.formatted_results(self.probe()):
+            with self.subTest(description=result.stderr.splitlines()[0]):
+                self.assertTrue(passed(result, self.TEST),
+                                '#1060 both bound unittest pass descriptions must pass')
+                self.assertEqual(classify(result, self.TEST, self.MESSAGE)[0], 'SURVIVED',
+                                 '#1060 both bound unittest pass descriptions must survive')
+
     def test_rejects_other_test_success(self):
-        result = self.probe()
-        for old, new in [('test_bound', 'test_other'), ('test_bound (', 'test_other ('),
-                         ('__main__.Probe', '__main__.Other'),
-                         ('__main__', 'other_module'),
-                         ('.test_bound)', '.test_bound_extra)')]:
-            with self.subTest(replacement=new):
-                wrong = subprocess.CompletedProcess([], 0, '', result.stderr.replace(old, new))
-                self.assertFalse(passed(wrong, self.TEST),
-                                 '#991 another method or qualified name must not pass')
+        for result in self.formatted_results(self.probe()):
+            description = result.stderr.splitlines()[0].split(' ...', 1)[0]
+            for old, new in [('test_bound', 'test_other'), ('test_bound (', 'test_other ('),
+                             ('__main__.Probe', '__main__.Other'),
+                             ('__main__', 'other_module'),
+                             (description, description[:-1] + '_extra)')]:
+                with self.subTest(replacement=new, description=result.stderr.splitlines()[0]):
+                    wrong = subprocess.CompletedProcess([], 0, '', result.stderr.replace(old, new))
+                    self.assertFalse(passed(wrong, self.TEST),
+                                     '#991 another method or qualified name must not pass')
 
     def test_requires_single_unskipped_success(self):
         result = self.probe()
@@ -444,25 +471,33 @@ class LogParsingTests(unittest.TestCase):
                                           self.TEST, self.MESSAGE)[0], 'KILLED',
                                  '#991 bound AssertionError including multiline subTest must kill')
 
+    def test_accepts_both_assertion_formats(self):
+        for subtests in (False, True):
+            for result in self.formatted_results(self.probe(fail=True, subtests=subtests)):
+                with self.subTest(subtests=subtests, description=result.stderr.splitlines()[0]):
+                    self.assertEqual(classify(result, self.TEST, self.MESSAGE)[0], 'KILLED',
+                                     '#1060 both bound unittest assertion descriptions must kill')
+
     def test_rejects_wrong_failure_identity_or_message(self):
-        result = self.probe(fail=True)
-        for old, new in [('FAIL: test_bound (', 'FAIL: test_other ('),
-                         ('__main__.Probe', '__main__.Other'),
-                         ('__main__', 'other_module'),
-                         ('.test_bound)', '.test_bound_extra)'),
-                         ('AssertionError: ' + self.MESSAGE, 'AssertionError: unrelated')]:
-            with self.subTest(replacement=new):
-                # A marker outside the bound assertion cannot rescue it.
-                wrong = subprocess.CompletedProcess([], 1, self.MESSAGE + '\n',
-                                                     result.stderr.replace(old, new))
-                self.assertEqual(classify(wrong, self.TEST, self.MESSAGE)[0], 'INVALID',
-                                 '#991 failure must bind both names and its own assertion message')
-        source_echo = result.stderr.replace('AssertionError: ' + self.MESSAGE,
-                                           '    self.fail(' + repr(self.MESSAGE) + ')\n'
-                                           'AssertionError: unrelated')
-        wrong = subprocess.CompletedProcess([], 1, '', source_echo)
-        self.assertEqual(classify(wrong, self.TEST, self.MESSAGE)[0], 'INVALID',
-                         '#991 traceback source echo is not an assertion message')
+        for result in self.formatted_results(self.probe(fail=True)):
+            description = result.stderr.splitlines()[0].split(' ...', 1)[0]
+            for old, new in [('FAIL: test_bound (', 'FAIL: test_other ('),
+                             ('__main__.Probe', '__main__.Other'),
+                             ('__main__', 'other_module'),
+                             (description, description[:-1] + '_extra)'),
+                             ('AssertionError: ' + self.MESSAGE, 'AssertionError: unrelated')]:
+                with self.subTest(replacement=new, description=result.stderr.splitlines()[0]):
+                    # A marker outside the bound assertion cannot rescue it.
+                    wrong = subprocess.CompletedProcess([], 1, self.MESSAGE + '\n',
+                                                         result.stderr.replace(old, new))
+                    self.assertEqual(classify(wrong, self.TEST, self.MESSAGE)[0], 'INVALID',
+                                     '#991 failure must bind both names and its own assertion message')
+            source_echo = result.stderr.replace('AssertionError: ' + self.MESSAGE,
+                                               '    self.fail(' + repr(self.MESSAGE) + ')\n'
+                                               'AssertionError: unrelated')
+            wrong = subprocess.CompletedProcess([], 1, '', source_echo)
+            self.assertEqual(classify(wrong, self.TEST, self.MESSAGE)[0], 'INVALID',
+                             '#991 traceback source echo is not an assertion message')
 
     def test_rejects_abnormal_failure(self):
         result = self.probe(fail=True)
