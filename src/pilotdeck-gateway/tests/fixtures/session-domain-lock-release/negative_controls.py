@@ -13,12 +13,22 @@ the exclusive marker its FAIL block must carry.  Every mutant is compiled
 before its bound positive runs.  All selected rows run to completion; any
 non-KILLED row is a nonzero exit.  A stale anchor or a failed compile is
 INVALID and keeps going.  If the outer source guard or restoration fails, every
-already-recorded row is invalidated and the on-disk summary is rewritten
-unconditionally (the #979/#1037 shared semantics) instead of publishing a false
-green summary.  The guard exit catches ``BaseException``: a ``KeyboardInterrupt``
-or ``SystemExit`` during the restore/re-verify window voids the recorded rows
-and rewrites ``summary.json`` through an atomic replace before it is re-raised,
-so a cancelled run cannot leave an all-KILLED file behind.
+already-recorded row is invalidated and an INVALID summary is published (the
+#979/#1037 shared semantics) instead of keeping a false green summary.
+
+Per-row results live in memory only.  ``summary.json`` is published exactly
+once, after ``mutating_sources`` restored every guarded file and verified it
+byte-for-byte against the baseline.  A failure or cancellation therefore leaves
+either no ``summary.json`` or an INVALID one; a reader that treats a missing
+summary as failure can never observe an all-KILLED file from a cancelled run.
+An old ``summary.json`` is deleted before the run starts (and before
+``new_output_directory``'s non-empty check), so a previous success cannot be
+inherited.  The guard exit catches
+``BaseException``: a ``KeyboardInterrupt`` or ``SystemExit`` during the
+restore/re-verify window voids the recorded rows and publishes INVALID before
+it is re-raised.  If that void publish is itself interrupted (a second SIGINT),
+no summary is published at all — missing means failure (fail-closed), not the
+previous all-KILLED row set (#209 E1 P0).
 """
 import argparse
 import json
@@ -119,12 +129,44 @@ MUTATIONS = [
      "                    audit['allStopped'] = verified\n"
      "                    if verified:"),
     # The runner guard catches only Exception, so a cancellation (KeyboardInterrupt
-    # / SystemExit) during restore keeps the last all-KILLED summary (#209 P0).
+    # / SystemExit) during restore skips the INVALID publication and leaves no
+    # final summary; the bound test requires the void publish (#209 P0-2).
     ('e1-runner-baseexception-narrowed', RUNNER,
      "    except BaseException as error:\n"
      "        reason = f'source guard: {type(error).__name__}: {error}'",
      "    except Exception as error:\n"
      "        reason = f'source guard: {type(error).__name__}: {error}'"),
+    # Put the pre-fix "publish each row, verify later" order back: record()
+    # writes summary.json while the guarded restore is still unverified.  A
+    # SIGINT in the later void publish then leaves that all-KILLED file behind
+    # (#209 E1 P0, paired mutant for the structural publication).
+    ('e1-runner-publish-before-verify', RUNNER,
+     "def record(out, results, name, status, reason):\n"
+     "    \"\"\"Append a row in memory; the disk summary is published once, later.\n"
+     "\n"
+     "    The outcome of an earlier row must never be readable as the final result\n"
+     "    while the guarded restore is still unverified (#209 E1 P0).\n"
+     "    \"\"\"\n"
+     "    results.append({'mutation': name, 'status': status, 'reason': reason})\n"
+     "    print(f'{name}: {status}: {reason}', flush=True)",
+     "def record(out, results, name, status, reason):\n"
+     "    results.append({'mutation': name, 'status': status, 'reason': reason})\n"
+     "    print(f'{name}: {status}: {reason}', flush=True)\n"
+     "    write_summary(out, results)"),
+    # The startup retirement is skipped, so a previous all-KILLED summary is
+    # still readable when this run's void publish is interrupted (#209 E1 P0).
+    ('e1-runner-stale-summary-kept', RUNNER,
+     "    # Fail-closed from the first instruction: no previous success may survive\n"
+     "    # into this run's evidence directory.  This has to run before\n"
+     "    # new_output_directory's non-empty check, otherwise an old summary would\n"
+     "    # make the directory unusable while still being readable by others.\n"
+     "    raw = Path(args.output).resolve()\n"
+     "    retire_stale_summary(raw)",
+     "    # Fail-closed from the first instruction: no previous success may survive\n"
+     "    # into this run's evidence directory.  This has to run before\n"
+     "    # new_output_directory's non-empty check, otherwise an old summary would\n"
+     "    # make the directory unusable while still being readable by others.\n"
+     "    raw = Path(args.output).resolve()"),
 ]
 
 CHECKS = {
@@ -167,6 +209,12 @@ CHECKS = {
     'e1-runner-baseexception-narrowed': (
         'RunnerInvalidationControls.test_final_guard_interrupt_rewrites_summary',
         '#209 P0-2 a cancellation after the last row must not keep KILLED'),
+    'e1-runner-publish-before-verify': (
+        'RunnerInvalidationControls.test_interrupt_during_void_publish_leaves_no_killed_summary',
+        '#209 P0-3 an interrupt during the void publish must not leave a readable KILLED summary'),
+    'e1-runner-stale-summary-kept': (
+        'RunnerInvalidationControls.test_interrupt_during_void_publish_leaves_no_killed_summary',
+        '#209 P0-3 an interrupt during the void publish must not leave a readable KILLED summary'),
 }
 
 
@@ -196,8 +244,10 @@ def _counts(results):
 
 
 def write_summary(out, results):
-    """Publish the current rows atomically; the only summary writer here.
+    """Publish the one final summary atomically.
 
+    This is called exactly once per normal run, after every guarded file was
+    restored and byte-verified, and once from the failure handler (INVALID).
     A reader that checks "the file exists" must never observe a half-written
     JSON document, so the payload goes to a sibling temp file and is renamed
     over ``summary.json`` (#166 r8).
@@ -210,10 +260,30 @@ def write_summary(out, results):
     tmp.replace(target)
 
 
+def retire_stale_summary(out):
+    """Delete a pre-existing final summary before any mutation starts.
+
+    ``new_output_directory`` refuses to reuse a non-empty evidence directory,
+    so this runs first on the resolved path: a directory that holds only an
+    old ``summary.json`` becomes empty and can be used, while a directory that
+    still holds other evidence is left in place and the normal refusal fires.
+    Deleting (rather than keeping a same-directory ``.prev``) is deliberate:
+    the old success must not remain readable as this run's result, and a
+    same-directory rename would still make the directory non-empty.
+    """
+    target = out / 'summary.json'
+    if target.exists():
+        target.unlink()
+
+
 def record(out, results, name, status, reason):
+    """Append a row in memory; the disk summary is published once, later.
+
+    The outcome of an earlier row must never be readable as the final result
+    while the guarded restore is still unverified (#209 E1 P0).
+    """
     results.append({'mutation': name, 'status': status, 'reason': reason})
     print(f'{name}: {status}: {reason}', flush=True)
-    write_summary(out, results)
 
 
 def check_anchors(selected):
@@ -247,6 +317,12 @@ def main():
     if args.output is None:
         print('--output is required unless --check-anchors is used', file=sys.stderr)
         return 2
+    # Fail-closed from the first instruction: no previous success may survive
+    # into this run's evidence directory.  This has to run before
+    # new_output_directory's non-empty check, otherwise an old summary would
+    # make the directory unusable while still being readable by others.
+    raw = Path(args.output).resolve()
+    retire_stale_summary(raw)
     out = new_output_directory(args.output)
     results = []
     try:
@@ -294,14 +370,12 @@ def main():
                 record(out, results, name, status, reason)
     except BaseException as error:
         reason = f'source guard: {type(error).__name__}: {error}'
-        # #979/#1037: a guard/restoration failure voids every already-recorded
-        # row in memory, then the summary on disk is rewritten unconditionally.
-        # Without the rewrite the last record() kept an all-KILLED file (#209
-        # P0-2), because selected[len(results):] is empty in this path.
-        # BaseException covers the cancellation exits (KeyboardInterrupt /
-        # SystemExit) that interrupted the restore/re-verify window: void the
-        # rows and publish INVALID first, then propagate the cancellation
-        # instead of returning a normal status (#209 P0-2).
+        # #979/#1037 + #209 E1 P0: a guard/restoration failure voids every
+        # already-recorded row in memory, then publishes INVALID.  The disk
+        # never held a final summary before this point (record() is memory
+        # only), so an interrupt inside this publish — even a second SIGINT —
+        # leaves no summary at all instead of the old all-KILLED file.  Missing
+        # summary is the fail-closed signal.
         invalidate_completed(results, reason)
         for name, *_ in selected[len(results):]:
             record(out, results, name, 'INVALID', reason)
@@ -309,6 +383,9 @@ def main():
         if not isinstance(error, Exception):
             raise
         return 2
+    # Reaching here means mutating_sources restored every guarded file and
+    # verified it against the baseline.  Only now may a final summary exist.
+    write_summary(out, results)
     counts = _counts(results)
     print(json.dumps(counts), flush=True)
     return 0 if counts['KILLED'] == len(results) else 1
