@@ -140,6 +140,80 @@ class LockGateControls(unittest.TestCase):
         self.assertEqual(L['read_owner'](self.lock).get('cleanupPending'), [424242],
                          '#209 retained cleanupPending must be explicit in owner.json')
 
+    def _run_fake_cleanup(self, fake, killpg):
+        """Drive run()'s real post-exit cleanup gate with a fake child."""
+        def fake_spawn(*args, **kwargs):
+            L['LIVE_GROUPS'].add(fake.pid)
+            return fake
+
+        with patch.dict(L, {'spawn': fake_spawn}), \
+                patch.object(L['os'], 'killpg', side_effect=killpg):
+            return L['run'](self.root / 'stub.py', [], self.lock)
+
+    def test_wait_timeout_returns_blocked_and_retains_lease(self):
+        class FakeProc:
+            pid = 505053
+            returncode = 0
+
+            def __init__(self):
+                self.waits = 0
+
+            def wait(self, timeout=None):
+                # The first wait is run()'s normal leader wait; the cleanup
+                # waits time out, which alone must force BLOCKED.
+                self.waits += 1
+                if self.waits == 1:
+                    return 0
+                raise subprocess.TimeoutExpired(str(self.pid), timeout)
+
+        def killpg(pid, sig):
+            # TERM/KILL are delivered; the bounded leader waits fail and only
+            # the final probe sees the group gone.
+            if sig == 0:
+                raise ProcessLookupError(pid)
+            return None
+
+        fake = FakeProc()
+        code = self._run_fake_cleanup(fake, killpg)
+        self.assertEqual(code, L['BLOCKED'],
+                         '#209 wait timeout must return BLOCKED')
+        self.assertTrue(self.lock.exists(),
+                        '#209 wait timeout must retain the lease')
+        owner = L['read_owner'](self.lock)
+        self.assertIsNotNone(owner, '#209 retained lease must keep an owner record')
+        self.assertEqual(owner.get('cleanupPending'), [fake.pid],
+                         '#209 wait timeout must publish cleanupPending')
+        self.assertIn(fake.pid, L['LIVE_GROUPS'],
+                      '#209 wait timeout must stay in LIVE_GROUPS')
+
+    def test_probe_error_returns_blocked_and_retains_lease(self):
+        class FakeProc:
+            pid = 505054
+            returncode = 0
+
+            def wait(self, timeout=None):
+                return 0
+
+        def killpg(pid, sig):
+            # TERM/KILL succeed and the leader is reaped; only the final
+            # absence probe fails. That error must deny proof, not read as gone.
+            if sig == 0:
+                raise PermissionError('probe #209')
+            return None
+
+        fake = FakeProc()
+        code = self._run_fake_cleanup(fake, killpg)
+        self.assertEqual(code, L['BLOCKED'],
+                         '#209 probe OSError must return BLOCKED')
+        self.assertTrue(self.lock.exists(),
+                        '#209 probe OSError must retain the lease')
+        owner = L['read_owner'](self.lock)
+        self.assertIsNotNone(owner, '#209 retained lease must keep an owner record')
+        self.assertEqual(owner.get('cleanupPending'), [fake.pid],
+                         '#209 probe OSError must publish cleanupPending')
+        self.assertIn(fake.pid, L['LIVE_GROUPS'],
+                      '#209 probe OSError must stay in LIVE_GROUPS')
+
     def test_cleanup_error_returns_blocked_and_retains_lease(self):
         stub = self.root / 'stub.py'
         stub.write_text('import sys\nsys.exit(0)\n')

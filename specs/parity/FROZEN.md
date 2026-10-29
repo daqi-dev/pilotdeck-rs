@@ -1,5 +1,7 @@
 # 冻结记录
 
+> **2026-10-26 fix-r2 重登记（#209 A1 清理故障路径恢复，**AI 代批，待人复核**）**：只改 `scripts/parity/controls/lock_release.py` 的测试：保留 fix-r1 的「TERM/KILL 投递失败但最终 ESRCH 成功」用例，补回 fix-r1 删掉的 wait 超时与最终探测 OSError 两条故障路径，各自独立注入并走真实 `stop_group → _stop_group` 与 `round.main()` 清理门：断言 round BLOCKED、LIVE_GROUPS / 共享锁 / `cleanupPending` 保留。四条新分支各配负控（wait 错误被忽略、探测 OSError 被当作组已消失），本机 17/17 KILLED。产品 `round.py`、判分语义、阈值、分母、归一化、比较器均未动；`round.py` 与 `README.md` 哈希不变。`check_frozen` 复跑 PASS。
+
 > **2026-10-26 fix-r1 重登记（#209 A1 测试补强，**AI 代批，待人复核**）**：只改 `scripts/parity/controls/lock_release.py` 的测试断言：清理 OSError 用例改为「组已消失（最终 ESRCH 成功）但 TERM/KILL 投递失败」，使 `errors` 单独决定 `allStopped`；cleanupPending 接管用例的 `assertRaises` 专属消息即绑定失败点，去掉其内部与绑定消息不一致的 `self.fail`。产品 `round.py`、判分语义、阈值、分母、归一化、比较器均未动；`round.py` 与 `README.md` 哈希不变。`check_frozen` 复跑 PASS。
 
 > **2026-10-26 重登记（#209 A1 共享锁释放门控，**AI 代批，待人复核**）**：`scripts/parity/round.py` 改为只在本次启动的会话组被 `killpg`+有界 `wait`+最终 `killpg(0)` 证实全部停止后才释放 `/tmp/pdrs-parity.lock`；spawn 与登记、清理和释放 guard 期间挂起 SIGINT/SIGTERM，SIGTERM 与 KeyboardInterrupt 走同一回收路径；`_stop_group` 的 kill/wait/探测错误不再被当成「已停止」，未证实时原子改写 `owner.json` 的 `cleanupPending` 为残留 pgid 并退出 BLOCKED(1)，带 `cleanupPending` 的锁不被 dead_pid/expired 自动接管。只改装置生命周期，不改判分语义、阈值、分母、归一化或比较器；`specs/parity/README.md` 未动、哈希不变（`shasum -a 256 README.md` = `f8958a3280a95df7…`）。新增 `scripts/parity/controls/lock_release.py` 覆盖信号挂起、残留组保留、cleanupPending 拒绝接管、清理 OSError 和中断后 BLOCKED 回收；负控 `src/pilotdeck-gateway/tests/fixtures/parity-lock-release/negative_controls.py` 在宿主提交后运行。真实数据复算：`self_compare --source /Users/da/ws/pilotdeck-rs/_tmp/20261014-ts5` 得 k=5、S=53、无排除；`controls/run_all --source /Users/da/ws/pilotdeck-rs/_tmp/20261014-exp001/parity-run1` 的 59 个 case 全部 ok（real_self_positive 53/53、G03 规则对照全 PASS），原始输出见本 worktree `_tmp/20261026-issue-209/raw/`。
@@ -17,7 +19,7 @@
 | `scripts/parity/check_ruler.py` | `34c8d0999aee2eff…` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/controls/README.md` | `36aee14ea36dcd70…` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/controls/review_r1.py` | `7466fdf193cb8a9c…` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
-| `scripts/parity/controls/lock_release.py` | `c7ecab3783a36530…` | 2026-10-26 #209 A1 fix-r1 重登记（**AI 代批，待人复核**） | 信号挂起 / 残留组保留 / cleanupPending 拒绝接管 / 中断 BLOCKED；清理失败与接管断言即负控绑定失败点 |
+| `scripts/parity/controls/lock_release.py` | `1faff334841bf266…` | 2026-10-26 #209 A1 fix-r2 重登记（**AI 代批，待人复核**） | 信号挂起 / 残留组保留 / cleanupPending 拒绝接管 / 中断 BLOCKED；TERM-KILL 失败、wait 超时、最终探测 OSError 三条未证实路径与接管断言即负控绑定失败点 |
 | `scripts/parity/controls/run_all.py` | `3836225887515560…` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/g03_compare.py` | `ce60e7c3705f4ee1…` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/round.py` | `e70e6f3b63a814eb…` | 2026-10-26 #209 A1 重登记（**AI 代批，待人复核**） | 锁只在本次会话组证实停止后释放；清理期间挂起 SIGINT/SIGTERM |

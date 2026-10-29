@@ -143,6 +143,109 @@ class LockReleaseControls(unittest.TestCase):
         self.assertEqual(R.read_owner(self.lock).get('cleanupPending'), [424242],
                          '#209 retained cleanupPending must be explicit in owner.json')
 
+    def _assert_cleanup_blocks_round(self, label, fake, killpg):
+        """Drive round.main()'s real post-run cleanup gate with a fake child."""
+        baseline = self.root / 'baseline'
+        binary = baseline / 'dist/src/cli/pilotdeck-agent-loop-sidecar.js'
+        binary.parent.mkdir(parents=True)
+        binary.write_text('cleanup-control')
+        worktree = self.root / 'worktree'
+        (worktree / '_tmp').mkdir(parents=True)
+        out_root = worktree / '_tmp/parity'
+        real_lock = R.parity_lock
+        argv = ['round.py', '--side', 'ts', '--label', label, '--scenario', 'pure_text']
+
+        def fake_spawn(*args, **kwargs):
+            R.LIVE_GROUPS.add(fake.pid)
+            return fake
+
+        def isolated_lock(*args, **kwargs):
+            return real_lock(self.lock, **kwargs)
+
+        with patch.object(sys, 'argv', argv), \
+                patch.dict(os.environ, {'PDRS_OUT': str(out_root)}), \
+                patch.object(G, 'WORKTREE', worktree), patch.object(G, 'BASELINE', baseline), \
+                patch.object(G, 'scenario_catalog', return_value={'pure_text': {}}), \
+                patch.object(R.shutil, 'which', return_value=sys.executable), \
+                patch.object(R.subprocess, 'check_output', return_value='v-control\n'), \
+                patch.object(R, 'spawn', side_effect=fake_spawn), \
+                patch.object(R.os, 'killpg', side_effect=killpg), \
+                patch.object(R, 'parity_lock', side_effect=isolated_lock), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(R.main(), 1,
+                             f'#209 {label} cleanup must exit BLOCKED/1')
+        return json.loads((out_root / label / 'run.json').read_text())
+
+    def test_wait_timeout_blocks_round(self):
+        class FakeProc:
+            pid = 505051
+            returncode = 0
+
+            def wait(self, timeout=None):
+                raise subprocess.TimeoutExpired(str(self.pid), timeout)
+
+            def communicate(self, timeout=None):
+                return 'stdout', 'stderr'
+
+        def killpg(pid, sig):
+            # TERM/KILL are delivered; the bounded leader waits fail and only
+            # the final probe sees the group gone.
+            if sig == 0:
+                raise ProcessLookupError(pid)
+            return None
+
+        self.addCleanup(R.LIVE_GROUPS.discard, FakeProc.pid)
+        run = self._assert_cleanup_blocks_round('wait-timeout', FakeProc(), killpg)
+        self.assertEqual(run.get('status'), 'BLOCKED',
+                         '#209 wait timeout must leave the round BLOCKED')
+        self.assertIn('leader did not exit', run['cleanup']['errors'],
+                      '#209 wait timeout must be recorded as a cleanup error')
+        self.assertEqual(run['cleanup']['remaining'], [],
+                         '#209 the final ESRCH probe must prove the group gone')
+        self.assertEqual(run['ownedGroupsRemaining'], [FakeProc.pid],
+                         '#209 wait timeout must keep the group in LIVE_GROUPS')
+        self.assertTrue(self.lock.exists(),
+                        '#209 wait timeout must retain the shared lock')
+        owner = R.read_owner(self.lock)
+        self.assertIsNotNone(owner, '#209 retained lock must keep an owner record')
+        self.assertEqual(owner.get('cleanupPending'), [FakeProc.pid],
+                         '#209 wait timeout must publish cleanupPending')
+
+    def test_probe_error_blocks_round(self):
+        class FakeProc:
+            pid = 505052
+            returncode = 0
+
+            def wait(self, timeout=None):
+                return 0
+
+            def communicate(self, timeout=None):
+                return 'stdout', 'stderr'
+
+        def killpg(pid, sig):
+            # TERM/KILL succeed and the leader is reaped; only the final
+            # absence probe fails. That error must deny proof, not read as gone.
+            if sig == 0:
+                raise PermissionError('probe #209')
+            return None
+
+        self.addCleanup(R.LIVE_GROUPS.discard, FakeProc.pid)
+        run = self._assert_cleanup_blocks_round('probe-error', FakeProc(), killpg)
+        self.assertEqual(run.get('status'), 'BLOCKED',
+                         '#209 probe OSError must leave the round BLOCKED')
+        self.assertTrue(run['cleanup']['errors'],
+                        '#209 probe OSError must be recorded as a cleanup error')
+        self.assertEqual(run['cleanup']['remaining'], [FakeProc.pid],
+                         '#209 probe OSError must report the residual group')
+        self.assertEqual(run['ownedGroupsRemaining'], [FakeProc.pid],
+                         '#209 probe OSError must keep the group in LIVE_GROUPS')
+        self.assertTrue(self.lock.exists(),
+                        '#209 probe OSError must retain the shared lock')
+        owner = R.read_owner(self.lock)
+        self.assertIsNotNone(owner, '#209 retained lock must keep an owner record')
+        self.assertEqual(owner.get('cleanupPending'), [FakeProc.pid],
+                         '#209 probe OSError must publish cleanupPending')
+
     def test_cleanup_pending_cannot_be_stolen(self):
         self.lock.mkdir()
         original = {'pid': os.getpid(), 'timestamp': time.time(),
