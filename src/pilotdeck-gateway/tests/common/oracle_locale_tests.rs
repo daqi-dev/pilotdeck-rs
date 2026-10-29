@@ -116,6 +116,80 @@ async fn silent_child_expires_at_idle_deadline() {
     );
 }
 
+#[test]
+fn adaptive_idle_scales_with_host_load() {
+    assert_eq!(
+        idle_limit_for(32.0, 8),
+        Duration::from_secs(150),
+        "#978 adaptive idle must scale with host load"
+    );
+    for (load, cpus) in [(0.0, 8), (f64::NAN, 8), (f64::INFINITY, 8), (4.0, 0)] {
+        assert_eq!(
+            idle_limit_for(load, cpus),
+            IDLE_LIMIT,
+            "#978 adaptive idle must fall back to the base budget for load={load:?} cpus={cpus}"
+        );
+    }
+}
+
+#[test]
+fn adaptive_idle_caps_at_startup_budget() {
+    for load in [1000.0, f64::MAX] {
+        assert_eq!(
+            idle_limit_for(load, 1),
+            STARTUP_LIMIT,
+            "#978 adaptive idle must stay within the startup cap for load={load:?}"
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn silent_child_expires_at_adaptive_idle_deadline() {
+    // #978: the adaptive budget is still a finite no-output deadline. A load of
+    // 32 on 8 CPUs scales 30 s to 150 s; after the first byte, a child that
+    // stops writing must be killed at the scaled deadline, not wait for a PID
+    // or an unbounded extension.
+    let idle = idle_limit_for(32.0, 8);
+    let (mut out_writer, stdout) = tokio::io::duplex(16);
+    let (_err_writer, stderr) = tokio::io::duplex(16);
+    let mut collect = Box::pin(collect_output(
+        stdout,
+        stderr,
+        future::pending(),
+        STARTUP_LIMIT,
+        idle,
+        ChildTrace::new(None),
+    ));
+    assert!(
+        poll_once(collect.as_mut()).is_pending(),
+        "#978 adaptive idle: starts pending"
+    );
+    out_writer
+        .write_all(b".")
+        .await
+        .expect("#978 adaptive idle: first byte");
+    assert!(
+        poll_once(collect.as_mut()).is_pending(),
+        "#978 adaptive idle: first byte switches to the idle phase"
+    );
+    // Keep the clock advance fixed at the non-mutant 150 s budget: a mutant
+    // that makes the budget unbounded must not also move the assertion.
+    tokio::time::advance(Duration::from_secs(149)).await;
+    assert!(
+        poll_once(collect.as_mut()).is_pending(),
+        "#978 adaptive idle must not expire before the scaled deadline"
+    );
+    tokio::time::advance(Duration::from_secs(1)).await;
+    let Poll::Ready(Err(error)) = poll_once(collect.as_mut()) else {
+        panic!("#978 adaptive idle must still expire for a silent child");
+    };
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::TimedOut,
+        "#978 adaptive idle must still report a timeout"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn eof_does_not_renew_deadline_or_complete_a_live_child() {
     let (out_writer, stdout) = tokio::io::duplex(16);
