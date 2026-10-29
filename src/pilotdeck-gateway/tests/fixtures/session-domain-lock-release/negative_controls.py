@@ -21,14 +21,16 @@ once, after ``mutating_sources`` restored every guarded file and verified it
 byte-for-byte against the baseline.  A failure or cancellation therefore leaves
 either no ``summary.json`` or an INVALID one; a reader that treats a missing
 summary as failure can never observe an all-KILLED file from a cancelled run.
-An old ``summary.json`` is deleted before the run starts (and before
-``new_output_directory``'s non-empty check), so a previous success cannot be
-inherited.  The guard exit catches
-``BaseException``: a ``KeyboardInterrupt`` or ``SystemExit`` during the
-restore/re-verify window voids the recorded rows and publishes INVALID before
-it is re-raised.  If that void publish is itself interrupted (a second SIGINT),
-no summary is published at all — missing means failure (fail-closed), not the
-previous all-KILLED row set (#209 E1 P0).
+No file in the target directory is deleted or renamed before admission:
+``new_output_directory`` refuses a non-empty directory, so a directory holding
+an old ``summary.json`` is rejected as-is and a successfully admitted directory
+is always empty, which is why a previous success cannot be inherited (#209 E1
+r4 P0: a mistyped ``--output`` must keep the previous run's bytes).  The guard
+exit catches ``BaseException``: a ``KeyboardInterrupt`` or ``SystemExit`` during
+the restore/re-verify window voids the recorded rows and publishes INVALID
+before it is re-raised.  If that void publish is itself interrupted (a second
+SIGINT), no summary is published at all — missing means failure (fail-closed),
+not the previous all-KILLED row set (#209 E1 P0).
 """
 import argparse
 import json
@@ -153,20 +155,14 @@ MUTATIONS = [
      "    results.append({'mutation': name, 'status': status, 'reason': reason})\n"
      "    print(f'{name}: {status}: {reason}', flush=True)\n"
      "    write_summary(out, results)"),
-    # The startup retirement is skipped, so a previous all-KILLED summary is
-    # still readable when this run's void publish is interrupted (#209 E1 P0).
-    ('e1-runner-stale-summary-kept', RUNNER,
-     "    # Fail-closed from the first instruction: no previous success may survive\n"
-     "    # into this run's evidence directory.  This has to run before\n"
-     "    # new_output_directory's non-empty check, otherwise an old summary would\n"
-     "    # make the directory unusable while still being readable by others.\n"
+    # The pre-admission retirement is put back, so a mistyped --output pointing
+    # at another run's evidence directory loses that run's summary.json before
+    # admission refuses the directory (#209 E1 r4 P0: evidence loss).
+    ('e1-runner-retire-before-admission', RUNNER,
+     "    out = new_output_directory(args.output)\n",
      "    raw = Path(args.output).resolve()\n"
-     "    retire_stale_summary(raw)",
-     "    # Fail-closed from the first instruction: no previous success may survive\n"
-     "    # into this run's evidence directory.  This has to run before\n"
-     "    # new_output_directory's non-empty check, otherwise an old summary would\n"
-     "    # make the directory unusable while still being readable by others.\n"
-     "    raw = Path(args.output).resolve()"),
+     "    (raw / 'summary.json').unlink(missing_ok=True)\n"
+     "    out = new_output_directory(args.output)\n"),
 ]
 
 CHECKS = {
@@ -212,9 +208,9 @@ CHECKS = {
     'e1-runner-publish-before-verify': (
         'RunnerInvalidationControls.test_interrupt_during_void_publish_leaves_no_killed_summary',
         '#209 P0-3 an interrupt during the void publish must not leave a readable KILLED summary'),
-    'e1-runner-stale-summary-kept': (
-        'RunnerInvalidationControls.test_interrupt_during_void_publish_leaves_no_killed_summary',
-        '#209 P0-3 an interrupt during the void publish must not leave a readable KILLED summary'),
+    'e1-runner-retire-before-admission': (
+        'RunnerInvalidationControls.test_existing_evidence_is_refused_byte_identical',
+        '#209 P0-4 a pre-existing evidence directory must be refused with every byte preserved'),
 }
 
 
@@ -260,22 +256,6 @@ def write_summary(out, results):
     tmp.replace(target)
 
 
-def retire_stale_summary(out):
-    """Delete a pre-existing final summary before any mutation starts.
-
-    ``new_output_directory`` refuses to reuse a non-empty evidence directory,
-    so this runs first on the resolved path: a directory that holds only an
-    old ``summary.json`` becomes empty and can be used, while a directory that
-    still holds other evidence is left in place and the normal refusal fires.
-    Deleting (rather than keeping a same-directory ``.prev``) is deliberate:
-    the old success must not remain readable as this run's result, and a
-    same-directory rename would still make the directory non-empty.
-    """
-    target = out / 'summary.json'
-    if target.exists():
-        target.unlink()
-
-
 def record(out, results, name, status, reason):
     """Append a row in memory; the disk summary is published once, later.
 
@@ -317,12 +297,12 @@ def main():
     if args.output is None:
         print('--output is required unless --check-anchors is used', file=sys.stderr)
         return 2
-    # Fail-closed from the first instruction: no previous success may survive
-    # into this run's evidence directory.  This has to run before
-    # new_output_directory's non-empty check, otherwise an old summary would
-    # make the directory unusable while still being readable by others.
-    raw = Path(args.output).resolve()
-    retire_stale_summary(raw)
+    # #209 E1 r4 P0: nothing in the target directory is touched before
+    # admission.  new_output_directory refuses any non-empty directory, so a
+    # directory that still holds an old summary.json (or any other evidence)
+    # exits with the #953 refusal and keeps every byte; a mistyped --output
+    # therefore cannot delete a previous run's result.  Since admission only
+    # succeeds on an empty directory, no stale summary can be inherited either.
     out = new_output_directory(args.output)
     results = []
     try:
