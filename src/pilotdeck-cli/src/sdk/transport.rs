@@ -4,6 +4,7 @@ use super::Connection;
 use crate::Failure;
 use futures_util::{SinkExt, StreamExt};
 use pilotdeck_protocol::{JsValue, parse_json};
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::{net::TcpStream, time::timeout};
@@ -27,6 +28,17 @@ pub(super) async fn request(
     method: &str,
     params: Value,
 ) -> Result<JsValue, Failure> {
+    request_with_version(connection, method, params, "pilotdeck-cli").await
+}
+
+/// Settings helpers use the SDK's default client version and lossless JSON
+/// parameters; the sessions entry keeps its existing version and Value API.
+pub(super) async fn request_with_version(
+    connection: &Connection,
+    method: &str,
+    params: impl Serialize,
+    client_version: &str,
+) -> Result<JsValue, Failure> {
     // Preserve the measured Node v22.22.0 successes through 100 MiB + 1.
     // A finite frame cap rejects hostile length headers before allocation;
     // the message cap also bounds accumulated fragments. Security exception:
@@ -47,7 +59,7 @@ pub(super) async fn request(
                 &mut socket,
                 json!({
                     "type": "hello", "protocolVersion": pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION, "clientName": "sdk",
-                    "clientVersion": "pilotdeck-cli", "token": connection.auth_token,
+                    "clientVersion": client_version, "token": connection.auth_token,
                 }),
             )
             .await?;
@@ -67,7 +79,7 @@ pub(super) async fn request(
         timeout(REQUEST_TIMEOUT, async {
             send(
                 &mut socket,
-                json!({"type": "request", "id": id, "method": method, "params": params}),
+                RequestFrame { kind: "request", id: &id, method, params },
             )
             .await?;
             loop {
@@ -98,9 +110,23 @@ pub(super) async fn request(
     result
 }
 
-async fn send(socket: &mut Socket, frame: Value) -> Result<(), Failure> {
+#[derive(Serialize)]
+struct RequestFrame<'a, P> {
+    // Preserve the old Value serializer's sorted envelope bytes for sessions.
+    id: &'a str,
+    method: &'a str,
+    params: P,
+    #[serde(rename = "type")]
+    kind: &'a str,
+}
+
+async fn send(socket: &mut Socket, frame: impl Serialize) -> Result<(), Failure> {
     socket
-        .send(Message::Text(frame.to_string().into()))
+        .send(Message::Text(
+            serde_json::to_string(&frame)
+                .map_err(|e| error(&e.to_string()))?
+                .into(),
+        ))
         .await
         .map_err(|_| error("Gateway WebSocket is not connected."))
 }

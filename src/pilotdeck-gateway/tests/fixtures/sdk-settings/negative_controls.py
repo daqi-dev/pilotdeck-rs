@@ -17,6 +17,7 @@ from negative_suite import ReceiptRun, judge, passed
 root = Path(__file__).resolve().parents[5]
 settings = root / 'src/pilotdeck-cli/src/sdk/settings.rs'
 sdk = root / 'src/pilotdeck-cli/src/sdk.rs'
+transport = root / 'src/pilotdeck-cli/src/sdk/transport.rs'
 tests = root / 'src/pilotdeck-cli/tests/sdk_settings_exit.rs'
 fixture = root / 'src/pilotdeck-cli/tests/fixtures/sdk-settings'
 oracle = fixture / 'oracle.json'
@@ -27,7 +28,7 @@ REGENERATE = 'settings_oracle_regenerates_identically'
 mutations = [
     ('dispatch', sdk, 'Some("settings") => run_settings(&argv[1..], env, cwd),', 'Some("setting") => run_settings(&argv[1..], env, cwd),', MATRIX, '#1029 expected gateway lifecycle settings-default--argv'),
     ('default', sdk, 'map_or("get", String::as_str)', 'map_or("unknown", String::as_str)', MATRIX, '#1029 expected gateway lifecycle settings-default--argv'),
-    ('get-method', settings, '"resolve_settings", json!({})', '"wrong_settings", json!({})', MATRIX, '#1029 hello and request wire settings-default--argv'),
+    ('get-method', settings, '"resolve_settings",', '"wrong_settings",', MATRIX, '#1029 hello and request wire settings-default--argv'),
     ('set-method', settings, '"update_settings",', '"wrong_settings",', MATRIX, '#1029 hello and request wire settings-set--argv'),
     ('json-precedence', sdk, 'read_value(rest, "--json")', 'read_value(rest, "--wrong-json")', MATRIX, '#1029 expected gateway lifecycle settings-set--json-flag-precedence'),
     ('positional-join', sdk, 'positional(rest).join(" ")', 'positional(rest).join("")', LOCAL, '#1029 TS output and exit settings-set--missing-h'),
@@ -37,15 +38,19 @@ mutations = [
     ('array-validation', settings, '!matches!(settings, JsValue::Object(_))', '!matches!(settings, JsValue::Object(_) | JsValue::Array(_))', LOCAL, '#1029 preflight never connects settings-set--json-value-570'),
     ('scalar-validation', settings, '!matches!(settings, JsValue::Object(_))', '!matches!(settings, JsValue::Object(_) | JsValue::Number(_))', LOCAL, '#1029 preflight never connects settings-set--json-value-571'),
     ('object-message', settings, 'updateSettings settings must be an object.', 'settings must be an object.', LOCAL, '#1029 TS output and exit settings-set--json-value-569'),
-    ('source', settings, '"source":"localSettings"', '"source":"wrongSource"', MATRIX, '#1029 hello and request wire settings-set--argv'),
-    ('whole-object', settings, '"settings":settings', '"settings":{}', MATRIX, '#1029 hello and request wire settings-set--argv'),
-    ('json-rounding', settings, 'serde_json::from_str(&encoded)', 'serde_json::from_str(raw)', MATRIX, '#1029 expected gateway lifecycle settings-extra--set-js-numbers'),
+    ('source', settings, 'localSettings', 'wrongSource', MATRIX, '#1029 hello and request wire settings-set--argv'),
+    ('whole-object', settings, 'pub(super) fn set(connection: &Connection, settings: Box<RawValue>) -> Result<u8, Failure> {', 'pub(super) fn set(connection: &Connection, settings: Box<RawValue>) -> Result<u8, Failure> { let _ = settings; let settings = RawValue::from_string("{}".into()).map_err(|e| Failure::Error(e.to_string()))?;', MATRIX, '#1029 hello and request wire settings-set--argv'),
+    ('json-rounding', settings, 'RawValue::from_string(encoded)', 'RawValue::from_string({ let _ = encoded; raw.to_owned() })', MATRIX, '#1029 hello and request wire settings-extra--set-js-numbers'),
     ('empty-url-gate', sdk, '        "get" => {\n            create_client(&connection)?;', '        "get" => {\n            if false { create_client(&connection)?; }', LOCAL, '#1029 TS output and exit settings-default--gateway-empty'),
     ('full-result', settings, 'stringify_json(&result)', 'stringify_json(result.get("settings").unwrap_or(&JsValue::Null))', MATRIX, '#1029 TS output and exit settings-default--argv'),
     ('undefined-output', settings, 'unwrap_or_else(|| "undefined".into())', 'unwrap_or_else(|| "null".into())', MATRIX, '#1029 TS output and exit settings-extra--get-missing'),
     ('pretty-output', settings, 'stdout_line(&json_pretty(&raw));', 'stdout_line(&if false { json_pretty(&raw) } else { raw.clone() });', MATRIX, '#1029 TS output and exit settings-default--argv'),
     ('fixed-ack', settings, 'stdout_line("{\\"updated\\":true}");', 'stdout_line("{\\"updated\\":false}");', MATRIX, '#1029 TS output and exit settings-set--argv'),
     ('no-local-write', settings, 'stdout_line("{\\"updated\\":true}");', 'std::fs::write(std::path::Path::new(&std::env::var("PILOT_HOME").unwrap_or_default()).join("settings.json"), b"{}").map_err(|e| Failure::Error(e.to_string()))?; stdout_line("{\\"updated\\":true}");', MATRIX, '#1029 complete disk unchanged settings-set--argv'),
+    ('settings-client-version', settings, 'connection, method, params, "0.1.0",', 'connection, method, params, "pilotdeck-cli",', MATRIX, '#1029 hello and request wire settings-default--argv'),
+    ('rawvalue-surrogate', transport, 'serde_json::to_string(&frame)', 'serde_json::to_value(&frame).and_then(|value| serde_json::to_string(&value))', 'settings_raw_params_preserve_lone_surrogates', '#1029 expected text request frame settings-extra--set-surrogate'),
+    ('rawvalue-depth', transport, 'serde_json::to_string(&frame)', 'serde_json::to_value(&frame).and_then(|value| serde_json::to_string(&value))', 'settings_raw_params_preserve_deep_object', '#1029 expected text request frame settings-extra--set-deep-object'),
+    ('selected-cell-coverage', tests, '.count()\n                == 1', '.count()\n                == 2', 'settings_raw_params_preserve_deep_object', '#1029 exactly one selected TS cell settings-extra--set-deep-object'),
     ('coverage', tests, 'cases.len() == 191', 'cases.len() == 190', MATRIX, '#1029 157 registered cells plus 34 live settings boundary cells'),
     ('oracle-drift', oracle, '"nodeVersion": "v22.22.0"', '"nodeVersion": "v0.0.0"', REGENERATE, '#1029 identical TS fixture sdk-settings'),
     ('source-drift', source, '"raw/node-version.stdout.bin": "v22.22.0\\n"', '"raw/node-version.stdout.bin": "v0.0.0\\n"', REGENERATE, '#1029 identical TS fixture sdk-settings'),
