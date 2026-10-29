@@ -7,7 +7,7 @@
 以下命令从本树根运行；所有 cargo 使用调用方的同一 target，不建副本仓库或第二份构建目录。
 
 ```sh
-export CARGO_TARGET_DIR=/Users/da/ws/pilotdeck-rs/_build/wt-745/_build/cargo-target
+export CARGO_TARGET_DIR=/Users/da/ws/pilotdeck-rs/_build/wt-1022/_build/cargo-target
 export CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_PROFILE_TEST_DEBUG=line-tables-only
 export PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck
 scripts/cargo-slots.sh
@@ -15,14 +15,14 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib r
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --audit
 ```
 
-111 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
+122 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --compile "$OUT_COMPILE"
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py "$OUT_NEGATIVE"
 ```
 
-可在 OUT 后加单个变异名（如 `same-key-cached`）。每项先跑正控、单独编译变异、运行精确被点名测试、还原并复跑；所有项目汇总后退出。编译失败、错断言、槽位/测试超时、源码不等于 HEAD 或恢复守卫失败均为 INVALID；任何非 KILLED 使全量失败。`--compile` 的 COMPILED 仅表示能编译，不表示被杀。等待槽位与单次进程均最多 900 秒；Rust 门闩最多 8 秒，超时不作为判杀证据。
+可在 OUT 后加单个变异名（如 `same-key-cached`）。每项先跑正控、单独编译变异、运行精确被点名测试、还原并复跑；所有项目汇总后退出。编译失败、错断言、槽位/测试超时、源码不等于 HEAD 或恢复守卫失败均为 INVALID；任何非 KILLED 使全量失败。`--compile` 的 COMPILED 仅表示能编译，不表示被杀。等待槽位与单次进程均最多 900 秒；Rust 门闩最多 8 秒。执行器进程/槽位超时不作为判杀证据；Rust 用例中明确绑定的生命周期清理期限是专属断言（例如 `#1022 seed cancelled cleanup bounded wait`），须取得完整 libtest 失败结果才可判杀。
 
 状态差异正式登记在 `specs/gateway-parity/diffs/A7.2-SESSION-{WRITER-FENCE,SAME-KEY,RECREATE-DRAIN,ADMISSION-READ}-001.md`。同 key 并发、重建排队与 admission 首读错误清理仍标未批准；writer fence 依「基线丢数据默认修」人定规则实施、待人复核，不自动增加评分豁免。
 
@@ -30,7 +30,7 @@ python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.p
 
 `fenceMatrix` 新增 4 个旧状态（idle/quick/never/disposing）×4 事件（recreate/twice/close/shutdown）×3 时机（beforeload/afterload/publish）共48格。publish 门闩在真实 Router setupSession、registry.replace 之前；never 表示测量前缀中未放行的旧 turn，探针仅在清理时解除，不把15秒装置截止当产品结论。Rust每格有完整 `fence_<state>_<event>_<timing>` 测试；never 的后两阶段被 fence 阻断于 load 前，以专用超时、零load/零publish与原文件验证。
 
-租约按 canonical path 跨 factory 协调，并复用既有 `.lock` 文件锁排除其他进程。锁随真实 recorder/store 保留；显式 close 等已受理写完成后释放，不依赖旧 handle clone Drop。recreate 总等待预算由 `FactoryOptions.writer_fence_timeout` 显式传入；宿主按实际取消策略选择（例如既有 `POST_CANCEL_EXIT_TIMEOUT`），不隐式借用默认 transport close_timeout，storage构造自身耗时不消耗租约等待预算；超时不取消旧 handle 的持有型 drain任务。
+租约按 canonical path 跨 factory 协调，并复用既有 `.lock` 文件锁排除其他进程。锁随真实 recorder/store 保留；显式 close 等已受理写完成后释放，不依赖旧 handle clone Drop。recreate 前驱 drain 与忙锁等待预算由 `FactoryOptions.writer_busy_wait_timeout` 显式传入；宿主按实际取消策略选择（例如既有 `POST_CANCEL_EXIT_TIMEOUT`），不隐式借用默认 transport close_timeout，storage构造自身耗时不消耗租约等待预算；超时不取消旧 handle 的持有型 drain任务。
 
 `regenerates_identically` 必须执行真实探针，生成器不再接受 `MATRIX_IMPORT_ROOT` 跳过采集。新增金样仍由同一个 `#[ignore]` 守卫逐字节重生成验证。`--audit` 只证明变异文本发生变化、测试存在、失败消息存在；语义非等价与判杀只能由编译和实际测试证明。
 
@@ -50,4 +50,8 @@ writer lease在dispose/rollback一开始被take到局部WriterCloseGuard；guard
 
 fix-r4 将 handle 的 writer guard 接管提前到 adapter.abort 之前，覆盖 abort panic 尚未调用 session.dispose 的路径；正常资源钩子的最后写入仍在 guard Drop 前。factory.new 明确拒绝 ZERO 预算；到期仍完成 canonical path 和一次非阻塞租约尝试，只有忙锁等待受 deadline 约束（忙锁可等待时间仍扣除路径解析耗时）。耗尽预算用真实前驱活动、受控暂停 factory future、虚拟时钟与实际 lease 释放验证，不用 sleep 猜时序。
 
-新增五项：`writer-abort-panic-guard`、`writer-zero-budget`、`writer-expired-budget-skips-try`、`same-key-concurrent-skip-cache`、`same-key-cached-skip-cache`。same-key 新变异直接跳过缓存返回；原两条只覆盖 dirty，证据范围按 `A7.2-SESSION-SAME-KEY-001-R1` 更正。未提交产品源码的 mutating_sources 拒跑必须保留；本地一条样本不代表全部111项已编译/判杀。
+新增五项：`writer-abort-panic-cleanup`、`writer-zero-budget`、`writer-expired-budget-skips-try`、`same-key-concurrent-skip-cache`、`same-key-cached-skip-cache`。same-key 新变异直接跳过缓存返回；原两条只覆盖 dirty，证据范围按 `A7.2-SESSION-SAME-KEY-001-R1` 更正。未提交产品源码的 mutating_sources 拒跑必须保留；本地一条样本不代表全部122项已编译/判杀。
+
+#1022 补全 ticket 排队负控、FIFO/取消/截止、慢路径预算与 drain seed。`writer_busy_wait_timeout` 不限制 prepare、storage construction、canonicalization 或单次 OS 文件打开/锁尝试的墙钟时间；路径时间仍消耗后续忙锁剩余预算。`followups.mts` 用真实 stdio 实测 drain checkpoint 与 abort throw 后清理，`followups_regenerates_identically` 重新采集并逐字节比较。Rust 的 abort panic 被捕获后仍等 activity 清空再调用 session.dispose，保留原错误；测试保留旧 handle 验证资源无需等 clone Drop。
+
+优先解除 #748b 负控前置：提交后运行 `negative_controls.py OUT same-key-ticket-bypassed`，必须编译成功且 KILLED；本树未提交时 HEAD 守卫拒绝是正确行为。新增负控完整清单与执行状态见任务证据 RESULT，不把静态锚点检查称为运行判杀。

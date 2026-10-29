@@ -30,9 +30,9 @@ cases = [
     ('same-key-cached', owner, 'dirty: false,', 'dirty: true,', None, prefix+'same_key_cached', '#745 same-key-cached conclusion'),
     ('same-key-concurrent-skip-cache', owner, 'if !record.dirty || !self.0.options.factory.can_recreate() {', 'if false {', 'create_active', prefix+'same_key_concurrent', '#745 same-key-concurrent conclusion'),
     ('same-key-cached-skip-cache', owner, 'if !record.dirty || !self.0.options.factory.can_recreate() {', 'if false {', 'create_active', prefix+'same_key_cached', '#745 same-key-cached conclusion'),
-    ('writer-abort-panic-guard', handle, 'let _writer_guard = handle.0.session.disposal_guard();', 'let _writer_guard = ();', None, prefix+'writer_abort_panic_releases_lease_before_session_dispose', '#745 abort panic replacement not BUSY'),
-    ('writer-zero-budget', factory, '!options.writer_fence_timeout.is_zero(),', 'true,', None, prefix+'writer_fence_rejects_zero_budget', '#745 zero fence budget rejected'),
-    ('writer-expired-budget-skips-try', factory, 'let process = match mutex.clone().try_lock_owned() {', 'if deadline <= tokio::time::Instant::now() { return Err(writer_busy()); }\n    let process = match mutex.clone().try_lock_owned() {', None, prefix+'writer_fence_exhausted_drain_budget_acquires_idle_lease', '#745 exhausted budget still acquires idle writer'),
+    ('writer-abort-panic-cleanup', handle, '.unwrap_or_else(|_| Err(RuntimeError::new("Agent session abort panicked.")))', '.unwrap_or_else(|panic| std::panic::resume_unwind(panic))', None, prefix+'writer_abort_panic_releases_lease_before_session_dispose', '#1022 abort panic still drains active turn'),
+    ('writer-zero-budget', factory, '!options.writer_busy_wait_timeout.is_zero(),', 'true,', None, prefix+'writer_fence_rejects_zero_budget', '#745 zero fence budget rejected'),
+    ('writer-expired-budget-skips-try', factory, 'mutex.try_lock_owned().map_err(|_| writer_busy())', 'Err(writer_busy())', None, prefix+'writer_fence_exhausted_drain_budget_acquires_idle_lease', '#745 exhausted budget still acquires idle writer'),
     ('create-owner-shutdown', owner, 'return Err(RuntimeError::new(message));', 'let _ = message; return Ok(handle);', 'create_active', prefix+'create_owner_shutdown', '#745 create-owner-shutdown conclusion'),
     ('create-factory-dispose', factory, 'self.mcp.dispose().await', 'Ok(())', None, prefix+'create_factory_dispose', '#745 create-factory-dispose MCP stopped'),
     ('create-dispose-before-mcp', factory, 'self.mcp.dispose().await', 'Ok(())', None, prefix+'create_dispose_before_mcp', '#745 create-dispose-before-mcp conclusion'),
@@ -121,14 +121,14 @@ cases = [
     # lease's immediate try succeeds even with an expired deadline. Charge slow
     # storage to the original deadline inside initialized so normal rollback runs.
     ('writer-slow-storage-budget', factory, 'let deadline = tokio::time::Instant::now() + writer_wait_remaining;\n        let initialized = async {', 'let _ = writer_wait_remaining;\n        let initialized = async {\n            if tokio::time::Instant::now() >= deadline { return Err(writer_busy()); }', None, prefix+'writer_fence_slow_storage_is_not_writer_timeout', '#745 slow storage has full writer budget'),
-    ('writer-draining-snapshot', handle, 'self.0.session.draining_reload_snapshot()', 'self.0.session.reload_snapshot()', None, prefix+'recreate_while_storage_close_is_pending', '#745 draining closed adapter still recreates'),
+    ('writer-draining-snapshot', handle, 'self.0.session.draining_reload_snapshot()', 'self.0.session.reload_snapshot()', 'recreation_snapshot', prefix+'recreate_while_storage_close_is_pending', '#745 draining closed adapter still recreates'),
     ('writer-external-lock-error', factory, 'writer_busy()\n            }', 'RuntimeError::new("untyped lock failure")\n            }', None, prefix+'writer_fence_external_ledger_lock_rejects_before_load', '#745 external lease dedicated error'),
     ('writer-lease-retained-after-close', factory, 'lock(&self.writer_lease).take()', 'None', None, prefix+'recreate_running_after_publish_resume', '#745 interleaving new handle'),
     ('writer-snapshot-before-prepare', factory, '        let prepared = (self.options.prepare)(context.clone(), self.mcp.clone()).await?;\n        let captured_reload = previous\n            .as_ref()\n            .map(LiveSessionHandle::recreation_snapshot)\n            .transpose();', '        let captured_reload = previous.as_ref().map(LiveSessionHandle::recreation_snapshot).transpose();\n        let prepared = (self.options.prepare)(context.clone(), self.mcp.clone()).await?;', None, prefix+'recreate_snapshot_rejects_disposal_during_prepare', '#745 prepare disposal rejects recreation'),
     ('writer-dispose-panic-guard', factory, 'lock(&self.writer_lease).take()', 'None', None, prefix+'writer_close_panic_releases_lease', '#745 panic lease released'),
     ('writer-rollback-panic-guard', factory, 'lock(&self.writer_lease).take()', 'None', None, prefix+'writer_rollback_close_panic_releases_lease', '#745 rollback panic lease released'),
     ('writer-already-locked-contract', factory, 'writer_busy()\n            }', 'RuntimeError::new("untyped lock failure")\n            }', None, prefix+'writer_factory_rejects_already_locked_storage', '#1027 locked store factory error contract'),
-    ('writer-configured-budget', factory, 'tokio::time::Instant::now() + self.options.writer_fence_timeout', 'tokio::time::Instant::now() + crate::host::Limits::default().close_timeout', None, prefix+'writer_fence_uses_configured_budget', '#745 configured budget exceeds default close timeout'),
+    ('writer-configured-budget', factory, 'tokio::time::Instant::now() + self.options.writer_busy_wait_timeout', 'tokio::time::Instant::now() + crate::host::Limits::default().close_timeout', None, prefix+'writer_fence_uses_configured_budget', '#745 configured budget exceeds default close timeout'),
     ('fence-runtime-registry', test_source, 'serde_json::json!(fence_handle_id(h, &handle))', 'serde_json::json!(fence_handle_id(h, &handle) + 1)', None, prefix+'fence_idle_recreate_beforeload', '#745 fence runtime complete observation fence-idle-recreate-beforeload'),
     ('fence-runtime-results', test_source, '"handle":fence_handle_id(h,handle)', '"handle":fence_handle_id(h,handle) + 1', None, prefix+'fence_idle_twice_beforeload', '#745 fence runtime complete observation fence-idle-twice-beforeload'),
     ('fence-runtime-predecessor', test_source, 'HandleState::Disposed => "disposed"', 'HandleState::Disposed => "active"', None, prefix+'fence_idle_recreate_beforeload', '#745 fence runtime complete observation fence-idle-recreate-beforeload'),
@@ -140,6 +140,18 @@ cases = [
     ('writer-panic-sync-drain', factory, 'std::thread::spawn(close);', 'close();', None, prefix+'writer_panic_cleanup_allows_runtime_progress', '#745 panic cleanup permits runtime progress'),
     ('writer-panic-early-unlock', factory, 'let close = move || {\n            writer.close();\n            drop(lease);\n        };', 'drop(lease); let close = move || { writer.close(); };', None, prefix+'writer_panic_cleanup_allows_runtime_progress', '#745 panic retains lease through admitted write'),
     ('writer-panic-retirement-removed', factory, '        self.writer.begin_close();\n        let writer = self.writer.clone();\n        let lease = self._lease.take();\n        let close = move || {\n            writer.close();\n            drop(lease);\n        };\n        // An independent blocking thread also works when a future is dropped\n        // after its runtime has exited. It owns the lease through the drain.\n        std::thread::spawn(close);', '        let _ = self._lease.take();', None, prefix+'writer_rollback_close_panic_releases_lease', '#745 rollback panic writer retired'),
+    ('same-key-ticket-bypassed', owner, 'let _exclusive = ticket.enter().await;\n            let outcome = owner.create_active(context).await;', 'let _exclusive = ticket;\n            let outcome = owner.create_active(context).await;', None, prefix+'same_key_ticket_blocks_before_publication', '#1022 ticket second cannot enter before first publication'),
+    ('writer-unexpired-try-only', factory, 'tokio::time::timeout_at(deadline, mutex.lock_owned())\n            .await\n            .map_err(|_| writer_busy())', 'mutex.try_lock_owned().map_err(|_| writer_busy())', None, prefix+'writer_waiters_are_fifo_and_cancellation_safe', '#1022 FIFO B waits'),
+    ('writer-wait-never-times-out', factory, 'tokio::time::timeout_at(deadline, mutex.lock_owned())', 'tokio::time::timeout_at(deadline + std::time::Duration::from_secs(60), mutex.lock_owned())', None, prefix+'writer_waiters_are_fifo_and_cancellation_safe', '#1022 FIFO expiry is ready'),
+    ('writer-resolution-charged-as-total', factory, 'let path = resolved.await?;', 'let path = tokio::time::timeout_at(deadline, resolved).await.map_err(|_| writer_busy())??;', None, prefix+'writer_busy_budget_excludes_path_resolution', '#1022 path IO excluded from busy budget'),
+    ('drain-file-state-not-refreshed', factory, 'Ok(file_state) => reload.file_state = file_state,', 'Ok(_file_state) => {}', None, prefix+'recreation_uses_file_state_saved_during_drain', '#1022 seed replacement retains drained read state'),
+    ('drain-file-state-error-ignored', factory, 'match previous.drained_file_state() {', 'match previous.drained_file_state().or_else(|_| Ok(SeedState::default())) {', None, prefix+'failed_drained_seed_releases_prepared_resources', '#1022 seed failure propagated'),
+    ('drain-file-state-error-leaks-prepared', factory, 'let _ = prepared.resources.release().await;\n                    return Err(error);\n                }\n            }\n        }\n        let writer_wait_remaining', 'std::mem::forget(prepared.resources);\n                    return Err(error);\n                }\n            }\n        }\n        let writer_wait_remaining', None, prefix+'failed_drained_seed_releases_prepared_resources', '#1022 seed failure releases prepared project lease'),
+    ('drain-turn-drop-seed-removed', factory, 'if !self.finished\n            && self.started.load(Ordering::SeqCst)\n            &&', 'if false\n            && self.started.load(Ordering::SeqCst)\n            &&', None, prefix+'recreation_uses_file_state_saved_during_drain', '#1022 seed drop publishes final checkpoint'),
+    ('drain-cancelled-candidate-not-disposed', factory, 'let _ = handle.dispose("session_create_cancelled".into()).await;', 'let _ = handle;', None, prefix+'cancelled_recreation_finishes_drain_and_candidate_cleanup', '#1022 seed cancelled cleanup bounded wait'),
+    ('abort-session-cleanup-skipped', handle, 'if let Err(error) = handle.0.session.dispose().await {', 'if let Err(error) = if failures.is_empty() { handle.0.session.dispose().await } else { Ok(()) } {', None, prefix+'writer_abort_panic_releases_lease_before_session_dispose', '#1022 abort panic releases project resources with old handle retained'),
+    ('followups-regeneration', oracle, '"name": "abort-throw",', '"name": "wrong-abort-throw",', None, prefix+'followups_regenerates_identically', '#280 session-factory/oracle.json differs'),
+
 ]
 
 def audit():
@@ -170,8 +182,9 @@ def audit():
                         return False
                     offset = at + len(part)
                 return True
-            if test_name != 'regenerates_identically' and not any(
-                marker_matches(literal) for literal in literals if literal.startswith(('#745 ', '#1027 '))):
+            if not test_name.endswith('regenerates_identically') and not any(
+                marker_matches(literal) for literal in literals
+                if '#745 ' in literal or '#1022 ' in literal or '#1027 ' in literal):
                 raise ValueError('bound failure message not found: ' + assertion)
             rows.append(dict(mutation=name, status='CHECKED', test=test, assertion=assertion))
         except Exception as error:
@@ -199,7 +212,7 @@ command = ['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','p
 def run(label, test, compile=False):
     slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
     (out / (label+'.slots.log')).write_text(slot.stdout+slot.stderr)
-    args = ['--no-run'] if compile else [test,'--','--exact','--include-ignored','--nocapture']
+    args = ['--no-run'] if compile else [test,'--','--exact','--include-ignored']
     result = run_owned(command+args,cwd=root,env=env,timeout=900)
     with (out / (label+'.log')).open('x') as log:
         log.write(result.stdout+result.stderr)

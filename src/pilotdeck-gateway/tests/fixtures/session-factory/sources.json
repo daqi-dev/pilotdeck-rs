@@ -24,5 +24,7 @@
   "src/agent/modules/transport/agentLoopSidecarClient.ts",
   "src/agent/modules/transport/stdioAgentLoopSidecarConnection.ts",
   "src/agent/modules/checkpoint/seedStateProjection.ts",
-  "src/agent/turn/TurnRunner.ts"
+  "src/agent/turn/TurnRunner.ts",
+  "src/agent/session/AgentSessionRuntimeBundle.ts",
+  "src/agent/scope/AgentRuntimeScope.ts"
 ]

@@ -141,12 +141,26 @@ async fn acquire_writer(
     path: PathBuf,
     deadline: tokio::time::Instant,
 ) -> Result<WriterLease, RuntimeError> {
+    acquire_writer_resolved(
+        async move {
+            tokio::task::spawn_blocking(move || crate::storage::canonical_transcript_path(&path))
+                .await
+                .map_err(|e| RuntimeError::new(e.to_string()))?
+                .map_err(|e| RuntimeError::new(e.to_string()))
+        },
+        deadline,
+    )
+    .await
+}
+
+async fn acquire_writer_resolved(
+    resolved: impl std::future::Future<Output = Result<PathBuf, RuntimeError>>,
+    deadline: tokio::time::Instant,
+) -> Result<WriterLease, RuntimeError> {
     static WRITERS: OnceLock<Mutex<HashMap<PathBuf, Weak<WriterMutex>>>> = OnceLock::new();
-    let path =
-        tokio::task::spawn_blocking(move || crate::storage::canonical_transcript_path(&path))
-            .await
-            .map_err(|e| RuntimeError::new(e.to_string()))?
-            .map_err(|e| RuntimeError::new(e.to_string()))?;
+    // Path resolution is not a cancellable busy-lock wait. Its elapsed time
+    // consumes the remaining wait budget; after expiry only an idle try remains.
+    let path = resolved.await?;
     let mutex = {
         let mut writers = lock(WRITERS.get_or_init(Mutex::default));
         writers.retain(|_, entry| entry.strong_count() != 0);
@@ -160,14 +174,7 @@ async fn acquire_writer(
                 mutex
             })
     };
-    // Canonicalization may yield even when the lease is idle. Always try once
-    // after it completes; only an occupied lease enters the timed wait.
-    let process = match mutex.clone().try_lock_owned() {
-        Ok(process) => process,
-        Err(_) => tokio::time::timeout_at(deadline, mutex.lock_owned())
-            .await
-            .map_err(|_| writer_busy())?,
-    };
+    let process = acquire_process_writer(mutex, deadline).await?;
     let file = tokio::task::spawn_blocking(move || crate::storage::LedgerLock::acquire(&path))
         .await
         .map_err(|e| RuntimeError::new(e.to_string()))?
@@ -184,6 +191,19 @@ async fn acquire_writer(
         _process: process,
         _file: file,
     })
+}
+async fn acquire_process_writer(
+    mutex: Arc<WriterMutex>,
+    deadline: tokio::time::Instant,
+) -> Result<tokio::sync::OwnedMutexGuard<()>, RuntimeError> {
+    if deadline <= tokio::time::Instant::now() {
+        // An exhausted drain budget still allows an idle writer, never a wait.
+        mutex.try_lock_owned().map_err(|_| writer_busy())
+    } else {
+        tokio::time::timeout_at(deadline, mutex.lock_owned())
+            .await
+            .map_err(|_| writer_busy())
+    }
 }
 fn writer_busy() -> RuntimeError {
     let message = "Session writer is still draining; retry session recreation.";
@@ -395,13 +415,14 @@ pub type CreateStorage =
 pub type Admission =
     Arc<dyn Fn(SessionContext) -> BoxFuture<Result<Option<JsValue>, RuntimeError>> + Send + Sync>;
 pub struct FactoryOptions {
-    /// Total predecessor drain + writer lease wait budget, explicitly chosen by
-    /// the host's cancellation policy (e.g. POST_CANCEL_EXIT_TIMEOUT). This is
-    /// independent of host transport close_timeout; storage construction is
-    /// excluded from the budget. Must be positive. Path resolution and one
-    /// nonblocking lease attempt still run at expiry; if the process lease is
-    /// busy, its wait uses the original deadline (including resolution time).
-    pub writer_fence_timeout: std::time::Duration,
+    /// Predecessor drain + occupied process-lock wait budget, chosen by the
+    /// host's cancellation policy (e.g. POST_CANCEL_EXIT_TIMEOUT), not a total
+    /// wall-clock deadline for create. Must be positive. Prepare, storage
+    /// construction, path resolution and the single OS file-open/lock attempt
+    /// are excluded: blocking filesystem I/O cannot be cancelled by this budget.
+    /// Resolution time still consumes the remaining process-lock wait; at
+    /// expiry only a nonblocking process-lock attempt is permitted.
+    pub writer_busy_wait_timeout: std::time::Duration,
     pub prepare: Prepare,
     pub create_storage: CreateStorage,
     pub admission: Option<Admission>,
@@ -417,8 +438,8 @@ impl ProjectSessionFactory {
     /// Panics for a zero writer fence budget (a host configuration error).
     pub fn new(options: FactoryOptions) -> Self {
         assert!(
-            !options.writer_fence_timeout.is_zero(),
-            "writer_fence_timeout must be positive"
+            !options.writer_busy_wait_timeout.is_zero(),
+            "writer_busy_wait_timeout must be positive"
         );
         Self {
             options: Arc::new(options),
@@ -441,7 +462,7 @@ impl ProjectSessionFactory {
             .as_ref()
             .map(LiveSessionHandle::recreation_snapshot)
             .transpose();
-        let reload = match captured_reload {
+        let mut reload = match captured_reload {
             Ok(value) => value,
             Err(error) => {
                 let _ = prepared.resources.release().await;
@@ -449,7 +470,7 @@ impl ProjectSessionFactory {
             }
         };
         // A dropped timeout waiter cannot cancel the handle's owned drain task.
-        let deadline = tokio::time::Instant::now() + self.options.writer_fence_timeout;
+        let deadline = tokio::time::Instant::now() + self.options.writer_busy_wait_timeout;
         if let Some(previous) = &previous {
             let drained =
                 tokio::time::timeout_at(deadline, previous.dispose("session_recreate".into()))
@@ -458,6 +479,18 @@ impl ProjectSessionFactory {
             if let Err(error) = outcome {
                 let _ = prepared.resources.release().await;
                 return Err(error);
+            }
+        }
+        if let (Some(previous), Some(reload)) = (&previous, &mut reload) {
+            // OwnedTurn finalizes its checkpoint before releasing handle activity.
+            // Keep the earlier eligibility check, but seed the replacement only
+            // after that drain; durable messages still come from storage.restore.
+            match previous.drained_file_state() {
+                Ok(file_state) => reload.file_state = file_state,
+                Err(error) => {
+                    let _ = prepared.resources.release().await;
+                    return Err(error);
+                }
             }
         }
         let writer_wait_remaining = deadline.saturating_duration_since(tokio::time::Instant::now());

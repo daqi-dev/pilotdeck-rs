@@ -133,7 +133,7 @@ impl Harness {
     fn new(name: &'static str) -> Self {
         Self::with_fence_timeout(name, Duration::from_secs(1))
     }
-    fn with_fence_timeout(name: &'static str, writer_fence_timeout: Duration) -> Self {
+    fn with_fence_timeout(name: &'static str, writer_busy_wait_timeout: Duration) -> Self {
         let root = std::env::temp_dir().join(format!("pdrs-745-{name}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("#745 scratch");
         let registry = Arc::new(ProjectRuntimeRegistry::new(
@@ -344,7 +344,7 @@ impl Harness {
         });
         let diagnostic_obs = observed.clone();
         let factory = Arc::new(ProjectSessionFactory::new(FactoryOptions {
-            writer_fence_timeout,
+            writer_busy_wait_timeout,
             prepare,
             create_storage,
             admission: (name == "admission-read-reject").then(|| {
@@ -1766,7 +1766,7 @@ async fn writer_fence_timeout_then_owner_resume() {
     tokio::time::pause();
     let creating = h.owner.get_or_create(h.context());
     wait_draining(&old).await;
-    tokio::time::advance(h.factory.options.writer_fence_timeout).await;
+    tokio::time::advance(h.factory.options.writer_busy_wait_timeout).await;
     let error = creating
         .await
         .err()
@@ -1829,7 +1829,7 @@ async fn writer_lease_excludes_second_factory_and_alias() {
     #[cfg(not(unix))]
     let alias = h.root.join(".");
     let second = ProjectSessionFactory::new(FactoryOptions {
-        writer_fence_timeout: h.factory.options.writer_fence_timeout,
+        writer_busy_wait_timeout: h.factory.options.writer_busy_wait_timeout,
         prepare: h.factory.options.prepare.clone(),
         create_storage: Arc::new(move |context| {
             let root = alias.clone();
@@ -2263,7 +2263,7 @@ async fn fence_matrix(name: &'static str) {
         result_rows.push(serde_json::json!({"label":"fence-old-dispose","status":"fulfilled"}));
     }
     if state == "never" {
-        tokio::time::advance(h.factory.options.writer_fence_timeout).await;
+        tokio::time::advance(h.factory.options.writer_busy_wait_timeout).await;
         let first = first.await;
         result_rows.push(fence_result(&h, "fence-first", &first));
         let error = first.err().expect("#745 matrix timeout rejects first");
@@ -2472,7 +2472,7 @@ async fn writer_fence_slow_storage_is_not_writer_timeout() {
     let creating = h.owner.get_or_create(h.context());
     bounded("slow storage", h.gate.entered()).await;
     tokio::time::pause();
-    tokio::time::advance(h.factory.options.writer_fence_timeout * 2).await;
+    tokio::time::advance(h.factory.options.writer_busy_wait_timeout * 2).await;
     tokio::time::resume();
     h.gate.open();
     let new = bounded("slow storage", creating)
@@ -2495,7 +2495,7 @@ async fn writer_fence_timeout_returns_no_candidate() {
     tokio::time::pause();
     let creating = tokio::spawn(h.factory.create(h.context(), Some(old.clone())));
     wait_draining(&old).await;
-    tokio::time::advance(h.factory.options.writer_fence_timeout).await;
+    tokio::time::advance(h.factory.options.writer_busy_wait_timeout).await;
     let error = creating
         .await
         .expect("#745 candidate task completes")
@@ -2614,15 +2614,14 @@ async fn recreate_snapshot_rejects_disposal_during_prepare() {
 
 #[tokio::test]
 async fn writer_abort_panic_releases_lease_before_session_dispose() {
-    // Inject only the adapter's abort failure, forwarding the real factory
-    // cleanup capability. Retain the original handle/recorder across recreate.
-    struct AbortPanic(Arc<dyn LiveSession>);
+    struct AbortPanic(Arc<dyn LiveSession>, Arc<Semaphore>);
     impl LiveSession for AbortPanic {
         fn snapshot(&self) -> JsValue {
             self.0.snapshot()
         }
         fn abort(&self, _: &JsString) -> RuntimeResult {
-            panic!("#745 injected adapter abort panic");
+            self.1.add_permits(1);
+            panic!("#1022 abort injected adapter panic");
         }
         fn disposal_guard(&self) -> Option<Box<dyn Send>> {
             self.0.disposal_guard()
@@ -2632,49 +2631,104 @@ async fn writer_abort_panic_releases_lease_before_session_dispose() {
         }
     }
     let h = Harness::new("abort-panic");
-    let original = bounded("abort panic initial", h.factory.create(h.context(), None))
+    let original = followup_bounded("abort initial", h.factory.create(h.context(), None))
         .await
-        .expect("#745 abort panic initial factory create");
-    let writer = lock(&h.observed.bindings)[0].recorder.writer().clone();
-    let old = LiveSessionHandle::new(Arc::new(AbortPanic(original.session_for_test())), None);
-    let activity = old.begin_activity().expect("#745 abort panic active turn");
-    let result = bounded("abort panic dispose", old.dispose("test".into())).await;
-    assert!(result.is_err(), "#745 abort panic reports disposal failure");
+        .expect("#1022 abort initial create");
+    let writer = lock(&h.observed.bindings)
+        .first()
+        .expect("#1022 abort initial binding")
+        .recorder
+        .writer()
+        .clone();
+    let aborted = Arc::new(Semaphore::new(0));
+    let old = LiveSessionHandle::new(
+        Arc::new(AbortPanic(original.session_for_test(), aborted.clone())),
+        None,
+    );
+    let activity = old.begin_activity().expect("#1022 abort active turn");
+    let disposal = old.dispose("test".into());
+    followup_bounded("abort observed", aborted.acquire())
+        .await
+        .expect("#1022 abort reached adapter")
+        .forget();
     assert_eq!(
         old.state(),
-        HandleState::Disposed,
-        "#745 abort panic disposed"
+        HandleState::Draining,
+        "#1022 abort panic still drains active turn"
     );
-    let new = bounded("abort panic recreate", h.factory.create(h.context(), None))
+    assert_eq!(h.leases(), 1, "#1022 abort resources retained while active");
+    drop(disposal); // Cancelling the waiter cannot cancel owned cleanup.
+    drop(activity);
+    let error = followup_bounded("abort dispose", old.dispose("again".into()))
         .await
-        .expect("#745 abort panic replacement not BUSY");
-    assert!(
-        lock(&lock(&h.observed.writer_leases)[0]).is_none(),
-        "#745 abort panic old lease transferred"
+        .expect_err("#1022 abort reports failure");
+    assert_eq!(
+        error.message,
+        oracle_document()["followups"][1]["error"]["message"],
+        "#1022 abort aggregate retained"
     );
+    assert_eq!(
+        error
+            .causes
+            .first()
+            .expect("#1022 abort cause exists")
+            .message,
+        "Agent session abort panicked.",
+        "#1022 abort original panic retained"
+    );
+    assert_eq!(old.state(), HandleState::Disposed, "#1022 abort disposed");
+    assert_eq!(
+        h.leases(),
+        0,
+        "#1022 abort panic releases project resources with old handle retained"
+    );
+    assert_eq!(
+        h.observed.mcp.load(Ordering::SeqCst),
+        0,
+        "#1022 abort panic releases MCP with old handle retained"
+    );
+    assert_eq!(
+        lock(&h.observed.events)
+            .iter()
+            .filter(|v| *v == "close.1")
+            .count(),
+        1,
+        "#1022 abort panic closes storage exactly once"
+    );
+    assert!(
+        original.reload_snapshot().is_err(),
+        "#1022 abort panic disposes adapter with old handle retained"
+    );
+    let repeat = followup_bounded("abort repeat", old.dispose("repeat".into()))
+        .await
+        .expect_err("#1022 abort repeat error");
+    assert_eq!(
+        repeat.message, error.message,
+        "#1022 abort shared completion"
+    );
+    assert_eq!(
+        lock(&h.observed.events)
+            .iter()
+            .filter(|v| *v == "close.1")
+            .count(),
+        1,
+        "#1022 abort repeat does not close twice"
+    );
+    let new = followup_bounded("abort recreate", h.factory.create(h.context(), None))
+        .await
+        .expect("#1022 abort replacement not BUSY");
     let before = writer.snapshot_state();
     writer
-        .record_session_metadata(
-            &"session-745".into(),
-            &"late".into(),
-            js(r#"{"late":true}"#),
-        )
-        .expect("#745 abort panic retired append resolves");
+        .record_session_metadata(&"session-745".into(), &"late".into(), JsValue::Null)
+        .expect("#1022 abort retired append resolves");
     assert_eq!(
         writer.snapshot_state(),
         before,
-        "#745 abort panic writer retired"
+        "#1022 abort writer retired"
     );
-    drop(activity);
-    // The injected abort skipped ordinary session cleanup; release the retained
-    // test adapter's remaining resources after proving writer recovery.
-    original
-        .dispose("cleanup".into())
+    followup_bounded("abort replacement dispose", new.dispose("cleanup".into()))
         .await
-        .expect("#745 abort panic original cleanup");
-    new.dispose("cleanup".into())
-        .await
-        .expect("#745 abort panic replacement cleanup");
+        .expect("#1022 abort replacement cleanup");
     h.finish("abort-panic").await;
 }
 
@@ -2683,7 +2737,7 @@ async fn writer_fence_rejects_zero_budget() {
     let h = Harness::new("zero-budget");
     let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         ProjectSessionFactory::new(FactoryOptions {
-            writer_fence_timeout: Duration::ZERO,
+            writer_busy_wait_timeout: Duration::ZERO,
             prepare: h.factory.options.prepare.clone(),
             create_storage: h.factory.options.create_storage.clone(),
             admission: None,
@@ -2716,7 +2770,7 @@ async fn writer_fence_exhausted_drain_budget_acquires_idle_lease() {
         HandleState::Draining,
         "#745 exhausted budget drain started"
     );
-    tokio::time::advance(h.factory.options.writer_fence_timeout).await;
+    tokio::time::advance(h.factory.options.writer_busy_wait_timeout).await;
     tokio::time::resume();
     drop(activity);
     bounded("exhausted budget drain", old.dispose("finish".into()))
@@ -2937,7 +2991,7 @@ async fn writer_factory_rejects_already_locked_storage() {
     let retained = store.clone();
     let root = h.root.clone();
     let factory = ProjectSessionFactory::new(FactoryOptions {
-        writer_fence_timeout: h.factory.options.writer_fence_timeout,
+        writer_busy_wait_timeout: h.factory.options.writer_busy_wait_timeout,
         prepare: h.factory.options.prepare.clone(),
         create_storage: Arc::new(move |context| {
             let store = retained.clone();
@@ -3199,4 +3253,472 @@ async fn writer_panic_cleanup_allows_runtime_progress() {
     .expect("#745 panic background lease eventually released");
     drop(lease);
     h.finish("panic-background").await;
+}
+
+async fn followup_bounded<T>(name: &str, future: impl Future<Output = T>) -> T {
+    tokio::time::timeout(Duration::from_secs(8), future)
+        .await
+        .unwrap_or_else(|_| panic!("#1022 {name} bounded wait"))
+}
+
+// No filesystem or blocking pool: paused time can advance only after both
+// owned creation tasks have been polled. Removing ticket.enter reaches the
+// second factory before the 1ms observation deadline, deterministically.
+#[tokio::test(start_paused = true)]
+async fn same_key_ticket_blocks_before_publication() {
+    struct Idle;
+    impl LiveSession for Idle {
+        fn snapshot(&self) -> JsValue {
+            JsValue::Null
+        }
+        fn abort(&self, _: &JsString) -> RuntimeResult {
+            Ok(())
+        }
+        fn dispose(&self) -> DisposeFuture<'_> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+    struct QueuedFactory {
+        first: Arc<Semaphore>,
+        second: Arc<Semaphore>,
+        release: Arc<Semaphore>,
+        creates: Arc<AtomicUsize>,
+    }
+    impl SessionFactory for QueuedFactory {
+        fn create(
+            &self,
+            _: SessionContext,
+            _: Option<LiveSessionHandle>,
+        ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+            let id = self.creates.fetch_add(1, Ordering::SeqCst);
+            let entered = if id == 0 {
+                self.first.clone()
+            } else {
+                self.second.clone()
+            };
+            let release = self.release.clone();
+            Box::pin(async move {
+                entered.add_permits(1);
+                release
+                    .acquire()
+                    .await
+                    .expect("#1022 ticket release gate")
+                    .forget();
+                Ok(LiveSessionHandle::new(Arc::new(Idle), None))
+            })
+        }
+    }
+    for cancel_first in [false, true] {
+        let first = Arc::new(Semaphore::new(0));
+        let second = Arc::new(Semaphore::new(0));
+        let release = Arc::new(Semaphore::new(0));
+        let creates = Arc::new(AtomicUsize::new(0));
+        let mut options = SessionOwnerOptions::new(Arc::new(QueuedFactory {
+            first: first.clone(),
+            second: second.clone(),
+            release: release.clone(),
+            creates: creates.clone(),
+        }));
+        options.idle_sweep_interval_ms = 0;
+        let owner = SessionOwner::new(options);
+        let context = SessionContext {
+            session_key: "ticket-1022".into(),
+            project_key: None,
+            channel_key: "test".into(),
+            allowed_tools: None,
+            disallowed_tools: None,
+        };
+        let mut a = Some(owner.get_or_create(context.clone()));
+        followup_bounded("ticket first", first.acquire())
+            .await
+            .expect("#1022 ticket first entered")
+            .forget();
+        let b = owner.get_or_create(context.clone());
+        if cancel_first {
+            drop(a.take());
+        }
+        let premature = tokio::time::timeout(Duration::from_millis(1), second.acquire()).await;
+        assert!(
+            premature.is_err(),
+            "#1022 ticket second cannot enter before first publication"
+        );
+        assert_eq!(
+            creates.load(Ordering::SeqCst),
+            1,
+            "#1022 ticket one preparation while predecessor held"
+        );
+        release.add_permits(2);
+        let b = followup_bounded("ticket second", b)
+            .await
+            .expect("#1022 ticket second completes");
+        let a = if let Some(a) = a {
+            followup_bounded("ticket first result", a)
+                .await
+                .expect("#1022 ticket first result")
+        } else {
+            followup_bounded("ticket cached", owner.get_or_create(context))
+                .await
+                .expect("#1022 ticket cancelled caller owned result")
+        };
+        assert!(a.same_identity(&b), "#1022 ticket one published identity");
+        assert_eq!(
+            creates.load(Ordering::SeqCst),
+            1,
+            "#1022 ticket no duplicate preparation"
+        );
+        followup_bounded("ticket shutdown", owner.shutdown())
+            .await
+            .expect("#1022 ticket cleanup");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn writer_waiters_are_fifo_and_cancellation_safe() {
+    let mutex = Arc::new(WriterMutex::new(()));
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    let a = acquire_process_writer(mutex.clone(), deadline)
+        .await
+        .expect("#1022 FIFO initial owner");
+    let mut b = Box::pin(acquire_process_writer(mutex.clone(), deadline));
+    let mut c = Box::pin(acquire_process_writer(mutex.clone(), deadline));
+    assert!(
+        std::future::poll_fn(|cx| std::task::Poll::Ready(b.as_mut().poll(cx)))
+            .await
+            .is_pending(),
+        "#1022 FIFO B waits"
+    );
+    assert!(
+        std::future::poll_fn(|cx| std::task::Poll::Ready(c.as_mut().poll(cx)))
+            .await
+            .is_pending(),
+        "#1022 FIFO C waits"
+    );
+    drop(a);
+    assert!(
+        std::future::poll_fn(|cx| std::task::Poll::Ready(c.as_mut().poll(cx)))
+            .await
+            .is_pending(),
+        "#1022 FIFO C cannot pass B"
+    );
+    let b = followup_bounded("FIFO B", b)
+        .await
+        .expect("#1022 FIFO B receives released writer");
+    drop(b);
+    let c = followup_bounded("FIFO C", c)
+        .await
+        .expect("#1022 FIFO C follows B");
+    let mut cancelled = Box::pin(acquire_process_writer(mutex.clone(), deadline));
+    assert!(
+        std::future::poll_fn(|cx| std::task::Poll::Ready(cancelled.as_mut().poll(cx)))
+            .await
+            .is_pending(),
+        "#1022 FIFO cancelled waiter queues"
+    );
+    drop(cancelled);
+    let mut expires = Box::pin(acquire_process_writer(mutex.clone(), deadline));
+    assert!(
+        std::future::poll_fn(|cx| std::task::Poll::Ready(expires.as_mut().poll(cx)))
+            .await
+            .is_pending(),
+        "#1022 FIFO live waiter queues"
+    );
+    tokio::time::advance(Duration::from_secs(1)).await;
+    let expired =
+        std::future::poll_fn(|cx| std::task::Poll::Ready(expires.as_mut().poll(cx))).await;
+    let std::task::Poll::Ready(Err(error)) = expired else {
+        panic!("#1022 FIFO expiry is ready");
+    };
+    assert_eq!(
+        error.js_error().and_then(|e| e.code.as_deref()),
+        Some("SESSION_WRITER_BUSY"),
+        "#1022 FIFO timeout error"
+    );
+    assert!(
+        mutex.clone().try_lock_owned().is_err(),
+        "#1022 FIFO timeout retains owner"
+    );
+    drop(c);
+    acquire_process_writer(mutex, deadline)
+        .await
+        .expect("#1022 FIFO cancellation leaves no stale waiter");
+}
+
+#[tokio::test]
+async fn writer_busy_budget_excludes_path_resolution() {
+    let h = Harness::new("slow-path-1022");
+    let path = crate::storage::canonical_transcript_path(&h.root.join("slow-path.jsonl"))
+        .expect("#1022 path canonical identity");
+    for occupied in [false, true] {
+        let held = if occupied {
+            Some(
+                acquire_writer(
+                    path.clone(),
+                    tokio::time::Instant::now() + Duration::from_secs(1),
+                )
+                .await
+                .expect("#1022 path initial owner"),
+            )
+        } else {
+            None
+        };
+        tokio::time::pause();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        let (send, receive) = tokio::sync::oneshot::channel();
+        let mut waiting = Box::pin(acquire_writer_resolved(
+            async { receive.await.expect("#1022 path resolution gate") },
+            deadline,
+        ));
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx)))
+                .await
+                .is_pending(),
+            "#1022 path starts resolution"
+        );
+        tokio::time::advance(Duration::from_secs(2)).await;
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx)))
+                .await
+                .is_pending(),
+            "#1022 path IO excluded from busy budget"
+        );
+        tokio::time::resume();
+        send.send(Ok(path.clone()))
+            .expect("#1022 path resolution completes");
+        let acquired = followup_bounded("path acquire", waiting).await;
+        if occupied {
+            let error = acquired.err().expect("#1022 path expired busy rejects");
+            assert_eq!(
+                error.js_error().and_then(|e| e.code.as_deref()),
+                Some("SESSION_WRITER_BUSY"),
+                "#1022 path busy error"
+            );
+        } else {
+            drop(acquired.expect("#1022 path expired idle succeeds"));
+        }
+        drop(held);
+    }
+    h.finish("slow-path-1022").await;
+}
+
+async fn drained_seed_case(cancel_waiter: bool, fail_final_seed: bool) {
+    struct Pending;
+    impl LiveTurn for Pending {
+        fn next(&mut self) -> super::super::SessionNext<'_> {
+            Box::pin(std::future::pending())
+        }
+    }
+    // Retain the actual factory adapter/storage and use the production OwnedTurn
+    // checkpoint-on-drop path with a deterministic started turn, no provider I/O.
+    struct StartedSession {
+        inner: Arc<dyn LiveSession>,
+        checkpoint: HostToolCheckpoint,
+        saved: Arc<Mutex<SeedState>>,
+        captured: Arc<Semaphore>,
+        snapshots: AtomicUsize,
+        fail_final_seed: bool,
+    }
+    impl LiveSession for StartedSession {
+        fn snapshot(&self) -> JsValue {
+            self.inner.snapshot()
+        }
+        fn reload_snapshot(&self) -> Result<ReloadSnapshot, RuntimeError> {
+            self.inner.reload_snapshot()
+        }
+        fn draining_reload_snapshot(&self) -> Result<ReloadSnapshot, RuntimeError> {
+            if self.snapshots.fetch_add(1, Ordering::SeqCst) > 0 && self.fail_final_seed {
+                return Err(RuntimeError::new("#1022 final seed unavailable"));
+            }
+            let mut snapshot = self.inner.draining_reload_snapshot()?;
+            snapshot.file_state = lock(&self.saved).clone();
+            self.captured.add_permits(1);
+            Ok(snapshot)
+        }
+        fn submit(&self, _: JsValue, _: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+            Ok(Box::new(OwnedTurn {
+                turn: Box::new(Pending),
+                checkpoint: self.checkpoint.clone(),
+                saved: self.saved.clone(),
+                started: Arc::new(AtomicBool::new(true)),
+                finished: false,
+            }))
+        }
+        fn abort(&self, reason: &JsString) -> RuntimeResult {
+            self.inner.abort(reason)
+        }
+        fn disposal_guard(&self) -> Option<Box<dyn Send>> {
+            self.inner.disposal_guard()
+        }
+        fn dispose(&self) -> DisposeFuture<'_> {
+            self.inner.dispose()
+        }
+    }
+    let h = Harness::new("drain-seed-1022");
+    let original = followup_bounded("seed initial", h.factory.create(h.context(), None))
+        .await
+        .expect("#1022 seed initial session");
+    let checkpoint = lock(&h.observed.bindings)
+        .first()
+        .expect("#1022 seed initial binding")
+        .checkpoint
+        .clone();
+    lock(&checkpoint.read_file_state).insert(
+        "seed.txt".into(),
+        parse_json(r#"{"mtimeMs":1,"kind":"text"}"#).expect("#1022 seed initial metadata"),
+    );
+    let saved = Arc::new(Mutex::new(
+        checkpoint
+            .snapshot()
+            .expect("#1022 seed initial checkpoint"),
+    ));
+    lock(&checkpoint.read_file_state).insert(
+        "during.txt".into(),
+        parse_json(r#"{"mtimeMs":2,"kind":"text"}"#).expect("#1022 seed read metadata"),
+    );
+    let captured = Arc::new(Semaphore::new(0));
+    let old = LiveSessionHandle::new(
+        Arc::new(StartedSession {
+            inner: original.session_for_test(),
+            checkpoint,
+            saved: saved.clone(),
+            captured: captured.clone(),
+            snapshots: AtomicUsize::new(0),
+            fail_final_seed,
+        }),
+        None,
+    );
+    let stream = old
+        .submit(JsValue::Null, JsValue::Null)
+        .expect("#1022 seed started turn");
+    let factory = h.factory.clone();
+    let context = h.context();
+    let previous = old.clone();
+    let creating = tokio::spawn(async move { factory.create(context, Some(previous)).await });
+    followup_bounded("seed capture", captured.acquire())
+        .await
+        .expect("#1022 seed before-drain capture")
+        .forget();
+    assert_eq!(
+        old.state(),
+        HandleState::Draining,
+        "#1022 seed predecessor draining before stream drop"
+    );
+    assert!(
+        lock(&saved)
+            .read_file_state
+            .as_ref()
+            .is_some_and(|s| s.get("during.txt").is_none()),
+        "#1022 seed saved state remains pre-turn until drain"
+    );
+    if cancel_waiter {
+        creating.abort();
+    }
+    drop(stream);
+    assert!(
+        lock(&saved)
+            .read_file_state
+            .as_ref()
+            .is_some_and(|s| s.get("during.txt").is_some()),
+        "#1022 seed drop publishes final checkpoint"
+    );
+    if cancel_waiter {
+        assert!(
+            creating
+                .await
+                .err()
+                .expect("#1022 seed cancelled waiter")
+                .is_cancelled(),
+            "#1022 seed cancellation is expected"
+        );
+        followup_bounded("seed cancelled cleanup", async {
+            while h.leases() != 0
+                || h.observed.mcp.load(Ordering::SeqCst) != 0
+                || !lock(&h.observed.events).iter().any(|v| v == "close.2")
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+    } else if fail_final_seed {
+        let error = followup_bounded("seed failure", creating)
+            .await
+            .expect("#1022 seed failure join")
+            .err()
+            .expect("#1022 seed failure propagated");
+        assert_eq!(
+            error.message, "#1022 final seed unavailable",
+            "#1022 seed failure preserves error"
+        );
+        assert_eq!(
+            h.leases(),
+            0,
+            "#1022 seed failure releases prepared project lease"
+        );
+        assert_eq!(
+            h.observed.mcp.load(Ordering::SeqCst),
+            0,
+            "#1022 seed failure releases prepared MCP"
+        );
+        assert_eq!(
+            lock(&h.observed.bindings).len(),
+            1,
+            "#1022 seed failure creates no replacement storage"
+        );
+    } else {
+        let new = followup_bounded("seed recreate", creating)
+            .await
+            .expect("#1022 seed create join")
+            .expect("#1022 seed create result");
+        let seed = new
+            .reload_snapshot()
+            .expect("#1022 seed replacement snapshot")
+            .file_state;
+        assert_eq!(
+            seed_json(&seed)["readFileState"],
+            oracle_document()["followups"][0]["drained"]["readFileState"],
+            "#1022 seed replacement retains drained read state"
+        );
+        let binding = lock(&h.observed.bindings)
+            .get(1)
+            .expect("#1022 seed replacement binding")
+            .checkpoint
+            .clone();
+        assert!(
+            lock(&binding.read_file_state).get("during.txt").is_some(),
+            "#1022 seed edit checkpoint retains read authority"
+        );
+        followup_bounded("seed replacement dispose", new.dispose("cleanup".into()))
+            .await
+            .expect("#1022 seed replacement cleanup");
+    }
+    assert!(
+        lock(&h.observed.events).iter().any(|v| v == "close.1"),
+        "#1022 seed old storage closed"
+    );
+    if cancel_waiter {
+        assert!(
+            lock(&h.observed.events).iter().any(|v| v == "close.2"),
+            "#1022 seed cancelled candidate storage closed"
+        );
+    }
+    h.finish("drain-seed-1022").await;
+}
+
+#[tokio::test]
+async fn recreation_uses_file_state_saved_during_drain() {
+    drained_seed_case(false, false).await;
+}
+#[tokio::test]
+async fn cancelled_recreation_finishes_drain_and_candidate_cleanup() {
+    drained_seed_case(true, false).await;
+}
+
+#[test]
+#[ignore = "requires fixed TS baseline and Node v22.22.0"]
+fn followups_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("session-factory");
+}
+
+#[tokio::test]
+async fn failed_drained_seed_releases_prepared_resources() {
+    drained_seed_case(false, true).await;
 }

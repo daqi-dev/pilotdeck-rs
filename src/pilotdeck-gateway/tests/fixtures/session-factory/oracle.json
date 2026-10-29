@@ -24350,5 +24350,101 @@
       "name": "Error",
       "message": "Session projection driver is disposed."
     }
-  }
+  },
+  "followups": [
+    {
+      "name": "drain",
+      "initial": {
+        "readFileState": {
+          "seed.txt": {
+            "mtimeMs": 1,
+            "kind": "text"
+          }
+        }
+      },
+      "captured": {
+        "readFileState": {
+          "seed.txt": {
+            "mtimeMs": 1,
+            "kind": "text"
+          }
+        }
+      },
+      "drained": {
+        "allowedReadFiles": [],
+        "readFileState": {
+          "seed.txt": {
+            "mtimeMs": 1,
+            "kind": "text"
+          },
+          "during.txt": {
+            "mtimeMs": 2,
+            "kind": "text"
+          }
+        },
+        "writeSnapshots": {}
+      },
+      "pending": {
+        "state": "draining",
+        "inFlight": 1,
+        "configuredDisposed": 0,
+        "effectReleased": 0
+      },
+      "state": "disposed",
+      "inFlight": 0,
+      "configuredDisposed": 1,
+      "effectReleased": 1,
+      "error": null
+    },
+    {
+      "name": "abort-throw",
+      "initial": {
+        "readFileState": {
+          "seed.txt": {
+            "mtimeMs": 1,
+            "kind": "text"
+          }
+        }
+      },
+      "captured": {
+        "readFileState": {
+          "seed.txt": {
+            "mtimeMs": 1,
+            "kind": "text"
+          }
+        }
+      },
+      "drained": {
+        "allowedReadFiles": [],
+        "readFileState": {
+          "seed.txt": {
+            "mtimeMs": 1,
+            "kind": "text"
+          },
+          "during.txt": {
+            "mtimeMs": 2,
+            "kind": "text"
+          }
+        },
+        "writeSnapshots": {}
+      },
+      "pending": {
+        "state": "draining",
+        "inFlight": 1,
+        "configuredDisposed": 0,
+        "effectReleased": 0
+      },
+      "state": "disposed",
+      "inFlight": 0,
+      "configuredDisposed": 1,
+      "effectReleased": 1,
+      "error": {
+        "name": "AggregateError",
+        "message": "Failed to dispose agent handle.",
+        "errors": [
+          "ABORT_1022"
+        ]
+      }
+    }
+  ]
 }
