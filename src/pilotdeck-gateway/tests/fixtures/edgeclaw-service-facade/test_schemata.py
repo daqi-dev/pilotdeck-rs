@@ -19,7 +19,9 @@ def result(test, state='ok', anchor='', file='pilotdeck-gateway/src/../tests/edg
     return SimpleNamespace(returncode=0 if state == 'ok' else 101,
         stdout=f'test {runner.PREFIX}{test} ... {state}\n'
                + ('test result: ok. 1 passed;' if state == 'ok' else 'test result: FAILED'),
-        stderr='' if state == 'ok' else f'panicked at {file}:1:1:\n{anchor}')
+        # Real libtest header: the shared judge reads the named test's own
+        # `thread '<name>' panicked at` block (#818), never a bare line.
+        stderr='' if state == 'ok' else f"thread '{runner.PREFIX}{test}' panicked at {file}:1:1:\n{anchor}")
 
 
 def binding(name, witness=None):
