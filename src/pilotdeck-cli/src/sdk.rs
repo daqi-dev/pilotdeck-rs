@@ -1,5 +1,6 @@
 //! SDK CLI dispatch and shared connection preflight.
 mod sessions;
+mod settings;
 mod transport;
 use crate::paths::{self, Env};
 use crate::{Failure, stdout_line};
@@ -73,9 +74,7 @@ fn run_settings(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
         // the subcommand dispatch (#982 settings-default/get--gateway-empty).
         "get" => {
             create_client(&connection)?;
-            Err(Failure::Todo(
-                "pilotdeck settings get (SDK resolveSettings)",
-            ))
+            settings::get(&connection)
         }
         "set" => {
             let rest = &argv[1..];
@@ -90,11 +89,12 @@ fn run_settings(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
             if let Some(message) = json_syntax::parse_error(&raw) {
                 return Err(Failure::Error(format!("Invalid settings JSON: {message}")));
             }
+            let settings = settings::parse(&raw)?;
             // updateSettings validates the settings object (P04) and then the
             // connectionOptions gate before connecting; the JSON syntax error
             // above already precedes both (#982 settings-set--gateway-empty).
             create_client(&connection)?;
-            Err(Failure::Todo("pilotdeck settings set (SDK updateSettings)"))
+            settings::set(&connection, settings)
         }
         _ => Err(Failure::Error(
             "Usage: pilotdeck settings <get|set> ...".into(),
