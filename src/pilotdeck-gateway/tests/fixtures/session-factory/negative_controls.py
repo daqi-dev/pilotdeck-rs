@@ -286,7 +286,7 @@ def guard_failed(group, error):
     # A failed guard means the tree may not be restored: every row recorded so
     # far is untrusted, not only this group's (#979 P0 / #1037, shared
     # invalidate_completed also revokes ``compiled``). Unrun rows stay INVALID.
-    invalidate_completed(results, f'guard: {error}')
+    invalidate_completed(results, f'source guard: {error}')
     recorded = {row['mutation'] for row in results}
     for name,path,old,new,scope,test,assertion in group:
         if name not in recorded:
