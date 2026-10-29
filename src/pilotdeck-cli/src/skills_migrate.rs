@@ -894,7 +894,10 @@ mod tests {
     /// #273: libtest receipt for an `--exact` child — exit 0, one `running 1
     /// test` banner, one passing summary, and the per-test `... ok` line. No
     /// shared test-support crate in pilotdeck-cli: keep in sync with
-    /// `src/pilotdeck-gateway/tests/common/exact_receipt.rs`. The exact
+    /// `src/pilotdeck-gateway/tests/common/exact_receipt.rs` and with the
+    /// Python twin `libtest_receipt` in
+    /// `src/pilotdeck-yaml/tests/run_resource_scaling.py` (no shared
+    /// language). The exact
     /// per-test line assumes the multithreaded libtest layout (`#942`
     /// fix-r1): a printing child must pin `--test-threads=2`, since
     /// single-threaded libtest prints the name before the body runs. This

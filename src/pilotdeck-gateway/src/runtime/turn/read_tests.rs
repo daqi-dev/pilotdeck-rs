@@ -629,8 +629,22 @@ fn real_ts_turn_read_regenerates_identically() {
 /// print the completion marker, so a filter that matches nothing (this is a
 /// unit-test binary, where `--exact` needs the full module path) cannot pass
 /// as a vacuous exit-0.
+/// #942 fix-r2 (r3 review Claude-concurrency P2): the bounded probe and its
+/// single-thread ambient regression each race a 100,000-layer child; run in
+/// parallel they contend for the same CPU/memory and the 10 s wall-clock
+/// deadline flakes under load. Serialize the two within this test binary
+/// (the ambient regression's inner re-run is a separate process, so it only
+/// ever shares this lock with its own siblings — never with itself).
+static DEPTH_PROBE_SERIAL: Mutex<()> = Mutex::new(());
+
 #[test]
 fn run_events_pathological_depth_last_seq_is_bounded() {
+    // Held for the whole probe, including the child wait, so the ambient
+    // regression below cannot start its own heavy child until this one is
+    // reaped. A poisoned lock means one of the two already panicked.
+    let _serial = DEPTH_PROBE_SERIAL
+        .lock()
+        .expect("#942 depth-probe serialization lock");
     // Reap on every exit path, including failed try_wait and assertion
     // unwinding.
     struct ReapedChild(Child);
@@ -732,6 +746,11 @@ fn run_events_pathological_depth_last_seq_is_bounded() {
 /// here instead of on a quiet single-threaded CI box.
 #[test]
 fn run_events_pathological_depth_last_seq_is_bounded_under_single_thread_ambient() {
+    // See DEPTH_PROBE_SERIAL above: same-binary serialization with the heavy
+    // probe (the inner re-run takes the lock in its own process, never here).
+    let _serial = DEPTH_PROBE_SERIAL
+        .lock()
+        .expect("#942 depth-probe serialization lock");
     const PARENT: &str =
         "runtime::turn::read::tests::run_events_pathological_depth_last_seq_is_bounded";
     let output =
