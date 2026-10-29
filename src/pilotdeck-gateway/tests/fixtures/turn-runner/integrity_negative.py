@@ -31,7 +31,7 @@ cases = [
      'observe_terminal', 'runtime::turn::live::tests::host_lifecycle_cannot_justify_a_sidecar_final', 'host failure is not loop evidence'),
     ('early-final', live,
      'Some("success") => current == IntegrityState::Running,', 'Some("success") => current != IntegrityState::Failed,',
-     'observe_terminal', 'runtime::turn::live::stream_tests::real_ts_sidecar_early_final', 'integrity rejection catch order'),
+     'observe_terminal', 'runtime::turn::live::stream_tests::real_ts_sidecar_early_final', '#748 early-final lifecycle rejection reason'),
     ('delivered-suffix', live,
      'if !outcome.is_some_and', 'if false && !outcome.is_some_and',
      'finish', 'runtime::turn::live::stream_tests::slow_consumer_with_a_blocked_callback_still_exits_bounded', 'integrity failure terminal must be error'),
