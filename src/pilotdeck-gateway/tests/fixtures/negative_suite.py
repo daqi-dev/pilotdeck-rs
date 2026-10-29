@@ -36,6 +36,19 @@ def classify(result, case):
     return 'INVALID', 'missing bound runtime failure (build error, wrong panic, or missing test)'
 
 
+def invalidate_completed(results, reason):
+    """A failed source guard invalidates every row already recorded.
+
+    The guard restores and re-verifies every mutated file on context exit. When
+    it raises there, a previously recorded KILLED row is no longer trustworthy:
+    the tree may not be restored. Leaving it green would publish a false pass
+    (#979 P0), so this is the single implementation shared by ``run_cases`` and
+    the SQLite-header executor.
+    """
+    for row in results:
+        row.update(status='INVALID', reason=row['reason'] + '; ' + reason)
+
+
 def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD'):
     """Return an exit code; each case must pass before and after mutation."""
     results = []
@@ -102,8 +115,7 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD'):
         # A baseline/lock/restoration failure makes further mutation unsafe.
         # Still account for every selected case and never leave an all-green summary.
         reason = f'source guard: {type(error).__name__}: {error}'
-        for row in results:
-            row.update(status='INVALID', reason=row['reason'] + '; ' + reason)
+        invalidate_completed(results, reason)
         for case in cases[len(results):]:
             record(case, 'INVALID', reason)
         if len(results) == len(cases):

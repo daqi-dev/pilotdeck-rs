@@ -17,7 +17,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, new_output_directory, run_owned, wait_for_slot
-from negative_suite import Case, classify as classify_case, passed
+from negative_suite import Case, classify as classify_case, invalidate_completed, passed
 
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
@@ -119,6 +119,10 @@ def main():
                 write_summary(output, results)
     except Exception as error:
         reason = f'source guard: {type(error).__name__}: {error}'
+        # The guard exits after restoring and re-verifying every mutated source.
+        # A failure there invalidates rows already recorded as KILLED; never
+        # leave them green and exit 0 (#979 P0). Shared with negative_suite.
+        invalidate_completed(results, reason)
         for name, _path, _before, _after, test, _assertion in MUTANT_ROWS[len(results):]:
             results.append({'mutation': name, 'test': test,
                             'status': 'INVALID', 'reason': reason})

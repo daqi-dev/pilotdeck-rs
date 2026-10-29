@@ -5,11 +5,15 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 import negative_suite as suite
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / '_shared'))
+import negative_sqlite_header as sqlite_header
 
 
 TEST = 'runtime::fixture::bound_test'
@@ -174,6 +178,94 @@ class SuiteTests(unittest.TestCase):
                 self.assertFalse(suite.passed(subprocess.CompletedProcess([], 0,
                                   passed.stdout.replace(marker, ''), ''), TEST),
                                  'positive needs exact test and one pass')
+
+
+class SqliteHeaderExecutorTests(unittest.TestCase):
+    """#979 P0: guard-exit failures must invalidate already-recorded kills."""
+
+    def test_guard_restore_failure_invalidates_all_completed_kills(self):
+        generator = sqlite_header.GENERATOR
+        observer = sqlite_header.STORAGE_OBSERVER
+        originals = {generator: generator.read_bytes(), observer: observer.read_bytes()}
+        for name, path, before, _after, _test, _assertion in sqlite_header.MUTANT_ROWS:
+            self.assertEqual(originals[path].decode().count(before), 1,
+                             f'#979 {name} anchor must be unique before the simulation')
+
+        @contextlib.contextmanager
+        def guard(_root, _paths):
+            try:
+                yield originals
+            finally:
+                raise RuntimeError('injected source guard restore failure')
+
+        outcomes = []
+        anchors = {test: assertion for _name, _path, _before, _after, test, assertion
+                   in sqlite_header.MUTANT_ROWS}
+        snapshots = []
+        write_summary = sqlite_header.write_summary
+
+        def capture(output_dir, rows):
+            snapshots.append([row['status'] for row in rows])
+            return write_summary(output_dir, rows)
+
+        def cargo(command, **_kwargs):
+            test = command[-1]
+            outcomes.append(test)
+            if len(outcomes) in (2, 5):
+                return subprocess.CompletedProcess(
+                    command, 101,
+                    f'test {test} ... FAILED\ntest result: FAILED\n',
+                    f'panicked at fixture: {anchors[test]}\n')
+            return subprocess.CompletedProcess(
+                command, 0,
+                f'test {test} ... ok\ntest result: ok. 1 passed; 0 failed;\n', '')
+
+        write_bytes = Path.write_bytes
+
+        def keep_tree(path, data):
+            # Never let the simulation write the real fixtures: the snapshots
+            # already equal their committed bytes.
+            if path in originals:
+                self.assertEqual(path.read_bytes(), originals[path],
+                                 '#979 simulated mutation must not touch the tree')
+                return len(data)
+            return write_bytes(path, data)
+
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / 'evidence'
+            with patch.object(sqlite_header, 'mutating_sources', new=guard), \
+                    patch.object(sqlite_header, 'wait_for_slot',
+                                 return_value=subprocess.CompletedProcess([], 0, '', '')), \
+                    patch.object(sqlite_header, 'run_owned', side_effect=cargo), \
+                    patch.object(sqlite_header, 'write_summary', new=capture), \
+                    patch.object(Path, 'write_bytes', new=keep_tree), \
+                    patch.object(sys, 'argv', ['negative_sqlite_header.py', str(out)]), \
+                    patch.dict('os.environ', {
+                        'PDRS_BASELINE': str(Path(directory)),
+                        'CARGO_TARGET_DIR': str(Path(directory) / 'target')}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                code = sqlite_header.main()
+            summary = out / 'summary.json'
+            self.assertTrue(summary.is_file(), '#979 guard-failure run must write summary.json')
+            try:
+                report = json.loads(summary.read_text())
+            except (OSError, ValueError) as error:
+                self.fail(f'#979 summary.json must be readable JSON: {type(error).__name__}: {error}')
+        self.assertEqual(len(outcomes), 6,
+                         '#979 both mutants must finish positive/negative/restored before the guard exits')
+        self.assertEqual(report['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 2},
+                         '#979 a failed guard exit must invalidate every completed kill')
+        self.assertEqual([row['status'] for row in report['controls']],
+                         ['INVALID', 'INVALID'],
+                         '#979 no completed row may stay KILLED after a guard failure')
+        self.assertIn(['KILLED', 'KILLED'], snapshots,
+                      '#979 both mutants must be KILLED before the guard exit')
+        self.assertEqual(snapshots[-1], ['INVALID', 'INVALID'],
+                         '#979 the guard failure must rewrite the persisted summary')
+        for row in report['controls']:
+            self.assertIn('injected source guard restore failure', row['reason'],
+                          '#979 the guard exception must be attached to every row')
+        self.assertNotEqual(code, 0, '#979 a failed guard exit must return nonzero')
 
 
 class AnchorPreflightTests(unittest.TestCase):
