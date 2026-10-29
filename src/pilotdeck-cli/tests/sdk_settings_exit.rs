@@ -283,7 +283,14 @@ async fn replay(listener: TcpListener, case: &Value, pid: u32) {
                 .await
                 .expect("#1029 wire frame exists")
                 .expect("#1029 readable wire frame");
-            let raw = message.to_text().expect("#1029 text wire frame");
+            verify(
+                message.is_text(),
+                &format!(
+                    "#1029 expected text request frame {}",
+                    case["input"]["id"].as_str().expect("#1029 cell id")
+                ),
+            );
+            let raw = message.to_text().expect("#1029 verified text wire frame");
             let mut frame = pilotdeck_protocol::parse_json(raw).expect("#1029 JSON wire frame");
             if frame
                 .get("type")
@@ -539,15 +546,25 @@ impl Drop for ParityLock {
 
 #[tokio::test(flavor = "current_thread")]
 async fn settings_matches_ts_matrix() {
-    replay_matrix(false).await;
+    replay_matrix(false, None).await;
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn settings_local_preflight_matches_ts_matrix() {
-    replay_matrix(true).await;
+    replay_matrix(true, None).await;
 }
 
-async fn replay_matrix(local_only: bool) {
+#[tokio::test(flavor = "current_thread")]
+async fn settings_raw_params_preserve_lone_surrogates() {
+    replay_matrix(false, Some("settings-extra--set-surrogate")).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn settings_raw_params_preserve_deep_object() {
+    replay_matrix(false, Some("settings-extra--set-deep-object")).await;
+}
+
+async fn replay_matrix(local_only: bool, selected: Option<&str>) {
     let _port = PORT.lock().await;
     let _lock = ParityLock::acquire().await;
     let oracle: Value = serde_json::from_str(ORACLE).expect("#1029 TS oracle JSON");
@@ -556,9 +573,20 @@ async fn replay_matrix(local_only: bool) {
         cases.len() == 191,
         "#1029 157 registered cells plus 34 live settings boundary cells",
     );
+    if let Some(id) = selected {
+        verify(
+            cases
+                .iter()
+                .filter(|case| case["input"]["id"] == id)
+                .count()
+                == 1,
+            &format!("#1029 exactly one selected TS cell {id}"),
+        );
+    }
     for case in cases
         .iter()
         .filter(|case| !local_only || case["connections"] == 0)
+        .filter(|case| selected.is_none_or(|id| case["input"]["id"] == id))
     {
         let runtime = Runtime::new();
         let mut command = runtime.command(&case["input"]);

@@ -260,9 +260,8 @@ async fn replay(listener: TcpListener, case: &Value, pid: u32) {
                 .await
                 .expect("#983 wire frame exists")
                 .expect("#983 readable wire frame");
-            let mut frame: Value =
-                serde_json::from_str(message.to_text().expect("#983 text wire frame"))
-                    .expect("#983 JSON wire frame");
+            let raw = message.to_text().expect("#983 text wire frame");
+            let mut frame: Value = serde_json::from_str(raw).expect("#983 JSON wire frame");
             if frame["type"] == "request" {
                 id = frame["id"]
                     .as_str()
@@ -276,6 +275,17 @@ async fn replay(listener: TcpListener, case: &Value, pid: u32) {
                     ),
                 );
                 frame["id"] = "<request>".into();
+                // P04's RawValue entry must retain P02's Value-encoded bytes,
+                // including the legacy sorted envelope keys (not a TS oracle).
+                let legacy =
+                    serde_json::to_string(&frame).expect("#983 legacy request serialization");
+                verify(
+                    raw.replace(&id, "<request>") == legacy,
+                    &format!(
+                        "#983 legacy request encoding {}",
+                        case["input"]["id"].as_str().expect("#983 cell id")
+                    ),
+                );
             }
             verify(
                 frame == row["frame"],
