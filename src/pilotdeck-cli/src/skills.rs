@@ -430,8 +430,14 @@ mod tests {
         bundled_root(&home);
         let output = std::process::Command::new("/bin/sh")
             .arg("-c")
+            // #942 fix-r1: the child's `WRITE_ERROR=` line is itself the
+            // receipt (like the grep helper's handshake) — a renamed filter
+            // runs zero tests and still exits 0, and the `strip_prefix` below
+            // then finds no marker line — and `--test-threads=2` pins the
+            // multithreaded libtest layout so the marker stays a whole line
+            // even under an ambient RUST_TEST_THREADS=1.
             .arg(
-                "ulimit -f 0; exec \"$0\" --exact skills::tests::marker_child_over_file_size_limit --ignored --nocapture",
+                "ulimit -f 0; exec \"$0\" --exact skills::tests::marker_child_over_file_size_limit --ignored --nocapture --test-threads=2",
             )
             .arg(std::env::current_exe().unwrap())
             .env("PDRS_MARKER_HOME", &home)

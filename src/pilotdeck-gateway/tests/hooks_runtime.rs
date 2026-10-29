@@ -2124,6 +2124,7 @@ fn deleted_process_cwd_fails_turn_environment() {
                 "--exact",
                 "deleted_process_cwd_fails_turn_environment",
                 "--nocapture",
+                "--test-threads=2",
             ])
             .env("PDRS_DELETED_CWD_TURN_CHILD", "1")
             .output()

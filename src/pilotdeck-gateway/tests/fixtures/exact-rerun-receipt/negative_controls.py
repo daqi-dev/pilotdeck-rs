@@ -9,7 +9,9 @@ switches a worker child to libtest's terse format which drops the per-test
 "#273 ... rerun matched no test" assertion. The #942 rows hold the remaining
 in-repo rerun sites to the same receipt (bound to their "#942 ..." messages;
 the grep helper is bound to its handshake panic because its receipt is the
-handshake itself, not a libtest summary).
+handshake itself, not a libtest summary). The rss-probe row is macOS-only
+(its bound parent is `#[cfg(target_os = "macos")]`-gated); other platforms
+record it SKIPPED rather than KILLED or INVALID.
 """
 import argparse
 import difflib
@@ -45,6 +47,8 @@ CARGO_TARGETS = {
     # #942: the remaining subprocess --exact rerun sites.
     'runtime::turn::read::tests::run_events_pathological_depth_last_seq_is_bounded':
         ['-p', 'pilotdeck-gateway', '--lib'],
+    'runtime::manager::tests::manager_deep_project_key_returns_range_error_without_aborting':
+        ['-p', 'pilotdeck-gateway', '--lib'],
     'runtime::tools::builtin::grep::tests::sigkill_of_the_test_process_leaves_no_fake_rg_orphans':
         ['-p', 'pilotdeck-gateway', '--lib'],
     'dump_request_creates_file':
@@ -75,11 +79,21 @@ CARGO_TARGETS = {
         ['-p', 'pilotdeck-gateway', '--test', 'count_proxy'],
     'bounded_peak_rss_is_lower_than_full':
         ['-p', 'pilotdeck-gateway', '--test', 'html_budget_probe'],
+    'repository_home_fallback_matches_ts_homedir':
+        ['-p', 'pilotdeck-gateway', '--test', 'edgeclaw_accessors'],
 }
 
 # Bound parents that are themselves #[ignore]d: libtest needs --ignored to
 # select them at all (their rerun children already carry their own --ignored).
 IGNORED_PARENTS = {'bounded_peak_rss_is_lower_than_full'}
+
+# `bounded_peak_rss_is_lower_than_full` and its RSS probe child compile only
+# on macOS (`#[cfg(target_os = "macos")]` in html_budget_probe.rs): elsewhere
+# the bound test does not exist, the positive control can never pass, and the
+# row would be INVALID by construction. Default runs on other platforms drop
+# the row; an explicit selection there is recorded SKIPPED (neither KILLED nor
+# INVALID) and does not fail the run.
+DARWIN_ONLY = {'rss-probe-exact-rename'}
 
 
 def main():
@@ -113,6 +127,8 @@ def main():
     permission_source = root / 'src/pilotdeck-gateway/tests/permission.rs'
     count_source = root / 'src/pilotdeck-gateway/tests/count_proxy.rs'
     rss_source = root / 'src/pilotdeck-gateway/tests/html_budget_probe.rs'
+    accessors_source = root / 'src/pilotdeck-gateway/tests/edgeclaw_accessors.rs'
+    manager_source = root / 'src/pilotdeck-gateway/src/runtime/manager/tests.rs'
     env = os.environ.copy()
     env['CARGO_PROFILE_DEV_DEBUG'] = 'line-tables-only'
     env['CARGO_PROFILE_TEST_DEBUG'] = 'line-tables-only'
@@ -183,32 +199,68 @@ def main():
         # run_case is shared by creates_file and disabled_by_default; both
         # fail at the same receipt assertion, bind the enabled-gate parent.
         ('dump-enabled-gate-exact-rename', dump_source,
-         '        .args(["--exact", "dump_child", "--ignored", "--nocapture"])\n'
+         '        .args([\n'
+         '            "--exact",\n'
+         '            "dump_child",\n'
+         '            "--ignored",\n'
+         '            "--nocapture",\n'
+         '            "--test-threads=2",\n'
+         '        ])\n'
          '        .env("PDRS_DUMP_PROTOCOL", protocol)',
-         '        .args(["--exact", "dump_child_renamed", "--ignored", "--nocapture"])\n'
+         '        .args([\n'
+         '            "--exact",\n'
+         '            "dump_child_renamed",\n'
+         '            "--ignored",\n'
+         '            "--nocapture",\n'
+         '            "--test-threads=2",\n'
+         '        ])\n'
          '        .env("PDRS_DUMP_PROTOCOL", protocol)',
          'dump_request_creates_file',
          '#942 dump rerun (enabled gate) matched no test'),
         ('dump-write-fail-exact-rename', dump_source,
-         '                .args(["--exact", "dump_child", "--ignored", "--nocapture"])\n'
+         '                .args([\n'
+         '                    "--exact",\n'
+         '                    "dump_child",\n'
+         '                    "--ignored",\n'
+         '                    "--nocapture",\n'
+         '                    "--test-threads=2",\n'
+         '                ])\n'
          '                .env("PDRS_DUMP_PROTOCOL", protocol)',
-         '                .args(["--exact", "dump_child_renamed", "--ignored", "--nocapture"])\n'
+         '                .args([\n'
+         '                    "--exact",\n'
+         '                    "dump_child_renamed",\n'
+         '                    "--ignored",\n'
+         '                    "--nocapture",\n'
+         '                    "--test-threads=2",\n'
+         '                ])\n'
          '                .env("PDRS_DUMP_PROTOCOL", protocol)',
          'dump_request_write_failure_semantics',
          '#942 dump rerun (write-fail) matched no test'),
         ('dump-xfsz-exact-rename', dump_source,
-         '--exact dump_child --ignored --nocapture',
-         '--exact dump_child_renamed --ignored --nocapture',
+         '--exact dump_child --ignored --nocapture --test-threads=2',
+         '--exact dump_child_renamed --ignored --nocapture --test-threads=2',
          'dump_request_write_over_file_size_limit_surfaces_efbig',
          '#942 dump rerun (xfsz) matched no test'),
         ('dump-empty-tmpdir-exact-rename', dump_source,
-         '        .args(["--exact", "dump_child", "--ignored", "--nocapture"])\n'
+         '        .args([\n'
+         '            "--exact",\n'
+         '            "dump_child",\n'
+         '            "--ignored",\n'
+         '            "--nocapture",\n'
+         '            "--test-threads=2",\n'
+         '        ])\n'
          '        .env("PDRS_DUMP_PROTOCOL", "openai")\n'
          '        .env("PDRS_DUMP_MARKER", &marker)\n'
          '        .env("PDRS_DUMP_MODE", "ok")\n'
          '        .env("PILOTDECK_DUMP_REQUEST", "1")\n'
          '        .env("TMPDIR", "")',
-         '        .args(["--exact", "dump_child_renamed", "--ignored", "--nocapture"])\n'
+         '        .args([\n'
+         '            "--exact",\n'
+         '            "dump_child_renamed",\n'
+         '            "--ignored",\n'
+         '            "--nocapture",\n'
+         '            "--test-threads=2",\n'
+         '        ])\n'
          '        .env("PDRS_DUMP_PROTOCOL", "openai")\n'
          '        .env("PDRS_DUMP_MARKER", &marker)\n'
          '        .env("PDRS_DUMP_MODE", "ok")\n'
@@ -217,19 +269,41 @@ def main():
          'dump_request_empty_tmpdir_never_lands_in_cwd',
          '#942 dump rerun (empty-tmpdir) matched no test'),
         ('dump-complete-exact-rename', dump_source,
-         '        .args(["--exact", "dump_child", "--ignored", "--nocapture"])\n'
+         '        .args([\n'
+         '            "--exact",\n'
+         '            "dump_child",\n'
+         '            "--ignored",\n'
+         '            "--nocapture",\n'
+         '            "--test-threads=2",\n'
+         '        ])\n'
          '        .env("PDRS_DUMP_PROTOCOL", "openai")\n'
          '        .env("PDRS_DUMP_MARKER", &marker)\n'
          '        .env("PDRS_DUMP_MODE", "complete")',
-         '        .args(["--exact", "dump_child_renamed", "--ignored", "--nocapture"])\n'
+         '        .args([\n'
+         '            "--exact",\n'
+         '            "dump_child_renamed",\n'
+         '            "--ignored",\n'
+         '            "--nocapture",\n'
+         '            "--test-threads=2",\n'
+         '        ])\n'
          '        .env("PDRS_DUMP_PROTOCOL", "openai")\n'
          '        .env("PDRS_DUMP_MARKER", &marker)\n'
          '        .env("PDRS_DUMP_MODE", "complete")',
          'dump_request_not_triggered_by_complete',
          '#942 dump rerun (complete) matched no test'),
         ('cold-restart-exact-rename', a52_source,
-         '.args(["--exact", "cold_restart_child", "--nocapture"])',
-         '.args(["--exact", "cold_restart_child_renamed", "--nocapture"])',
+         '                .args([\n'
+         '                    "--exact",\n'
+         '                    "cold_restart_child",\n'
+         '                    "--nocapture",\n'
+         '                    "--test-threads=2",\n'
+         '                ])',
+         '                .args([\n'
+         '                    "--exact",\n'
+         '                    "cold_restart_child_renamed",\n'
+         '                    "--nocapture",\n'
+         '                    "--test-threads=2",\n'
+         '                ])',
          'cold_restart_fences_accepted_and_running_without_inventing_unknown_result',
          '#942 cold-restart rerun matched no test'),
         ('transcript-resolve-exact-rename', transcript_source,
@@ -238,13 +312,33 @@ def main():
          'relative_base_normal_cwd',
          '#942 transcript-resolve rerun matched no test'),
         ('private-ca-exact-rename', private_ca_source,
-         '.args(["--exact", "private_ca_matrix", "--nocapture"])',
-         '.args(["--exact", "private_ca_matrix_renamed", "--nocapture"])',
+         '            .args([\n'
+         '                "--exact",\n'
+         '                "private_ca_matrix",\n'
+         '                "--nocapture",\n'
+         '                "--test-threads=2",\n'
+         '            ])',
+         '            .args([\n'
+         '                "--exact",\n'
+         '                "private_ca_matrix_renamed",\n'
+         '                "--nocapture",\n'
+         '                "--test-threads=2",\n'
+         '            ])',
          'private_ca_matrix',
          '#942 private-ca rerun matched no test'),
         ('proxy-schemes-exact-rename', schemes_source,
-         '.args(["--exact", "replays_ts_proxy_schemes", "--nocapture"])',
-         '.args(["--exact", "replays_ts_proxy_schemes_renamed", "--nocapture"])',
+         '            .args([\n'
+         '                "--exact",\n'
+         '                "replays_ts_proxy_schemes",\n'
+         '                "--nocapture",\n'
+         '                "--test-threads=2",\n'
+         '            ])',
+         '            .args([\n'
+         '                "--exact",\n'
+         '                "replays_ts_proxy_schemes_renamed",\n'
+         '                "--nocapture",\n'
+         '                "--test-threads=2",\n'
+         '            ])',
          'replays_ts_proxy_schemes',
          '#942 proxy-schemes rerun matched no test'),
         ('mcp-proxy-exact-rename', mcp_proxy_source,
@@ -252,11 +346,13 @@ def main():
          '                "--exact",\n'
          '                "replays_ts_mcp_http_proxy_scenarios",\n'
          '                "--nocapture",\n'
+         '                "--test-threads=2",\n'
          '            ])',
          '            .args([\n'
          '                "--exact",\n'
          '                "replays_ts_mcp_http_proxy_scenarios_renamed",\n'
          '                "--nocapture",\n'
+         '                "--test-threads=2",\n'
          '            ])',
          'replays_ts_mcp_http_proxy_scenarios',
          '#942 mcp-proxy rerun matched no test'),
@@ -265,11 +361,13 @@ def main():
          '                "--exact",\n'
          '                "deleted_process_cwd_fails_turn_environment",\n'
          '                "--nocapture",\n'
+         '                "--test-threads=2",\n'
          '            ])',
          '            .args([\n'
          '                "--exact",\n'
          '                "deleted_process_cwd_fails_turn_environment_renamed",\n'
          '                "--nocapture",\n'
+         '                "--test-threads=2",\n'
          '            ])',
          'deleted_process_cwd_fails_turn_environment',
          '#942 deleted-cwd turn-environment rerun matched no test'),
@@ -278,11 +376,13 @@ def main():
          '                "--exact",\n'
          '                "deleted_process_cwd_fails_the_decision",\n'
          '                "--nocapture",\n'
+         '                "--test-threads=2",\n'
          '            ])',
          '            .args([\n'
          '                "--exact",\n'
          '                "deleted_process_cwd_fails_the_decision_renamed",\n'
          '                "--nocapture",\n'
+         '                "--test-threads=2",\n'
          '            ])',
          'deleted_process_cwd_fails_the_decision',
          '#942 deleted-cwd decision rerun matched no test'),
@@ -291,25 +391,83 @@ def main():
          '            "--exact",\n'
          '            "count_transport_uses_environment_proxy",\n'
          '            "--nocapture",\n'
+         '            "--test-threads=2",\n'
          '        ])',
          '        .args([\n'
          '            "--exact",\n'
          '            "count_transport_uses_environment_proxy_renamed",\n'
          '            "--nocapture",\n'
+         '            "--test-threads=2",\n'
          '        ])',
          'count_transport_uses_environment_proxy',
          '#942 count-proxy rerun matched no test'),
         ('rss-probe-exact-rename', rss_source,
-         '.args(["--ignored", "--exact", "probe", "--nocapture"])',
-         '.args(["--ignored", "--exact", "probe_renamed", "--nocapture"])',
+         '            .args([\n'
+         '                "--ignored",\n'
+         '                "--exact",\n'
+         '                "probe",\n'
+         '                "--nocapture",\n'
+         '                "--test-threads=2",\n'
+         '            ])',
+         '            .args([\n'
+         '                "--ignored",\n'
+         '                "--exact",\n'
+         '                "probe_renamed",\n'
+         '                "--nocapture",\n'
+         '                "--test-threads=2",\n'
+         '            ])',
          'bounded_peak_rss_is_lower_than_full',
          '#942 rss-probe rerun matched no test'),
+        # #942 fix-r1 (review P2): the two homedir rerun sites share one
+        # spawn helper, so one rename kills the runnable parent; the other
+        # caller needs a TS baseline and cannot be a positive control here.
+        ('homedir-exact-rename', accessors_source,
+         '        .args([\n'
+         '            "--exact",\n'
+         '            "home_fallback_child",\n'
+         '            "--ignored",\n'
+         '            "--nocapture",\n'
+         '            "--test-threads=2",\n'
+         '        ])\n'
+         '        .env("PDRS_HOME_FALLBACK_CHILD", mode)',
+         '        .args([\n'
+         '            "--exact",\n'
+         '            "home_fallback_child_renamed",\n'
+         '            "--ignored",\n'
+         '            "--nocapture",\n'
+         '            "--test-threads=2",\n'
+         '        ])\n'
+         '        .env("PDRS_HOME_FALLBACK_CHILD", mode)',
+         'repository_home_fallback_matches_ts_homedir',
+         '#942 homedir rerun matched no test'),
+        # #942 fix-r1 (review P2): #934's deep projectKey child had only the
+        # DEEP= marker; now bound to the same receipt as the other sites.
+        ('manager-deep-exact-rename', manager_source,
+         '    const CHILD: &str =\n'
+         '        "runtime::manager::tests::manager_deep_project_key_returns_range_error_without_aborting";',
+         '    const CHILD: &str =\n'
+         '        "runtime::manager::tests::manager_deep_project_key_returns_range_error_without_aborting_renamed";',
+         'runtime::manager::tests::manager_deep_project_key_returns_range_error_without_aborting',
+         '#942 manager deep rerun matched no test'),
     ]
     if args.mutations:
         selected = set(args.mutations)
         if not selected <= {row[0] for row in mutations}:
             parser.error('unknown mutation name')
         mutations = [row for row in mutations if row[0] in selected]
+    summary = []
+    if sys.platform != 'darwin':
+        # DARWIN_ONLY rows cannot run here (the bound parent does not compile
+        # on this platform): record SKIPPED — neither KILLED nor INVALID, so a
+        # default full run on Linux does not fail on a structurally absent
+        # control. Default runs record the drop for the evidence directory.
+        requested = set(args.mutations) if args.mutations else DARWIN_ONLY
+        for name in sorted(requested & DARWIN_ONLY):
+            summary.append({'name': name, 'status': 'SKIPPED',
+                           'reason': 'bound parent compiles only on macOS '
+                                     '(#[cfg(target_os = "macos")])'})
+            print(f'{name}: SKIPPED: macOS-only bound parent', flush=True)
+        mutations = [row for row in mutations if row[0] not in DARWIN_ONLY]
     args.output.mkdir(parents=True, exist_ok=False)
 
     def save(name, text):
@@ -323,9 +481,14 @@ def main():
         # per-test "test <name> ... ok/FAILED" lines this script's pass/kill
         # criteria are written against (a quiet pass is a lone "." and a quiet
         # failure is "<name> --- FAILED").
+        # --test-threads=2 (#942 fix-r1): single-threaded libtest prints the
+        # test name before the body runs, so a printing parent (the dateparse
+        # rows echo their child's stdout) would splice its output into the
+        # "test <name> ... ok" line under an ambient RUST_TEST_THREADS=1 and
+        # fail the positive control; the explicit flag pins the layout.
         result = run_owned([
             'cargo', 'test', '--manifest-path', 'src/Cargo.toml', *CARGO_TARGETS[test],
-            '--', '--exact', test, '--nocapture',
+            '--', '--exact', test, '--nocapture', '--test-threads=2',
             *(['--ignored'] if test in IGNORED_PARENTS else []),
         ], cwd=root, env=env, timeout=900)
         log = result.stdout + result.stderr
@@ -345,7 +508,6 @@ def main():
             return 'KILLED', 'bound test failed at its #273 assertion'
         return 'INVALID', 'no attributable runtime failure (build error, wrong panic, or missing test)'
 
-    summary = []
     for name, source, old, new, test, assertion in mutations:
         with mutating_sources(root, [source], baseline=args.baseline) as snapshots:
             original = snapshots[source]
@@ -368,8 +530,9 @@ def main():
                 status, reason = classify(result, test, assertion, log)
             else:
                 status, reason = 'INVALID', 'positive control did not pass the bound test'
-        # Restoration and SHA validation belong to mutating_sources, including on failure.
-        assert source.read_bytes() == original, f'{name}: source not restored'
+        # Restoration and byte-level SHA validation belong to mutating_sources's
+        # finally, which runs under the tree lock — re-checking here would race
+        # another runner's mutation of the same file (fix-r1 review).
         with mutating_sources(root, [source], baseline=args.baseline):
             result, restored = run(f'{name}-restored', test)
             if positive and not passed(result, test, restored):
@@ -379,12 +542,14 @@ def main():
         save(f'{name}.json', json.dumps(summary[-1], indent=2) + '\n')
         print(f'{name}: {status}: {reason}', flush=True)
     counts = {state: sum(row['status'] == state for row in summary)
-              for state in ('KILLED', 'SURVIVED', 'INVALID')}
+              for state in ('KILLED', 'SURVIVED', 'INVALID', 'SKIPPED')}
     save('summary.json', json.dumps({'controls': summary, 'counts': counts}, indent=2) + '\n')
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
     # Every selected case must be accounted for and killed; never stop at the
     # first failure, and never exit 0 while any case survived or was invalid.
-    return int(not summary or any(row['status'] != 'KILLED' for row in summary))
+    # SKIPPED (platform-absent, explicitly recorded above) is not a failure.
+    return int(not summary or any(row['status'] not in ('KILLED', 'SKIPPED')
+                                  for row in summary))
 
 
 if __name__ == '__main__':

@@ -894,7 +894,11 @@ mod tests {
     /// #273: libtest receipt for an `--exact` child — exit 0, one `running 1
     /// test` banner, one passing summary, and the per-test `... ok` line. No
     /// shared test-support crate in pilotdeck-cli: keep in sync with
-    /// `src/pilotdeck-gateway/tests/common/exact_receipt.rs`.
+    /// `src/pilotdeck-gateway/tests/common/exact_receipt.rs`. The exact
+    /// per-test line assumes the multithreaded libtest layout (`#942`
+    /// fix-r1): a printing child must pin `--test-threads=2`, since
+    /// single-threaded libtest prints the name before the body runs. This
+    /// site's child prints nothing, so the umask spawn needs no pin.
     fn single_pass(status: &std::process::ExitStatus, test: &str, output: &str) -> bool {
         let summaries: Vec<&str> = output
             .lines()

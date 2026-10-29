@@ -1484,13 +1484,16 @@ fn manager_sessions_invalid_params_match_ts() {
 /// child signal rather than killing the whole test harness.
 #[test]
 fn manager_deep_project_key_returns_range_error_without_aborting() {
+    const CHILD: &str =
+        "runtime::manager::tests::manager_deep_project_key_returns_range_error_without_aborting";
     if std::env::var_os("PDRS_934_DEEP_CHILD").is_none() {
         let output = std::process::Command::new(std::env::current_exe().expect("#934 test binary"))
-            .args([
-                "--exact",
-                "runtime::manager::tests::manager_deep_project_key_returns_range_error_without_aborting",
-                "--nocapture",
-            ])
+            // #942 fix-r1: pin the multithreaded libtest layout so the child's
+            // `DEEP=` marker cannot splice into the `test <name> ... ok` line
+            // the receipt below keys on (single-threaded libtest prints the
+            // name before the body runs; the flag overrides an ambient
+            // RUST_TEST_THREADS=1).
+            .args(["--exact", CHILD, "--nocapture", "--test-threads=2"])
             .env("PDRS_934_DEEP_CHILD", "1")
             .output()
             .expect("#934 run deep projectKey child");
@@ -1499,6 +1502,13 @@ fn manager_deep_project_key_returns_range_error_without_aborting() {
         assert!(
             output.status.success(),
             "#934 deep projectKey child must not abort: status={:?}\nstdout={stdout}\nstderr={stderr}",
+            output.status
+        );
+        // #942: exit 0 alone is not a receipt — a renamed child makes this
+        // `--exact` filter match nothing and libtest still exits 0.
+        assert!(
+            crate::test_exact_receipt::single_pass(&output.status, CHILD, &stdout),
+            "#942 manager deep rerun matched no test: {}\n{stdout}\n{stderr}",
             output.status
         );
         assert!(

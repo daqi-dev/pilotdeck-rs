@@ -25,6 +25,14 @@ pub(crate) fn ignore_sigxfsz_like_gateway() {
 /// `ulimit -f limit_blocks`, with [`CHILD_PATH_ENV`] pointing at `path`, and
 /// return the child's single `WRITE_ERROR=` line. RLIMIT_FSIZE counts in
 /// 512-byte blocks, so `1` fails any 4 KiB write and `0` fails every write.
+///
+/// The child's `WRITE_ERROR=` line is itself the receipt (#942, like the
+/// grep helper's handshake): a renamed filter makes libtest run zero tests
+/// and still exit 0, and the `strip_prefix` below then finds no marker line
+/// and fails — never a vacuous pass. `--test-threads=2` pins the multithreaded
+/// libtest layout so the marker stays a whole line even under an ambient
+/// `RUST_TEST_THREADS=1` (single-threaded libtest prints the test name
+/// before the body runs).
 pub(crate) fn child_write_error(child: &str, limit_blocks: u32, path: &std::path::Path) -> String {
     let output = std::process::Command::new("/bin/sh")
         // The limit stays a numeric literal interpolated from a `u32` — the
@@ -36,7 +44,7 @@ pub(crate) fn child_write_error(child: &str, limit_blocks: u32, path: &std::path
         // argument.
         .arg("-c")
         .arg(format!(
-            "ulimit -f {limit_blocks} || exit 1; exec \"$0\" --exact \"$1\" --ignored --nocapture"
+            "ulimit -f {limit_blocks} || exit 1; exec \"$0\" --exact \"$1\" --ignored --nocapture --test-threads=2"
         ))
         .arg(std::env::current_exe().unwrap())
         .arg(child)

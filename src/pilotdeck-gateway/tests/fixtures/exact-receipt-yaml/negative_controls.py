@@ -49,8 +49,10 @@ def main():
     env['CARGO_PROFILE_TEST_DEBUG'] = 'line-tables-only'
     mutations = [
         ('rust-worker-exact-rename', yaml_source,
-         "rust = [binary, 'resource_worker', '--ignored', '--exact', '--nocapture']",
-         "rust = [binary, 'resource_worker_renamed', '--ignored', '--exact', '--nocapture']",
+         "rust = [binary, 'resource_worker', '--ignored', '--exact', '--nocapture',\n"
+         "                '--test-threads=2']",
+         "rust = [binary, 'resource_worker_renamed', '--ignored', '--exact', '--nocapture',\n"
+         "                '--test-threads=2']",
          FAMILY,
          '#942 resource worker rerun matched no test'),
     ]
@@ -134,8 +136,9 @@ def main():
                 status, reason = classify(result, assertion, log)
             else:
                 status, reason = 'INVALID', 'positive control did not pass the family'
-        # Restoration and SHA validation belong to mutating_sources, including on failure.
-        assert source.read_bytes() == original, f'{name}: source not restored'
+        # Restoration and byte-level SHA validation belong to mutating_sources's
+        # finally, which runs under the tree lock — re-checking here would race
+        # another runner's mutation of the same file (fix-r1 review).
         with mutating_sources(root, [source], baseline=args.baseline):
             result, restored = run(f'{name}-restored')
             if positive and not passed(result, restored):

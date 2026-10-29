@@ -114,8 +114,19 @@ fn run_case(protocol: &str, enabled: Option<&str>) {
     );
     let root = CaseRoot::acquire("run");
     let mut command = Command::new(std::env::current_exe().expect("#942 dump test binary path"));
+    // #942 fix-r1: `--test-threads=2` pins the multithreaded libtest layout —
+    // single-threaded libtest prints `test <name> ... ` before the body runs,
+    // so this printing child would splice its `SENT_BODY=` lines into the
+    // receipt line under an ambient RUST_TEST_THREADS=1; the explicit flag
+    // overrides that env default (same pin at the other dump spawn sites).
     command
-        .args(["--exact", "dump_child", "--ignored", "--nocapture"])
+        .args([
+            "--exact",
+            "dump_child",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=2",
+        ])
         .env("PDRS_DUMP_PROTOCOL", protocol)
         .env("PDRS_DUMP_MARKER", &marker)
         .env("PDRS_DUMP_MODE", "ok")
@@ -321,7 +332,13 @@ fn dump_request_write_failure_semantics() {
                 continue;
             };
             let output = Command::new(std::env::current_exe().expect("#942 dump test binary path"))
-                .args(["--exact", "dump_child", "--ignored", "--nocapture"])
+                .args([
+                    "--exact",
+                    "dump_child",
+                    "--ignored",
+                    "--nocapture",
+                    "--test-threads=2",
+                ])
                 .env("PDRS_DUMP_PROTOCOL", protocol)
                 .env("PDRS_DUMP_MARKER", &marker)
                 .env("PDRS_DUMP_MODE", "write-fail")
@@ -426,7 +443,11 @@ fn dump_request_write_over_file_size_limit_surfaces_efbig() {
     // larger) dump does not.
     let output = Command::new("/bin/sh")
         .arg("-c")
-        .arg("ulimit -f 1; exec \"$PDRS_CHILD_EXE\" --exact dump_child --ignored --nocapture")
+        // #942 fix-r1: `--test-threads=2` pins the multithreaded libtest layout
+        // so the child's `ERROR_*=` lines stay whole under an ambient
+        // RUST_TEST_THREADS=1 (single-threaded libtest prints the test name
+        // before the body runs and splices printing children into that line).
+        .arg("ulimit -f 1; exec \"$PDRS_CHILD_EXE\" --exact dump_child --ignored --nocapture --test-threads=2")
         .env(
             "PDRS_CHILD_EXE",
             std::env::current_exe().expect("#942 dump test binary path"),
@@ -511,7 +532,13 @@ fn dump_request_empty_tmpdir_never_lands_in_cwd() {
     let root = CaseRoot::acquire("empty-tmpdir");
     let cwd = CaseRoot::acquire("empty-tmpdir-cwd");
     let output = Command::new(std::env::current_exe().expect("#942 dump test binary path"))
-        .args(["--exact", "dump_child", "--ignored", "--nocapture"])
+        .args([
+            "--exact",
+            "dump_child",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=2",
+        ])
         .env("PDRS_DUMP_PROTOCOL", "openai")
         .env("PDRS_DUMP_MARKER", &marker)
         .env("PDRS_DUMP_MODE", "ok")
@@ -569,7 +596,13 @@ fn dump_request_not_triggered_by_complete() {
     );
     let root = CaseRoot::acquire("complete");
     let output = Command::new(std::env::current_exe().expect("#942 dump test binary path"))
-        .args(["--exact", "dump_child", "--ignored", "--nocapture"])
+        .args([
+            "--exact",
+            "dump_child",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=2",
+        ])
         .env("PDRS_DUMP_PROTOCOL", "openai")
         .env("PDRS_DUMP_MARKER", &marker)
         .env("PDRS_DUMP_MODE", "complete")

@@ -245,6 +245,7 @@ fn run_scenario(
             "--exact",
             "count_transport_uses_environment_proxy",
             "--nocapture",
+            "--test-threads=2",
         ])
         .env_remove("PDRS_COUNT_URL")
         .env_remove("PDRS_COUNT_RESULT");

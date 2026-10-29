@@ -17,6 +17,8 @@ use std::{
 };
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/exact_receipt.rs"]
+mod exact_receipt;
 const ORACLE: &str = include_str!("fixtures/edgeclaw-accessors/oracle.json");
 const NOW: &str = "2026-10-22T00:00:00.000Z";
 struct Scratch(PathBuf);
@@ -463,6 +465,33 @@ fn system_passwd_home() -> PathBuf {
     PathBuf::from(line.trim_end().split(':').nth(5).unwrap())
 }
 
+/// Shared spawn for the two `home_fallback_child` rerun sites (#942 fix-r1):
+/// the child is an `--ignored` test whose libtest summary is the receipt, so
+/// the spawn pins `--test-threads=2` — single-threaded libtest prints
+/// `test <name> ... ` before the body runs and would splice the summary under
+/// an ambient RUST_TEST_THREADS=1 — and the callers assert
+/// [`exact_receipt::single_pass`] instead of a bare `test result:` substring
+/// that a multi-summary or ignored-count output could satisfy.
+fn spawn_home_fallback_child(mode: &str, expected: &Path) -> std::process::Output {
+    let mut command = Command::new(std::env::current_exe().expect("#942 homedir test binary"));
+    command
+        .args([
+            "--exact",
+            "home_fallback_child",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=2",
+        ])
+        .env("PDRS_HOME_FALLBACK_CHILD", mode)
+        .env("PDRS_EXPECTED_GENERAL", expected);
+    if mode == "unset" {
+        command.env_remove("HOME");
+    } else {
+        command.env("HOME", "");
+    }
+    command.output().expect("#942 homedir child spawn")
+}
+
 #[test]
 fn repository_home_fallback_matches_ts_homedir() {
     if std::env::var_os("PDRS_HOME_FALLBACK_CHILD").is_some() {
@@ -473,26 +502,18 @@ fn repository_home_fallback_matches_ts_homedir() {
         ("unset", system_passwd_home().join(".pilotdeck")),
         ("empty", std::env::current_dir().unwrap().join(".pilotdeck")),
     ] {
-        let mut command = Command::new(std::env::current_exe().unwrap());
-        command
-            .args(["--exact", "home_fallback_child", "--ignored", "--nocapture"])
-            .env("PDRS_HOME_FALLBACK_CHILD", mode)
-            .env("PDRS_EXPECTED_GENERAL", &expected);
-        if mode == "unset" {
-            command.env_remove("HOME");
-        } else {
-            command.env("HOME", "");
-        }
-        let output = command.output().unwrap();
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(output.status.success(), "{mode} child failed: {text}");
+        let output = spawn_home_fallback_child(mode, &expected);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            text.contains("test result: ok. 1 passed"),
-            "{mode} child did not run: {text}"
+            output.status.success(),
+            "{mode} child failed: {stdout}{stderr}"
+        );
+        // #942: exit 0 alone is not a receipt — a renamed child makes this
+        // `--exact` filter match nothing and libtest still exits 0.
+        assert!(
+            exact_receipt::single_pass(&output.status, "home_fallback_child", &stdout),
+            "#942 homedir rerun matched no test ({mode}):\n{stdout}{stderr}"
         );
     }
 }
@@ -537,22 +558,18 @@ fn real_ts_homedir_matches_rust_without_home() {
                 system_passwd_home().join(".pilotdeck").as_path()
             );
         }
-        let mut child = Command::new(std::env::current_exe().unwrap());
-        child
-            .args(["--exact", "home_fallback_child", "--ignored", "--nocapture"])
-            .env("PDRS_HOME_FALLBACK_CHILD", mode)
-            .env("PDRS_EXPECTED_GENERAL", general);
-        if mode == "unset" {
-            child.env_remove("HOME");
-        } else {
-            child.env("HOME", "");
-        }
-        let output = child.output().unwrap();
+        let output = spawn_home_fallback_child(mode, Path::new(general));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             output.status.success(),
-            "{mode} Rust child disagreed with TS {general}: {}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+            "{mode} Rust child disagreed with TS {general}: {stdout}{stderr}"
+        );
+        // #942: same receipt as the non-baseline site — exit 0 alone is not a
+        // receipt, a renamed child would run zero tests and still exit 0.
+        assert!(
+            exact_receipt::single_pass(&output.status, "home_fallback_child", &stdout),
+            "#942 homedir rerun matched no test ({mode}, TS baseline):\n{stdout}{stderr}"
         );
     }
 }

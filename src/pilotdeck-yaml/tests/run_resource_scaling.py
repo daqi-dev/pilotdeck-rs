@@ -150,7 +150,13 @@ def main():
         file = Path(temp) / 'input.yaml'
         env = dict(os.environ, PILOTDECK_YAML_RESOURCE_INPUT=str(file))
         node = [args.node, str(HERE / 'resource_worker.mjs'), args.baseline, str(file)]
-        rust = [binary, 'resource_worker', '--ignored', '--exact', '--nocapture']
+        # #942 fix-r1: --test-threads=2 pins the multithreaded libtest layout
+        # so the worker's RESOURCE_SAMPLE line and the `test <name> ... ok`
+        # receipt line stay whole even under an ambient RUST_TEST_THREADS=1
+        # (single-threaded libtest prints the name before the body runs, which
+        # splices the worker's output into both parses).
+        rust = [binary, 'resource_worker', '--ignored', '--exact', '--nocapture',
+                '--test-threads=2']
         for family in args.families:
             try:
                 if family not in sizes:

@@ -180,7 +180,12 @@ async fn replays_ts_proxy_schemes() {
             std::env::current_exe().expect("#942 proxy-schemes test binary path"),
         );
         command
-            .args(["--exact", "replays_ts_proxy_schemes", "--nocapture"])
+            .args([
+                "--exact",
+                "replays_ts_proxy_schemes",
+                "--nocapture",
+                "--test-threads=2",
+            ])
             .env("PDRS_SCHEME_CHILD", id)
             .env("PDRS_SCHEME_URL", url)
             .env("PDRS_SCHEME_PROXY", &proxy)

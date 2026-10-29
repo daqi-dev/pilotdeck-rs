@@ -45,7 +45,12 @@ fn stats_dateparse_matches_real_ts_in_three_timezones() {
         "/etc/localtime",
     ] {
         let output = Command::new(std::env::current_exe().expect("#273 zone child path"))
-            .args(["--exact", CHILD, "--nocapture"])
+            // #942 fix-r1: pin the multithreaded libtest layout — the zone
+            // child prints its per-zone PASS line, which single-threaded libtest
+            // (an ambient RUST_TEST_THREADS=1) splices into the `test <name> ...
+            // ok` line the #273 receipt below keys on; the explicit flag
+            // overrides that env default.
+            .args(["--exact", CHILD, "--nocapture", "--test-threads=2"])
             .env(ZONE_ENV, zone)
             .env("TZ", zone)
             .output()

@@ -145,7 +145,12 @@ async fn private_ca_matrix() {
             std::env::current_exe().expect("#942 private-ca test binary path"),
         );
         command
-            .args(["--exact", "private_ca_matrix", "--nocapture"])
+            .args([
+                "--exact",
+                "private_ca_matrix",
+                "--nocapture",
+                "--test-threads=2",
+            ])
             .env(
                 "PDRS_TLS_URL",
                 addresses[if mode.starts_with("proxy-") {

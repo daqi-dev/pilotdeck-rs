@@ -32,6 +32,10 @@ fn resource_scaling() {
 
 #[test]
 #[ignore = "isolated subprocess worker for resource_scaling"]
+// #942: this worker's name rides two Python copies — the `receipt_test`
+// filter in run_resource_scaling.py (its libtest receipt criterion) and the
+// exact-receipt-yaml negative control's anchor. Renaming it must sync those
+// two strings, or the receipt silently matches zero tests.
 fn resource_worker() {
     require_release();
     let file = std::env::var("PILOTDECK_YAML_RESOURCE_INPUT").expect("worker input");
