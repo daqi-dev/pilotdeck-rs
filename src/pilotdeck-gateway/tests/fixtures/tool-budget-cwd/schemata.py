@@ -5,6 +5,10 @@ The #946 text-replacement negative_controls.py and session_negative.py are
 deleted; each mutation is now a ``crate::mutants::on`` branch compiled into
 the feature-enabled library test binary. CARGO_TARGET_DIR must be supplied.
 Use --check for a read-only anchor preflight, or NEW_OUTPUT_DIR [switch ...].
+
+Both old entries judged kills through the #946 nonce receipt protocol, so the
+shared run keeps it (receipts=True): a bound test only counts as killed on a
+named FAILED line plus this run's assertion receipt, never on prose.
 """
 import argparse
 import os
@@ -86,7 +90,7 @@ def main():
         return mutant_switch.run(ROOT, output, chosen,
                                  mutant_switch.clean_environment(os.environ),
                                  guarded=GUARDED, prefix='', script=Path(__file__),
-                                 requested=args.names)
+                                 requested=args.names, receipts=True)
     except (ValueError, OSError) as error:
         print(f'preflight: {error}', file=sys.stderr)
         return 2
