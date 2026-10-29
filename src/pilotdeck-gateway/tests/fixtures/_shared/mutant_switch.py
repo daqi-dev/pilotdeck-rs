@@ -187,6 +187,32 @@ def execute_suite(selected_rows, invoke, verdict=None, prefix=''):
             'status': status, 'reason': reason}
 
 
+def denominator_drift(root, script, rows, requested=()):
+    """#996 fix-r4: reconcile the executed switch names with the declaration.
+
+    The static whitelist and the import-time audit both stop at module scope,
+    so execution-entry code (``main()``) can still shrink or grow the table the
+    executor actually consumes. The only unforgeable denominator is therefore
+    compared here, after the run, using the checker's own extraction
+    (anchor_selfcheck.static_switch_names): an explicit selection is compared
+    with the requested names, and no requested name may exceed the declared
+    table (selected() already bounds the runtime side). Returns a drift
+    description, or None when the executed set matches the denominator.
+    """
+    import anchor_selfcheck  # fixtures root; already on sys.path here.
+
+    executed = {row['name'] for row in rows}
+    declared = anchor_selfcheck.static_switch_names(script, root)
+    expected = set(requested) or declared
+    missing = sorted(expected - executed)
+    extra = sorted((executed | set(requested)) - declared)
+    if missing or extra:
+        return (f'switch denominator drift: the executed table has {len(executed)} '
+                f'switch names, the declared table has {len(declared)}; '
+                f'missing={missing}, extra={extra}')
+    return None
+
+
 def record_sources(root, output, guarded):
     """Hash guarded inputs; working-tree hashes, not HEAD equivalence."""
     hashes = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -208,9 +234,15 @@ def verify_unchanged(root, hashes):
         raise RuntimeError('sources changed during precompiled run')
 
 
-def run(root, output, selected_rows, env, *, guarded, prefix='', test_timeout=240,
-        build_timeout=900, verdict=None):
-    """Execute every selected switch; return the process exit code."""
+def run(root, output, selected_rows, env, *, guarded, script=None, requested=(),
+        prefix='', test_timeout=240, build_timeout=900, verdict=None):
+    """Execute every selected switch; return the process exit code.
+
+    With ``script`` (the declaring execution entry) the run finishes with the
+    #996 fix-r4 denominator check: the executed switch names must match the
+    statically declared ones (or the explicitly requested selection), or the
+    whole suite is reported INVALID with the difference and exits nonzero.
+    """
     started = time.monotonic()
     build_seconds = 0.0
     rows = []
@@ -242,6 +274,15 @@ def run(root, output, selected_rows, env, *, guarded, prefix='', test_timeout=24
                 publish_summary(output, rows, started, build_seconds)
                 print(f"{row['name']}: {row['status']}: {row['reason']}", flush=True)
             verify_unchanged(root, hashes)
+            if script is not None:
+                drift = denominator_drift(root, script, rows, requested)
+                if drift:
+                    # The audited table and the executed table disagree: no row
+                    # of this run counts as a valid control outcome.
+                    for row in rows:
+                        row.update(status='INVALID',
+                                   reason=f'{row["reason"]}; {drift}' if row['reason'] else drift)
+                    print(drift, file=sys.stderr)
     except Exception as error:
         reason = f'runner: {type(error).__name__}: {error}'
         for row in rows:

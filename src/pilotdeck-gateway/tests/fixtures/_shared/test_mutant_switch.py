@@ -207,6 +207,82 @@ class MutantSwitchTests(unittest.TestCase):
             self.assertEqual(document['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 2})
             self.assertTrue(all('runner:' in row['reason'] for row in document['controls']))
 
+    def test_denominator_drift_fails_the_whole_suite(self):
+        # #996 fix-r4 review P1: the static whitelist and the import-time audit
+        # both stop at module scope, so a main() that shrinks (or grows) the
+        # table after those gates used to run a different suite than the
+        # declared one. The run now finishes with the checker's own extraction
+        # as the denominator: any drift marks every row INVALID with the
+        # difference and exits nonzero.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            fixtures = root / 'src/pilotdeck-gateway/tests/fixtures/sample'
+            fixtures.mkdir(parents=True)
+            source = root / 'src/example.rs'
+            source.write_text('crate::mutants::on("first")\ncrate::mutants::on("second")\n')
+            script = fixtures / 'schemata.py'
+            script.write_text(
+                'from pathlib import Path\n'
+                'root = Path(__file__).resolve().parents[5]\n'
+                'source = root / "src/example.rs"\n'
+                "switches = [('first', source, 'first_test', '#996 first'),"
+                " ('second', source, 'second_test', '#996 second')]\n")
+            binary = Path(temp) / 'test-binary'
+            binary.write_bytes(b'fixture binary\n')
+
+            def process(command, **kwargs):
+                if command[:2] == ['git', 'rev-parse']:
+                    return SimpleNamespace(returncode=0, stdout='test-head\n', stderr='')
+                selector = kwargs['env'].get(shared.SELECTOR)
+                return result(command[1], 'FAILED' if selector else 'ok',
+                              '#996 ' + command[1], 'fixture.rs')
+
+            def suite(rows, **kwargs):
+                out = Path(temp) / kwargs.pop('label')
+                out.mkdir()
+                with patch.object(shared, 'run_owned', side_effect=process), \
+                     patch.object(shared, 'wait_for_slot',
+                                  return_value=SimpleNamespace(stdout='', stderr='')), \
+                     patch.object(shared, 'artifact', return_value=binary):
+                    code = shared.run(root, out, rows, {}, guarded=[], script=script,
+                                      **kwargs)
+                return code, json.loads((out / 'summary.json').read_text())
+
+            # A main() that drops a declared row is reported whole-suite.
+            code, document = suite([binding('first')], label='missing')
+            self.assertEqual(code, 1, '#996 r4 a dropped declared switch must '
+                                      'fail the whole suite')
+            self.assertEqual(document['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                             '#996 r4 the drifted run must count every row INVALID')
+            reason = document['controls'][0]['reason']
+            self.assertIn('switch denominator drift', reason,
+                          '#996 r4 the drifted row must name the denominator check')
+            self.assertIn("missing=['second']", reason,
+                          '#996 r4 the drift must list the missing declared switch')
+            # A main() that adds an undeclared row is reported the same way.
+            code, document = suite([binding('first'), binding('second'), binding('forged')],
+                                   label='extra')
+            self.assertEqual(code, 1, '#996 r4 an undeclared executed switch must '
+                                      'fail the whole suite')
+            self.assertIn("extra=['forged']",
+                          document['controls'][0]['reason'],
+                          '#996 r4 the drift must list the undeclared switch')
+            # Without drift, and for an explicit selection, nothing is reported.
+            code, document = suite([binding('first'), binding('second')], label='clean')
+            self.assertEqual(code, 0, '#996 r4 a matching denominator must keep the suite green')
+            self.assertEqual(document['counts'], {'KILLED': 2, 'SURVIVED': 0, 'INVALID': 0},
+                             '#996 r4 a matching denominator must keep both rows KILLED')
+            code, document = suite([binding('first')], requested=['first'], label='subset')
+            self.assertEqual(code, 0, '#996 r4 an explicit selection is its own denominator')
+            self.assertEqual(document['counts'], {'KILLED': 1, 'SURVIVED': 0, 'INVALID': 0},
+                             '#996 r4 an explicit selection must stay KILLED')
+            # A selection beyond the declared table cannot hide behind requested.
+            code, document = suite([binding('forged')], requested=['forged'], label='beyond')
+            self.assertEqual(code, 1, '#996 r4 a requested name outside the declaration '
+                                      'must fail the whole suite')
+            self.assertIn("extra=['forged']", document['controls'][0]['reason'],
+                          '#996 r4 the beyond-declaration drift must list the switch')
+
 
 if __name__ == '__main__':
     unittest.main()
