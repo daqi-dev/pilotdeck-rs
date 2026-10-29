@@ -2214,6 +2214,202 @@ class ContractTests(unittest.TestCase):
                     raise error
             self.assertFalse(lock.exists(), type(error).__name__)
 
+    # #1064: 以下用例覆盖 .guard 有界与获取途中取消两个回归。所有等待都用
+    # SIGALRM 兜底：实现若退回无界阻塞，测试在自己的断言（带 #1064 消息）
+    # 处失败，而不是挂死——挂死在负控里只能判 INVALID，等于没测。
+
+    @contextmanager
+    def alarm_bounded(self, seconds, message):
+        def expired(_signum, _frame):
+            raise AssertionError(message)
+        previous = signal.signal(signal.SIGALRM, expired)
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+        try:
+            yield
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous)
+
+    def stuck_guard_sibling(self, lock):
+        """A sibling stuck inside its .guard critical section (P1-1's shape)."""
+        guard = lock.with_name(lock.name + '.guard')
+        guard.write_bytes(b'')
+        proc = subprocess.Popen([sys.executable, '-I', '-c',
+                                'import fcntl, sys, time\n'
+                                'f = open(sys.argv[1], "r+")\n'
+                                'fcntl.flock(f, fcntl.LOCK_EX)\n'
+                                'print("held", flush=True)\n'
+                                'time.sleep(600)\n', str(guard)],
+                               stdout=subprocess.PIPE, text=True)
+        try:
+            if proc.stdout is None or proc.stdout.readline().strip() != 'held':
+                raise AssertionError('#1064: the guard holder sibling failed to start')
+        except BaseException:
+            proc.kill()
+            proc.wait()
+            raise
+        return proc
+
+    def test_guard_wait_is_bounded_when_a_sibling_holds_it(self):
+        lock = self.root / 'lock'
+        holder = self.stuck_guard_sibling(lock)
+        try:
+            with self.alarm_bounded(3, '#1064: guard acquisition must answer its deadline, not block forever'):
+                start = time.monotonic()
+                with self.assertRaises(Blocked):
+                    with parity_lock(lock, timeout=0.05):
+                        self.fail('#1064: acquired the lease while a sibling held the guard')
+                self.assertLess(time.monotonic() - start, 3,
+                                '#1064: a stuck guard must fail the acquisition within its deadline')
+            self.assertFalse(lock.exists(), '#1064: a timed-out acquisition must not leave a lease')
+        finally:
+            holder.kill()
+            holder.wait()
+            if holder.stdout is not None:
+                holder.stdout.close()
+        # The failure was the guard, not a broken lease: without the sibling the
+        # same call acquires and releases normally.
+        with parity_lock(lock, timeout=1):
+            self.assertTrue((lock / 'owner.json').is_file(), '#1064: the lease must publish its owner')
+        self.assertFalse(lock.exists(), '#1064: the lease must be released after the body')
+
+    def test_release_guard_wait_is_bounded_when_a_sibling_holds_it(self):
+        lock = self.root / 'lock'
+        holder = None
+        try:
+            with self.alarm_bounded(3, '#1064: guard release must answer its deadline, not block forever'):
+                with self.assertRaises(Blocked):
+                    with parity_lock(lock, timeout=0.05):
+                        holder = self.stuck_guard_sibling(lock)
+            self.assertTrue((lock / 'owner.json').is_file(),
+                            '#1064: a bounded release failure must retain the lease')
+            owner = json.loads((lock / 'owner.json').read_text())
+            self.assertEqual(owner['pid'], os.getpid(),
+                             '#1064: a bounded release failure must retain our own lease unchanged')
+            self.assertTrue(lock.is_dir(), '#1064: the retained lease directory must stay in place')
+        finally:
+            if holder is not None:
+                holder.kill()
+                holder.wait()
+                if holder.stdout is not None:
+                    holder.stdout.close()
+
+    def test_interrupt_during_acquisition_leaves_no_lease(self):
+        """SIGINT at any window between mkdir and the published owner.json must
+        recycle the lease directory this run created (#1064 P1-2) and still
+        propagate the interrupt; a later acquisition must not be blocked."""
+        real_mkdir, real_open, real_dump = os.mkdir, os.open, json.dump
+
+        def mkdir_then_interrupt(path, *args, **kwargs):
+            real_mkdir(path, *args, **kwargs)
+            if Path(path) == lock:
+                raise KeyboardInterrupt('#1064 after mkdir, before identity')
+
+        def open_interrupt(path, flags, *args, **kwargs):
+            if Path(path) == lock and flags & os.O_DIRECTORY:
+                raise KeyboardInterrupt('#1064 after identity, before the directory fd')
+            return real_open(path, flags, *args, **kwargs)
+
+        def dump_partial(obj, stream, *args, **kwargs):
+            stream.write('{"pid": 1')  # 半写的 owner.json：不可解析，只能来自本次写入
+            raise KeyboardInterrupt('#1064 during the owner write')
+
+        def interrupted_dump(obj, stream, *args, **kwargs):
+            os.kill(os.getpid(), signal.SIGINT)  # 真信号，不是合成异常
+            return real_dump(obj, stream, *args, **kwargs)
+
+        def handler(_signum, _frame):
+            raise KeyboardInterrupt('#1064 real SIGINT during the owner write')
+
+        windows = [
+            ('after-mkdir', lambda: patch.object(os, 'mkdir', mkdir_then_interrupt)),
+            ('after-identity', lambda: patch.object(os, 'open', open_interrupt)),
+            ('partial-owner', lambda: patch.object(json, 'dump', dump_partial)),
+        ]
+        for label, patcher in windows:
+            with self.subTest(window=label):
+                lock = self.root / f'lock-interrupt-{label}'
+                with patcher():
+                    with self.assertRaises(KeyboardInterrupt):
+                        with parity_lock(lock, timeout=1):
+                            self.fail('#1064: acquisition survived its own cancellation')
+                self.assertFalse(lock.exists(),
+                                  f'#1064: an interrupted acquisition must not leave a lease ({label})')
+                with parity_lock(lock, timeout=1) as owner:
+                    self.assertEqual(owner['pid'], os.getpid(),
+                                     f'#1064: a later acquisition must succeed after the interruption ({label})')
+                self.assertFalse(lock.exists(),
+                                 f'#1064: the follow-up lease must release normally ({label})')
+        lock = self.root / 'lock-interrupt-real-sigint'
+        previous = signal.signal(signal.SIGINT, handler)
+        try:
+            with patch.object(json, 'dump', interrupted_dump):
+                with self.assertRaises(KeyboardInterrupt):
+                    with parity_lock(lock, timeout=1):
+                        self.fail('#1064: acquisition survived a real SIGINT')
+        finally:
+            signal.signal(signal.SIGINT, previous)
+        self.assertFalse(lock.exists(), '#1064: a real SIGINT must not leave a lease')
+
+    def test_interrupt_retains_a_replaced_lock_directory(self):
+        """回收只删本次创建的目录：mkdir 后目录被换走，中断不得删除替换物。"""
+        lock = self.root / 'lock'
+        other = self.root / 'other'
+        other.mkdir()
+        replaced_ino = other.stat().st_ino
+        real_open = os.open
+
+        def swap_then_interrupt(path, flags, *args, **kwargs):
+            if Path(path) == lock and flags & os.O_DIRECTORY:
+                lock.rmdir()  # 本次创建、尚未写入 owner.json
+                other.rename(lock)
+                raise KeyboardInterrupt('#1064 the directory was replaced mid-acquisition')
+            return real_open(path, flags, *args, **kwargs)
+
+        with patch.object(os, 'open', swap_then_interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                with parity_lock(lock, timeout=1):
+                    self.fail('#1064: acquisition survived its own cancellation')
+        self.assertTrue(lock.is_dir(), '#1064: a replaced directory must be retained, never deleted')
+        self.assertEqual(lock.stat().st_ino, replaced_ino,
+                         '#1064: the replacement must be left byte-identically in place')
+
+    def test_interrupt_retains_foreign_owner_bytes(self):
+        """owner 可证才回收：目录里出现完整的非本次 owner 字节时保留原样。"""
+        lock = self.root / 'lock'
+        foreign = {'pid': 999_999_003, 'timestamp': 0.0, 'token': 'foreign'}
+        real_dump = json.dump
+
+        def dump_foreign(obj, stream, *args, **kwargs):
+            real_dump(foreign, stream)
+            raise KeyboardInterrupt('#1064 foreign owner bytes appeared before publish')
+
+        with patch.object(json, 'dump', dump_foreign):
+            with self.assertRaises(KeyboardInterrupt):
+                with parity_lock(lock, timeout=1):
+                    self.fail('#1064: acquisition survived its own cancellation')
+        self.assertTrue(lock.is_dir(), '#1064: a directory with foreign owner bytes must be retained')
+        self.assertEqual(json.loads((lock / 'owner.json').read_text()), foreign,
+                         '#1064: foreign owner bytes must be left unchanged')
+
+    def test_blocked_acquisition_keeps_a_foreign_empty_lease(self):
+        """前驱在 mkdir 与 owner 发布之间崩溃留下的空目录：只报 Blocked，绝不回收。"""
+        lock = self.root / 'lock'
+        lock.mkdir(mode=0o700)
+        try:
+            with parity_lock(lock, timeout=1):
+                self.fail('#1064: acquired a lease over a foreign directory')
+        except Blocked:
+            pass
+        except BaseException as error:
+            # 任何非 Blocked 的异常形状（如 FileExistsError 裸奔）也必须在本
+            # 测试自己的断言处失败，不能变成无消息的 ERROR（负控会判 INVALID）。
+            raise AssertionError('#1064: an existing foreign lease must fail with the '
+                                 'existing Blocked contract, not '
+                                 f'{type(error).__name__}') from error
+        self.assertTrue(lock.is_dir(), '#1064: a foreign empty lease must be retained, never deleted')
+        self.assertEqual(list(lock.iterdir()), [], '#1064: the foreign lease must be left untouched')
+
     def test_stop_group_unregisters_only_when_all_stopped(self):
         run_round = _run_round
         proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
