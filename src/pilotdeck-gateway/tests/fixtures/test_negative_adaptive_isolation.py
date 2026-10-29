@@ -1,6 +1,7 @@
 # anchor-selfcheck: unsupported subprocess isolation and candidate-baseline regression tests
 """#994: real HEAD-guarded Python probes; no synthetic Git or Cargo workspace."""
 import importlib.util
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,6 @@ from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from negative_process import SourceBaselineError
 
 
 def load_runner():
@@ -40,6 +40,25 @@ def hold_mutant(out, ready):
                 signal.pause()
 
 
+def hold_source_lock(root, ready):
+    from negative_process import tree_lock
+    with tree_lock(root, timeout=1):
+        pending = ready.with_suffix('.tmp')
+        pending.write_text('locked')
+        pending.replace(ready)
+        while True:
+            signal.pause()
+
+
+def source_lock_is_busy(root):
+    with (root / '.negative-source.lock').open('a') as stream:
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return 0
+    return 10
+
+
 class IsolationTests(unittest.TestCase):
     def setUp(self):
         self.runner = load_runner()
@@ -63,7 +82,7 @@ class IsolationTests(unittest.TestCase):
                 self.assertEqual(copied.read_bytes(), contents[case[1]], '#994 copied verified input')
                 write = Path.write_bytes
                 def restore(path, data):
-                    if break_restore and path == copied:
+                    if break_restore and path == copied and data == contents[case[1]]:
                         return len(data)  # deliberate no-op restoration
                     return write(path, data)
                 with patch.object(Path, 'write_bytes', restore):
@@ -76,6 +95,100 @@ class IsolationTests(unittest.TestCase):
         self.assertEqual(row['status'], 'KILLED', '#994 copied real assertion must kill')
         self.assertTrue(row['compiled'], '#994 Python mutant must compile')
         self.assertTrue(row['restoredPass'], '#994 restored copy must pass')
+
+    def test_new_shared_imports_are_copied_and_executable(self):
+        runner = self.runner
+        dependency = HERE / 'pending_reanchor.py'
+        initializer = HERE / '_shared/pending_support/__init__.py'
+        nested = HERE / '_shared/pending_support/value.py'
+        injected = {
+            dependency: b'def read():\n    from _shared.pending_support import VALUE\n    return VALUE\nassert read() == 994\n',
+            initializer: b'from .value import VALUE\n',
+            nested: b'VALUE = 994\n',
+            runner.shared: self.before[runner.shared] + b'\nimport pending_reanchor\n',
+            # The bootstrap itself may gain the same dependency in a later PR.
+            runner.process: self.before[runner.process] + b'\nimport pending_reanchor\n',
+        }
+        git, read, is_file = runner.git_bytes, Path.read_bytes, Path.is_file
+        def git_with_dependency(*args):
+            if args[0] == 'ls-tree':
+                return git(*args) + b''.join(
+                    str(path.relative_to(runner.root)).encode() + b'\0' for path in (dependency, initializer, nested))
+            if args[0] == 'show':
+                path = runner.root / args[1].split(':', 1)[1]
+                if path in injected:
+                    return injected[path]
+            return git(*args)
+        with patch.object(runner, 'git_bytes', side_effect=git_with_dependency), \
+                patch.object(Path, 'read_bytes', lambda path: injected[path] if path in injected else read(path)), \
+                patch.object(Path, 'is_file', lambda path: path in injected or is_file(path)):
+            commit = runner.git_bytes('rev-parse', 'HEAD').decode().strip()
+            self.assertTrue(set(injected).issubset(runner.input_paths(commit)),
+                            '#994 import closure must include transitive relative and function imports')
+            with runner.verified_inputs() as contents:
+                with runner.isolated_inputs(runner.root, contents, self.out) as directory:
+                    self.assertTrue((directory / dependency.relative_to(runner.root)).is_file(),
+                                    '#994 new shared dependency must be copied')
+                    row = runner.run_case(runner.cases[0], directory, self.out, contents[runner.shared])
+        self.assertEqual(row['status'], 'KILLED', '#994 added import must execute in positive and mutant')
+        self.assertTrue(row['restoredPass'], '#994 added import must survive restoration')
+        self.assert_pristine()
+
+    def test_head_change_invalidates_copy_without_rewriting_inputs(self):
+        changed = False
+        git = self.runner.git_bytes
+        def moving_head(*args):
+            if changed and args == ('rev-parse', 'HEAD'):
+                return b'changed-head\n'
+            return git(*args)
+        with patch.object(self.runner, 'git_bytes', side_effect=moving_head), \
+                self.assertRaisesRegex(self.runner.SourceBaselineError, 'HEAD changed',
+                                       msg='#994 HEAD movement must invalidate isolated controls'):
+            with self.runner.verified_inputs():
+                changed = True
+        self.assert_pristine()
+
+    def test_bootstrap_rejects_dirty_code_before_execution_and_ignores_cached_module(self):
+        runner = self.runner
+        from types import ModuleType
+        poisoned = ModuleType('negative_process')
+        def forbidden(*_args, **_kwargs):
+            self.fail('#994 bootstrap must not execute cached unverified helpers')
+        poisoned.mutating_sources = poisoned._head_bytes = poisoned.run_owned = forbidden
+        with patch.dict(sys.modules, {'negative_process': poisoned}):
+            with runner.verified_inputs() as contents:
+                self.assertEqual(contents[runner.process], self.before[runner.process],
+                                 '#994 bootstrap must read independent HEAD bytes')
+        read = Path.read_bytes
+        with patch.object(Path, 'read_bytes', lambda path:
+                          b'raise AssertionError("unverified module executed")\n'
+                          if path == runner.process else read(path)), \
+                self.assertRaisesRegex(runner.SourceBaselineError, 'differs from HEAD',
+                                       msg='#994 dirty bootstrap must be refused before import'):
+            with runner.verified_inputs():
+                self.fail('#994 dirty bootstrap must never yield')
+
+    def test_empty_controls_fail_closed(self):
+        output = self.out / 'empty'
+        with patch.object(self.runner, 'cases', []), \
+                patch.object(sys, 'argv', ['runner', str(output)]), \
+                patch.dict(os.environ, {'CARGO_TARGET_DIR': str(self.out / 'unused')}):
+            code = self.runner.main()
+        self.assertEqual(code, 1, '#994 empty controls must fail closed')
+        self.assertEqual(json.loads((output / 'summary.json').read_text())['controls'], [],
+                         '#994 empty controls must remain explicit in summary')
+
+    def test_bootstrap_refuses_unverified_dependencies_even_if_cached(self):
+        from types import ModuleType
+        for name in ('_shared.untracked_helper', 'untracked_helper'):
+            cached = ModuleType(name)
+            cached.MARKER = 'unverified'
+            contents = {self.runner.process: f'from {name} import MARKER\n'.encode()}
+            with self.subTest(name=name), patch.dict(sys.modules, {name: cached}), \
+                    self.assertRaisesRegex(ImportError, '#994 unverified shared import',
+                                           msg='#994 cached unverified dependency must be refused'):
+                with self.runner.trusted_process(contents):
+                    self.fail('#994 unverified dependency must never load')
 
     def test_guard_never_writes_real_inputs_even_on_exit(self):
         write_bytes, write_text = Path.write_bytes, Path.write_text
@@ -97,7 +210,7 @@ class IsolationTests(unittest.TestCase):
                 def read_dirty(path):
                     return b'killed predecessor residue' if path == dirty else read(path)
                 with patch.object(Path, 'read_bytes', read_dirty), self.assertRaisesRegex(
-                        SourceBaselineError, 'differs from HEAD', msg='#994 dirty shared input must fail closed'):
+                        self.runner.SourceBaselineError, 'differs from HEAD', msg='#994 dirty shared input must fail closed'):
                     with self.runner.verified_inputs():
                         self.fail('#994 dirty shared input must never reach copying')
         self.assert_pristine()
@@ -231,6 +344,85 @@ class CandidateBaselineTests(unittest.TestCase):
         self.assertFalse(summary['mutationValidation'], '#994 baseline never certifies mutation validation')
         self.assertEqual(summary['selections'][0]['status'], 'BASELINE_PASS', '#994 explicit baseline status')
         self.assertNotIn('restoredPass', summary['selections'][0], '#994 baseline makes no restoration claim')
+        self.assertEqual({key: summary[key] for key in ('commit', 'dirty', 'candidateDirty')},
+                         self.fixture.candidate_identity(), '#994 summary must identify candidate bytes')
+
+    def test_identity_distinguishes_clean_and_dirty_candidates(self):
+        for dirty in ('', ' M src/pilotdeck-gateway/tests/network_timing.rs\n'):
+            with self.subTest(dirty=dirty), patch.object(self.fixture.subprocess, 'check_output') as git:
+                git.side_effect = [dirty.encode(), b'0123456789abcdef\n']
+                identity = self.fixture.candidate_identity()
+            self.assertEqual(identity, dict(commit='0123456789abcdef', dirty=dirty, candidateDirty=bool(dirty)),
+                             '#994 provenance must distinguish dirty candidates')
+            self.assertEqual(git.call_args_list[0].args[0][-5:],
+                             ['status', '--porcelain', '--untracked-files=all', '--', 'src'],
+                             '#994 candidate provenance must include all src changes')
+
+    def test_candidate_environment_clears_oracles_and_wrapper(self):
+        oracles = ('PDRS_RECORDER_ORACLE', 'PDRS_SESSION_DOMAIN_ORACLE', 'PDRS_TRANSCRIPT_ADAPTER_ORACLE')
+        contaminated = {key: 'injected-oracle' for key in oracles}
+        contaminated.update(CARGO_TARGET_DIR=str(self.out / 'target'), RUSTC_WRAPPER='foreign-wrapper',
+                            CARGO_INCREMENTAL='1', TMPDIR='foreign-tmp')
+        output = self.out / 'environment'
+        with patch.dict(os.environ, contaminated), patch.object(self.fixture, 'CargoTests') as constructor:
+            self.fixture.baseline_only([], output)
+        env = constructor.call_args.args[2]
+        for key in oracles:
+            self.assertNotIn(key, env, '#994 candidate must clear oracle injection')
+        self.assertEqual((env['RUSTC_WRAPPER'], env['CARGO_INCREMENTAL'], env['TMPDIR']),
+                         ('', '0', str(output.resolve())), '#994 candidate must use normalized build environment')
+
+    def test_candidate_holds_source_lock_during_cargo(self):
+        # A private lock path prevents an unrelated suite holding the real tree
+        # lock from making a missing-lock mutant look correctly locked.
+        self.enterContext(patch.object(self.fixture, 'root', self.out))
+        self.enterContext(patch.object(self.fixture, 'candidate_identity',
+                                      return_value=dict(commit='lock-probe', dirty='', candidateDirty=False)))
+        def run(*_args, **_kwargs):
+            result = subprocess.run([sys.executable, '-B', str(Path(__file__).resolve()),
+                                     '--check-lock', str(self.fixture.root)],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, '#994 candidate cargo must hold source lock')
+            test = self.fixture.cases[0][-1][0]
+            return subprocess.CompletedProcess([], 0,
+                f'test {test} ... ok\ntest result: ok. 1 passed; 0 failed;', '')
+        with patch.dict(os.environ, {'CARGO_TARGET_DIR': str(self.out / 'target')}), \
+                patch.object(self.fixture, 'CargoTests') as constructor:
+            constructor.return_value.run.side_effect = run
+            code = self.fixture.baseline_only([self.fixture.cases[0]], self.out / 'locked')
+        self.assertEqual(code, 0, '#994 locked candidate must pass its bound test')
+
+    def test_never_finishing_lock_holder_times_out_and_cancelled_holder_releases(self):
+        self.enterContext(patch.object(self.fixture, 'root', self.out))
+        self.enterContext(patch.object(self.fixture, 'candidate_identity',
+                                      return_value=dict(commit='lock-probe', dirty='', candidateDirty=False)))
+        ready = self.out / 'ready'
+        child = subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()), '--hold-lock',
+                                  str(self.fixture.root), str(ready)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                 start_new_session=True)
+        try:
+            deadline = time.monotonic() + 10
+            while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue(ready.exists(), '#994 lock predecessor must publish readiness')
+            with patch.dict(os.environ, {'CARGO_TARGET_DIR': str(self.out / 'target')}), \
+                    patch.object(self.fixture, 'BASELINE_LOCK_SECONDS', .1), \
+                    patch.object(self.fixture, 'CargoTests') as constructor:
+                with self.assertRaisesRegex(TimeoutError, 'source lock busy',
+                                            msg='#994 never finishing predecessor must time out'):
+                    self.fixture.baseline_only([], self.out / 'busy')
+                constructor.assert_not_called()
+                child.terminate()
+                child.communicate(timeout=5)
+                self.assertEqual(child.returncode, -signal.SIGTERM, '#994 cancel lock predecessor')
+                self.assertEqual(self.fixture.baseline_only([], self.out / 'released'), 1,
+                                 '#994 empty candidate remains nonpassing after cancellation')
+                constructor.assert_called_once()
+        finally:
+            if child.poll() is None:
+                os.killpg(child.pid, signal.SIGKILL)
+            child.communicate(timeout=5)
 
     def test_failure_zero_tests_and_compile_error_continue_and_fail(self):
         first, second = self.fixture.cases[0], self.fixture.cases[3]
@@ -275,5 +467,9 @@ class CandidateBaselineTests(unittest.TestCase):
 if __name__ == '__main__':
     if len(sys.argv) == 4 and sys.argv[1] == '--hold':
         hold_mutant(Path(sys.argv[2]), Path(sys.argv[3]))
+    elif len(sys.argv) == 4 and sys.argv[1] == '--hold-lock':
+        hold_source_lock(Path(sys.argv[2]), Path(sys.argv[3]))
+    elif len(sys.argv) == 3 and sys.argv[1] == '--check-lock':
+        raise SystemExit(source_lock_is_busy(Path(sys.argv[2])))
     else:
         unittest.main(verbosity=2)

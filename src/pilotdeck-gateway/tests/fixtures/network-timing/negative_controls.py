@@ -10,10 +10,12 @@ import json
 import os
 import re
 from pathlib import Path
+import subprocess
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from _shared.negative_control import CargoTests, mutation_suite
+from _shared.negative_control import CargoTests, environment, mutation_suite
 from negative_panic import panic_evidence, named_test_failed
+from negative_process import tree_lock
 
 root = Path(__file__).resolve().parents[5]
 network = root / 'src/pilotdeck-gateway/src/runtime/network.rs'
@@ -228,6 +230,17 @@ def classify(name, result, test):
     return 'INVALID', 'missing bound oracle/typed assertion failure'
 
 
+BASELINE_LOCK_SECONDS = 60
+
+
+def candidate_identity():
+    def git(*args):
+        return subprocess.check_output(['git', '-C', str(root), *args], timeout=30).decode()
+    dirty = git('status', '--porcelain', '--untracked-files=all', '--', 'src')
+    return dict(commit=git('rev-parse', 'HEAD').strip(), dirty=dirty,
+                candidateDirty=bool(dirty))
+
+
 def baseline_only(rows, output):
     """Check candidate tests without mutation or a claim of negative coverage.
 
@@ -239,7 +252,14 @@ def baseline_only(rows, output):
         raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
-    env = dict(os.environ, CARGO_TARGET_DIR=str(Path(os.environ['CARGO_TARGET_DIR']).resolve()))
+    with tree_lock(root, timeout=BASELINE_LOCK_SECONDS):
+        return locked_baseline(rows, output)
+
+
+def locked_baseline(rows, output):
+    identity = candidate_identity()
+    env = environment(output)
+    env['CARGO_TARGET_DIR'] = str(Path(env['CARGO_TARGET_DIR']).resolve())
     runner = CargoTests(root / 'src', output, env)
     records = []
     for name, _path, _old, _new, tests in rows:
@@ -255,7 +275,7 @@ def baseline_only(rows, output):
             print(f'{name}/{test}: {row["status"]}: {row["reason"]}', flush=True)
     with (output / 'summary.json').open('x') as stream:
         stream.write(json.dumps({'mode': 'baseline-only', 'mutationValidation': False,
-                                 'selections': records}, indent=2) + '\n')
+                                 **identity, 'selections': records}, indent=2) + '\n')
     return int(not records or any(row['status'] != 'BASELINE_PASS' for row in records))
 
 
