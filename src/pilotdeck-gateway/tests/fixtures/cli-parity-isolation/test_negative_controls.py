@@ -7,10 +7,18 @@ import os
 
 # #1023 fix-r2: identify the directory by (device, inode), not by spelling.
 _boot_dir = os.path.dirname(os.path.realpath(__file__))
-_boot_roots = (_boot_dir, os.path.dirname(_boot_dir))
+# The apparatus this driver exercises is also a boot-time import
+# surface: a caller can insert scripts/cli-parity and shadow a stdlib
+# module before any check (GLM r4 sibling P2-2).
+_boot_root = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.dirname(_boot_dir)))))
+_boot_roots = (_boot_dir, os.path.dirname(_boot_dir),
+               os.path.join(_boot_root, 'scripts', 'cli-parity'))
 if not sys.flags.isolated or any(
         os.path.isdir(entry or os.curdir)
-        and any(os.path.samefile(entry or os.curdir, root) for root in _boot_roots)
+        and any(os.path.isdir(root)
+                and os.path.samefile(entry or os.curdir, root)
+                for root in _boot_roots)
         for entry in sys.path):
     raise SystemExit(f'#701: unsafe import path; run with -I by file: python3 -I {__file__}')
 

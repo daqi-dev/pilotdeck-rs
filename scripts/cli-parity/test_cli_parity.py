@@ -447,7 +447,17 @@ print(json.dumps({'prefixes': prefixes, 'dontWrite': sys.dont_write_bytecode,
                                 f'#701: {name}: the guard must exit before loading anything')
 
     def test_entry_guard_rejects_unfrozen_or_unloaded_os(self):
-        """fix-r4 GLM P1: import os may only run after its preload is proved."""
+        """fix-r4 GLM P1: import os may only run after its preload is proved.
+
+        fix-r5 Codex P1-1: the forged os.py must be provably reachable. The
+        probe unloads ``os`` and puts the real forge directory on sys.path
+        under ``-X frozen_modules=off``; the paired control removes exactly the
+        preflight from the same bytes and requires the marker, so an
+        unreachable fixture can no longer pass vacuously. Keep this probe and
+        control pair in sync with ``scripts/ui-server-parity/test_frozen.py``
+        (#1023-11) and ``.../parity-lock-release/test_lock_release.py``
+        (#1023-10).
+        """
         marker = ('#701: an interpreter without a preloaded frozen os must be '
                   'rejected before importing os')
         preload = 'os must be preloaded from CPython 3.11+ frozen modules'
@@ -455,23 +465,42 @@ print(json.dumps({'prefixes': prefixes, 'dontWrite': sys.dont_write_bytecode,
                   'with open(sys.argv[2], "w") as stream:\n'
                   '    stream.write("forged os executed")\n'
                   'raise RuntimeError("forged os module executed")\n')
-        frozen_probe = ('import runpy, sys\n'
-                        'sys.path.insert(0, sys.argv[1])\n'
-                        'runpy.run_path(sys.argv[2], run_name="__main__")\n')
+        # sys.argv: [1] entry, [2] marker, [3] forge. ``os`` is unloaded only
+        # after the source was read and compiled, then the real forge directory
+        # is put on sys.path: an entry that imports os before its preflight
+        # executes forge/os.py.
+        probe = ('import sys\n'
+                 'entry, marker, forge = sys.argv[1], sys.argv[2], sys.argv[3]\n'
+                 'source = open(entry, "rb").read()\n'
+                 'code = compile(source, entry, "exec")\n'
+                 'del sys.modules["os"]\n'
+                 'sys.path.insert(0, forge)\n'
+                 'exec(code, {"__file__": entry, "__name__": "__main__"})\n')
         version_probe = ('import sys\n'
-                         'entry, marker, staged = sys.argv[1], sys.argv[2], sys.argv[3]\n'
+                         'entry, marker, forge = sys.argv[1], sys.argv[2], sys.argv[3]\n'
                          'source = open(entry, "rb").read()\n'
+                         'code = compile(source, entry, "exec")\n'
                          'sys.version_info = (3, 10, 0, "final", 0)\n'
-                         'sys.path.insert(0, staged)\n'
-                         'exec(compile(source, entry, "exec"), '
-                         '{"__file__": entry, "__name__": "__main__"})\n')
-        unloaded_probe = ('import sys\n'
-                          'entry, marker, staged = sys.argv[1], sys.argv[2], sys.argv[3]\n'
-                          'source = open(entry, "rb").read()\n'
-                          'del sys.modules["os"]\n'
-                          'sys.path.insert(0, staged)\n'
-                          'exec(compile(source, entry, "exec"), '
-                          '{"__file__": entry, "__name__": "__main__"})\n')
+                         'del sys.modules["os"]\n'
+                         'sys.path.insert(0, forge)\n'
+                         'exec(code, {"__file__": entry, "__name__": "__main__"})\n')
+
+        def without_preflight(source):
+            """The same entry bytes with the os-preload preflight removed.
+
+            If a mutant already disabled or removed the block, the source is
+            returned unchanged: its next ``import os`` must still reach forge.
+            """
+            tree = ast.parse(source)
+            node = next((statement for statement in tree.body
+                         if isinstance(statement, ast.If)
+                         and 'version_info' in ast.unparse(statement.test)), None)
+            if node is None:
+                return source
+            lines = source.splitlines(keepends=True)
+            del lines[node.lineno - 1:node.end_lineno]
+            return ''.join(lines)
+
         with tempfile.TemporaryDirectory(prefix='d0-osguard-') as temp:
             holder = Path(temp)
             for name in ENTRY_FILES:
@@ -479,38 +508,52 @@ print(json.dumps({'prefixes': prefixes, 'dontWrite': sys.dont_write_bytecode,
                 # copy2 so the negative-control harness can substitute the
                 # mutant bytes into the temporary staging directory.
                 shutil.copy2(SCRIPT / name, staged)
+                control = holder / ('control-' + name)
+                control.write_text(without_preflight(staged.read_text()))
                 forge = holder / ('forge-' + name)
                 forge.mkdir()
                 (forge / 'os.py').write_text(forged)
                 marker_path = holder / (name + '.marker')
                 cases = (
-                    ('frozen-modules-off',
-                     [sys.executable, '-I', '-X', 'frozen_modules=off', '-c',
-                      frozen_probe, str(staged.parent), str(staged)]),
-                    ('version-below-3-11',
-                     [sys.executable, '-I', '-c', version_probe, str(staged),
-                      str(marker_path), str(forge)]),
-                    ('os-not-preloaded',
-                     [sys.executable, '-I', '-c', unloaded_probe, str(staged),
-                      str(marker_path), str(forge)]),
+                    ('frozen-modules-off', probe),
+                    ('version-below-3-11', version_probe),
                 )
-                for label, command in cases:
+                for label, case_probe in cases:
+                    base = [sys.executable, '-I', '-X', 'frozen_modules=off',
+                            '-c', case_probe]
                     with self.subTest(entry=name, case=label):
                         marker_path.unlink(missing_ok=True)
-                        result = subprocess.run(command, capture_output=True,
-                                                text=True, timeout=60)
+                        result = subprocess.run(
+                            base + [str(staged), str(marker_path), str(forge)],
+                            capture_output=True, text=True, timeout=60)
                         output = result.stdout + result.stderr
                         self.assertEqual(
                             result.returncode, 1,
                             marker + f' [{name}/{label}] rc={result.returncode}: '
                             + output[-300:])
-                        self.assertTrue(
-                            preload in output or 'unsafe import path' in output,
-                            marker + f' [{name}/{label}] rejected later than the guard: '
-                            + output[-300:])
+                        self.assertIn(
+                            preload, output,
+                            marker + f' [{name}/{label}] the preflight must reject '
+                            'before importing os: ' + output[-300:])
                         self.assertFalse(
                             marker_path.exists(),
                             marker + f' [{name}/{label}] the forged os.py executed')
+                        # Paired control: removing exactly the preflight from the
+                        # same bytes must execute the same forged module; without
+                        # this arm the marker check above could stay vacuously true.
+                        marker_path.unlink(missing_ok=True)
+                        control_result = subprocess.run(
+                            base + [str(control), str(marker_path), str(forge)],
+                            capture_output=True, text=True, timeout=60)
+                        control_output = control_result.stdout + control_result.stderr
+                        self.assertTrue(
+                            marker_path.exists(),
+                            marker + f' [{name}/{label}] control: removing the preflight '
+                            'must execute the forged os.py: ' + control_output[-300:])
+                        self.assertIn(
+                            'forged os module executed', control_output,
+                            marker + f' [{name}/{label}] control: the forged module must '
+                            'be the failure: ' + control_output[-300:])
 
     def test_entries_reject_a_mixed_spelling_reinsertion(self):
         """#701 fix-r2: the same directory under another spelling is still that directory."""

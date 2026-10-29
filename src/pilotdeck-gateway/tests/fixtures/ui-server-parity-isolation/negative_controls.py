@@ -27,7 +27,16 @@ import os as _boot_os
 # case-insensitive volume a differently cased sys.path entry still pointed at
 # this directory and was admitted (fix-r2 P1-1).
 _boot_dir = _boot_os.path.dirname(_boot_os.path.realpath(__file__))
-_boot_roots = (_boot_dir, _boot_os.path.dirname(_boot_dir))
+# The frozen B2 apparatus and its controls are a boot-time import surface:
+# a caller can insert either directory and shadow a stdlib module before
+# any check (GLM r4 sibling P2-2, same fix as parity-lock-release).
+_boot_root = _boot_os.path.dirname(_boot_os.path.dirname(
+    _boot_os.path.dirname(_boot_os.path.dirname(
+        _boot_os.path.dirname(_boot_dir)))))
+_boot_roots = (_boot_dir, _boot_os.path.dirname(_boot_dir),
+               _boot_os.path.join(_boot_root, 'scripts', 'ui-server-parity'),
+               _boot_os.path.join(_boot_root, 'scripts', 'ui-server-parity',
+                                  'controls'))
 if not _boot_sys.flags.isolated or any(
         _boot_os.path.isdir(entry or _boot_os.curdir)
         and any(_boot_os.path.samefile(entry or _boot_os.curdir, root)
@@ -128,11 +137,16 @@ def failure_bodies(log):
         match = HEADER.match(line)
         if not match:
             continue
+        # A verbose single-test run prints the test's short description (its
+        # docstring) between the header and the first separator. Start the
+        # body after that separator so the traceback is not skipped.
         start = index + 1
-        if start < len(lines) and lines[start] == SEPARATOR:
+        while start < len(lines) and lines[start] != SEPARATOR:
             start += 1
+        if start >= len(lines):
+            continue
         body = []
-        for later in lines[start:]:
+        for later in lines[start + 1:]:
             if later == SEPARATOR:
                 break
             body.append(later)
