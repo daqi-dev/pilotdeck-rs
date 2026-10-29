@@ -89,10 +89,12 @@ struct Harness {
     observed: Arc<Observed>,
     gate: Arc<Gate>,
     drain: Arc<Gate>,
+    handoff: Arc<Gate>,
 }
 struct PublishGate {
     factory: Arc<ProjectSessionFactory>,
     gate: Option<Arc<Gate>>,
+    handoff: Option<Arc<Gate>>,
     observed: Arc<Observed>,
 }
 impl SessionFactory for PublishGate {
@@ -104,9 +106,18 @@ impl SessionFactory for PublishGate {
         context: SessionContext,
         previous: Option<LiveSessionHandle>,
     ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
-        let creating = self.factory.create(context, previous);
+        let creating = self.factory.create(context, previous.clone());
         let observed = self.observed.clone();
+        // #1020: park the owner's recreate attempt after it selected previous
+        // but before the real factory takes the handle over. `creating` is an
+        // unpolled boxed future, so the real construct has not started yet.
+        let handoff = (previous.is_some() && self.handoff.is_some())
+            .then(|| self.handoff.clone())
+            .flatten();
         Box::pin(async move {
+            if let Some(handoff) = handoff {
+                handoff.wait().await;
+            }
             let handle = creating.await?;
             lock(&observed.created_handles).push(handle.clone());
             Ok(handle)
@@ -143,6 +154,7 @@ impl Harness {
         let observed = Arc::new(Observed::default());
         let gate = Gate::new();
         let drain = Gate::new();
+        let handoff = Gate::new();
         let prepare_drain = drain.clone();
         let prepare_observed = observed.clone();
         let prepare_gate = gate.clone();
@@ -362,6 +374,7 @@ impl Harness {
         let owner_factory: Arc<dyn SessionFactory> = Arc::new(PublishGate {
             factory: factory.clone(),
             gate: (name.starts_with("fence-") && name.ends_with("publish")).then(|| gate.clone()),
+            handoff: (name == "stale-handoff").then(|| handoff.clone()),
             observed: observed.clone(),
         });
         let mut options = SessionOwnerOptions::new(owner_factory);
@@ -381,6 +394,7 @@ impl Harness {
             observed,
             gate,
             drain,
+            handoff,
         }
     }
     fn context(&self) -> SessionContext {
@@ -3333,6 +3347,261 @@ async fn recreate_snapshot_rejects_disposal_during_prepare() {
         "#745 prepare disposal next retry resumes"
     );
     h.finish("snapshot-before-prepare").await;
+}
+
+#[test]
+#[ignore = "requires the pinned Node v22.22.0 TS baseline"]
+fn stale_handoff_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("session-stale-handoff");
+}
+
+#[test]
+fn stale_handoff_matches_ts() {
+    let oracle: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/session-stale-handoff/oracle.json"
+    ))
+    .expect("#1020 stale handoff fixture");
+    let cases = oracle["cases"]
+        .as_array()
+        .expect("#1020 stale handoff case rows");
+    assert_eq!(cases.len(), 4, "#1020 stale handoff denominator");
+    for row in cases {
+        let name = row["name"].as_str().expect("#1020 case name");
+        assert_eq!(row["node"], "v22.22.0", "#1020 {name} node oracle");
+        let error = &row["observations"]["secondError"];
+        if name.starts_with("router-") {
+            assert_eq!(
+                serde_json::json!({"name":"Error","message":"Session projection driver is disposed."}),
+                *error,
+                "#1020 {name} router rejection oracle"
+            );
+        } else {
+            assert_eq!(
+                serde_json::json!({"name":"Error","message":"Session projection driver is disposed."}),
+                row["observations"]["recreateError"],
+                "#1020 {name} factory rejection oracle"
+            );
+        }
+    }
+    let third = &cases[0]["observations"]["thirdError"];
+    assert_eq!(
+        serde_json::json!({"name":"Error","message":"Session projection driver is disposed."}),
+        *third,
+        "#1020 router keeps rejecting without recovery"
+    );
+}
+
+#[tokio::test]
+async fn recreate_retries_stale_disposed_handoff() {
+    let h = Harness::new("stale-handoff");
+    let old = h.create("stale-handoff").await;
+    // Hold the old handle's drain so the disposal is parked mid-flight (state
+    // Draining) while the owner selects it as previous.
+    let activity = old.begin_activity().expect("#1020 stale activity hold");
+    let disposal = old.dispose("prior".into());
+    assert_eq!(old.state(), HandleState::Draining, "#1020 prior draining");
+    assert!(
+        h.owner
+            .mark_session_dirty(&"session-745".into(), "stale-handoff"),
+        "#1020 stale dirty mark"
+    );
+    let creating = h.owner.get_or_create(h.context());
+    // The owner worker parks inside the factory wrapper after it selected the
+    // draining old handle.
+    bounded("stale handoff parked", h.handoff.entered()).await;
+    // The same-key disposal completes after selection, before the factory
+    // takes the handle over.
+    drop(activity);
+    disposal.await.expect("#1020 prior disposal completes");
+    assert_eq!(
+        old.state(),
+        HandleState::Disposed,
+        "#1020 prior fully disposed at handoff"
+    );
+    h.handoff.open();
+    let new = bounded("stale recreate", creating)
+        .await
+        .expect("#1020 stale handoff retried");
+    assert!(
+        !new.same_identity(&old),
+        "#1020 replacement identity after retry"
+    );
+    assert_eq!(
+        old.state(),
+        HandleState::Disposed,
+        "#1020 old stays disposed"
+    );
+    let (attempt_released, retry_started, no_storage) = {
+        let events = lock(&h.observed.events);
+        (
+            ordered(&events, "prepare.2", "release.2"),
+            ordered(&events, "release.2", "prepare.3"),
+            !events.iter().any(|e| e == "storage.2"),
+        )
+    };
+    assert!(attempt_released, "#1020 failed attempt released prepared");
+    assert!(retry_started, "#1020 retry after rollback");
+    assert!(no_storage, "#1020 rejected attempt never created storage");
+    assert_eq!(
+        h.observed.creates.load(Ordering::SeqCst),
+        3,
+        "#1020 one failed attempt plus retry"
+    );
+    assert_eq!(
+        h.observed.published.load(Ordering::SeqCst),
+        1,
+        "#1020 single dirty-recreate publication"
+    );
+    // dirty was cleared by the single publication; the record now caches the
+    // replacement without a further factory call.
+    let cached = bounded("stale cached", h.owner.get_or_create(h.context()))
+        .await
+        .expect("#1020 cached after retry");
+    assert!(
+        cached.same_identity(&new),
+        "#1020 cached identity after retry"
+    );
+    assert_eq!(
+        h.observed.creates.load(Ordering::SeqCst),
+        3,
+        "#1020 dirty cleared after retry"
+    );
+    h.finish("stale-handoff").await;
+}
+
+#[tokio::test]
+async fn recreate_after_completed_disposal_resumes_without_previous() {
+    let h = Harness::new("stale-completed");
+    let old = h.create("stale-completed").await;
+    old.dispose("prior".into())
+        .await
+        .expect("#1020 prior disposal completes");
+    assert_eq!(old.state(), HandleState::Disposed, "#1020 prior disposed");
+    assert!(
+        h.owner
+            .mark_session_dirty(&"session-745".into(), "stale-completed"),
+        "#1020 completed-disposal dirty mark"
+    );
+    let new = bounded(
+        "completed disposal recreate",
+        h.owner.get_or_create(h.context()),
+    )
+    .await
+    .expect("#1020 completed disposal resumes without previous");
+    assert!(
+        !new.same_identity(&old),
+        "#1020 completed disposal replacement identity"
+    );
+    assert_eq!(
+        h.observed.creates.load(Ordering::SeqCst),
+        2,
+        "#1020 completed disposal one factory attempt"
+    );
+    assert_eq!(
+        h.observed.published.load(Ordering::SeqCst),
+        1,
+        "#1020 completed disposal single publication"
+    );
+    let cached = bounded(
+        "completed disposal cached",
+        h.owner.get_or_create(h.context()),
+    )
+    .await
+    .expect("#1020 completed disposal cached");
+    assert!(
+        cached.same_identity(&new),
+        "#1020 completed disposal cached identity"
+    );
+    h.finish("stale-completed").await;
+}
+
+#[tokio::test]
+async fn stale_handoff_retry_is_limited_to_one() {
+    struct LifecycleOnly;
+    impl LiveSession for LifecycleOnly {
+        fn snapshot(&self) -> JsValue {
+            JsValue::Null
+        }
+        fn abort(&self, _: &JsString) -> RuntimeResult {
+            Ok(())
+        }
+        fn dispose(&self) -> DisposeFuture<'_> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+    struct StaleFactory {
+        initial: Mutex<Option<LiveSessionHandle>>,
+        calls: Arc<AtomicUsize>,
+    }
+    impl SessionFactory for StaleFactory {
+        fn can_recreate(&self) -> bool {
+            true
+        }
+        fn create(
+            &self,
+            _: SessionContext,
+            previous: Option<LiveSessionHandle>,
+        ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+            if let Some(handle) = lock(&self.initial).take() {
+                return Box::pin(async move { Ok(handle) });
+            }
+            let calls = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            Box::pin(async move {
+                // Calls 1-2 mark the previous stale and reject with the TS
+                // disposed error; call 3 succeeds, so an unbounded retry loop
+                // still terminates instead of hanging the mutant.
+                if calls < 3 {
+                    if let Some(previous) = previous {
+                        previous.mark_recreation_stale_handoff();
+                    }
+                    Err(RuntimeError::new("Session projection driver is disposed."))
+                } else {
+                    Ok(LiveSessionHandle::new(Arc::new(LifecycleOnly), None))
+                }
+            })
+        }
+    }
+    let h = Harness::new("stale-limit");
+    let initial = h
+        .factory
+        .create(h.context(), None)
+        .await
+        .expect("#1020 stale limit initial");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut options = SessionOwnerOptions::new(Arc::new(StaleFactory {
+        initial: Mutex::new(Some(initial)),
+        calls: calls.clone(),
+    }));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    owner
+        .get_or_create(h.context())
+        .await
+        .expect("#1020 stale limit initial cache");
+    assert!(
+        owner.mark_session_dirty(&h.context().session_key, "stale-limit"),
+        "#1020 stale limit dirty"
+    );
+    let error = bounded("stale limit", owner.get_or_create(h.context()))
+        .await
+        .err()
+        .expect("#1020 stale handoff retry is limited to one");
+    assert_eq!(
+        error.message, "Session projection driver is disposed.",
+        "#1020 stale limit surfaces the last factory error"
+    );
+    assert_eq!(
+        error.js_error().and_then(|e| e.code.as_deref()),
+        None,
+        "#1020 stale limit keeps the TS error shape"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "#1020 stale handoff retry is limited to one"
+    );
+    owner.shutdown().await.expect("#1020 stale limit cleanup");
+    h.finish("stale-limit").await;
 }
 
 #[tokio::test]

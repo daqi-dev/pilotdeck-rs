@@ -312,41 +312,73 @@ impl SessionOwner {
         &self,
         context: SessionContext,
     ) -> Result<LiveSessionHandle, RuntimeError> {
-        let cached = {
-            let mut state = self.0.state.lock().unwrap();
-            if state.stopped {
-                return Err(RuntimeError::new("Session router is shut down."));
-            }
-            if project_paused(&state, context.project_key.as_ref()) {
-                return Err(RuntimeError::new("Project is being deleted."));
-            }
-            if let Some(record) = state.records.get_mut(&context.session_key) {
-                record.dirty |= record.context.merge(&context);
-                if !record.dirty || !self.0.options.factory.can_recreate() {
-                    record.last_used = (self.0.options.now_ms)();
-                    return Ok(record.handle.clone());
+        // #1020: one restricted retry for a stale previous handoff. The
+        // factory marks a previous that was already Disposed when it took it
+        // over; such a rejection means the same-key disposal completed after
+        // the selection above read the handle state, so re-running the
+        // synchronized selection drops the dead handle and resumes fresh.
+        #[cfg_attr(test, allow(unused_mut))]
+        let mut stale_handoff_retry = true;
+        #[cfg(test)]
+        let mut stale_handoff_retry =
+            stale_handoff_retry && option_env!("PDRS_1020_SKIP_STALE_RETRY").is_none();
+        let (cached, context, previous, handle) = loop {
+            let cached = {
+                let mut state = self.0.state.lock().unwrap();
+                if state.stopped {
+                    return Err(RuntimeError::new("Session router is shut down."));
                 }
-                Some(record.clone())
-            } else {
-                None
+                if project_paused(&state, context.project_key.as_ref()) {
+                    return Err(RuntimeError::new("Project is being deleted."));
+                }
+                if let Some(record) = state.records.get_mut(&context.session_key) {
+                    record.dirty |= record.context.merge(&context);
+                    if !record.dirty || !self.0.options.factory.can_recreate() {
+                        record.last_used = (self.0.options.now_ms)();
+                        return Ok(record.handle.clone());
+                    }
+                    Some(record.clone())
+                } else {
+                    None
+                }
+            };
+            let context = cached
+                .as_ref()
+                .map_or_else(|| context.clone(), |record| record.context.clone());
+            let previous = cached
+                .as_ref()
+                .filter(|record| {
+                    record.handle.state() != super::HandleState::Disposed
+                        || record.handle.retains_recreation_source()
+                })
+                .map(|record| record.handle.clone());
+            match self
+                .0
+                .options
+                .factory
+                .create(context.clone(), previous.clone())
+                .await
+            {
+                Ok(handle) => break (cached, context, previous, handle),
+                Err(error) => {
+                    if stale_handoff_retry
+                        && previous
+                            .as_ref()
+                            .is_some_and(LiveSessionHandle::recreation_stale_handoff)
+                    {
+                        #[cfg(test)]
+                        let keep_budget = option_env!("PDRS_1020_UNLIMITED_STALE_RETRY").is_some();
+                        #[cfg(not(test))]
+                        let keep_budget = false;
+                        if !keep_budget {
+                            stale_handoff_retry = false;
+                        }
+                        continue;
+                    }
+                    return Err(error);
+                }
             }
         };
-        let context = cached
-            .as_ref()
-            .map_or(context, |record| record.context.clone());
-        let previous = cached
-            .as_ref()
-            .filter(|record| {
-                record.handle.state() != super::HandleState::Disposed
-                    || record.handle.retains_recreation_source()
-            })
-            .map(|record| record.handle.clone());
-        let handle = self
-            .0
-            .options
-            .factory
-            .create(context.clone(), previous.clone())
-            .await?;
         if let Err(cause) = self
             .0
             .options

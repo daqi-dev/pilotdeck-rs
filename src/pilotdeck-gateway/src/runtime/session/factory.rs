@@ -1,7 +1,9 @@
 //! ProjectSessionFactory: prepare resources, restore one writer, then transfer
 //! them to the real AgentSession adapter. The project registry still owns
 //! generations; the session owner still serializes publication by key.
-use super::{LiveSession, LiveSessionHandle, LiveTurn, SessionContext, SessionFactory};
+use super::{
+    HandleState, LiveSession, LiveSessionHandle, LiveTurn, SessionContext, SessionFactory,
+};
 use crate::{
     host::modules::tool_context::{HostToolCheckpoint, SeedState},
     runtime::{
@@ -630,6 +632,15 @@ impl ProjectSessionFactory {
         previous: Option<LiveSessionHandle>,
         disposal_failure: &mut Option<LiveSessionHandle>,
     ) -> Result<LiveSessionHandle, RuntimeError> {
+        // #1020: capture the handoff state before prepare. A predecessor that
+        // is already Disposed here (without a retained source) was a stale
+        // selection; a disposal completing only during prepare below keeps the
+        // TS rejection and is never marked.
+        let stale_handoff = previous.as_ref().is_some_and(|previous| {
+            previous.state() == HandleState::Disposed && !previous.retains_recreation_source()
+        });
+        #[cfg(test)]
+        let stale_handoff = stale_handoff && option_env!("PDRS_1020_SKIP_STALE_MARK").is_none();
         let prepared = (self.options.prepare)(context.clone(), self.mcp.clone()).await?;
         // Sample before this attempt grants eligibility or starts disposal:
         // the first cleanup error must still be reported to its caller.
@@ -644,6 +655,9 @@ impl ProjectSessionFactory {
             Ok(value) => value,
             Err(error) => {
                 let _ = prepared.resources.release().await;
+                if stale_handoff && let Some(previous) = &previous {
+                    previous.mark_recreation_stale_handoff();
+                }
                 return Err(error);
             }
         };

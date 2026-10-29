@@ -181,14 +181,22 @@ cases = [
     ('r2-guard-drop-panic-is-success', handle, 'self.outcome.is_some() && !std::thread::panicking()', 'self.outcome.is_some()', None, prefix+'recreation_idle_guard_drop_panic_cannot_skip_drain', '#1022 r2 panic predecessor never creates replacement storage'),
     ('r3-owner-replays-drained-busy', owner, 'option_env!("PDRS_1022_R3_REPLAY_DRAINED_BUSY").is_none()', 'false', None, prefix+'recreation_cancelled_timeout_retries_after_drain', '#1022 r3 completed drain must discard abandoned BUSY'),
     ('r3-idle-sweeps-pending-error', owner, 'option_env!("PDRS_1022_R3_SWEEP_PENDING_ERROR").is_some()', 'true', None, prefix+'recreation_cancelled_owner_error_survives_idle_sweep', '#1022 r3 idle sweep retains pending cleanup error'),
+
+    ('1020-stale-mark-removed', factory, 'option_env!("PDRS_1020_SKIP_STALE_MARK").is_none()', 'false', None, prefix+'recreate_retries_stale_disposed_handoff', '#1020 stale handoff retried'),
+    ('1020-stale-retry-removed', owner, 'option_env!("PDRS_1020_SKIP_STALE_RETRY").is_none()', 'false', None, prefix+'recreate_retries_stale_disposed_handoff', '#1020 stale handoff retried'),
+    ('1020-stale-retry-unlimited', owner, 'option_env!("PDRS_1020_UNLIMITED_STALE_RETRY").is_some()', 'true', None, prefix+'stale_handoff_retry_is_limited_to_one', '#1020 stale handoff retry is limited to one'),
+    ('1020-stale-fixture-regeneration', Path(__file__).parents[1] / 'session-stale-handoff/oracle.json', '"name": "router-prepare-disposal",', '"name": "wrong-router-prepare-disposal",', None, prefix+'stale_handoff_regenerates_identically', '#280 session-stale-handoff/oracle.json differs'),
 ]
 
-# These two cfg(test) branches are selected at compile time by option_env!.
+# These cfg(test) branches are selected at compile time by option_env!.
 # Their before/after expressions above also let the ordinary anchor auditor
 # verify the exact source location. No source bytes are mutated for them.
 compile_switches = {
     'r3-owner-replays-drained-busy': 'PDRS_1022_R3_REPLAY_DRAINED_BUSY',
     'r3-idle-sweeps-pending-error': 'PDRS_1022_R3_SWEEP_PENDING_ERROR',
+    '1020-stale-mark-removed': 'PDRS_1020_SKIP_STALE_MARK',
+    '1020-stale-retry-removed': 'PDRS_1020_SKIP_STALE_RETRY',
+    '1020-stale-retry-unlimited': 'PDRS_1020_UNLIMITED_STALE_RETRY',
 }
 
 def audit():
@@ -221,7 +229,8 @@ def audit():
                 return True
             if not test_name.endswith('regenerates_identically') and not any(
                 marker_matches(literal) for literal in literals
-                if '#745 ' in literal or '#1022 ' in literal or '#1027 ' in literal):
+                if '#745 ' in literal or '#1022 ' in literal or '#1027 ' in literal
+                or '#1020 ' in literal):
                 raise ValueError('bound failure message not found: ' + assertion)
             rows.append(dict(mutation=name, status='CHECKED', test=test, assertion=assertion))
         except Exception as error:
