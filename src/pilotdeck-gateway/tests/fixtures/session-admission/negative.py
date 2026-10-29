@@ -15,6 +15,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_failed, panic_evidence
 from negative_process import run_owned, wait_for_slot
 
 ANCHOR_COUNTS = {'run-id-is-identity': 2, 'discard-is-completion': 2}
@@ -112,6 +113,7 @@ def main():
     env = dict(os.environ, CARGO_NET_OFFLINE="true",
                CARGO_HOME=os.environ["CARGO_HOME"])
     summary = []
+    failures = []
     with tempfile.TemporaryDirectory(prefix="pdrs-a71-negative-", dir="/tmp") as directory:
         scratch = Path(directory)
         env["CARGO_TARGET_DIR"] = str(scratch / "src/target")
@@ -137,21 +139,28 @@ def main():
                     "runtime::session::tests::" if name == "baseline" else
                     "runtime::session::tests::real_ts_admission_completion_and_gateway_abort")
             command = ["cargo", "test", "--offline", "--manifest-path", str(scratch / "src/Cargo.toml"),
-                       "-p", "pilotdeck-gateway", "--lib", test, "--", "--nocapture"]
+                       "-p", "pilotdeck-gateway", "--lib", test, "--"]
+            if name != "baseline":
+                # Keep the `--` separator before libtest's own flag. Dropping
+                # it makes cargo parse `--exact` as a cargo argument and every
+                # mutant exits 1 without running the named test (fix-r2).
+                command = command + ["--exact"]
             result = run_owned(command, env=env, timeout=600 if name == "baseline" else 120)
             raw = result.stdout + result.stderr
             (output / f"negative-{name}.log").write_text(gate.stdout + gate.stderr + raw + f"\nexit={result.returncode}\n")
+            evidence = '' if name == "baseline" else panic_evidence(raw, test)
             passed = result.returncode == 0 if name == "baseline" else (
-                result.returncode == 101 and "test result: FAILED" in raw and "could not compile" not in raw)
+                result.returncode == 101 and named_test_failed(raw, test)
+                and bool(evidence) and "could not compile" not in raw)
             hits = re.search(r"replacement hits: (\d+)/(\d+)", raw)
             if name == "restore-original-abort":
                 passed = passed and hits is not None and int(hits[1]) == int(hits[2]) == 2_000
             if name == "tampered-source-hash":
-                passed = passed and "oracle hash for src/gateway/SessionRouter.ts does not match" in raw
+                passed = passed and "oracle hash for src/gateway/SessionRouter.ts does not match" in evidence
             if name == "end-turn-ignores-reservation-identity":
-                passed = passed and "stale exact end released new identity" in raw
+                passed = passed and "#818 stale exact end released new identity" in evidence
             if name == "maintenance-ignores-active-turn":
-                passed = passed and '"active-turn-rejects-maintenance" step 1' in raw
+                passed = passed and '"active-turn-rejects-maintenance" step 1' in evidence
             summary.append({"replacement_hits": int(hits[1]) if hits else None,
                             "rounds": int(hits[2]) if hits else None,
                             "name": name, "file": filename, "before": before, "after": after,
@@ -160,9 +169,13 @@ def main():
             (output / "negative-summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
             print(name, "PASS" if passed else "INVALID", f"exit={result.returncode}", flush=True)
             if not passed:
-                raise SystemExit(1)
+                failures.append(name)
+    if failures:
+        print(f'not rejected: {", ".join(failures)}', file=sys.stderr)
+        return 1
     print("all mutants compiled and were rejected by oracle/race assertions; scratch removed")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

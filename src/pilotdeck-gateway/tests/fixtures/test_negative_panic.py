@@ -665,6 +665,16 @@ class PanicBlockCriterion(unittest.TestCase):
         self.assertFalse(named_test_killed(raw, [NAMED, OTHER], MARKER))
         self.assertFalse(named_test_killed(raw, [NAMED], MARKER))
 
+    def test_target_prefix_accepts_any_issue_number(self):
+        # #818 fix-r3: this branch already uses #818 assertion anchors. A
+        # #813-only target check would silently return "not killed" for them.
+        marker = '#818 tail payload sees done'
+        raw = log('FAILED', '', named_panic=marker)
+        self.assertTrue(marker_kills_named_test(raw, NAMED, marker, target=marker))
+        self.assertFalse(marker_kills_named_test(raw, NAMED, marker,
+                                                target='tail payload sees done'),
+                         'a target without an issue prefix is not pinned')
+
     def test_libtest_reports_detached_panics_after_the_failed_line(self):
         # P2-2 constraint cannot be implemented: libtest streams the detached
         # thread's panic after `... FAILED` (here even after `test result:`),

@@ -46,3 +46,15 @@ def select(controls, requested, *, name=lambda row: row[0], always=('baseline',)
         raise ValueError(f'unknown controls: {", ".join(sorted(unknown))}')
     return [row for row in rows
             if name(row) in always or not requested or name(row) in requested]
+
+
+def verdict_exit(rows, *, key='verdict', killed='KILLED'):
+    """Exit code for a finished negative-control run.
+
+    Success requires at least one row and every row KILLED. An empty selection
+    (a mis-parse, a missing data mutation or a future branch that forgets to
+    record) and any SURVIVED / INVALID / SKIPPED row are failures. In
+    particular a run with zero KILLED can never return 0 (#818 fix-r3 P0).
+    """
+    statuses = [row[key] for row in rows]
+    return 0 if statuses and all(status == killed for status in statuses) else 1

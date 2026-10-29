@@ -22,8 +22,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from negative_process import (SourceBaselineError, exclusive_write,
-                              mutating_sources, new_output_directory, run_owned,
-                              tree_lock, wait_for_slot)
+                              mutating_sources, new_output_directory,
+                              node_version, run_owned, tree_lock, wait_for_slot)
 import negative_process
 
 
@@ -433,6 +433,51 @@ class ProcessControls(unittest.TestCase):
                 holder.kill()
                 holder.communicate(timeout=10)
         self.assertLess(elapsed, 5, f"lock timeout waited {elapsed:.1f}s")
+
+
+class NodeVersionProbe(unittest.TestCase):
+    """#818 fix-r3 P1/P2: the probe is evidence, never a silent skip."""
+
+    @staticmethod
+    def result(returncode=0, stdout='v22.22.0\n', stderr=''):
+        return subprocess.CompletedProcess(['node', '--version'], returncode,
+                                           stdout, stderr)
+
+    def test_only_the_first_stdout_line_counts(self):
+        with patch.object(negative_process, 'run_owned',
+                          return_value=self.result(stderr='(node:1) ExperimentalWarning\n')):
+            self.assertEqual(node_version({}), ('v22.22.0', None),
+                             'stderr warnings must not change a matching host')
+
+    def test_empty_stdout_is_an_error(self):
+        with patch.object(negative_process, 'run_owned',
+                          return_value=self.result(stdout='')):
+            version, error = node_version({})
+            self.assertIsNone(version)
+            self.assertIn('no version on stdout', error)
+
+    def test_nonzero_exit_is_an_error_not_a_version(self):
+        with patch.object(negative_process, 'run_owned',
+                          return_value=self.result(returncode=9, stdout='',
+                                                   stderr='node: bad option\n')):
+            version, error = node_version({})
+            self.assertIsNone(version)
+            self.assertIn('exited 9', error)
+            self.assertIn('bad option', error)
+
+    def test_missing_node_is_an_error(self):
+        with patch.object(negative_process, 'run_owned',
+                          side_effect=OSError('node not found')):
+            version, error = node_version({})
+            self.assertIsNone(version)
+            self.assertIn('node unavailable', error)
+
+    def test_hanging_probe_is_an_error(self):
+        with patch.object(negative_process, 'run_owned',
+                          side_effect=subprocess.TimeoutExpired(['node'], 60)):
+            version, error = node_version({})
+            self.assertIsNone(version)
+            self.assertIn('timed out', error)
 
 
 class MutatingSources(unittest.TestCase):

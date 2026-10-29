@@ -13,6 +13,8 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_failed, panic_evidence
+from negative_selection import baseline_passed
 from negative_process import run_owned, wait_for_slot
 
 output = Path(sys.argv[1]).resolve()
@@ -24,10 +26,31 @@ module = gateway / "src/user_dialog"
 baseline_helper = gateway / "tests/common/baseline.rs"
 oracle_source = fixture / "oracle.json"
 
+HTTP_STORE_USE = """pub use http_store::{
+    GatewayUserDialogStoreHttpHandler, GatewayUserDialogStoreHttpServer,
+    HttpGatewayUserDialogStore, HttpGatewayUserDialogStoreOptions, HttpStoreAnswer,
+    HttpStoreHttpRequest, HttpStoreHttpResponse, HttpStoreLeaseClaim, HttpStoreOwnerClaim,
+    HttpStoreTransport, HttpStoreTransportError, HttpStoreTransportRequest,
+    HttpStoreTransportResponse, HttpStoreValidationError, LiveGatewayUserDialogStore,
+    create_gateway_user_dialog_store_http_handler, start_gateway_user_dialog_store_http_server,
+};
+"""
 originals = {p.name: p.read_text() for p in module.glob("*.rs")}
 originals.pop("tests.rs", None)
-originals["mod.rs"] = originals["mod.rs"].replace("#[cfg(test)]\nmod tests;\n", "")
+# The HTTP store is a different subsystem: its production code reaches
+# `crate::runtime::model::http` and `crate::fetch_redirect`, which this
+# standalone replay crate does not contain. Compile only the journal/channel
+# modules the oracle exercises instead of dragging the whole gateway in.
+originals.pop("http_store.rs", None)
+originals.pop("http_store_tests.rs", None)
+originals["mod.rs"] = (
+    originals["mod.rs"]
+    .replace("#[cfg(test)]\nmod tests;\n", "")
+    .replace("mod http_store;\n", "", 1)
+    .replace(HTTP_STORE_USE, "", 1)
+)
 assert "mod tests;" not in originals["mod.rs"]
+assert "http_store" not in originals["mod.rs"]
 originals["oracle.json"] = oracle_source.read_text()
 
 mutants = [
@@ -252,6 +275,7 @@ base64 = "=0.22.1"
 pilotdeck-protocol = {{ path = {json.dumps(str(src_root / "pilotdeck-protocol"))} }}
 pilotdeck-transport = {{ path = {json.dumps(str(src_root / "pilotdeck-transport"))} }}
 sha2 = "=0.10.9"
+serde_json = "=1.0.151"
 uuid = {{ version = "=1.27.0", features = ["v4"] }}
 """
 
@@ -265,6 +289,18 @@ def stage(scratch: Path) -> None:
     )
     (scratch / "Cargo.toml").write_text(manifest)
     (scratch / "src/test_baseline.rs").write_text(baseline_helper.read_text())
+    # baseline.rs declares `#[path = "regeneration_masks.rs"]`, resolved next
+    # to the copy; omit it and every case dies on E0583 before the test.
+    (scratch / "src/regeneration_masks.rs").write_text(
+        (baseline_helper.parent / "regeneration_masks.rs").read_text()
+    )
+    # regeneration_masks.rs include_str!s ../fixtures/_shared/... relative to
+    # src/, so the scratch crate needs the same layout.
+    shared = scratch / "fixtures/_shared"
+    shared.mkdir(parents=True, exist_ok=True)
+    (shared / "regeneration-masks.tsv").write_text(
+        (baseline_helper.parent.parent / "fixtures/_shared/regeneration-masks.tsv").read_text()
+    )
     (scratch / "tests/fixtures/user-dialog-channel").mkdir(parents=True)
 
 
@@ -297,6 +333,7 @@ def run(scratch: Path, command: list[str]) -> subprocess.CompletedProcess:
 gate = wait_for_slot(fixture.parents[4] / "scripts/cargo-slots.sh")
 
 summary = []
+failures = []
 with tempfile.TemporaryDirectory(prefix="pdrs-udc-negative-", dir="/tmp") as temp:
     scratch = Path(temp)
     stage(scratch)
@@ -314,21 +351,27 @@ with tempfile.TemporaryDirectory(prefix="pdrs-udc-negative-", dir="/tmp") as tem
                 "user_dialog::channel_tests::channel_and_journal_match_real_ts_oracle_step_by_step",
             ),
             "--",
-            "--nocapture",
+            "--exact",
         ]
         result = run(scratch, command)
         raw = result.stdout + result.stderr
+        test_name = targets.get(
+            name,
+            "user_dialog::channel_tests::channel_and_journal_match_real_ts_oracle_step_by_step",
+        )
+        evidence = '' if name == "baseline" else panic_evidence(raw, test_name)
         expected = (
             "oracle hash for src/gateway/user-dialog/GatewayUserDialogJournal.ts"
             if name == "tampered-source-hash"
             else next((item[4] for item in mutants if item[0] == name), "")
         )
         passed = (
-            result.returncode == 0
+            result.returncode == 0 and baseline_passed(raw, test_name)
             if name == "baseline"
             else result.returncode == 101
-            and "assertion `left" in raw
-            and expected in raw
+            and named_test_failed(raw, test_name)
+            and bool(evidence)
+            and (expected in evidence if expected else True)
             and "could not compile" not in raw
         )
         (output / f"negative-{name}.log").write_text(
@@ -354,7 +397,10 @@ with tempfile.TemporaryDirectory(prefix="pdrs-udc-negative-", dir="/tmp") as tem
         print(name, "PASS" if passed else "INVALID", flush=True)
         if not passed:
             print(raw[-4000:], flush=True)
-            raise SystemExit(1)
+            failures.append(name)
+    if failures:
+        print(f'not rejected: {", ".join(failures)}', file=sys.stderr)
+        raise SystemExit(1)
     if selected:
         print("selected controls rejected; temporary sources removed on exit")
         raise SystemExit(0)

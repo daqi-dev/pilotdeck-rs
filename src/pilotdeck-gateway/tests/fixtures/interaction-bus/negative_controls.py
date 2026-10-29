@@ -14,6 +14,8 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_failed, panic_evidence
+from negative_selection import baseline_passed
 from negative_process import mutating_sources, run_owned
 
 ANCHOR_COUNTS = {'reject-live-reentry': 2, 'deny-dispose-detached': 2}
@@ -97,19 +99,63 @@ if selected:
     mutations = [mutation for mutation in mutations if mutation[0] in selected]
     assert len(mutations) == len(selected), 'unknown mutation name'
 env = os.environ.copy()
-env.setdefault('CARGO_TARGET_DIR', str(root / 'target'))
+if not env.get('CARGO_TARGET_DIR'):
+    sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
 summary = []
+failures = []
+
+
+def target_test(name):
+    return {
+        'late-cross-thread-response': 'interaction_reject_cross_thread_response_and_bulk_have_one_winner',
+        'cross-thread-bulk': 'interaction_reject_cross_thread_response_and_bulk_have_one_winner',
+        'reject-window-final-delete-removed': 'interaction_register_racing_reject_window_matches_ts_map_semantics',
+        'reject-window-delete-before-loop': 'interaction_register_racing_reject_window_matches_ts_map_semantics',
+        'injected-port-ignored': 'interaction_injected_options_share_the_supplied_components',
+        'injected-grants-ignored': 'interaction_injected_options_share_the_supplied_components',
+        'injected-elicitation-ignored': 'interaction_injected_options_share_the_supplied_components',
+    }.get(name, 'interaction_real_ts_stepwise_oracle')
+
+
 with mutating_sources(root, sorted({source / filename for _, filename, _, _ in mutations})) as snapshots:
+    def run(full):
+        result = run_owned(['cargo','test','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib',
+            full, '--', '--exact'], cwd=root, env=env, timeout=240)
+        return result.returncode, result.stdout + result.stderr
+
+    # #819: an unmutated baseline for every named target must be green first.
+    baseline_ok = set()
+    for test in dict.fromkeys(target_test(name) for name, *_ in mutations):
+        full = f'runtime::interaction::tests::{test}'
+        slot_deadline = time.monotonic() + 1800
+        while True:
+            slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, capture_output=True, text=True, timeout=10)
+            if slots.returncode != 1:
+                assert slots.returncode == 0
+                break
+            assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
+            time.sleep(5)
+        code, log = run(full)
+        (out / f'baseline-{test}.log').write_text(log)
+        ok = code == 0 and baseline_passed(log, full)
+        print(f'baseline {test}: {"PASS" if ok else "INVALID"}', flush=True)
+        if ok:
+            baseline_ok.add(test)
+        else:
+            failures.append('baseline-' + test)
+
     for name, filename, old, new in mutations:
         path = source / filename
         original = snapshots[path]
         before = hashlib.sha256(original).hexdigest()
         content = original.decode()
         expected = ANCHOR_COUNTS.get(name, 1)
-        assert content.count(old) == expected, (name, content.count(old))
-        changed = new.join(content.rsplit(old, 1)) if name == 'deny-dispose-detached' else content.replace(old, new, 1)
-        (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(content.splitlines(True), changed.splitlines(True), fromfile=filename, tofile=filename)))
+        test = target_test(name)
+        full = f'runtime::interaction::tests::{test}'
         try:
+            assert content.count(old) == expected, (name, content.count(old))
+            changed = new.join(content.rsplit(old, 1)) if name == 'deny-dispose-detached' else content.replace(old, new, 1)
+            (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(content.splitlines(True), changed.splitlines(True), fromfile=filename, tofile=filename)))
             # Required resource check; do not interpret the output as a concurrency
             # guarantee if the sandbox denies ps. Its raw output is retained.
             slot_deadline = time.monotonic() + 1800
@@ -122,27 +168,40 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
                 assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
                 time.sleep(5)
             path.write_text(changed)
-            # Each mutation names the test whose assertion it must turn red.
-            test = {
-                'late-cross-thread-response': 'interaction_reject_cross_thread_response_and_bulk_have_one_winner',
-                'cross-thread-bulk': 'interaction_reject_cross_thread_response_and_bulk_have_one_winner',
-                'reject-window-final-delete-removed': 'interaction_register_racing_reject_window_matches_ts_map_semantics',
-                'reject-window-delete-before-loop': 'interaction_register_racing_reject_window_matches_ts_map_semantics',
-                'injected-port-ignored': 'interaction_injected_options_share_the_supplied_components',
-                'injected-grants-ignored': 'interaction_injected_options_share_the_supplied_components',
-                'injected-elicitation-ignored': 'interaction_injected_options_share_the_supplied_components',
-            }.get(name, 'interaction_real_ts_stepwise_oracle')
-            result = run_owned(['cargo','test','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib',
-                f'runtime::interaction::tests::{test}'], cwd=root, env=env, timeout=240)
-            log = result.stdout + result.stderr
+            code, log = run(full)
             (out / f'{name}.log').write_text(log)
-            killed = result.returncode == 101 and f'{test} ... FAILED' in log and ('assertion `left == right` failed' in log or 'late response:' in log)
-            failure = next((line.strip() for line in log.splitlines() if 'assertion `left == right` failed' in line or 'late response:' in line), '')
-            summary.append(dict(name=name, killed=killed, returncode=result.returncode, failure=failure, sourceSha256=before))
-            print(f'{name}: {"KILLED" if killed else "NOT KILLED"} rc={result.returncode} {failure}', flush=True)
-            assert killed, f'{name}: compile/signal failure or surviving mutant is not evidence'
+            evidence = panic_evidence(log, full)
+            # #819: keep the old assertion/late-response scope, but only inside
+            # the named test's own panic payload (not stdout or a sibling test).
+            marker_ok = ('assertion `left == right` failed' in evidence
+                         or 'late response:' in evidence)
+            killed = (test in baseline_ok and code == 101
+                      and named_test_failed(log, full)
+                      and marker_ok
+                      and 'could not compile' not in log)
+            failure = next((line.strip() for line in log.splitlines()
+                            if 'panicked at' in line or 'assertion' in line), '')
+            status = 'KILLED' if killed else (
+                'SURVIVED' if code == 0 else 'INVALID')
+            summary.append(dict(name=name, test=full, status=status,
+                                returncode=code, failure=failure,
+                                sourceSha256=before))
+            print(f'{name}: {status} rc={code} {failure}', flush=True)
+            if status != 'KILLED':
+                failures.append(name)
+        except Exception as error:
+            summary.append(dict(name=name, test=full, status='INVALID',
+                                reason=f'{type(error).__name__}: {error}',
+                                sourceSha256=before))
+            failures.append(name)
         finally:
             path.write_bytes(original)
             assert hashlib.sha256(path.read_bytes()).hexdigest() == before
             (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\n')
-    print(f'{len(summary)}/{len(mutations)} killed; every source restored byte-for-byte',flush=True)
+counts = {state: sum(row['status'] == state for row in summary)
+          for state in ('KILLED', 'SURVIVED', 'INVALID')}
+print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
+if failures:
+    print(f'not killed: {", ".join(failures)}', file=sys.stderr)
+    sys.exit(1)
+print(f'{len(summary)}/{len(mutations)} killed; every source restored byte-for-byte', flush=True)

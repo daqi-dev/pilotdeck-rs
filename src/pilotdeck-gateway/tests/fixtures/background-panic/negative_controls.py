@@ -8,6 +8,8 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
+from negative_selection import baseline_passed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
@@ -24,16 +26,20 @@ mutants = [
     ('subagent-prefix', source, r'Some\(std::panic::catch_unwind\(std::panic::AssertUnwindSafe\(\s*\|\| run\(entry.controller.clone\(\)\),\s*\)\)\)', 'Some(Ok::<_, Box<dyn std::any::Any + Send>>(run(entry.controller.clone())))', subagent, 'background panic completion deadline'),
     ('subagent-poll', source, re.escape('Err(subagent_panic_message(error.try_into_panic().ok()))'), 'panic!("uncaught subagent poll")', 'subagent_poll', 'background panic completion deadline'),
     ('subagent-notify', source, re.escape('entry.done.send_replace(true);\n            drop(clock);\n        });'), 'drop(entry.done.subscribe());\n            drop(clock);\n        });', subagent, 'background panic completion deadline'),
-    ('cancel-before', source, re.escape('if task.status == TaskStatus::Cancelled {\n                    None'), 'if false {\n                    None', 'subagent_cancel_before', 'assertion `left == right` failed'),
-    ('cancel-error', source, re.escape('Err(message) => {\n                        if task.status != TaskStatus::Cancelled {'), 'Err(message) => {\n                        if true {', 'subagent_cancel_running', 'assertion `left == right` failed'),
+    ('cancel-before', source, re.escape('if task.status == TaskStatus::Cancelled {\n                    None'), 'if false {\n                    None', 'subagent_cancel_before', '#818 subagent'),
+    ('cancel-error', source, re.escape('Err(message) => {\n                        if task.status != TaskStatus::Cancelled {'), 'Err(message) => {\n                        if true {', 'subagent_cancel_running', '#818 subagent'),
 ]
 # New edge controls each execute exactly one Rust matrix cell.
 mutants.extend([
     ('empty-flush-join', source, re.escape('tokio::spawn(async move { store.flush().await }).await;'), 'tokio::spawn(async move { store.flush().await }).await.unwrap();', 'snapshot_flush_empty::three_before_poll', 'background panic completion deadline'),
     ('write-tail-join', source, mutants[0][2], mutants[0][3], 'snapshot_write_b::three_before_poll', 'background panic completion deadline'),
-    ('sync-message', source, re.escape('Err(payload) => Err(subagent_panic_message(Some(payload))),'), 'Err(_) => Err(JsString::from("Background subagent task panicked.")),', 'subagent_sync', 'assertion `left == right` failed'),
-    ('poll-message', source, re.escape('Err(subagent_panic_message(error.try_into_panic().ok()))'), 'Err(JsString::from("Background subagent task panicked."))', 'subagent_poll', 'assertion `left == right` failed'),
-    ('fallback-message', source, re.escape('.unwrap_or("Background subagent task panicked.")'), '.unwrap_or("wrong fallback")', 'subagent_non_string_sync', 'assertion `left == right` failed'),
+    ('sync-message', source, re.escape('Err(payload) => Err(subagent_panic_message(Some(payload))),'), 'Err(_) => Err(JsString::from("Background subagent task panicked.")),', 'subagent_sync', '#818 subagent'),
+    ('poll-message', source, re.escape('Err(subagent_panic_message(error.try_into_panic().ok()))'), 'Err(JsString::from("Background subagent task panicked."))', 'subagent_poll', '#818 subagent'),
+    # The fallback literal only matters for a non-string payload. Bind the
+    # mutant to that test's own message, not the generic `#818 subagent`
+    # prefix used by the string-payload cells (host r1: the unmarked
+    # `non_string_panic` assertion failed, so the marker never appeared).
+    ('fallback-message', source, re.escape('.unwrap_or("Background subagent task panicked.")'), '.unwrap_or("wrong fallback")', 'subagent_non_string_sync', '#818 subagent non-string error for sync'),
 ])
 for prefix, test in [('write-a-', snapshot), ('write-b-', 'snapshot_write_b::zero_before_poll'),
                      ('flush-empty-', 'snapshot_flush_empty::zero_before_poll'),
@@ -71,6 +77,13 @@ def mutate(name, content, pattern, replacement):
         raise RuntimeError(f'{name}: mutation made no change')
     return changed
 
+def judge(code, log, test, anchor):
+    """#818/#930: the named test failed at its own panic-block marker."""
+    full = 'runtime::background::panic_tests::' + test
+    return (code == 101 and named_test_killed(log, full, anchor)
+            and 'could not compile' not in log)
+
+
 def main():
     if not os.environ.get('CARGO_TARGET_DIR'):
         sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
@@ -104,25 +117,70 @@ def main():
     def run(test, name):
         slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
         record(name + '.slots.log', slots.stdout + slots.stderr)
+        full = 'runtime::background::panic_tests::' + test
         result = run_owned(['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '-p',
-            'pilotdeck-gateway', '--lib', 'runtime::background::panic_tests::' + test, '--', '--exact'], cwd=root, env=os.environ.copy(), timeout=900)
+            'pilotdeck-gateway', '--lib', full, '--', '--exact'], cwd=root,
+            env=os.environ.copy(), timeout=900)
         log = result.stdout + result.stderr
         record(name + '.log', log)
         return result.returncode, log
 
-    for name, relative, pattern, replacement, test, anchor in selected:
-        path = root / relative
-        with mutating_sources(root, [path]) as original:
-            content = original[path].decode()
-            changed = mutate(name, content, pattern, replacement)
-            path.write_text(changed)
-            code, log = run(test, name)
-            assert code == 101 and f'{test} ... FAILED' in log and 'test result: FAILED' in log and anchor in log, (name, 'not an anchored runtime failure')
-            print(f'{name}: KILLED', flush=True)
-        code, log = run(test, name + '-restored')
-        assert code == 0 and f'{test} ... ok' in log, (name, 'restored test failed')
+    summary = []
+    failures = []
+    with mutating_sources(root, sorted({root / m[1] for m in selected})) as originals:
+        for test in dict.fromkeys(m[4] for m in selected):
+            code, log = run(test, 'baseline-' + test)
+            ok = code == 0 and baseline_passed(
+                log, 'runtime::background::panic_tests::' + test)
+            summary.append({'mutation': 'baseline', 'test': test,
+                            'status': 'PASS' if ok else 'INVALID'})
+            print(f'baseline {test}: {"PASS" if ok else "INVALID"}', flush=True)
+            if not ok:
+                failures.append('baseline-' + test)
+
+        for name, relative, pattern, replacement, test, anchor in selected:
+            path = root / relative
+            try:
+                changed = mutate(name, originals[path].decode(), pattern, replacement)
+                path.write_text(changed)
+                code, log = run(test, name)
+                killed = judge(code, log, test, anchor)
+                reason = None if killed else (
+                    'bound test still passed' if code == 0
+                    else f'exit={code}: named assertion missing from its panic block')
+            except Exception as error:
+                killed, reason = False, f'{type(error).__name__}: {error}'
+            finally:
+                path.write_bytes(originals[path])
+            status = 'KILLED' if killed else (
+                'SURVIVED' if reason == 'bound test still passed' else 'INVALID')
+            summary.append({'mutation': name, 'test': test, 'status': status,
+                            'reason': reason})
+            print(f'{name}: {status}' + (f' ({reason})' if reason else ''), flush=True)
+            if status != 'KILLED':
+                failures.append(name)
+            with mutating_sources(root, [path]):
+                code, log = run(test, name + '-restored')
+            if not (code == 0 and baseline_passed(
+                    log, 'runtime::background::panic_tests::' + test)):
+                summary[-1].update(status='INVALID', reason='restored positive failed')
+                if name not in failures:
+                    failures.append(name)
+            (out / 'summary.json').write_text(json.dumps(
+                {'results': summary,
+                 'counts': {s: sum(r['status'] == s for r in summary)
+                            for s in ('KILLED', 'SURVIVED', 'INVALID')}},
+                indent=2) + '\n')
+    counts = {s: sum(r['status'] == s for r in summary)
+              for s in ('KILLED', 'SURVIVED', 'INVALID')}
+    print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()),
+          flush=True)
+    if failures:
+        print(f'not killed: {", ".join(failures)}', file=sys.stderr)
+        return 1
     print(f'{len(selected)} mutants killed and restored', flush=True)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

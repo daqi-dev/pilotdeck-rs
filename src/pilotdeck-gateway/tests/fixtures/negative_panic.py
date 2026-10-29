@@ -199,8 +199,9 @@ def marker_kills_named_test(raw, used_test, marker, target=None):
 
     ``target`` (string) pins the marker to the one assertion the mutant is
     meant to break: the marker must equal the target's complete message and be
-    a ``#813`` assertion message. A payload containing a watchdog/timeout prefix
-    is never evidence, even if the marker text appears in it (#813 fix-r8).
+    an issue-prefixed assertion message (``#813``, ``#818``, ...). A payload
+    containing a watchdog/timeout prefix is never evidence, even if the marker
+    text appears in it (#813 fix-r8, #818 fix-r3).
     """
     evidence = panic_evidence(raw, used_test)
     if any(prefix in evidence for prefix in HANG_PREFIXES):
@@ -209,7 +210,7 @@ def marker_kills_named_test(raw, used_test, marker, target=None):
     if target is not None:
         if not isinstance(marker, str) or marker != target:
             return False
-        if not target.startswith('#813 '):
+        if re.match(r'^#\d+ ', target) is None:
             return False
     if not all(marker_is_scoped(candidate) for candidate in markers):
         return False

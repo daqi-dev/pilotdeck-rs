@@ -3,10 +3,12 @@
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_failed, panic_evidence
 from negative_process import run_owned, wait_for_slot
 
 output = Path(sys.argv[1]).resolve()
@@ -54,6 +56,14 @@ spread_start = context.index("        let mut fields = match &params {")
 spread_end = context.index('        if method.equals_str("submit_turn")', spread_start)
 mutants.append(("non-object-params-as-empty", "context.rs", context[spread_start:spread_end],
                 '        let mut fields = match &params {\n            JsValue::Object(object) => object.clone(),\n            _ => JsObject::new(),\n        };\n', 1))
+# #818 fix-r1: this mutant's canonical failure is the interaction-session
+# retention assertion, not any other test that happens to fail at the same time.
+BOUND = {
+    'submit-clears-interaction-session': (
+        'connection::tests::old_submit_cleanup_clears_session_across_threads',
+        '#818 submit cleanup retains interaction session',
+    ),
+}
 selected = set(sys.argv[2:])
 assert selected <= {name for name, *_ in mutants}, selected
 if selected:
@@ -84,6 +94,7 @@ ticket_patches = {
     ],
 }
 summary = []
+failures = []
 with tempfile.TemporaryDirectory(prefix="pdrs-pr3-negative-", dir="/tmp") as temp:
     scratch = Path(temp)
     # No shared positive build artifacts: compile and test every mutant here.
@@ -108,31 +119,56 @@ with tempfile.TemporaryDirectory(prefix="pdrs-pr3-negative-", dir="/tmp") as tem
         (scratch / "src/lib.rs").write_text(base_lib)
         gate = wait_for_slot(fixture.parents[4] / "scripts/cargo-slots.sh")
         test_filter = "connection::tests::"
-        command = ["cargo", "test", "--offline", "--manifest-path", str(scratch / "Cargo.toml"), "--lib", test_filter, "--", "--nocapture"]
+        command = ["cargo", "test", "--offline", "--manifest-path", str(scratch / "Cargo.toml"), "--lib", test_filter, "--"]
         result = run_owned(command, env=env, timeout=900)
         raw = result.stdout + result.stderr
-        passed = result.returncode == 0 if name == "baseline" else result.returncode == 101 and "assertion `left" in raw and "could not compile" not in raw
-        if name == "ticket-scoped-in-flight":
-            passed = passed and '\"same-session-concurrent-submit-first-finishes-before-close\" step 3' in raw
-        if name == "null-params-as-object":
-            passed = passed and '"permission-decide-null-and-missing-params" step 1' in raw
-        if name == "non-string-session-as-empty":
-            passed = passed and '\"session-key-5\" step 1' in raw
-        if name == "non-object-params-as-empty":
-            passed = passed and all(
-                f"connection::tests::{case}" in raw.split("failures:")[-1]
-                for case in ("non_object_string_params_match_ts", "non_object_array_params_match_ts"))
-            passed = passed and all(f'"submit-turn-ui-{kind}-params" step 1' in raw for kind in ("string", "array"))
-        if name == "serde-json-inbound":
-            passed = passed and '"lone-surrogate-id" step 1' in raw
-        if name == "tampered-source-hash":
-            passed = passed and "oracle hash for src/gateway/server/GatewayWsConnection.ts does not match" in raw
+        failed_tests = re.findall(r'^test (\S+) \.\.\. FAILED$', raw, re.MULTILINE)
+        evidence = {failed: panic_evidence(raw, failed) for failed in failed_tests}
+        passed = result.returncode == 0 if name == "baseline" else (
+            result.returncode == 101 and 'could not compile' not in raw
+            and bool(failed_tests) and any(evidence.values()))
+
+        # Every expectation below must live in the panic payload of a test
+        # libtest declared FAILED, never in stdout or a sibling test.
+        def in_failed_payload(marker):
+            return any(marker in payload for payload in evidence.values())
+
+        if name != "baseline":
+            if name in BOUND:
+                bound_test, bound_marker = BOUND[name]
+                passed = (passed and bound_test in failed_tests
+                          and bound_marker in evidence.get(bound_test, ''))
+            if name == "ticket-scoped-in-flight":
+                passed = passed and in_failed_payload(
+                    '"same-session-concurrent-submit-first-finishes-before-close" step 3')
+            if name == "null-params-as-object":
+                passed = passed and in_failed_payload(
+                    '"permission-decide-null-and-missing-params" step 1')
+            if name == "non-string-session-as-empty":
+                passed = passed and in_failed_payload('"session-key-5" step 1')
+            if name == "non-object-params-as-empty":
+                expected = ("non_object_string_params_match_ts",
+                            "non_object_array_params_match_ts")
+                passed = passed and all(
+                    f"connection::tests::{case}" in failed_tests for case in expected)
+                passed = passed and all(
+                    in_failed_payload(f'"submit-turn-ui-{kind}-params" step 1')
+                    for kind in ("string", "array"))
+            if name == "serde-json-inbound":
+                passed = passed and in_failed_payload('"lone-surrogate-id" step 1')
+            if name == "tampered-source-hash":
+                passed = passed and in_failed_payload(
+                    "oracle hash for src/gateway/server/GatewayWsConnection.ts does not match")
         (output / f"negative-{name}.log").write_text(gate.stdout + gate.stderr + "CARGO_TARGET_DIR=" + env["CARGO_TARGET_DIR"] + "\nCOMMAND " + " ".join(command) + "\n" + raw + f"\nexit={result.returncode}\n")
         summary.append({"name":name,"file":filename,"before":before,"after":after,"exit":result.returncode,"passed":passed,
                         "patches":ticket_patches if name == "ticket-scoped-in-flight" else None})
         (output / "negative-summary.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2)+"\n")
         print(name, "PASS" if passed else "INVALID", flush=True)
-        if not passed: raise SystemExit(1)
+        if not passed:
+            failures.append(name)
+    if failures:
+        print(f'not rejected: {", ".join(failures)}', file=sys.stderr)
+        raise SystemExit(1)
     if selected:
         print("all selected controls rejected; temporary sources removed on exit")
         raise SystemExit(0)
@@ -157,5 +193,9 @@ with tempfile.TemporaryDirectory(prefix="pdrs-pr3-negative-", dir="/tmp") as tem
         summary.append({"name":name,"kind":"compile-time identity rejection","statement":statement,"exit":result.returncode,"passed":passed})
         (output / "negative-summary.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2)+"\n")
         print(name,"PASS" if passed else "INVALID",flush=True)
-        if not passed: raise SystemExit(1)
+        if not passed:
+            failures.append(name)
+    if failures:
+        print(f'not rejected: {", ".join(failures)}', file=sys.stderr)
+        raise SystemExit(1)
 print("all controls rejected; temporary sources removed")

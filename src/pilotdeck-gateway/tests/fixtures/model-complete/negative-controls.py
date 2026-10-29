@@ -46,6 +46,8 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_failed, panic_evidence  # noqa: E402
+from negative_selection import baseline_passed  # noqa: E402
 from negative_process import mutating_sources  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -348,6 +350,11 @@ LIB_TESTS = {
     "shape-probe-string-limit-default-removed",
     "response-text-returns-before-eof",
 }
+# The baseline loop iterates full test names, not mutation names. Using the
+# mutation name there selected the integration target and ran 0 lib tests with
+# exit 0, so every lib baseline looked red and every lib mutant uncatchable
+# (host r1).
+LIB_TEST_NAMES = {control[3] for control in CONTROLS if control[0] in LIB_TESTS}
 
 # These controls must fail on the newly pinned target case itself, not on some
 # unrelated assertion or a compile error. The case name is part of the panic
@@ -356,10 +363,14 @@ LIB_TESTS = {
 TARGET_CASE = {
     "anthropic-shape-check-bypassed": "anthropic-200-empty-endpoint-fallback:",
     "responses-shape-check-bypassed": "responses-200-empty-endpoint-fallback:",
-    "capped-text-cap-allows-limit-plus-one": LIB_CAP_BOUNDARY_TEST,
-    "capped-text-cap-counts-utf16-units": LIB_RESPONSE_BYTES_TEST,
-    "shape-probe-string-limit-default-removed": LIB_DEFAULT_LIMIT_TEST,
-    "response-text-returns-before-eof": LIB_RESPONSE_DRAIN_TEST,
+    "capped-text-cap-allows-limit-plus-one":
+        "#818 cap boundary: limit + 1 must reject the first candidate",
+    "capped-text-cap-counts-utf16-units":
+        "#818 byte cap: 9 received bytes must pass the 5-byte cap",
+    "shape-probe-string-limit-default-removed":
+        "#818 string limit defaults to v8 max",
+    "response-text-returns-before-eof":
+        "#818 overlong body reads to EOF before the error",
 }
 
 _active: dict | None = None
@@ -933,6 +944,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_test_hold:
         return self_test_hold()
 
+    if not os.environ.get("CARGO_TARGET_DIR"):
+        print("CARGO_TARGET_DIR must be supplied by the caller", file=sys.stderr)
+        return 2
+
     install_signal_handlers()
     # The model-complete controls write the same product tree as every
     # other in-place negative control: take the shared flock and prove
@@ -940,6 +955,16 @@ def main(argv: list[str] | None = None) -> int:
     with mutating_sources(ROOT, [HTTP]):
         baseline_sha = sha256(HTTP.read_bytes())
         failures: list[str] = []
+        baseline_ok: set[str] = set()
+        # #819: every named target must be green before a mutation verdict
+        # counts; otherwise a pre-existing failure would masquerade as a kill.
+        for test_name in dict.fromkeys(control[3] for control in CONTROLS):
+            wait_for_slot()
+            code, output = run_test(test_name, test_name in LIB_TEST_NAMES)
+            if code != 0 or not baseline_passed(output, test_name):
+                failures.append(f"baseline {test_name}: not green (exit {code})")
+            else:
+                baseline_ok.add(test_name)
         for name, old, new, test_name in CONTROLS:
             text = HTTP.read_text()
             anchor_count = text.count(old)
@@ -956,10 +981,12 @@ def main(argv: list[str] | None = None) -> int:
             begin_mutation(name, mutated.encode())
             try:
                 code, output = run_test(test_name, name in LIB_TESTS)
-                caught = "test result: FAILED" in output and code != 0
+                evidence = panic_evidence(output, test_name)
+                caught = (code != 0 and test_name in baseline_ok
+                          and named_test_failed(output, test_name))
                 target = TARGET_CASE.get(name)
-                if caught and target is not None:
-                    caught = target in output
+                if target is not None:
+                    caught = caught and target in evidence
                 print(f"{name}: {'caught' if caught else 'NOT CAUGHT'} (exit {code})")
                 if target is not None:
                     print(f"  target case in output: {target in output}")

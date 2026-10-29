@@ -14,7 +14,7 @@ import subprocess
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _shared.negative_control import CargoTests, environment, mutation_suite
-from negative_panic import panic_evidence, named_test_failed
+from negative_panic import named_test_failed, named_test_killed, panic_evidence
 from negative_process import tree_lock
 
 root = Path(__file__).resolve().parents[5]
@@ -202,10 +202,23 @@ def passed(result, test):
 def classify(name, result, test):
     if passed(result, test):
         return 'SURVIVED', 'bound test still passed'
-    log = result.stdout + result.stderr
+    raw = result.stdout + result.stderr
     bound = (required_failures[name].replace('/', '_').replace('-', '_')
              if test == '*' else selection(test)[1][0])
-    evidence = panic_evidence(log, bound)
+    if test == '*':
+        # #818 fix-r5: a full-suite control kills only through the named cell's
+        # own panic block; cell text elsewhere in the log is not evidence.
+        cell = required_failures[name]
+        if not named_test_killed(raw, bound, 'network timing cell: ' + cell):
+            return 'INVALID', f'not the named cell assertion: {cell}'
+        try:
+            # Keep #994's exact oracle-line binding as well: the cell must be
+            # the `left == right` assertion, not just a message in the block.
+            assert_required_failure(name, raw)
+        except AssertionError as error:
+            return 'INVALID', str(error)
+        return 'KILLED', 'bound network timing assertion failed'
+    evidence = panic_evidence(raw, bound)
     log = evidence
     anchor_ok = all(needle in log for needle in failure_anchors.get(name, ()))
     if name in failure_anchors:

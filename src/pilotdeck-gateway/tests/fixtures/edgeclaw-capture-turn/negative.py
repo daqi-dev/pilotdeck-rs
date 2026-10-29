@@ -31,6 +31,9 @@ TEST_FILE = 'pilotdeck-gateway/tests/edgeclaw_capture_turn.rs'
 
 
 def classify_control(mutant, code, raw):
+    # The shared classifier (#818 negative_panic criteria) already requires the
+    # named test's own FAILED line and panic payload; these checks only add
+    # what is specific to this fixture.
     result = SimpleNamespace(returncode=code, stdout=raw, stderr='')
     bound = SimpleNamespace(test=mutant['test'], assertion=mutant['anchor'])
     status, reason = shared_classify(result, bound)
@@ -241,8 +244,12 @@ def main():
                 gate = gate or wait_for_slot(root / 'scripts/cargo-slots.sh')
                 log.write(gate.stdout + gate.stderr)
                 log.flush()
+                # No `--nocapture`: it interleaves a test's stdout with the
+                # `test <name> ... FAILED` status line the shared judge reads
+                # (#938 r14; #818 fix-r7 removed it from every shared-criteria
+                # control).
                 result = run_owned(
-                    command + ([test, '--', '--exact', '--nocapture'] if test else []),
+                    command + ([test, '--', '--exact'] if test else []),
                     cwd=root,
                     env=env,
                     timeout=600,

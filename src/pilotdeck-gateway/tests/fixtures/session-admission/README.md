@@ -60,7 +60,7 @@ cargo test -p pilotdeck-gateway --lib runtime::session::
 16 项行为变异必须编译成功、oracle 测试以断言失败退出；活动 turn 变异还须命中新增场景。
 `end_turn` 身份变异单独运行
 `exact_end_requires_original_admission_identity_but_empty_end_is_unfenced`，
-必须命中 `stale exact end released new identity` 断言。
+必须命中 `#818 stale exact end released new identity` 断言。
 恢复 abort 前缀的变异运行屏障控制的
 `old_abort_never_targets_replacement_across_threads`，要求 2000/2000 轮新 run 被命中，
 从而证明竞态回归确实拒绝旧写法；修复实现必须为 0/2000。

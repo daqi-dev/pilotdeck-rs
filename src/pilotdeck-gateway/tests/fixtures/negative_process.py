@@ -130,6 +130,32 @@ def run_owned(command, *, env=None, timeout=900, cwd=None, kill_timeout=KILL_TIM
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
+def node_version(env=None, *, timeout=60):
+    """Return ``(version, error)`` from the first stdout line of ``node --version``.
+
+    Only stdout is evidence: a warning on stderr (for example from
+    ``NODE_OPTIONS``) must not turn a matching host into a mismatch. A non-zero
+    exit, an empty stdout or a missing node is an error, never a silently
+    skipped control; callers record INVALID and exit non-zero (#818 fix-r3).
+    """
+    try:
+        result = run_owned(['node', '--version'], env=env, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None, f'node --version timed out after {timeout}s'
+    except OSError as error:
+        return None, f'node unavailable: {error}'
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or '').strip().splitlines()
+        suffix = f': {detail[0]}' if detail else ''
+        return None, f'node --version exited {result.returncode}{suffix}'
+    lines = result.stdout.splitlines()
+    version = lines[0].strip() if lines else ''
+    if not version:
+        return None, 'node --version printed no version on stdout'
+    return version, None
+
+
+
 def new_output_directory(path):
     """Create this run's evidence directory; refuse to reuse earlier evidence.
 
@@ -171,6 +197,8 @@ def exclusive_write(path, text):
     """Create a new evidence file; never overwrite an earlier run's bytes."""
     with Path(path).open("x", encoding="utf-8") as stream:
         stream.write(text)
+
+
 
 
 class SourceBaselineError(RuntimeError):

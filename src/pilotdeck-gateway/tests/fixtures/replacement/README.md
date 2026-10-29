@@ -86,5 +86,5 @@ python3 src/pilotdeck-gateway/tests/fixtures/replacement/negative-518.py \
 负控脚本的依赖误报回归（无需基线或 cargo）：
 
 ```sh
-python3 src/pilotdeck-gateway/tests/fixtures/replacement/test-negative-518.py
+python3 src/pilotdeck-gateway/tests/fixtures/replacement/test_negative_518.py
 ```

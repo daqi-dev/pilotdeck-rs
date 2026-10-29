@@ -11,6 +11,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_failed, panic_evidence
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 if not os.environ.get('CARGO_TARGET_DIR'):
@@ -766,23 +767,43 @@ def run(name, test):
 
 
 summary = []
+failures = []
 for name, filename, before, after, test in selected:
     path = paths[filename]
+    full = "runtime::turn::" + test
     with mutating_sources(rust.parent, [path]) as snapshots:
         original = snapshots[path].decode()
         assert original.count(before) == 1, (name, "stale anchor")
         result, raw = run(name + "-positive", test)
-        assert result.returncode == 0 and "1 passed" in raw, (name, "positive failed")
+        positive_ok = result.returncode == 0 and "1 passed" in raw
         path.write_text(original.replace(before, after, 1))
         result, raw = run(name, test)
-        assert (result.returncode == 101 and "test result: FAILED" in raw
-                and f"{test} ... FAILED" in raw and "could not compile" not in raw), (
-                    name, "not a targeted runtime failure")
+        # #819: the named test's own FAILED line plus its own panic payload.
+        killed = (positive_ok and result.returncode == 101
+                  and named_test_failed(raw, full)
+                  and bool(panic_evidence(raw, full))
+                  and "could not compile" not in raw)
+        status = "KILLED" if killed else (
+            "SURVIVED" if result.returncode == 0 else "INVALID")
+        if not positive_ok:
+            status = "INVALID"
     with mutating_sources(rust.parent, [path]):
         result, raw = run(name + "-restored", test)
-        assert result.returncode == 0 and "1 passed" in raw, (name, "restore failed")
-    summary.append({"name": name, "test": test, "killed": True, "restored": True})
-    print(f"{name}: KILLED; restored PASS", flush=True)
+        restored_ok = result.returncode == 0 and "1 passed" in raw
+    if not restored_ok:
+        status = "INVALID"
+    summary.append({"name": name, "test": full, "status": status,
+                    "restored": restored_ok})
+    print(f"{name}: {status}", flush=True)
+    if status != "KILLED":
+        failures.append(name)
+counts = {state: sum(row['status'] == state for row in summary)
+          for state in ('KILLED', 'SURVIVED', 'INVALID')}
+print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()),
+      flush=True)
+if failures:
+    print(f'not killed: {", ".join(failures)}', file=sys.stderr)
+    sys.exit(1)
 with (output / "summary.json").open("x") as log:
     json.dump(summary, log, indent=2)
 print(f"{len(summary)} mutants killed and restored", flush=True)

@@ -2087,7 +2087,7 @@ async fn complete_shape_probe_cap_boundary_is_exact_across_frames() {
     assert!(matches!(accepted, JsValue::Object(_)));
     assert!(
         over_limit.0.lock().unwrap().is_empty(),
-        "limit + 1 must reject the first candidate and request the next endpoint"
+        "#818 cap boundary: limit + 1 must reject the first candidate and request the next endpoint"
     );
 
     let mut body = replay_body(
@@ -2110,7 +2110,11 @@ async fn complete_shape_probe_cap_boundary_is_exact_across_frames() {
 /// itself: a mutation of the shared default to `usize::MAX` must fail here.
 #[test]
 fn shape_string_limit_defaults_to_v8_max() {
-    assert_eq!(string_limit(), 0x1fffffe8);
+    assert_eq!(
+        string_limit(),
+        0x1fffffe8,
+        "#818 string limit defaults to v8 max"
+    );
 }
 
 /// Nested guards restore the previous override, and the outermost drop returns
@@ -2241,11 +2245,11 @@ async fn complete_response_text_overlong_body_reads_to_eof_then_throws_plain_err
     assert_eq!(
         error.message_text(),
         crate::fetch_redirect::STRING_TOO_LONG,
-        "real TS: Error, not RangeError/TypeError"
+        "#818 overlong body: real TS Error, not RangeError/TypeError"
     );
     assert!(
         transport.eof(0),
-        "the error was raised before the body reached EOF"
+        "#818 overlong body reads to EOF before the error"
     );
 }
 
@@ -2264,7 +2268,7 @@ async fn response_text_cap_counts_received_bytes_not_utf16_units() {
         );
         let error = response_text(&mut body, &StreamOptions::default(), false)
             .await
-            .expect_err("9 received bytes must pass the 5-byte cap");
+            .expect_err("#818 byte cap: 9 received bytes must pass the 5-byte cap");
         assert!(
             error.name().equals_str("Error")
                 && error.message_text() == crate::fetch_redirect::STRING_TOO_LONG,

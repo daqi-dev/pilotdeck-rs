@@ -718,15 +718,30 @@ fn old_submit_cleanup_clears_session_across_threads() {
         );
         gate.wait();
         gate.wait();
-        worker.join().unwrap();
+        worker
+            .join()
+            .unwrap_or_else(|_| panic!("#818 submit cleanup worker thread"));
+        // Snapshot under the lock, assert after it is released: a pending
+        // SubmitCleanup locks the same state while unwinding, so holding the
+        // guard in an assert would poison it and abort instead of reporting
+        // the named failure (#818 fix-r1).
+        let (cleared, retained) = {
+            let state = connection.state.lock().unwrap();
+            (
+                state.in_flight.is_empty(),
+                session_values(&state.interactions),
+            )
+        };
         // TS finally deletes by session even while the newer submit is pending.
-        assert!(connection.state.lock().unwrap().in_flight.is_empty());
+        assert!(cleared, "#818 submit cleanup clears in-flight session");
         assert_eq!(
-            session_values(&connection.state.lock().unwrap().interactions),
-            [js(&json!("s"))]
+            retained,
+            [js(&json!("s"))],
+            "#818 submit cleanup retains interaction session"
         );
         drop(new);
-        assert!(connection.state.lock().unwrap().in_flight.is_empty());
+        let cleared_after = connection.state.lock().unwrap().in_flight.is_empty();
+        assert!(cleared_after, "#818 submit cleanup keeps in-flight cleared");
     });
 }
 

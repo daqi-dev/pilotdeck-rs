@@ -1850,7 +1850,7 @@ mod tests {
         struct Payload(Option<Box<dyn FnOnce() + Send>>);
         impl Drop for Payload {
             fn drop(&mut self) {
-                self.0.take().unwrap()();
+                self.0.take().expect("#818 tail payload drop callback")();
                 panic!("tail payload drop");
             }
         }
@@ -1862,12 +1862,18 @@ mod tests {
         (
             Arc::new(move || {
                 if calls.fetch_add(1, Ordering::SeqCst) == 1 {
-                    entered.lock().unwrap().take().unwrap().send(()).unwrap();
+                    entered
+                        .lock()
+                        .expect("#818 tail clock entered")
+                        .take()
+                        .expect("#818 tail clock entered sender")
+                        .send(())
+                        .expect("#818 tail clock entered send");
                     paused
                         .lock()
-                        .unwrap()
+                        .expect("#818 tail clock paused")
                         .recv_timeout(Duration::from_secs(5))
-                        .unwrap();
+                        .expect("#818 tail clock resume");
                     let callback = lock(&on_drop).take();
                     if let Some(callback) = callback {
                         std::panic::panic_any(Payload(Some(callback)));
@@ -1905,33 +1911,41 @@ mod tests {
                     let poll = future.as_mut().poll(cx);
                     if let Some(registered) = registered.take() {
                         assert!(poll.is_pending(), "tail predecessor pending");
-                        registered.send(()).unwrap();
+                        registered.send(()).expect("#818 tail observer registered");
                     }
                     poll
                 })
                 .await;
             }));
-            tail_deadline(ready).await.unwrap();
+            tail_deadline(ready)
+                .await
+                .expect("#818 tail observer registration");
         }
-        let cancelled = observers.pop().unwrap();
+        let cancelled = observers.pop().expect("#818 tail observer handle");
         cancelled.abort();
-        assert!(tail_deadline(cancelled).await.unwrap_err().is_cancelled());
+        assert!(
+            tail_deadline(cancelled)
+                .await
+                .expect_err("#818 tail cancelled observer")
+                .is_cancelled(),
+            "#818 tail cancelled observer is cancelled"
+        );
         observers
     }
 
     fn clock_oracle() -> serde_json::Value {
         let text = include_str!("../../tests/fixtures/background-clock/oracle.json");
         crate::test_baseline::oracle(text);
-        serde_json::from_str(text).unwrap()
+        serde_json::from_str(text).expect("#818 tail oracle json")
     }
 
     fn tail_case(id: &str) -> serde_json::Value {
         clock_oracle()["tailCases"]
             .as_array()
-            .unwrap()
+            .expect("#818 tail oracle cases")
             .iter()
             .find(|case| case["id"] == id)
-            .unwrap()
+            .expect("#818 tail oracle case")
             .clone()
     }
 
@@ -2022,8 +2036,9 @@ mod tests {
                 std::process::Command::new("mkfifo")
                     .arg(&fifo)
                     .status()
-                    .unwrap()
-                    .success()
+                    .expect("#818 tail fifo status")
+                    .success(),
+                "#818 tail fifo created"
             );
         }
         let on_drop: TailDrop = Arc::default();
@@ -2042,24 +2057,43 @@ mod tests {
             .as_str()
             .into();
         if no_pid {
-            spec.cwd = scratch.path().join("missing").to_str().unwrap().into();
+            spec.cwd = scratch
+                .path()
+                .join("missing")
+                .to_str()
+                .expect("#818 tail missing cwd path")
+                .into();
         }
-        let task = tail_deadline(runtime.start(spec)).await.unwrap();
-        let entry = runtime.find(&task.task_id, None).unwrap();
-        assert_eq!(task.status, TaskStatus::Running);
+        let task = tail_deadline(runtime.start(spec))
+            .await
+            .expect("#818 tail shell start");
+        let entry = runtime
+            .find(&task.task_id, None)
+            .expect("#818 tail shell entry");
+        assert_eq!(
+            task.status,
+            TaskStatus::Running,
+            "#818 tail shell starts running"
+        );
         assert_eq!(task.pid.is_none(), no_pid, "tail real process path");
-        let (dropped, drop_seen) = tokio::sync::oneshot::channel();
-        if payload {
+        // The payload runs where the runtime may swallow its unwind (a
+        // detached timer thread or a dropped JoinHandle). Record the
+        // observation and assert it in the named test body, so the mutant is
+        // killed by its own assertion instead of an unrelated observer
+        // deadline (#818 fix-r2).
+        let payload_observation: Arc<Mutex<Option<(bool, bool)>>> = Arc::default();
+        let drop_seen = if payload {
+            let (dropped, drop_seen) = tokio::sync::oneshot::channel();
             let entry = entry.clone();
+            let observation = payload_observation.clone();
             *lock(&on_drop) = Some(Box::new(move || {
-                assert!(*entry.done.borrow(), "tail payload sees done");
-                assert!(
-                    !entry.state.is_poisoned(),
-                    "tail payload sees unpoisoned entry"
-                );
-                dropped.send(()).unwrap();
+                *lock(&observation) = Some((*entry.done.borrow(), !entry.state.is_poisoned()));
+                let _ = dropped.send(());
             }));
-        }
+            Some(drop_seen)
+        } else {
+            None
+        };
         let observers = tail_observers(|| {
             let entry = entry.clone();
             async move { entry.wait_done().await }
@@ -2072,15 +2106,20 @@ mod tests {
             if disposing {
                 owner.dispose().await;
             } else if no_pid {
-                owner.stop(&id, &JsValue::Number(0.0), None).await.unwrap();
+                owner
+                    .stop(&id, &JsValue::Number(0.0), None)
+                    .await
+                    .expect("#818 tail shell stop");
             } else {
                 tokio::task::spawn_blocking(move || std::fs::write(fifo, b"go\n"))
                     .await
-                    .unwrap()
-                    .unwrap();
+                    .expect("#818 tail shell fifo write task")
+                    .expect("#818 tail shell fifo write");
             }
         });
-        tail_deadline(reached).await.unwrap();
+        tail_deadline(reached)
+            .await
+            .expect("#818 tail shell clock paused");
         assert!(!*entry.done.borrow(), "tail Clock predecessor pending");
         let disposers = if disposing {
             tail_observers(|| {
@@ -2094,21 +2133,37 @@ mod tests {
         if no_pid {
             operation.abort();
         }
-        resume.send(()).unwrap();
+        resume.send(()).expect("#818 tail shell clock resume");
+        if let Some(drop_seen) = drop_seen {
+            tail_deadline(drop_seen)
+                .await
+                .expect("#818 tail payload observation");
+            let (done, unpoisoned) = lock(&payload_observation)
+                .take()
+                .expect("#818 tail payload observation recorded");
+            assert!(done, "#818 tail payload sees done");
+            assert!(unpoisoned, "#818 tail payload sees unpoisoned entry");
+        }
         for observer in observers.into_iter().chain(disposers) {
-            tail_deadline(observer).await.unwrap();
+            tail_deadline(observer)
+                .await
+                .expect("#818 tail shell observer");
         }
         let result = tail_deadline(operation).await;
         if no_pid {
-            assert!(result.unwrap_err().is_cancelled());
+            assert!(
+                result
+                    .expect_err("#818 tail shell aborted operation")
+                    .is_cancelled(),
+                "#818 tail shell aborted operation is cancelled"
+            );
         } else {
-            result.unwrap();
-        }
-        if payload {
-            tail_deadline(drop_seen).await.unwrap();
+            result.expect("#818 tail shell operation");
         }
         assert!(!entry.state.is_poisoned(), "tail entry unpoisoned");
-        let task = runtime.get(&task.task_id, None).unwrap();
+        let task = runtime
+            .get(&task.task_id, None)
+            .expect("#818 tail shell task");
         let expected = if no_pid {
             TaskStatus::Cancelled
         } else if code == 0 {
@@ -2118,33 +2173,45 @@ mod tests {
         };
         assert_eq!(task.status, expected, "tail terminal status");
         assert_eq!(task.ended_at, Some(42.0), "tail fallback timestamp");
-        assert_eq!(task.exit_code, if no_pid { None } else { Some(Some(code)) });
+        assert_eq!(
+            task.exit_code,
+            if no_pid { None } else { Some(Some(code)) },
+            "#818 tail exit code"
+        );
         let event_count = {
             let event = lock(&events);
             assert_eq!(event.len(), 1, "tail completion exactly once");
             assert_eq!(
                 event[0].get("status"),
-                Some(&JsValue::from(expected.as_str()))
+                Some(&JsValue::from(expected.as_str())),
+                "#818 tail completion status"
             );
             event.len()
         };
         let id = &task.task_id;
         let undefined = &JsValue::Undefined;
-        assert_eq!(runtime.list(&TaskListFilter::default(), None).len(), 1);
-        assert!(runtime.get_output(id, undefined, undefined, None).is_ok());
+        assert_eq!(
+            runtime.list(&TaskListFilter::default(), None).len(),
+            1,
+            "#818 tail shell list"
+        );
+        assert!(
+            runtime.get_output(id, undefined, undefined, None).is_ok(),
+            "#818 tail shell output"
+        );
         let waited = tail_deadline(runtime.wait(id, undefined, None, None))
             .await
-            .unwrap()
-            .unwrap();
+            .expect("#818 tail shell wait")
+            .expect("#818 tail shell wait output");
         let stopped = tail_deadline(runtime.stop(id, undefined, None))
             .await
             .is_ok();
-        assert!(stopped);
+        assert!(stopped, "#818 tail shell stop accepted");
         let retry = tail_deadline(runtime.start(construction_spec())).await;
         let retry_rejected = retry.is_err();
         if !disposing {
             assert_eq!(
-                retry.unwrap().status,
+                retry.expect("#818 tail shell retry").status,
                 TaskStatus::Failed,
                 "tail capacity released"
             );
@@ -2157,9 +2224,14 @@ mod tests {
             disposers.push(tokio::spawn(async move { owner.dispose().await }));
         }
         for observer in disposers {
-            tail_deadline(observer).await.unwrap();
+            tail_deadline(observer)
+                .await
+                .expect("#818 tail shell disposer");
         }
-        assert!(runtime.start(construction_spec()).await.is_err());
+        assert!(
+            runtime.start(construction_spec()).await.is_err(),
+            "#818 tail shell disposed start rejected"
+        );
         let id = if no_pid {
             "B-never"
         } else if code == 0 {
@@ -2180,13 +2252,16 @@ mod tests {
         expected_row["disposed"] = true.into();
         // unhandledRejection is a Node-only observation; its original value
         // is pinned in tail_oracle_has_exact_matrix, not invented for Rust.
-        expected_row.as_object_mut().unwrap().remove("unhandled");
+        expected_row
+            .as_object_mut()
+            .expect("#818 tail shell expected row")
+            .remove("unhandled");
         assert_eq!(
             serde_json::json!({
                 "id": id, "status": task.status.as_str(), "ended": task.ended_at.is_some(),
                 "done": *entry.done.borrow(), "events": event_count,
                 "retryRejected": retry_rejected, "outcome": waited.outcome,
-                "stopped": stopped, "disposed": runtime.inner.state.lock().unwrap().phase == Phase::Disposed
+                "stopped": stopped, "disposed": lock(&runtime.inner.state).phase == Phase::Disposed
             }),
             expected_row,
             "tail TS shell matrix with registered differences"
@@ -2226,12 +2301,12 @@ mod tests {
         let task = runtime.start(subagent_input(Box::new(move |signal| {
             Box::pin(async move {
                 body_ran.store(true, Ordering::SeqCst);
-                entered.send(()).unwrap();
+                entered.send(()).expect("#818 tail subagent entered");
                 if stopping {
                     signal.cancelled().await;
                     body_cancelled.store(true, Ordering::SeqCst);
                 } else {
-                    gate.await.unwrap();
+                    gate.await.expect("#818 tail subagent gate");
                 }
                 if failing {
                     Err("body failure".into())
@@ -2240,31 +2315,39 @@ mod tests {
                 }
             })
         })));
-        tail_deadline(ready).await.unwrap();
-        let entry = runtime.find(&task.task_id).unwrap();
-        let (dropped, drop_seen) = tokio::sync::oneshot::channel();
-        if payload {
+        tail_deadline(ready)
+            .await
+            .expect("#818 tail subagent ready");
+        let entry = runtime
+            .find(&task.task_id)
+            .expect("#818 tail subagent entry");
+        // Record the payload observation and assert it in this named test:
+        // the runtime may swallow the payload unwind, which used to leave the
+        // mutant failing on an unrelated observer deadline (#818 fix-r2).
+        let payload_observation: Arc<Mutex<Option<(bool, bool)>>> = Arc::default();
+        let drop_seen = if payload {
+            let (dropped, drop_seen) = tokio::sync::oneshot::channel();
             let entry = entry.clone();
+            let observation = payload_observation.clone();
             *lock(&on_drop) = Some(Box::new(move || {
-                assert!(
-                    if stopping {
-                        entry.controller.is_cancelled()
-                    } else {
-                        *entry.done.borrow()
-                    },
-                    "tail payload sees completion or cancellation"
-                );
-                assert!(
-                    !entry.task.is_poisoned(),
-                    "tail payload sees unpoisoned entry"
-                );
-                dropped.send(()).unwrap();
+                let ready = if stopping {
+                    entry.controller.is_cancelled()
+                } else {
+                    *entry.done.borrow()
+                };
+                *lock(&observation) = Some((ready, !entry.task.is_poisoned()));
+                let _ = dropped.send(());
             }));
-        }
+            Some(drop_seen)
+        } else {
+            None
+        };
         let observers = tail_observers(|| {
             let mut done = entry.done.subscribe();
             async move {
-                done.wait_for(|done| *done).await.unwrap();
+                done.wait_for(|done| *done)
+                    .await
+                    .expect("#818 tail subagent done observer");
             }
         })
         .await;
@@ -2272,28 +2355,43 @@ mod tests {
         let id = task.task_id.clone();
         let operation = tokio::spawn(async move {
             if stopping {
-                assert!(owner.stop(&id));
+                assert!(owner.stop(&id), "#818 tail subagent stop accepted");
             } else {
-                release.send(()).unwrap();
+                release.send(()).expect("#818 tail subagent release");
             }
         });
-        tail_deadline(reached).await.unwrap();
+        tail_deadline(reached)
+            .await
+            .expect("#818 tail subagent clock paused");
         assert!(!*entry.done.borrow(), "tail Clock predecessor pending");
-        resume.send(()).unwrap();
+        resume.send(()).expect("#818 tail subagent clock resume");
+        if let Some(drop_seen) = drop_seen {
+            tail_deadline(drop_seen)
+                .await
+                .expect("#818 tail payload observation");
+            let (ready, unpoisoned) = lock(&payload_observation)
+                .take()
+                .expect("#818 tail payload observation recorded");
+            assert!(ready, "#818 tail payload sees completion or cancellation");
+            assert!(unpoisoned, "#818 tail payload sees unpoisoned entry");
+        }
         for observer in observers {
-            tail_deadline(observer).await.unwrap();
+            tail_deadline(observer)
+                .await
+                .expect("#818 tail subagent observer");
         }
         let result = tail_deadline(operation).await;
         if payload && stopping {
             assert_eq!(
-                result.unwrap_err().into_panic().downcast_ref::<&str>(),
-                Some(&"tail payload drop")
+                result
+                    .expect_err("#818 tail subagent payload operation")
+                    .into_panic()
+                    .downcast_ref::<&str>(),
+                Some(&"tail payload drop"),
+                "#818 tail subagent payload panic"
             );
         } else {
-            result.unwrap();
-        }
-        if payload {
-            tail_deadline(drop_seen).await.unwrap();
+            result.expect("#818 tail subagent operation");
         }
         assert!(!entry.task.is_poisoned(), "tail entry unpoisoned");
         assert_eq!(
@@ -2301,7 +2399,7 @@ mod tests {
             stopping,
             "tail cancellation delivered"
         );
-        let task = runtime.get(&task.task_id).unwrap();
+        let task = runtime.get(&task.task_id).expect("#818 tail subagent task");
         let id = format!("S-{mode}");
         assert_eq!(
             subagent_observation(
@@ -2314,7 +2412,11 @@ mod tests {
             "tail subagent TS row"
         );
         assert_eq!(task.ended_at, Some(42.0), "tail fallback timestamp");
-        assert_eq!(runtime.list(&SubagentListFilter::default()).len(), 1);
+        assert_eq!(
+            runtime.list(&SubagentListFilter::default()).len(),
+            1,
+            "#818 tail subagent list"
+        );
         assert!(!tail_deadline(runtime.stop_and_wait(&task.task_id)).await);
         let next = runtime.start(subagent_input(Box::new(|_| Box::pin(async { Ok(()) }))));
         tail_deadline(runtime.stop_and_wait(&next.task_id)).await;

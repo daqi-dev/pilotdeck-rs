@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
@@ -62,21 +63,43 @@ def run(name, test):
 
 
 summary = []
+failures = []
 for name, path, before, after, test, marker in selected:
+    full = 'runtime::cleanup_task::tests::' + test
+    status = 'INVALID'
     with mutating_sources(root, [path]) as snapshots:
         original = snapshots[path].decode()
-        assert original.count(before) == 1, (name, 'stale anchor')
-        code, raw = run(name + '-positive', test)
-        assert code == 0 and '1 passed' in raw, (name, 'positive failed')
-        path.write_text(original.replace(before, after, 1))
-        code, raw = run(name, test)
-        assert (code == 101 and f'{test} ... FAILED' in raw and marker in raw
-                and 'test result: FAILED' in raw and 'could not compile' not in raw), (
-                    name, 'not a targeted runtime failure')
+        try:
+            assert original.count(before) == 1, (name, 'stale anchor')
+            code, raw = run(name + '-positive', test)
+            positive_ok = code == 0 and '1 passed' in raw
+            path.write_text(original.replace(before, after, 1))
+            code, raw = run(name, test)
+            killed = (positive_ok and code == 101
+                      and named_test_killed(raw, full, marker)
+                      and 'could not compile' not in raw)
+            status = 'KILLED' if killed else (
+                'SURVIVED' if code == 0 else 'INVALID')
+        except Exception as error:
+            status = 'INVALID'
+            print(f'{name}: {type(error).__name__}: {error}', flush=True)
+        finally:
+            path.write_bytes(snapshots[path])
     with mutating_sources(root, [path]):
         code, raw = run(name + '-restored', test)
-        assert code == 0 and '1 passed' in raw, (name, 'restore failed')
-    summary.append({'name': name, 'killed': True, 'restored': True})
-    print(f'{name}: KILLED; restored PASS', flush=True)
+        restored = code == 0 and '1 passed' in raw
+    if not restored:
+        status = 'INVALID'
+    summary.append({'name': name, 'status': status, 'restored': restored})
+    print(f'{name}: {status}; restored {"PASS" if restored else "FAIL"}', flush=True)
+    if status != 'KILLED':
+        failures.append(name)
 with (args.output / 'summary.json').open('x') as log:
     json.dump(summary, log, indent=2)
+counts = {state: sum(row['status'] == state for row in summary)
+          for state in ('KILLED', 'SURVIVED', 'INVALID')}
+print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()),
+      flush=True)
+if failures:
+    print(f'not killed: {", ".join(failures)}', file=sys.stderr)
+    sys.exit(1)
