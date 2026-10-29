@@ -751,7 +751,9 @@ class MachineLeaseTests(unittest.TestCase):
             with open(guard_path, 'w+') as guard:
                 fcntl.flock(guard, fcntl.LOCK_EX)
                 acquired.set()
-                release.wait(5)
+                # Same rule as the twin below: only release.set() (always
+                # reached via finally) may drop the flock (#1023 r6 GLM P1).
+                release.wait()
 
         def caller():
             try:
