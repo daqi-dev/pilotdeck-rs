@@ -968,7 +968,7 @@ async fn run_case(scenario: &str) {
     let storage_dir = directory.clone();
     let gate = scenario == "cancel-tool";
     let factory = Arc::new(ProjectSessionFactory::new(FactoryOptions {
-        writer_fence_timeout: Duration::from_secs(5),
+        writer_busy_wait_timeout: Duration::from_secs(5),
         prepare: Arc::new(move |_, _| {
             let project = prepare_project.clone();
             let directory = prepare_dir.clone();
