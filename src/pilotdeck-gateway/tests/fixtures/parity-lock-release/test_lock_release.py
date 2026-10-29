@@ -51,13 +51,14 @@ sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-b2-lock-pyc-')
 sys.dont_write_bytecode = True
 
 import ast
+import contextlib
 import json
 import os
 from pathlib import Path
 import signal
 import subprocess
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[5]
 CALIBRATE = ROOT / 'scripts/ui-server-parity/calibrate.sh'
@@ -650,6 +651,206 @@ class FixtureBootstrapTests(unittest.TestCase):
                     self.assertFalse(
                         any(text in control.stderr for text in rejection),
                         marker + f' [{relative}] control: a neutral path was rejected')
+
+
+class RunnerInvalidationControls(unittest.TestCase):
+    """The delivered mutation runner must never keep a stale green summary."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='pdrs-plr-runner-')
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        self.source = self.root / 'mutant_source.py'
+        self.source.write_text('x = 0\n')
+        entry = str(Path(__file__).resolve().parent)
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
+            self.addCleanup(sys.path.remove, entry)
+        import negative_controls
+        self.runner = negative_controls
+
+    def _read_summary(self, out):
+        """Read the final summary without an un-messaged failure point."""
+        path = out / 'summary.json'
+        if not path.is_file():
+            return None
+        try:
+            summary = json.loads(path.read_text())
+        except ValueError as error:
+            self.fail(f'#1059 runner summary.json must be valid JSON: {error}')
+        self.assertIsInstance(summary, list,
+                              '#1059 the runner summary must stay a bare list')
+        return summary
+
+    def _run_owned(self):
+        phase = {'n': 0}
+
+        def run_owned(command, **kwargs):
+            phase['n'] += 1
+            step = (phase['n'] - 1) % 3
+            if step == 0:
+                return subprocess.CompletedProcess([], 0, '', 'Ran 1 test\n')
+            if step == 1:
+                return subprocess.CompletedProcess(
+                    [], 1, '', 'FAIL: test_one\n#209 exclusive message\n')
+            return subprocess.CompletedProcess([], 0, '', 'Ran 1 test\n')
+
+        return run_owned
+
+    def _drive(self, *, guard_error=None):
+        """Run the real ``main`` with only the guard and subprocess mocked."""
+        out = Path(tempfile.mkdtemp(prefix='out-', dir=self.root))
+        source = self.source
+        captured = {'mutating_calls': 0}
+
+        class Guard:
+            def __enter__(self):
+                return {source: b'x = 0\n'}
+
+            def __exit__(self, *exc):
+                if guard_error is not None:
+                    raise guard_error
+                return False
+
+        def mutating(root, paths, **kwargs):
+            captured['mutating_calls'] += 1
+            captured['paths'] = list(paths)
+            return Guard()
+
+        with patch.multiple(self.runner,
+                            MUTATIONS=[('one', source, 'x = 0', 'x = 1')],
+                            CHECKS={'one': ('Controls.test_one',
+                                            '#209 exclusive message')},
+                            parity_lease=lambda: contextlib.nullcontext(),
+                            mutating_sources=mutating,
+                            run_owned=self._run_owned()), \
+                patch.object(sys, 'argv',
+                             [str(Path(self.runner.__file__)), '--output',
+                              str(out), '--only', 'one']):
+            try:
+                code = self.runner.main()
+            except BaseException as error:
+                if error is not guard_error:
+                    raise
+                # Only the injected cancellation is observed; a real Ctrl-C
+                # (a different exception object) must still abort the test.
+                code = error
+        return code, self._read_summary(out), captured.get('paths'), captured['mutating_calls']
+
+    def test_runner_guards_round_and_shell_without_outer_lease(self):
+        """The sample run stays green and guards the runner itself."""
+        code, summary, paths, mutating_calls = self._drive()
+        self.assertEqual(code, 0, '#1059 the sample runner must finish green')
+        self.assertEqual([row['status'] for row in summary], ['KILLED'],
+                         '#1059 the sample mutant must be killed')
+        self.assertIn(self.runner.RUNNER, paths,
+                      '#1059 the delivered runner must be protected for its own row')
+        self.assertEqual(mutating_calls, 1,
+                         '#1059 the runner lease must not wrap a second guard')
+
+    def test_final_guard_failure_rewrites_summary(self):
+        """P0-2: a guard/restoration failure after the last row must void it."""
+        code, summary, _, _ = self._drive(
+            guard_error=RuntimeError('restore failed'))
+        self.assertEqual(code, 2, '#1059 P0-2 guard failure must exit 2')
+        self.assertIsNotNone(
+            summary, '#1059 P0-2 a guard failure must publish an INVALID summary')
+        self.assertEqual([row['status'] for row in summary], ['INVALID'],
+                         '#1059 P0-2 the on-disk summary must not keep KILLED')
+        self.assertIn('source guard', summary[0]['reason'],
+                      '#1059 P0-2 invalidation reason must be recorded')
+
+    def test_final_guard_interrupt_rewrites_summary(self):
+        """P0-2: a cancellation after the last row must void it, then propagate."""
+        for canceled in (KeyboardInterrupt('restore interrupted'),
+                         SystemExit('restore exited')):
+            with self.subTest(canceled=type(canceled).__name__):
+                code, summary, _, _ = self._drive(guard_error=canceled)
+                self.assertIs(type(code), type(canceled),
+                              '#1059 P0-2 the cancellation must be re-raised')
+                self.assertIsNotNone(
+                    summary,
+                    '#1059 P0-2 a cancellation after the last row must not keep KILLED')
+                self.assertEqual([row['status'] for row in summary], ['INVALID'],
+                                 '#1059 P0-2 a cancellation after the last row must not keep KILLED')
+                self.assertIn('source guard', summary[0]['reason'],
+                              '#1059 P0-2 invalidation reason must be recorded')
+
+    def test_interrupt_during_void_publish_leaves_no_killed_summary(self):
+        """P0-3: a SIGINT inside the void publish must not keep KILLED.
+
+        The publish side is the review's read-only in-memory model: file
+        operations are mocks and the SIGINT is a real Python signal raised
+        from ``tmp.replace`` while the INVALID payload is being published.
+        The output path itself is a real directory holding an old all-KILLED
+        ``summary.json``, so this also proves startup retirement deletes a
+        previous success before the run starts.
+        """
+        disk = {}
+        files = {}
+
+        def entry(name):
+            if name not in files:
+                files[name] = MagicMock(name=name)
+            return files[name]
+
+        out = MagicMock(name='out')
+        out.__truediv__.side_effect = entry
+        tmp = entry('summary.json.tmp')
+        reuse = Path(tempfile.mkdtemp(prefix='reuse-', dir=self.root))
+        stale = reuse / 'summary.json'
+        stale.write_text(json.dumps(
+            [{'mutation': 'one', 'status': 'KILLED', 'reason': '#209 stale'}]) + '\n')
+        tmp.write_text.side_effect = lambda payload: disk.update(staged=payload)
+
+        def publish(_destination):
+            # The window: the INVALID temp is complete, and the SIGINT lands
+            # before the rename.
+            if any(row['status'] == 'INVALID' for row in json.loads(disk['staged'])):
+                signal.raise_signal(signal.SIGINT)
+            disk['summary'] = disk['staged']
+
+        tmp.replace.side_effect = publish
+        source = MagicMock(name='source')
+
+        class Guard:
+            def __enter__(self):
+                return {source: b'x = 0\n'}
+
+            def __exit__(self, *exc):
+                raise RuntimeError('restore verification failed')
+
+        def mutating(root, paths, **kwargs):
+            return Guard()
+
+        with patch.multiple(
+                self.runner,
+                MUTATIONS=[('one', source, 'x = 0', 'x = 1')],
+                CHECKS={'one': ('Controls.test_one',
+                                '#209 exclusive message')},
+                new_output_directory=lambda _: out,
+                parity_lease=lambda: contextlib.nullcontext(),
+                mutating_sources=mutating,
+                run_owned=self._run_owned()), \
+                patch.object(sys, 'argv',
+                             [str(Path(self.runner.__file__)), '--output',
+                              str(reuse)]):
+            try:
+                code = self.runner.main()
+            except BaseException as error:
+                code = error
+        message = ('#1059 P0-3 an interrupt during the void publish must not '
+                   'leave a readable KILLED summary')
+        self.assertFalse(stale.exists(), message)
+        try:
+            summary = json.loads(disk['summary']) if 'summary' in disk else None
+        except ValueError as error:
+            self.fail(f'{message}: unreadable summary: {error}')
+        self.assertIsInstance(code, KeyboardInterrupt, message)
+        self.assertTrue(
+            summary is None
+            or [row['status'] for row in summary] != ['KILLED'],
+            message)
 
 
 if __name__ == '__main__':
