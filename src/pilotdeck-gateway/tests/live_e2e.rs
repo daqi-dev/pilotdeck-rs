@@ -816,13 +816,35 @@ fn live_artifact_provenance() {
     verify_artifacts();
 }
 
+// Cargo creates this integration-test root even in a fresh checkout. Return an
+// uncreated UUID leaf: capture.py owns TS creation; run_case owns Rust creation.
+fn case_directory(prefix: &str) -> PathBuf {
+    Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{prefix}-{}", uuid::Uuid::new_v4()))
+}
+
+#[test]
+fn case_directories_use_cargo_tmpdir() {
+    for prefix in ["rust-text", "ts-client"] {
+        let directory = case_directory(prefix);
+        negative_assert_eq!(
+            directory.parent(),
+            Some(Path::new(env!("CARGO_TARGET_TMPDIR"))),
+            "#1056 case directory uses Cargo temporary root"
+        );
+        negative_assert!(
+            directory != case_directory(prefix),
+            "#1056 each case directory has a fresh identity"
+        );
+        fs::create_dir(&directory).expect("#1056 case leaf can be created without historical _tmp");
+        fs::remove_dir(directory).expect("#1056 remove empty regression leaf");
+    }
+}
+
 #[test]
 #[ignore = "requires fixed PDRS_BASELINE and Node v22.22.0"]
 fn live_ts_client_payload() {
     verify_artifacts();
-    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../_tmp/20261026-issue-748")
-        .join(format!("ts-client-{}", uuid::Uuid::new_v4()));
+    let directory = case_directory("ts-client");
     let mut command = Command::new("python3");
     command
         .args(["-B", &format!("{FIXTURE}/capture.py"), "text"])
@@ -865,9 +887,7 @@ async fn run_case(scenario: &str) {
             .expect("#748 Node version");
         assert_eq!(version.stdout, b"v22.22.0\n", "#748 pinned Node runtime");
     });
-    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../_tmp/20261026-issue-748")
-        .join(format!("rust-{scenario}-{}", uuid::Uuid::new_v4()));
+    let directory = case_directory(&format!("rust-{scenario}"));
     fs::create_dir(&directory).expect("#748 exclusive case directory");
     let directory = fs::canonicalize(directory).expect("#748 canonical case directory");
     let _descendants = Descendants(directory.clone());
