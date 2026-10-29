@@ -1,11 +1,14 @@
 """Version binding and capture-clock admission; never certify changed apparatus from cache."""
 # Isolated bootstrap: verify the source loader before executing local code.
-import os as _boot_os
 import sys as _boot_sys
 if not (_boot_sys.flags.isolated and _boot_sys.flags.ignore_environment
         and _boot_sys.flags.no_user_site and _boot_sys.pycache_prefix is None):
     print('{"verdict":"FAIL","errors":["Python isolation required: use python3 -I; no pycache prefix"]}')
     raise SystemExit(1)
+if _boot_sys.version_info < (3, 11) or 'os' not in _boot_sys.modules:
+    print('{"verdict":"FAIL","errors":["os must be preloaded from CPython 3.11+ frozen modules"]}')
+    raise SystemExit(1)
+import os as _boot_os
 _boot_sys.dont_write_bytecode = True
 _boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
 # Identity, not spelling: a case-insensitive alias, a symlinked spelling or a

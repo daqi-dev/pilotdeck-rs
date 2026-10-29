@@ -17,8 +17,10 @@ pre-fix realpath comparison so ``#1023-6`` must fail on admission.
 No checkout source is written and no cargo runs.  Run all rows, print a
 summary, and exit nonzero unless every row is KILLED.
 """
-import os as _boot_os
 import sys as _boot_sys
+if _boot_sys.version_info < (3, 11) or 'os' not in _boot_sys.modules:
+    raise SystemExit(f'#1023: os must be preloaded from CPython 3.11+ frozen modules; run with -I: python3 -I {__file__}')
+import os as _boot_os
 
 # Directory identity is compared by (device, inode), never by spelling.
 # realpath normalises ``//`` and symlinks but keeps the caller's case, so on a
@@ -61,6 +63,14 @@ GUARD = ('if any(\n'
          '        _boot_os.path.isdir(entry or _boot_os.curdir)\n')
 GUARD_OFF = ('if False and any(\n'
              '        _boot_os.path.isdir(entry or _boot_os.curdir)\n')
+# fix-r4 GLM P1: the preflight that proves os is a preloaded frozen module.
+# Removing it lets a forged os.py beside a reinserted directory execute on an
+# interpreter without frozen os; the shipped guard must reject first.
+PREFLIGHT = (
+    "if _boot_sys.version_info < (3, 11) or 'os' not in _boot_sys.modules:\n"
+    "    print('{\"verdict\":\"FAIL\",\"errors\":[\"os must be preloaded from "
+    "CPython 3.11+ frozen modules\"]}')\n"
+    "    raise SystemExit(1)\n")
 # The pre-fix-r3 spelling comparison this row restores to prove #1023-6 kills it.
 REALPATH_GUARD = (
     'if any(_boot_os.path.realpath(entry or _boot_os.curdir) in {\n'
@@ -268,12 +278,20 @@ def alias_reinsertion(root):
         'FrozenControls.test_entry_guards_reject_alias_spellings', '#1023-6:'
 
 
+def os_preflight(root):
+    """fix-r4 GLM P1: the guard must reject before importing an unproved os."""
+    rewrite_source(root, APPARATUS + '/check_frozen.py', PREFLIGHT, 'if False:\n    pass\n')
+    return run_bound(root, 'FrozenControls.test_entry_guards_require_preloaded_os'), \
+        'FrozenControls.test_entry_guards_require_preloaded_os', '#1023-11:'
+
+
 ROWS = {
     'readme-discover': row_readme,
     'entry-guard-removed': row_guard,
     'main-removed': row_main,
     'discover-guard-removed': row_discover,
     'alias-reinsertion': alias_reinsertion,
+    'os-preflight-removed': os_preflight,
 }
 
 

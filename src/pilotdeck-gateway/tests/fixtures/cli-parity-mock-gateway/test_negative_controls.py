@@ -9,8 +9,10 @@ with an injected final-restore failure: the persisted summary must be rewritten
 INVALID, never left claiming kills whose sources were not verifiably restored.
 No real source is mutated; nothing here runs cargo or node.
 """
-import os as _boot_os
 import sys as _boot_sys
+if _boot_sys.version_info < (3, 11) or 'os' not in _boot_sys.modules:
+    raise SystemExit(f'#1023: os must be preloaded from CPython 3.11+ frozen modules; run with -I: python3 -I {__file__}')
+import os as _boot_os
 
 # #1023: same guard as the driver. -I keeps this directory and tests/fixtures
 # out of module resolution; a reinsertion (unittest discover) is rejected
@@ -29,6 +31,7 @@ if not _boot_sys.flags.isolated or any(
     raise SystemExit(f'#1023: unsafe import path; run with -I by file: python3 -I {__file__}')
 
 from contextlib import contextmanager, nullcontext
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -38,6 +41,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -333,7 +337,7 @@ class RestoreFailureTests(unittest.TestCase):
         fragment = negative_controls.failure_fragments[name]
         sources = (negative_controls.policy, negative_controls.common, negative_controls.compare,
                    negative_controls.run_round, negative_controls.mock_gateway,
-                   negative_controls.isolation_probe)
+                   negative_controls.isolation_probe, negative_controls.fixture)
         # The real probe source must survive this test byte-for-byte even if
         # the copy wiring regresses, so pin it before anything is patched.
         real_probe = negative_controls.isolation_probe
@@ -386,6 +390,7 @@ FAILED (failures=1)
              patch.object(negative_controls, 'run_round', copies[3]), \
              patch.object(negative_controls, 'mock_gateway', copies[4]), \
              patch.object(negative_controls, 'isolation_probe', copies[5]), \
+             patch.object(negative_controls, 'fixture', copies[6]), \
              patch.object(negative_controls, 'mutating_sources', fake_mutating_sources), \
              patch.object(negative_controls, 'machine_parity_lock', nullcontext), \
              patch.object(negative_controls, 'run_owned', fake_run_owned), \
@@ -402,6 +407,8 @@ FAILED (failures=1)
                             f'a real source was written outside the copies: {path}')
         self.assertIn(copies[5], written,
                       'the sixth source copy (isolation_probe) must participate in the write-back')
+        self.assertIn(copies[6], written,
+                      'the seventh source copy (this driver) must participate in the write-back')
         self.assertEqual(hashlib.sha256(real_probe.read_bytes()).hexdigest(), real_probe_sha256,
                          'the real isolation_probe.mjs must be byte-identical after the test')
         summary = json.loads((out / 'summary.json').read_text())
@@ -655,6 +662,51 @@ class MachineLeaseTests(unittest.TestCase):
                             '#1023-9: the lease must be held for the whole child run')
         self.assertFalse(self.lock.exists(),
                          '#1023-9: a finished bound run must release the lease')
+
+    def test_bound_run_lease_late_arrival_does_not_start_bound_run(self):
+        marker = ('#1023-9: a lease released after the deadline must not start '
+                  'the bound run')
+        acquired = threading.Event()
+        release = threading.Event()
+        started = []
+        timer = None
+
+        guard_path = self.lock.with_name(self.lock.name + '.guard')
+
+        def holder():
+            # Hold only the .guard flock, without creating the lease directory:
+            # this is the window in which parity_lock's flock blocks past the
+            # deadline instead of raising Blocked on an existing directory.
+            with open(guard_path, 'w+') as guard:
+                fcntl.flock(guard, fcntl.LOCK_EX)
+                acquired.set()
+                release.wait(5)
+
+        thread = threading.Thread(target=holder, daemon=True)
+        thread.start()
+        try:
+            self.assertTrue(acquired.wait(5),
+                            marker + ': the sibling never acquired the lease')
+            # The sibling releases only after the caller's deadline, so the
+            # blocking flock returns late instead of raising Blocked.
+            timer = threading.Timer(0.3, release.set)
+            timer.start()
+            try:
+                with negative_controls.machine_parity_lock(
+                        timeout=0.05, interval=0.005, lock=self.lock):
+                    started.append(True)
+            except RuntimeError as error:
+                self.assertIn('released after the', str(error),
+                              marker + f': wrong rejection: {error}')
+            else:
+                self.fail(marker + ': the bound run started after the deadline')
+        finally:
+            release.set()
+            thread.join(5)
+            if timer is not None:
+                timer.join()
+        self.assertEqual(started, [], marker + ': no bound run may start')
+        self.assertFalse(self.lock.exists(), marker + ': a late lease must be released')
 
     def test_bound_run_lease_is_released_on_cancellation(self):
         with self.assertRaises(KeyboardInterrupt,

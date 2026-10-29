@@ -1,14 +1,16 @@
 """Contract tests use clearly synthetic recordings, never calibration evidence."""
 import sys
+if sys.version_info < (3, 11) or 'os' not in sys.modules:
+    raise SystemExit(f'#701: os must be preloaded from CPython 3.11+ frozen modules; run with -I: python3 -I {__file__}')
 import os
 
 # -I keeps PYTHONPATH, user site and the script directory out of module
 # resolution.  Without it, exit before importing anything: a same-named stdlib
 # file beside this entry (json.py, pathlib.py, tempfile.py) would otherwise
 # execute before the guard. Discover can add the directory back even with
-# -I, so reject that path too. Both boot imports are safe: ``sys`` is builtin
-# and ``os`` has been frozen since CPython 3.11, so neither can be shadowed
-# from the reinserted directory.
+# -I, so reject that path too. ``sys`` is builtin; ``os`` is imported only
+# after the preflight above proved it is a preloaded frozen module, so neither
+# can be shadowed from the reinserted directory.
 # The directory is identified by (device, inode), not by its spelling: a
 # case-insensitive alias or a mixed ``//``/symlink form names this very
 # directory while the raw string differs (fix-r2 GLM sibling P1).
@@ -411,21 +413,31 @@ print(json.dumps({'prefixes': prefixes, 'dontWrite': sys.dont_write_bytecode,
         for name in ENTRY_FILES:
             with self.subTest(entry=name):
                 body = module_statements((SCRIPT / name).read_text())
-                self.assertGreaterEqual(len(body), 5, f'#701: {name}: missing isolated guard')
+                self.assertGreaterEqual(len(body), 6, f'#701: {name}: missing isolated guard')
                 self.assertEqual(ast.unparse(body[0]), 'import sys',
                                  f'#701: {name}: only boot-essential imports may load before the guard')
-                self.assertEqual(ast.unparse(body[1]), 'import os',
-                                 f'#701: {name}: os is frozen (3.11+) and safe before the guard')
+                preflight = body[1]
+                self.assertIsInstance(
+                    preflight, ast.If,
+                    f'#701: {name}: the os-preload preflight must precede import os')
                 self.assertEqual(
-                    ast.unparse(body[2]),
+                    ast.unparse(preflight.test),
+                    "sys.version_info < (3, 11) or 'os' not in sys.modules",
+                    f'#701: {name}: the preflight must reject unfrozen or unloaded os')
+                self.assertTrue(any(isinstance(node, ast.Raise) for node in preflight.body),
+                                f'#701: {name}: the preflight must fail closed before importing os')
+                self.assertEqual(ast.unparse(body[2]), 'import os',
+                                 f'#701: {name}: os may only load after the preflight')
+                self.assertEqual(
+                    ast.unparse(body[3]),
                     '_boot_dir = os.path.dirname(os.path.realpath(__file__))',
                     f'#701: {name}: the guard must resolve this directory once')
-                identity = ast.unparse(body[3])
+                identity = ast.unparse(body[4])
                 self.assertTrue(identity.startswith('_boot_reinserted = any('),
                                 f'#701: {name}: the guard must build one reinsertion flag')
                 self.assertIn('os.path.samefile(entry or os.curdir, _boot_dir)', identity,
                               f'#701: {name}: the guard must compare directory identity, not spelling')
-                guard = body[4]
+                guard = body[5]
                 self.assertIsInstance(guard, ast.If,
                                       f'#701: {name}: the isolated guard must follow the boot prelude')
                 self.assertEqual(ast.unparse(guard.test),
@@ -433,6 +445,72 @@ print(json.dumps({'prefixes': prefixes, 'dontWrite': sys.dont_write_bytecode,
                                  f'#701: {name}: the guard must reject non-isolated or reinserted paths')
                 self.assertTrue(any(isinstance(node, ast.Raise) for node in guard.body),
                                 f'#701: {name}: the guard must exit before loading anything')
+
+    def test_entry_guard_rejects_unfrozen_or_unloaded_os(self):
+        """fix-r4 GLM P1: import os may only run after its preload is proved."""
+        marker = ('#701: an interpreter without a preloaded frozen os must be '
+                  'rejected before importing os')
+        preload = 'os must be preloaded from CPython 3.11+ frozen modules'
+        forged = ('import sys\n'
+                  'with open(sys.argv[2], "w") as stream:\n'
+                  '    stream.write("forged os executed")\n'
+                  'raise RuntimeError("forged os module executed")\n')
+        frozen_probe = ('import runpy, sys\n'
+                        'sys.path.insert(0, sys.argv[1])\n'
+                        'runpy.run_path(sys.argv[2], run_name="__main__")\n')
+        version_probe = ('import sys\n'
+                         'entry, marker, staged = sys.argv[1], sys.argv[2], sys.argv[3]\n'
+                         'source = open(entry, "rb").read()\n'
+                         'sys.version_info = (3, 10, 0, "final", 0)\n'
+                         'sys.path.insert(0, staged)\n'
+                         'exec(compile(source, entry, "exec"), '
+                         '{"__file__": entry, "__name__": "__main__"})\n')
+        unloaded_probe = ('import sys\n'
+                          'entry, marker, staged = sys.argv[1], sys.argv[2], sys.argv[3]\n'
+                          'source = open(entry, "rb").read()\n'
+                          'del sys.modules["os"]\n'
+                          'sys.path.insert(0, staged)\n'
+                          'exec(compile(source, entry, "exec"), '
+                          '{"__file__": entry, "__name__": "__main__"})\n')
+        with tempfile.TemporaryDirectory(prefix='d0-osguard-') as temp:
+            holder = Path(temp)
+            for name in ENTRY_FILES:
+                staged = holder / name
+                # copy2 so the negative-control harness can substitute the
+                # mutant bytes into the temporary staging directory.
+                shutil.copy2(SCRIPT / name, staged)
+                forge = holder / ('forge-' + name)
+                forge.mkdir()
+                (forge / 'os.py').write_text(forged)
+                marker_path = holder / (name + '.marker')
+                cases = (
+                    ('frozen-modules-off',
+                     [sys.executable, '-I', '-X', 'frozen_modules=off', '-c',
+                      frozen_probe, str(staged.parent), str(staged)]),
+                    ('version-below-3-11',
+                     [sys.executable, '-I', '-c', version_probe, str(staged),
+                      str(marker_path), str(forge)]),
+                    ('os-not-preloaded',
+                     [sys.executable, '-I', '-c', unloaded_probe, str(staged),
+                      str(marker_path), str(forge)]),
+                )
+                for label, command in cases:
+                    with self.subTest(entry=name, case=label):
+                        marker_path.unlink(missing_ok=True)
+                        result = subprocess.run(command, capture_output=True,
+                                                text=True, timeout=60)
+                        output = result.stdout + result.stderr
+                        self.assertEqual(
+                            result.returncode, 1,
+                            marker + f' [{name}/{label}] rc={result.returncode}: '
+                            + output[-300:])
+                        self.assertTrue(
+                            preload in output or 'unsafe import path' in output,
+                            marker + f' [{name}/{label}] rejected later than the guard: '
+                            + output[-300:])
+                        self.assertFalse(
+                            marker_path.exists(),
+                            marker + f' [{name}/{label}] the forged os.py executed')
 
     def test_entries_reject_a_mixed_spelling_reinsertion(self):
         """#701 fix-r2: the same directory under another spelling is still that directory."""
@@ -530,7 +608,7 @@ print(json.dumps({'prefixes': prefixes, 'dontWrite': sys.dont_write_bytecode,
                 tree = ast.parse(source)
                 body = module_statements(source)
                 self.assertEqual(
-                    [ast.dump(node) for node in body[5:5 + len(expected)]],
+                    [ast.dump(node) for node in body[6:6 + len(expected)]],
                     [ast.dump(node) for node in expected],
                     f'#701: {name}: must load the shared bootstrap by explicit source path')
                 for node in ast.walk(tree):

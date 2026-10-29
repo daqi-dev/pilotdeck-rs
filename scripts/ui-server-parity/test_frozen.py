@@ -1,10 +1,13 @@
 # Isolated bootstrap: verify the source loader before executing local code.
-import os as _boot_os
 import sys as _boot_sys
 if not (_boot_sys.flags.isolated and _boot_sys.flags.ignore_environment
         and _boot_sys.flags.no_user_site and _boot_sys.pycache_prefix is None):
     print('{"verdict":"FAIL","errors":["Python isolation required: use python3 -I; no pycache prefix"]}')
     raise SystemExit(1)
+if _boot_sys.version_info < (3, 11) or 'os' not in _boot_sys.modules:
+    print('{"verdict":"FAIL","errors":["os must be preloaded from CPython 3.11+ frozen modules"]}')
+    raise SystemExit(1)
+import os as _boot_os
 _boot_sys.dont_write_bytecode = True
 _boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
 # Identity, not spelling: a case-insensitive alias, a symlinked spelling or a
@@ -391,6 +394,76 @@ class FrozenControls(unittest.TestCase):
                               f'#1023-5: {relative} must compare directory identity, not spelling')
                 self.assertNotIn('realpath', head,
                                  f'#1023-5: {relative} must not compare realpath strings')
+
+    def test_entry_guards_require_preloaded_os(self):
+        marker = ('#1023-11: an interpreter without a preloaded frozen os must be '
+                  'rejected before importing os')
+        preload = 'os must be preloaded from CPython 3.11+ frozen modules'
+        forger = ('import sys\n'
+                  'with open(sys.argv[2], "w") as stream:\n'
+                  '    stream.write("forged os executed")\n'
+                  'raise RuntimeError("forged os module executed")\n')
+        frozen_probe = ('import runpy, sys\n'
+                        'sys.path.insert(0, sys.argv[1])\n'
+                        'runpy.run_path(sys.argv[2], run_name="__main__")\n')
+        version_probe = ('import sys\n'
+                         'entry, marker, staged = sys.argv[1], sys.argv[2], sys.argv[3]\n'
+                         'source = open(entry, "rb").read()\n'
+                         'sys.version_info = (3, 10, 0, "final", 0)\n'
+                         'sys.path.insert(0, staged)\n'
+                         'exec(compile(source, entry, "exec"), '
+                         '{"__file__": entry, "__name__": "__main__"})\n')
+        unloaded_probe = ('import sys\n'
+                          'entry, marker, staged = sys.argv[1], sys.argv[2], sys.argv[3]\n'
+                          'source = open(entry, "rb").read()\n'
+                          'del sys.modules["os"]\n'
+                          'sys.path.insert(0, staged)\n'
+                          'exec(compile(source, entry, "exec"), '
+                          '{"__file__": entry, "__name__": "__main__"})\n')
+        apparatus = ROOT / 'scripts/ui-server-parity'
+        entries = [path for path in sorted(apparatus.rglob('*.py'))
+                   if '# Isolated bootstrap' in path.read_text()]
+        self.assertGreaterEqual(len(entries), 20, '#1023-11: guard inventory must not be empty')
+        with tempfile.TemporaryDirectory(prefix='b2-osguard-') as temp:
+            holder = Path(temp)
+            for path in entries:
+                relative = path.relative_to(apparatus)
+                staged = holder / relative
+                staged.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, staged)
+                label_path = '__'.join(relative.with_suffix('').parts)
+                forge = holder / ('forge-' + label_path)
+                forge.mkdir()
+                (forge / 'os.py').write_text(forger)
+                marker_path = holder / (label_path + '.marker')
+                cases = (
+                    ('frozen-modules-off',
+                     [sys.executable, '-I', '-X', 'frozen_modules=off', '-c',
+                      frozen_probe, str(holder), str(staged)]),
+                    ('version-below-3-11',
+                     [sys.executable, '-I', '-c', version_probe, str(staged),
+                      str(marker_path), str(forge)]),
+                    ('os-not-preloaded',
+                     [sys.executable, '-I', '-c', unloaded_probe, str(staged),
+                      str(marker_path), str(forge)]),
+                )
+                for label, command in cases:
+                    with self.subTest(entry=str(relative), case=label):
+                        marker_path.unlink(missing_ok=True)
+                        result = subprocess.run(command, capture_output=True,
+                                                text=True, timeout=60)
+                        output = result.stdout + result.stderr
+                        self.assertEqual(
+                            result.returncode, 1,
+                            marker + f' [{relative}/{label}] rc={result.returncode}: '
+                            + output[-300:])
+                        self.assertTrue(
+                            preload in output or 'apparatus directory on sys.path' in output,
+                            marker + f' [{relative}/{label}] rejected later than the guard: '
+                            + output[-300:])
+                        self.assertFalse(
+                            marker_path.exists(),
+                            marker + f' [{relative}/{label}] the forged os.py executed')
 
     def test_entry_guards_reject_alias_spellings(self):
         apparatus = ROOT / 'scripts/ui-server-parity'

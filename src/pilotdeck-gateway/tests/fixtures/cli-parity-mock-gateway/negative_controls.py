@@ -24,8 +24,10 @@ traceback's source echo, another test's block, plain stdout) is not evidence,
 and an abnormal exit (a signal, no unittest summary, an unexpected exit code)
 is INVALID, never KILLED.
 """
-import os as _boot_os
 import sys as _boot_sys
+if _boot_sys.version_info < (3, 11) or 'os' not in _boot_sys.modules:
+    raise SystemExit(f'#1023: os must be preloaded from CPython 3.11+ frozen modules; run with -I: python3 -I {__file__}')
+import os as _boot_os
 
 # #1023: -I keeps the fixture search paths out of module resolution. Reject a
 # non-isolated launch and any reinsertion of this directory or tests/fixtures
@@ -83,6 +85,8 @@ compare = root / 'scripts/cli-parity/compare.py'
 run_round = root / 'scripts/cli-parity/run_round.py'
 mock_gateway = root / 'scripts/cli-parity/mock_gateway.mjs'
 isolation_probe = root / 'scripts/cli-parity/isolation_probe.mjs'
+fixture = root / 'src/pilotdeck-gateway/tests/fixtures/cli-parity-mock-gateway/negative_controls.py'
+fixture_test = root / 'src/pilotdeck-gateway/tests/fixtures/cli-parity-mock-gateway/test_negative_controls.py'
 
 # The real cli-parity driver serialises a whole round on this same mkdir lease
 # (common.py: LOCK = /tmp/pdrs-parity.lock). Loading common.py by explicit path
@@ -119,22 +123,30 @@ def machine_parity_lock(timeout=90, interval=0.5, lock=None):
     bind (fix-r2 concurrency P1). ``run_round.main`` already holds this exact
     lease for a whole round, so taking it turns the wait into mutual exclusion.
     Bounded: a lease that never comes free raises a named INVALID after
-    ``timeout`` seconds instead of running into a foreign bind.
+    ``timeout`` seconds instead of running into a foreign bind. The blocking
+    ``flock`` can return arbitrarily late, so the deadline is re-checked after
+    acquisition: a lease that only arrives after the deadline is released and
+    becomes the same named INVALID without starting the bound test (fix-r4
+    Codex P1-1, this-PR part).
     """
-    common = lease_module()
+    lease = lease_module()
     config = {'lock': lock} if lock is not None else {}
     deadline = time.monotonic() + timeout
     with ExitStack() as stack:
         while True:
             try:
-                stack.enter_context(common.parity_lock(**config))
+                stack.enter_context(lease.parity_lock(**config))
                 break
-            except common.Blocked:
+            except lease.Blocked:
                 if time.monotonic() >= deadline:
-                    target = lock if lock is not None else common.LOCK
+                    target = lock if lock is not None else lease.LOCK
                     raise RuntimeError(
                         f'#1023-9: {target} still held after {timeout}s; no bound run started')
                 time.sleep(interval)
+        if time.monotonic() >= deadline:
+            target = lock if lock is not None else lease.LOCK
+            raise RuntimeError(
+                f'#1023-9: {target} released after the {timeout}s deadline; no bound run started')
         yield
 
 
@@ -298,6 +310,21 @@ mutations = [
      "    ancestors = {parent for path in read_dirs + read_files for parent in path.parents}",
      "    ancestors = {parent for path in read_dirs + read_files for parent in path.parents}\n"
      "    ancestors.add(baseline.parent)"),
+    # fix-r4 Codex P1-1 (this-PR part): a lease that only arrives after the
+    # deadline must be released and become the same named INVALID; the bound
+    # test must never start.
+    ('lease-late-arrival-runs-bound-test',
+     fixture,
+     "        if time.monotonic() >= deadline:\n"
+     "            target = lock if lock is not None else lease.LOCK\n"
+     "            raise RuntimeError(\n"
+     "                f'#1023-9: {target} released after the {timeout}s deadline; no bound run started')\n"
+     "        yield",
+     "        if False:\n"
+     "            target = lock if lock is not None else lease.LOCK\n"
+     "            raise RuntimeError(\n"
+     "                f'#1023-9: {target} released after the {timeout}s deadline; no bound run started')\n"
+     "        yield"),
 ]
 tests = {
     'allow-rule-drops-port': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
@@ -321,6 +348,8 @@ tests = {
     'mock-port-changed': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
     'script-parent-metadata-allowed': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
     'baseline-parent-metadata-allowed': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
+    'lease-late-arrival-runs-bound-test':
+        'MachineLeaseTests.test_bound_run_lease_late_arrival_does_not_start_bound_run',
 }
 # The exclusive assertion message each mutant must turn red. A string is one
 # marker; a tuple lists the alternative markers of one assertion family (the
@@ -363,6 +392,8 @@ failure_fragments = {
     # ancestors); only the pinned rust digests can catch them.
     'script-parent-metadata-allowed': '#933-2: the base RUST profile changed',
     'baseline-parent-metadata-allowed': '#933-2: the base RUST profile changed',
+    'lease-late-arrival-runs-bound-test':
+        '#1023-9: a lease released after the deadline must not start the bound run',
 }
 
 SEPARATOR = '-' * 70
@@ -477,22 +508,30 @@ def wait_for_port_free(port, timeout=30, interval=0.1):
 
 
 def run_test(out, label, test):
-    # Hold the machine lease across the WHOLE child run, not only the probe:
-    # the port probe alone can be overtaken before the child binds 28999.
-    with machine_parity_lock():
-        # A stale listener on the pinned port makes the bound test fail in
-        # setUp, which the judge would record as INVALID (not a product
-        # observation).
-        wait_for_port_free(pinned_mock_port())
-        # -X pycache_prefix pins this invocation's bytecode cache to a fresh
-        # directory: a pyc left next to a (restored) source can otherwise be
-        # executed as the mutant whenever its recorded mtime and size match the
-        # restored file — same-second, same-size mutants do exactly that, and a
-        # "positive" or "restored" control would then judge mutant bytecode.
-        with tempfile.TemporaryDirectory(prefix='negctl-pycache-') as pycache:
+    # -X pycache_prefix pins this invocation's bytecode cache to a fresh
+    # directory: a pyc left next to a (restored) source can otherwise be
+    # executed as the mutant whenever its recorded mtime and size match the
+    # restored file — same-second, same-size mutants do exactly that, and a
+    # "positive" or "restored" control would then judge mutant bytecode.
+    with tempfile.TemporaryDirectory(prefix='negctl-pycache-') as pycache:
+        if test.startswith('MachineLeaseTests.'):
+            # The fixture's own lease test uses a private lock and never binds
+            # the mock port; the shared machine lease and port preflight would
+            # only add unrelated failure modes to this row.
             result = run_owned([sys.executable, '-I', '-X', f'pycache_prefix={pycache}',
-                                'scripts/cli-parity/test_cli_parity.py', test],
-                               cwd=root, timeout=600)
+                                str(fixture_test), test], cwd=root, timeout=600)
+        else:
+            # Hold the machine lease across the WHOLE child run, not only the
+            # probe: the port probe alone can be overtaken before the child
+            # binds 28999.
+            with machine_parity_lock():
+                # A stale listener on the pinned port makes the bound test fail
+                # in setUp, which the judge would record as INVALID (not a
+                # product observation).
+                wait_for_port_free(pinned_mock_port())
+                result = run_owned([sys.executable, '-I', '-X', f'pycache_prefix={pycache}',
+                                    'scripts/cli-parity/test_cli_parity.py', test],
+                                   cwd=root, timeout=600)
     (out / f'{label}.log').write_text(result.stdout + result.stderr)
     return result
 
@@ -542,7 +581,7 @@ def main():
     summary = []
     try:
         with mutating_sources(root, [policy, common, compare, run_round, mock_gateway,
-                                     isolation_probe],
+                                     isolation_probe, fixture],
                               baseline=args.baseline) as snapshots:
             for name, path, old, new in rows:
                 status, reason, stage, before = 'INVALID', '', 'anchor', None
