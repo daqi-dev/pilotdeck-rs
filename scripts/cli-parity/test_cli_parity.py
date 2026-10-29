@@ -2295,61 +2295,148 @@ class ContractTests(unittest.TestCase):
                     holder.stdout.close()
 
     def test_interrupt_during_acquisition_leaves_no_lease(self):
-        """SIGINT at any window between mkdir and the published owner.json must
-        recycle the lease directory this run created (#1064 P1-2) and still
-        propagate the interrupt; a later acquisition must not be blocked."""
-        real_mkdir, real_open, real_dump = os.mkdir, os.open, json.dump
-
-        def mkdir_then_interrupt(path, *args, **kwargs):
-            real_mkdir(path, *args, **kwargs)
-            if Path(path) == lock:
-                raise KeyboardInterrupt('#1064 after mkdir, before identity')
+        """SIGINT at the windows where the lease is provably this run's must
+        recycle it (#1064 P1-2) and still propagate the interrupt; a later
+        acquisition must not be blocked. The windows where ownership cannot be
+        proven are pinned by test_interrupt_before_identity_capture_retains_the_lease
+        and test_interrupt_retains_unproven_owner_bytes instead."""
+        real_open, real_write, real_close = os.open, os.write, os.close
+        fired = []
 
         def open_interrupt(path, flags, *args, **kwargs):
             if Path(path) == lock and flags & os.O_DIRECTORY:
                 raise KeyboardInterrupt('#1064 after identity, before the directory fd')
             return real_open(path, flags, *args, **kwargs)
 
-        def dump_partial(obj, stream, *args, **kwargs):
-            stream.write('{"pid": 1')  # 半写的 owner.json：不可解析，只能来自本次写入
-            raise KeyboardInterrupt('#1064 during the owner write')
+        def write_interrupt(fd, data):
+            raise KeyboardInterrupt('#1064 after the owner create, before any byte')
 
-        def interrupted_dump(obj, stream, *args, **kwargs):
-            os.kill(os.getpid(), signal.SIGINT)  # 真信号，不是合成异常
-            return real_dump(obj, stream, *args, **kwargs)
+        def close_after_owner_bytes(fd):
+            # 先真正关掉 owner fd，再合成取消：written 已记为完整 payload。
+            real_close(fd)
+            if not fired:
+                fired.append(fd)
+                raise KeyboardInterrupt('#1064 after the owner bytes landed')
 
-        def handler(_signum, _frame):
-            raise KeyboardInterrupt('#1064 real SIGINT during the owner write')
+        def close_real_sigint(fd):
+            # 真信号，不是合成异常：owner fd 已关、字节已记，KI 在下一条字节码
+            # 边界投递，仍落在已证窗口内。
+            real_close(fd)
+            if not fired:
+                fired.append(fd)
+                os.kill(os.getpid(), signal.SIGINT)
 
         windows = [
-            ('after-mkdir', lambda: patch.object(os, 'mkdir', mkdir_then_interrupt)),
             ('after-identity', lambda: patch.object(os, 'open', open_interrupt)),
-            ('partial-owner', lambda: patch.object(json, 'dump', dump_partial)),
+            ('owner-empty', lambda: patch.object(os, 'write', write_interrupt)),
+            ('owner-written', lambda: patch.object(os, 'close', close_after_owner_bytes)),
+            ('owner-written-real-sigint', lambda: patch.object(os, 'close', close_real_sigint)),
         ]
         for label, patcher in windows:
             with self.subTest(window=label):
                 lock = self.root / f'lock-interrupt-{label}'
+                fired.clear()
                 with patcher():
                     with self.assertRaises(KeyboardInterrupt):
                         with parity_lock(lock, timeout=1):
                             self.fail('#1064: acquisition survived its own cancellation')
                 self.assertFalse(lock.exists(),
-                                  f'#1064: an interrupted acquisition must not leave a lease ({label})')
+                                 f'#1064: an interrupted acquisition must not leave a lease ({label})')
                 with parity_lock(lock, timeout=1) as owner:
                     self.assertEqual(owner['pid'], os.getpid(),
                                      f'#1064: a later acquisition must succeed after the interruption ({label})')
                 self.assertFalse(lock.exists(),
                                  f'#1064: the follow-up lease must release normally ({label})')
-        lock = self.root / 'lock-interrupt-real-sigint'
-        previous = signal.signal(signal.SIGINT, handler)
-        try:
-            with patch.object(json, 'dump', interrupted_dump):
-                with self.assertRaises(KeyboardInterrupt):
+
+    def test_interrupt_before_identity_capture_retains_the_lease(self):
+        """mkdir 未执行或未返回时被取消（r1 P1-1）：identity 未捕获，「目录为空」
+        不是本次创建的证明，外来空目录与本次刚建的目录一律保留，后续获取按
+        既有 Blocked 契约拒绝。"""
+        real_mkdir = os.mkdir
+
+        def mkdir_interrupted(path, *args, **kwargs):
+            # mkdir 系统调用执行前触发：前驱留下的外来空目录必须原样保留。
+            raise KeyboardInterrupt('#1064 before mkdir executed')
+
+        def mkdir_created_then_interrupted(path, *args, **kwargs):
+            # mkdir 已真实执行但尚未返回：归属同样不可证。
+            real_mkdir(path, *args, **kwargs)
+            raise KeyboardInterrupt('#1064 before mkdir returned')
+
+        windows = [
+            ('before-mkdir-foreign-empty', mkdir_interrupted, True),
+            ('before-mkdir-returns', mkdir_created_then_interrupted, False),
+        ]
+        for label, interceptor, preexist in windows:
+            with self.subTest(window=label):
+                lock = self.root / f'lock-unprovable-{label}'
+                if preexist:
+                    lock.mkdir(mode=0o700)  # 前驱崩溃留下的外来空租约
+                with patch.object(os, 'mkdir', interceptor):
+                    with self.assertRaises(KeyboardInterrupt):
+                        with parity_lock(lock, timeout=1):
+                            self.fail('#1064: acquisition survived its own cancellation')
+                self.assertTrue(lock.is_dir(),
+                                f'#1064: an unprovable lease must be retained, never deleted ({label})')
+                self.assertEqual(list(lock.iterdir()), [],
+                                 f'#1064: the retained lease must be left untouched ({label})')
+                try:
                     with parity_lock(lock, timeout=1):
-                        self.fail('#1064: acquisition survived a real SIGINT')
-        finally:
-            signal.signal(signal.SIGINT, previous)
-        self.assertFalse(lock.exists(), '#1064: a real SIGINT must not leave a lease')
+                        self.fail('#1064: acquired over a retained lease')
+                except Blocked:
+                    pass
+                except BaseException as error:
+                    raise AssertionError('#1064: an existing foreign lease must fail with the '
+                                         'existing Blocked contract, not '
+                                         f'{type(error).__name__}') from error
+                lock.rmdir()
+
+    def test_interrupt_retains_unproven_owner_bytes(self):
+        """owner 半写、或被外来写者写成「恰为本次 payload 前缀形态」的字节
+        （r1 P1-2）：磁盘字节与本次已证写入不一致，一律保留，后续获取按既有
+        Blocked 契约拒绝。"""
+        real_write = os.write
+        foreign_prefix = b'{"pid": 1'  # 恰为本次 owner payload 的前缀形态
+
+        def write_foreign_prefix(fd, data):
+            real_write(fd, foreign_prefix)
+            raise KeyboardInterrupt('#1064 foreign prefix-shaped bytes through the owner write')
+
+        def write_partial(fd, data):
+            real_write(fd, bytes(data)[:9])
+            raise KeyboardInterrupt('#1064 interrupted mid owner write')
+
+        for label, patcher in (
+                ('foreign-prefix-shape', lambda: patch.object(os, 'write', write_foreign_prefix)),
+                ('partial-write', lambda: patch.object(os, 'write', write_partial))):
+            with self.subTest(window=label):
+                lock = self.root / f'lock-owner-{label}'
+                with patcher():
+                    with self.assertRaises(KeyboardInterrupt):
+                        with parity_lock(lock, timeout=1):
+                            self.fail('#1064: acquisition survived its own cancellation')
+                self.assertTrue(lock.is_dir(),
+                                f'#1064: a lease with unproven owner bytes must be retained ({label})')
+                on_disk = (lock / 'owner.json').read_bytes()
+                # 半写落在本次 payload 的前 9 字节；外来前缀形态是固定 9 字节。
+                self.assertTrue(on_disk.startswith(b'{"pid": '),
+                                f'#1064: the retained owner bytes must be the prefix shape of this run ({label})')
+                self.assertEqual(len(on_disk), 9,
+                                 f'#1064: unproven owner bytes must be retained byte-identically ({label})')
+                if label == 'foreign-prefix-shape':
+                    self.assertEqual(on_disk, foreign_prefix,
+                                     '#1064: foreign prefix-shaped owner bytes must be retained')
+                try:
+                    with parity_lock(lock, timeout=1):
+                        self.fail('#1064: acquired over a lease with unproven owner bytes')
+                except Blocked:
+                    pass
+                except BaseException as error:
+                    raise AssertionError('#1064: an existing foreign lease must fail with the '
+                                         'existing Blocked contract, not '
+                                         f'{type(error).__name__}') from error
+                (lock / 'owner.json').unlink()
+                lock.rmdir()
 
     def test_interrupt_retains_a_replaced_lock_directory(self):
         """回收只删本次创建的目录：mkdir 后目录被换走，中断不得删除替换物。"""
@@ -2375,22 +2462,111 @@ class ContractTests(unittest.TestCase):
                          '#1064: the replacement must be left byte-identically in place')
 
     def test_interrupt_retains_foreign_owner_bytes(self):
-        """owner 可证才回收：目录里出现完整的非本次 owner 字节时保留原样。"""
+        """外来 owner 文件在本次 O_EXCL 之前出现（r1 P1-2）：`null\n`、损坏
+        JSON、外来完整 dict、前缀形态字节——owner 归属不可证，一律原样保留。"""
+        real_open = os.open
+        foreign_blobs = (b'null\n',                      # 完整有效的 JSON，但不是本次的
+                         b'{"pid": 1',                   # 恰为本次前缀形态
+                         b'{"pid": 999999005, "times',   # 损坏 JSON
+                         b'{"pid": 999999005, "timestamp": 0.0, "token": "foreign"}')  # 外来完整 dict
+
+        def open_interrupt(path, flags, *args, **kwargs):
+            if Path(path).name == 'owner.json' and flags & os.O_EXCL:
+                (lock / 'owner.json').write_bytes(blob)
+                raise KeyboardInterrupt('#1064 a foreign owner.json appeared before the exclusive create')
+            return real_open(path, flags, *args, **kwargs)
+
+        for blob in foreign_blobs:
+            with self.subTest(owner=blob[:16]):
+                lock = self.root / f'lock-foreign-{hashlib.sha256(blob).hexdigest()[:8]}'
+                with patch.object(os, 'open', open_interrupt):
+                    with self.assertRaises(KeyboardInterrupt):
+                        with parity_lock(lock, timeout=1):
+                            self.fail('#1064: acquisition survived its own cancellation')
+                self.assertTrue(lock.is_dir(),
+                                '#1064: a directory with foreign owner bytes must be retained')
+                self.assertEqual((lock / 'owner.json').read_bytes(), blob,
+                                 '#1064: foreign owner bytes must be left unchanged')
+                (lock / 'owner.json').unlink()
+                lock.rmdir()
+
+    def test_interrupt_retains_a_replaced_owner_file(self):
+        """owner 文件在完整写入后被字节相同的副本替换（r1 P1-2「owner 被替换」）：
+        inode 不再是本次 O_EXCL 创建的那个，即使字节逐字节相同也保留。"""
         lock = self.root / 'lock'
-        foreign = {'pid': 999_999_003, 'timestamp': 0.0, 'token': 'foreign'}
-        real_dump = json.dump
+        real_close = os.close
+        fired = []
 
-        def dump_foreign(obj, stream, *args, **kwargs):
-            real_dump(foreign, stream)
-            raise KeyboardInterrupt('#1064 foreign owner bytes appeared before publish')
+        def close_replace_then_interrupt(fd):
+            real_close(fd)
+            if not fired:
+                fired.append(fd)
+                data = (lock / 'owner.json').read_bytes()
+                foreign = lock / 'foreign-owner'
+                foreign.write_bytes(data)  # 字节相同、inode 不同
+                foreign.replace(lock / 'owner.json')
+                raise KeyboardInterrupt('#1064 the owner file was replaced after the write')
 
-        with patch.object(json, 'dump', dump_foreign):
+        with patch.object(os, 'close', close_replace_then_interrupt):
             with self.assertRaises(KeyboardInterrupt):
                 with parity_lock(lock, timeout=1):
                     self.fail('#1064: acquisition survived its own cancellation')
-        self.assertTrue(lock.is_dir(), '#1064: a directory with foreign owner bytes must be retained')
-        self.assertEqual(json.loads((lock / 'owner.json').read_text()), foreign,
-                         '#1064: foreign owner bytes must be left unchanged')
+        self.assertTrue(lock.is_dir(), '#1064: a replaced owner file must be retained, never deleted')
+        self.assertTrue((lock / 'owner.json').is_file(),
+                        '#1064: the replacement owner file must be left in place')
+
+    def test_owner_conflict_closes_the_directory_fd_and_retains_the_lease(self):
+        """外来 owner.json 顶住 O_EXCL（r1 P2-1）：目录 fd 必须关闭、租约保留、
+        FileExistsError 原样上抛（#1064 之前的契约），外来字节逐字节不变。"""
+        lock = self.root / 'lock'
+        foreign = b'{"pid": 999999006}\n'
+        real_open = os.open
+
+        def open_with_foreign_owner(path, flags, *args, **kwargs):
+            if Path(path) == lock and flags & os.O_DIRECTORY:
+                fd = real_open(path, flags, *args, **kwargs)
+                (lock / 'owner.json').write_bytes(foreign)  # 外来写者抢在本次 O_EXCL 之前
+                return fd
+            return real_open(path, flags, *args, **kwargs)
+
+        before = sorted(os.listdir('/dev/fd'))
+        with patch.object(os, 'open', open_with_foreign_owner):
+            try:
+                with parity_lock(lock, timeout=1):
+                    self.fail('#1064: acquisition survived a foreign owner.json')
+            except FileExistsError:
+                pass
+            except Blocked as error:
+                raise AssertionError('#1064: a foreign owner.json must surface as the '
+                                     'pre-#1064 FileExistsError, not Blocked') from error
+        self.assertEqual(sorted(os.listdir('/dev/fd')), before,
+                         '#1064: the directory fd must be closed on every acquisition failure')
+        self.assertTrue(lock.is_dir(),
+                        '#1064: a lease with a foreign owner.json must be retained, never deleted')
+        self.assertEqual((lock / 'owner.json').read_bytes(), foreign,
+                         '#1064: the foreign owner.json must be left byte-identically in place')
+
+    def test_interrupt_between_guard_and_body_releases_the_lease(self):
+        """guard 临界区退出与 yield 之间的取消（r1 concurrency P2-1）：释放路径
+        必须覆盖这个窗口——租约正常释放、目录 fd 关闭，不留无回收窗口。"""
+        lock = self.root / 'lock'
+        real_guard = _common.lock_guard
+
+        @contextmanager
+        def guard_exit_interrupt(lock_arg, timeout=_common.GUARD_TIMEOUT):
+            with real_guard(lock_arg, timeout):
+                yield
+            raise KeyboardInterrupt('#1064 cancelled between the guard and the body')
+
+        before = sorted(os.listdir('/dev/fd'))
+        with patch.object(_common, 'lock_guard', guard_exit_interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                with parity_lock(lock, timeout=1):
+                    self.fail('#1064: the body ran despite the cancellation')
+        self.assertFalse(lock.exists(),
+                         '#1064: a cancellation between the guard and the body must still release the lease')
+        self.assertEqual(sorted(os.listdir('/dev/fd')), before,
+                         '#1064: the directory fd must be closed when the body never ran')
 
     def test_blocked_acquisition_keeps_a_foreign_empty_lease(self):
         """前驱在 mkdir 与 owner 发布之间崩溃留下的空目录：只报 Blocked，绝不回收。"""

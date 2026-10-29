@@ -4,22 +4,39 @@ the bound unit test to fail at its #1064 assertion, then restore byte-for-byte.
 
 Mutates the Python lease apparatus (scripts/cli-parity/common.py), not Rust
 sources: the compile check is ``py_compile`` and the bound tests are the offline
-unit tests of the same apparatus (``scripts/cli-parity/test_cli_parity.py``).
-Run with no other writers in this worktree, after the apparatus change is
-committed (``mutating_sources`` refuses files that differ from HEAD by design).
-Evidence goes in a new output folder. No cargo is involved, so no
-CARGO_TARGET_DIR is required. Run all mutants to completion; any non-KILLED
-row is a nonzero exit (a stale anchor or a broken run is INVALID, never
-SURVIVED).
+unit tests of the same apparatus (``scripts/cli-parity/test_cli_parity.py``)
+plus this runner's own self-checks (``test_negative_controls.py``). Run with no
+other writers in this worktree, after the apparatus change is committed
+(``mutating_sources`` refuses files that differ from HEAD by design). Evidence
+goes in a new output folder. No cargo is involved, so no CARGO_TARGET_DIR is
+required. Run all mutants to completion; any non-KILLED row is a nonzero exit (a
+stale anchor or a broken run is INVALID, never SURVIVED).
 
 Kill criterion (the shared negative_panic standard, applied to unittest
 output): the *named* test must have failed at its own assertion — its FAIL
 block must carry an ``AssertionError:`` line containing the mutant's exclusive
-#1064 marker. The bound tests deliberately arm a SIGALRM before every wait:
-a mutant that restores an unbounded block makes the test fail at its own
+#1064 marker. The bound tests deliberately arm a SIGALRM before every wait: a
+mutant that restores an unbounded block makes the test fail at its own
 bounded-wait assertion instead of hanging (a hang or a signal death is
 INVALID, never KILLED). An abnormal exit (no unittest summary, an unexpected
 exit code) is INVALID too.
+
+Per-row results live in memory only (#1064 r1 P1-3, the #1059/#209 E1 family
+semantics). ``summary.json`` is published exactly once, after
+``mutating_sources`` restored every guarded file and verified it byte-for-byte
+against the baseline; the payload goes to a sibling temp file and is renamed
+into place (#166 r8). A failure or cancellation therefore leaves either no
+``summary.json`` or an INVALID one, never an all-KILLED file whose sources were
+not verifiably restored. Nothing in the target directory is deleted or renamed
+before ``new_output_directory`` admits it (#1038 fix-r4): admission refuses any
+non-empty directory with every byte kept, and an admitted directory is empty,
+so a previous success cannot be inherited either. The guard exit catches
+``BaseException``: a ``KeyboardInterrupt`` or ``SystemExit`` during the
+restore/re-verify window voids the recorded rows
+(``negative_suite.invalidate_completed``), publishes INVALID, and is re-raised
+(non-Exception) or exits 2; if that void publish is itself interrupted by a
+second SIGINT, no summary is published at all — missing means failure
+(fail-closed), never the previous all-KILLED row set.
 """
 import argparse
 import hashlib
@@ -32,9 +49,14 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, new_output_directory, run_owned
+from negative_suite import invalidate_completed
 
 root = Path(__file__).resolve().parents[5]
 common = root / 'scripts/cli-parity/common.py'
+# One row mutates this delivered runner itself; the self-check bound tests live
+# beside it (#1064 r1 P1-3, the #1059 runner-row shape).
+RUNNER = Path(__file__).resolve()
+SELF_TEST = RUNNER.with_name('test_negative_controls.py')
 
 # Every mutant is applied to the original independently and names the unit
 # test whose assertion it must turn red. Rows are (name, source, old, new) so
@@ -55,36 +77,82 @@ mutations = [
     # The release phase stops inheriting the caller's deadline (default 60s).
     ('release-guard-unbounded',
      common,
-     "            # 释放阶段同样有界（#1064 P1-1）：卡死的兄弟不能让清理无限期阻塞；\n"
-     "            # 超时抛 Blocked、lease 原样保留，交给 README 的人工流程。\n"
-     '            with lock_guard(lock, timeout):',
-     "            # 释放阶段同样有界（#1064 P1-1）：卡死的兄弟不能让清理无限期阻塞；\n"
-     "            # 超时抛 Blocked、lease 原样保留，交给 README 的人工流程。\n"
-     '            with lock_guard(lock):'),
+     "                # 释放阶段同样有界（#1064 P1-1）：卡死的兄弟不能让清理无限期阻塞；\n"
+     "                # 超时抛 Blocked、lease 原样保留，交给 README 的人工流程。\n"
+     '                with lock_guard(lock, timeout):',
+     "                # 释放阶段同样有界（#1064 P1-1）：卡死的兄弟不能让清理无限期阻塞；\n"
+     "                # 超时抛 Blocked、lease 原样保留，交给 README 的人工流程。\n"
+     '                with lock_guard(lock):'),
     # The acquisition phase stops inheriting the caller's deadline (default 60s).
     ('acquisition-guard-unbounded',
      common,
-     "    with lock_guard(lock, timeout):\n"
-     "        # mkdir 本身在 try 覆盖内：落盘后的任何取消都进回收分支；而 mkdir 失败",
-     "    with lock_guard(lock):\n"
-     "        # mkdir 本身在 try 覆盖内：落盘后的任何取消都进回收分支；而 mkdir 失败"),
+     "        with lock_guard(lock, timeout):\n"
+     "            # 「是否本次创建」以 identity 是否捕获为准：identity 只在 lock.mkdir()",
+     "        with lock_guard(lock):\n"
+     "            # 「是否本次创建」以 identity 是否捕获为准：identity 只在 lock.mkdir()"),
     # A cancelled acquisition no longer recycles the lease directory it
     # created: the #1023 r3 Codex P1-2 shape blocks every later run.
     ('acquisition-cleanup-removed',
      common,
-     '            discard_unpublished_lease(lock, mine, identity)',
-     '            pass  # mutant #1064: no acquisition cleanup'),
+     '                discard_unpublished_lease(lock, mine, identity, owner_identity, written)',
+     '                pass  # mutant #1064: no acquisition cleanup'),
+    # r1 P1-1: an unprovable lease (identity never captured) is deleted again
+    # whenever the directory happens to be empty — the pre-fix shape that
+    # removed a foreign empty lease left by a crashed predecessor.
+    ('cleanup-identity-none-widened',
+     common,
+     '    if identity is None or (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):\n'
+     '        return',
+     '    if identity is not None and (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):\n'
+     '        return'),
     # The cleanup no longer proves the directory identity: a replaced
     # directory gets deleted.
-    ('cleanup-identity-ignored',
+    ('cleanup-identity-compare-removed',
      common,
-     '    elif (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):',
-     '    elif False:'),
-    # The cleanup deletes foreign owner bytes it cannot prove are its own.
-    ('cleanup-foreign-owner-deleted',
+     '    if identity is None or (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):\n'
+     '        return',
+     '    if identity is None:\n'
+     '        return'),
+    # r1 P1-2: the whole owner proof is replaced by the pre-fix JSON comparator,
+    # which treats unparseable or ``null`` foreign bytes as deletable.
+    ('cleanup-owner-proof-restored',
      common,
-     '        if published is not None and published != mine:',
-     '        if False:'),
+     "        if owner_identity is None:\n"
+     "            return\n"
+     "        try:\n"
+     "            owner = (lock / 'owner.json').lstat()\n"
+     "        except OSError:\n"
+     "            return\n"
+     "        if (owner.st_dev, owner.st_ino) != (owner_identity.st_dev, owner_identity.st_ino):\n"
+     "            return\n"
+     "        try:\n"
+     "            on_disk = (lock / 'owner.json').read_bytes()\n"
+     "        except OSError:\n"
+     "            return\n"
+     "        if on_disk != written:\n"
+     "            return\n",
+     "        try:\n"
+     "            published = json.loads((lock / 'owner.json').read_text())\n"
+     "        except (OSError, ValueError):\n"
+     "            published = None\n"
+     "        if published is not None and published != mine:\n"
+     "            return\n"),
+    # The owner file inode is no longer proven: a byte-identical replacement
+    # copy of our own owner.json gets deleted.
+    ('cleanup-owner-identity-compare-removed',
+     common,
+     "        if (owner.st_dev, owner.st_ino) != (owner_identity.st_dev, owner_identity.st_ino):\n"
+     "            return",
+     "        if False:\n"
+     "            return"),
+    # r1 P1-2: the byte proof is faked to accept a fixed prefix-shaped blob, so
+    # foreign bytes shaped exactly like this run's write prefix are deleted.
+    ('cleanup-written-bytes-hardcoded',
+     common,
+     '        if on_disk != written:\n'
+     '            return',
+     '        if on_disk != b\'{"pid": 1\':\n'
+     '            return'),
     # A pre-existing foreign directory is no longer exempted from the
     # cancellation cleanup: the empty lease a crashed predecessor left is
     # deleted instead of reported as held.
@@ -92,6 +160,56 @@ mutations = [
      common,
      '        except FileExistsError as error:',
      '        except FileNotFoundError as error:'),
+    # r1 P2-1: the acquisition failure path leaks the directory fd instead of
+    # closing it on every exit.
+    ('acquisition-fd-leaked',
+     common,
+     "                if directory is not None:\n"
+     "                    os.close(directory)\n"
+     "                    directory = None\n"
+     "                raise",
+     "                if directory is not None:\n"
+     "                    directory = None\n"
+     "                raise"),
+    # r1 concurrency P2-1: the outer finally stops covering the window between
+    # the guard critical section and the body, so a cancellation there leaves a
+    # published lease behind.
+    ('release-finally-skipped',
+     common,
+     "        if directory is not None:\n"
+     "            # 不论正常还是任何异常（含 KeyboardInterrupt）：只有本次启动的进程组全部被 stop_group 证实停止，才释放锁",
+     "        if False:\n"
+     "            # 不论正常还是任何异常（含 KeyboardInterrupt）：只有本次启动的进程组全部被 stop_group 证实停止，才释放锁"),
+    # r1 P1-3: the runner guard catches only Exception, so a cancellation
+    # (KeyboardInterrupt / SystemExit) during the restore/re-verify window
+    # skips the INVALID publication and leaves no final summary.
+    ('runner-baseexception-narrowed',
+     RUNNER,
+     "    except BaseException as error:\n",
+     "    except Exception as error:\n"),
+    # r1 P1-3: the pre-fix "publish each row, verify later" order — record()
+    # writes summary.json while the guarded restore is still unverified, so a
+    # SIGINT in the later void publish leaves that all-KILLED file behind.
+    ('runner-publish-before-verify',
+     RUNNER,
+     "    summary.append(row)\n"
+     "    print(f\"{row['mutation']}: {row['status']}: {row['reason']}\", flush=True)",
+     "    summary.append(row)\n"
+     "    print(f\"{row['mutation']}: {row['status']}: {row['reason']}\", flush=True)\n"
+     "    write_summary(out, summary)"),
+    # r1 P1-3: a SystemExit escaping the guard is re-raised raw instead of the
+    # normalized exit 2 (a string code would exit 1, deciding how a coordinator
+    # reads this run by accident).
+    ('runner-exit-normalization-removed',
+     RUNNER,
+     "        if isinstance(error, SystemExit):\n"
+     "            raise SystemExit(2) from error\n"
+     "        if not isinstance(error, Exception):\n"
+     "            raise\n"
+     "        return 2",
+     "        if not isinstance(error, Exception):\n"
+     "            raise\n"
+     "        return 2"),
 ]
 tests = {
     'guard-blocking': 'ContractTests.test_guard_wait_is_bounded_when_a_sibling_holds_it',
@@ -99,9 +217,17 @@ tests = {
     'release-guard-unbounded': 'ContractTests.test_release_guard_wait_is_bounded_when_a_sibling_holds_it',
     'acquisition-guard-unbounded': 'ContractTests.test_guard_wait_is_bounded_when_a_sibling_holds_it',
     'acquisition-cleanup-removed': 'ContractTests.test_interrupt_during_acquisition_leaves_no_lease',
-    'cleanup-identity-ignored': 'ContractTests.test_interrupt_retains_a_replaced_lock_directory',
-    'cleanup-foreign-owner-deleted': 'ContractTests.test_interrupt_retains_foreign_owner_bytes',
+    'cleanup-identity-none-widened': 'ContractTests.test_interrupt_before_identity_capture_retains_the_lease',
+    'cleanup-identity-compare-removed': 'ContractTests.test_interrupt_retains_a_replaced_lock_directory',
+    'cleanup-owner-proof-restored': 'ContractTests.test_interrupt_retains_foreign_owner_bytes',
+    'cleanup-owner-identity-compare-removed': 'ContractTests.test_interrupt_retains_a_replaced_owner_file',
+    'cleanup-written-bytes-hardcoded': 'ContractTests.test_interrupt_retains_unproven_owner_bytes',
     'exists-clause-widened': 'ContractTests.test_blocked_acquisition_keeps_a_foreign_empty_lease',
+    'acquisition-fd-leaked': 'ContractTests.test_owner_conflict_closes_the_directory_fd_and_retains_the_lease',
+    'release-finally-skipped': 'ContractTests.test_interrupt_between_guard_and_body_releases_the_lease',
+    'runner-baseexception-narrowed': 'RunnerInvalidationControls.test_final_guard_interrupt_voids_and_reraises',
+    'runner-publish-before-verify': 'RunnerInvalidationControls.test_interrupt_during_void_publish_leaves_no_killed_summary',
+    'runner-exit-normalization-removed': 'RunnerInvalidationControls.test_final_guard_systemexit_is_normalized_to_two',
 }
 # The exclusive assertion message each mutant must turn red.
 failure_fragments = {
@@ -110,9 +236,17 @@ failure_fragments = {
     'release-guard-unbounded': '#1064: guard release must answer its deadline, not block forever',
     'acquisition-guard-unbounded': '#1064: guard acquisition must answer its deadline, not block forever',
     'acquisition-cleanup-removed': '#1064: an interrupted acquisition must not leave a lease',
-    'cleanup-identity-ignored': '#1064: a replaced directory must be retained, never deleted',
-    'cleanup-foreign-owner-deleted': '#1064: a directory with foreign owner bytes must be retained',
+    'cleanup-identity-none-widened': '#1064: an unprovable lease must be retained, never deleted',
+    'cleanup-identity-compare-removed': '#1064: a replaced directory must be retained, never deleted',
+    'cleanup-owner-proof-restored': '#1064: a directory with foreign owner bytes must be retained',
+    'cleanup-owner-identity-compare-removed': '#1064: a replaced owner file must be retained, never deleted',
+    'cleanup-written-bytes-hardcoded': '#1064: a lease with unproven owner bytes must be retained',
     'exists-clause-widened': '#1064: an existing foreign lease must fail with the existing Blocked contract',
+    'acquisition-fd-leaked': '#1064: the directory fd must be closed on every acquisition failure',
+    'release-finally-skipped': '#1064: a cancellation between the guard and the body must still release the lease',
+    'runner-baseexception-narrowed': '#1064 r1 P1-3 a cancellation after the last row must not keep KILLED',
+    'runner-publish-before-verify': '#1064 r1 P1-3 an interrupt during the void publish must not leave a readable KILLED summary',
+    'runner-exit-normalization-removed': '#1064 r1 P1-3 a SystemExit from the guard must exit 2, never the raw code',
 }
 
 SEPARATOR = '-' * 70
@@ -197,6 +331,14 @@ def classify(result, test, fragments):
     return 'INVALID', 'bound test failed without the #1064 assertion (wrong failure point)'
 
 
+def script_for(test):
+    """The bound script of a test: the runner self-checks live beside this
+    runner; every apparatus test runs from scripts/cli-parity/."""
+    if test.startswith('RunnerInvalidationControls.'):
+        return SELF_TEST
+    return root / 'scripts/cli-parity/test_cli_parity.py'
+
+
 def run_test(out, label, test):
     # -X pycache_prefix pins this invocation's bytecode cache to a fresh
     # directory: a pyc left next to a (restored) source can otherwise be
@@ -205,7 +347,7 @@ def run_test(out, label, test):
     # "positive" or "restored" control would then judge mutant bytecode.
     with tempfile.TemporaryDirectory(prefix='negctl-pycache-') as pycache:
         result = run_owned([sys.executable, '-I', '-X', f'pycache_prefix={pycache}',
-                            'scripts/cli-parity/test_cli_parity.py', test],
+                            str(script_for(test)), test],
                            cwd=root, timeout=600)
     (out / f'{label}.log').write_text(result.stdout + result.stderr)
     return result
@@ -221,16 +363,36 @@ def compile_check(path):
         py_compile.compile(str(path), cfile=str(Path(holder) / 'mutant.pyc'), doraise=True)
 
 
-def persist(out, summary):
-    counts = {state: sum(entry['status'] == state for entry in summary)
-              for state in ('KILLED', 'SURVIVED', 'INVALID')}
-    (out / 'summary.json').write_text(json.dumps(
-        {'controls': summary, 'counts': counts}, indent=2) + '\n')
+def _counts(summary):
+    return {state: sum(entry['status'] == state for entry in summary)
+            for state in ('KILLED', 'SURVIVED', 'INVALID')}
+
+
+def write_summary(out, summary):
+    """Publish the one final summary atomically.
+
+    This is called exactly once per normal run, after every guarded file was
+    restored and byte-verified, and once from the failure handler (INVALID).
+    The payload keeps the ``{'controls': ..., 'counts': ...}`` shape this
+    suite's readers expect; a reader that checks "the file exists" must never
+    observe a half-written JSON document, so the payload goes to a sibling
+    temp file and is renamed over ``summary.json`` (#166 r8).
+    """
+    payload = json.dumps({'controls': summary, 'counts': _counts(summary)},
+                         indent=2) + '\n'
+    target = out / 'summary.json'
+    tmp = out / 'summary.json.tmp'
+    tmp.write_text(payload)
+    tmp.replace(target)
 
 
 def record(out, summary, row):
+    """Append a row in memory; the disk summary is published once, later.
+
+    The outcome of an earlier row must never be readable as the final result
+    while the guarded restore is still unverified (#1064 r1 P1-3).
+    """
     summary.append(row)
-    persist(out, summary)
     print(f"{row['mutation']}: {row['status']}: {row['reason']}", flush=True)
 
 
@@ -244,11 +406,18 @@ def main():
     rows = mutations
     if args.selection:
         rows = [mutation for mutation in mutations if mutation[0] in args.selection]
-        assert len(rows) == len(args.selection), 'unknown mutation name'
+        assert len(rows) == len(args.selection), (
+            f'#1064 unknown mutation name(s): {sorted(set(args.selection) - {m[0] for m in mutations})}')
+    # Nothing is deleted or renamed here: admission (new_output_directory)
+    # refuses a non-empty directory with every byte kept, and an admitted
+    # directory is always empty, so a previous success can never be inherited
+    # (#1038 fix-r4 P0 semantics).
     out = new_output_directory(args.output)
     summary = []
     try:
-        with mutating_sources(root, [common], baseline=args.baseline) as snapshots:
+        # RUNNER is guarded too: three rows mutate this delivered runner to
+        # prove the P1-3 publication rules bite (#1064 r1).
+        with mutating_sources(root, [RUNNER, common], baseline=args.baseline) as snapshots:
             for name, path, old, new in rows:
                 status, reason, stage, before = 'INVALID', '', 'anchor', None
                 try:
@@ -283,24 +452,38 @@ def main():
                     status, reason = 'INVALID', reason + f'; restored: {type(error).__name__}: {error}'
                 record(out, summary, {'mutation': name, 'test': tests[name], 'status': status,
                                       'reason': reason, 'sourceSha256': before})
-    except Exception as error:
+    except BaseException as error:
         # A baseline/lock/restoration failure makes further mutation unsafe.
-        # The rows flushed so far are unproven too: their restores happened
-        # inside a guard that failed to verify, so the summary.json already
-        # written saying KILLED claims kills the sources never made. Rewrite
-        # the persisted rows INVALID before anything else.
+        # The rows recorded so far are unproven too: their restores happened
+        # inside a guard that failed to verify, so an all-KILLED summary would
+        # claim kills the sources never made (#979/#1037 shared semantics).
+        # Void them in memory, account for the remaining rows, and publish the
+        # INVALID summary — the disk never held a final summary before this
+        # point (record() is memory only), so an interrupt inside this publish,
+        # even a second SIGINT, leaves no summary at all instead of the old
+        # all-KILLED file. Missing summary is the fail-closed signal.
         reason = f'source guard: {type(error).__name__}: {error}'
-        for row in summary:
-            row.update(status='INVALID', reason=row['reason'] + '; ' + reason)
-        persist(out, summary)
+        invalidate_completed(summary, reason)
         for name, _path, _old, _new in rows[len(summary):]:
             record(out, summary, {'mutation': name, 'test': tests[name], 'status': 'INVALID',
                                   'reason': reason, 'sourceSha256': None})
-    counts = {state: sum(row['status'] == state for row in summary)
-              for state in ('KILLED', 'SURVIVED', 'INVALID')}
+        write_summary(out, summary)
+        # The INVALID summary is on disk, so the exit is normalized instead of
+        # judged by the raw code: 256/-256 truncate to a zero process status
+        # on POSIX and a string code exits 1, none of which may decide how a
+        # coordinator reads this run (#1059 fix-r2 shape).
+        if isinstance(error, SystemExit):
+            raise SystemExit(2) from error
+        if not isinstance(error, Exception):
+            raise
+        return 2
+    # Reaching here means mutating_sources restored every guarded file and
+    # verified it against the baseline. Only now may a final summary exist.
+    write_summary(out, summary)
+    counts = _counts(summary)
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
-    raise SystemExit(int(not summary or any(row['status'] != 'KILLED' for row in summary)))
+    return 0 if counts['KILLED'] == len(summary) else 1
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
