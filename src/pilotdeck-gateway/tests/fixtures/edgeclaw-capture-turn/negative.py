@@ -21,11 +21,26 @@ import json
 import os
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import classify as shared_classify
 
 TEST_FILE = 'pilotdeck-gateway/tests/edgeclaw_capture_turn.rs'
+
+
+def classify_control(mutant, code, raw):
+    result = SimpleNamespace(returncode=code, stdout=raw, stderr='')
+    bound = SimpleNamespace(test=mutant['test'], assertion=mutant['anchor'])
+    status, reason = shared_classify(result, bound)
+    if status == 'KILLED' and (
+        code != 101 or 'could not compile' in raw
+        or f'panicked at {TEST_FILE}:' not in raw
+        or (mutant['failure'] == 'assertion' and 'assertion' not in raw)
+    ):
+        return 'INVALID', 'missing fixture-specific runtime failure'
+    return status, reason
 
 
 def restore_positive(run):
@@ -64,7 +79,9 @@ def summary_payload(*, results, failures, restored, restored_ok,
 
 
 def write_summary(output, payload):
-    (output / 'summary.json').write_text(json.dumps(payload, indent=2) + '\n')
+    pending = output / 'summary.json.tmp'
+    pending.write_text(json.dumps(payload, indent=2) + '\n')
+    pending.replace(output / 'summary.json')
 
 
 def main():
@@ -74,7 +91,8 @@ def main():
     prepare = root / 'src/pilotdeck-gateway/src/runtime/context/prepare.rs'
     manifest = root / 'src/pilotdeck-gateway/src/host/modules/manifest.rs'
     env = dict(os.environ)
-    env.setdefault('CARGO_TARGET_DIR', str(root / '_build/cargo-target'))
+    if not env.get('CARGO_TARGET_DIR'):
+        raise SystemExit('CARGO_TARGET_DIR must be provided by the caller')
     command = [
         'cargo', 'test', '--offline', '--locked',
         '--manifest-path', str(root / 'src/Cargo.toml'),
@@ -209,12 +227,9 @@ def main():
     ]
     results = []
 
-    # A committed tree passes HEAD. The uncommitted-patch runner can point
-    # NEGATIVE_BASELINE at a temporary `git commit-tree` object with the same
-    # product bytes, without moving the branch.
-    baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
+    # The source guard must use HEAD; uncommitted trees are not mutation inputs.
     files = [prepare, manifest]
-    with mutating_sources(root, files, baseline=baseline) as snapshots:
+    with mutating_sources(root, files) as snapshots:
         originals = {path: snapshots[path].decode() for path in files}
         for mutant in mutants:
             path = mutant['path']
@@ -235,22 +250,6 @@ def main():
                 log.write(result.stdout + result.stderr)
                 return result.returncode
 
-        def failure_shape(mutant, raw):
-            # A real test failure, not a compile error, and the named test ran.
-            if (
-                f"test {mutant['test']} ... FAILED" not in raw
-                or 'test result: FAILED' not in raw
-                or 'could not compile' in raw
-            ):
-                return False
-            # Every accepted failure must carry a panic location in this test
-            # file; the anchor then pins which branch/message did it.
-            if f'panicked at {TEST_FILE}:' not in raw or mutant['anchor'] not in raw:
-                return False
-            if mutant['failure'] == 'assertion':
-                return 'assertion' in raw
-            return True
-
         assert run('positive', '') == 0, 'positive tests must pass before mutating'
         failures = []
         try:
@@ -266,21 +265,11 @@ def main():
                     try:
                         code = run(name, mutant['test'], gate)
                         raw = (output / f'{name}.log').read_text()
-                        killed = code == 101 and failure_shape(mutant, raw)
-                        reason = None if killed else (
-                            'bound test still passed' if code == 0
-                            else f'exit={code}: bound failure missing'
-                        )
+                        status, reason = classify_control(mutant, code, raw)
                     except Exception as error:
-                        # A timeout or harness fault is INVALID, not a reason to
-                        # stop: the remaining mutants must still be classified.
-                        code, killed = None, False
+                        # Account for every mutant even when its runner fails.
+                        code, status = None, 'INVALID'
                         reason = f'{type(error).__name__}: {error}'
-                    status = (
-                        'KILLED' if killed
-                        else 'SURVIVED' if code == 0
-                        else 'INVALID'
-                    )
                     results.append(dict(
                         name=name,
                         file=str(path.relative_to(root)),

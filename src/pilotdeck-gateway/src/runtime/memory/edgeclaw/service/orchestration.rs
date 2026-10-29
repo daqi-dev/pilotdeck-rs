@@ -284,8 +284,8 @@ impl From<DreamRunnerError> for ServiceError {
 /// completion (success or any propagated error) counts exactly once — and a
 /// dream whose future is dropped at an await point still counts here, keeping
 /// the `dream_stage_counters()` pair balanced. The flag is a `Cell` because
-/// the service's async paths are already `!Send` (they hold `&mut dyn FnMut`
-/// seams), and the guard must stay writable across the LLM awaits.
+/// the guard is owned by this invocation and stays writable across LLM awaits;
+/// it is never shared between tasks.
 struct DreamStageDisposeFallback<'a> {
     service: &'a EdgeClawMemoryService,
     disposed: std::cell::Cell<bool>,

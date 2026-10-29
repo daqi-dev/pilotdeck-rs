@@ -132,8 +132,8 @@ MUTANTS = [
     mutation(
         'workspace-state-key',
         SERVICE,
-        '"workspaceDir"',
-        '"workspaceDirMutated"',
+        '                "workspaceDir"\n',
+        '                "workspaceDirMutated"\n',
     ),
     mutation(
         'default-capture-source',

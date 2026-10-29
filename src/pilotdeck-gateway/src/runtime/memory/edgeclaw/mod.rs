@@ -35,3 +35,5 @@ pub use file_memory::{
 };
 
 pub use storage::{EdgeClawStorage, IndexingSettings, L0SessionRecord, StorageError};
+
+pub mod factory;

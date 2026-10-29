@@ -147,6 +147,12 @@ impl LlmMemoryExtractor {
             transport_timeout: Duration::from_secs(300),
         }
     }
+    /// Read-only configuration observation for the real-factory parity fixture.
+    #[doc(hidden)]
+    pub fn configuration(&self) -> &JsValue {
+        &self.config
+    }
+
     /// TS constructor's third argument; absent means no warning output.
     pub fn with_logger(mut self, logger: Arc<dyn LlmLogger>) -> Self {
         self.logger = Some(logger);

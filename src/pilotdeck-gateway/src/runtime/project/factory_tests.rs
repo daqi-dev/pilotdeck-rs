@@ -3251,8 +3251,9 @@ mod memory_bundle_tests {
             self.clear_session_calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
-        fn close(&self) {
+        fn close(&self) -> Result<(), MemoryProviderError> {
             self.close_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         }
     }
 
@@ -3604,21 +3605,36 @@ mod memory_bundle_tests {
     }
 
     #[tokio::test]
-    async fn memory_native_default_fails_explicitly_and_does_not_publish() {
+    async fn memory_native_default_publishes_three_handles() {
         let scratch = Scratch::new();
-        let group = memory_group(&scratch.0.join("project"), memory_snapshot());
-        let error = stage_memory(&MemoryBundleFamilySource::default(), &group)
-            .expect_err("the unported native provider must fail explicitly");
-        assert_eq!(
-            error.message,
-            "ProjectMemoryBundle requires an injected provider factory; the native EdgeClaw provider is not ported."
-        );
+        let mut snapshot = memory_snapshot();
+        snapshot["config"]["memory"]["rootDir"] = json!(scratch.0.join("memory"));
+        let group = memory_group(&scratch.0.join("project"), snapshot);
+        stage_memory(&MemoryBundleFamilySource::default(), &group)
+            .expect("#778 default native factory constructs service");
         let context = group.context();
-        assert!(context.owner(Family::MemoryBundle).is_some());
-        assert!(context.resource(Resource::Memory).is_none());
-        assert!(context.resource(Resource::MemoryService).is_none());
-        assert!(context.resource(Resource::MemoryManagement).is_none());
-        bounded(group.dispose()).await.unwrap();
+        assert!(
+            context.owner(Family::MemoryBundle).is_some(),
+            "#778 native owner"
+        );
+        assert!(
+            context.resource(Resource::Memory).is_some(),
+            "#778 native resolver"
+        );
+        assert!(
+            context.resource(Resource::MemoryService).is_some(),
+            "#778 native maintenance"
+        );
+        assert!(
+            context.resource(Resource::MemoryManagement).is_some(),
+            "#778 native management"
+        );
+        bounded(group.dispose())
+            .await
+            .expect("#778 native disposal");
+        bounded(group.dispose())
+            .await
+            .expect("#778 native disposal once");
     }
 
     #[tokio::test]
@@ -3640,7 +3656,9 @@ mod memory_bundle_tests {
     #[tokio::test]
     async fn with_context_memory_wires_context_and_keeps_native_memory_default() {
         let scratch = Scratch::new();
-        let group = memory_group(&scratch.0.join("project"), memory_snapshot());
+        let mut snapshot = memory_snapshot();
+        snapshot["config"]["memory"]["rootDir"] = json!(scratch.0.join("memory"));
+        let group = memory_group(&scratch.0.join("project"), snapshot);
         let families = Families::unwired().with_context_memory();
 
         families
@@ -3660,15 +3678,14 @@ mod memory_bundle_tests {
                 .is_some()
         );
 
-        let error = families
+        families
             .memory
             .stage(&group.context(), &mut group.sink())
-            .expect_err("the builder keeps the unported native memory default");
-        assert_eq!(
-            error.message,
-            "ProjectMemoryBundle requires an injected provider factory; the native EdgeClaw provider is not ported."
+            .expect("#778 builder constructs native memory");
+        assert!(
+            group.context().resource(Resource::Memory).is_some(),
+            "#778 native resolver published"
         );
-        assert!(group.context().resource(Resource::Memory).is_none());
         bounded(group.dispose()).await.unwrap();
     }
 
@@ -3847,38 +3864,43 @@ mod memory_bundle_tests {
     }
 
     #[tokio::test]
-    async fn memory_default_with_only_provider_normalizes_enabled_and_fails_native() {
-        let scratch = Scratch::new();
-        let yaml = yaml_with_memory("  provider: edgeclaw\n");
-        let registry = registry_for_yaml(&scratch, &yaml, silent_families().with_context_memory());
-        let root = scratch.0.join("project");
-        let error = match registry.resolve(Some(&root)) {
-            Err(error) => error,
-            Ok(_) => panic!("normalized enabled=true must reach the unported native factory"),
-        };
-        assert_eq!(
-            error.message,
-            "ProjectMemoryBundle requires an injected provider factory; the native EdgeClaw provider is not ported.",
-            "a provider-only memory section normalizes enabled to true"
-        );
-        bounded(registry.dispose()).await.unwrap();
+    async fn memory_default_with_only_provider_normalizes_enabled_and_constructs_native() {
+        assert_native_yaml("  provider: edgeclaw\n").await;
     }
 
     #[tokio::test]
-    async fn memory_empty_section_defaults_enabled_and_fails_native() {
+    async fn memory_empty_section_defaults_enabled_and_constructs_native() {
+        assert_native_yaml("  {}\n").await;
+    }
+
+    async fn assert_native_yaml(memory: &str) {
         let scratch = Scratch::new();
-        let yaml = yaml_with_memory("  {}\n");
+        let yaml = yaml_with_memory(memory);
         let registry = registry_for_yaml(&scratch, &yaml, silent_families().with_context_memory());
-        let error = match registry.resolve(Some(&scratch.0.join("project"))) {
-            Err(error) => error,
-            Ok(_) => panic!("a present-but-empty memory section must not be treated as absent"),
-        };
-        assert_eq!(
-            error.message,
-            "ProjectMemoryBundle requires an injected provider factory; the native EdgeClaw provider is not ported.",
-            "`memory: {{}}` defaults enabled=true and provider=edgeclaw, unlike a missing section"
+        let runtime = registry
+            .resolve(Some(&scratch.0.join("project")))
+            .expect("#778 normalized memory constructs native generation");
+        let lease = runtime.acquire().expect("#778 native generation active");
+        let resources = lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .expect("#778 project resources");
+        assert!(
+            resources.context().resource(Resource::Memory).is_some(),
+            "#778 normalized default publishes resolver"
         );
-        bounded(registry.dispose()).await.unwrap();
+        assert!(
+            resources
+                .context()
+                .resource(Resource::MemoryService)
+                .is_some(),
+            "#778 normalized default publishes maintenance"
+        );
+        drop(lease);
+        bounded(registry.dispose())
+            .await
+            .expect("#778 normalized native dispose");
     }
 
     #[tokio::test]

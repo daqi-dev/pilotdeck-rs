@@ -167,6 +167,10 @@ pub struct HeartbeatIndexer {
 }
 
 impl HeartbeatIndexer {
+    pub(crate) fn configured_batch_size(&self) -> usize {
+        self.batch_size
+    }
+
     pub fn new(
         repository: Arc<EdgeClawFileStores>,
         extractor: Arc<LlmMemoryExtractor>,

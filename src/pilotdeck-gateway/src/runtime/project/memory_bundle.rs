@@ -8,9 +8,7 @@
 //! Provider construction follows `ProjectMemoryBundle.ts:57-73`: the
 //! application-selected `providerFactory` wins; otherwise the deprecated
 //! `createProvider` is used; otherwise the native EdgeClaw factory is the
-//! baseline default. That native EdgeClaw factory is not ported here, so an
-//! enabled `edgeclaw` configuration fails explicitly instead of succeeding or
-//! being silently disabled.
+//! baseline default, constructing the native EdgeClaw service and provider.
 //!
 //! #636 closes the type boundary: [`ProjectMemoryBundleOptions`] now carries
 //! the normalized `modelConfig`, the project clock and the opaque telemetry
@@ -20,9 +18,7 @@
 //! RuntimeError` retains the factory's original JS `{name, code, message,
 //! requires_host}` instead of collapsing it to `message`.
 //!
-//! The native EdgeClaw provider itself is still not ported (that is #587), so
-//! an enabled `edgeclaw` configuration without an injected factory continues to
-//! fail explicitly.
+//! The native provider is implemented by #751 and connected here by #778.
 
 use super::{
     DisposeFuture, Family, FamilyResource, Resource, ResourceFamilySource, RuntimeError,
@@ -55,9 +51,8 @@ impl Default for MemoryBundleFamilySource {
 }
 
 impl MemoryBundleFamilySource {
-    /// No injected provider. The native EdgeClaw default is not ported, so an
-    /// enabled `edgeclaw` config returns `NativeProviderNotPorted`; a missing
-    /// or disabled config stages no provider.
+    /// No injected provider: enabled EdgeClaw constructs the native service;
+    /// missing, disabled or other-provider configurations stage no provider.
     pub fn new() -> Self {
         Self {
             provider_factory: None,

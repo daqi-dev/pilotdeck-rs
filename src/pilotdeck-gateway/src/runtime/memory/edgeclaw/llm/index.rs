@@ -878,7 +878,7 @@ impl LlmMemoryExtractor {
     async fn classify_memory_turn_call(
         &self,
         input: &ClassifyTurnInput<'_>,
-        debug: &mut dyn FnMut(JsValue),
+        debug: &mut impl FnMut(JsValue),
     ) -> Result<FileMemoryClassificationResult, IndexError> {
         // The TS `userPrompt` is evaluated inside the `try`: a window error
         // is swallowed by the caller and never reaches the debug sink.
@@ -1033,7 +1033,7 @@ impl LlmMemoryExtractor {
         input: &MemoryNoteInput<'_>,
         structured: &StructuredInput,
         raw_response: &mut JsString,
-        debug: &mut dyn FnMut(JsValue),
+        debug: &mut impl FnMut(JsValue),
     ) -> Result<Option<JsObject>, IndexError> {
         *raw_response = self
             .call_structured_json(structured)
@@ -1134,7 +1134,7 @@ impl LlmMemoryExtractor {
     async fn select_index_project_call(
         &self,
         input: &SelectIndexProjectInput<'_>,
-        debug: &mut dyn FnMut(JsValue),
+        debug: &mut impl FnMut(JsValue),
     ) -> Result<IndexProjectDecision, IndexError> {
         // The user prompt is evaluated inside the TS `try`: a candidate
         // field error takes the create-new fallback without a debug event.

@@ -543,12 +543,8 @@ impl Families {
 
     /// Wire native context storage, snapshot/session persistence composition,
     /// and the default memory family
-    /// (A6.9-pr3d). The memory source has no injected provider factory, so an
-    /// enabled `edgeclaw` config still fails explicitly with
-    /// `NativeProviderNotPorted`; call [`Self::with_memory`] with
-    /// [`super::memory_bundle::MemoryBundleFamilySource::with_provider_factory`]
-    /// (or `with_create_provider`) to supply a real one. This is the exact
-    /// native default of `ProjectMemoryBundle` with no `providerFactory`.
+    /// (A6.9-pr3d, #751 / #778). Enabled EdgeClaw uses the native factory;
+    /// application-selected factories can override it through `with_memory`.
     pub fn with_context_memory(mut self) -> Self {
         self.context_storage = Arc::new(super::context_storage::ContextStorageFamilySource);
         self.memory = Arc::new(super::memory_bundle::MemoryBundleFamilySource::default());
@@ -1070,9 +1066,9 @@ impl ProjectResourcesFactory {
         Self { options, config }
     }
 
-    /// A family whose option is absent but whose baseline default constructs
-    /// a native resource: the default is not ported yet, so it reports
-    /// explicitly instead of succeeding silently.
+    /// Dispatch an installed native family source, or fail explicitly when
+    /// this family has no implementation. Memory installs MemoryBundleFamilySource
+    /// through with_context_memory; its default EdgeClaw factory is implemented.
     fn stage_native_default(
         &self,
         source: Option<&Arc<dyn ResourceFamilySource>>,
