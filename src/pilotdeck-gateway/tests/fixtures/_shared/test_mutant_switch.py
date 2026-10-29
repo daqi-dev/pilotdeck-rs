@@ -283,6 +283,68 @@ class MutantSwitchTests(unittest.TestCase):
             self.assertIn("extra=['forged']", document['controls'][0]['reason'],
                           '#996 r4 the beyond-declaration drift must list the switch')
 
+    def test_denominator_drift_on_an_emptied_table(self):
+        # #996 fix-r6 review P0: a table emptied whole at runtime leaves no
+        # executed row, and any() over an empty row list reads False, so the
+        # drift used to reach neither the exit code nor the summary of the
+        # callers without a ``not rows`` guard. The shared check must keep a
+        # suite-level INVALID row for every entrance.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            fixtures = root / 'src/pilotdeck-gateway/tests/fixtures/sample'
+            fixtures.mkdir(parents=True)
+            source = root / 'src/example.rs'
+            source.write_text('crate::mutants::on("first")\ncrate::mutants::on("second")\n')
+            script = fixtures / 'schemata.py'
+            script.write_text(
+                'from pathlib import Path\n'
+                'root = Path(__file__).resolve().parents[5]\n'
+                'source = root / "src/example.rs"\n'
+                "switches = [('first', source, 'first_test', '#996 first'),"
+                " ('second', source, 'second_test', '#996 second')]\n")
+            binary = Path(temp) / 'test-binary'
+            binary.write_bytes(b'fixture binary\n')
+
+            def process(command, **kwargs):
+                if command[:2] == ['git', 'rev-parse']:
+                    return SimpleNamespace(returncode=0, stdout='test-head\n', stderr='')
+                return result(command[1])
+
+            out = Path(temp) / 'out'
+            out.mkdir()
+            with patch.object(shared, 'run_owned', side_effect=process), \
+                    patch.object(shared, 'wait_for_slot',
+                                 return_value=SimpleNamespace(stdout='', stderr='')), \
+                    patch.object(shared, 'artifact', return_value=binary), \
+                    patch('sys.stderr') as quiet:
+                quiet.write = lambda *_: None
+                code = shared.run(root, out, [], {}, guarded=[], script=script)
+            self.assertNotEqual(code, 0, '#996 r6 a runtime table emptied whole '
+                                          'must fail the whole run')
+            document = json.loads((out / 'summary.json').read_text())
+            self.assertEqual(document['counts'],
+                             {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                             '#996 r6 the emptied run must keep a suite-level INVALID row')
+            reason = document['controls'][0]['reason']
+            self.assertIn('switch denominator drift', reason,
+                          '#996 r6 the suite-level row must name the denominator check')
+            self.assertIn("missing=['first', 'second']", reason,
+                          '#996 r6 the drift must list every declared switch')
+
+            # The same shape at the shared check itself: an empty executed
+            # table is never a green run, with or without entry-side guards.
+            enforced = []
+            with patch('sys.stderr') as quiet:
+                quiet.write = lambda *_: None
+                drift = shared.enforce_denominator(root, None, enforced, (),
+                                                   declared={'first'})
+            self.assertTrue(drift, '#996 r6 drift must still be returned to the caller')
+            self.assertEqual([row['status'] for row in enforced], ['INVALID'],
+                             '#996 r6 an empty executed table must keep a '
+                             'suite-level INVALID row')
+            self.assertIn('switch denominator drift', enforced[0]['reason'],
+                          '#996 r6 the suite-level row must name the check')
+
     def test_declared_denominator_covers_legacy_tables(self):
         # #996 fix-r5: entries whose declaration is a legacy mutation table
         # (the edgeclaw-service-facade runner and boundary control) supply the
