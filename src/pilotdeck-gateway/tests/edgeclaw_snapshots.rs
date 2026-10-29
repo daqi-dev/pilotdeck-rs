@@ -500,7 +500,18 @@ fn in_oracle_locale(test: &str) -> bool {
         return true;
     }
     let output = Command::new(std::env::current_exe().expect("#273 locale child path"))
-        .args(["--exact", test, "--include-ignored", "--nocapture"])
+        // #942 fix-r2 (r3 review Codex P1): the rerun child can print
+        // *indirectly* — real_ts_regenerates_identically emits its generator
+        // log through common/baseline.rs's println, not a marker of its own —
+        // so this spawn feeds the receipt a printing child and must pin the
+        // multithreaded libtest layout (see exact_receipt).
+        .args([
+            "--exact",
+            test,
+            "--include-ignored",
+            "--test-threads=2",
+            "--nocapture",
+        ])
         .env("PDRS_SNAPSHOT_LOCALE_CHILD", test)
         .env("LANG", "en_US.UTF-8")
         .env_remove("LC_ALL")
@@ -699,6 +710,43 @@ fn real_ts_regenerates_identically() {
         return;
     }
     baseline::regenerates_identically("edgeclaw-snapshots");
+}
+
+/// #942 fix-r2 regression (r3 review Codex P1): the locale rerun above feeds
+/// the receipt a child that prints *indirectly* — the generator log comes
+/// out of `common/baseline.rs`'s `println!`, not a marker of the child's
+/// own — so the old "this file never prints" exemption was wrong: under an
+/// ambient `RUST_TEST_THREADS=1` the spliced line made the locale parent
+/// fail at its `#273 snapshot locale rerun matched no test` assertion while
+/// the child had actually passed (`1 passed`, exit 0). The locale spawn now
+/// pins `--test-threads=2`; this re-runs the printing child with exactly
+/// that hostile ambient (the env var still reaches the grandchild through
+/// inheritance — only libtest's own flag parse is overridden), so dropping
+/// the pin fails here instead of on a quiet single-threaded CI box. Needs
+/// the real TS baseline, hence ignored like the test it re-runs.
+#[test]
+#[ignore = "needs the real TS baseline like real_ts_regenerates_identically"]
+fn real_ts_snapshots_locale_receipt_survives_single_thread_ambient() {
+    const CHILD: &str = "real_ts_regenerates_identically";
+    let output =
+        Command::new(std::env::current_exe().expect("#942 snapshots locale ambient child path"))
+            .args([
+                "--exact",
+                CHILD,
+                "--include-ignored",
+                "--test-threads=2",
+                "--nocapture",
+            ])
+            .env("RUST_TEST_THREADS", "1")
+            .output()
+            .expect("#942 snapshots locale ambient child spawn");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        exact_receipt::single_pass(&output.status, CHILD, &stdout),
+        "#942 snapshots locale receipt broke under ambient single-thread libtest: {}\n{stdout}\n{stderr}",
+        output.status
+    );
 }
 
 fn signal(root: &Path, name: &str) {

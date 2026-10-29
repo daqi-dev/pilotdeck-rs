@@ -10,8 +10,10 @@ switches a worker child to libtest's terse format which drops the per-test
 in-repo rerun sites to the same receipt (bound to their "#942 ..." messages;
 the grep helper is bound to its handshake panic because its receipt is the
 handshake itself, not a libtest summary). The rss-probe row is macOS-only
-(its bound parent is `#[cfg(target_os = "macos")]`-gated); other platforms
-record it SKIPPED rather than KILLED or INVALID.
+(its bound parent is `#[cfg(target_os = "macos")]`-gated) and the two
+locale-pin rows need the real TS baseline (PDRS_BASELINE); absent hosts
+record those rows SKIPPED rather than KILLED or INVALID. A run with zero
+KILLED rows still exits nonzero: nothing was verified.
 """
 import argparse
 import difflib
@@ -81,11 +83,23 @@ CARGO_TARGETS = {
         ['-p', 'pilotdeck-gateway', '--test', 'html_budget_probe'],
     'repository_home_fallback_matches_ts_homedir':
         ['-p', 'pilotdeck-gateway', '--test', 'edgeclaw_accessors'],
+    # #942 fix-r2: the two locale-pin ambient regressions (r3 review Codex P1)
+    # and the FIFO sentinel rename row (r3 review sibling P3#2).
+    'real_ts_entries_locale_receipt_survives_single_thread_ambient':
+        ['-p', 'pilotdeck-gateway', '--test', 'edgeclaw_entries'],
+    'real_ts_snapshots_locale_receipt_survives_single_thread_ambient':
+        ['-p', 'pilotdeck-gateway', '--test', 'edgeclaw_snapshots'],
+    'fifo_manifests_cannot_block_capture_or_list':
+        ['-p', 'pilotdeck-gateway', '--test', 'workspace_snapshot'],
 }
 
 # Bound parents that are themselves #[ignore]d: libtest needs --ignored to
 # select them at all (their rerun children already carry their own --ignored).
-IGNORED_PARENTS = {'bounded_peak_rss_is_lower_than_full'}
+IGNORED_PARENTS = {
+    'bounded_peak_rss_is_lower_than_full',
+    'real_ts_entries_locale_receipt_survives_single_thread_ambient',
+    'real_ts_snapshots_locale_receipt_survives_single_thread_ambient',
+}
 
 # `bounded_peak_rss_is_lower_than_full` and its RSS probe child compile only
 # on macOS (`#[cfg(target_os = "macos")]` in html_budget_probe.rs): elsewhere
@@ -94,6 +108,14 @@ IGNORED_PARENTS = {'bounded_peak_rss_is_lower_than_full'}
 # the row; an explicit selection there is recorded SKIPPED (neither KILLED nor
 # INVALID) and does not fail the run.
 DARWIN_ONLY = {'rss-probe-exact-rename'}
+
+# #942 fix-r2 (r3 review Codex P1 + Claude boundary P2#1): the two locale-pin
+# rows are bound to ambient regressions that re-run the real_ts regenerate
+# tests through the real TS baseline (`PDRS_BASELINE`). Without the baseline
+# the positive control can never pass (the regenerate child panics at its
+# #280 expect), so hosts without it record the rows SKIPPED — neither KILLED
+# nor INVALID — and a default full run does not fail on them.
+BASELINE_ONLY = {'entries-locale-pin', 'snapshots-locale-pin'}
 
 
 def main():
@@ -129,6 +151,7 @@ def main():
     rss_source = root / 'src/pilotdeck-gateway/tests/html_budget_probe.rs'
     accessors_source = root / 'src/pilotdeck-gateway/tests/edgeclaw_accessors.rs'
     manager_source = root / 'src/pilotdeck-gateway/src/runtime/manager/tests.rs'
+    fifo_source = root / 'src/pilotdeck-gateway/tests/workspace_snapshot.rs'
     env = os.environ.copy()
     env['CARGO_PROFILE_DEV_DEBUG'] = 'line-tables-only'
     env['CARGO_PROFILE_TEST_DEBUG'] = 'line-tables-only'
@@ -173,14 +196,33 @@ def main():
         # Renaming a worker's --exact filter would only hit the 20 s boot
         # barrier timeout (an unattributable hang), so sever the receipt
         # instead: terse drops the per-test line the summary check requires.
+        # #942 fix-r2: anchored to the full worker args block — the file now
+        # also pins --test-threads=2 in its locale spawn, so the bare
+        # trailing-comma --nocapture string is no longer unique.
         ('entries-worker-terse', entries_source,
-         '"--nocapture",',
-         '"--format=terse",',
+         '                .args([\n'
+         '                    "--exact",\n'
+         '                    "concurrent_clear_and_writes_match_real_ts",\n'
+         '                    "--nocapture",\n'
+         '                ])',
+         '                .args([\n'
+         '                    "--exact",\n'
+         '                    "concurrent_clear_and_writes_match_real_ts",\n'
+         '                    "--format=terse",\n'
+         '                ])',
          'concurrent_clear_and_writes_match_real_ts',
          '#273 entries worker rerun matched no test'),
         ('snapshots-worker-terse', snapshots_source,
-         '"--nocapture",',
-         '"--format=terse",',
+         '                .args([\n'
+         '                    "--exact",\n'
+         '                    "concurrent_stage_and_swap_matches_real_ts",\n'
+         '                    "--nocapture",\n'
+         '                ])',
+         '                .args([\n'
+         '                    "--exact",\n'
+         '                    "concurrent_stage_and_swap_matches_real_ts",\n'
+         '                    "--format=terse",\n'
+         '                ])',
          'concurrent_stage_and_swap_matches_real_ts',
          '#273 snapshot worker rerun matched no test'),
         # ---- #942: the remaining subprocess --exact rerun sites. ----
@@ -449,6 +491,50 @@ def main():
          '        "runtime::manager::tests::manager_deep_project_key_returns_range_error_without_aborting_renamed";',
          'runtime::manager::tests::manager_deep_project_key_returns_range_error_without_aborting',
          '#942 manager deep rerun matched no test'),
+        # #942 fix-r2 (r3 review Codex P1): dropping the locale pin puts the
+        # regenerate child's indirect println (common/baseline.rs) back into
+        # the receipt line under an ambient RUST_TEST_THREADS=1 — exactly
+        # what the bound ambient regressions re-run.
+        ('entries-locale-pin', entries_source,
+         '        .args([\n'
+         '            "--exact",\n'
+         '            test,\n'
+         '            "--include-ignored",\n'
+         '            "--test-threads=2",\n'
+         '            "--nocapture",\n'
+         '        ])',
+         '        .args([\n'
+         '            "--exact",\n'
+         '            test,\n'
+         '            "--include-ignored",\n'
+         '            "--nocapture",\n'
+         '        ])',
+         'real_ts_entries_locale_receipt_survives_single_thread_ambient',
+         '#942 entries locale receipt broke under ambient single-thread libtest'),
+        ('snapshots-locale-pin', snapshots_source,
+         '        .args([\n'
+         '            "--exact",\n'
+         '            test,\n'
+         '            "--include-ignored",\n'
+         '            "--test-threads=2",\n'
+         '            "--nocapture",\n'
+         '        ])',
+         '        .args([\n'
+         '            "--exact",\n'
+         '            test,\n'
+         '            "--include-ignored",\n'
+         '            "--nocapture",\n'
+         '        ])',
+         'real_ts_snapshots_locale_receipt_survives_single_thread_ambient',
+         '#942 snapshots locale receipt broke under ambient single-thread libtest'),
+        # #942 fix-r2 (r3 review sibling P3#2): the FIFO site's receipt is the
+        # sentinel contains, not a libtest summary — renaming the child
+        # filter makes libtest run zero tests, exit 0, and emit no sentinels.
+        ('fifo-child-exact-rename', fifo_source,
+         '"fifo_manifests_child_round",',
+         '"fifo_manifests_child_round_renamed",',
+         'fifo_manifests_cannot_block_capture_or_list',
+         '#293 fix-r5 the capture over the writer-less FIFO manifest recaptured and committed'),
     ]
     if args.mutations:
         selected = set(args.mutations)
@@ -468,6 +554,16 @@ def main():
                                      '(#[cfg(target_os = "macos")])'})
             print(f'{name}: SKIPPED: macOS-only bound parent', flush=True)
         mutations = [row for row in mutations if row[0] not in DARWIN_ONLY]
+    if not os.environ.get('PDRS_BASELINE'):
+        # BASELINE_ONLY rows cannot run here (the bound parent re-runs a real
+        # TS regenerate): record SKIPPED, same accounting as the platform rows.
+        requested = set(args.mutations) if args.mutations else BASELINE_ONLY
+        for name in sorted(requested & BASELINE_ONLY):
+            summary.append({'name': name, 'status': 'SKIPPED',
+                            'reason': 'bound parent needs the real TS baseline '
+                                      '(PDRS_BASELINE) for its positive control'})
+            print(f'{name}: SKIPPED: needs PDRS_BASELINE', flush=True)
+        mutations = [row for row in mutations if row[0] not in BASELINE_ONLY]
     args.output.mkdir(parents=True, exist_ok=False)
 
     def save(name, text):
@@ -547,9 +643,15 @@ def main():
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
     # Every selected case must be accounted for and killed; never stop at the
     # first failure, and never exit 0 while any case survived or was invalid.
-    # SKIPPED (platform-absent, explicitly recorded above) is not a failure.
-    return int(not summary or any(row['status'] not in ('KILLED', 'SKIPPED')
-                                  for row in summary))
+    # SKIPPED (platform- or baseline-absent, explicitly recorded above) is
+    # not a failure, but a run that killed nothing proved nothing: with zero
+    # KILLED rows the exit must stay nonzero so a runner consuming the code
+    # cannot read an all-SKIPPED selection as verified (r3 review boundary
+    # P2#1).
+    return int(not summary
+               or counts['KILLED'] == 0
+               or any(row['status'] not in ('KILLED', 'SKIPPED')
+                      for row in summary))
 
 
 if __name__ == '__main__':
