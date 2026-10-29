@@ -956,7 +956,9 @@ fn directory_flags() -> rustix::fs::OFlags {
                             "--",
                         ]
                         if used_test is not None:
-                            args.insert(-1, "--exact")
+                            # libtest flag: must follow `--` (insert(-1) put it before `--`,
+                            # i.e. on cargo's argv, once `--nocapture` was removed; #818 r8).
+                            args.append("--exact")
                         command = cargo_test(args)
                         returncode, raw = run_gated(command, f"negative-{name}.log")
                         if name == "baseline":
