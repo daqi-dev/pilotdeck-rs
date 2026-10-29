@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 # anchor-selfcheck: unsupported mixed compile/positive/custom-assertion runner for one process-lifecycle helper; no declarative whole-file table
-"""Negative controls for the shared generator deadline helper (#776 fix-r4).
+"""Negative controls for the shared generator deadline helper (#776 fix-r4/r5).
 
-One mutant replaces the process-group signal with a leader-only signal. The
-helper still returns its deadline error (the drain is bounded), but the
-descendant that inherited stdout/stderr stays alive, so the named regression
-test must fail at its ``#776 process group ... survived`` assertion rather than
-hang or die at an unrelated unwrap.
+One mutant drops the leading ``-`` from the ``kill(1)`` pid argument, so the
+helper signals only the direct child instead of its process group. The helper
+still returns its deadline error (the drain is bounded), but the descendant
+that inherited stdout/stderr stays alive, so the named regression test must
+fail at its ``#776 process group ... survived`` assertion rather than hang or
+die at an unrelated unwrap.
+
+The helper itself must stay std-only: fixture negative crates copy
+``tests/common/baseline.rs`` verbatim and link only their own externs, so any
+new crate (e.g. rustix) is ``E0433`` there (#879 r1 / #776 fix-r5).
 
 Every selected row runs a positive control, a compile-only check of the mutant,
 the bound negative run, and a restored positive control. A row that times out,
@@ -40,8 +45,8 @@ test_command = base + [test, "--", "--exact", "--nocapture"]
 ROWS = [
     (
         "leader-only-kill",
-        "rustix::process::kill_process_group(group, rustix::process::Signal::KILL);",
-        "rustix::process::kill_process(group, rustix::process::Signal::KILL);",
+        '.args(["-KILL", "--", &format!("-{pgid}")])',
+        '.args(["-KILL", "--", &format!("{pgid}")])',
     ),
 ]
 

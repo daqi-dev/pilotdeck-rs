@@ -331,15 +331,11 @@ pub(crate) fn run_generator_with_deadline(
 
 /// Kill and reap the generator's process group, with every wait bounded.
 fn terminate_generator_tree(child: &mut Child) -> Option<ExitStatus> {
+    // The child was spawned with `process_group(0)` in `run_generator_with_deadline`,
+    // so its pid is also the process-group id. Signalling the group terminates
+    // every descendant that inherited the pipes; a vanished group is harmless.
     #[cfg(unix)]
-    {
-        // The child was spawned with `process_group(0)`, so its pid is also
-        // the process-group id. `kill_process_group` signals every descendant
-        // that inherited the pipes; a vanished group is a harmless ESRCH.
-        let group = rustix::process::Pid::from_raw(child.id() as i32)
-            .expect("#280 spawned generator has a valid pid");
-        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
-    }
+    kill_process_group(child.id());
     #[cfg(not(unix))]
     {
         let _ = child.kill();
@@ -350,6 +346,25 @@ fn terminate_generator_tree(child: &mut Child) -> Option<ExitStatus> {
     // The group signal can miss a raced leader; still bound the direct reap.
     let _ = child.kill();
     wait_bounded(child, DRAIN_GRACE)
+}
+
+/// Signal every process in `pgid`, without adding a crate dependency.
+///
+/// `std` exposes `CommandExt::process_group(0)` for spawning but no
+/// group-signal API, and this module is copied verbatim into fixture negative
+/// crates that only link std plus the harness's own externs (#879 r1 / #776
+/// fix-r5). POSIX `kill(1)` with a negative pid signals the group; the helper
+/// process is reaped with the same bounded wait as every other deadline path.
+#[cfg(unix)]
+fn kill_process_group(pgid: u32) {
+    let mut command = Command::new("kill");
+    command
+        .args(["-KILL", "--", &format!("-{pgid}")])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Ok(mut killer) = command.spawn() {
+        let _ = wait_bounded(&mut killer, DRAIN_GRACE);
+    }
 }
 
 /// Reap `child` without ever waiting longer than `timeout`.
