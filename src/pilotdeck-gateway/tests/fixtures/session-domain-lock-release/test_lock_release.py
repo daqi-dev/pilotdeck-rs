@@ -28,7 +28,7 @@ import shutil
 import signal
 import subprocess
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[5]
 SESSION = ROOT / 'scripts/gateway-parity/session_domain.py'
@@ -392,7 +392,15 @@ class RunnerInvalidationControls(unittest.TestCase):
                 # Only the injected cancellation is observed; a real Ctrl-C
                 # (a different exception object) must still abort the test.
                 code = error
-        summary = json.loads((out / 'summary.json').read_text())
+        path = out / 'summary.json'
+        if not path.is_file():
+            summary = None
+        else:
+            try:
+                summary = json.loads(path.read_text())
+            except ValueError as error:
+                self.fail(
+                    f'#209 P0-2 runner summary.json must be valid JSON: {error}')
         return code, summary, captured.get('paths'), captured['mutating_calls']
 
     def test_final_guard_failure_rewrites_summary(self):
@@ -400,6 +408,8 @@ class RunnerInvalidationControls(unittest.TestCase):
         code, summary, _, _ = self._drive(
             guard_error=RuntimeError('restore failed'))
         self.assertEqual(code, 2, '#209 P0-2 guard failure must exit 2')
+        self.assertIsNotNone(
+            summary, '#209 P0-2 a guard failure must publish an INVALID summary')
         self.assertEqual(summary['counts'],
                          {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
                          '#209 P0-2 the on-disk summary must not keep KILLED')
@@ -417,6 +427,9 @@ class RunnerInvalidationControls(unittest.TestCase):
                 code, summary, _, _ = self._drive(guard_error=canceled)
                 self.assertIs(type(code), type(canceled),
                               '#209 P0-2 the cancellation must be re-raised')
+                self.assertIsNotNone(
+                    summary,
+                    '#209 P0-2 a cancellation after the last row must not keep KILLED')
                 self.assertEqual(
                     summary['counts'],
                     {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
@@ -426,6 +439,94 @@ class RunnerInvalidationControls(unittest.TestCase):
                                 '#209 P0-2 every recorded row must be invalidated')
                 self.assertIn('source guard', summary['controls'][0]['reason'],
                               '#209 P0-2 invalidation reason must be recorded')
+
+    def test_interrupt_during_void_publish_leaves_no_killed_summary(self):
+        """Codex r3 P0: a SIGINT inside the void publish must not keep KILLED.
+
+        The publish side is the review's read-only in-memory model: file
+        operations are mocks and the SIGINT is a real Python signal raised
+        from ``tmp.replace`` while the INVALID payload is being published.
+        The output path itself is a real directory holding an old all-KILLED
+        ``summary.json``, so this also proves startup retirement deletes a
+        previous success before the run starts.
+        """
+        disk = {}
+        files = {}
+
+        def entry(name):
+            if name not in files:
+                files[name] = MagicMock(name=name)
+            return files[name]
+
+        out = MagicMock(name='out')
+        out.__truediv__.side_effect = entry
+        tmp = entry('summary.json.tmp')
+        reuse = Path(tempfile.mkdtemp(prefix='reuse-', dir=self.root))
+        stale = reuse / 'summary.json'
+        stale.write_text(json.dumps({
+            'controls': [{'mutation': 'one', 'status': 'KILLED',
+                          'reason': '#209 stale success'}],
+            'counts': {'KILLED': 1, 'SURVIVED': 0, 'INVALID': 0}}) + '\n')
+        tmp.write_text.side_effect = lambda payload: disk.update(staged=payload)
+
+        def publish(_destination):
+            # The review's window: the INVALID temp is complete, and the
+            # SIGINT lands before the rename.
+            if json.loads(disk['staged'])['counts']['INVALID']:
+                signal.raise_signal(signal.SIGINT)
+            disk['summary'] = disk['staged']
+
+        tmp.replace.side_effect = publish
+        source = MagicMock(name='source')
+        values = {
+            1: subprocess.CompletedProcess([], 0, '', 'Ran 1 test\n'),
+            2: subprocess.CompletedProcess(
+                [], 1, '', 'FAIL: test_one\n#209 exclusive message\n'),
+            3: subprocess.CompletedProcess([], 0, '', 'Ran 1 test\n'),
+        }
+        calls = []
+
+        def run_owned(command, **kwargs):
+            calls.append(command)
+            return values[len(calls)]
+
+        class Guard:
+            def __enter__(self):
+                return {source: b'x = 0\n'}
+
+            def __exit__(self, *exc):
+                raise RuntimeError('restore verification failed')
+
+        def mutating(root, paths, **kwargs):
+            return Guard()
+
+        with patch.multiple(
+                self.runner,
+                MUTATIONS=[('one', source, 'x = 0', 'x = 1')],
+                CHECKS={'one': ('Controls.test_one',
+                                '#209 exclusive message')},
+                new_output_directory=lambda _: out,
+                mutating_sources=mutating,
+                run_owned=run_owned), \
+                patch.object(sys, 'argv',
+                             [str(Path(self.runner.__file__)), '--output',
+                              str(reuse)]):
+            try:
+                code = self.runner.main()
+            except BaseException as error:
+                code = error
+        message = ('#209 P0-3 an interrupt during the void publish must not '
+                   'leave a readable KILLED summary')
+        self.assertFalse(stale.exists(), message)
+        try:
+            summary = json.loads(disk['summary']) if 'summary' in disk else None
+        except ValueError as error:
+            self.fail(f'{message}: unreadable summary: {error}')
+        self.assertIsInstance(code, KeyboardInterrupt, message)
+        self.assertTrue(
+            summary is None
+            or summary['counts'] != {'KILLED': 1, 'SURVIVED': 0, 'INVALID': 0},
+            message)
 
     def test_runner_guards_session_and_common_without_outer_lease(self):
         """P1: one lease from mutating_sources and both protected sources."""

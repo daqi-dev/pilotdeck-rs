@@ -43,22 +43,31 @@ lease cannot be stolen by a later acquirer.
 A retained lease and the frozen report status are deliberately independent:
 when `allStopped` is false but `processTreeCleanup` is `VERIFIED`, the gateway
 report keeps `status=PASS` (`cleanup_status` only maps `processTreeCleanup`)
-while `launch.json` carries `cleanupPending`/`ownedGroupsRemaining` and the
+while the retained evidence is split by file: `report.json.cleanupPending`,
+`launch.json.ownedGroupsRemaining` and the lock directory's
+`owner.json.cleanupPending` (`launch.json` has no `cleanupPending`), and the
 shared lease stays retained.  That combination is intentional (#209 E1): the
 frozen scoring fields must match `origin/main`, and lock lifecycle is expressed
 only by `allStopped`/`cleanupPending`, never by rewriting a scoring field.
 
-`RunnerInvalidationControls` drives the mutation runner itself: a guard failure
-after the last row must rewrite `summary.json` as `INVALID`; a
-`KeyboardInterrupt` or `SystemExit` during the guard exit must void the same
-rows and then be re-raised; and the guard set must carry both protected sources
-plus the delivered runner with exactly one `mutating_sources` call.
+`RunnerInvalidationControls` drives the mutation runner itself.  Per-row
+results are kept in memory; `summary.json` is published exactly once, after
+`mutating_sources` restored and byte-verified every guarded file, and an old
+`summary.json` is deleted before the run starts (before
+`new_output_directory`'s non-empty check; a directory holding only that file
+becomes usable, while other evidence still triggers the normal refusal).  A
+guard failure after the last row publishes `INVALID`; a `KeyboardInterrupt` or
+`SystemExit` during the guard exit voids the same rows and is then re-raised;
+a SIGINT inside that void publish leaves no summary at all (missing means
+failure, never the old all-KILLED file); and the guard set must carry both
+protected sources plus the delivered runner with exactly one `mutating_sources`
+call.
 
 ## Source-mutation controls (after commit)
 
 ```sh
 python3 -I -B src/pilotdeck-gateway/tests/fixtures/session-domain-lock-release/negative_controls.py \
-  --output _tmp/20261026-issue-209-e1/fix-r2/negative/lock-release
+  --output _tmp/20261026-issue-209-e1/fix-r3/negative/lock-release
 ```
 
 `negative_controls.py` uses `negative_process.mutating_sources`, so it refuses
@@ -74,7 +83,7 @@ Run it only after the coordinator commits the patch; pre-commit it reports
 a concurrent parity run makes the control `INVALID` (busy lock), not a mutation
 window.  `--check-anchors` is the read-only preflight; a stale anchor exits 2.
 
-The thirteen mutants are:
+The fifteen mutants are:
 
 - `e1-release-ungated` — deletes the group's registration even when cleanup is
   unverified.
@@ -101,16 +110,29 @@ The thirteen mutants are:
   (`processTreeCleanup=NOT_VERIFIED` whenever the lease is retained); the bound
   test must fail at `#209 P0-1 a verified probe must keep main scoring`.
 - `e1-runner-baseexception-narrowed` — narrows the runner's guard exit back to
-  `except Exception`, so a cancellation keeps the last all-KILLED summary; the
-  bound test must fail at `#209 P0-2 a cancellation after the last row must not
-  keep KILLED`.
+  `except Exception`, so a cancellation skips the void publish and leaves no
+  final summary; the bound test must fail at `#209 P0-2 a cancellation after
+  the last row must not keep KILLED`.
+- `e1-runner-publish-before-verify` — puts the pre-fix order back: `record()`
+  publishes `summary.json` while the guarded restore is still unverified, so a
+  SIGINT in the later void publish leaves the all-KILLED file; the bound test
+  must fail at `#209 P0-3 an interrupt during the void publish must not leave a
+  readable KILLED summary`.
+- `e1-runner-stale-summary-kept` — removes the startup retirement, so a previous
+  all-KILLED `summary.json` is still readable when this run's void publish is
+  interrupted; the same bound test must fail at the same `#209 P0-3` message.
 
 Every mutant is compiled before its bound positive runs.  Rows report
 `KILLED` / `SURVIVED` / `INVALID` and the run continues to the last selected
 row; only an all-`KILLED` batch exits 0.  `new_output_directory` refuses a
-non-empty output directory.  If the outer source guard or restoration raises —
-including `KeyboardInterrupt` / `SystemExit` during restore/re-verify — the
-shared `negative_suite.invalidate_completed()` rewrites every already-recorded
-`KILLED` row to `INVALID`, the unexecuted rows are added, the on-disk
-`summary.json` is atomically rewritten unconditionally (#979/#1037), and the
-`Exception` path exits 2 while a cancellation is re-raised.
+non-empty output directory.  Per-row results stay in memory, so the disk holds
+no final `summary.json` while the guarded restore is unverified; the file is
+published once after `mutating_sources` restores and byte-verifies every
+guarded path.  If the outer source guard or restoration raises — including
+`KeyboardInterrupt` / `SystemExit` during restore/re-verify — the shared
+`negative_suite.invalidate_completed()` voids every already-recorded `KILLED`
+row, the unexecuted rows are added, an `INVALID` summary is published
+(#979/#1037), and the `Exception` path exits 2 while a cancellation is
+re-raised.  If that void publish is itself interrupted, no `summary.json`
+exists: a missing summary is the fail-closed result, never the previous
+all-KILLED one.
