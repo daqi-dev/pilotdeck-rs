@@ -15,7 +15,10 @@ import sys as _boot_sys
 # #1023: same guard as the driver. -I keeps this directory and tests/fixtures
 # out of module resolution; a reinsertion (unittest discover) is rejected
 # before any local or stdlib module is imported.
-_boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
+# Realpath both sides: an abspath keeps a ``//`` entry-point alias while the
+# sys.path side normalises it, which let a reinserted fixture directory pass
+# (fix-r1 P1-1).
+_boot_dir = _boot_os.path.dirname(_boot_os.path.realpath(__file__))
 _boot_roots = {_boot_dir, _boot_os.path.dirname(_boot_dir)}
 if not _boot_sys.flags.isolated or any(
         _boot_os.path.realpath(entry or _boot_os.curdir) in _boot_roots
@@ -28,6 +31,7 @@ import importlib.util
 import json
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -39,10 +43,11 @@ from unittest.mock import patch
 _boot_driver_path = Path(__file__).resolve().with_name('negative_controls.py')
 _boot_spec = importlib.util.spec_from_file_location('negative_controls', _boot_driver_path)
 _boot_driver = importlib.util.module_from_spec(_boot_spec)
-sys.modules['negative_controls'] = _boot_driver
 _boot_spec.loader.exec_module(_boot_driver)
 negative_controls = _boot_driver
-from negative_controls import bound_failure_bodies, classify, unittest_blocks  # noqa: E402
+bound_failure_bodies = _boot_driver.bound_failure_bodies
+classify = _boot_driver.classify
+unittest_blocks = _boot_driver.unittest_blocks
 
 TEST = 'ContractTests.test_occupied_mock_port_blocks_round'
 MARKER = '#933-5: an occupied 28999 must make the owned mock exit and Block the round'
@@ -417,49 +422,163 @@ class IsolationGuardTests(unittest.TestCase):
     def entry(self, name):
         return self.here / name
 
-    def test_driver_and_test_reject_a_reinserted_fixture_directory(self):
+    def run_reinserted(self, name, directory):
         # The exact shape unittest discover produces: the start directory is
-        # inserted into sys.path and the module is loaded from a path. The
-        # guard must exit before either local module is imported.
+        # inserted into sys.path and the module is loaded from a path.
+        probe = ('import runpy, sys\n'
+                 'sys.path.insert(0, sys.argv[1])\n'
+                 'runpy.run_path(sys.argv[2], run_name="__main__")\n')
+        return subprocess.run(
+            [sys.executable, '-I', '-c', probe, str(directory),
+             str(Path(directory) / name), '--help'],
+            capture_output=True, text=True, timeout=30)
+
+    def deep_mirror(self, temp):
+        """A mirror deep enough for the driver's parents[5] root under /tmp.
+
+        ``/tmp/negctl-x/fixture`` has four parents; the Linux path made
+        ``parents[5]`` raise IndexError before argparse could print --help
+        (fix-r1 boundary P2-3). The extra levels are inert but keep both the
+        current and the legacy loader evaluable on every platform.
+        """
+        holder = Path(temp) / 'a' / 'b' / 'c' / 'd'
+        mirror = holder / 'fixture'
+        mirror.mkdir(parents=True)
         for name in ('negative_controls.py', 'test_negative_controls.py'):
-            with self.subTest(entry=name):
-                probe = ('import runpy, sys\n'
-                         'sys.path.insert(0, sys.argv[1])\n'
-                         'runpy.run_path(sys.argv[2], run_name="__main__")\n')
-                result = subprocess.run(
-                    [sys.executable, '-I', '-c', probe, str(self.here), str(self.entry(name)), '--help'],
-                    capture_output=True, text=True, timeout=30)
-                self.assertEqual(result.returncode, 1,
-                                 f'#1023-5: {name}: a reinserted fixture dir must be rejected')
-                self.assertIn('#1023: unsafe import path', result.stderr,
-                              f'#1023-5: {name}: the guard itself must reject, not a later import error')
+            shutil.copy2(self.entry(name), mirror / name)
+        shutil.copy2(self.here.parent / 'negative_process.py', holder / 'negative_process.py')
+        return holder, mirror
+
+    def disable_guard(self, mirror, marker):
+        old = ("    raise SystemExit(f'#1023: unsafe import path; run with -I by file: "
+               "python3 -I {__file__}')")
+        new = f'    pass  # {marker} control: guard disabled'
+        for name in ('negative_controls.py', 'test_negative_controls.py'):
+            path = mirror / name
+            text = path.read_text()
+            self.assertIn(old, text, f'{marker}: {name}: the guard anchor is stale')
+            path.write_text(text.replace(old, new, 1))
+
+    def test_driver_and_test_reject_a_reinserted_fixture_directory(self):
+        path_cases = [('plain path', str(self.here))]
+        alias = '/' + str(self.here)
+        self.assertTrue(alias.startswith('//'),
+                        '#1023-5: the POSIX double-slash alias must keep its prefix')
+        path_cases.append(('double-slash alias', alias))
+        with tempfile.TemporaryDirectory(prefix='negctl-1023-') as temp:
+            link = Path(temp) / 'linked-fixture'
+            link.symlink_to(self.here, target_is_directory=True)
+            path_cases.append(('symlinked fixture dir', str(link)))
+            for label, directory in path_cases:
+                for name in ('negative_controls.py', 'test_negative_controls.py'):
+                    with self.subTest(entry=name, path=label):
+                        result = self.run_reinserted(name, directory)
+                        self.assertEqual(
+                            result.returncode, 1,
+                            f'#1023-5: {name} via {label}: a reinserted fixture dir must be rejected')
+                        self.assertIn(
+                            '#1023: unsafe import path', result.stderr,
+                            f'#1023-5: {name} via {label}: the guard itself must reject, '
+                            'not a later import error')
+            # Paired control: with the guard's raise disabled, the same probe
+            # must start. That proves the assertions above measure the guard,
+            # not an unrelated failure of runpy or argparse.
+            holder, control = self.deep_mirror(temp)
+            self.disable_guard(control, '#1023-5')
+            for name in ('negative_controls.py', 'test_negative_controls.py'):
+                with self.subTest(entry=name, control='guard disabled'):
+                    result = self.run_reinserted(name, control)
+                    self.assertEqual(
+                        result.returncode, 0,
+                        f'#1023-5 control: removing the guard must let the reinserted {name} '
+                        f'start: {result.stderr}')
+
+    def run_nonisolated(self, entry):
+        # A direct script launch puts the script directory on sys.path, so the
+        # reinsertion branch would reject even with the isolation flag check
+        # removed. ``-c`` + runpy keeps the fixture out of sys.path, making the
+        # ``not sys.flags.isolated`` branch the only rejection under test.
+        probe = ('import runpy, sys\n'
+                 'path = sys.argv[1]\n'
+                 'sys.argv = [path, "--help"]\n'
+                 'runpy.run_path(path, run_name="__main__")\n')
+        return subprocess.run(
+            [sys.executable, '-E', '-s', '-c', probe, str(entry)],
+            cwd=self.here.parents[5], capture_output=True, text=True, timeout=30)
 
     def test_driver_rejects_a_nonisolated_launch(self):
-        result = subprocess.run([sys.executable, '-E', '-s', str(self.entry('negative_controls.py')), '--help'],
-                                capture_output=True, text=True, timeout=30)
+        result = self.run_nonisolated(self.entry('negative_controls.py'))
         self.assertEqual(result.returncode, 1, '#1023-6: without -I the entry must exit at the guard')
         self.assertIn('#1023: unsafe import path', result.stderr,
                       '#1023-6: the non-isolated launch must be named by the guard')
-
-    def test_explicit_load_ignores_a_same_directory_negative_process(self):
-        # A same-named module beside the driver must never win: the shared
-        # guard is loaded by its explicit parent path, not through sys.path.
         with tempfile.TemporaryDirectory(prefix='negctl-1023-') as temp:
-            holder = Path(temp)
-            mirror = holder / 'fixture'
-            mirror.mkdir()
-            shutil.copy2(self.entry('negative_controls.py'), mirror / 'negative_controls.py')
-            shutil.copy2(self.here.parent / 'negative_process.py', holder / 'negative_process.py')
+            _holder, control = self.deep_mirror(temp)
+            self.disable_guard(control, '#1023-6')
+            result = self.run_nonisolated(control / 'negative_controls.py')
+            self.assertEqual(result.returncode, 0,
+                             '#1023-6 control: removing the guard must let a non-isolated launch '
+                             'start: ' + result.stderr)
+
+    def test_explicit_load_does_not_reinsert_the_parent_directory(self):
+        # The old loader inserted parents[1] into sys.path; a planted
+        # subprocess.py there then won inside the shared helper. The new loader
+        # opens that helper by path and leaves sys.path untouched.
+        with tempfile.TemporaryDirectory(prefix='negctl-1023-') as temp:
+            holder, mirror = self.deep_mirror(temp)
             marker = holder / 'IMPOSTER_EXECUTED'
-            (mirror / 'negative_process.py').write_text(
+            # ``subprocess`` is imported by the shared helper, i.e. after the
+            # legacy loader's sys.path.insert; planting json.py here would be
+            # inert because the driver imports json before the loader.
+            (holder / 'subprocess.py').write_text(
                 f'open({str(marker)!r}, "w").write("imposter")\n')
-            result = subprocess.run([sys.executable, '-I', str(mirror / 'negative_controls.py'), '--help'],
-                                    capture_output=True, text=True, timeout=30)
+            result = subprocess.run(
+                [sys.executable, '-I', str(mirror / 'negative_controls.py'), '--help'],
+                capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0,
                              '#1023-7: the driver must load its real sibling helper: ' + result.stderr)
             self.assertFalse(marker.exists(),
-                             '#1023-7: a same-directory negative_process.py must never execute')
+                             '#1023-7: the parent directory must not be reinserted into sys.path')
+            # Paired control: splice the legacy ``sys.path.insert`` loader into
+            # a second copy. The planted subprocess.py must then execute, proving the
+            # assertion above can fail when the explicit load is reverted.
+            legacy_holder = Path(temp) / 'legacy' / 'a' / 'b' / 'c' / 'd'
+            legacy_mirror = legacy_holder / 'fixture'
+            legacy_mirror.mkdir(parents=True)
+            source = (mirror / 'negative_controls.py').read_text()
+            start = source.index('_boot_module_path = ')
+            end = source.index('sys.meta_path.remove(_boot_finder)')
+            end = source.index('\n', end) + 1
+            legacy = ('sys.path.insert(0, str(Path(__file__).resolve().parents[1]))\n'
+                      'from negative_process import mutating_sources, run_owned  # noqa: E402\n')
+            (legacy_mirror / 'negative_controls.py').write_text(
+                source[:start] + legacy + source[end:])
+            shutil.copy2(self.here.parent / 'negative_process.py',
+                         legacy_holder / 'negative_process.py')
+            legacy_marker = legacy_holder / 'IMPOSTER_EXECUTED'
+            (legacy_holder / 'subprocess.py').write_text(
+                f'open({str(legacy_marker)!r}, "w").write("imposter")\n')
+            result = subprocess.run(
+                [sys.executable, '-I', str(legacy_mirror / 'negative_controls.py'), '--help'],
+                capture_output=True, text=True, timeout=30)
+            self.assertTrue(
+                legacy_marker.exists(),
+                '#1023-7 control invalid: the legacy sys.path loader did not execute the '
+                f'planted subprocess.py: {result.stderr}')
 
+    def test_port_preflight_waits_for_a_released_listener(self):
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(('127.0.0.1', 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        try:
+            with self.assertRaises(RuntimeError,
+                                   msg='#1023-8: an occupied port must block the run'):
+                negative_controls.wait_for_port_free(port, timeout=0.2)
+        finally:
+            listener.close()
+        self.assertIsNone(negative_controls.wait_for_port_free(port, timeout=2),
+                          '#1023-8: a released port must be admitted')
 
 
 if __name__ == '__main__':
