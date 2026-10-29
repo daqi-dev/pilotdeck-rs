@@ -1925,13 +1925,8 @@ fn adopt_factory(
 async fn writer_adopt_creates_recreates_closes_and_reopens() {
     let h = Harness::new("adopt-lifecycle");
     let opens = Arc::new(AtomicUsize::new(0));
-    let factory = adopt_factory(
-        &h,
-        opens.clone(),
-        h.root.join("session-745.jsonl"),
-        false,
-        None,
-    );
+    let path = h.root.join("session-745.jsonl");
+    let factory = adopt_factory(&h, opens.clone(), path.clone(), false, None);
     let first = bounded("adopt first create", factory.create(h.context(), None))
         .await
         .expect("#1019 adopted first create is not busy");
@@ -1951,11 +1946,38 @@ async fn writer_adopt_creates_recreates_closes_and_reopens() {
         .expect("#1019 adopted writer appends through the transferred fence");
     // Recreate: the predecessor's close thread releases the flock before the
     // process mutex, so the deferred opener cannot observe the in-flight
-    // release and the first recreation must not report busy.
-    let second = bounded(
-        "adopt recreate",
-        factory.create(h.context(), Some(first.clone())),
-    )
+    // release and the first recreation must not report busy. The close-thread
+    // gate pins that thread at the exact window after the drain returned and
+    // before it releases the lease, so the pinned assertions below are
+    // deterministic instead of racing the spawned close.
+    let canonical = crate::storage::canonical_transcript_path(&path)
+        .expect("#1019 adopt lifecycle canonical path");
+    let observation = writer_wait_observation(&writer_mutex(&canonical));
+    let gate = install_close_thread_gate(&canonical);
+    let recreate = tokio::spawn(factory.create(h.context(), Some(first.clone())));
+    observation.store(0, Ordering::SeqCst);
+    bounded("adopt recreate pinned window", async {
+        loop {
+            if first.state() == HandleState::Disposed && observation.load(Ordering::SeqCst) != 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    })
+    .await;
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        1,
+        "#1019 pinned close window keeps the opener waiting on the lease"
+    );
+    assert!(
+        !recreate.is_finished(),
+        "#1019 pinned close window keeps the recreate waiting"
+    );
+    drop(gate);
+    let second = bounded("adopt recreate await", async {
+        recreate.await.expect("#1019 adopt recreate task completes")
+    })
     .await
     .expect("#1019 adopted recreate is not busy");
     assert_eq!(
@@ -1968,6 +1990,15 @@ async fn writer_adopt_creates_recreates_closes_and_reopens() {
         HandleState::Active,
         "#1019 recreated adopted handle is active"
     );
+    lock(&h.observed.bindings)[1]
+        .recorder
+        .writer()
+        .record_session_metadata(
+            &"session-745".into(),
+            &"adopt".into(),
+            js(r#"{"recreated":true}"#),
+        )
+        .expect("#1019 recreated writer continues the sequence chain");
     second
         .dispose("adopt close".into())
         .await
@@ -1980,22 +2011,277 @@ async fn writer_adopt_creates_recreates_closes_and_reopens() {
         3,
         "#1019 adopted reopen opens the recording once more"
     );
+    lock(&h.observed.bindings)[2]
+        .recorder
+        .writer()
+        .record_session_metadata(
+            &"session-745".into(),
+            &"adopt".into(),
+            js(r#"{"reopened":true}"#),
+        )
+        .expect("#1019 reopened writer continues the sequence chain");
     reopened
         .dispose("adopt reopen cleanup".into())
         .await
         .expect("#1019 adopted reopen cleanup");
-    let transcript = std::fs::read_to_string(h.root.join("session-745.jsonl"))
-        .expect("#1019 adopted transcript written");
+    let transcript = std::fs::read_to_string(&path).expect("#1019 adopted transcript written");
+    let entries: Vec<_> = transcript.lines().map(js).collect();
     assert_eq!(
-        transcript.lines().count(),
-        1,
-        "#1019 adopted writes land exactly once"
+        entries.len(),
+        3,
+        "#1019 continuation writes land exactly three entries"
     );
+    for (index, entry) in entries.iter().enumerate() {
+        assert_eq!(
+            entry.get("sequence").and_then(JsValue::as_number),
+            Some((index + 1) as f64),
+            "#1019 continuation writes keep one sequence chain"
+        );
+        let parent = entry.get("parentEntryId");
+        if index == 0 {
+            assert_eq!(
+                parent,
+                Some(&JsValue::Null),
+                "#1019 first continuation entry has no parent"
+            );
+        } else {
+            assert_eq!(
+                parent,
+                entries[index - 1].get("entryId"),
+                "#1019 continuation writes chain parentEntryId"
+            );
+        }
+    }
     factory
         .dispose()
         .await
         .expect("#1019 adopt lifecycle factory disposal");
     h.finish("adopt-lifecycle").await;
+}
+
+/// #1019 P0: the fence handoff retires the recording's writer. A stale holder
+/// that retained an Arc clone of the pre-handoff writer cannot append after
+/// the handoff — a typed rejection, not a silent fork of the sequence chain
+/// under the factory's replacement writer — and the chain stays unbroken.
+#[tokio::test]
+async fn writer_adopt_retires_retained_opener_writer_clones() {
+    let h = Harness::new("adopt-retired-clone");
+    let opens = Arc::new(AtomicUsize::new(0));
+    let path = h.root.join("session-745.jsonl");
+    let retained: Arc<Mutex<Option<Arc<crate::storage::TranscriptWriter>>>> =
+        Arc::new(Mutex::new(None));
+    let stash = retained.clone();
+    let persistence = Arc::new(
+        crate::runtime::project::persistence::PersistenceResources::for_tests(
+            h.root.clone(),
+            h.root.join("home"),
+        ),
+    );
+    let session_id: JsString = "session-745".into();
+    let factory_path = path.clone();
+    let factory_opens = opens.clone();
+    let factory = Arc::new(ProjectSessionFactory::new(FactoryOptions {
+        writer_busy_wait_timeout: h.factory.options.writer_busy_wait_timeout,
+        prepare: h.factory.options.prepare.clone(),
+        create_storage: Arc::new(move |_context| {
+            let persistence = persistence.clone();
+            let session_id = session_id.clone();
+            let open_path = factory_path.clone();
+            let plan_path = factory_path.clone();
+            let opens = factory_opens.clone();
+            let stash = stash.clone();
+            Box::pin(async move {
+                let open: OpenRecording = Arc::new(move || {
+                    opens.fetch_add(1, Ordering::SeqCst);
+                    let recording =
+                        persistence.create_session(session_id.clone(), Some(open_path.clone()))?;
+                    // One pre-handoff write through this writer, then retain a
+                    // clone: the stale holder the factory cannot see or drop.
+                    recording.recorder.writer().record_session_metadata(
+                        &session_id,
+                        &"adopt".into(),
+                        js(r#"{"probe":"pre-handoff"}"#),
+                    )?;
+                    *lock(&stash) = Some(recording.recorder.writer().clone());
+                    Ok(recording)
+                });
+                Ok(SessionStorage::Recording(RecordingPlan {
+                    transcript_path: plan_path,
+                    open,
+                }))
+            })
+        }),
+        admission: None,
+        diagnostic: Arc::new(|_| {}),
+    }));
+    let handle = bounded("adopt retire create", factory.create(h.context(), None))
+        .await
+        .expect("#1019 adopted create succeeds while retiring the opener writer");
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        1,
+        "#1019 retire clone opens the recording once"
+    );
+    let replacement = lock(&h.observed.bindings)[0].recorder.writer().clone();
+    replacement
+        .record_session_metadata(
+            &"session-745".into(),
+            &"adopt".into(),
+            js(r#"{"probe":"replacement"}"#),
+        )
+        .expect("#1019 replacement writer appends after the handoff");
+    let stale = lock(&retained)
+        .clone()
+        .expect("#1019 opener retained a writer clone");
+    let rejected = |stale: &Arc<crate::storage::TranscriptWriter>| {
+        stale.record_session_metadata(
+            &"session-745".into(),
+            &"adopt".into(),
+            js(r#"{"probe":"stale-clone"}"#),
+        )
+    };
+    match rejected(&stale) {
+        Err(crate::storage::AdapterError::Retired(message)) => assert!(
+            message.contains("handed its ledger fence"),
+            "#1019 retained opener writer clone cannot append after the handoff: {message}"
+        ),
+        Err(error) => {
+            panic!("#1019 retained opener writer clone cannot append after the handoff: {error:?}")
+        }
+        Ok(()) => panic!("#1019 retained opener writer clone cannot append after the handoff"),
+    }
+    handle
+        .dispose("adopt retire close".into())
+        .await
+        .expect("#1019 retired clone session closes");
+    // Closing the session does not resurrect the retired clone.
+    match rejected(&stale) {
+        Err(crate::storage::AdapterError::Retired(_)) => {}
+        Err(error) => panic!("#1019 retired clone stays rejected after the close: {error:?}"),
+        Ok(()) => panic!("#1019 retired clone stays rejected after the close"),
+    }
+    // The chain is unbroken: exactly the pre-handoff and replacement entries.
+    let transcript =
+        std::fs::read_to_string(&path).expect("#1019 retired clone transcript written");
+    let entries: Vec<_> = transcript.lines().map(js).collect();
+    assert_eq!(entries.len(), 2, "#1019 the stale clone never appended");
+    assert_eq!(
+        entries[0].get("sequence").and_then(JsValue::as_number),
+        Some(1.0),
+        "#1019 the pre-handoff append keeps sequence 1"
+    );
+    assert_eq!(
+        entries[1].get("sequence").and_then(JsValue::as_number),
+        Some(2.0),
+        "#1019 the replacement continues the sequence chain"
+    );
+    assert_eq!(
+        entries[1].get("parentEntryId"),
+        entries[0].get("entryId"),
+        "#1019 the replacement chains to the pre-handoff entry"
+    );
+    let reopened = bounded("adopt retire reopen", factory.create(h.context(), None))
+        .await
+        .expect("#1019 the retired-clone transcript reopens");
+    reopened
+        .dispose("adopt retire reopen cleanup".into())
+        .await
+        .expect("#1019 retired clone reopen cleanup");
+    factory
+        .dispose()
+        .await
+        .expect("#1019 adopt retire factory disposal");
+    h.finish("adopt-retired-clone").await;
+}
+
+/// #1019 P1: the recording branch's writer-wait budget restarts after the
+/// drained snapshot. A predecessor whose drained snapshot runs long must not
+/// expire the adopt path's mutex-wait deadline into the expired try-once.
+#[tokio::test]
+async fn writer_adopt_budget_excludes_slow_drained_snapshot() {
+    let h = Harness::with_fence_timeout("adopt-slow-plan", Duration::from_secs(5));
+    let (old, _, _) = retry_fault(&h, "slow-snapshot").await;
+    let opens = Arc::new(AtomicUsize::new(0));
+    let path = h.root.join("adopt-slow.jsonl");
+    let persistence = Arc::new(
+        crate::runtime::project::persistence::PersistenceResources::for_tests(
+            h.root.clone(),
+            h.root.join("home"),
+        ),
+    );
+    let session_id: JsString = "session-745".into();
+    let factory_path = path.clone();
+    let factory_opens = opens.clone();
+    let factory = Arc::new(ProjectSessionFactory::new(FactoryOptions {
+        writer_busy_wait_timeout: Duration::from_secs(5),
+        prepare: h.factory.options.prepare.clone(),
+        create_storage: Arc::new(move |_context| {
+            let persistence = persistence.clone();
+            let session_id = session_id.clone();
+            let open_path = factory_path.clone();
+            let plan_path = factory_path.clone();
+            let opens = factory_opens.clone();
+            Box::pin(async move {
+                let open: OpenRecording = Arc::new(move || {
+                    opens.fetch_add(1, Ordering::SeqCst);
+                    persistence.create_session(session_id.clone(), Some(open_path.clone()))
+                });
+                Ok(SessionStorage::Recording(RecordingPlan {
+                    transcript_path: plan_path,
+                    open,
+                }))
+            })
+        }),
+        admission: None,
+        diagnostic: Arc::new(|_| {}),
+    }));
+    let canonical = crate::storage::canonical_transcript_path(&path)
+        .expect("#1019 adopt slow plan canonical path");
+    let mutex = writer_mutex(&canonical);
+    let observation = writer_wait_observation(&mutex);
+    let guard = mutex.lock_owned().await;
+    tokio::time::pause();
+    let waiting = tokio::spawn(factory.create(h.context(), Some(old)));
+    // Keep the test runnable while the drain's blocking filesystem work
+    // completes, so the paused clock cannot auto-advance to any timeout.
+    let wait_state = followup_bounded("adopt slow plan lock entered", async {
+        loop {
+            let state = observation.load(Ordering::SeqCst);
+            if state != 0 {
+                break state;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert_eq!(
+        wait_state, 1,
+        "#1019 slow drained snapshot retains the adopt path's busy wait budget"
+    );
+    assert!(
+        !waiting.is_finished(),
+        "#1019 slow drained snapshot still waits for the occupied writer"
+    );
+    tokio::time::advance(Duration::from_secs(1)).await;
+    assert!(
+        !waiting.is_finished(),
+        "#1019 the re-based adopt deadline still waits past the slow snapshot"
+    );
+    drop(guard);
+    tokio::time::resume();
+    let new = followup_bounded("adopt slow plan retry", waiting)
+        .await
+        .expect("#1019 adopt slow plan task completes")
+        .expect("#1019 slow drained snapshot retains the adopt path's busy wait budget");
+    new.dispose("adopt slow plan cleanup".into())
+        .await
+        .expect("#1019 adopt slow plan cleanup");
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        1,
+        "#1019 slow plan opened the recording once"
+    );
+    h.finish("adopt-slow-plan").await;
 }
 
 #[tokio::test]
@@ -2217,14 +2503,17 @@ async fn writer_adopt_opener_failure_releases_prepared() {
     .await
     .err()
     .expect("#1019 opener failure rejects the session");
-    assert_ne!(
-        error.js_error().and_then(|e| e.code.as_deref()),
-        Some("SESSION_WRITER_BUSY"),
-        "#1019 opener failure is the storage error, not lock contention"
+    // Node v22.22.0 on this read: code EISDIR, message without the path
+    // (eisdir-probe.mjs). The opener's non-BUSY storage failures keep that
+    // exact contract instead of a Rust io error rendering.
+    assert_eq!(
+        error.message, "EISDIR: illegal operation on a directory, read",
+        "#1019 opener failure keeps the node storage error message"
     );
-    assert!(
-        error.message.contains("Is a directory"),
-        "#1019 opener failure surfaces the storage error: {error}"
+    assert_eq!(
+        error.js_error().and_then(|e| e.code.as_deref()),
+        Some("EISDIR"),
+        "#1019 opener failure keeps the node storage error code"
     );
     assert_eq!(
         opens.load(Ordering::SeqCst),

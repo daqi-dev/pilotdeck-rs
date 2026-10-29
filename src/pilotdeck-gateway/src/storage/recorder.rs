@@ -72,6 +72,9 @@ pub enum RecorderError {
     /// Projection outside the currently ported read surface.
     ProjectionUnavailable(String),
     Range(String),
+    /// #1019 fence handoff: this recorder's writer was retired when its ledger
+    /// fence moved to the session factory; appends are a typed rejection.
+    Retired(String),
     /// Host store failure, propagated unchanged.
     Store(super::LedgerError),
 }
@@ -82,6 +85,7 @@ impl fmt::Display for RecorderError {
             | Self::Type(message)
             | Self::ProjectionUnavailable(message)
             | Self::Range(message)
+            | Self::Retired(message)
             | Self::Domain { message, .. }
             | Self::Envelope { message, .. } => f.write_str(message),
             Self::Store(error) => error.fmt(f),
@@ -114,6 +118,7 @@ impl From<AdapterError> for RecorderError {
             AdapterError::Range(message) => Self::Range(message),
             AdapterError::ProjectionUnavailable(message) => Self::ProjectionUnavailable(message),
             AdapterError::Domain { code, message } => Self::Domain { code, message },
+            AdapterError::Retired(message) => Self::Retired(message),
             AdapterError::Store(error) => Self::Store(error),
         }
     }

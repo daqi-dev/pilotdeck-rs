@@ -21,6 +21,15 @@ lands on a dedicated assertion:
   rejection test then gets a session instead of the typed error.
 - ``adopt-busy-untyped`` drops the SESSION_WRITER_BUSY mapping for the
   opener's lock contention; the busy test then fails on the error code.
+- ``adopt-clone-not-retired`` skips retiring the recording's writer at the
+  fence handoff; the retained opener clone then appends (a second sequence
+  cache forking the chain) instead of the typed retirement rejection.
+- ``adopt-deadline-not-rebased`` keeps the pre-construction absolute deadline
+  for the recording branch's mutex wait; a slow drained snapshot then expires
+  that budget into the try-once busy error.
+- ``adopt-store-error-untyped`` drops the Node storage-error mapping for the
+  opener's non-BUSY failures; the opener-failure test then fails on the
+  exact Node code and message.
 
 Usage: CARGO_TARGET_DIR=/abs/target python3 switch_negative.py NEW_OUTPUT_DIR [switch ...]
 """
@@ -36,6 +45,7 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 SWITCH_SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/session/factory.rs'
 TEST_SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/session/factory_tests.rs'
+PERSISTENCE_SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/project/persistence.rs'
 # (name, path, test, assertion): the switch site is counted in the target file.
 # The kill must land on the dedicated #1019 assertion of each bound test.
 switches = [
@@ -51,12 +61,22 @@ switches = [
     ('adopt-busy-untyped', SWITCH_SOURCE,
      'runtime::session::factory::tests::writer_adopt_busy_is_typed_session_writer_busy',
      '#1019 opener lock contention is the typed busy error'),
+    ('adopt-clone-not-retired', PERSISTENCE_SOURCE,
+     'runtime::session::factory::tests::writer_adopt_retires_retained_opener_writer_clones',
+     '#1019 retained opener writer clone cannot append after the handoff'),
+    ('adopt-deadline-not-rebased', SWITCH_SOURCE,
+     'runtime::session::factory::tests::writer_adopt_budget_excludes_slow_drained_snapshot',
+     '#1019 slow drained snapshot retains the adopt path\'s busy wait budget'),
+    ('adopt-store-error-untyped', SWITCH_SOURCE,
+     'runtime::session::factory::tests::writer_adopt_opener_failure_releases_prepared',
+     '#1019 opener failure keeps the node storage error message'),
 ]
 GUARDED = [
     SWITCH_SOURCE,
     TEST_SOURCE,
     ROOT / 'src/pilotdeck-gateway/src/runtime/project/persistence.rs',
     ROOT / 'src/pilotdeck-gateway/src/storage/transcript_adapter.rs',
+    ROOT / 'src/pilotdeck-gateway/src/storage/recorder.rs',
     ROOT / 'src/pilotdeck-gateway/src/storage/transcript.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',

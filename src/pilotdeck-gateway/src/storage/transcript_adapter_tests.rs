@@ -16,6 +16,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
     thread,
+    time::Duration,
 };
 
 const FIXTURES: &str = concat!(
@@ -245,6 +246,12 @@ fn error_outcome(error: &AdapterError) -> JsValue {
         AdapterError::Store(error) => {
             e.insert("name".into(), "Error".into());
             e.insert("message".into(), error.to_string().as_str().into());
+        }
+        // Rust-side fence handoff rejection (#1019); TS has no equivalent, so
+        // no oracle fixture exercises it — keep the shape consistent anyway.
+        AdapterError::Retired(message) => {
+            e.insert("name".into(), "Error".into());
+            e.insert("message".into(), message.as_str().into());
         }
     }
     object([("error", JsValue::Object(e))])
@@ -722,6 +729,95 @@ fn concurrent_appends_commit_in_lock_order_and_failures_leave_no_gap() {
         .filter(|n| n.ends_with(".tmp"))
         .collect();
     assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+/// #1019 fence handoff: `retire` drains an in-flight append (it completes and
+/// commits) and every Arc clone — the ones stale holders retain — is a typed
+/// rejection afterwards, so a stale writer cannot fork the sequence chain under
+/// the factory's replacement writer.
+#[test]
+fn retire_drains_in_flight_append_and_rejects_later_clones() {
+    struct GatedStore {
+        entered: std::sync::mpsc::Sender<()>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+        entries: Mutex<Vec<JsValue>>,
+    }
+    impl TranscriptStore for GatedStore {
+        fn append(&self, _: &TranscriptKey, entry: &JsValue) -> StoreResult<()> {
+            let _ = self.entered.send(());
+            // Block while holding the writer's commit lock, like a slow store.
+            let _ = self.release.lock().unwrap().recv();
+            self.entries.lock().unwrap().push(entry.clone());
+            Ok(())
+        }
+        fn read(&self, _: &TranscriptKey, _: Option<u64>) -> StoreResult<TranscriptRead> {
+            Ok(TranscriptRead {
+                entries: self.entries.lock().unwrap().clone(),
+                diagnostics: Vec::new(),
+            })
+        }
+    }
+    let (entered, append_entered) = std::sync::mpsc::channel::<()>();
+    let (release, release_store) = std::sync::mpsc::channel::<()>();
+    let store = Arc::new(GatedStore {
+        entered,
+        release: Mutex::new(release_store),
+        entries: Mutex::new(Vec::new()),
+    });
+    let key = TranscriptKey {
+        project_root: PROJECT_ROOT.into(),
+        pilot_home: PathBuf::from("/pdrs-fixture/home"),
+        session_id: "s1".into(),
+        transcript_path: PathBuf::new(),
+    };
+    let writer = Arc::new(TranscriptWriter::for_store(store.clone(), key.clone()));
+    let stale = writer.clone();
+    let in_flight = thread::spawn({
+        let stale = stale.clone();
+        move || stale.record_session_metadata(&"s1".into(), &"t".into(), metadata_value(0))
+    });
+    append_entered
+        .recv()
+        .expect("#1019 retire drain: append entered the store");
+    let retiring = thread::spawn(move || writer.retire());
+    // The append holds the commit lock inside the store, so retire cannot
+    // finish before it drains. The store cannot return before `release`.
+    thread::sleep(Duration::from_millis(100));
+    assert!(
+        !retiring.is_finished(),
+        "#1019 retire drains the in-flight append before returning"
+    );
+    release
+        .send(())
+        .expect("#1019 retire drain: release the store");
+    in_flight
+        .join()
+        .unwrap()
+        .expect("#1019 the drained in-flight append commits");
+    retiring
+        .join()
+        .expect("#1019 retire thread finishes after the drain");
+    match stale.record_session_metadata(&"s1".into(), &"t".into(), metadata_value(1)) {
+        Err(AdapterError::Retired(message)) => assert!(
+            message.contains("handed its ledger fence"),
+            "#1019 retained clone append is the typed retirement rejection: {message}"
+        ),
+        Err(error) => {
+            panic!("#1019 retained clone append is the typed retirement rejection: {error:?}")
+        }
+        Ok(()) => panic!("#1019 retained clone append is the typed retirement rejection"),
+    }
+    let committed = store.read(&key, None).unwrap();
+    assert_eq!(
+        committed.entries.len(),
+        1,
+        "#1019 exactly the drained append committed"
+    );
+    assert_eq!(
+        field(&committed.entries[0], "sequence").as_number(),
+        Some(1.0),
+        "#1019 the drained append keeps sequence 1"
+    );
 }
 
 #[test]
