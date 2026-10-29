@@ -1,7 +1,9 @@
 # anchor-selfcheck: unsupported synthetic unittest results and private Python mirrors, no in-place product mutation table
 """#701: kill-judge forgeries, inventory gaps, and private mirror boundaries."""
-import os
 import sys
+if sys.version_info < (3, 11) or 'os' not in sys.modules:
+    raise SystemExit(f'#701: os must be preloaded from CPython 3.11+ frozen modules; run with -I: python3 -I {__file__}')
+import os
 
 # #1023 fix-r2: identify the directory by (device, inode), not by spelling.
 _boot_dir = os.path.dirname(os.path.realpath(__file__))

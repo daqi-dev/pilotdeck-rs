@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Compare full D0 recordings. Missing evidence never compares equal."""
 import sys
+if sys.version_info < (3, 11) or 'os' not in sys.modules:
+    raise SystemExit(f'#701: os must be preloaded from CPython 3.11+ frozen modules; run with -I: python3 -I {__file__}')
 import os
 
 # -I keeps PYTHONPATH, user site and the script directory out of module
 # resolution.  Without it, exit before importing anything: a same-named stdlib
 # file beside this entry (json.py, pathlib.py, tempfile.py) would otherwise
 # execute before the guard. Discover can add the directory back even with
-# -I, so reject that path too. Both boot imports are safe: ``sys`` is builtin
-# and ``os`` has been frozen since CPython 3.11, so neither can be shadowed
-# from the reinserted directory.
+# -I, so reject that path too. ``sys`` is builtin; ``os`` is imported only
+# after the preflight above proved it is a preloaded frozen module, so neither
+# can be shadowed from the reinserted directory.
 # The directory is identified by (device, inode), not by its spelling: a
 # case-insensitive alias or a mixed ``//``/symlink form names this very
 # directory while the raw string differs (fix-r2 GLM sibling P1).

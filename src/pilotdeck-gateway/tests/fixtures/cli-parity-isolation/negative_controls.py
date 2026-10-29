@@ -12,8 +12,10 @@ means the test could not run, compile, or reach the exclusive assertion.
 No environment row writes to the checkout. Every mirror is removed on exit;
 run all rows and summarise; any non-KILLED row is a nonzero exit.
 """
-import os
 import sys
+if sys.version_info < (3, 11) or 'os' not in sys.modules:
+    raise SystemExit(f'#701: os must be preloaded from CPython 3.11+ frozen modules; run with -I: python3 -I {__file__}')
+import os
 
 # #1023 fix-r2: identify the directory by (device, inode), not by spelling, so
 # a case-insensitive or symlinked alias cannot reinsert it.
@@ -87,26 +89,34 @@ def statements(tree):
 
 def guard_problem(tree):
     body = statements(tree)
-    if len(body) < 5:
+    if len(body) < 6:
         return 'missing the boot prelude and the isolated guard'
     first = body[0]
     if not (isinstance(first, ast.Import)
             and [alias.name for alias in first.names] == ['sys']):
         return f'first executable statement is {ast.unparse(first)[:80]!r}, not "import sys"'
-    second = body[1]
+    preflight = body[1]
+    if not isinstance(preflight, ast.If):
+        return 'the os-preload preflight is not the second statement'
+    expected_preflight = "sys.version_info < (3, 11) or 'os' not in sys.modules"
+    if ast.unparse(preflight.test) != expected_preflight:
+        return f'preflight tests {ast.unparse(preflight.test)[:80]!r}, not {expected_preflight!r}'
+    if not any(isinstance(node, ast.Raise) for node in preflight.body):
+        return 'preflight does not raise SystemExit'
+    second = body[2]
     if not (isinstance(second, ast.Import)
             and [alias.name for alias in second.names] == ['os']):
-        return f'second statement is {ast.unparse(second)[:80]!r}, not "import os"'
-    resolved = ast.unparse(body[2])
+        return f'third statement is {ast.unparse(second)[:80]!r}, not "import os"'
+    resolved = ast.unparse(body[3])
     if resolved != '_boot_dir = os.path.dirname(os.path.realpath(__file__))':
         return f'directory resolution is {resolved[:80]!r}'
-    identity = ast.unparse(body[3])
+    identity = ast.unparse(body[4])
     if (not identity.startswith('_boot_reinserted = any(')
             or 'os.path.samefile(entry or os.curdir, _boot_dir)' not in identity):
         return f'reinsertion check is {identity[:80]!r}, not a samefile identity check'
-    guard = body[4]
+    guard = body[5]
     if not isinstance(guard, ast.If):
-        return 'the isolated guard is not the fifth statement'
+        return 'the isolated guard is not the sixth statement'
     expected = 'not sys.flags.isolated or _boot_reinserted'
     if ast.unparse(guard.test) != expected:
         return f'guard tests {ast.unparse(guard.test)!r}, not {expected!r}'
@@ -343,6 +353,21 @@ def bootstrap_regressions(apparatus):
                original.replace(' or _boot_reinserted', '', 1),
                'test_isolated_guard_is_the_first_statement',
                f'#701: {entry}: the guard must reject non-isolated or reinserted paths')
+        if entry == 'compare.py':
+            preflight = (
+                "if sys.version_info < (3, 11) or 'os' not in sys.modules:\n"
+                "    raise SystemExit(f'#701: os must be preloaded from CPython 3.11+ "
+                "frozen modules; run with -I: python3 -I {__file__}')")
+            if preflight not in original:
+                raise AssertionError('#701: the os-preload preflight anchor is stale')
+            yield ('guard/os-preflight', path,
+                   original.replace(
+                       preflight,
+                       "if False:\n    raise SystemExit(f'#701: os must be preloaded from "
+                       "CPython 3.11+ frozen modules; run with -I: python3 -I {__file__}')", 1),
+                   'test_entry_guard_rejects_unfrozen_or_unloaded_os',
+                   '#701: an interpreter without a preloaded frozen os must be rejected '
+                   'before importing os')
         if entry == 'run_round.py':
             spelling = original.replace(
                 'os.path.samefile(entry or os.curdir, _boot_dir)',
@@ -514,7 +539,8 @@ def bootstrap_checks(apparatus, rows, output, selection):
         rows[-1].update(test=test, assertion=assertion, compiled=compiled,
                         mutationKind=('temporary unit-test mirror' if method.startswith((
                             'test_each_entry', 'test_discover', 'test_bootstrap_cache',
-                            'test_apparatus_inventory', 'test_entries_reject')) else
+                            'test_apparatus_inventory', 'test_entries_reject',
+                            'test_entry_guard')) else
                                       'in-memory AST input' if path.suffix == '.py' else 'in-memory document'))
 
 

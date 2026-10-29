@@ -7,8 +7,10 @@ executes (no copy, no second implementation) and drives it with a temporary
 lease and stub "calibrate" scripts. The real /tmp/pdrs-parity.lock is never
 touched.
 """
-import os
 import sys
+if sys.version_info < (3, 11) or 'os' not in sys.modules:
+    raise SystemExit(f'os must be preloaded from CPython 3.11+ frozen modules; run with -I: python3 -I {__file__}')
+import os
 
 # #1023 fix-r2 P2-1: -I alone is not enough. unittest discovery reinserts the
 # fixture directory, and a caller can also insert the frozen B2 apparatus
@@ -23,7 +25,8 @@ _boot_parent = os.path.dirname(_boot_dir)
 _boot_root = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(_boot_parent))))
 _boot_roots = (_boot_dir, _boot_parent,
-               os.path.join(_boot_root, 'scripts', 'ui-server-parity'))
+               os.path.join(_boot_root, 'scripts', 'ui-server-parity'),
+               os.path.join(_boot_root, 'scripts', 'ui-server-parity', 'controls'))
 
 
 def _boot_reinserted(entries):
@@ -370,6 +373,49 @@ class EntryGuardTests(unittest.TestCase):
             self.assertIn('Ran 1 test', opened.stdout + opened.stderr,
                           marker + ' control: the probe itself must run')
 
+    def test_guard_requires_preloaded_os(self):
+        marker = '#1023-10: the guard must reject an unfrozen or unloaded os before importing it'
+        preload = 'os must be preloaded from CPython 3.11+ frozen modules'
+        forged = ('import sys\n'
+                  'with open(sys.argv[2], "w") as stream:\n'
+                  '    stream.write("forged os executed")\n'
+                  'raise RuntimeError("forged os module executed")\n')
+        version_probe = ('import sys\n'
+                         'entry, marker, staged = sys.argv[1], sys.argv[2], sys.argv[3]\n'
+                         'source = open(entry, "rb").read()\n'
+                         'sys.version_info = (3, 10, 0, "final", 0)\n'
+                         'sys.path.insert(0, staged)\n'
+                         'exec(compile(source, entry, "exec"), '
+                         '{"__file__": entry, "__name__": "__main__"})\n')
+        unloaded_probe = ('import sys\n'
+                          'entry, marker, staged = sys.argv[1], sys.argv[2], sys.argv[3]\n'
+                          'source = open(entry, "rb").read()\n'
+                          'del sys.modules["os"]\n'
+                          'sys.path.insert(0, staged)\n'
+                          'exec(compile(source, entry, "exec"), '
+                          '{"__file__": entry, "__name__": "__main__"})\n')
+        with tempfile.TemporaryDirectory(prefix='b2-osguard-') as temp:
+            holder = Path(temp)
+            staged = holder / 'entry.py'
+            staged.write_text(guard_prefix() + "\nprint('REACHED')\n")
+            forge = holder / 'forge'
+            forge.mkdir()
+            (forge / 'os.py').write_text(forged)
+            marker_path = holder / 'forged.marker'
+            for label, probe in (('version', version_probe), ('unloaded', unloaded_probe)):
+                with self.subTest(probe=label):
+                    marker_path.unlink(missing_ok=True)
+                    result = subprocess.run(
+                        [sys.executable, '-I', '-c', probe, str(staged),
+                         str(marker_path), str(forge)],
+                        capture_output=True, text=True, timeout=60)
+                    self.assertEqual(
+                        result.returncode, 1,
+                        marker + f' [{label}] rc={result.returncode}: ' + result.stderr[-300:])
+                    self.assertIn(preload, result.stdout + result.stderr, marker + f' [{label}]')
+                    self.assertFalse(marker_path.exists(),
+                                     marker + f' [{label}]: the forged os.py executed')
+
     def test_mixed_spelling_reinsertion_is_rejected(self):
         marker = '#1023-10: a mixed-spelling reinsertion must be rejected'
         with tempfile.TemporaryDirectory(prefix='b2-guard-') as temp:
@@ -379,7 +425,7 @@ class EntryGuardTests(unittest.TestCase):
             entry.write_text(guard_prefix() + "\nprint('REACHED')\n")
             link = Path(temp) / 'linked'
             link.symlink_to(holder, target_is_directory=True)
-            cases = [('sys.path real, entry symlink', holder, link / 'entry.py')]
+            spellings = [('sys.path real, entry symlink', holder, link / 'entry.py')]
             alias = holder.with_name(holder.name.upper())
             if alias.is_dir():
                 try:
@@ -387,20 +433,35 @@ class EntryGuardTests(unittest.TestCase):
                 except OSError:
                     same = False
                 if same:
-                    cases.append(('sys.path case alias, entry real', alias, entry))
-                    cases.append(('sys.path real, entry case alias', holder,
+                    spellings.append(('sys.path case alias, entry real', alias, entry))
+                    spellings.append(('sys.path real, entry case alias', holder,
                                   alias / 'entry.py'))
-            for label, path_dir, entry_path in cases:
+            for label, path_dir, entry_path in spellings:
                 with self.subTest(case=label):
                     result = self.run_reinserted(path_dir, entry_path)
                     self.assertEqual(result.returncode, 1,
                                      marker + f' [{label}] rc={result.returncode}')
                     self.assertIn('run with -I', result.stderr, marker + f' [{label}]')
             real = Path(__file__).resolve()
-            for label, path_dir in (
-                    ('fixture directory', self.here),
-                    ('B2 apparatus directory',
-                     self.here.parents[4] / 'scripts/ui-server-parity')):
+            controls_dir = self.here.parents[4] / 'scripts/ui-server-parity/controls'
+            controls_link = Path(temp) / 'controls-link'
+            controls_link.symlink_to(controls_dir, target_is_directory=True)
+            matrix = [
+                ('fixture directory', self.here),
+                ('B2 apparatus directory',
+                 self.here.parents[4] / 'scripts/ui-server-parity'),
+                ('B2 controls directory', controls_dir),
+                ('B2 controls symlink', controls_link),
+            ]
+            controls_alias = controls_dir.with_name(controls_dir.name.upper())
+            if controls_alias.is_dir():
+                try:
+                    same = os.path.samefile(controls_alias, controls_dir)
+                except OSError:
+                    same = False
+                if same:
+                    matrix.append(('B2 controls case alias', controls_alias))
+            for label, path_dir in matrix:
                 with self.subTest(case=label):
                     result = self.run_reinserted(path_dir, real)
                     self.assertEqual(result.returncode, 1, marker + f' [{label}]')
