@@ -1,0 +1,348 @@
+{
+  "nodeVersion": "v22.22.0",
+  "kind": "real-sdk-method-validation-no-lifecycle",
+  "sourceSha256": {
+    "packages/sdk/src/client.ts": "7dc380d0a7e0d3ac1d97210a36b2a18855d27936de9c12ea6cedf74f75e92c2a",
+    "packages/sdk/dist/client.js": "1fe1552964726337893b6f294552a385c5cdf5d16a0530e32b5d17f256a2bc49",
+    "packages/sdk/src/transport.ts": "793e38f0273836621c54a6bf9fb19645e4924343be9e6825d1fd06227136cb7f",
+    "packages/sdk/dist/transport.js": "065e0c379092571710f7ca3a2e02d9e417e43029fb8f4fadc1e305f7dc105d87"
+  },
+  "models": [
+    {
+      "input": {
+        "name": "disabled",
+        "model": "alias",
+        "items": [
+          {
+            "id": "alias",
+            "provider": "fixture",
+            "model": "model",
+            "available": false
+          }
+        ]
+      },
+      "output": {
+        "error": "Model is not uniquely resolvable: alias"
+      }
+    },
+    {
+      "input": {
+        "name": "disabled-sibling",
+        "model": "alias",
+        "items": [
+          {
+            "id": "alias",
+            "provider": "wrong",
+            "model": "model",
+            "available": false
+          },
+          {
+            "id": "alias",
+            "provider": "fixture",
+            "model": "model"
+          }
+        ]
+      },
+      "output": {
+        "value": {
+          "mode": "model",
+          "provider": "fixture",
+          "model": "model"
+        }
+      }
+    },
+    {
+      "input": {
+        "name": "ambiguous",
+        "model": "model",
+        "items": [
+          {
+            "id": "alias",
+            "provider": "fixture",
+            "model": "model"
+          },
+          {
+            "id": "alias",
+            "provider": "other",
+            "model": "model"
+          }
+        ]
+      },
+      "output": {
+        "error": "Model is not uniquely resolvable: model"
+      }
+    },
+    {
+      "input": {
+        "name": "missing-provider",
+        "model": "alias",
+        "items": [
+          {
+            "id": "alias",
+            "model": "model"
+          }
+        ]
+      },
+      "output": {
+        "error": "Model is not uniquely resolvable: alias"
+      }
+    },
+    {
+      "input": {
+        "name": "missing-model",
+        "model": "alias",
+        "items": [
+          {
+            "id": "alias",
+            "provider": "fixture"
+          }
+        ]
+      },
+      "output": {
+        "error": "Model is not uniquely resolvable: alias"
+      }
+    },
+    {
+      "input": {
+        "name": "missing-both",
+        "model": "undefined/undefined",
+        "items": [
+          {}
+        ]
+      },
+      "output": {
+        "error": "Model is not uniquely resolvable: undefined/undefined"
+      }
+    },
+    {
+      "input": {
+        "name": "undefined-pair-sibling",
+        "model": "undefined/undefined",
+        "items": [
+          {},
+          {
+            "id": "undefined/undefined",
+            "provider": "fixture",
+            "model": "model"
+          }
+        ]
+      },
+      "output": {
+        "error": "Model is not uniquely resolvable: undefined/undefined"
+      }
+    },
+    {
+      "input": {
+        "name": "empty-provider",
+        "model": "alias",
+        "items": [
+          {
+            "id": "alias",
+            "provider": "",
+            "model": "model"
+          }
+        ]
+      },
+      "output": {
+        "error": "Model is not uniquely resolvable: alias"
+      }
+    },
+    {
+      "input": {
+        "name": "empty-model",
+        "model": "alias",
+        "items": [
+          {
+            "id": "alias",
+            "provider": "fixture",
+            "model": ""
+          }
+        ]
+      },
+      "output": {
+        "error": "Model is not uniquely resolvable: alias"
+      }
+    },
+    {
+      "input": {
+        "name": "by-pair",
+        "model": "fixture/model",
+        "items": [
+          {
+            "id": "alias",
+            "provider": "fixture",
+            "model": "model"
+          }
+        ]
+      },
+      "output": {
+        "value": {
+          "mode": "model",
+          "provider": "fixture",
+          "model": "model"
+        }
+      }
+    },
+    {
+      "input": {
+        "name": "by-id",
+        "model": "alias",
+        "items": [
+          {
+            "id": "alias",
+            "provider": "fixture",
+            "model": "model"
+          }
+        ]
+      },
+      "output": {
+        "value": {
+          "mode": "model",
+          "provider": "fixture",
+          "model": "model"
+        }
+      }
+    },
+    {
+      "input": {
+        "name": "by-name",
+        "model": "model",
+        "items": [
+          {
+            "id": "alias",
+            "provider": "fixture",
+            "model": "model"
+          }
+        ]
+      },
+      "output": {
+        "value": {
+          "mode": "model",
+          "provider": "fixture",
+          "model": "model"
+        }
+      }
+    }
+  ],
+  "sequences": [
+    {
+      "input": {
+        "name": "first",
+        "previous": -1,
+        "seq": 0
+      },
+      "output": {
+        "sequence": 0
+      }
+    },
+    {
+      "input": {
+        "name": "next",
+        "previous": 0,
+        "seq": 1
+      },
+      "output": {
+        "sequence": 1
+      }
+    },
+    {
+      "input": {
+        "name": "duplicate",
+        "previous": 0,
+        "seq": 0
+      },
+      "output": {
+        "sequence": null
+      }
+    },
+    {
+      "input": {
+        "name": "older",
+        "previous": 1,
+        "seq": 0
+      },
+      "output": {
+        "sequence": null
+      }
+    },
+    {
+      "input": {
+        "name": "gap-first",
+        "previous": -1,
+        "seq": 1
+      },
+      "output": {
+        "error": "Gateway event sequence gap for validation: expected 0, received 1."
+      }
+    },
+    {
+      "input": {
+        "name": "gap-later",
+        "previous": 0,
+        "seq": 2
+      },
+      "output": {
+        "error": "Gateway event sequence gap for validation: expected 1, received 2."
+      }
+    },
+    {
+      "input": {
+        "name": "negative",
+        "previous": -1,
+        "seq": -1
+      },
+      "output": {
+        "error": "Gateway event sequence must be a non-negative integer for validation."
+      }
+    },
+    {
+      "input": {
+        "name": "fractional",
+        "previous": -1,
+        "seq": 0.5
+      },
+      "output": {
+        "error": "Gateway event sequence must be a non-negative integer for validation."
+      }
+    },
+    {
+      "input": {
+        "name": "missing",
+        "previous": -1
+      },
+      "output": {
+        "error": "Gateway event sequence must be a non-negative integer for validation."
+      }
+    },
+    {
+      "input": {
+        "name": "null",
+        "previous": -1,
+        "seq": null
+      },
+      "output": {
+        "error": "Gateway event sequence must be a non-negative integer for validation."
+      }
+    },
+    {
+      "input": {
+        "name": "string",
+        "previous": -1,
+        "seq": "0"
+      },
+      "output": {
+        "error": "Gateway event sequence must be a non-negative integer for validation."
+      }
+    },
+    {
+      "input": {
+        "name": "boolean",
+        "previous": -1,
+        "seq": false
+      },
+      "output": {
+        "error": "Gateway event sequence must be a non-negative integer for validation."
+      }
+    }
+  ]
+}

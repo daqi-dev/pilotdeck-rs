@@ -31,3 +31,13 @@ PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck node src/pilotdeck-c
 ```
 
 负控位于 `src/pilotdeck-gateway/tests/fixtures/sdk-run/negative_controls.py`，与既有共享执行器/扫描器同目录树。只接受调用方 CARGO_TARGET_DIR，先 no-run 再运行并绑定 nonce 收据，逐项汇总。新增源码未提交时 HEAD 守卫必须拒绝；本包不绕过，提交后由协调者先全量 `--compile-only`，再跑 `drop-stdin` 一个样本，余项按宿主资源安排。
+
+## fix-r1 边界补充
+
+`../sdk-run-validation/` 直接调用真实 SDK 的模型解析与序号处理方法，补 12 个模型格和 12 个序号格。它只证明字段选择/验证，不证明异常 query 的 socket 生命周期。Rust 的两个纯验证函数由实际 run/stream 路径调用；单测逐字比较 Node 观测结果，独立 ignored 重生成守卫重新执行真实 TS。
+
+`run_token_file_reaches_gateway` 持有相同端口租约，验证有效 token 文件进入网络路径后的拒绝连接字节；成功路径仍由 `run--token-file` 原金样回放。旧 preflight 测试不再保留 P02 run 占位断言。
+
+stdin 仍是明确缺口：Rust 在 current_thread 运行时同步 `read_to_end`；control 在等待 stdin 和 query 期间没有独立轮询。TS `sdkCli.ts` 使用异步文件读取且未设置字节上限（本轮仅读码，未实测慢 stdin/心跳/取消）。只换 spawn_blocking 不能补 control 轮询；完整修复须补永不 EOF、取消、ping 和内存策略矩阵，前置于 #123 P06–P08 生命周期验收。本轮不擅增字节上限。
+
+负控表以 `--check` 输出为准。三个产品变异常量已删除；runner 对真实表达式/代码块变异，并增加纯函数模型/序号和 canPrompt/canElicit/旧占位回退配对。HEAD 守卫拒绝本轮未提交新文件时，先提交再由协调者运行 `--compile-only` 全表和负控全表；拒绝不是编译通过或 KILLED。

@@ -4,9 +4,9 @@
 //! (`_tmp/20261028-issue-123-d1/plan/raw/host-b*/cases/<grid>/`, Node v22.22.0,
 //! coordinator host runs) after removing the registered Node SQLite
 //! ExperimentalWarning (`scripts/cli-parity/compare.py:29-30`). Grid ids in
-//! assertion messages name the original each row pins. Network outcomes are
-//! P02+ and stay TODO placeholders; only the locally observable preflight
-//! behavior is asserted here.
+//! assertion messages name the original each row pins. Network outcomes,
+//! including run token-file success/refusal, are covered by sdk_run_exit;
+//! only locally observable preflight behavior is asserted here.
 use std::{
     fs,
     io::Write,
@@ -25,7 +25,6 @@ const SESSIONS_USAGE: &str = "Usage: pilotdeck sessions <list|messages> ...\n";
 const RESUME_USAGE: &str = "Usage: pilotdeck resume <session-id> <prompt>\n";
 const MESSAGES_USAGE: &str = "Usage: pilotdeck sessions messages <session-id>\n";
 const SETTINGS_JSON_FLAG_ERROR: &str = "Invalid settings JSON: Unexpected non-whitespace character after JSON at position 21 (line 1 column 22)\n";
-const TODO_PREFIX: &str = "pilotdeck-rs TODO: ";
 
 fn fixture(tag: &str) -> PathBuf {
     let root =
@@ -221,24 +220,8 @@ fn token_source_errors_match_ts_bytes() {
         );
     }
 
-    // run--token-file: the file source satisfies preflight, so the run leaves
-    // the local path and stops at the P02 TODO placeholder (exit 2).
-    fs::write(
-        root.join("pilot/server-token"),
-        " \nd1-fixture-not-a-secret\t\n",
-    )
-    .expect("#982 write token file");
-    let output = spawn(&root, &["run", "fixture prompt"], &[]);
-    assert_eq!(
-        output.status.code(),
-        Some(2),
-        "#982 run--token-file: preflight passes, P02 TODO exit"
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stderr),
-        format!("{TODO_PREFIX}pilotdeck run (SDK sessions.create) is not implemented yet.\n"),
-        "#982 run--token-file: TODO stderr"
-    );
+    // A valid token file enters the network path; sdk_run_exit owns that
+    // coverage under its shared parity lease and bounded child lifecycle.
     fs::remove_dir_all(root).expect("#982 remove token fixture");
 }
 
