@@ -6,7 +6,7 @@
 
 装置目录 `scripts/ui-server-parity/` 与 `scripts/exp008/` 的实际文件必须**恰好等于 Git 跟踪内容**，两目录的全部跟踪文件都进入 FROZEN 和 capture hash。精确名为 `.DS_Store` 的普通文件不执行、不登记、不参与 hash；同名链接、目录或特殊文件仍 FAIL。除此以外任何多余/未跟踪文件（含被 .gitignore 忽略的文件）、缺失跟踪文件、符号链接（目录/文件/断链）、`.pyc`、`__pycache__` 或非普通文件均 FAIL。递归扫描不跟随链接，不以排除缓存或影子模块的方式继续运行。审批清单 FROZEN.md 自身不进入 capture hash。
 
-所有 B2 Python 入口和 Python 子进程使用 `python3 -I`，隐含 `-E -s`；入口先断言 isolated、ignore_environment、no_user_site 和 `sys.pycache_prefix is None`，不带 `-I` 或显式 `-X pycache_prefix` 均 FAIL。`PYTHONPATH`、`PYTHONHOME`、`PYTHONUSERBASE`、`PYTHONPYCACHEPREFIX` 等环境变量由解释器忽略。入口在执行装置预检源码前先校验其 FROZEN 哈希；清单缺失时只允许与 HEAD 相同的装置源码，checker 仍返回 DRAFT/2。本目录模块由显式绝对路径的源码加载器校验哈希后执行，不走 pyc，也不把装置目录加入 sys.path。B1 compare/run 同样先验哈希，加载结束恢复 sys.path 和 compare 模块绑定；reconcile 子进程也带 `-I`。关闭字节码写入；unittest 的第一个测试由标准库 discovery 导入，因此测试命令额外带 `-B`，避免在入口代码执行前写缓存（`-I` 会忽略 PYTHONDONTWRITEBYTECODE 环境变量）。
+所有 B2 Python 入口和 Python 子进程使用 `python3 -I`，隐含 `-E -s`；入口先断言 isolated、ignore_environment、no_user_site、`sys.pycache_prefix is None`，且装置目录（含 `controls/`）不在 `sys.path`，不带 `-I`、显式 `-X pycache_prefix` 或把装置目录重新插入 `sys.path`（`unittest discover` 即如此）均 FAIL。`PYTHONPATH`、`PYTHONHOME`、`PYTHONUSERBASE`、`PYTHONPYCACHEPREFIX` 等环境变量由解释器忽略。入口在执行装置预检源码前先校验其 FROZEN 哈希；清单缺失时只允许与 HEAD 相同的装置源码，checker 仍返回 DRAFT/2。本目录模块由显式绝对路径的源码加载器校验哈希后执行，不走 pyc，也不把装置目录加入 sys.path。B1 compare/run 同样先验哈希，加载结束恢复 sys.path 和 compare 模块绑定；reconcile 子进程也带 `-I`。关闭字节码写入；测试入口逐个文件直接执行（每个文件都带 `unittest.main()`），文档命令不得使用 `unittest discover` 或 `-m unittest`，因为 discovery 会在入口守卫执行前把测试目录插回 `sys.path`。`-I` 与入口内的 `sys.dont_write_bytecode` 已覆盖缓存写入，无需额外 `-B`。
 
 正式定标开始、每遍前后及续跑均要求装置路径 `git status --porcelain --untracked-files=all` 为空（含四份规约及 FROZEN），并在 batch.json 记录 HEAD；HEAD 与批次记录不同即拒绝，必须另建批次。根目录 `rust-toolchain` / `rust-toolchain.toml` 若存在必须为 Git 跟踪的普通文件，纳入 FROZEN、capture hash 和 Git admission。每批独占全新 `batch/cargo-target/` 与 `batch/cargo-home/`，已存在的 target 一律拒绝；Cargo 使用该目录构建，记录 target 路径、产物路径与 SHA256。每遍 run 只使用本批校验通过的产物，续跑不重建、不复用 `_build` 的旧产物；独立 run 也在其新输出目录内构建新 target。
 
@@ -15,10 +15,15 @@
 离线验证（不监听）：
 
 ```sh
-python3 -I -B -m unittest discover -s scripts/ui-server-parity -p 'test_*.py'
+python3 -I scripts/ui-server-parity/test_calibrate.py
+python3 -I scripts/ui-server-parity/test_compare.py
+python3 -I scripts/ui-server-parity/test_coverage.py
+python3 -I scripts/ui-server-parity/test_frozen.py
+python3 -I scripts/ui-server-parity/test_multimodal.py
+python3 -I scripts/ui-server-parity/test_recording.py
 python3 -I scripts/ui-server-parity/controls/run_all.py --out _tmp/b2-controls.json
 python3 -I scripts/ui-server-parity/check_frozen.py --self-test
-python3 -I scripts/ui-server-parity/check_frozen.py  # 草稿哈希正确时退出 2
+python3 -I scripts/ui-server-parity/check_frozen.py  # 已登记时 PASS/0；草稿为 DRAFT/2
 python3 -I scripts/ui-server-parity/benchmark_clock.py
 bash -n scripts/ui-server-parity/calibrate.sh
 bash scripts/ui-server-parity/calibrate.sh --preflight

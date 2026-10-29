@@ -22,8 +22,23 @@ traceback's source echo, another test's block, plain stdout) is not evidence,
 and an abnormal exit (a signal, no unittest summary, an unexpected exit code)
 is INVALID, never KILLED.
 """
+import os as _boot_os
+import sys as _boot_sys
+
+# #1023: -I keeps the fixture search paths out of module resolution. Reject a
+# non-isolated launch and any reinsertion of this directory or tests/fixtures
+# (unittest discover does exactly that) before importing anything else, so a
+# same-named module next to this file can never execute as a bootstrap.
+_boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
+_boot_roots = {_boot_dir, _boot_os.path.dirname(_boot_dir)}
+if not _boot_sys.flags.isolated or any(
+        _boot_os.path.realpath(entry or _boot_os.curdir) in _boot_roots
+        for entry in _boot_sys.path):
+    raise SystemExit(f'#1023: unsafe import path; run with -I by file: python3 -I {__file__}')
+
 import argparse
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import py_compile
@@ -31,8 +46,15 @@ import re
 import sys
 import tempfile
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned
+# Load the shared guard by explicit absolute path, register it, then bind the
+# names. The guard above proved no fixture directory is on sys.path, so the
+# from-import below resolves through sys.modules and cannot find an imposter.
+_boot_module_path = Path(__file__).resolve().parents[1] / 'negative_process.py'
+_boot_spec = importlib.util.spec_from_file_location('negative_process', _boot_module_path)
+_boot_module = importlib.util.module_from_spec(_boot_spec)
+sys.modules['negative_process'] = _boot_module
+_boot_spec.loader.exec_module(_boot_module)
+from negative_process import mutating_sources, run_owned  # noqa: E402
 
 root = Path(__file__).resolve().parents[5]
 policy = root / 'scripts/cli-parity/policy.py'
