@@ -161,7 +161,7 @@ fn error(e: FileMemoryError) -> JsValue {
             JsValue::Object(obj(&[("error", string(code))]))
         }
         e => JsValue::Object(obj(&[
-            ("error", string("Error")),
+            ("error", string(e.js_name())),
             ("message", JsValue::String(e.js_message())),
         ])),
     }

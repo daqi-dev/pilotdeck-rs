@@ -91,7 +91,7 @@ feature 也不会激活。既有测试文件在 feature 下同时作为库内的
 交错；新执行器使用 `--exact --include-ignored` 在独立进程中逐条执行它们。
 
 `schemata.py` 从 Cargo JSON 获取本次 feature 库测试的 executable，只编译
-一次；24 项复用 `negative.py` 的名称、绑定测试、专属断言、witness 和共享
+一次；28 项复用 `negative.py` 的名称、绑定测试、专属断言、witness 和共享
 `negative_suite.classify`。保留 fixture panic 文件约束（库内 inclusion 的
 路径显式为 `src/../tests`）。每项启动独立进程，正控和恢复正控清除选择变量；
 超时/错断言/编译错误记 INVALID 后继续，最后任一非 KILLED 即非零退出。
@@ -118,4 +118,18 @@ python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-service-facade/test_schema
 `switch_negative.py` 为默认恒 false / 精确 selector 两条新增检查提供源码
 负控；必须提交后才能运行（新 mutants.rs 不在 HEAD 时拒跑）。每个变异
 先 no-run 再运行绑定测试，异常汇总并恢复。新机制一次 no-run 已同时类型检查
-全部 23 个 Rust 分支；第 24 项 TS encoder 由 ignored verifier 实跑。
+全部 27 个 Rust 分支；另 1 项 TS encoder 由 ignored verifier 实跑。
+
+## #975 延后 get(maxLines) 转换
+
+`get-maxlines-order-975` 金样记录空 ids、缺失记录、过滤后为空、非法 ids、
+有效 workspace/global 记录和未知 external。直接 FileMemoryStore 的同名金样
+保留独立语义：`ids.map` 错误；空路径先报 EISDIR；无效 markdown 被过滤。
+两份 oracle 均由 Node v22.22.0 的真实 TS 生成，原始读取顺序探针见本单
+`_tmp/20261026-issue-975/plan.md`（交接时保存，不入提交）。
+
+六项 `_975` 专属测试补齐 workspace/global/external 有效记录与文件读取错误
+先于转换的顺序。四个新增编译期开关恢复 service/store 提前转换、跳过有效
+记录转换、吞掉非法 ids；沿用本目录 `schemata.py`，一次 feature no-run 同时
+编译全部开关，逐项正控/负控/恢复，不改源码。三个旧 coercion 负控锚点同步；
+原地替换 `negative.py` 仍须源码等于 HEAD，提交后由协调者在宿主执行。

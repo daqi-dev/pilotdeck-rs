@@ -4140,6 +4140,351 @@
         "memory": [],
         "global": []
       }
+    },
+    {
+      "name": "get-maxlines-order-975",
+      "options": null,
+      "seeds": [
+        {
+          "store": "workspace",
+          "method": "upsertCandidate",
+          "input": {
+            "type": "project",
+            "scope": "project",
+            "name": "Alpha note",
+            "description": "Alpha note description",
+            "summary": "Alpha note summary",
+            "profile": "Alpha note profile",
+            "capturedAt": "2026-10-22T00:00:00.000Z",
+            "sourceSessionKey": "seed-session"
+          }
+        },
+        {
+          "store": "global",
+          "method": "upsertCandidate",
+          "input": {
+            "type": "user",
+            "scope": "global",
+            "name": "User order",
+            "description": "User order description",
+            "summary": "User order summary",
+            "profile": "User order profile",
+            "capturedAt": "2026-10-22T00:00:00.000Z",
+            "sourceSessionKey": "seed-session"
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "get",
+          "args": {
+            "ids": [],
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/missing.md"
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "",
+              " ",
+              null,
+              1,
+              false
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": null,
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": {},
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": {
+              "$type": "undefined"
+            },
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "global/UserIdentity/missing.md"
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "global/UserIdentityNotes/user-order-5cd581d9f0.md"
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "external:unknown:Project/missing.md"
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "inputPaths": {
+        "workspace": "workspace",
+        "rootDir": "root"
+      },
+      "paths": {
+        "workspace": "$ROOT/get-maxlines-order-975/workspace",
+        "rootDir": "$ROOT/get-maxlines-order-975/root",
+        "dataDir": "$ROOT/get-maxlines-order-975/root/workspaces/$HASH",
+        "dbPath": "$ROOT/get-maxlines-order-975/root/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/get-maxlines-order-975/root/workspaces/$HASH/memory"
+      },
+      "steps": [
+        {
+          "op": "get",
+          "args": {
+            "ids": [],
+            "maxLines": {
+              "toString": null
+            }
+          },
+          "ok": true,
+          "value": []
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/missing.md"
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          },
+          "ok": true,
+          "value": []
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "",
+              " ",
+              null,
+              1,
+              false
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          },
+          "ok": true,
+          "value": []
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": null,
+            "maxLines": {
+              "toString": null
+            }
+          },
+          "ok": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Cannot read properties of null (reading 'filter')"
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": {},
+            "maxLines": {
+              "toString": null
+            }
+          },
+          "ok": false,
+          "error": {
+            "name": "TypeError",
+            "message": "ids.filter is not a function"
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": {
+              "$type": "undefined"
+            },
+            "maxLines": {
+              "toString": null
+            }
+          },
+          "ok": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Cannot read properties of undefined (reading 'filter')"
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "Project/alpha-note-c8acc71a5e.md"
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          },
+          "ok": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Cannot convert object to primitive value"
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "global/UserIdentity/missing.md"
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          },
+          "ok": true,
+          "value": []
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "global/UserIdentityNotes/user-order-5cd581d9f0.md"
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          },
+          "ok": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Cannot convert object to primitive value"
+          }
+        },
+        {
+          "op": "get",
+          "args": {
+            "ids": [
+              "external:unknown:Project/missing.md"
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          },
+          "ok": true,
+          "value": []
+        },
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        }
+      ],
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/get-maxlines-order-975/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": []
+      },
+      "files": {
+        "memory": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Alpha note](project.meta.md) — Alpha note description\n\n## Project Memory\n- [Alpha note](Project/alpha-note-c8acc71a5e.md) — Alpha note description\n"
+          },
+          {
+            "relativePath": "Project/alpha-note-c8acc71a5e.md",
+            "content": "---\nname: Alpha note\ndescription: Alpha note description\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: seed-session\n---\n## Summary\nAlpha note summary\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Alpha note\ndescription: Alpha note description\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nAlpha note description\n"
+          }
+        ],
+        "global": [
+          {
+            "relativePath": "UserIdentityNotes/user-order-5cd581d9f0.md",
+            "content": "---\nname: User order\ndescription: User order description\ntype: user\nscope: global\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: seed-session\n---\n## 身份背景\n- User order profile\n"
+          }
+        ]
+      }
     }
   ]
 }

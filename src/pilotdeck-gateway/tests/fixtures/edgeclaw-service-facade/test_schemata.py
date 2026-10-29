@@ -100,7 +100,7 @@ class SchemataTests(unittest.TestCase):
     def test_environment_and_request_validation(self):
         env = runner.clean_environment({'PDRS_MUTANT': 'bad', 'PDRS_FACADE_ENCODER_MUTANT': 'bad', 'KEEP': 'yes'})
         self.assertEqual(env, {'KEEP': 'yes'})
-        self.assertEqual(len(runner.selected_rows([])), 24)
+        self.assertEqual(len(runner.selected_rows([])), 28)
         for request in (['missing'], ['default-root-dir', 'default-root-dir']):
             with self.assertRaises(ValueError):
                 runner.selected_rows(request)

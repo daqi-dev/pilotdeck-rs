@@ -1011,6 +1011,9 @@ impl Core {
         Ok(entries)
     }
     fn records(&self, ids: &[String], max_lines: f64) -> Result<Vec<JsObject>> {
+        self.records_raw(ids, &JsValue::Number(max_lines))
+    }
+    fn records_raw(&self, ids: &[String], max_lines: &JsValue) -> Result<Vec<JsObject>> {
         let mut records = vec![];
         for id in ids {
             let Some(mut e) = self.entry(id)? else {
@@ -1018,6 +1021,12 @@ impl Core {
             };
             let Some((_, body)) = self.parsed(id)? else {
                 continue;
+            };
+            // `trimContentLines` is reached only after both file reads succeed.
+            let max_lines = if crate::mutants::on("file-get-maxlines-skip") {
+                80.0
+            } else {
+                super::storage::overview::to_number(max_lines)?
             };
             let full = crate::metadata::js_trim(&body);
             let normalized = full.replace("\r\n", "\n");
@@ -1761,28 +1770,44 @@ impl Core {
             "listMemoryEntries" => objects(self.list(input)?),
             "countMemoryEntries" => num(self.list(input)?.len()),
             "getMemoryRecordsByIds" => {
-                // Same TS default rule as `service.get`: only `undefined` takes
-                // 80; `trimContentLines` coerces every other value with Number().
+                // Defaulting does not convert: missing records never inspect maxLines.
                 let max_lines = match input.get("maxLines") {
-                    None | Some(JsValue::Undefined) => 80.0,
+                    None | Some(JsValue::Undefined) => JsValue::Number(80.0),
                     Some(value) if crate::mutants::on("file-memory-nonnumber-maxlines") => {
-                        value.as_number().unwrap_or(80.0)
+                        JsValue::Number(value.as_number().unwrap_or(80.0))
                     }
-                    Some(value) => {
-                        crate::runtime::memory::edgeclaw::storage::overview::to_number(value)?
+                    Some(value) => value.clone(),
+                };
+                if crate::mutants::on("file-get-maxlines-early") {
+                    super::storage::overview::to_number(&max_lines)?;
+                }
+                let undefined = JsValue::Undefined;
+                let ids = match input.get("ids").unwrap_or(&undefined) {
+                    JsValue::Array(ids) => ids,
+                    _ if crate::mutants::on("file-get-ids-unchecked") => {
+                        return Ok(objects(vec![]));
                     }
+                    JsValue::Undefined => {
+                        return Err(FileMemoryError::Type(
+                            "Cannot read properties of undefined (reading 'map')".into(),
+                        ));
+                    }
+                    JsValue::Null => {
+                        return Err(FileMemoryError::Type(
+                            "Cannot read properties of null (reading 'map')".into(),
+                        ));
+                    }
+                    _ => return Err(FileMemoryError::Type("ids.map is not a function".into())),
                 };
                 let mut result = vec![];
-                if let Some(JsValue::Array(ids)) = input.get("ids") {
-                    for id in ids.iter().filter_map(JsValue::as_string) {
-                        if let Some(mut record) = self
-                            .records(&[String::from_utf16_lossy(id.units())], max_lines)?
-                            .into_iter()
-                            .next()
-                        {
-                            self.api_path(&mut record, id);
-                            result.push(record);
-                        }
+                for id in ids.iter().filter_map(JsValue::as_string) {
+                    if let Some(mut record) = self
+                        .records_raw(&[String::from_utf16_lossy(id.units())], &max_lines)?
+                        .into_iter()
+                        .next()
+                    {
+                        self.api_path(&mut record, id);
+                        result.push(record);
                     }
                 }
                 objects(result)

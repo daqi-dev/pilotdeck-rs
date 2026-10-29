@@ -68,3 +68,18 @@ export function readBack(store: any) {
   const entries = store.listMemoryEntries({kinds:['user','project','feedback','general_project_meta'],includeDeprecated:true,limit:5000});
   return {rootDir:store.getRootDir(),workspaceMode:store.getWorkspaceMode(),generalMode:store.isGeneralMode(),profilePath:store.getUserProfileRelativePath(),entries,records:store.getMemoryRecordsByIds(entries.map((e:any)=>e.relativePath),5000),summary:store.getUserSummary(),metas:store.listProjectMetas(),hints:store.listProjectIdentityHints(),overview:store.getOverview('2026-10-20'),bundle:store.exportBundleRecords(),version:store.getSnapshotVersion('2026-10-20'),snapshot:store.exportSnapshotFiles()};
 }
+
+// #975: the direct store maps ids, then filters missing/invalid records. It does
+// not apply the repository's string/blank-id filter before reading the paths.
+export function maxLinesOrderOperations() {
+  const op = (method: string, input: any) => ({method, input});
+  const badLimit = {toString: null};
+  return [
+    op('writeRaw', {relativePath: 'Project/invalid.md', content: 'invalid'}),
+    op('writeRaw', {relativePath: 'Project/valid.md', content: '---\nname: valid\ndescription: valid\ntype: project\nscope: project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\none\ntwo\n'}),
+    ...[[], ['Project/missing.md'], ['Project/invalid.md'], null, {},
+      [''], ['Project/valid.md']].map(ids => op('getMemoryRecordsByIds', {ids, maxLines: badLimit})),
+    // Missing ids must retain the undefined receiver's map error.
+    op('getMemoryRecordsByIds', {maxLines: badLimit}),
+  ];
+}
