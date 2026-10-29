@@ -52,11 +52,14 @@ only by `allStopped`/`cleanupPending`, never by rewriting a scoring field.
 
 `RunnerInvalidationControls` drives the mutation runner itself.  Per-row
 results are kept in memory; `summary.json` is published exactly once, after
-`mutating_sources` restored and byte-verified every guarded file, and an old
-`summary.json` is deleted before the run starts (before
-`new_output_directory`'s non-empty check; a directory holding only that file
-becomes usable, while other evidence still triggers the normal refusal).  A
-guard failure after the last row publishes `INVALID`; a `KeyboardInterrupt` or
+`mutating_sources` restored and byte-verified every guarded file.  Nothing in
+the target directory is deleted or renamed before `new_output_directory`
+admits it: a directory holding an old `summary.json` — alone or together with
+other evidence — gets the normal non-empty refusal (#953) with every byte
+preserved, so a mistyped `--output` cannot destroy another run's result; and a
+successfully admitted directory is always empty, so a previous success cannot
+be inherited either (#209 E1 r4 P0).  A guard failure after the last row
+publishes `INVALID`; a `KeyboardInterrupt` or
 `SystemExit` during the guard exit voids the same rows and is then re-raised;
 a SIGINT inside that void publish leaves no summary at all (missing means
 failure, never the old all-KILLED file); and the guard set must carry both
@@ -118,9 +121,11 @@ The fifteen mutants are:
   SIGINT in the later void publish leaves the all-KILLED file; the bound test
   must fail at `#209 P0-3 an interrupt during the void publish must not leave a
   readable KILLED summary`.
-- `e1-runner-stale-summary-kept` — removes the startup retirement, so a previous
-  all-KILLED `summary.json` is still readable when this run's void publish is
-  interrupted; the same bound test must fail at the same `#209 P0-3` message.
+- `e1-runner-retire-before-admission` — puts the pre-admission retirement back
+  (`--output`'s `summary.json` is unlinked before `new_output_directory` runs),
+  so pointing at another run's evidence directory destroys its summary and is
+  only then refused; the bound test must fail at `#209 P0-4 a pre-existing
+  evidence directory must be refused with every byte preserved`.
 
 Every mutant is compiled before its bound positive runs.  Rows report
 `KILLED` / `SURVIVED` / `INVALID` and the run continues to the last selected

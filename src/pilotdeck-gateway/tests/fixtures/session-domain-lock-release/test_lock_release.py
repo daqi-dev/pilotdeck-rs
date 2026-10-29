@@ -21,6 +21,7 @@ sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-e1-lock-pyc-')
 sys.dont_write_bytecode = True
 
 import contextlib
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -321,11 +322,23 @@ class LockReleaseControls(unittest.TestCase):
                          '#209 a real empty group must release the shared lock')
 
     def test_existing_output_directory_is_not_reused(self):
+        # The real admission, not pathlib: a directory that already holds
+        # evidence is refused (#953) and keeps every byte.  The runner must
+        # never retire an old summary before this check (r4 P0).
         folder = self.root / 'existing-output'
         folder.mkdir()
-        with self.assertRaises(FileExistsError,
-                               msg='#209 output directory reuse must be refused'):
-            folder.mkdir(parents=False, exist_ok=False)
+        (folder / 'summary.json').write_text('{"counts": {}}\n')
+        before = {path.name: path.read_bytes() for path in folder.iterdir()}
+        process = _load(
+            'negative_process_lock_release',
+            ROOT / 'src/pilotdeck-gateway/tests/fixtures/negative_process.py')
+        message = '#209 output directory reuse must be refused'
+        with self.assertRaises(SystemExit, msg=message) as caught:
+            process.new_output_directory(folder)
+        self.assertIn('#953 refusing to reuse a non-empty output directory',
+                      str(caught.exception), message)
+        self.assertEqual({path.name: path.read_bytes() for path in folder.iterdir()},
+                         before, message + ' with every byte kept')
 
 
 class RunnerInvalidationControls(unittest.TestCase):
@@ -446,10 +459,13 @@ class RunnerInvalidationControls(unittest.TestCase):
         The publish side is the review's read-only in-memory model: file
         operations are mocks and the SIGINT is a real Python signal raised
         from ``tmp.replace`` while the INVALID payload is being published.
-        The output path itself is a real directory holding an old all-KILLED
-        ``summary.json``, so this also proves startup retirement deletes a
-        previous success before the run starts.
+        Admission and pre-existing evidence are deliberately out of scope
+        here: ``new_output_directory`` is replaced by the model output, and
+        the target-directory lifecycle is pinned by
+        ``test_existing_evidence_is_refused_byte_identical`` (#209 E1 r4 P0).
         """
+        message = ('#209 P0-3 an interrupt during the void publish must not '
+                   'leave a readable KILLED summary')
         disk = {}
         files = {}
 
@@ -461,12 +477,6 @@ class RunnerInvalidationControls(unittest.TestCase):
         out = MagicMock(name='out')
         out.__truediv__.side_effect = entry
         tmp = entry('summary.json.tmp')
-        reuse = Path(tempfile.mkdtemp(prefix='reuse-', dir=self.root))
-        stale = reuse / 'summary.json'
-        stale.write_text(json.dumps({
-            'controls': [{'mutation': 'one', 'status': 'KILLED',
-                          'reason': '#209 stale success'}],
-            'counts': {'KILLED': 1, 'SURVIVED': 0, 'INVALID': 0}}) + '\n')
         tmp.write_text.side_effect = lambda payload: disk.update(staged=payload)
 
         def publish(_destination):
@@ -510,14 +520,11 @@ class RunnerInvalidationControls(unittest.TestCase):
                 run_owned=run_owned), \
                 patch.object(sys, 'argv',
                              [str(Path(self.runner.__file__)), '--output',
-                              str(reuse)]):
+                              str(self.root / 'void-publish')]):
             try:
                 code = self.runner.main()
             except BaseException as error:
                 code = error
-        message = ('#209 P0-3 an interrupt during the void publish must not '
-                   'leave a readable KILLED summary')
-        self.assertFalse(stale.exists(), message)
         try:
             summary = json.loads(disk['summary']) if 'summary' in disk else None
         except ValueError as error:
@@ -527,6 +534,63 @@ class RunnerInvalidationControls(unittest.TestCase):
             summary is None
             or summary['counts'] != {'KILLED': 1, 'SURVIVED': 0, 'INVALID': 0},
             message)
+
+    def test_existing_evidence_is_refused_byte_identical(self):
+        """P0-4: a pre-existing evidence directory is refused, never edited.
+
+        r4 P0: the runner used to delete ``summary.json`` before admission, so
+        a mistyped ``--output`` destroyed another run's result and only then
+        got the #953 refusal.  Both shapes are pinned here — the old summary
+        alone and the old summary next to other evidence — and every byte
+        (sha256) of the directory must survive.  The bound mutant puts the
+        pre-admission unlink back.
+        """
+        message = ('#209 P0-4 a pre-existing evidence directory must be refused '
+                   'with every byte preserved')
+        stale = json.dumps({
+            'controls': [{'mutation': 'one', 'status': 'KILLED',
+                          'reason': '#209 stale success'}],
+            'counts': {'KILLED': 1, 'SURVIVED': 0, 'INVALID': 0}}) + '\n'
+        for label, extra in (
+                ('summary-only', {}),
+                ('summary-and-evidence',
+                 {'e1-release-ungated-positive.log': 'Ran 1 test\nOK\n'})):
+            with self.subTest(case=label):
+                folder = Path(tempfile.mkdtemp(prefix='reuse-', dir=self.root))
+                (folder / 'summary.json').write_text(stale)
+                for name, text in extra.items():
+                    (folder / name).write_text(text)
+
+                def snapshot():
+                    return {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                            for path in sorted(folder.iterdir())}
+
+                before = snapshot()
+
+                def refuse(*_args, **_kwargs):
+                    # Any admitted directory would start the run; fail loudly
+                    # instead of touching this tree (#209 P0-4 message).
+                    raise RuntimeError('#209 P0-4 mutation must not start')
+
+                with patch.multiple(self.runner, mutating_sources=refuse), \
+                        patch.object(sys, 'argv',
+                                     [str(Path(self.runner.__file__)),
+                                      '--output', str(folder),
+                                      '--only', 'e1-release-ungated']):
+                    try:
+                        code = self.runner.main()
+                    except BaseException as error:
+                        code = error
+                after = snapshot()
+                self.assertEqual(
+                    after, before,
+                    f'{message}: the {label} directory was edited')
+                self.assertEqual(
+                    after.get('summary.json'), before['summary.json'],
+                    f'{message}: summary.json bytes changed ({label})')
+                self.assertIsInstance(code, SystemExit, f'{message} ({label})')
+                self.assertIn('#953 refusing to reuse a non-empty output directory',
+                              str(code), f'{message} ({label})')
 
     def test_runner_guards_session_and_common_without_outer_lease(self):
         """P1: one lease from mutating_sources and both protected sources."""
