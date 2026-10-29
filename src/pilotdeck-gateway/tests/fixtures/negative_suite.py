@@ -3,10 +3,12 @@
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 import subprocess
 
 import pending_reanchor as pending
 
+from negative_panic import named_test_failed, panic_evidence
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 
@@ -23,7 +25,12 @@ class Case:
 
 def passed(result, test):
     log = result.stdout + result.stderr
-    return (result.returncode == 0 and f'test {test} ... ok' in log
+    # `--nocapture` can interleave a test's stdout between the name and the
+    # status word (#938 r14), so accept the exact name but not an arbitrary
+    # suffix after `... ok`.
+    named_ok = re.search(r'^test ' + re.escape(test) + r' \.\.\..* ok$', log,
+                         re.MULTILINE)
+    return (result.returncode == 0 and named_ok is not None
             and 'test result: ok. 1 passed;' in log)
 
 
@@ -32,9 +39,17 @@ def classify(result, case):
     if passed(result, case.test):
         return 'SURVIVED', 'bound test still passed'
     anchors = case.assertion if isinstance(case.assertion, list) else [case.assertion]
-    if (result.returncode != 0 and 'test result: FAILED' in log
-            and f'test {case.test} ... FAILED' in log and 'panicked at' in log
-            and any(anchor in log for anchor in anchors)):
+    # #818/#819/#930: only the named test's own FAILED line plus its own panic
+    # payload can kill. A sibling test's panic, ordinary stdout, or the named
+    # test's `... ok` line is not evidence.
+    evidence = panic_evidence(log, case.test)
+    if (result.returncode != 0 and named_test_failed(log, case.test)
+            and 'test result: FAILED' in log
+            and 'could not compile' not in log and evidence
+            # #818 fix-r4: a list is a set of alternatives: one mutation can
+            # fail at one of several assertions (or a panic stops the test
+            # before the later one), so any single bound marker kills.
+            and any(anchor in evidence for anchor in anchors)):
         return 'KILLED', 'bound test failed at its assertion'
     return 'INVALID', 'missing bound runtime failure (build error, wrong panic, or missing test)'
 
@@ -86,7 +101,10 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
             slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
             (out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
             # Exact binding still runs one test, including explicit TS/regeneration guards.
-            result = run_owned(command + [test, '--', '--exact', '--include-ignored', '--nocapture'],
+            # No `--nocapture`: it interleaves test stdout with the
+            # `test <name> ... ok` status line (#938 r14), which would make the
+            # exact named-test judge miss a real FAILED line.
+            result = run_owned(command + [test, '--', '--exact', '--include-ignored'],
                                cwd=root, env=env, timeout=timeout)
             (out / f'{label}.log').write_text(result.stdout + result.stderr)
             return result
@@ -342,6 +360,9 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
         # No -q: cargo forwards it to libtest as --quiet, and the classifier
         # needs the named per-test lines even where --format=pretty would have
         # restored them (#273 fix-r1 lesson, made a standing rule by #942).
+        # No `-q`: cargo forwards it to libtest as `--quiet`, which replaces
+        # the per-test `test <name> ... FAILED` line that `judge()` requires
+        # with `<name> --- FAILED` (#818 fix-r3).
         command = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib']
         if compile:
             command += ['--no-run']

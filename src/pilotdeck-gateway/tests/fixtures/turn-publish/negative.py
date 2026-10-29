@@ -15,7 +15,9 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned
+from negative_panic import named_test_failed, panic_evidence
+from negative_selection import baseline_passed
+from negative_process import mutating_sources, run_owned, wait_for_slot
 
 fixture = Path(__file__).resolve().parent
 rust = fixture.parents[3]
@@ -27,7 +29,8 @@ connection = rust / 'pilotdeck-gateway/src/runtime/connection/mod.rs'
 with mutating_sources(repo, [source, connection]) as snapshots:
     originals = {source: snapshots[source], connection: snapshots[connection]}
     env = dict(os.environ, CARGO_NET_OFFLINE='true')
-    env.setdefault('CARGO_TARGET_DIR', str(rust / 'target'))
+    if not env.get('CARGO_TARGET_DIR'):
+        sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
     assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
     prefix = 'runtime::turn::publish::tests::'
     mutants = [
@@ -100,42 +103,73 @@ with mutating_sources(repo, [source, connection]) as snapshots:
          'file_registry_publication_preserves_fifo_across_workers'),
     ]
     summary = []
+    failures = []
     try:
         for name, path, before, after, test in mutants:
             assert originals[path].decode().count(before) == 1, (name, 'anchor is not unique')
         (output / 'negative-original-sha256.json').write_text(json.dumps({str(p.relative_to(repo)): hashlib.sha256(b).hexdigest() for p,b in originals.items()}, indent=2)+'\n')
-        for name, path, before, after, test in [('baseline', None, None, None, '')] + mutants:
-            if path:
+
+        def execute(test):
+            wait_for_slot(repo / 'scripts/cargo-slots.sh', timeout=1800)
+            command = ['cargo','test','--offline','--manifest-path',str(rust / 'Cargo.toml'),'-p','pilotdeck-gateway','--lib',prefix+test,'--','--exact']
+            try:
+                result = run_owned(command, cwd=repo, env=env, timeout=240)
+                return command, result.returncode, result.stdout + result.stderr
+            except subprocess.TimeoutExpired as error:
+                return command, -signal.SIGKILL, (error.output or '') + (error.stderr or '')
+
+        baseline_ok = set()
+        for test in dict.fromkeys(test for *_, test in mutants):
+            command, returncode, raw = execute(test)
+            ok = returncode == 0 and baseline_passed(raw, prefix + test)
+            summary.append(dict(name='baseline-' + test, test=prefix + test,
+                                exit=returncode, valid=ok))
+            (output / f'negative-baseline-{test}.log').write_text(
+                'COMMAND ' + ' '.join(command) + '\n' + raw + f'\nexit={returncode}\n')
+            print(f'baseline {test}: {"PASS" if ok else "INVALID"} exit={returncode}', flush=True)
+            if ok:
+                baseline_ok.add(test)
+            else:
+                failures.append('baseline-' + test)
+
+        for name, path, before, after, test in mutants:
+            try:
                 assert path.read_bytes() == originals[path], f'{path} changed outside this run'
                 path.write_text(originals[path].decode().replace(before, after, 1))
-            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True, timeout=10)
-            slot_deadline = time.monotonic() + 1800
-            while slots.returncode == 1:
-                assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
-                time.sleep(30)
-                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True, timeout=10)
-            assert slots.returncode == 0
-            command = ['cargo','test','--offline','--manifest-path',str(rust / 'Cargo.toml'),'-p','pilotdeck-gateway','--lib',prefix+test,'--','--nocapture']
-            try:
-                run = run_owned(command, cwd=repo, env=env, timeout=240)
-                raw = run.stdout + run.stderr
-                returncode = run.returncode
-            except subprocess.TimeoutExpired as error:
-                raw = (error.output or '') + (error.stderr or '')
-                returncode = -signal.SIGKILL
+                command, returncode, raw = execute(test)
+                full = prefix + test
+                valid = (returncode == 101 and named_test_failed(raw, full)
+                         and bool(panic_evidence(raw, full))
+                         and 'could not compile' not in raw)
+            except Exception as error:
+                command, returncode, raw = [], None, ''
+                valid = False
+                reason = f'{type(error).__name__}: {error}'
+            else:
+                reason = None if valid else f'exit={returncode}: named panic block missing'
             finally:
-                if path: path.write_bytes(originals[path])
-            valid = (returncode == 0 and 'test result: ok' in raw) if name == 'baseline' else (
-                returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw and prefix+test in raw
-                and ('panicked at' in raw or 'assertion' in raw))
-            (output / f'negative-{name}.log').write_text('COMMAND '+ ' '.join(command)+'\n'+slots.stdout+slots.stderr+raw+f'\nexit={returncode}\n')
-            summary.append(dict(name=name, file=str(path.relative_to(repo)) if path else None, test=prefix+test, before=before, after=after, exit=returncode, valid=valid))
+                path.write_bytes(originals[path])
+            if test not in baseline_ok:
+                valid, reason = False, 'baseline failed'
+            (output / f'negative-{name}.log').write_text(
+                'COMMAND ' + ' '.join(command) + '\n' + raw + f'\nexit={returncode}\n')
+            summary.append(dict(name=name, file=str(path.relative_to(repo)), test=prefix + test,
+                                before=before, after=after, exit=returncode, valid=valid,
+                                reason=reason))
             (output/'negative-summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\n')
-            print(f'{name}: {"PASS" if valid else "INVALID"} exit={returncode}', flush=True)
-            if not valid: raise SystemExit(1)
+            print(f'{name}: {"PASS" if valid else "INVALID"} exit={returncode}' +
+                  (f' ({reason})' if reason else ''), flush=True)
+            if not valid:
+                failures.append(name)
     finally:
         for path, original in originals.items():
             # These paths belong exclusively to this run while the lock exists.
             path.write_bytes(original)
             assert path.read_bytes() == original
+    killed = sum(1 for row in summary
+                 if row['valid'] and not row['name'].startswith('baseline-'))
+    print(f'summary: KILLED={killed} INVALID={len(failures)}', flush=True)
+    if failures:
+        print(f'not killed: {", ".join(failures)}', file=sys.stderr)
+        sys.exit(1)
     print(f'{len(mutants)} compiled implementation mutants killed; original bytes restored', flush=True)

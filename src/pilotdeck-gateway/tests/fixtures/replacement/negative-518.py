@@ -11,6 +11,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_failed, named_test_killed, panic_evidence
 from negative_process import mutating_sources, run_owned
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -75,14 +76,50 @@ FAILURE_TEXT = {
     'remove_warning_boundary': ['warning panic skipped commit cleanup', 'warning panic stranded timeout phase'],
     'omit_getter_panic_rearm': ['getter panic retry did not finish rollback'],
 }
+# A shared diagnostic list cannot be index-bound to tests. Each required text
+# here names the one test whose own panic payload must carry it (#818 fix-r4).
+FAILURE_TARGETS = {
+    'remove_warning_boundary': {
+        'warning panic skipped commit cleanup': 'warning_panic_commit_cleanup',
+        'warning panic stranded timeout phase': 'warning_panic_timeout_cleanup',
+    },
+}
 
 
 def invalid_reason(name, tests, returncode, output):
     if returncode != 101 or 'could not compile' in output:
         return 'test did not compile and fail with exit 101'
-    missing = [f'test {PREFIX}{test} ... FAILED' for test in tests
-               if f'test {PREFIX}{test} ... FAILED' not in output]
-    missing += [text for text in FAILURE_TEXT[name] if text not in output]
+    missing = []
+    texts = FAILURE_TEXT[name]
+    evidence = []
+    for index, test in enumerate(tests):
+        full = PREFIX + test
+        if not named_test_failed(output, full):
+            missing.append(f'test {full} ... FAILED')
+            continue
+        # #819: the failure text must live in this named test's panic payload,
+        # never in stdout or a sibling test's block.
+        block = panic_evidence(output, full)
+        if block:
+            evidence.append(block)
+        if len(texts) == len(tests):
+            if not named_test_killed(output, full, texts[index]):
+                missing.append(f'{full} panic block lacks {texts[index]!r}')
+    if len(texts) != len(tests):
+        # One shared diagnostic may cover a whole panic-test family, but every
+        # required diagnostic must still appear in a failed named test's own
+        # payload. The former double-any accepted either of two (#818 fix-r4).
+        if not all(any(text in block for block in evidence) for text in texts):
+            missing.extend(f'no named panic block contains {text!r}' for text in texts
+                           if not any(text in block for block in evidence))
+        # Tests in the family fail at different points, so a diagnostic that is
+        # present somewhere is not proof that its target assertion failed.
+        for text, target in FAILURE_TARGETS.get(name, {}).items():
+            full = PREFIX + target
+            if not named_test_failed(output, full):
+                missing.append(f'test {full} ... FAILED')
+            elif text not in panic_evidence(output, full):
+                missing.append(f'{full} panic block lacks {text!r}')
     return 'missing expected failure: ' + '; '.join(missing) if missing else None
 
 
@@ -98,7 +135,20 @@ def main():
         for name, path, before, after, count, pattern, tests, ignored in MUTATIONS:
             assert original[path].count(before.encode()) == count, name
             assert FAILURE_TEXT[name], name
+            bound = FAILURE_TARGETS.get(name, {})
+            # A binding is all-or-nothing, names a known diagnostic, and targets
+            # a test selected by this very mutation; a typo must fail preflight.
+            assert not bound or set(bound) == set(FAILURE_TEXT[name]), name
+            assert set(bound.values()) <= set(tests), name
         summary = []
+        baseline_log = evidence / 'baseline.log'
+        baseline = run_owned(
+            ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib', PREFIX],
+            cwd=ROOT / 'src', timeout=600)
+        baseline_log.write_text(baseline.stdout + baseline.stderr)
+        if baseline.returncode != 0 or 'test result: ok.' not in (baseline.stdout + baseline.stderr):
+            print(f'INVALID baseline failed; see {baseline_log}', file=sys.stderr)
+            return 1
         for name, path, before, after, count, pattern, tests, ignored in MUTATIONS:
             slot_deadline = time.monotonic() + 1800
             while True:
@@ -150,7 +200,11 @@ def main():
                 summary.append(record)
                 (evidence / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
             if record['status'] != 'CONFIRMED':
-                return 1
+                print(f'INVALID {name}: continuing with the remaining controls', flush=True)
+        if any(record['status'] != 'CONFIRMED' for record in summary):
+            print(f'not confirmed: {", ".join(r["mutation"] for r in summary if r["status"] != "CONFIRMED")}',
+                  file=sys.stderr)
+            return 1
         print(f'CONFIRMED {len(summary)} compiled mutations; all original bytes restored', flush=True)
         return 0
 

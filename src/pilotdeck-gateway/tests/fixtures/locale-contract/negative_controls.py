@@ -114,6 +114,8 @@ def main():
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only')
     # No -q (#942): cargo forwards it to libtest as --quiet, which drops the
     # per-test lines this script's passed/classify criteria match.
+    # No `-q`: quiet mode drops the `test <name> ... ok` line that
+    # negative_suite.passed() requires for every positive control (#818 fix-r3).
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--lib']
     summary = []
 

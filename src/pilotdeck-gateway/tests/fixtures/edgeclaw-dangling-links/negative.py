@@ -15,6 +15,7 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 
@@ -194,6 +195,7 @@ def main():
                str(root / 'src/Cargo.toml'), '-p', 'pilotdeck-gateway',
                '--test', 'edgeclaw_dangling_links']
     results = []
+    failures = []
 
     # Hold the shared flock from the pristine read through the final restored
     # run; the other edgeclaw in-place runners use the same lock file.
@@ -241,7 +243,7 @@ def main():
                               and 'test result: FAILED' in raw
                               and statuses.get(target) == 'FAILED'
                               and all(value == 'ok' for value in others.values())
-                              and marker in raw)
+                              and named_test_killed(raw, target, marker))
                     record = dict(name=mutant['name'], test=target,
                                   scenario=mutant['scenario'], exit=negative.returncode,
                                   target=statuses.get(target), others=others,
@@ -250,8 +252,8 @@ def main():
                     print(f"{mutant['name']}: killed={killed}, "
                           f"target={statuses.get(target)}, others={others}",
                           flush=True)
-                    assert killed, \
-                        f"{mutant['name']}: expected only {target} to fail, got {record}"
+                    if not killed:
+                        failures.append(mutant['name'])
                 finally:
                     assert source.read_text() == mutated, 'another writer changed the mutant'
                     source.write_text(original)
@@ -264,6 +266,11 @@ def main():
             assert restored
         restored_run = run('restored')
         assert restored_run.returncode == 0, 'restored product must pass'
+    print(f'summary: KILLED={sum(r["killed"] for r in results)} INVALID={len(failures)}',
+          flush=True)
+    if failures:
+        print(f'not killed: {", ".join(failures)}', file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == '__main__':

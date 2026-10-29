@@ -36,7 +36,7 @@ cargo test -q --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib \
 python3 src/pilotdeck-gateway/tests/fixtures/commands-catalog/negative_controls.py /absolute/new-negative-output
 ```
 
-每个变异先编译，再要求被点名完整测试失败并出现该变异的专属断言，最后恢复源码并重跑正控；编译错误、无关 panic、超时属于 INVALID。所有变异逐项记 KILLED / SURVIVED / INVALID 后统一汇总，任一非 KILLED 返回非零。
+每个变异先编译，再要求被点名完整测试失败并出现该变异的专属断言，最后恢复源码并重跑正控；编译错误、无关 panic、超时属于 INVALID。所有变异逐项记 KILLED / SURVIVED / INVALID 后统一汇总，任一非 KILLED 返回非零。generator 变异需要宿主 Node v22.22.0（`generate.mts:11`）：版本不符或 `node --version` 探针失败时记 INVALID 并返回非零，绝不记为 SKIPPED 放行（#818 fix-r3）。
 
 ## 前置于 U5 的 wire limit 解码
 

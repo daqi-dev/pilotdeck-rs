@@ -9,6 +9,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
+from negative_selection import baseline_passed
 from negative_process import run_owned, wait_for_slot
 
 
@@ -61,7 +63,8 @@ def main():
         ('unchecked-live-abort', owner,
          '.map_or(!exact_completion_owner, |active| active != run)',
          '.map_or({ let _ = exact_completion_owner; false }, |_active| false)',
-         'live_sink_rechecks_owner_after_abort_decision_across_threads', 'live replacement hits: 100/100'),
+         'live_sink_rechecks_owner_after_abort_decision_across_threads',
+         '#818 an old abort reached the new live writer'),
         ('stale-end-releases-readmitted-reservation', admission,
          '.is_some_and(|current| Arc::ptr_eq(current, &reservation.0))',
          '.is_some_and(|current| { let _ = (current, reservation); true })',
@@ -103,6 +106,7 @@ def main():
     for name, file, before, after, test, marker in mutants:
         assert originals[file].count(before) == 1, (name, originals[file].count(before))
     results = []
+    failures = []
     with tempfile.TemporaryDirectory(prefix='pdrs-session-owner-negative-', dir='/tmp') as directory:
         scratch = Path(directory) / 'src'
         env['CARGO_TARGET_DIR'] = str(scratch / 'target')
@@ -119,20 +123,26 @@ def main():
                 (scratch / path).write_text(content)
             gate = wait_for_slot(rust.parent / 'scripts/cargo-slots.sh')
             command = ['cargo', 'test', '--offline', '--manifest-path', str(scratch / 'Cargo.toml'),
-                       '-p', 'pilotdeck-gateway', '--lib', module + test, '--', '--nocapture']
+                       '-p', 'pilotdeck-gateway', '--lib', module + test]
+            command += ['--', '--exact'] if test else []
             result = run_owned(command, env=env, timeout=600 if name == 'baseline' else 240)
             raw = result.stdout + result.stderr
             (output / f'negative-{name}.log').write_text(gate.stdout + gate.stderr + raw + f'\nexit={result.returncode}\n')
-            valid = marker in raw and (result.returncode == 0 if name == 'baseline' else
-                    result.returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw)
+            valid = (result.returncode == 0 and 'test result: ok.' in raw) if name == 'baseline' else (
+                result.returncode == 101 and named_test_killed(raw, module + test, marker)
+                and 'could not compile' not in raw)
             results.append(dict(name=name, file=file, before=before, after=after, test=module + test,
                                 exit=result.returncode, marker=marker, valid=valid))
             (output / 'negative-summary.json').write_text(json.dumps(results, ensure_ascii=False, indent=2) + '\n')
             print(f'{name}: {"PASS" if valid else "INVALID"} exit={result.returncode}', flush=True)
             if not valid:
-                raise SystemExit(1)
+                failures.append(name)
+    if failures:
+        print(f'not killed: {", ".join(failures)}', file=sys.stderr)
+        return 1
     print('all mutations compiled and failed their targeted assertion; /tmp workspace removed')
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

@@ -11,6 +11,31 @@ negative = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(negative)
 
 
+class JudgeTests(unittest.TestCase):
+    TEST = 'snapshot_write_a::zero_before_sync'
+    FULL = 'runtime::background::panic_tests::' + TEST
+    ANCHOR = '#818 subagent'
+
+    def log(self, marker, thread=None):
+        return (f"test {self.FULL} ... FAILED\n"
+                f"thread '{thread or self.FULL}' panicked at src/x.rs:1:1:\n"
+                f'{marker}\n'
+                'test result: FAILED. 0 passed; 1 failed\n')
+
+    def test_named_panic_block_kills(self):
+        self.assertTrue(negative.judge(101, self.log(self.ANCHOR), self.TEST, self.ANCHOR))
+
+    def test_sibling_panic_with_the_same_marker_is_rejected(self):
+        # #818/#930 defect channel: the marker is in another test's block.
+        self.assertFalse(negative.judge(
+            101, self.log(self.ANCHOR, 'sibling::test'), self.TEST, self.ANCHOR))
+
+    def test_stdout_marker_is_rejected(self):
+        raw = (f'test {self.FULL} ... FAILED\n{self.ANCHOR}\n'
+               'test result: FAILED. 0 passed; 1 failed\n')
+        self.assertFalse(negative.judge(101, raw, self.TEST, self.ANCHOR))
+
+
 class AnchorTests(unittest.TestCase):
     def test_source_anchor_missing_or_ambiguous(self):
         for content in ['renamed', 'anchor anchor']:

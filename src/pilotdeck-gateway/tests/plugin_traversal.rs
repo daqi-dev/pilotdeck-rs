@@ -97,7 +97,12 @@ impl Drop for ReapedChild {
 // Poll completion before checking the deadline so a descheduled parent accepts
 // a child which has already finished. Drop also reaps on wait errors/panics.
 #[cfg(unix)]
-fn wait_for_traversal(mut child: ReapedChild, child_test: &str, label: &str) {
+fn wait_for_traversal(
+    mut child: ReapedChild,
+    child_test: &str,
+    label: &str,
+    report: Option<&Path>,
+) {
     let start = Instant::now();
     let status = loop {
         if let Some(status) = child.0.try_wait().expect("#273 traversal child wait") {
@@ -117,6 +122,14 @@ fn wait_for_traversal(mut child: ReapedChild, child_test: &str, label: &str) {
     if let Some(mut pipe) = child.0.stderr.take() {
         let _ = pipe.read_to_string(&mut stderr);
     }
+    // #818: a child that exits before the hang guard is the normal path for a
+    // behavior mutant. Carry its own assertion text into the named parent
+    // test's panic payload; otherwise the only parent marker is the generic
+    // "child failed" line (host r1: 95/96).
+    let detail = report
+        .and_then(|path| fs::read_to_string(path).ok())
+        .unwrap_or_default();
+    assert!(status.success(), "{label} child failed: {status}\n{detail}");
     // #273: libtest exits 0 even when --exact matches nothing after a rename;
     // only the libtest receipt proves the traversal child really ran its test.
     assert!(
@@ -143,6 +156,18 @@ fn assert_directory_expansions(commands: &[loader::LoadedPluginCommand], unique:
             (metadata.dev(), metadata.ino())
         })
         .collect();
+    // The parent runs this check in a reaped child so a lost dedup cannot wedge
+    // the suite. Leave the child's own assertion text behind for the parent's
+    // panic payload (never a substitute for the assertion below).
+    if let Some(report) = std::env::var_os("PDRS_PLUGIN_CLIQUE_REPORT") {
+        let _ = fs::write(
+            report,
+            format!(
+                "each physical directory expanded once\n  left: {}\n right: {unique}\n",
+                identities.len()
+            ),
+        );
+    }
     assert_eq!(
         identities.len(),
         unique,
@@ -172,6 +197,7 @@ fn clique(k: usize) {
             }
         }
     }
+    let report = scratch.path().join("child-report.txt");
     let child = ReapedChild(
         Command::new(std::env::current_exe().expect("#273 clique child path"))
             .args([
@@ -182,13 +208,19 @@ fn clique(k: usize) {
             ])
             .env("PDRS_PLUGIN_CLIQUE_BASE", &base)
             .env("PDRS_PLUGIN_CLIQUE_SIZE", k.to_string())
+            .env("PDRS_PLUGIN_CLIQUE_REPORT", &report)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .expect("#273 clique child spawn"),
     );
-    wait_for_traversal(child, "plugin_markdown_clique_child", "markdown clique");
+    wait_for_traversal(
+        child,
+        "plugin_markdown_clique_child",
+        "markdown clique",
+        Some(&report),
+    );
 }
 #[test]
 #[cfg(unix)]
@@ -781,7 +813,7 @@ fn plugin_markdown_alias_dag() {
             .spawn()
             .expect("#273 DAG child spawn"),
     );
-    wait_for_traversal(child, "plugin_markdown_alias_dag_child", "alias DAG");
+    wait_for_traversal(child, "plugin_markdown_alias_dag_child", "alias DAG", None);
 }
 
 #[test]

@@ -314,19 +314,28 @@ async fn subagent_case(mode: &str) {
             }
         })
     })));
-    let entry = runtime.find(&task.task_id).unwrap();
+    let entry = runtime
+        .find(&task.task_id)
+        .unwrap_or_else(|| panic!("#818 subagent find for {mode}"));
     let mut done = entry.done.subscribe();
     let cancelled = mode.starts_with("cancel-");
     if mode == "cancel-before" {
         assert!(runtime.stop(&task.task_id));
     } else {
-        bounded(started).await.unwrap();
+        bounded(started)
+            .await
+            .unwrap_or_else(|_| panic!("#818 subagent started for {mode}"));
         if mode == "cancel-running" {
             assert!(!*done.borrow(), "unreleased subagent predecessor");
             assert!(runtime.stop(&task.task_id));
         }
     }
-    let at_cancel = cancelled.then(|| runtime.get(&task.task_id).unwrap().ended_at);
+    let at_cancel = cancelled.then(|| {
+        runtime
+            .get(&task.task_id)
+            .unwrap_or_else(|| panic!("#818 subagent cancel get for {mode}"))
+            .ended_at
+    });
     let mut observers = Vec::new();
     let mut wakeups = Vec::new();
     if cancelled {
@@ -337,7 +346,9 @@ async fn subagent_case(mode: &str) {
         }
     }
     drop(release);
-    bounded(done.wait_for(|done| *done)).await.unwrap();
+    bounded(done.wait_for(|done| *done))
+        .await
+        .unwrap_or_else(|_| panic!("#818 subagent done for {mode}"));
     assert!(
         wakeups.iter().all(|w| w.0.load(Ordering::SeqCst)),
         "every subagent observer notified"
@@ -348,21 +359,41 @@ async fn subagent_case(mode: &str) {
     for _ in 0..3 {
         assert!(!bounded(runtime.stop_and_wait(&task.task_id)).await);
     }
-    let actual = runtime.get(&task.task_id).unwrap();
-    assert_eq!(actual.status.as_str(), case["status"], "{mode}");
+    let actual = runtime
+        .get(&task.task_id)
+        .unwrap_or_else(|| panic!("#818 subagent get for {mode}"));
+    assert_eq!(
+        actual.status.as_str(),
+        case["status"],
+        "#818 subagent status for {mode}"
+    );
     assert_eq!(
         actual.error.map(|s| String::from_utf16_lossy(s.units())),
-        case["error"].as_str().map(str::to_owned)
+        case["error"].as_str().map(str::to_owned),
+        "#818 subagent error for {mode}"
     );
-    assert_eq!(actual.ended_at.is_some(), case["ended"].as_bool().unwrap());
+    assert_eq!(
+        actual.ended_at.is_some(),
+        case["ended"]
+            .as_bool()
+            .unwrap_or_else(|| panic!("#818 subagent oracle ended for {mode}")),
+        "#818 subagent ended for {mode}"
+    );
     if let Some(ended) = at_cancel {
-        assert_eq!(actual.ended_at, ended, "cancel timestamp retained");
+        assert_eq!(actual.ended_at, ended, "#818 cancel timestamp retained");
     }
     assert_eq!(
         calls.load(std::sync::atomic::Ordering::SeqCst),
-        case["calls"].as_u64().unwrap() as usize
+        case["calls"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("#818 subagent oracle calls for {mode}")) as usize,
+        "#818 subagent calls for {mode}"
     );
-    assert_eq!(runtime.list(&SubagentListFilter::default()).len(), 1);
+    assert_eq!(
+        runtime.list(&SubagentListFilter::default()).len(),
+        1,
+        "#818 subagent list for {mode}"
+    );
 }
 
 macro_rules! subagent_cell {
@@ -382,24 +413,40 @@ subagent_cell!(subagent_err, "err");
 
 async fn non_string_panic(sync: bool) {
     let runtime = BackgroundSubagentRuntime::default();
+    let mode = if sync { "sync" } else { "poll" };
     let task = runtime.start(super::tests::subagent_input(Box::new(move |_| {
         if sync {
             std::panic::panic_any(799_u32);
         }
         Box::pin(async { std::panic::panic_any(799_u32) })
     })));
-    let entry = runtime.find(&task.task_id).unwrap();
+    let entry = runtime
+        .find(&task.task_id)
+        .unwrap_or_else(|| panic!("#818 subagent non-string find for {mode}"));
     bounded(entry.done.subscribe().wait_for(|done| *done))
         .await
-        .unwrap();
-    let task = runtime.get(&task.task_id).unwrap();
-    assert_eq!(task.status, TaskStatus::Failed);
+        .unwrap_or_else(|_| panic!("#818 subagent non-string done for {mode}"));
+    let task = runtime
+        .get(&task.task_id)
+        .unwrap_or_else(|| panic!("#818 subagent non-string get for {mode}"));
+    assert_eq!(
+        task.status,
+        TaskStatus::Failed,
+        "#818 subagent non-string status for {mode}"
+    );
     assert_eq!(
         task.error,
-        Some("Background subagent task panicked.".into())
+        Some("Background subagent task panicked.".into()),
+        "#818 subagent non-string error for {mode}"
     );
-    assert!(task.ended_at.is_some());
-    assert!(!bounded(runtime.stop_and_wait(&task.task_id)).await);
+    assert!(
+        task.ended_at.is_some(),
+        "#818 subagent non-string ended for {mode}"
+    );
+    assert!(
+        !bounded(runtime.stop_and_wait(&task.task_id)).await,
+        "#818 subagent non-string stop for {mode}"
+    );
 }
 
 #[tokio::test]
@@ -416,7 +463,8 @@ async fn subagent_non_string_poll() {
 fn subagent_no_panic_payload() {
     assert_eq!(
         subagent_panic_message(None),
-        JsString::from("Background subagent task panicked.")
+        JsString::from("Background subagent task panicked."),
+        "#818 subagent no-payload fallback"
     );
 }
 

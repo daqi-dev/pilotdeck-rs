@@ -23,7 +23,10 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot  # noqa: E402
+from negative_panic import named_test_killed
+from negative_selection import baseline_passed, verdict_exit
+from negative_process import (mutating_sources, node_version, run_owned,
+                              wait_for_slot)  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / "src/pilotdeck-gateway/src"
@@ -244,6 +247,7 @@ def run_test(target, test, env):
     ]
     args += ["--lib"] if target == "lib" else ["--test", target]
     args.append(test)
+    args += ["--", "--exact"]
     return run_owned(args, cwd=ROOT, env=env, timeout=1800)
 
 
@@ -268,8 +272,32 @@ def main():
         results.append({"name": name, "status": status, "reason": reason})
         print(f"{name}: {status} {reason}", flush=True)
 
+    # #930/#819: prove every selected named test is green before any mutant
+    # verdict counts. One baseline per (target, test), not per mutant. The
+    # oracle-truncation data mutation has no row in `mutations`, so it needs
+    # its own baseline or it was always reported INVALID "baseline failed".
+    data_targets = []
+    if not selected or "workspace-snapshot-oracle-truncated" in selected:
+        data_targets.append(
+            ("workspace_snapshot", "scenarios_match_ts_outcomes_and_trees")
+        )
+    baseline_ok = set()
+    for target, test in dict.fromkeys(
+        [(row[4], row[5]) for row in rows] + data_targets
+    ):
+        result = run_test(target, test, env)
+        log = result.stdout + result.stderr
+        (out / f"baseline-{test.replace('::', '_')}.log").write_text(log)
+        if result.returncode == 0 and baseline_passed(log, test):
+            baseline_ok.add((target, test))
+        else:
+            record(f"baseline-{test}", "INVALID", "unmutated target did not pass")
+
     with mutating_sources(ROOT, paths) as snapshots:
         for name, path, before, after, target, test, marker in rows:
+            if (target, test) not in baseline_ok:
+                record(name, "INVALID", "baseline failed")
+                continue
             original = snapshots[path]
             before_bytes = hashlib.sha256(original).hexdigest()
             try:
@@ -295,7 +323,7 @@ def main():
                 (out / f"{name}.log").write_text(log)
                 if result.returncode == 0:
                     record(name, "SURVIVED", "named test stayed green")
-                elif test in log and marker in log:
+                elif named_test_killed(log, test, marker):
                     record(name, "KILLED", "named assertion failed")
                 else:
                     record(name, "INVALID", "test failed outside the named assertion")
@@ -319,6 +347,9 @@ def main():
             # not silently replay one scenario. This is a data mutation; no
             # compile.
             name = "workspace-snapshot-oracle-truncated"
+            if ("workspace_snapshot", "scenarios_match_ts_outcomes_and_trees") not in baseline_ok:
+                record(name, "INVALID", "baseline failed")
+                return
             original = snapshots[ORACLE]
             before_bytes = hashlib.sha256(original).hexdigest()
             try:
@@ -346,7 +377,9 @@ def main():
                         "SURVIVED",
                         f"oracle shrank from {expected_scenarios} to 1",
                     )
-                elif marker in log:
+                elif named_test_killed(
+                    log, "scenarios_match_ts_outcomes_and_trees", marker
+                ):
                     record(name, "KILLED", "exact corpus pin failed")
                 else:
                     record(name, "INVALID", "failed outside the corpus pin")
@@ -375,11 +408,27 @@ def main():
             try:
                 content = original.decode("utf-8")
                 count = content.count(before)
+                version = error = None
+                if count == 1:
+                    version, error = node_version(env)
                 if count != 1:
                     record(
                         name,
                         "INVALID",
                         f"stale anchor: expected 1 occurrence, found {count}",
+                    )
+                elif error:
+                    record(name, "INVALID", f"node prerequisite failed: {error}")
+                elif not version.startswith("v22."):
+                    # generate.mts:26 itself refuses every other Node major. A
+                    # host outside that contract cannot reach the ownership
+                    # guard, so the control is INVALID, never SKIPPED
+                    # (#818 fix-r3, fail-closed).
+                    record(
+                        name,
+                        "INVALID",
+                        f"host node {version} does not meet the Node 22 "
+                        f"generator guard (generate.mts:26); refusing to skip",
                     )
                 elif not os.environ.get("PDRS_BASELINE"):
                     record(name, "INVALID", "PDRS_BASELINE is unset")
@@ -435,8 +484,13 @@ def main():
         json.dumps(results, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
     )
     killed = sum(row["status"] == "KILLED" for row in results)
-    print(f"{killed}/{len(results)} KILLED; see {out / 'summary.json'}", flush=True)
-    return 0 if killed == len(results) else 1
+    print(
+        f"{killed}/{len(results)} KILLED; see {out / 'summary.json'}",
+        flush=True,
+    )
+    # Every row must KILLED and at least one row must exist: an empty run or a
+    # zero-kill run is never success (#818 fix-r3 P0).
+    return verdict_exit(results, key="status")
 
 
 if __name__ == "__main__":

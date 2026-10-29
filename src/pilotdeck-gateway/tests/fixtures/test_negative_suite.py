@@ -28,7 +28,14 @@ def output(kind):
     if kind == 'kill':
         return subprocess.CompletedProcess([], 101,
             f'test {TEST} ... FAILED\ntest result: FAILED\n',
-            f'panicked at fixture.rs:1: {ANCHOR}\n')
+            f"thread '{TEST}' panicked at fixture.rs:1:1:\n{ANCHOR}\n")
+    if kind == 'sibling':
+        return subprocess.CompletedProcess([], 101,
+            f'test {TEST} ... FAILED\ntest result: FAILED\n',
+            f"thread 'other::test' panicked at fixture.rs:2:2:\n{ANCHOR}\n")
+    if kind == 'stdout-only':
+        return subprocess.CompletedProcess([], 101,
+            f'test {TEST} ... FAILED\n{ANCHOR}\ntest result: FAILED\n', '')
     raise ValueError(kind)
 
 
@@ -58,8 +65,8 @@ class SuiteTests(unittest.TestCase):
                 return False
 
             def run(command, **kwargs):
-                self.assertEqual(command[-5:], [TEST, '--', '--exact', '--include-ignored', '--nocapture'],
-                                 'bound ignored tests must execute')
+                self.assertEqual(command[-4:], [TEST, '--', '--exact', '--include-ignored'],
+                                 'bound ignored tests must execute without --nocapture')
                 calls.append(source.read_text())
                 if source.read_text() == 'first':
                     if isinstance(first, Exception):
@@ -237,6 +244,32 @@ class SuiteTests(unittest.TestCase):
                          '#1076 a body cancellation must publish an all-INVALID summary')
         self.assertIn('KeyboardInterrupt', summary['controls'][0]['reason'],
                       '#1076 a body cancellation must be recorded as INVALID')
+
+    def test_sibling_panic_with_the_same_marker_is_rejected(self):
+        # #818/#819/#930 defect channel: the marker lives in another test's
+        # panic block. The named test's own FAILED line is not enough.
+        case = suite.Case('test', None, '', '', TEST, ANCHOR)
+        self.assertEqual(suite.classify(output('sibling'), case)[0], 'INVALID',
+                         'a sibling panic must not kill the named test')
+
+    def test_marker_in_named_stdout_is_rejected(self):
+        case = suite.Case('test', None, '', '', TEST, ANCHOR)
+        self.assertEqual(suite.classify(output('stdout-only'), case)[0], 'INVALID',
+                         'stdout is not a panic payload')
+
+    def test_alternative_markers_any_one_kills(self):
+        # #818 fix-r4: a list means alternatives. live_negative's
+        # live_factory_pre_aborted lists two assertions from different failure
+        # points; a panic at the first never reaches the second.
+        only_one = suite.Case('test', None, '', '', TEST, ['unreached alternative', ANCHOR])
+        self.assertEqual(suite.classify(output('kill'), only_one)[0], 'KILLED',
+                         'one bound alternative in the named payload must kill')
+        none = suite.Case('test', None, '', '', TEST,
+                          ['first alternative', 'second alternative'])
+        self.assertEqual(suite.classify(output('kill'), none)[0], 'INVALID',
+                         'no alternative in the named payload must stay invalid')
+        self.assertEqual(suite.classify(output('sibling'), only_one)[0], 'INVALID',
+                         'alternatives never widen evidence to a sibling panic')
 
     def test_each_failure_marker_is_required(self):
         case = suite.Case('test', None, '', '', TEST, ANCHOR)
@@ -600,7 +633,10 @@ class SqliteHeaderExecutorTests(unittest.TestCase):
                 return subprocess.CompletedProcess(
                     command, 101,
                     f'test {test} ... FAILED\ntest result: FAILED\n',
-                    f'panicked at fixture: {anchors[test]}\n')
+                    # #818 fix-r5: the shared judge now reads the named test's
+                    # own panic block, so the fixture must emit libtest's real
+                    # `thread '<full name>' panicked at <file>:<line>:<col>:` header.
+                    f"thread '{test}' panicked at fixture.rs:1:1:\n{anchors[test]}\n")
             return subprocess.CompletedProcess(
                 command, 0,
                 f'test {test} ... ok\ntest result: ok. 1 passed; 0 failed;\n', '')

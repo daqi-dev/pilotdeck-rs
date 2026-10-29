@@ -11,6 +11,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_failed, panic_evidence
+from negative_selection import baseline_passed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -433,6 +435,37 @@ with mutating_sources(ROOT, [ROOT/p for p in {c[1] for c in CASES}]) as snapshot
     # enabled, but avoid 650 baseline git subprocesses after every recompilation.
     env.pop('PDRS_BASELINE', None)
     summary = []
+
+    def resolve(test):
+        if ':' in test:
+            target, test_name = test.split(':', 1)
+            if target == 'lib':
+                target_args = ['--lib']
+                # Unit tests already have a full module path if `::` appears.
+                if '::' not in test_name:
+                    test_name = 'runtime::plugins::tests::' + test_name
+            else:
+                target_args = ['--test', {'regressions':'plugin_regressions','runtime':'plugin_runtime','traversal':'plugin_traversal'}[target]]
+        else:
+            target_args, test_name = ['--test','plugin_loader'], test
+        return target_args, test_name
+
+    def cargo(target_args, test_name):
+        return run_owned(['cargo','test','--manifest-path',str(ROOT/'src/Cargo.toml'),'-p','pilotdeck-gateway',*target_args,test_name,'--','--exact','--test-threads=4'],cwd=ROOT,env=env,timeout=600 if test_name == 'plugin_markdown_real_node_modules' else 180)
+
+    # #819: every named target must be green on the unmutated tree first.
+    baseline_ok = set()
+    for test in dict.fromkeys(c[-1] for c in CASES):
+        target_args, test_name = resolve(test)
+        gate = wait_for_slot(ROOT/'scripts/cargo-slots.sh', interval=5)
+        (OUTPUT/('baseline-'+test_name.replace('::','_')+'.slots.log')).write_text(gate.stdout + gate.stderr)
+        result = cargo(target_args, test_name)
+        log = result.stdout + result.stderr
+        (OUTPUT/('baseline-'+test_name.replace('::','_')+'.log')).write_text(log)
+        if result.returncode == 0 and baseline_passed(log, test_name):
+            baseline_ok.add(test)
+        else:
+            print(json.dumps({'baseline': test_name, 'status': 'INVALID'}), flush=True)
     try:
         for name, relative, old, new, test in CASES:
             path = ROOT/relative
@@ -441,24 +474,21 @@ with mutating_sources(ROOT, [ROOT/p for p in {c[1] for c in CASES}]) as snapshot
             (OUTPUT/(name+'.slots.log')).write_text(gate.stdout + gate.stderr)
             path.write_text(originals[relative].decode().replace(old,new))
             try:
-                if ':' in test:
-                    target, test_name = test.split(':', 1)
-                    if target == 'lib':
-                        target_args = ['--lib']
-                        # Unit tests already have a full module path if `::` appears.
-                        if '::' not in test_name:
-                            test_name = 'runtime::plugins::tests::' + test_name
-                    else:
-                        target_args = ['--test', {'regressions':'plugin_regressions','runtime':'plugin_runtime','traversal':'plugin_traversal'}[target]]
-                else:
-                    target_args, test_name = ['--test','plugin_loader'], test
-                result = run_owned(['cargo','test','--manifest-path',str(ROOT/'src/Cargo.toml'),'-p','pilotdeck-gateway',*target_args,test_name,'--','--exact','--test-threads=4'],cwd=ROOT,env=env,timeout=600 if test_name == 'plugin_markdown_real_node_modules' else 180)
+                target_args, test_name = resolve(test)
+                result = cargo(target_args, test_name)
                 (OUTPUT/(name+'.log')).write_text(result.stdout + result.stderr)
                 output = (OUTPUT/(name+'.log')).read_text()
                 markers = EXPECTED_FAILURES[name]
-                matched_markers = all(marker in output for marker in markers)
-                target_failed = f'test {test_name} ... FAILED' in output
+                # #819: markers must live in the named test's own panic
+                # payload, not in stdout or a sibling test's panic.
+                evidence = panic_evidence(output, test_name)
+                matched_markers = all(marker in evidence for marker in markers)
+                target_failed = named_test_failed(output, test_name)
                 killed = result.returncode != 0 and 'test result: FAILED.' in output and 'error[E' not in output and matched_markers and target_failed
+                if test not in baseline_ok:
+                    killed = False
+                    matched_markers = False
+                    target_failed = False
                 row = {'mutation':name,'test':test,'exit':result.returncode,'killed':killed,'expectedMarkers':markers,'matchedMarkers':matched_markers,'targetFailed':target_failed,'failure':next((line for line in output.splitlines() if 'failed:' in line or "panicked at" in line),''),'summary':next((line for line in output.splitlines() if line.startswith('test result:')), '')}
                 summary.append(row)
                 print(json.dumps(row), flush=True)

@@ -9,6 +9,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
+from negative_selection import baseline_passed
 from negative_process import run_owned, wait_for_slot
 
 
@@ -66,6 +68,7 @@ def main():
     for name, file, before, _after, _marker in mutants:
         assert originals[file].count(before) == 1, (name, originals[file].count(before))
     results = []
+    failures = []
     with tempfile.TemporaryDirectory(prefix='pdrs-abort-contract-negative-', dir='/tmp') as directory:
         scratch = Path(directory) / 'src'
         shutil.copytree(rust, scratch, ignore=shutil.ignore_patterns(
@@ -82,21 +85,25 @@ def main():
                 (scratch / path).write_text(content)
             gate = wait_for_slot(rust.parent / 'scripts/cargo-slots.sh')
             command = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway',
-                       '--lib', test, '--', '--exact', '--nocapture']
+                       '--lib', test, '--', '--exact']
             result = run_owned(command, cwd=scratch, env=env, timeout=600)
             raw = result.stdout + result.stderr
             (output / f'negative-{name}.log').write_text(gate.stdout + gate.stderr + raw + f'\nexit={result.returncode}\n')
-            valid = ('1 passed; 0 failed' in raw and result.returncode == 0) if name == 'baseline' else (
-                result.returncode == 101 and marker in raw
-                and '0 passed; 1 failed' in raw and 'could not compile' not in raw)
+            valid = (baseline_passed(raw, test) and result.returncode == 0) if name == 'baseline' else (
+                result.returncode == 101 and named_test_killed(raw, test, marker)
+                and 'could not compile' not in raw)
             results.append(dict(name=name, file=file, before=before, after=after,
                                 command=command, exit=result.returncode, valid=valid))
             (output / 'negative-summary.json').write_text(json.dumps(results, indent=2) + '\n')
             print(f'{name}: {"PASS" if valid else "INVALID"} exit={result.returncode}', flush=True)
             if not valid:
-                raise SystemExit(1)
+                failures.append(name)
+    if failures:
+        print(f'not killed: {", ".join(failures)}', file=sys.stderr)
+        return 1
     print('all mutations detected; scratch workspace restored and removed', flush=True)
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

@@ -9,7 +9,7 @@ baseline.
 """
 import unittest
 
-from negative_selection import baseline_passed, select
+from negative_selection import baseline_passed, select, verdict_exit
 
 ROWS = [('baseline', 'pass'), ('mutant-a', 'kill'), ('mutant-b', 'kill')]
 
@@ -55,6 +55,33 @@ class SubsetSelection(unittest.TestCase):
         rows = [dict(name='baseline'), dict(name='mutant-a')]
         self.assertEqual(select(rows, ['mutant-a'], name=lambda row: row['name']),
                          rows)
+
+
+class VerdictExit(unittest.TestCase):
+    """#818 fix-r3 P0: a run with zero KILLED rows must never exit 0."""
+
+    def test_all_killed_exits_zero(self):
+        self.assertEqual(verdict_exit([{'verdict': 'KILLED'},
+                                       {'verdict': 'KILLED'}]), 0)
+
+    def test_zero_killed_is_never_success(self):
+        for rows in (
+            [],
+            [{'verdict': 'SURVIVED'}],
+            [{'verdict': 'INVALID'}],
+            [{'verdict': 'SKIPPED'}],
+            [{'verdict': 'KILLED'}, {'verdict': 'SKIPPED'}],
+            [{'verdict': 'KILLED'}, {'verdict': 'INVALID'}],
+        ):
+            with self.subTest(rows=rows):
+                self.assertEqual(verdict_exit(rows), 1,
+                                 'zero KILLED (or any non-KILLED row) must fail')
+
+    def test_snapshot_status_key(self):
+        rows = [{'status': 'KILLED'}, {'status': 'KILLED'}]
+        self.assertEqual(verdict_exit(rows, key='status'), 0)
+        self.assertEqual(verdict_exit([], key='status'), 1)
+        self.assertEqual(verdict_exit([{'status': 'SKIPPED'}], key='status'), 1)
 
 
 if __name__ == '__main__':

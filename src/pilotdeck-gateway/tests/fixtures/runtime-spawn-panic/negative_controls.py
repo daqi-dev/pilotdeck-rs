@@ -9,6 +9,8 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
+from negative_selection import baseline_passed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
@@ -87,13 +89,13 @@ mutants = [
     ('tail-matrix', tail_fixture, None, 'B-', 'tail_oracle_has_exact_matrix', 'complete tail matrix'),
     ('tail-duplicate', tail_fixture, None, 'S-', 'tail_oracle_has_exact_matrix', 'complete tail matrix'),
     ('tail-shell-evidence', tail_fixture, None, 'B-reject', 'tail_oracle_has_exact_matrix', 'tail TS shell evidence'),
-    ('tail-payload', background, re.escape('    inner.settle(&entry);\n    drop(clock);'), '    drop(clock);\n    inner.settle(&entry);', 'clock_tail_payload_drop', 'tail payload sees done'),
+    ('tail-payload', background, re.escape('    inner.settle(&entry);\n    drop(clock);'), '    drop(clock);\n    inner.settle(&entry);', 'clock_tail_payload_drop', '#818 tail payload sees done'),
     ('tail-shell-done', background, re.escape('        entry.done.send_replace(true);\n    }\n}'), '        entry.done.send_replace(false);\n    }\n}', 'clock_tail_shell_exit', 'tail observer deadline'),
     ('tail-subagent-done', background, re.escape('            entry.done.send_replace(true);\n            drop(clock);'), '            entry.done.send_replace(false);\n            drop(clock);', 'clock_tail_subagent_finish', 'tail observer deadline'),
     ('tail-stop-signal', background, re.escape('        entry.controller.cancel_synchronously();\n        drop(clock);'), '        drop(clock);', 'clock_tail_subagent_stop', 'tail observer deadline'),
     ('tail-shell-event', background, re.escape('        if let (Some(event), Some(handler)) = (event, &self.on_completion) {'), '        if let (Some(event), Some(handler)) = (event.filter(|_| false), &self.on_completion) {', 'clock_tail_shell_exit', 'tail completion exactly once'),
-    ('tail-subagent-payload', background, re.escape('            entry.done.send_replace(true);\n            drop(clock);'), '            drop(clock);\n            entry.done.send_replace(true);', 'clock_tail_payload_drop', 'tail payload sees completion or cancellation'),
-    ('tail-stop-payload', background, re.escape('        entry.controller.cancel_synchronously();\n        drop(clock);'), '        drop(clock);\n        entry.controller.cancel_synchronously();', 'clock_tail_payload_drop', 'tail payload sees completion or cancellation'),
+    ('tail-subagent-payload', background, re.escape('            entry.done.send_replace(true);\n            drop(clock);'), '            drop(clock);\n            entry.done.send_replace(true);', 'clock_tail_payload_drop', '#818 tail payload sees completion or cancellation'),
+    ('tail-stop-payload', background, re.escape('        entry.controller.cancel_synchronously();\n        drop(clock);'), '        drop(clock);\n        entry.controller.cancel_synchronously();', 'clock_tail_payload_drop', '#818 tail payload sees completion or cancellation'),
     ('tail-payload-leak', background, re.escape('    inner.settle(&entry);\n    drop(clock);'), '    inner.settle(&entry);\n    std::mem::forget(clock);', 'clock_tail_payload_drop', 'tail observer deadline'),
     ('construction-matrix', fixture, None, 'construct-', 'construction_oracle_has_exact_matrix', 'complete construction matrix'),
     ('construction-duplicate', fixture, None, 'construct-', 'construction_oracle_has_exact_matrix', 'complete construction matrix'),
@@ -107,11 +109,22 @@ def record(name, data):
     with (out / name).open('x') as file:
         file.write(data)
 
+
+def full_test(test):
+    """Full libtest path for the short names in the table."""
+    if test.startswith(('clock_', 'tail_', 'initial_snapshot_')):
+        return 'runtime::background::tests::' + test
+    if test.startswith(('shared_', 'construction_')):
+        return 'runtime::mcp::registry::tests::' + test
+    return 'runtime::turn::publish::tests::' + test
+
+
 def run(test, name):
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
     record(name + '.slots.log', slots.stdout + slots.stderr)
     result = run_owned(['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '-p',
-        'pilotdeck-gateway', '--lib', test], cwd=root, env=os.environ.copy(), timeout=900)
+        'pilotdeck-gateway', '--lib', test, '--', '--exact'], cwd=root,
+        env=os.environ.copy(), timeout=900)
     record(name + '.log', result.stdout + result.stderr)
     return result, result.stdout + result.stderr
 
@@ -121,34 +134,79 @@ if args.only:
         sys.exit(f'unknown mutants: {sorted(unknown)}')
     mutants = [m for m in mutants if m[0] in args.only]
 
-for name, relative, pattern, replacement, test, anchor in mutants:
-    path = root / relative
-    with mutating_sources(root, [path]) as original:
-        content = original[path].decode()
-        if pattern is None:
-            oracle = json.loads(content)
-            if name == 'clock-pending-evidence':
-                oracle['pendingSnapshotCase']['settled'] = True
-            elif name == 'clock-durable-evidence':
-                oracle['durableCase']['persisted'][0]['status'] = 'unknown'
+summary = []
+failures = []
+with mutating_sources(root, sorted({root / m[1] for m in mutants})) as originals:
+    # Unmutated baseline first: every selected target test must be green
+    # before a mutation verdict counts.
+    for test in dict.fromkeys(m[4] for m in mutants):
+        full = full_test(test)
+        result, log = run(full, 'baseline-' + test)
+        ok = result.returncode == 0 and baseline_passed(log, full)
+        summary.append({'mutation': 'baseline', 'test': full, 'status': 'PASS' if ok else 'INVALID'})
+        print(f'baseline {full}: {"PASS" if ok else "INVALID"}', flush=True)
+        if not ok:
+            failures.append('baseline-' + test)
+
+    for name, relative, pattern, replacement, test, anchor in mutants:
+        full = full_test(test)
+        path = root / relative
+        try:
+            content = originals[path].decode()
+            if pattern is None:
+                oracle = json.loads(content)
+                if name == 'clock-pending-evidence':
+                    oracle['pendingSnapshotCase']['settled'] = True
+                elif name == 'clock-durable-evidence':
+                    oracle['durableCase']['persisted'][0]['status'] = 'unknown'
+                else:
+                    cases = oracle['tailCases' if relative == tail_fixture else 'cases']
+                    index = next(i for i, c in enumerate(cases) if c['id'].startswith(replacement))
+                    if name.endswith('-duplicate'): cases.append(cases[index].copy())
+                    elif name == 'tail-shell-evidence': cases[index]['done'] = True
+                    else: cases.pop(index)
+                changed = json.dumps(oracle) + '\n'
             else:
-                cases = oracle['tailCases' if relative == tail_fixture else 'cases']
-                index = next(i for i, c in enumerate(cases) if c['id'].startswith(replacement))
-                if name.endswith('-duplicate'): cases.append(cases[index].copy())
-                elif name == 'tail-shell-evidence': cases[index]['done'] = True
-                else: cases.pop(index)
-            changed = json.dumps(oracle) + '\n'
-        else:
-            changed, count = re.subn(pattern, replacement, content, flags=re.S)
-            assert count == 1, (name, count)
-        if name == 'clock-pending-snapshot':
-            changed, count = re.subn(re.escape('        Ok(task)\n    }\n\n    fn insert('), '        result\n    }\n\n    fn insert(', changed)
-            assert count == 1, (name, 'return anchor', count)
-        path.write_text(changed)
-        result, log = run(test, name)
-        assert result.returncode == 101 and f'{test} ... FAILED' in log and any(part in log for part in anchor.split('|')) and 'test result: FAILED' in log, (name, 'not an anchored runtime failure')
-        print(f'{name}: KILLED ({test}: {anchor})', flush=True)
-    with mutating_sources(root, [path]):
-        result, log = run(test, name + '-restored')
-        assert result.returncode == 0 and f'{test} ... ok' in log, (name, 'restored test failed')
+                changed, count = re.subn(pattern, replacement, content, flags=re.S)
+                assert count == 1, (name, count)
+            if name == 'clock-pending-snapshot':
+                changed, count = re.subn(re.escape('        Ok(task)\n    }\n\n    fn insert('), '        result\n    }\n\n    fn insert(', changed)
+                assert count == 1, (name, 'return anchor', count)
+            if changed == content:
+                raise AssertionError(f'{name}: mutation made no change')
+            path.write_text(changed)
+            result, log = run(full, name)
+            markers = anchor.split('|')
+            killed = (result.returncode == 101
+                      and named_test_killed(log, full, markers)
+                      and 'could not compile' not in log)
+            reason = None if killed else (
+                'bound test still passed' if result.returncode == 0
+                else f'exit={result.returncode}: named assertion missing from its panic block')
+        except Exception as error:
+            killed, reason = False, f'{type(error).__name__}: {error}'
+        finally:
+            path.write_bytes(originals[path])
+        status = 'KILLED' if killed else ('SURVIVED' if reason == 'bound test still passed' else 'INVALID')
+        summary.append({'mutation': name, 'test': full, 'status': status, 'reason': reason})
+        print(f'{name}: {status}' + (f' ({reason})' if reason else ''), flush=True)
+        if status != 'KILLED':
+            failures.append(name)
+        with mutating_sources(root, [path]):
+            restored, log = run(full, name + '-restored')
+        if not (restored.returncode == 0 and baseline_passed(log, full)):
+            summary[-1]['status'] = 'INVALID'
+            summary[-1]['reason'] = 'restored positive failed'
+            if name not in failures:
+                failures.append(name)
+        (out / 'summary.json').write_text(json.dumps(
+            {'counts': {s: sum(r['status'] == s for r in summary)
+                        for s in ('KILLED', 'SURVIVED', 'INVALID')},
+             'results': summary}, indent=2) + '\n')
+counts = {s: sum(r['status'] == s for r in summary)
+          for s in ('KILLED', 'SURVIVED', 'INVALID')}
+print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
+if failures:
+    print(f'not killed: {", ".join(failures)}', file=sys.stderr)
+    sys.exit(1)
 print(f'{len(mutants)} mutants killed and restored', flush=True)

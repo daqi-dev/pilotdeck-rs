@@ -846,19 +846,23 @@ fn live_sink_rechecks_owner_after_abort_decision_across_threads() {
         .worker_threads(2)
         .enable_all()
         .build()
-        .unwrap();
+        .expect("#818 live sink runtime builds");
     let _entered = runtime.enter();
     const ROUNDS: usize = 100;
     let probe = Probe::default();
     let owner = probe.owner();
     let key = JsString::from("a");
-    runtime.block_on(owner.get_or_create(context("a"))).unwrap();
+    runtime
+        .block_on(owner.get_or_create(context("a")))
+        .expect("#818 live sink initial session");
     let decided = std::sync::Barrier::new(2);
     let replaced = std::sync::Barrier::new(2);
     for round in 0..ROUNDS {
         let old_run = JsString::from(format!("old-{round}"));
         let new_run = JsString::from(format!("new-{round}"));
-        let old_reservation = owner.begin_turn(&key, &old_run).unwrap();
+        let old_reservation = owner
+            .begin_turn(&key, &old_run)
+            .expect("#818 live sink old reservation");
         let old_fence = (round % 2 == 0).then(|| owner.begin_completion(&key, &old_run));
         std::thread::scope(|scope| {
             let aborter = scope.spawn(|| {
@@ -869,7 +873,9 @@ fn live_sink_rechecks_owner_after_abort_decision_across_threads() {
                         .abort_turn(&key, Some(&old_run), None, |target, reason| {
                             decided.wait();
                             replaced.wait();
-                            owner.abort(&key, target.as_ref(), &reason).unwrap();
+                            owner
+                                .abort(&key, target.as_ref(), &reason)
+                                .expect("#818 live sink abort decision");
                             std::future::ready(())
                         });
                 drop(operation);
@@ -881,11 +887,18 @@ fn live_sink_rechecks_owner_after_abort_decision_across_threads() {
             }
             owner.mark_all_dirty("refresh");
             // Run the public replacement on the independent runtime workers.
-            let fresh = runtime.block_on(owner.get_or_create(context("a"))).unwrap();
-            assert!(owner.is_current(&key, &fresh));
-            let new_reservation = owner.begin_turn(&key, &new_run).unwrap();
+            let fresh = runtime
+                .block_on(owner.get_or_create(context("a")))
+                .expect("#818 live sink replacement session");
+            assert!(
+                owner.is_current(&key, &fresh),
+                "#818 live sink replacement is current"
+            );
+            let new_reservation = owner
+                .begin_turn(&key, &new_run)
+                .expect("#818 live sink new reservation");
             replaced.wait();
-            aborter.join().unwrap();
+            aborter.join().expect("#818 live sink aborter joins");
             owner.end_turn(&key, Some(&new_run), Some(&new_reservation));
         });
     }
@@ -895,8 +908,10 @@ fn live_sink_rechecks_owner_after_abort_decision_across_threads() {
         .filter(|event| event.starts_with("abort:"))
         .count();
     println!("live replacement hits: {hits}/{ROUNDS}");
-    assert_eq!(hits, 0, "an old abort reached the new live writer");
-    runtime.block_on(owner.shutdown()).unwrap();
+    assert_eq!(hits, 0, "#818 an old abort reached the new live writer");
+    runtime
+        .block_on(owner.shutdown())
+        .expect("#818 live sink shutdown");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -13,7 +13,14 @@ import sys
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_panic import named_test_killed
+from negative_selection import baseline_passed, verdict_exit
+from negative_process import mutating_sources, node_version, run_owned, wait_for_slot
+
+# generate.mts:11 pins the TS baseline: assert.equal(process.version,
+# 'v22.22.0'). A host outside that contract records INVALID for the
+# generator mutants instead of skipping them (#818 fix-r3).
+NODE_CONTRACT = 'v22.22.0'
 
 source = root / 'src/pilotdeck-gateway/src/runtime/plugins/catalog.rs'
 bundle = root / 'src/pilotdeck-gateway/src/runtime/plugins.rs'
@@ -83,53 +90,69 @@ def main():
         if selected and name not in selected:
             continue
         entry = dict(name=name, verdict='INVALID', reason='not run')
-        # No -q (#942): cargo forwards it to libtest as --quiet, which drops
-        # the per-test lines this script's KILLED/restored criteria match.
-        command = ['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', target, test]
-        test_args = ['--', '--exact', '--format', 'pretty', '--nocapture']
+        blocker = None
         if ignored:
-            test_args.append('--ignored')
-        def run(label, args):
-            slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=180)
-            (out / f'{name}.{label}.slots.log').write_text(slot.stdout + slot.stderr)
+            version, error = node_version(env, timeout=60)
+            if error:
+                blocker = f'node prerequisite failed: {error}'
+            elif version != NODE_CONTRACT:
+                blocker = (
+                    f'host node {version} != {NODE_CONTRACT} required by the '
+                    f'generator contract (generate.mts:11); refusing to skip'
+                )
+        if blocker is not None:
+            entry.update(reason=blocker)
+        else:
+            # No -q (#942): cargo forwards it to libtest as --quiet, which drops
+            # the per-test lines this script's KILLED/restored criteria match.
+            command = ['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', target, test]
+            test_args = ['--', '--exact', '--format', 'pretty', '--nocapture']
+            if ignored:
+                test_args.append('--ignored')
+            def run(label, args):
+                slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=180)
+                (out / f'{name}.{label}.slots.log').write_text(slot.stdout + slot.stderr)
+                try:
+                    result = run_owned(args, cwd=root, env=env, timeout=300)
+                except subprocess.TimeoutExpired as error:
+                    def text(value):
+                        return value.decode('utf-8', 'replace') if isinstance(value, bytes) else value or ''
+                    (out / f'{name}.{label}.log').write_text(text(error.output) + text(error.stderr))
+                    raise
+                log = result.stdout + result.stderr
+                (out / f'{name}.{label}.log').write_text(log)
+                return result.returncode, log
             try:
-                result = run_owned(args, cwd=root, env=env, timeout=300)
-            except subprocess.TimeoutExpired as error:
-                def text(value):
-                    return value.decode('utf-8', 'replace') if isinstance(value, bytes) else value or ''
-                (out / f'{name}.{label}.log').write_text(text(error.output) + text(error.stderr))
-                raise
-            log = result.stdout + result.stderr
-            (out / f'{name}.{label}.log').write_text(log)
-            return result.returncode, log
-        try:
-            # This guard intentionally refuses all new/uncommitted product files.
-            with mutating_sources(root, [path]) as originals:
-                original = originals[path].decode()
-                if original.count(before) != 1:
-                    raise ValueError(f'stale anchor: expected 1, got {original.count(before)}')
-                path.write_text(original.replace(before, after, 1))
-                rc, log = run('compile', command + ['--no-run'])
-                if rc != 0:
-                    raise ValueError(f'mutant failed compilation rc={rc}')
-                rc, log = run('mutant', command + test_args)
-                if rc == 0:
-                    entry.update(verdict='SURVIVED', reason='named test passed')
-                elif rc == 101 and f'{test} ... FAILED' in log and 'running 1 test' in log and marker in log and 'test result: FAILED' in log:
-                    entry.update(verdict='KILLED', reason=f'named assertion: {marker}')
-                else:
-                    entry.update(reason=f'not the named assertion rc={rc}')
-            rc, log = run('restored', command + test_args)
-            if rc != 0 or 'running 1 test' not in log or '1 passed; 0 failed' not in log or f'{test} ... ok' not in log:
-                entry.update(verdict='INVALID', reason=f'restored positive failed rc={rc}')
-        except (Exception, subprocess.TimeoutExpired) as error:
-            entry.update(verdict='INVALID', reason=str(error))
+                rc, log = run('baseline', command + test_args)
+                if rc != 0 or not baseline_passed(log, test):
+                    raise ValueError(f'baseline failed rc={rc}')
+                # This guard intentionally refuses all new/uncommitted product files.
+                with mutating_sources(root, [path]) as originals:
+                    original = originals[path].decode()
+                    if original.count(before) != 1:
+                        raise ValueError(f'stale anchor: expected 1, got {original.count(before)}')
+                    path.write_text(original.replace(before, after, 1))
+                    rc, log = run('compile', command + ['--no-run'])
+                    if rc != 0:
+                        raise ValueError(f'mutant failed compilation rc={rc}')
+                    rc, log = run('mutant', command + test_args)
+                    if rc == 0:
+                        entry.update(verdict='SURVIVED', reason='named test passed')
+                    elif rc == 101 and named_test_killed(log, test, marker) and 'running 1 test' in log and 'test result: FAILED' in log:
+                        entry.update(verdict='KILLED', reason=f'named assertion: {marker}')
+                    else:
+                        entry.update(reason=f'not the named assertion rc={rc}')
+                rc, log = run('restored', command + test_args)
+                if rc != 0 or not baseline_passed(log, test):
+                    entry.update(verdict='INVALID', reason=f'restored positive failed rc={rc}')
+            except (Exception, subprocess.TimeoutExpired) as error:
+                entry.update(verdict='INVALID', reason=str(error))
         summary.append(entry)
         print(f"{name}: {entry['verdict']} {entry['reason']}", flush=True)
         (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
     counts = {status: sum(e['verdict'] == status for e in summary) for status in ['KILLED', 'SURVIVED', 'INVALID']}
     print(json.dumps(counts), flush=True)
-    return int(not summary or any(e['verdict'] != 'KILLED' for e in summary))
+    return verdict_exit(summary)
 
 
 if __name__ == '__main__':
