@@ -871,6 +871,10 @@ fn live_ts_client_payload() {
     );
 }
 async fn run_case(scenario: &str) {
+    run_case_transport(scenario, false).await;
+}
+
+async fn run_case_transport(scenario: &str, websocket: bool) {
     verify_artifacts();
     assert!(
         std::env::var_os("LIVE_E2E_MITM").is_none(),
@@ -1039,46 +1043,88 @@ async fn run_case(scenario: &str) {
         admission: None,
         diagnostic: Arc::new(|_| {}),
     }));
-    let mut options = SessionOwnerOptions::new(factory.clone());
-    options.idle_sweep_interval_ms = 0;
-    let owner = SessionOwner::new(options);
-    let replacement = Arc::new(ReplacementCoordinator::new(
-        Default::default(),
-        Arc::new(owner.clone()),
-        5000,
-        None,
-    ));
     let runs = Arc::new(
         FileRegistry::new(
             FileRunRegistry::open(directory.join("registry.json")).expect("#748 registry open"),
         )
         .expect("#748 registry worker"),
     );
-    let submitter = Arc::new(TurnSubmitter {
-        owner: owner.clone(),
-        coordinator: Arc::new(TurnEventCoordinator::new()),
-        registry: Some(runs.clone()),
-        workspace_admissions: WorkspaceAdmissions::default(),
-        host: Arc::new(GatewaySubmitHost::new(
-            Arc::new(Services {
-                recorder: shared_recorder,
-            }),
-            Arc::new(NativeSubmitReplacement((*replacement).clone())),
-            Arc::new(GatewaySubmitAdmission::new(SubmitAdmissionOptions::new(
-                replacement,
-            ))),
-        )),
-        projector: Arc::new(
-            GatewayAgentEventProjector::new(GatewayAgentEventProjectorOptions {
-                tool_result_artifacts: Some(Arc::new(
-                    GatewayToolResultArtifactStore::new(directory.join("artifacts"), 4096)
-                        .expect("#748 artifact root"),
-                )),
-                ..Default::default()
-            })
-            .expect("#748 projector"),
-        ),
-    });
+    let build_factory = factory.clone();
+    let build_directory = directory.clone();
+    let build_runs = runs.clone();
+    let build = move |coordinator| {
+        let factory = build_factory;
+        let directory = build_directory;
+        let runs = build_runs;
+        let mut options = SessionOwnerOptions::new(factory.clone());
+        options.idle_sweep_interval_ms = 0;
+        let owner = SessionOwner::new(options);
+        let replacement = Arc::new(ReplacementCoordinator::new(
+            Default::default(),
+            Arc::new(owner.clone()),
+            5000,
+            None,
+        ));
+        let submitter = Arc::new(TurnSubmitter {
+            owner: owner.clone(),
+            coordinator,
+            registry: Some(runs.clone()),
+            workspace_admissions: WorkspaceAdmissions::default(),
+            host: Arc::new(GatewaySubmitHost::new(
+                Arc::new(Services {
+                    recorder: shared_recorder,
+                }),
+                Arc::new(NativeSubmitReplacement((*replacement).clone())),
+                Arc::new(GatewaySubmitAdmission::new(SubmitAdmissionOptions::new(
+                    replacement,
+                ))),
+            )),
+            projector: Arc::new(
+                GatewayAgentEventProjector::new(GatewayAgentEventProjectorOptions {
+                    tool_result_artifacts: Some(Arc::new(
+                        GatewayToolResultArtifactStore::new(directory.join("artifacts"), 4096)
+                            .expect("#748 artifact root"),
+                    )),
+                    ..Default::default()
+                })
+                .expect("#748 projector"),
+            ),
+        });
+        (owner, submitter)
+    };
+    let (owner, submitter, ws_host) = if websocket {
+        use pilotdeck_gateway::runtime::turn::{
+            gateway::{GatewayServices, TurnGateway},
+            replay::TurnReplayOptions,
+        };
+        let (send, ready) = std::sync::mpsc::sync_channel(1);
+        let cleanup_factory = factory.clone();
+        let cleanup_project = project.clone();
+        let host = TurnGateway::start_with_cleanup(
+            TurnReplayOptions::new(),
+            move |coordinator| {
+                let (owner, submitter) = build(coordinator);
+                send.send((owner, submitter.clone()))
+                    .expect("#749 return live owners");
+                Ok(GatewayServices {
+                    submitter,
+                    interactions: Arc::default(),
+                    requests: Arc::new(WsRequests),
+                })
+            },
+            async move {
+                let factory = cleanup_factory.dispose().await.map_err(|e| e.to_string());
+                let project = cleanup_project.dispose().await.map_err(|e| e.to_string());
+                factory.and(project)
+            },
+        )
+        .expect("#749 start real live host");
+        let (owner, submitter) = ready.recv().expect("#749 live host initialized");
+        (owner, submitter, Some(host))
+    } else {
+        let (owner, submitter) = build(Arc::new(TurnEventCoordinator::new()));
+        (owner, submitter, None)
+    };
     let run_id = format!("run-{scenario}");
     let target = directory.join("sandbox/tool-target.txt");
     let prompt = match scenario {
@@ -1087,9 +1133,44 @@ async fn run_case(scenario: &str) {
         "cancel-stream" => "LIVE_E2E_HANG".into(),
         _ => "LIVE_E2E_TEXT".into(),
     };
-    let mut stream = submitter.submit(js(
-        json!({"sessionKey":SESSION,"runId":run_id,"channelKey":"test","message":prompt}),
-    ));
+    let input = json!({"sessionKey":SESSION,"runId":run_id,"channelKey":"test","message":prompt});
+    let mut ws_running = None;
+    let mut ws_client = None;
+    if let Some(host) = ws_host {
+        let server = pilotdeck_gateway::native_ws::NativeWsServer::bind(
+            "127.0.0.1:0".parse().expect("#749 live listen address"),
+            host,
+            "live-ws-token".into(),
+            "live-ws".into(),
+        )
+        .await
+        .expect("#749 live WS bind");
+        let address = server.local_addr().expect("#749 live assigned port");
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(server.run(
+            async {
+                let _ = stopped.await;
+            },
+            Duration::from_secs(10),
+        ));
+        let mut client = ws_client::Client::connect(address).await;
+        client.send(json!({"type":"hello","protocolVersion":"1.2","clientName":"ui","clientVersion":"live-ws","token":"live-ws-token"})).await;
+        assert_eq!(
+            client.read_json().await["type"],
+            "hello_ok",
+            "#749 live WS hello"
+        );
+        client
+            .send(json!({"type":"request","id":"live","method":"submit_turn","params":input}))
+            .await;
+        ws_client = Some(client);
+        ws_running = Some((stop, task));
+    }
+    let mut stream = if websocket {
+        None
+    } else {
+        Some(submitter.submit(js(input)))
+    };
     let cancel_owner = owner.clone();
     let cancel_run: JsString = run_id.clone().into();
     let cancel_dir = directory.clone();
@@ -1116,8 +1197,33 @@ async fn run_case(scenario: &str) {
     };
     let mut events = Vec::new();
     timeout(Duration::from_secs(45), async {
-        while let Some(event) = stream.next().await.expect("#748 submission stream") {
-            let value = val(&event);
+        loop {
+            let value = if let Some(client) = &mut ws_client {
+                let frame = client.read_json().await;
+                assert_eq!(frame["type"], "event", "#749 live WS event envelope");
+                assert_eq!(frame["id"], "live", "#749 live WS event identity");
+                assert_eq!(frame["seq"], json!(events.len()), "#749 live WS sequence");
+                if frame["final"] == true {
+                    assert_eq!(
+                        Some(&frame["event"]),
+                        events.last(),
+                        "#749 live WS final repeats terminal"
+                    );
+                    break;
+                }
+                frame["event"].clone()
+            } else {
+                let Some(event) = stream
+                    .as_mut()
+                    .expect("#748 direct submit stream")
+                    .next()
+                    .await
+                    .expect("#748 submission stream")
+                else {
+                    break;
+                };
+                val(&event)
+            };
             if scenario == "cancel-stream"
                 && value["type"] == "assistant_text_delta"
                 && abort.is_none()
@@ -1172,9 +1278,22 @@ async fn run_case(scenario: &str) {
         .expect("#748 restore durable state")
         .state
         .messages;
+    if let Some(mut client) = ws_client {
+        client.close().await;
+    }
+    if let Some((stop, task)) = ws_running {
+        stop.send(()).expect("#749 live WS stop");
+        timeout(Duration::from_secs(15), task)
+            .await
+            .expect("#749 live WS drain deadline")
+            .expect("#749 live WS server task")
+            .expect("#749 live WS drained");
+    }
     owner.shutdown().await.expect("#748 session shutdown");
-    factory.dispose().await.expect("#748 factory dispose");
-    project.dispose().await.expect("#748 project dispose");
+    if !websocket {
+        factory.dispose().await.expect("#748 factory dispose");
+        project.dispose().await.expect("#748 project dispose");
+    }
     let record = FileRunRegistry::open(directory.join("registry.json"))
         .expect("#748 reopen registry")
         .get(&run)
@@ -1338,3 +1457,41 @@ cell!(live_cancel_tool, "cancel-tool");
 cell!(live_drop, "drop");
 cell!(live_duplicate, "duplicate");
 cell!(live_early_final, "early-final");
+
+#[path = "common/native_ws_client.rs"]
+mod ws_client;
+struct WsRequests;
+impl pilotdeck_gateway::runtime::turn::gateway::GatewayRequests for WsRequests {
+    fn describe_server(
+        &self,
+    ) -> pilotdeck_gateway::runtime::connection::Call<
+        '_,
+        Result<JsValue, pilotdeck_gateway::runtime::connection::RequestError>,
+    > {
+        Box::pin(async { Ok(js(json!({"name":"live-ws", "capabilities":[]}))) })
+    }
+    fn request(
+        &self,
+        _: JsString,
+        _: JsValue,
+    ) -> pilotdeck_gateway::runtime::connection::Call<
+        '_,
+        Result<JsValue, pilotdeck_gateway::runtime::connection::RequestError>,
+    > {
+        Box::pin(async {
+            Err(pilotdeck_gateway::runtime::connection::RequestError::new(
+                "#749 unexpected live read",
+            ))
+        })
+    }
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires fixed PDRS_BASELINE and Node v22.22.0"]
+async fn live_ws_text() {
+    run_case_transport("text", true).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires fixed PDRS_BASELINE and Node v22.22.0"]
+async fn live_ws_tool() {
+    run_case_transport("tool", true).await;
+}

@@ -298,6 +298,8 @@ impl ConnectionGateway for ConnectionTurnGateway {
 pub struct TurnGateway {
     jobs: mpsc::UnboundedSender<Job>,
     gateway: Arc<ConnectionTurnGateway>,
+    stop: watch::Sender<Option<Duration>>,
+    stopped: watch::Receiver<Option<Result<(), String>>>,
 }
 impl TurnGateway {
     pub fn start(
@@ -308,6 +310,19 @@ impl TurnGateway {
     ) -> std::io::Result<Self> {
         Self::start_with_clock(options, None, build)
     }
+    /// Keep the host executor alive while embedding-owned session/project
+    /// resources dispose. The cleanup future must not enqueue new host jobs.
+    /// Registered only after successful initialization: on a builder error,
+    /// the caller remains responsible for disposing any partial resources.
+    pub fn start_with_cleanup(
+        options: TurnReplayOptions,
+        build: impl FnOnce(Arc<TurnEventCoordinator>) -> std::io::Result<GatewayServices>
+        + Send
+        + 'static,
+        cleanup: impl Future<Output = Result<(), String>> + Send + 'static,
+    ) -> std::io::Result<Self> {
+        Self::start_with_clock_and_cleanup(options, None, build, Some(Box::pin(cleanup)))
+    }
     fn start_with_clock(
         options: TurnReplayOptions,
         clock: Option<Arc<dyn ReplayTimer>>,
@@ -315,11 +330,23 @@ impl TurnGateway {
         + Send
         + 'static,
     ) -> std::io::Result<Self> {
+        Self::start_with_clock_and_cleanup(options, clock, build, None)
+    }
+    fn start_with_clock_and_cleanup(
+        options: TurnReplayOptions,
+        clock: Option<Arc<dyn ReplayTimer>>,
+        build: impl FnOnce(Arc<TurnEventCoordinator>) -> std::io::Result<GatewayServices>
+        + Send
+        + 'static,
+        cleanup: Option<Call<'static, Result<(), String>>>,
+    ) -> std::io::Result<Self> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
         let (jobs, mut receive) = mpsc::unbounded_channel::<Job>();
         let (ready, initialized) = std::sync::mpsc::sync_channel(1);
+        let (stop, mut stopping) = watch::channel(None::<Duration>);
+        let (finished, stopped) = watch::channel(None);
         std::thread::Builder::new().name("turn-gateway-host".into()).spawn(move || {
             runtime.block_on(async move {
                 let timer = Arc::new(clock.map_or_else(HostSerialTimer::new, HostSerialTimer::with_clock));
@@ -334,24 +361,76 @@ impl TurnGateway {
                 let gateway = Arc::new(ConnectionTurnGateway(services, Arc::default()));
                 if ready.send(Ok(gateway.clone())).is_err() { return; }
                 let mut running = JoinSet::new();
-                loop {
+                let budget = loop {
                     tokio::select! {
-                        job = receive.recv() => match job { Some(job) => { running.spawn(job); }, None => break },
+                        _ = stopping.changed() => break *stopping.borrow(),
+                        job = receive.recv() => match job { Some(job) => { running.spawn(job); }, None => break *stopping.borrow() },
                         _ = running.join_next(), if !running.is_empty() => {},
                     }
-                }
-                // No remaining transport handles: cancel owned turns and let
-                // consumer/finally fences unwind before disposing replay.
-                let _ = gateway.0.submitter.owner.shutdown().await;
+                };
+                receive.close();
+                while let Some(job) = receive.recv().await { running.spawn(job); }
+                let drain = async {
+                    let mut error = gateway.0.submitter.owner.shutdown().await.err().map(|e| e.to_string());
+                    while let Some(result) = running.join_next().await {
+                        if let Err(failure) = result { error.get_or_insert_with(|| failure.to_string()); }
+                    }
+                    if crate::mutants::on("native-ws-error-skips-cleanup") && error.is_some() { return error.map_or(Ok(()), Err); }
+                    // One failed job must not skip embedding-owned disposals.
+                    if !crate::mutants::on("native-ws-skip-host-cleanup") && let Some(cleanup) = cleanup && let Err(failure) = cleanup.await { error.get_or_insert(failure); }
+                    error.map_or(Ok(()), Err)
+                };
+                // Preserve the original implicit-drop drain. Only an explicit
+                // embedding shutdown opts into a deadline.
+                let result = match budget {
+                    Some(budget) => tokio::time::timeout(budget, drain).await.unwrap_or_else(|_| Err("gateway host drain deadline exceeded".into())),
+                    None => drain.await,
+                };
+                running.abort_all();
                 while running.join_next().await.is_some() {}
                 coordinator.dispose();
                 gateway.0.interactions.dispose(&"gateway_disposed".into());
+                finished.send_replace(Some(result));
             });
         })?;
         let gateway = initialized
             .recv()
             .map_err(|_| std::io::Error::other("gateway host initialization stopped"))??;
-        Ok(Self { jobs, gateway })
+        Ok(Self {
+            jobs,
+            gateway,
+            stop,
+            stopped,
+        })
+    }
+    /// Signal shutdown synchronously, including from an embedding's Drop guard.
+    pub fn request_shutdown(&self, budget: Duration) {
+        self.stop.send_if_modified(|value| {
+            if value.is_none() {
+                *value = Some(budget);
+                true
+            } else {
+                false
+            }
+        });
+    }
+    /// Explicitly stop the serial host, cancel owned turns and await cleanup.
+    pub async fn shutdown(&self, budget: Duration) -> Result<(), String> {
+        self.request_shutdown(budget);
+        self.stopped().await
+    }
+    /// Observe shutdown without initiating it (also useful to await a cancelled embedding).
+    pub async fn stopped(&self) -> Result<(), String> {
+        let mut stopped = self.stopped.clone();
+        loop {
+            if let Some(result) = stopped.borrow_and_update().clone() {
+                return result;
+            }
+            stopped
+                .changed()
+                .await
+                .map_err(|_| "gateway host exited without drain result".to_owned())?;
+        }
     }
     async fn call<T: Send + 'static>(
         &self,
@@ -397,6 +476,33 @@ pub struct HostedConnection {
     connection: Arc<GatewayConnection>,
 }
 impl HostedConnection {
+    /// Admit in caller order before returning the completion waiter. Only the
+    /// synchronous receive prefix is fenced; a pending business await cannot
+    /// block the next frame. Dropping either waiter never cancels the host job.
+    pub async fn enqueue(
+        &self,
+        text: String,
+    ) -> Result<Call<'static, Result<(), RequestError>>, RequestError> {
+        let connection = self.connection.clone();
+        let (admit, admitted) = oneshot::channel();
+        let (done, result) = oneshot::channel();
+        self.host
+            .jobs
+            .send(Box::pin(async move {
+                let operation = connection.receive(&text);
+                let _ = admit.send(());
+                let _ = done.send(operation.await);
+            }))
+            .map_err(|_| RequestError::new("Gateway host stopped."))?;
+        admitted
+            .await
+            .map_err(|_| RequestError::new("Gateway host operation stopped."))?;
+        Ok(Box::pin(async move {
+            result
+                .await
+                .map_err(|_| RequestError::new("Gateway host operation stopped."))?
+        }))
+    }
     pub async fn receive(&self, text: String) -> Result<(), RequestError> {
         let connection = self.connection.clone();
         self.host
@@ -421,4 +527,4 @@ impl HostedConnection {
 
 #[cfg(test)]
 #[path = "gateway_tests.rs"]
-mod tests;
+pub(crate) mod tests;
