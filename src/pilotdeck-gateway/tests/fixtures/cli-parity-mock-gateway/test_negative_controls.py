@@ -806,7 +806,10 @@ class MachineLeaseTests(unittest.TestCase):
             with open(guard_path, 'w+') as guard:
                 fcntl.flock(guard, fcntl.LOCK_EX)
                 acquired.set()
-                release.wait(5)
+                # Only release.set() may drop the flock (the finally below
+                # always sets it): a self-timeout here would silently change
+                # the timing under test (#1023 r5 Codex P1-1).
+                release.wait()
 
         def caller():
             try:
