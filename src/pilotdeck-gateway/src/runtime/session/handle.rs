@@ -83,6 +83,7 @@ struct Progress {
     maintenance: bool,
     cancelled: Option<JsString>,
     disposal: Option<watch::Receiver<Option<RuntimeResult>>>,
+    recreation_started: bool,
 }
 
 struct Inner {
@@ -117,11 +118,25 @@ impl LiveSessionHandle {
         // Capture eligibility once. Disposal may advance after this read; the
         // owned reload source stays valid through close and does not consult
         // the adapter's later disposed flag.
-        if self.state() == HandleState::Disposed {
+        let snapshot = if self.state() == HandleState::Disposed && !self.retains_recreation_source()
+        {
             self.reload_snapshot()
         } else {
             self.0.session.draining_reload_snapshot()
-        }
+        }?;
+        self.0.progress.lock().unwrap().recreation_started = true;
+        Ok(snapshot)
+    }
+
+    /// Only a factory that passed eligibility may retry from this retained
+    /// source. External disposal alone never grants recreation eligibility.
+    pub(super) fn retains_recreation_source(&self) -> bool {
+        self.0.progress.lock().unwrap().recreation_started
+    }
+
+    pub(super) fn recreation_drained(&self) -> bool {
+        let progress = self.0.progress.lock().unwrap();
+        progress.recreation_started && progress.state == HandleState::Disposed && !progress.activity
     }
 
     /// Only factory recreation calls this after its successful owned drain.
@@ -146,6 +161,7 @@ impl LiveSessionHandle {
                 maintenance: false,
                 cancelled: None,
                 disposal: None,
+                recreation_started: false,
             }),
             changed: watch::channel(0).0,
         }))
@@ -300,7 +316,14 @@ impl LiveSessionHandle {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     handle.0.session.abort(&reason)
                 }))
-                .unwrap_or_else(|_| Err(RuntimeError::new("Agent session abort panicked.")))
+                .unwrap_or_else(|panic| {
+                    let message = panic
+                        .downcast_ref::<String>()
+                        .map(String::as_str)
+                        .or_else(|| panic.downcast_ref::<&str>().copied())
+                        .unwrap_or("Agent session abort panicked.");
+                    Err(RuntimeError::new(message))
+                })
                 .err()
             } else {
                 None
@@ -649,7 +672,7 @@ mod tests {
                 .first()
                 .expect("#1022 abort handle cause")
                 .message,
-            "Agent session abort panicked.",
+            "simulated session.abort() panic",
             "#1022 abort panic cause"
         );
         assert_eq!(

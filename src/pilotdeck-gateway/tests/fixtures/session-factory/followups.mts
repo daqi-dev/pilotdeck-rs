@@ -22,7 +22,7 @@ export async function followups(base:string,output:string) {
  const {createDefaultPermissionContext}=await import(`${base}/src/permission/index.ts`);
  const encode=(v:any)=>JSON.parse(JSON.stringify(v,(_k,x)=>x instanceof Map?Object.fromEntries(x):x));
  const rows=[];
- for(const name of ['drain','abort-throw']) {
+ for(const name of ['drain','abort-throw','dispose-throw']) {
   const cwd=path.join(output,`followup-${name}`),home=path.join(cwd,'home');fs.mkdirSync(home,{recursive:true});
   const entered=deferred(),release=deferred();let calls=0,configuredDisposed=0,effectReleased=0,drained:any;
   const connections:any[]=[];
@@ -44,7 +44,7 @@ export async function followups(base:string,output:string) {
    seedState:{readFileState:new Map([['seed.txt',{mtimeMs:1,kind:'text'}]])},
    config:{provider:'test',model:'deterministic',cwd,permissionMode:'default',permissionContext:createDefaultPermissionContext({cwd,mode:'default',canPrompt:false})},
    transcript:new InMemoryTranscriptWriter(),dependencies:{router:{},ports:{model,tools},tools:{registry:{list:()=>[tool]},scheduler:tools}},
-   __configure:({scope,session}:any)=>{scope.own(()=>{effectReleased++});return ()=>{configuredDisposed++;drained=encode(session.snapshotForRuntimeReload().fileState)}},
+   __configure:({scope,session}:any)=>{scope.own(()=>{effectReleased++});return ()=>{configuredDisposed++;drained=encode(session.snapshotForRuntimeReload().fileState);if(name==='dispose-throw')throw Error('DISPOSE_1022')}},
    agentLoopFactory:createAgentLoopSidecarRuntimeFactory({connect})});
   const initial=encode(session.snapshotForRuntimeReload().fileState);
   const running=(async()=>{for await(const _event of handle.submit({type:'text',text:'checkpoint probe'},{turnId:'turn-1022'})) { /* consume real stream */ }})();
@@ -52,7 +52,7 @@ export async function followups(base:string,output:string) {
    await bounded(entered.promise,'tool entered');
    const captured=encode(session.snapshotForRuntimeReload().fileState);
    if(name==='abort-throw')session.abort=()=>{throw Error('ABORT_1022')};
-   const disposing=handle.dispose('followup').then(()=>null,(e:any)=>({name:e.name,message:e.message,errors:e.errors.map((v:any)=>v.message)}));
+   const disposing=handle.dispose('followup').then(()=>null,(e:any)=>({name:e.name,message:e.message,errors:e.errors.map((v:any)=>v.message),...(name==='dispose-throw'?{nestedErrors:e.errors[0].errors.map((v:any)=>v.message)}:{})}));
    const pending={state:handle.state,inFlight:handle.inFlight,configuredDisposed,effectReleased};
    release.resolve();await bounded(running,'turn drain');const error=await bounded(disposing,'dispose');
    const row={name,initial,captured,drained,pending,state:handle.state,inFlight:handle.inFlight,configuredDisposed,effectReleased,error};
@@ -62,6 +62,7 @@ export async function followups(base:string,output:string) {
    assert.equal(effectReleased,1,'#1022 scope cleanup runs after abort');
    assert.equal(handle.state,'disposed','#1022 handle disposed after drain');
    if(name==='abort-throw')assert.deepEqual(error,{name:'AggregateError',message:'Failed to dispose agent handle.',errors:['ABORT_1022']},'#1022 abort error retained');
+   else if(name==='dispose-throw')assert.deepEqual(error,{name:'AggregateError',message:'Failed to dispose agent handle.',errors:['Failed to dispose agent session lifecycle.'],nestedErrors:['DISPOSE_1022']},'#1022 dispose error retained');
    else assert.equal(error,null,'#1022 ordinary drain');
    rows.push(row);
   } finally {

@@ -246,7 +246,10 @@ impl SessionOwner {
             .map_or(context, |record| record.context.clone());
         let previous = cached
             .as_ref()
-            .filter(|record| record.handle.state() != super::HandleState::Disposed)
+            .filter(|record| {
+                record.handle.state() != super::HandleState::Disposed
+                    || record.handle.retains_recreation_source()
+            })
             .map(|record| record.handle.clone());
         let handle = self
             .0
@@ -315,11 +318,14 @@ impl SessionOwner {
             return Err(RuntimeError::new(message));
         }
         if let Some(previous) = cached {
+            let already_drained = previous.handle.recreation_drained();
             let mut reason = JsString::from("agent_replaced:").units().to_vec();
             reason.extend_from_slice(context.session_key.units());
             let disposal = previous.handle.dispose(JsString::from_utf16(reason));
             self.emit(&context.session_key, EvictionReason::DirtyRecreate);
-            disposal.await?;
+            if !already_drained {
+                disposal.await?;
+            }
         }
         Ok(handle)
     }

@@ -2614,14 +2614,32 @@ async fn recreate_snapshot_rejects_disposal_during_prepare() {
 
 #[tokio::test]
 async fn writer_abort_panic_releases_lease_before_session_dispose() {
-    struct AbortPanic(Arc<dyn LiveSession>, Arc<Semaphore>);
+    abort_panic_case("str").await;
+}
+
+#[tokio::test]
+async fn writer_abort_owned_string_panic_retains_error() {
+    abort_panic_case("String").await;
+}
+
+#[tokio::test]
+async fn writer_abort_non_string_panic_retains_fallback() {
+    abort_panic_case("Any").await;
+}
+
+async fn abort_panic_case(payload: &'static str) {
+    struct AbortPanic(Arc<dyn LiveSession>, Arc<Semaphore>, &'static str);
     impl LiveSession for AbortPanic {
         fn snapshot(&self) -> JsValue {
             self.0.snapshot()
         }
         fn abort(&self, _: &JsString) -> RuntimeResult {
             self.1.add_permits(1);
-            panic!("#1022 abort injected adapter panic");
+            match self.2 {
+                "str" => panic!("ABORT_1022"),
+                "String" => std::panic::panic_any(String::from("ABORT_1022")),
+                _ => std::panic::panic_any(1022_u32),
+            }
         }
         fn disposal_guard(&self) -> Option<Box<dyn Send>> {
             self.0.disposal_guard()
@@ -2642,7 +2660,11 @@ async fn writer_abort_panic_releases_lease_before_session_dispose() {
         .clone();
     let aborted = Arc::new(Semaphore::new(0));
     let old = LiveSessionHandle::new(
-        Arc::new(AbortPanic(original.session_for_test(), aborted.clone())),
+        Arc::new(AbortPanic(
+            original.session_for_test(),
+            aborted.clone(),
+            payload,
+        )),
         None,
     );
     let activity = old.begin_activity().expect("#1022 abort active turn");
@@ -2667,15 +2689,24 @@ async fn writer_abort_panic_releases_lease_before_session_dispose() {
         oracle_document()["followups"][1]["error"]["message"],
         "#1022 abort aggregate retained"
     );
-    assert_eq!(
-        error
-            .causes
-            .first()
-            .expect("#1022 abort cause exists")
-            .message,
-        "Agent session abort panicked.",
-        "#1022 abort original panic retained"
-    );
+    let causes: Vec<_> = error
+        .causes
+        .iter()
+        .map(|cause| cause.message.as_str())
+        .collect();
+    if payload == "Any" {
+        assert_eq!(
+            causes,
+            ["Agent session abort panicked."],
+            "#1022 abort non-string fallback retained"
+        );
+    } else {
+        assert_eq!(
+            serde_json::json!(causes),
+            oracle_document()["followups"][1]["error"]["errors"],
+            "#1022 abort original panic retained"
+        );
+    }
     assert_eq!(old.state(), HandleState::Disposed, "#1022 abort disposed");
     assert_eq!(
         h.leases(),
@@ -3500,7 +3531,11 @@ async fn writer_busy_budget_excludes_path_resolution() {
     h.finish("slow-path-1022").await;
 }
 
-async fn drained_seed_case(cancel_waiter: bool, fail_final_seed: bool) {
+async fn drained_seed_case(
+    cancel_waiter: bool,
+    fail_final_seed: bool,
+    retry: Option<&'static str>,
+) {
     struct Pending;
     impl LiveTurn for Pending {
         fn next(&mut self) -> super::super::SessionNext<'_> {
@@ -3516,6 +3551,7 @@ async fn drained_seed_case(cancel_waiter: bool, fail_final_seed: bool) {
         captured: Arc<Semaphore>,
         snapshots: AtomicUsize,
         fail_final_seed: bool,
+        retry: Option<&'static str>,
     }
     impl LiveSession for StartedSession {
         fn snapshot(&self) -> JsValue {
@@ -3525,7 +3561,8 @@ async fn drained_seed_case(cancel_waiter: bool, fail_final_seed: bool) {
             self.inner.reload_snapshot()
         }
         fn draining_reload_snapshot(&self) -> Result<ReloadSnapshot, RuntimeError> {
-            if self.snapshots.fetch_add(1, Ordering::SeqCst) > 0 && self.fail_final_seed {
+            let read = self.snapshots.fetch_add(1, Ordering::SeqCst);
+            if read > 0 && self.fail_final_seed && (self.retry.is_none() || read == 1) {
                 return Err(RuntimeError::new("#1022 final seed unavailable"));
             }
             let mut snapshot = self.inner.draining_reload_snapshot()?;
@@ -3546,10 +3583,38 @@ async fn drained_seed_case(cancel_waiter: bool, fail_final_seed: bool) {
             self.inner.abort(reason)
         }
         fn disposal_guard(&self) -> Option<Box<dyn Send>> {
+            if self.retry == Some("guard-panic") {
+                panic!("#1022 seed retry injected guard panic");
+            }
             self.inner.disposal_guard()
         }
         fn dispose(&self) -> DisposeFuture<'_> {
-            self.inner.dispose()
+            Box::pin(async move {
+                self.inner.dispose().await?;
+                if self.retry == Some("dispose") {
+                    return Err(RuntimeError::new("DISPOSE_1022"));
+                }
+                Ok(())
+            })
+        }
+    }
+    struct RetryFactory {
+        initial: Mutex<Option<LiveSessionHandle>>,
+        factory: Arc<ProjectSessionFactory>,
+    }
+    impl SessionFactory for RetryFactory {
+        fn can_recreate(&self) -> bool {
+            true
+        }
+        fn create(
+            &self,
+            context: SessionContext,
+            previous: Option<LiveSessionHandle>,
+        ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+            if let Some(initial) = lock(&self.initial).take() {
+                return Box::pin(async move { Ok(initial) });
+            }
+            self.factory.create(context, previous)
         }
     }
     let h = Harness::new("drain-seed-1022");
@@ -3583,20 +3648,94 @@ async fn drained_seed_case(cancel_waiter: bool, fail_final_seed: bool) {
             captured: captured.clone(),
             snapshots: AtomicUsize::new(0),
             fail_final_seed,
+            retry,
         }),
         None,
     );
     let stream = old
         .submit(JsValue::Null, JsValue::Null)
         .expect("#1022 seed started turn");
-    let factory = h.factory.clone();
-    let context = h.context();
-    let previous = old.clone();
-    let creating = tokio::spawn(async move { factory.create(context, Some(previous)).await });
+    let retry_owner = if retry.is_some() {
+        let mut options = SessionOwnerOptions::new(Arc::new(RetryFactory {
+            initial: Mutex::new(Some(old.clone())),
+            factory: h.factory.clone(),
+        }));
+        options.idle_sweep_interval_ms = 0;
+        let owner = SessionOwner::new(options);
+        let initial = followup_bounded("seed retry initial", owner.get_or_create(h.context()))
+            .await
+            .expect("#1022 seed retry initial handle");
+        assert!(
+            initial.same_identity(&old),
+            "#1022 seed retry tracks original handle"
+        );
+        assert!(
+            owner.mark_session_dirty(&h.context().session_key, "seed-retry"),
+            "#1022 seed retry dirty"
+        );
+        Some(owner)
+    } else {
+        None
+    };
+    let creating = if let Some(owner) = &retry_owner {
+        tokio::spawn(owner.get_or_create(h.context()))
+    } else {
+        tokio::spawn(h.factory.create(h.context(), Some(old.clone())))
+    };
     followup_bounded("seed capture", captured.acquire())
         .await
         .expect("#1022 seed before-drain capture")
         .forget();
+    if retry == Some("guard-panic") {
+        let first = followup_bounded("seed retry guard panic", creating)
+            .await
+            .expect("#1022 seed retry guard join")
+            .err()
+            .expect("#1022 seed retry guard failure reported");
+        assert_eq!(
+            first.message, "Agent session dispose task panicked.",
+            "#1022 seed retry guard original error"
+        );
+        assert_eq!(
+            old.state(),
+            HandleState::Disposed,
+            "#1022 seed retry guard finished while turn active"
+        );
+        let owner = retry_owner.as_ref().expect("#1022 seed retry guard owner");
+        let again = followup_bounded(
+            "seed retry active predecessor",
+            owner.get_or_create(h.context()),
+        )
+        .await;
+        assert_eq!(
+            lock(&h.observed.events)
+                .iter()
+                .filter(|event| event.starts_with("storage."))
+                .count(),
+            1,
+            "#1022 seed retry active predecessor cannot create storage"
+        );
+        assert_eq!(
+            again
+                .err()
+                .expect("#1022 seed retry active predecessor rejects")
+                .message,
+            first.message,
+            "#1022 seed retry active predecessor preserves failure"
+        );
+        drop(stream);
+        followup_bounded(
+            "seed retry guard explicit cleanup",
+            original.dispose("cleanup".into()),
+        )
+        .await
+        .expect("#1022 seed retry guard explicit cleanup");
+        followup_bounded("seed retry guard shutdown", owner.shutdown())
+            .await
+            .expect_err("#1022 seed retry guard shutdown retains original error");
+        h.finish("drain-seed-1022").await;
+        return;
+    }
     assert_eq!(
         old.state(),
         HandleState::Draining,
@@ -3612,6 +3751,26 @@ async fn drained_seed_case(cancel_waiter: bool, fail_final_seed: bool) {
     if cancel_waiter {
         creating.abort();
     }
+    let creating = if retry == Some("timeout") {
+        let error = followup_bounded("seed retry timeout", creating)
+            .await
+            .expect("#1022 seed retry timeout join")
+            .err()
+            .expect("#1022 seed retry timeout rejects");
+        assert_eq!(
+            error.js_error().and_then(|error| error.code.as_deref()),
+            Some("SESSION_WRITER_BUSY"),
+            "#1022 seed retry timeout error"
+        );
+        assert_eq!(
+            lock(&h.observed.bindings).len(),
+            1,
+            "#1022 seed retry never publishes while predecessor active"
+        );
+        None
+    } else {
+        Some(creating)
+    };
     drop(stream);
     assert!(
         lock(&saved)
@@ -3620,7 +3779,100 @@ async fn drained_seed_case(cancel_waiter: bool, fail_final_seed: bool) {
             .is_some_and(|s| s.get("during.txt").is_some()),
         "#1022 seed drop publishes final checkpoint"
     );
-    if cancel_waiter {
+    if let Some(owner) = &retry_owner {
+        if let Some(creating) = creating {
+            let error = followup_bounded("seed retry first error", creating)
+                .await
+                .expect("#1022 seed retry first join")
+                .err()
+                .expect("#1022 seed retry first failure propagated");
+            if retry == Some("dispose") {
+                assert_eq!(
+                    error
+                        .causes
+                        .first()
+                        .expect("#1022 seed retry dispose cause")
+                        .causes
+                        .first()
+                        .expect("#1022 seed retry nested dispose cause")
+                        .message,
+                    oracle_document()["followups"][2]["error"]["nestedErrors"][0],
+                    "#1022 seed retry original dispose error retained"
+                );
+            } else {
+                assert_eq!(
+                    error.message, "#1022 final seed unavailable",
+                    "#1022 seed retry original read error retained"
+                );
+            }
+        }
+        // Owned disposal must finish before retry; a failed waiter still leaves
+        // the completed source in the owner's dirty record.
+        let completed =
+            followup_bounded("seed retry old completion", old.dispose("finish".into())).await;
+        assert_eq!(
+            completed.is_err(),
+            retry == Some("dispose"),
+            "#1022 seed retry shared disposal result"
+        );
+        assert_eq!(
+            h.leases(),
+            0,
+            "#1022 seed retry failed preparation released"
+        );
+        assert_eq!(
+            lock(&h.observed.bindings).len(),
+            1,
+            "#1022 seed retry first error no publication"
+        );
+        let new = followup_bounded("seed retry create", owner.get_or_create(h.context()))
+            .await
+            .expect("#1022 seed retry succeeds after completed drain");
+        let seed = new
+            .reload_snapshot()
+            .expect("#1022 seed retry snapshot")
+            .file_state;
+        assert_eq!(
+            seed_json(&seed)["readFileState"],
+            oracle_document()["followups"][0]["drained"]["readFileState"],
+            "#1022 seed retry retains drained read state"
+        );
+        assert!(
+            lock(
+                &lock(&h.observed.bindings)
+                    .last()
+                    .expect("#1022 seed retry binding")
+                    .checkpoint
+                    .read_file_state
+            )
+            .get("during.txt")
+            .is_some(),
+            "#1022 seed retry checkpoint retains edit authority"
+        );
+        assert!(
+            !new.same_identity(&old),
+            "#1022 seed retry publishes new identity"
+        );
+        assert!(
+            owner
+                .current_handle(&h.context().session_key)
+                .expect("#1022 seed retry current handle")
+                .same_identity(&new),
+            "#1022 seed retry returns published identity"
+        );
+        assert_eq!(
+            lock(&h.observed.events)
+                .iter()
+                .filter(|event| *event == "close.1")
+                .count(),
+            1,
+            "#1022 seed retry old storage closes once"
+        );
+        followup_bounded("seed retry shutdown", owner.shutdown())
+            .await
+            .expect("#1022 seed retry shutdown succeeds");
+    } else if cancel_waiter {
+        let creating = creating.expect("#1022 seed cancellation task");
         assert!(
             creating
                 .await
@@ -3639,6 +3891,7 @@ async fn drained_seed_case(cancel_waiter: bool, fail_final_seed: bool) {
         })
         .await;
     } else if fail_final_seed {
+        let creating = creating.expect("#1022 seed failure task");
         let error = followup_bounded("seed failure", creating)
             .await
             .expect("#1022 seed failure join")
@@ -3664,6 +3917,7 @@ async fn drained_seed_case(cancel_waiter: bool, fail_final_seed: bool) {
             "#1022 seed failure creates no replacement storage"
         );
     } else {
+        let creating = creating.expect("#1022 seed recreation task");
         let new = followup_bounded("seed recreate", creating)
             .await
             .expect("#1022 seed create join")
@@ -3705,11 +3959,11 @@ async fn drained_seed_case(cancel_waiter: bool, fail_final_seed: bool) {
 
 #[tokio::test]
 async fn recreation_uses_file_state_saved_during_drain() {
-    drained_seed_case(false, false).await;
+    drained_seed_case(false, false, None).await;
 }
 #[tokio::test]
 async fn cancelled_recreation_finishes_drain_and_candidate_cleanup() {
-    drained_seed_case(true, false).await;
+    drained_seed_case(true, false, None).await;
 }
 
 #[test]
@@ -3718,7 +3972,33 @@ fn followups_regenerates_identically() {
     crate::test_baseline::regenerates_identically("session-factory");
 }
 
+#[test]
+#[ignore = "requires fixed TS baseline and Node v22.22.0"]
+fn dispose_failure_followups_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("session-factory");
+}
+
 #[tokio::test]
 async fn failed_drained_seed_releases_prepared_resources() {
-    drained_seed_case(false, true).await;
+    drained_seed_case(false, true, None).await;
+}
+
+#[tokio::test]
+async fn recreation_retry_after_dispose_error_retains_drained_seed() {
+    drained_seed_case(false, false, Some("dispose")).await;
+}
+
+#[tokio::test]
+async fn recreation_retry_after_timeout_retains_drained_seed() {
+    drained_seed_case(false, false, Some("timeout")).await;
+}
+
+#[tokio::test]
+async fn recreation_retry_after_seed_error_retains_drained_seed() {
+    drained_seed_case(false, true, Some("snapshot")).await;
+}
+
+#[tokio::test]
+async fn recreation_retry_rejects_disposed_predecessor_with_active_turn() {
+    drained_seed_case(false, false, Some("guard-panic")).await;
 }
