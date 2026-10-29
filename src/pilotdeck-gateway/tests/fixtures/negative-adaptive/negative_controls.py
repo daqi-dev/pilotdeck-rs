@@ -222,6 +222,8 @@ def run_case(case, directory, out, original):
         # Fresh bytecode namespace also keeps py_compile output off the real
         # tree. -B prevents stale same-second imports of equal-sized mutants.
         env = dict(os.environ, PYTHONPYCACHEPREFIX=str(out / (label + '-cache')))
+        env.pop('PYTHONPATH', None)
+        env.pop('PYTHONHOME', None)
         result = _process_api.get().run_owned(argv, cwd=directory, env=env, timeout=30)
         (out / (label + '.log')).write_text(result.stdout + result.stderr)
         return result
