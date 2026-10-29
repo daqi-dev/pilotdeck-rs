@@ -96,6 +96,39 @@ class IsolationTests(unittest.TestCase):
         self.assertTrue(row['compiled'], '#994 Python mutant must compile')
         self.assertTrue(row['restoredPass'], '#994 restored copy must pass')
 
+    def test_copied_children_ignore_caller_python_paths(self):
+        runner = self.runner
+        foreign = self.out / 'foreign-python-path'
+        foreign.mkdir()
+        marker = self.out / 'foreign-imported'
+        (foreign / 'sitecustomize.py').write_text(
+            'from pathlib import Path\n'
+            f'marker = Path({str(marker)!r})\n'
+            "pending = marker.with_suffix('.tmp')\n"
+            "pending.write_text('caller PYTHONPATH reached copied interpreter')\n"
+            'pending.replace(marker)\n')
+        environments = []
+        with runner.verified_inputs() as contents:
+            with runner.isolated_inputs(runner.root, contents, self.out) as directory:
+                api = runner._process_api.get()
+                run_owned = api.run_owned
+                def observe(*args, **kwargs):
+                    environments.append(dict(kwargs['env']))
+                    return run_owned(*args, **kwargs)
+                with patch.dict(os.environ, {'PYTHONPATH': str(foreign), 'PYTHONHOME': sys.base_prefix}), \
+                        patch.object(api, 'run_owned', side_effect=observe):
+                    row = runner.run_case(runner.cases[0], directory, self.out, contents[runner.shared])
+        self.assertEqual(len(environments), 4, '#994 inspect positive compile negative restored child phases')
+        self.assertFalse(marker.exists(), '#994 copied children must reject caller PYTHONPATH')
+        self.assertTrue(all('PYTHONPATH' not in env for env in environments),
+                        '#994 all copied child phases must clear PYTHONPATH')
+        self.assertTrue(all('PYTHONHOME' not in env for env in environments),
+                        '#994 all copied child phases must clear PYTHONHOME')
+        self.assertEqual(row['status'], 'KILLED', '#994 isolated child still kills bound assertion')
+        self.assertTrue(row['compiled'], '#994 isolated child mutant compiles')
+        self.assertTrue(row['restoredPass'], '#994 isolated child restoration passes')
+        self.assert_pristine()
+
     def test_new_shared_imports_are_copied_and_executable(self):
         runner = self.runner
         dependency = HERE / 'pending_reanchor.py'

@@ -22,6 +22,14 @@ FIXTURES = HERE.parent
 ADAPTIVE = HERE / 'negative_controls.py'
 NETWORK = FIXTURES / 'network-timing/negative_controls.py'
 CONTROLS = [
+    ('inherit-pythonpath', ADAPTIVE, "        env.pop('PYTHONPATH', None)",
+     '        pass  # retain caller PYTHONPATH',
+     'IsolationTests.test_copied_children_ignore_caller_python_paths',
+     '#994 copied children must reject caller PYTHONPATH'),
+    ('inherit-pythonhome', ADAPTIVE, "        env.pop('PYTHONHOME', None)",
+     '        pass  # retain caller PYTHONHOME',
+     'IsolationTests.test_copied_children_ignore_caller_python_paths',
+     '#994 all copied child phases must clear PYTHONHOME'),
     ('omit-transitive-imports', ADAPTIVE, 'pending.append(dependency)',
      "pending.extend([dependency] if dependency in ('_shared.negative_control', 'negative_process', 'test_negative_adaptive') else [])",
      'IsolationTests.test_new_shared_imports_are_copied_and_executable',
