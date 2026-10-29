@@ -55,7 +55,25 @@ edgeclaw_retriever = root / 'src/pilotdeck-gateway/tests/fixtures/edgeclaw-retri
 edgeclaw_snapshots = root / 'src/pilotdeck-gateway/tests/fixtures/edgeclaw-snapshots/generate.mts'
 edgeclaw_storage = root / 'src/pilotdeck-gateway/tests/fixtures/edgeclaw-storage/generate.mts'
 edgeclaw_text = root / 'src/pilotdeck-gateway/tests/fixtures/edgeclaw-text/generate.mts'
+edgeclaw_provider = root / 'src/pilotdeck-gateway/tests/fixtures/edgeclaw-provider/generate.mts'
+edgeclaw_service_facade = root / 'src/pilotdeck-gateway/tests/fixtures/edgeclaw-service-facade/generate.mts'
+edgeclaw_service_orchestration = root / 'src/pilotdeck-gateway/tests/fixtures/edgeclaw-service-orchestration/generate.mts'
 cases = [
+    ('edgeclaw-service-orchestration-partial-provenance', edgeclaw_service_orchestration,
+     'sourceSha256 = sourceClosureSha256(baseline, commit, gitExecutable, sources)',
+     'sourceSha256 = Object.fromEntries(Object.entries(sourceClosureSha256(baseline, commit, gitExecutable, sources)).slice(0, 1))',
+     'edgeclaw_service_orchestration_regenerates_identically',
+     '#280 edgeclaw-service-orchestration/oracle.json differs from committed bytes outside the exact masks'),
+    ('edgeclaw-service-facade-partial-provenance', edgeclaw_service_facade,
+     'sourceSha256 = sourceClosureSha256(baseline, commit, git, sources)',
+     'sourceSha256 = Object.fromEntries(Object.entries(sourceClosureSha256(baseline, commit, git, sources)).slice(0, 1))',
+     'edgeclaw_service_facade_regenerates_identically',
+     '#280 edgeclaw-service-facade/oracle.json differs from committed bytes outside the exact masks'),
+    ('edgeclaw-provider-partial-provenance', edgeclaw_provider,
+     'sourceSha256=sourceClosureSha256(baseline,commit,gitExecutable,SOURCES)',
+     'sourceSha256 = Object.fromEntries(Object.entries(sourceClosureSha256(baseline,commit,gitExecutable,SOURCES)).slice(0, 1))',
+     'edgeclaw_provider_regenerates_identically',
+     '#280 edgeclaw-provider/oracle.json differs from committed bytes outside the exact masks'),
     ('edgeclaw-accessors-partial-provenance', edgeclaw_accessors,
      'sourceSha256=sourceClosureSha256(baseline,commit,git,[source])',
      'sourceSha256 = Object.fromEntries(Object.entries(sourceClosureSha256(baseline,commit,git,[source])).slice(0, 1))',

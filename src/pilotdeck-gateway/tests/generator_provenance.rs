@@ -541,6 +541,14 @@ regeneration!(
     edgeclaw_provider_regenerates_identically,
     "edgeclaw-provider"
 );
+regeneration!(
+    edgeclaw_service_facade_regenerates_identically,
+    "edgeclaw-service-facade"
+);
+regeneration!(
+    edgeclaw_service_orchestration_regenerates_identically,
+    "edgeclaw-service-orchestration"
+);
 
 #[test]
 fn regeneration_layout_rejects_missing_ambiguous_and_symlink_outputs() {
