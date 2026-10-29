@@ -1,7 +1,7 @@
 {
   "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
   "nodeVersion": "v22.22.0",
-  "casesSha256": "24aa9167f3479d9bf61bb7fc1e5c410c52921473f1cd354be52e3c8e2f2473f6",
+  "casesSha256": "bd60808043186cfec28752e6ebba9114529a6122b6a9685e2e5262d4be1dea89",
   "normalization": "specs/cli-parity/normalization.md §6 only",
   "cases": [
     {
@@ -28,7 +28,7 @@
       "source": "raw/host-b07/cases/sessions-default--argv",
       "sha256": {
         "case.json": "3e7612b46ff6c72f3a3cb430543514faf7c142f91c9b6fe0cdfaa15924c8259d",
-        "result.json": "56034db93732fa678963b31ee3c68945d8678d3b1cf03c39b0365cefdfa00554",
+        "result.json": "5aac5d0fef0bc98d0e7349d76a6ccdd5aa6482ff4959295fa89c1a2bb3defab9",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "b73d08f70924813e8cbec1aaf75653a52a73bd447ad25d8c95688da562960386",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -191,7 +191,7 @@
       "source": "raw/host-b07/cases/sessions-default--stdin-text",
       "sha256": {
         "case.json": "3cd2ef93f455ef6554dd2c7e3bc752749db5c077b530750933274618e394ce15",
-        "result.json": "0dddb882fdbe49757365701b7318809805a7c835be4198903d05650ee8521cea",
+        "result.json": "7e9e117a1ba63aa45f0b5bd0fd7067e48adc6fb2df8e2b1ed29f90dd54b7f5fc",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "47a5622d7f5c9a44ae7ff092af1b074fc18740e5aea9b449f87c95458cd7b088",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -354,7 +354,7 @@
       "source": "raw/host-b07/cases/sessions-default--stdin-json",
       "sha256": {
         "case.json": "e327041a9095bf5c8cb32369773031d92c2edcd7974fab669d2617d3020a147c",
-        "result.json": "41b9718dd0ed6151b794a9b706ae17a52e547136cd3e68696fa554ee787f3fa0",
+        "result.json": "531fa44fd9977c3675ddb38fa2891206f69b0829a32aa9c9f71ffa3051f71eb9",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "84fc69dc7f49b74a0f35d49c046fa46539f81cd0daf808d295c5f3436d8ffe58",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -517,7 +517,7 @@
       "source": "raw/host-b07/cases/sessions-default--stdin-jsonl",
       "sha256": {
         "case.json": "00072f6f9c5a7efd8aebaecf1085683eac87d6a0ac8cf3cbdf3deb772f0c7ecd",
-        "result.json": "d47121af0b1a25fddab0bfa4cd2499ef7c8233b52dd02ca61d9eb5bbb0349c4a",
+        "result.json": "638a4ee533bcb678b860af6c86b55ec1a6402dbb55f8ed6eb28a311f6e99a704",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "9e3c53722881693be5e3a52971ada80e74d1a995908a75ffdaab4d8d6a730b22",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -680,7 +680,7 @@
       "source": "raw/host-b07/cases/sessions-default--stdin-argv-priority",
       "sha256": {
         "case.json": "ced383a36b2fb0a1d7c4c35976b314c2fb2310d2a0e1b48223612fa341be32a8",
-        "result.json": "876a50bcf3e5e88f4340e3de61b6cd5c8ec867d6e8a504b983782500f2264b02",
+        "result.json": "83fd01cb62d6eeed4bd69a3f72c764353292a3f1b5c50b4ec9fcbe8d49ae3be9",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "30ead34331fa1747e0233aef7755e5c971db5067fbff0e5775937d34bfc2ab4f",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -844,7 +844,7 @@
       "source": "raw/host-b07/cases/sessions-default--format-json",
       "sha256": {
         "case.json": "3d6abdf5eae75a3c634752303f0094d303ec8363621565336347f9f4d4d0f910",
-        "result.json": "61c5ac45a572d3cafb10e7894f7ade28d65955c0dd4cae602f44d13efe843021",
+        "result.json": "ac403f686479e454ce557f912933a4fa250e8a7feee589d6bf96b644289c949c",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "06fb4ebc79b5d3c38aafa0b398e27f5e16f22b9bb4701db46d5544c51319ab63",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -946,7 +946,7 @@
       "source": "raw/host-b07/cases/sessions-default--format-jsonl",
       "sha256": {
         "case.json": "9a376952d5f8bdf9005da846e32a9a12873a97c006b2eaa0857e25efb007b14a",
-        "result.json": "a8730cda52dab2ea977de207f6890cc971542ecf78c27e38142f7248cacf0eae",
+        "result.json": "cd28ca28ceb0e44c81cabf77b8660899778b03e505d8d7d4a34f2b843e0a7535",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "b0b3e23fab849fa3ac5a1d01f97ceb9f320289ff1c1f9e77e98a5e2206d79754",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -1049,7 +1049,7 @@
       "source": "raw/host-b08/cases/sessions-default--format-both",
       "sha256": {
         "case.json": "335aff52a71823cc81d8db279d6baa4e378cf97452ac331475374c7608b47b6a",
-        "result.json": "018c6338103000442b66f7574e9e49416c47fae6ef361e57af56112ab57f03ed",
+        "result.json": "1e13010d107d4e33a14e81115d20ed66e77479b390d7e2b3524a354ca8ec4693",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "bb55a60acbe174d76de18a30a236c38daa92c67ab08f88a27187c3a33a298739",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -1150,7 +1150,7 @@
       "source": "raw/host-b08/cases/sessions-default--token-argv",
       "sha256": {
         "case.json": "8477128cf50c016550771bdacf6cb44ea06516158577c0dcb12ec43e0124e35e",
-        "result.json": "f1288c6cfdc5096da3e0127d7641b7f7cdc7dbae0b47256320928dc0642bfaf1",
+        "result.json": "d52f59988fffd7dd6385d5b4a56531813756679530b16f7065a20f5dbcc939e1",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "f8a51cc8f89b39b444e1ad05271413ed093b8e0cb911a92df98ec88d9eb5fab4",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -1251,7 +1251,7 @@
       "source": "raw/host-b08/cases/sessions-default--token-sdk-env",
       "sha256": {
         "case.json": "340321a5a42a8fe4d200c796fc621c4f1ac1d3e86e6b49781b16955236ac92c9",
-        "result.json": "bce444b80783b60233245a99cac5f4cc36b0ceeff0ad60bf9491e372c1b6800b",
+        "result.json": "665c7743bf9e9c788b557b40b5d523eb2c86665408db9982672ed72bfafc5a43",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "8a8fb64bfb0f19771041d33f90d822e3dfde79edd164fcabdf1be7e8e9176836",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -1414,7 +1414,7 @@
       "source": "raw/host-b08/cases/sessions-default--token-generic-env",
       "sha256": {
         "case.json": "892f681c5c985698758a96af9c7123851e215433a370b362aea6499081c1bb1c",
-        "result.json": "cac16a77cb1520d648a080d25fe1c106ae76707c72abca2aee28a0bcd7fea81d",
+        "result.json": "845dbf3c5d191dfafe116abf5ff76b57dcbaac8215e724b1192a45935c01747a",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "68bb7648c415ed34ad276733b52349dbd466d45319ff89caceb2b8a4397fc2ab",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -1576,7 +1576,7 @@
       "source": "raw/host-b08/cases/sessions-default--token-file",
       "sha256": {
         "case.json": "e40e49b328b157ab3e2beaf2ced5492aac662dfbce6b2eb60dafd74a261f5a5a",
-        "result.json": "fdd55d6f628bb927e41857cedffeb2cd0074642bf8fd9510de3a64c0458dd93e",
+        "result.json": "2780050683611e12795e870e271934f3668b58431278a11fbf9591cc98d5e16f",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "8525a43105c8de09a794e8ff90ba1ed0f1a67bf1731bb2230f4a802f9ef01eca",
         "initial.json": "3f4f276b5b7ebc1660a6e5afb47f97d068737c86c66fb2f61aeb0a4622bb58d3",
@@ -1743,7 +1743,7 @@
       "source": "raw/host-b08/cases/sessions-default--token-absent",
       "sha256": {
         "case.json": "44bfffda0df956866a3544c65f025edfeafb94f9fffae989d746fa84dddaba4c",
-        "result.json": "e36618db2cc8e1a7fd616c534071581537011e57503bda734c715ab6e7598af4",
+        "result.json": "8a47f0a0396ef0d52514803abe28cc990b4b10d9e79e24497bbb02bfca9f34cc",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "f9ce009c6d8e1aca469f89ee96f6b688119ec686747623c588cefcdd8e43a80c",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -1848,7 +1848,7 @@
       "source": "raw/host-b08/cases/sessions-default--token-precedence",
       "sha256": {
         "case.json": "db7a6b5b2caf9e04998dfe84980f3c0ba86308aa921dac49f70cb1bfd3f3e084",
-        "result.json": "1567259481c2614e7ae6154f918c4fd5eba01582283a847bb67d47223c4dcd78",
+        "result.json": "975458287d039985900fd105ade049bf898807e0d147b194f4215b4a2597ccea",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "c38b78dc98ceb22ff24dea3cb67a08885783f927c3e4a303948e38477c24bdc4",
         "initial.json": "36930e7e2d64575a7f183e930bb0f3cd820284df3eccab246417b317d45b11a4",
@@ -1957,7 +1957,7 @@
       "source": "raw/host-b08/cases/sessions-default--token-sdk-empty",
       "sha256": {
         "case.json": "11ebdb28082bb0286fae15ef1c748360e816267648799c4a4652296b6067c353",
-        "result.json": "5a7989a843b9067c3a3e7959909f956d87171820f4a99e2f7f3f2004c401003a",
+        "result.json": "9d6bd2d2896ccd8b7686a17859bad7b58c076bfa1d6b8ac0ac50fd19a352de0a",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "1c558b9a5b899cf770f547070d2d9c4770f4355578a20b8f9ecef26f52396156",
         "initial.json": "5b5f5e85bcdd5ea57046b525ff6e147deb3df1fddeeedabdcd61b8d143f386e7",
@@ -2063,7 +2063,7 @@
       "source": "raw/host-b08/cases/sessions-default--gateway-unreachable",
       "sha256": {
         "case.json": "be0900d3d7e5598570fdc9569f69f60d48621253cf2e9de6261a7f238ce3e769",
-        "result.json": "2756ef3bbb1f44a173b976bbca5caba6157b0ef181154357b56ac7bfa5a403a9",
+        "result.json": "a78fd034251a532950ee548ab69f25828ae291a3bf71b6b92997d860ae0c1bf1",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "9f7a47d509a8a7190a246e837ef3c8442489378e39cc33a6e6b3853da6a02f3d",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -2163,7 +2163,7 @@
       "source": "raw/host-b08/cases/sessions-default--gateway-rpc-error",
       "sha256": {
         "case.json": "5ad8bcad5a1c88e61569e8fec4c87b044bc44c26ae8043cbf5a38fc3fc184ad8",
-        "result.json": "d4af3657b4d800fe0c06fcb191439ae87c2fd04489fffe081d0d0c50a3c722c1",
+        "result.json": "41547d65d4cc7f6765820bbfb2d33407b506420342881e6fd0f810353d358bf4",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "480e6b38cbf2acabe588f914baf6368f4fbd12e3d3a57f58cc0edbc6eafff6c0",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -2319,7 +2319,7 @@
       "source": "raw/host-b08/cases/sessions-default--gateway-auth-rejected",
       "sha256": {
         "case.json": "5cb747509ce358bb67997ecd192f7bdac7d551faa85bc30c4ecf5e9a5057e011",
-        "result.json": "80625c0b28ea90220c658bd8ffd63f88cf4ec32a7fc842a87ca1da4c76bdbce9",
+        "result.json": "38a29fc3bea1f934ae376994a633cd32543ca9a57822d39fbbd146d1e48e21bd",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "283b4eaf5dc2514f80a087b246ec21e11d849e3b5dc805b02beb2be8dcdbe69c",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -2440,7 +2440,7 @@
       "source": "raw/host-b08/cases/sessions-default--signal-sigint",
       "sha256": {
         "case.json": "099ae89a1837aa05fd982c34250e966f38f30433a8df7586214a55b3049c7c95",
-        "result.json": "f54e157a0464b1d6187f46fdbfedc02a107c6540e800508f3a4de5172ea7739a",
+        "result.json": "c3e59b3aa6e2e3a6c0b4663f92edfa475330198c0b66b2448a8d765d97d0f3a8",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "f1a99851a3c5c90e0b01b056ce35d6c0024ddcf9e90bce52ca21e3dd8a7e2471",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -2581,7 +2581,7 @@
       "source": "raw/host-b08/cases/sessions-default--signal-sigterm",
       "sha256": {
         "case.json": "72a43ce3f76cae78f72eaa59ea00ea30a6f80acb3d702fe8adfc84eb6b2f48a1",
-        "result.json": "c9ddcde69afb7bc843b545b86e6364f60d64011dc5f80ea0a6f7c29ac2ac48a0",
+        "result.json": "40098e3fdf54bbcf9b98e4b098d4e2e4260405a254490fe67e9ea30c29fe6e8a",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "8f9ee7a13c45824b3a1cfef6ef21b8b554d1d57408cf956bde0588daaecbf8ac",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -2720,7 +2720,7 @@
       "source": "raw/host-b08/cases/sessions-default--missing-help",
       "sha256": {
         "case.json": "8ade81fc72302e41a350e4d6f6aec6bf62dcaffd537aa22d00d59b28e064804d",
-        "result.json": "7f19605f8b3e9a2430722e36835bb303c4244188e5a7c3bc60426f0974e5138f",
+        "result.json": "378725a938e750b60b87afc0a001eabdfced7bd9f2e566e1363d5f7b9b65484e",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "0fcfe693cdf13ba42416ad1e5be82cccdd20ccb7332a6db130e81e915f0eb652",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -2822,7 +2822,7 @@
       "source": "raw/host-b08/cases/sessions-default--missing-h",
       "sha256": {
         "case.json": "93b57e209636f19d8c473f977a8841b7aa7bac6436aa40ed84e63ff867f635d8",
-        "result.json": "4401ac643b622a072b87d22afa2b91b3b7556c53a7e712cd216ccffe80145a90",
+        "result.json": "907a18acc8064689c611df97bc41bf89d98715922c6f89eeaaaf45ab7d9d1a50",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "807cef457ec676a131a62af16e3fcac83e2a6559093e75034c2b4cf24dc814d1",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -2924,7 +2924,7 @@
       "source": "raw/host-b08/cases/sessions-default--missing-project",
       "sha256": {
         "case.json": "0f454a5afa25f1f448678162b2f34e55b149815e4fe888361f68e9f798440f1c",
-        "result.json": "ddf30ab1fb5702d50dc8db16d3dc2264208f5acf03701f8861d18b7d76dd551f",
+        "result.json": "6590cb185a9bf3e444eabd2372e3e402d7dd45d6735721f90fd15e5c5cc7c0b1",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "13ec13ad5cdbd68f868683dd74ca19f16bf476775d45fb6304d7272995250b3c",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -3026,7 +3026,7 @@
       "source": "raw/host-b08/cases/sessions-default--missing-channel",
       "sha256": {
         "case.json": "1640772d12c5b05d28a6d514bf755f4d2d1e12631872c4388fe5e68945dc39b8",
-        "result.json": "f119cf0a301a04a76dd3a57fab06c2c724a6e59ceaf876113eae1c1853f7a53a",
+        "result.json": "bf70ed6bb649ae304859ab74d63e4b5ceb308c2f20a6f68c5a660ab4b591269f",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "6d54a96b3529e2510c59af5e670c9622ec2c109b8d3004ffc7e6686a44661798",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -3128,7 +3128,7 @@
       "source": "raw/host-b08/cases/sessions-default--missing-model",
       "sha256": {
         "case.json": "2b5406f47d2bc71c93de193ab901b67b470afbc792fd9b0d2b0ce43e2f6917c0",
-        "result.json": "503e566cd7cb867f6311c4b7e66d254f5cf5a0ec5d169cfe35fd2bff482cb7a0",
+        "result.json": "252a3ac0c9327a9fd791e5950b535252b0a11b9b566e738350ae8a11fcdb90c0",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "e5a270a56eb700a04e213fb5f77873b37f7f6631c0a4d187cf6de2071683b6df",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -3230,7 +3230,7 @@
       "source": "raw/host-b08/cases/sessions-default--missing-permission-mode",
       "sha256": {
         "case.json": "4e2e87859c17f2f26204db1286e15c383f8d7142d34e3336420341a86c11c8d0",
-        "result.json": "a99f58e0f0806506256c640d35c6811f82dac3b67d4ddccb696a5adc374490e6",
+        "result.json": "d323131fc186dd574500fcc754e7296e96b5dff3a5929edf74a1ec86be658a31",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "2e31e1e705604749279b4151ae59df5620dabc1dd26cd627f77e2987c02530f0",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -3332,7 +3332,7 @@
       "source": "raw/host-b08/cases/sessions-default--missing-gateway-url",
       "sha256": {
         "case.json": "db33c3e53d639dfb7767a4a617054ab230f83f48a14b2290e005b9383030beba",
-        "result.json": "1535032ad6cbf7af18709c4bbc8a99282d1482d6a51325eb5dda35c9a6e41d32",
+        "result.json": "0a7157610bfe48cf1b71d81108f4a764413983c348059999f22db7de88c5377e",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "4426c7933001880d3e87d365d5010824d12a958589fa20e203e3058b52f6a6fe",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -3434,7 +3434,7 @@
       "source": "raw/host-b08/cases/sessions-default--missing-auth-token",
       "sha256": {
         "case.json": "744e1729325de8c37e23e00294354e4c096642e93e7100df62195ef0f8a0c29d",
-        "result.json": "45e14cb31d2bad4a9f2194cc67712a7580f2890a39daf5317aec344f2f87ac99",
+        "result.json": "efefaf146ddca535a4183c23f79c3697242076e2a607b1e2d69c2a0640890328",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "e50d79f6787e9ea1a62b98e12fc07ce48f0b36952038f6c9ed912be2b2d38196",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -3538,7 +3538,7 @@
       "source": "raw/host-b08/cases/sessions-default--flag-unknown",
       "sha256": {
         "case.json": "b41d10fa8fed96ea7a9c348b38fc2dbf11dea40bbb42e7ac1ef5d3dafe511bca",
-        "result.json": "8b20ebf7622f874c6cd25357acfe42db0f0eff7ae36635f70fed0cecb8432ec9",
+        "result.json": "f666d0672ed4026708a63e5dfec33521de0c0508d128b8b4fceb3a79acbaf405",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "a26f538e65a54fb59e7247c8dc80636b4b94f8e940e5c2107b221fbd673d5422",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -3640,7 +3640,7 @@
       "source": "raw/host-b08/cases/sessions-default--flag-equals",
       "sha256": {
         "case.json": "117261acb2e8b520954c2d71322ebc6f66f1e4ad87b5a5e5ff3b1f8e96744c26",
-        "result.json": "9e79fb361ba5ead8336743b77f0fc0661c0df12dced0b03b18e466e022d64ec9",
+        "result.json": "38e8f3a5c478c2a86da13832e3c3f720289785cd3673be2c0ceb394a0afecb43",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "6888f10c99cc46a356c9acb7e07f5951338d77eb88e5b813b83cba7359fc493d",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -3745,7 +3745,7 @@
       "source": "raw/host-b08/cases/sessions-default--flag-repeat",
       "sha256": {
         "case.json": "ac9ef84e8948dfed5f07fb526d031f6c00de982f2483bda26e745607692674c1",
-        "result.json": "a8c4c849e5e6ec3ea108bc74bf4f6d5f38f26dc83e7db417058f9acc15917214",
+        "result.json": "58d1bbf124454d42fe2ff6f434626e225ff800cd2b2534e7c3c96b6bc3658e78",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "34b80bc48a587253cd7092b2e280d0dd6cd3a32c78dfe421094c2a1d882fe47c",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -3852,7 +3852,7 @@
       "source": "raw/host-b09/cases/sessions-default--flag-combined",
       "sha256": {
         "case.json": "96f607e1d60028372bec647979eec7dfa52c6b673b373c80c6584a28ed25843b",
-        "result.json": "c139df7ec210a9911a1da04e886476fd577497472e95c6e462a70985e2c621a7",
+        "result.json": "6e6a97537b7dddd9fc54f22fcbbe6fe5abd3fedd83dc5b61081f23f31ec9d9e7",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "a87cb288174ac5b003f9d0da6829d227f3d058932934de3e9ec97e6d5de16073",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -3955,7 +3955,7 @@
       "source": "raw/host-b09/cases/sessions-default--gateway-sdk-precedence",
       "sha256": {
         "case.json": "afaac67ffb8ef2c4939b5ea434f16a895d967d40a8974d738b7f23e2d5f8992f",
-        "result.json": "58b2d9319cb399c0be8d739b249574fd75e2702c5be7cf3dbc8fa23cedea7554",
+        "result.json": "1d1c1c1c2ab83a4524005a89179cd3a372d63931478bd393c22af5efb503faaa",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "e5715024dd706ddab32b05192e695b32a507d547672617e384f491edceca1a50",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -4121,7 +4121,7 @@
       "source": "raw/host-b09/cases/sessions-default--gateway-argv-precedence",
       "sha256": {
         "case.json": "b6ec968258af6ed29f314837eed1473a0bcb2ec69cf5fd69ba71ea9081a5915d",
-        "result.json": "57e58ea30d983fc38261d224e6ba29b9ebcde7e3b87ae8f728fb88c5b0df376c",
+        "result.json": "035c176311450cf27e22568e159a2f04f48227ea9d24c735940ff55675d1c6a5",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "6e39490c8a8132e9f9f34b33d01a920ff35e4d61356db35e94e4515be4b94359",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -4225,7 +4225,7 @@
       "source": "raw/host-b09/cases/sessions-default--gateway-generic",
       "sha256": {
         "case.json": "374da1cf2838fd9424f0c00069cd9df01267d1e9c1a3f55385734768caf40f49",
-        "result.json": "d220177671d78b46bd38d4779cd434d7e2dd7e72926b35c033b4e16cceb758ed",
+        "result.json": "8bf1e165a8922b5ad0140fbbacb955bc529ee4f00ef95116acba2fd0757e73e3",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "54adc79e643b4f4651a622a9c29fdd438d164f3acee1184333e1fe338a285686",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -4392,7 +4392,7 @@
       "source": "raw/host-b09/cases/sessions-default--gateway-port",
       "sha256": {
         "case.json": "8b68a13943dde74a0c46e40fa2d6f0f00c32a3e5aec16b64a5e863ee7567b234",
-        "result.json": "af7ce9fcb69a273946a79ac36406f104887d29a2e28ab017942ca1362ce569d1",
+        "result.json": "f7c3d146bb53e2fe9e447c96f5e78866017db74cc3d1310715052de34d120fa6",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "6f48ff76d9da7c1c22b29d6009563b6fa2d8e2570f58443e0cf46dbde146c6ed",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -4556,7 +4556,7 @@
       "source": "raw/host-b09/cases/sessions-default--gateway-empty",
       "sha256": {
         "case.json": "e40e11c14889ec1605baf8405beb1b13bdfef45a2103c1f4ce00d0ae3ef52ec6",
-        "result.json": "cac2c6a4315a18a81fc0e7253a7e834bccab8feea17b7fe3e8446afa8838ab7c",
+        "result.json": "a98ce1cf2b155d478d8ae69c0fce318d158bacfb9a0d15f91b9e5b79278d4cb3",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "fac3525f198539245753623daf1e09afb7ced52a750aea42b9ef1536d3823b6e",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -4657,7 +4657,7 @@
       "source": "raw/host-b09/cases/sessions-list--argv",
       "sha256": {
         "case.json": "f0add241bd929aaddf842b7b47034eb32b9b0f9f11f9c3c2aeaaaf3d78278de5",
-        "result.json": "a94e22bd79d05085e7e4561ff9f2507aa721588cc577e780f0ac3f338cf0d127",
+        "result.json": "23d0f2bf8d8550d9344a738daa53429b0e75ea55ae717744097eac5768a580e2",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "efb0e8adb2cd80705d174da924c5f9a6f2d1aee646184f0b67e4d6fbc759b3ff",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -4820,7 +4820,7 @@
       "source": "raw/host-b09/cases/sessions-list--stdin-text",
       "sha256": {
         "case.json": "e1694c98f394c77b92ea8ce8812a9a1b1cd6ef124132b1e9155f2d92e82c7970",
-        "result.json": "dafe8c07cc946a7b01ef6a8cd50a681d7c1f039846d3df3a34741035b076ca12",
+        "result.json": "e0fcd250815476f761c3a21cb7a705b3a03c898fd81c2ccce1c7817fb97e7cff",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "71c3a94fee5da2bcf3b23a223363adce441b168d2cfec21435b96d09f269300a",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -4983,7 +4983,7 @@
       "source": "raw/host-b09/cases/sessions-list--stdin-json",
       "sha256": {
         "case.json": "c6a17c9766d509576aa9a0f3f80b91fcad83d1a9754afe035039e05bbda991c3",
-        "result.json": "701f6d5c00ac6171614392d2bd0084e3c774550f1784de2e7683d14c4f4a4a46",
+        "result.json": "e02cc3dde7d711395e07823c49974c20efa4887005a33d676dc6bba4599bbbcd",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "554fbdb28924fe9c740abd0cc954d9ca664d94279abc482823eb14737764620b",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -5146,7 +5146,7 @@
       "source": "raw/host-b09/cases/sessions-list--stdin-jsonl",
       "sha256": {
         "case.json": "c730550b04811ab9381fb5236749752008d21273149a60f74a8dd0f67645960e",
-        "result.json": "e634170f61e96c4267f87730d484f0ca7b0aa18c5882d9b968a464fbde88941c",
+        "result.json": "e22774f42477a7fd190594c7066c7516831b720f976d49f192b2ca2cc241f730",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "dc7f9e73be76dcb4ab161d279109f058ae2c27dc3adadc99d686e2ae904c7ccf",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -5309,7 +5309,7 @@
       "source": "raw/host-b09/cases/sessions-list--stdin-argv-priority",
       "sha256": {
         "case.json": "5676e14378eb3fbeb5ef8c686e4545277b28f6b4c5710a4a58886137cd4c6d61",
-        "result.json": "91ace5980e2b12720897508c4e04dc9a36c9d4748e9a06b9f33d3d4f372c549e",
+        "result.json": "fcc80e9a7ab6e3322633183ccafd3076cd9bc975582e298926c6bb044bff3463",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "11c8bd66af9939910231b49e0086cae8596ad89062decb29bcd4955c692bd3a7",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -5473,7 +5473,7 @@
       "source": "raw/host-b09/cases/sessions-list--format-json",
       "sha256": {
         "case.json": "ed907ad6f21140d69d38394e86f20af2afa1d12fafaefcc646a1dff10e42ce6e",
-        "result.json": "d348b59776d533fbb5eea9cc0d3b47d2215fc25c62aae0f5673616b1a10e5181",
+        "result.json": "e402ab7fa9763b05b0aff186f1f509b402be4c64403643d91c50bbda34d301dd",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "2b802f6c84c92004ff6de3931c2f4d8bbb8c857b11772907d4e0f5946f87daee",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -5637,7 +5637,7 @@
       "source": "raw/host-b09/cases/sessions-list--format-jsonl",
       "sha256": {
         "case.json": "0d639254029b83959840e0d08884657e4b06804a3dfc51cf661fc734c9ec89df",
-        "result.json": "7e08976960e7a40c780b8feb00fcb47f72da967e52b321785a66fe80974a7874",
+        "result.json": "90fe144f345f3b4364016461144087ec947f8c94ff506d83f544942ae4a3f8bb",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "5dc24516225b6ac1a36cdc0a95720ceb9e0917e4fc996caaca4aa6303d291eb4",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -5802,7 +5802,7 @@
       "source": "raw/host-b09/cases/sessions-list--format-both",
       "sha256": {
         "case.json": "11bedc8707bab1b9e642cd33aee8383dcb74f002ea01fe1ba43211394bef5c66",
-        "result.json": "575bb504b7999f1d5e061dc0daa018e74d88804f165b7cabb750b90bbc063adc",
+        "result.json": "acf82cd9c1ab6d1813419844feea6eea67ef9cb19e8e2790c057c3bc8fec64d2",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "2d5dcdf4b127c9e4df442dd48b1ed487456a54265f10feed6cd713ecc2112e61",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -5965,7 +5965,7 @@
       "source": "raw/host-b09/cases/sessions-list--token-argv",
       "sha256": {
         "case.json": "2e7bbdc73b5254ce826a7787fd2c3f13cb22bf753bc77d8af40ce517702d8ba0",
-        "result.json": "8bd6bd90e5d84156da022d7fe995d28f9c27942cf2352c1cc69de0566f1c5be4",
+        "result.json": "b201e30cfef7c82f2459eb783aacd6ec0d93d0e39714c1c1e80617c8309478e0",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "b5c9ede8efa558e383c6d5ee375cb38306cbdac948b9c57cda202f1573c498f9",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -6128,7 +6128,7 @@
       "source": "raw/host-b09/cases/sessions-list--token-sdk-env",
       "sha256": {
         "case.json": "4c91ca3655bfe4984ed9c3d742bc0f3330bb9efdd29be9058ac4289f05b6d6c6",
-        "result.json": "02b2cceefa083eb32ae687e0560d98c8b96443d681b7abc7d92cc92bb173c998",
+        "result.json": "00f4d6fa2cdd446313788132156381438165c3daa2866587e01d9bdddc97904f",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "9c3de0f88032b44acb5f24f9cdae7afb39acf0ce4c2f0173f197e0e25f3df206",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -6291,7 +6291,7 @@
       "source": "raw/host-b09/cases/sessions-list--token-generic-env",
       "sha256": {
         "case.json": "937067463851f3bcd8131607e2e10a13cb8a7ee52901cc68e516927ac1dbf5b4",
-        "result.json": "6c390b6c4eb223759e05d657f7d004c1fd358f6dabcc7a86978528daa9f93c41",
+        "result.json": "c001521d73f6b2a51035bd5d8d04a573c04f7cb0f89f0d1a103e8012a6deab0e",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "0b7d6e5d7028ccabac5331376f0af9223f031f2e154f154c879941c330b32665",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -6453,7 +6453,7 @@
       "source": "raw/host-b09/cases/sessions-list--token-file",
       "sha256": {
         "case.json": "99e0ed0a7fe2b41d0499ee1f78e3ca152b57690c1d13a38d926874a046f787f9",
-        "result.json": "ad60b45a4cd70ca5f1bc42c2be39f7255c9983ecfd836c3e5ad368c84aa30773",
+        "result.json": "5f880e594aee27ba34078bf00c0910b77b1fe49b1a046f919ff55f89dcbe7668",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "9fbc1b1008f1d1a9a40c4c4462af5ac0d3b63f90c3fcb01bb0d22c785ddea13a",
         "initial.json": "3f4f276b5b7ebc1660a6e5afb47f97d068737c86c66fb2f61aeb0a4622bb58d3",
@@ -6620,7 +6620,7 @@
       "source": "raw/host-b09/cases/sessions-list--token-absent",
       "sha256": {
         "case.json": "fdbf3a19001a959edc93bd9ac5a8d92e58e03edb44988b85d208258cac508e72",
-        "result.json": "4c4bcf78184785b1f1cf801916bcea18eed3a14f5895dbb7aa09b63c7cce1087",
+        "result.json": "187db0da061cd371b86ebf962bf5ab5caa1d8cf08414d5b688f8544faf08499b",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "146a1831fb3844e3798343d5efd8b90be0428cc6222624a7912a97d34205bb9a",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -6725,7 +6725,7 @@
       "source": "raw/host-b09/cases/sessions-list--token-precedence",
       "sha256": {
         "case.json": "c62a4a487ef46749e1138e522771e1c968ae64a9faeb0e3b09d2475f62dad0a0",
-        "result.json": "fc369234931cc5c64f48dd70434684e18c1789c6e62d260ce09d6f061f066eb0",
+        "result.json": "742e79d76e5e5594a579385e03e7d12a8892a66825a470e4c7b0b7bb1e1941af",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "0b3df9e9fc8c40b314956dae07b81a6c3d875bd5e5b655e470ec20215e48f670",
         "initial.json": "36930e7e2d64575a7f183e930bb0f3cd820284df3eccab246417b317d45b11a4",
@@ -6896,7 +6896,7 @@
       "source": "raw/host-b09/cases/sessions-list--token-sdk-empty",
       "sha256": {
         "case.json": "c91c7fe34263d1e80c022fdaaaa95e861bdf740cae638399dcf9b011a017c42d",
-        "result.json": "9c92d10d0ef4a80f02e3abe9f8c7d0e0acc2b571c3cf09856305f50e8ddc097b",
+        "result.json": "76e1cdf6a701feacc11eca492aea3c151ba84d699d46472c618f8a1e4395c67b",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "3c6fefb6c7f649b4cf082a306f9f55fd72d109ba3e4ee6f38e2bdfb2fac39d45",
         "initial.json": "5b5f5e85bcdd5ea57046b525ff6e147deb3df1fddeeedabdcd61b8d143f386e7",
@@ -7002,7 +7002,7 @@
       "source": "raw/host-b09/cases/sessions-list--gateway-unreachable",
       "sha256": {
         "case.json": "c3b7da5f14602e6254f36b057e42c401f7b465d1febbfa9e0b5a96f6f7b245c4",
-        "result.json": "f34d1b0adab22bac68b23a5c2133e1fff6415f5aa528fe16d77344271674269c",
+        "result.json": "867a802bc708268290f84fcd934811f48efce44be0e515ed89dd0c94eb365af8",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "7b2ddeb55fd9bfac23221163eaf88c77360a025934a707870da1715ad23195b9",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -7102,7 +7102,7 @@
       "source": "raw/host-b09/cases/sessions-list--gateway-rpc-error",
       "sha256": {
         "case.json": "35530d117c28f7f15b5f531291c9872db1fc6c4822aafcce71edee0e02ade00a",
-        "result.json": "ecf707f6ced672fb53acd5d3472944a55e2b21afa20001876db29664267251e7",
+        "result.json": "0837b1225f620455e661350baed6497610bf1b4aed16740da88a52a5ba6ac1bd",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "777fad82ac9091db696e8be3b5b5b99ddaca330fbb8fda87436ef29959959e6a",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -7258,7 +7258,7 @@
       "source": "raw/host-b09/cases/sessions-list--gateway-auth-rejected",
       "sha256": {
         "case.json": "46b90e556cbb3268dc584a88816711351f6afb9724652af91fc50eda3bcde56b",
-        "result.json": "9b8ddeff291a605d004c84154133698ac20e3618bd520bcb3dbc6cf6d5c150e0",
+        "result.json": "dcd3f77d0b2880b86fce8059a4931c139d7015fe3c8b759f2b9490a6299f1a89",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "600a8fe548ebedd45ad14806d9ca7624bb345828f40ce333743a571a65b7c51b",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -7379,7 +7379,7 @@
       "source": "raw/host-b10/cases/sessions-list--signal-sigint",
       "sha256": {
         "case.json": "6b57b0b4a13b24f9f3f6d3e225886a4e55d663e30766aa0002f095e56dee2b71",
-        "result.json": "5be4876c9a70a48b475e70dbeb1cb0d53726de39e8aae52892f10e8d6cd0bd41",
+        "result.json": "ac40a531c5f1fd6cff8b2266f6a0b733cf3fa36f0237c36e6b68e4a48f4d330c",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "8060ebccb0c1966b5d12edc08ef7759d74efb8e5948f78760b6fdbc16c3bf00d",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -7520,7 +7520,7 @@
       "source": "raw/host-b10/cases/sessions-list--signal-sigterm",
       "sha256": {
         "case.json": "2fae3ec189e47975d4c60cab069f279103a203931577b0c5b6553695c57d28b2",
-        "result.json": "4fa8a911608702be49a62790fa68892b09e40fa57e0f13a6521adeb22f3f7ce2",
+        "result.json": "61c31bae82ecce3f00028de4d7dce751f1494d66117ff11af8dec7c9df252594",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "6932e312b4d1cc4b2dece5cfc44848ad32e647be8a6b4cc7d3ca8d380a654e81",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -7659,7 +7659,7 @@
       "source": "raw/host-b10/cases/sessions-list--missing-help",
       "sha256": {
         "case.json": "4b4a15fb4017b513c3d38671d16ee73f00dcbf0e21036971f421abe35d3e6cb6",
-        "result.json": "e585cb1f24be252f5d8fb75ff1923d10ead7b3457bf0aed80d4f81a67cda80c9",
+        "result.json": "f40f0114bccf97f87b38cba93a4b4594a68100d9f07b08638fa64c61c25b68fa",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "3fe2d32ce226863b7cfda02786cae61c5c2db8c2834f7bd33facebb1fa38d0e5",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -7823,7 +7823,7 @@
       "source": "raw/host-b10/cases/sessions-list--missing-h",
       "sha256": {
         "case.json": "b1ac0f0c8b540767c08b50e9b206acf22586d7b4da275de31570fc6039f1e972",
-        "result.json": "46421a5fc31988689d368e80cc2f018d6eede0801557904ef1511f6b78ab7d77",
+        "result.json": "ea556033066854af3f94962036e3e5ad48249a68c0d138eaaa3463998f4f584a",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "a67a7156768030c4b2fe8962481ec5a6df78193916d6edf5ffea9cf81b4573fa",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -7987,7 +7987,7 @@
       "source": "raw/host-b10/cases/sessions-list--missing-project",
       "sha256": {
         "case.json": "9e949a0305b98198b8786a087b492f0a634a6f5d1de0060ce45e7db243db2c1a",
-        "result.json": "fc8ee4262d5237ef1d7f2a3b2276ac2f933eb56af1a45702daf4b5caa5533257",
+        "result.json": "5d7a55c04c816888436f18b5d5e28042ed24b4ab39d0683df761d38494256a06",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "04aff179f0701052cff8033ea5b9cec73d48266bc1b376bde173ff113b583fd7",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -8151,7 +8151,7 @@
       "source": "raw/host-b10/cases/sessions-list--missing-channel",
       "sha256": {
         "case.json": "861bd25d165f8685b5b67889332037572f85d9a4dda1d75dff9b388470f370d3",
-        "result.json": "2bacfdc5653a3b7e49a920a3066d6082a26f8dc822f2bf7112f565cc5de82285",
+        "result.json": "2fa625e348f179e99b7d58de8787aa46aac89f39d60b6aaa0bd3311f9fe9cd46",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "6ce2048305e3e116a28697ef4ef9d4f87d5d9f0009d78732f19c765b2e21830e",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -8315,7 +8315,7 @@
       "source": "raw/host-b10/cases/sessions-list--missing-model",
       "sha256": {
         "case.json": "ad6e882ef8401ecba16f2da8289c6ebac3a2638d32c84f08ad1e863918d8fcaf",
-        "result.json": "90ad8ffaa7bd328f937c56dbc15107ce5c616cd6e931b6c61e89903848b8c07b",
+        "result.json": "7fa832579e2b9dda00c8773a31c97077f8f07ed58ba4f97359539dac3c3b6e8c",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "cbc90c5d5b39f537424e004c199f7e94a0b2ce3edb95c9fcc2d467b9bf081ebb",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -8479,7 +8479,7 @@
       "source": "raw/host-b10/cases/sessions-list--missing-permission-mode",
       "sha256": {
         "case.json": "de588768cfe0f72f419cf32433a19a4feebb9bfda7a6ee8eba218c8bef176a9e",
-        "result.json": "a612717fcc4987746a4224f45b0587fe0c885083592af4155a78f7f44b641c2f",
+        "result.json": "e9decdd57f4a47626f83958d5d21b9ec3a917777287165d1423a5b276f357df4",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "312704b6bb768fe0c8855c95325a3be91fce5baa19b4dda93e7bd0fb8fa18852",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -8643,7 +8643,7 @@
       "source": "raw/host-b10/cases/sessions-list--missing-gateway-url",
       "sha256": {
         "case.json": "6bd8d2952489f79e721ec53bc50fc43f1fb5146d34714da52e035eb8e27e791c",
-        "result.json": "a9709f6a5367ce2bebb253d1504b84cd6ada2013610a696353a3d02b8dc50f7d",
+        "result.json": "59a7c5e62ea1ddb1ab27e5b3edbb34c9cf7573f94ce14a19675d446ca6bde614",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "227766ee00a218c15d04e813352505bd6898dd009adfb15c45b5935414ae4149",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -8807,7 +8807,7 @@
       "source": "raw/host-b10/cases/sessions-list--missing-auth-token",
       "sha256": {
         "case.json": "71be9c4ebae804bed4496183b07f493efbea272f8764ac64e04d32f08d796680",
-        "result.json": "4fd2c02fd1ef90d7a2e101b5094da7d02cfd3352f42c4fe527cd7419f0c643c7",
+        "result.json": "f3d6680ab6d63d420d32cdc87246469d687414493835fb4be294f07325c68687",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "4afe5557e3f11c52b000c8c2001bbcb1bf3eed7a0faac2860ee731def226f5ac",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -8973,7 +8973,7 @@
       "source": "raw/host-b10/cases/sessions-list--flag-unknown",
       "sha256": {
         "case.json": "7079f751d74ea5618302a0ece4d8dae692ff9d12f534de64f46b16a23f772dc6",
-        "result.json": "af463114dd46c2f3dd7afc5a4b28de2f52bc70b09b41ba70fb5dafb34844a407",
+        "result.json": "2fe149ae2ede0d903b215a572d9922e450b6452d522bbc9dd8b2782280ff1d6d",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "2840e5cd724d9a49f69d19c8a5fbeef8be8bfe2887ab6ec067f6c0369b662e2c",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -9137,7 +9137,7 @@
       "source": "raw/host-b10/cases/sessions-list--flag-equals",
       "sha256": {
         "case.json": "7030ff4bbe048bdb9c4f33d1d6711fe44ba83231e3b7b0547c1ad2ab4170fb55",
-        "result.json": "f54edc1498463b881003a69954386ec1ff6ca73530fccfe5c5a8c4a1f8db5856",
+        "result.json": "a1354d7c1ba1d510809254dd4686302d812a31aa805d180e305d66feffa090e5",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "17a1f54c73537c2574cba4ac5f5d9cfa23c6236b2764119e94a778898fc699df",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -9304,7 +9304,7 @@
       "source": "raw/host-b10/cases/sessions-list--flag-repeat",
       "sha256": {
         "case.json": "560be2b0c779abc5dfd4f945909c6133fbb63a0a42beb7b9189edc5bc31f469f",
-        "result.json": "cfa40b034e896b230b633fee5ac604f19133ef9a8ddd04d2e89f1c5aaa48771c",
+        "result.json": "eb2018ff8133df34384e7a9700be5edf9028d33fa3171253731565d686f6c81f",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "3e9639eb47189d9a582e7c3f7a401a3d9e7b3c52c5b74af5b6cd9307f13d037e",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -9475,7 +9475,7 @@
       "source": "raw/host-b10/cases/sessions-list--flag-combined",
       "sha256": {
         "case.json": "45ee5ef68f808d9823885ba35bdf0499df6d712494e1dcf8790717f1d595cfac",
-        "result.json": "e541b00b0118d288d82af0bc2e3677e4f8fc5b53636fbe8bef947b4529d9797c",
+        "result.json": "f78eb9c112046b0ace876c7d894340bc110f50cbfc5d085b9173081784626ef1",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "31b54da1c9f517fd3af339f70cd6a6a105e5157f483a543ad6e67bb5d0fe9c06",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -9642,7 +9642,7 @@
       "source": "raw/host-b10/cases/sessions-list--gateway-sdk-precedence",
       "sha256": {
         "case.json": "1d5125b971f99a44e3570a05df84b9f668108e97fdb285d7fee0da5d7acd870f",
-        "result.json": "4dec66d7f6c06d2b44aabfdc6c4d961dde146c522201b459b08659c7617034de",
+        "result.json": "6ea40ff72d55d39d3a11d2f79167c1ce94900ad3c08ff7eef23d3fd3c043a70e",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "09d910ad81dfb6cb3f281615ff40f146290ea1d2d12dbc37164659e840d3ad9d",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -9808,7 +9808,7 @@
       "source": "raw/host-b10/cases/sessions-list--gateway-argv-precedence",
       "sha256": {
         "case.json": "3f9f8104855f67f401415a0859e8856093565ffbbf72e0a374551a6f4753802f",
-        "result.json": "52929071200352c49b38da9b1e9f2d683ab953a27c8562e4222e4e5610422f15",
+        "result.json": "59f53026b1ebd39e7a39145bd4a2e93ac8795c8881fd1b30c9af2434983efdbe",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "7137106728a8c8d6650ad2a579b1428fa3806d73655a7d71d259f1f8415ad74c",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -9974,7 +9974,7 @@
       "source": "raw/host-b10/cases/sessions-list--gateway-generic",
       "sha256": {
         "case.json": "6c2ddaa31163c3ba84c8a339da06cc0b799814f15b7ce5addddf827d1eb28894",
-        "result.json": "39bb47362eedc33ff0abf708ed85ad92401564f8515e0fed49e0813db398325a",
+        "result.json": "3420be057a3f9dc0625455eac9cbd353bc3383c6f52dcb97a093f463fe28c37a",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "2c6a281ddfdb8313103deccc02e43370c87a43c89a6dac77615298049edc1350",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -10141,7 +10141,7 @@
       "source": "raw/host-b10/cases/sessions-list--gateway-port",
       "sha256": {
         "case.json": "152417599a6abb22a2d06030c62dbfd9c332d29b0c43bfe11d2e6598351cb8e0",
-        "result.json": "fb633c2a4e8a7d067a5fe4c575fc1bfe1fbdf8e1db1323b1b2d5aed33d9de3d6",
+        "result.json": "395a43ce0e30a11a0abf53c2715164eec92bc1931b6a26c79ad75db6d7d3f9f5",
         "stdout.bin": "61cb996e873dea21e598c364029ac89fd78a11c50ac8676deb3fa18100ed4621",
         "stderr.bin": "b3390df73b45a7e2498083434a38738bb0f32e08ab2c92d048f6bbb8ee010bf1",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -10305,7 +10305,7 @@
       "source": "raw/host-b10/cases/sessions-list--gateway-empty",
       "sha256": {
         "case.json": "ccbf2d5e8d050923113c144c81629e851f7abefb7145ee14c2bde86bb4081f12",
-        "result.json": "e2a97d0b3880471fb1f3b3674c8b6822d5684bc26969c61fae4f3a79cbe458b5",
+        "result.json": "5c4c09148f350b4086fae4325a5be7775f3ce32f94b4b475f0ac28bfc9c290ac",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "d42b7c0f7a660f22854b284e4509aa381ceaa486ad77e57ab98d10f285f235f6",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -10406,7 +10406,7 @@
       "source": "raw/host-b12/cases/sessions-unknown--argv",
       "sha256": {
         "case.json": "97259e2f9ed04d326b4c94d64ecd99a24b10785f414b7ccfb2671e4a38fd3f0e",
-        "result.json": "546d371d819a8a0da15f9a07ae17bdeb4e21fc0221cd58e03fc0449bfd579ed8",
+        "result.json": "2d394eddc14930069c123235dcb1150f97fa021cd1849978aaf7b3885965dc98",
         "stdout.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "stderr.bin": "cb22a251063221f5b19b539a5fd0c402919e0c8d444eb82d6a3c1dfc61658fbc",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -10507,7 +10507,7 @@
       "source": "raw/host-b24-r1/cases/sessions-default--empty-response",
       "sha256": {
         "case.json": "03cfb4bc482cab784d56db75b0348452d38adf8e0a0142611effc734d1c09eef",
-        "result.json": "6f12fd6c9e9644beaee8adbe4ed2996e9f0b7589abaff5a58224b48734b23b70",
+        "result.json": "4a9dfa0ba90999f7cce2907e229d9eed07b32053bc11192a102bef87cbbe112d",
         "stdout.bin": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
         "stderr.bin": "53f8fe6c87ef35071cb038fd55d7a3bb8365460930d1aa8cbea286eae72fa259",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
@@ -10662,7 +10662,7 @@
       "source": "raw/host-b24-r1/cases/sessions-list--empty-response",
       "sha256": {
         "case.json": "faac1a2f1b18f353791e474ce8bca3fa88a856232e4fe7e186917f0899237434",
-        "result.json": "2b79cc758d6cb9efbd21e6a993ab443f783e25085848a5cb3bb6b35877897722",
+        "result.json": "b5d710de63d2c9f5013c26e3e26ab2d3ff69e608252efd0598046abc47435944",
         "stdout.bin": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
         "stderr.bin": "fdb34246080b8ce24b83dbc0a861865b8a812647c4502a85726e0b113279ed9d",
         "initial.json": "e509b48da2489daacd8760b333a906e91a07910a911fab27bcb541a404b92a9a",
