@@ -84,6 +84,8 @@ struct Progress {
     cancelled: Option<JsString>,
     disposal: Option<watch::Receiver<Option<RuntimeResult>>>,
     recreation_started: bool,
+    disposal_completed: bool,
+    recreation_error_reported: bool,
 }
 
 struct Inner {
@@ -136,7 +138,20 @@ impl LiveSessionHandle {
 
     pub(super) fn recreation_drained(&self) -> bool {
         let progress = self.0.progress.lock().unwrap();
-        progress.recreation_started && progress.state == HandleState::Disposed && !progress.activity
+        progress.recreation_started
+            && progress.disposal_completed
+            && !progress.activity
+            && (progress.recreation_error_reported
+                || progress
+                    .disposal
+                    .as_ref()
+                    .is_some_and(|result| matches!(&*result.borrow(), Some(Ok(())))))
+    }
+
+    /// Acknowledge only when the factory waiter actually receives a disposal
+    /// error. Sending to a live channel is not proof that it was consumed.
+    pub(super) fn report_recreation_error(&self) {
+        self.0.progress.lock().unwrap().recreation_error_reported = true;
     }
 
     /// Only factory recreation calls this after its successful owned drain.
@@ -162,6 +177,8 @@ impl LiveSessionHandle {
                 cancelled: None,
                 disposal: None,
                 recreation_started: false,
+                disposal_completed: false,
+                recreation_error_reported: false,
             }),
             changed: watch::channel(0).0,
         }))
@@ -290,10 +307,18 @@ impl LiveSessionHandle {
             }
             impl Drop for DisposeGuard<'_> {
                 fn drop(&mut self) {
-                    self.handle_progress.lock().unwrap().state = HandleState::Disposed;
-                    let outcome = self.outcome.take().unwrap_or_else(|| {
-                        Err(RuntimeError::new("Agent session dispose task panicked."))
-                    });
+                    // A custom writer guard can itself panic while dropping,
+                    // after the ordinary disposer already returned a result.
+                    let completed = self.outcome.is_some() && !std::thread::panicking();
+                    {
+                        let mut progress = self.handle_progress.lock().unwrap();
+                        progress.disposal_completed = completed;
+                        progress.state = HandleState::Disposed;
+                    }
+                    let outcome = if completed { self.outcome.take() } else { None }
+                        .unwrap_or_else(|| {
+                            Err(RuntimeError::new("Agent session dispose task panicked."))
+                        });
                     self.result.send_replace(Some(outcome));
                 }
             }

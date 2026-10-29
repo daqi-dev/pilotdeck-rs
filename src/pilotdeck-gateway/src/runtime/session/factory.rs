@@ -192,10 +192,38 @@ async fn acquire_writer_resolved(
         _file: file,
     })
 }
+// Each observation belongs to one real process mutex, so parallel tests cannot
+// cross-talk. Weak entries do not retain mutexes or observations after a test.
+#[cfg(test)]
+fn writer_wait_observation(mutex: &Arc<WriterMutex>) -> Arc<std::sync::atomic::AtomicUsize> {
+    static OBSERVERS: OnceLock<Mutex<HashMap<usize, Weak<std::sync::atomic::AtomicUsize>>>> =
+        OnceLock::new();
+    let mut observers = lock(OBSERVERS.get_or_init(Mutex::default));
+    observers.retain(|_, observer| observer.strong_count() != 0);
+    let key = Arc::as_ptr(mutex) as usize;
+    observers
+        .get(&key)
+        .and_then(Weak::upgrade)
+        .unwrap_or_else(|| {
+            let observer = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            observers.insert(key, Arc::downgrade(&observer));
+            observer
+        })
+}
+
 async fn acquire_process_writer(
     mutex: Arc<WriterMutex>,
     deadline: tokio::time::Instant,
 ) -> Result<tokio::sync::OwnedMutexGuard<()>, RuntimeError> {
+    #[cfg(test)]
+    writer_wait_observation(&mutex).store(
+        if deadline > tokio::time::Instant::now() {
+            1
+        } else {
+            2
+        },
+        Ordering::SeqCst,
+    );
     if deadline <= tokio::time::Instant::now() {
         // An exhausted drain budget still allows an idle writer, never a wait.
         mutex.try_lock_owned().map_err(|_| writer_busy())
@@ -417,8 +445,8 @@ pub type Admission =
 pub struct FactoryOptions {
     /// Predecessor drain + occupied process-lock wait budget, chosen by the
     /// host's cancellation policy (e.g. POST_CANCEL_EXIT_TIMEOUT), not a total
-    /// wall-clock deadline for create. Must be positive. Prepare, storage
-    /// construction, path resolution and the single OS file-open/lock attempt
+    /// wall-clock deadline for create. Must be positive. Prepare, drained
+    /// snapshot, storage construction, path resolution and the single OS file-open/lock attempt
     /// are excluded: blocking filesystem I/O cannot be cancelled by this budget.
     /// Resolution time still consumes the remaining process-lock wait; at
     /// expiry only a nonblocking process-lock attempt is permitted.
@@ -432,10 +460,12 @@ pub struct FactoryOptions {
 pub struct ProjectSessionFactory {
     options: Arc<FactoryOptions>,
     mcp: SessionMcpRuntimeRegistry,
+    #[cfg(test)]
+    creation_sent: Arc<tokio::sync::watch::Sender<usize>>,
 }
 impl ProjectSessionFactory {
     /// # Panics
-    /// Panics for a zero writer fence budget (a host configuration error).
+    /// Panics for a zero `writer_busy_wait_timeout` (a host configuration error).
     pub fn new(options: FactoryOptions) -> Self {
         assert!(
             !options.writer_busy_wait_timeout.is_zero(),
@@ -444,6 +474,8 @@ impl ProjectSessionFactory {
         Self {
             options: Arc::new(options),
             mcp: SessionMcpRuntimeRegistry::new(),
+            #[cfg(test)]
+            creation_sent: Arc::new(tokio::sync::watch::channel(0).0),
         }
     }
     /// Intentionally only the per-session MCP registry; owner.shutdown owns
@@ -456,6 +488,7 @@ impl ProjectSessionFactory {
         &self,
         context: SessionContext,
         previous: Option<LiveSessionHandle>,
+        disposal_failure: &mut Option<LiveSessionHandle>,
     ) -> Result<LiveSessionHandle, RuntimeError> {
         let prepared = (self.options.prepare)(context.clone(), self.mcp.clone()).await?;
         // Sample before this attempt grants eligibility or starts disposal:
@@ -482,12 +515,23 @@ impl ProjectSessionFactory {
             let drained =
                 tokio::time::timeout_at(deadline, previous.dispose("session_recreate".into()))
                     .await;
-            let outcome = drained.unwrap_or_else(|_| Err(writer_busy()));
+            let outcome = match drained {
+                Ok(result) => {
+                    if result.is_err() {
+                        *disposal_failure = Some(previous.clone());
+                    }
+                    result
+                }
+                Err(_) => Err(writer_busy()),
+            };
             if let Err(error) = outcome {
                 let _ = prepared.resources.release().await;
                 return Err(error);
             }
         }
+        // Only predecessor drain and occupied writer-lock waits spend this
+        // budget. The retained snapshot may perform synchronous storage I/O.
+        let writer_wait_remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if let (Some(previous), Some(reload)) = (&previous, &mut reload) {
             // OwnedTurn finalizes its checkpoint before releasing handle activity.
             // Keep the earlier eligibility check, but seed the replacement only
@@ -500,7 +544,6 @@ impl ProjectSessionFactory {
                 }
             }
         }
-        let writer_wait_remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         let storage = match (self.options.create_storage)(context.clone()).await {
             Ok(storage) => storage,
             Err(error) => {
@@ -645,16 +688,22 @@ impl SessionFactory for ProjectSessionFactory {
             // If the receiver is gone, dispose the completed candidate instead.
             let (send, receive) = tokio::sync::oneshot::channel();
             tokio::spawn(async move {
+                let mut disposal_failure = None;
                 let result = factory
-                    .construct(context, previous)
+                    .construct(context, previous, &mut disposal_failure)
                     .await
                     .map(PendingSession::new);
-                let _ = send.send(result);
+                let _ = send.send((result, disposal_failure));
+                #[cfg(test)]
+                factory.creation_sent.send_modify(|count| *count += 1);
             });
-            receive
+            let (result, disposal_failure) = receive
                 .await
-                .map_err(|e| RuntimeError::new(e.to_string()))?
-                .map(|mut candidate| candidate.handle.take().expect("factory candidate handle"))
+                .map_err(|e| RuntimeError::new(e.to_string()))?;
+            if let Some(previous) = disposal_failure {
+                previous.report_recreation_error();
+            }
+            result.map(|mut candidate| candidate.handle.take().expect("factory candidate handle"))
         })
     }
 }
