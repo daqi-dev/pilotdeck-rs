@@ -281,39 +281,110 @@ def env_summary(env):
             for key, value in sorted(env.items())}
 
 
+# #1064: .guard 只在 mkdir/owner 发布/释放的临界区内被兄弟短暂持有；卡死在临界区里的
+# 兄弟进程不能让任何调用方的截止期失效。60s 远大于该临界区、远小于 run_round 的
+# 2280s 租约闹钟，也是 negative_process 给同型 guard 的有界上限。
+GUARD_TIMEOUT = 60
+GUARD_INTERVAL = 0.05
+
+
 @contextmanager
-def lock_guard(lock):
+def lock_guard(lock, timeout=GUARD_TIMEOUT):
     path = lock.with_name(lock.name + '.guard')
     fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'r+') as guard:
         info = os.fstat(guard.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid():
             raise Blocked('unsafe parity guard')
-        fcntl.flock(guard, fcntl.LOCK_EX)
+        # 阻塞 flock 本身没有截止期：LOCK_NB + 轮询让调用方的任何期限都真实生效
+        # （#1064 P1-1），超时抛既有 Blocked，锁目录从不因超时被改动。
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise Blocked(f'parity guard busy: {path}') from None
+                time.sleep(min(GUARD_INTERVAL, remaining))
         yield
 
 
+def discard_unpublished_lease(lock, mine, identity):
+    """#1064: 回收本次获取中已 mkdir 但从未发布的租约目录（获取被取消/写入失败）。
+
+    只删归属可证的目录：inode 身份不匹配、目录非空于身份捕获前、或 owner.json
+    是外来完整字节时原样保留，交给 README 的人工流程。清理自身的 OSError 一律
+    吞掉（best-effort），不掩盖触发清理的原始异常。
+    """
+    try:
+        current = lock.lstat()
+    except OSError:
+        return
+    if not stat.S_ISDIR(current.st_mode):
+        return
+    if identity is None:
+        # mkdir 与身份捕获之间被取消：目录仍为空才可证是本次创建的。
+        try:
+            if any(lock.iterdir()):
+                return
+        except OSError:
+            return
+    elif (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
+        return
+    try:
+        entries = set(os.listdir(lock))
+    except OSError:
+        return
+    if entries - {'owner.json'}:
+        return
+    if 'owner.json' in entries:
+        try:
+            published = json.loads((lock / 'owner.json').read_text())
+        except (OSError, ValueError):
+            published = None
+        if published is not None and published != mine:
+            return
+        try:
+            (lock / 'owner.json').unlink()
+        except OSError:
+            return
+    try:
+        lock.rmdir()
+    except OSError:
+        pass
+
+
 @contextmanager
-def parity_lock(lock=LOCK):
+def parity_lock(lock=LOCK, timeout=GUARD_TIMEOUT):
     """Cooperate with existing .guard + mkdir contract; never steal a lock."""
     mine = {'pid': os.getpid(), 'timestamp': time.time(), 'token': uuid.uuid4().hex}
-    with lock_guard(lock):
+    identity = None
+    directory = None
+    with lock_guard(lock, timeout):
+        # mkdir 本身在 try 覆盖内：落盘后的任何取消都进回收分支；而 mkdir 失败
+        # （目录属于他人/前驱）先被 FileExistsError 子句接走，绝不进入回收——
+        # 用子句顺序而非标志位判别「是否本次创建」，没有标志位赋值前的信号窗口。
         try:
             lock.mkdir(mode=0o700)
-        except FileExistsError as error:
-            raise Blocked(f'parity lock held: {lock}') from error
-        identity = lock.lstat()
-        directory = os.open(lock, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        current = os.fstat(directory)
-        if (identity.st_dev, identity.st_ino) != (current.st_dev, current.st_ino) or current.st_uid != os.getuid():
-            os.close(directory)
-            raise Blocked('lock directory changed before ownership write')
-        try:
+            identity = lock.lstat()
+            directory = os.open(lock, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            current = os.fstat(directory)
+            if (identity.st_dev, identity.st_ino) != (current.st_dev, current.st_ino) or current.st_uid != os.getuid():
+                raise Blocked('lock directory changed before ownership write')
             fd = os.open('owner.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
             with os.fdopen(fd, 'w') as owner:
                 json.dump(mine, owner)
+        except FileExistsError as error:
+            raise Blocked(f'parity lock held: {lock}') from error
         except BaseException:
-            os.close(directory)
+            # 只可能是本次 mkdir 创建的目录：归属可证才回收，否则原样保留。
+            # 先回收再关 fd：清理途中若再来一次中断，至多丢 fd/掩盖原异常的链，
+            # 不会因关 fd 的顺序跳过回收本身。
+            discard_unpublished_lease(lock, mine, identity)
+            if directory is not None:
+                os.close(directory)
             raise
     try:
         yield mine
@@ -321,7 +392,9 @@ def parity_lock(lock=LOCK):
         # 不论正常还是任何异常（含 KeyboardInterrupt）：只有本次启动的进程组全部被 stop_group 证实停止，才释放锁
         release = not LIVE_GROUPS
         try:
-            with lock_guard(lock):
+            # 释放阶段同样有界（#1064 P1-1）：卡死的兄弟不能让清理无限期阻塞；
+            # 超时抛 Blocked、lease 原样保留，交给 README 的人工流程。
+            with lock_guard(lock, timeout):
                 current = lock.lstat()
                 if (identity.st_dev, identity.st_ino) != (current.st_dev, current.st_ino):
                     raise Blocked('lock directory changed; retaining lock')
