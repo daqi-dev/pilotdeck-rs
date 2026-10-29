@@ -9,11 +9,13 @@ the leader is dead (#528).
 """
 from contextlib import contextmanager, nullcontext
 import fcntl
+import json
 import math
 import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import threading
 import time
 from types import ModuleType
@@ -133,9 +135,11 @@ def new_output_directory(path):
 
     A negative control writes fixed log names. If a reused directory were
     accepted, the next attempt would overwrite the previous run's original
-    bytes and destroy the evidence its failure report points at. Accept only a
-    missing directory or an empty one; anything else exits nonzero before any
-    cargo or source mutation starts.
+    bytes and destroy the evidence its failure report points at. A missing or
+    empty directory is eligible, but only exclusive creation of .claim admits
+    this invocation. Keep the claim even on failure/cancellation: an old runner
+    may resume, so neither an empty claim nor a dead pid makes reuse safe.
+    Refusal happens before any cargo or source mutation starts.
     """
     path = Path(path).resolve()
     try:
@@ -149,6 +153,17 @@ def new_output_directory(path):
             raise SystemExit(
                 f"#953 refusing to reuse a non-empty output directory: {path}; "
                 "remove it or pass a new evidence directory")
+    # mkdir/iterdir are not an ownership decision: another process can claim
+    # the directory after either operation. O_EXCL is the admission point.
+    try:
+        with (path / ".claim").open("x", encoding="utf-8") as claim:
+            json.dump({"pid": os.getpid(), "started_at": time.time(),
+                       "argv": sys.argv}, claim)
+            claim.write("\n")
+    except FileExistsError as error:
+        raise SystemExit(
+            f"#1060 output directory already claimed: {path}; "
+            "pass a new evidence directory") from error
     return path
 
 

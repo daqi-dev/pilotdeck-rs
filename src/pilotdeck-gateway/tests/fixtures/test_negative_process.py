@@ -6,6 +6,7 @@ temporary directory, so they exercise the real baseline check without touching
 this worktree.
 """
 import errno
+import json
 from contextlib import contextmanager, nullcontext
 import os
 from pathlib import Path
@@ -756,6 +757,145 @@ class OutputDirectoryGuard(unittest.TestCase):
                 exclusive_write(log, "second run\n")
             self.assertEqual(log.read_text(), "first run\n",
                              "#953 exclusive log creation must preserve the first run bytes")
+
+
+class OutputDirectoryClaim(unittest.TestCase):
+    """#1060: only the atomic claim admits a runner, even across pauses."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='pdrs-1060-')
+        self.addCleanup(self.temp.cleanup)
+        self.control = Path(self.temp.name)
+        self.output = self.control / 'output'
+
+    def child(self, name, phase='none'):
+        probe = Path(__file__).resolve().parent / 'negative-output-directory/process_probe.py'
+        process = subprocess.Popen(
+            [sys.executable, '-I', '-B', '-X',
+             'pycache_prefix=' + str(self.control / 'unused-pycache'),
+             str(probe), str(self.output),
+             str(self.control), name, phase],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        def cleanup():
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate(timeout=5)
+
+        self.addCleanup(cleanup)
+        return process
+
+    def ready(self, process, name, phase):
+        ready = self.control / (name + '.ready')
+        deadline = time.monotonic() + 10
+        while not ready.exists():
+            self.assertIsNone(process.poll(), '#1060 child exited before pause')
+            self.assertLess(time.monotonic(), deadline, '#1060 child did not reach pause')
+            time.sleep(0.01)
+        self.assertEqual(ready.read_text(), phase, '#1060 atomic ready signal identifies pause')
+
+    def release(self, name):
+        path = self.control / (name + '.release')
+        temporary = path.with_suffix('.tmp')
+        temporary.write_text('release')
+        temporary.replace(path)
+
+    def completed(self, process):
+        try:
+            stdout, stderr = process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.fail('#1060 child did not exit within 10 seconds')
+        return process.returncode, stdout + stderr
+
+    def no_work(self, name):
+        for kind in ('cargo', 'mutation'):
+            self.assertFalse((self.control / (name + '.' + kind)).exists(),
+                             '#1060 refused runner must not start ' + kind)
+
+    def test_missing_and_empty_paths_have_persistent_metadata(self):
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                output = self.control / str(existing)
+                if existing:
+                    output.mkdir()
+                started = time.time()
+                self.assertEqual(new_output_directory(output), output.resolve(),
+                                 '#1060 successful claim returns resolved output')
+                claim = output / '.claim'
+                self.assertTrue(claim.is_file(), '#1060 admission requires a persistent claim')
+                raw = claim.read_bytes()
+                metadata = json.loads(raw)
+                self.assertEqual(metadata['pid'], os.getpid(), '#1060 claim identifies owner pid')
+                self.assertEqual(metadata['argv'], sys.argv, '#1060 claim records invocation')
+                self.assertGreaterEqual(metadata['started_at'], started, '#1060 claim records start time')
+                self.assertLessEqual(metadata['started_at'], time.time(), '#1060 claim time is not future')
+                with self.assertRaises(SystemExit, msg='#1060 completed claim cannot be reused'):
+                    new_output_directory(output)
+                self.assertEqual(claim.read_bytes(), raw, '#1060 refusal preserves claim bytes')
+
+    def mkdir_race(self, phase):
+        if phase == 'iterdir':
+            self.output.mkdir()
+        first = self.child('a', phase)
+        self.ready(first, 'a', phase)
+        second = self.child('b')
+        rc, log = self.completed(second)
+        self.assertEqual(rc, 0, '#1060 unclaimed directory admits one winner: ' + log)
+        self.release('a')
+        rc, log = self.completed(first)
+        self.assertNotEqual(rc, 0, '#1060 ' + phase + ' loser must be rejected before work')
+        self.assertIn('#1060 output directory already claimed', log,
+                      '#1060 loser must fail at the exclusive claim')
+        self.no_work('a')
+        for kind in ('cargo', 'mutation'):
+            self.assertTrue((self.control / ('b.' + kind)).exists(),
+                            '#1060 winner must reach the work sites')
+        claim = json.loads((self.output / '.claim').read_text())
+        self.assertEqual(claim['pid'], second.pid, '#1060 loser must not replace winner metadata')
+
+    def test_mkdir_pause_has_exactly_one_winner(self):
+        self.mkdir_race('mkdir')
+
+    def test_empty_snapshot_has_exactly_one_winner(self):
+        self.mkdir_race('iterdir')
+
+    def test_incomplete_and_cancelled_claims_are_not_reused(self):
+        first = self.child('a', 'open')
+        self.ready(first, 'a', 'open')
+        self.assertEqual((self.output / '.claim').read_bytes(), b'',
+                         '#1060 hook must pause before claim content is written')
+        for name in ('b', 'c'):
+            if name == 'c':
+                first.terminate()
+                rc, _ = self.completed(first)
+                self.assertNotEqual(rc, 0, '#1060 predecessor must be cancelled')
+            contender = self.child(name)
+            rc, log = self.completed(contender)
+            self.assertNotEqual(rc, 0, '#1060 incomplete or cancelled claim must reject contender')
+            self.assertIn('output directory', log, '#1060 refusal must identify evidence directory')
+            self.no_work(name)
+            self.assertEqual((self.output / '.claim').read_bytes(), b'',
+                             '#1060 cancellation must retain the original claim')
+        self.no_work('a')
+
+    def test_claim_open_and_write_errors_prevent_admission(self):
+        with patch.object(Path, 'open', side_effect=PermissionError('#1060 injected open denial')):
+            with self.assertRaisesRegex(PermissionError, '#1060 injected open denial',
+                                        msg='#1060 claim open errors must prevent admission'):
+                new_output_directory(self.output)
+        with patch.object(negative_process.json, 'dump',
+                          side_effect=OSError('#1060 injected write failure')):
+            with self.assertRaisesRegex(OSError, '#1060 injected write failure',
+                                        msg='#1060 claim write errors must prevent admission'):
+                new_output_directory(self.output)
+        self.assertTrue((self.output / '.claim').is_file(),
+                        '#1060 failed claim write must retain reservation')
+        with self.assertRaises(SystemExit, msg='#1060 failed claim cannot be reused'):
+            new_output_directory(self.output)
 
 
 if __name__ == "__main__":
