@@ -563,9 +563,7 @@ def _cleanup_fixture(child, audit, leader_state, output):
         outcome, detail = held.kill_leader(signal.SIGKILL)
         if outcome == 'error':
             audit['cleanupBlocked'] = detail
-        elif outcome == 'refused' and detail != 'EXITED':
-            # An unreaped zombie leader is already stopped; only a refused
-            # kill for any other state (reaped/unsupported) loses ownership.
+        elif outcome == 'refused':
             audit['cleanupBlocked'] = f'leader kill refused: state {detail}'
     if child.returncode is None:
         try:
@@ -657,39 +655,33 @@ def run_fixture(output, baseline, command=None):
                 if child is not None:
                     _cleanup_fixture(child, audit, leader_state, output)
             except BaseException as error:
-                # A cleanup helper failed before it could publish a status: keep
-                # the group registered and make the report non-PASS.  Signals are
-                # already deferred; re-raise cancellation after the audit is saved.
-                audit['cleanupBlocked'] = (
-                    f'cleanup raised: {type(error).__name__}: {error}')
-                audit['processTreeCleanup'] = CLEANUP_NOT_VERIFIED
-                audit.setdefault('processGroupProbe', {
-                    'pgid': child.pid if child is not None else None,
-                    'status': CLEANUP_NOT_VERIFIED,
-                    'reason': audit['cleanupBlocked']})
-                if not isinstance(error, (OSError, subprocess.SubprocessError,
-                                          ValueError, KeyError, TypeError)):
-                    raise
+                # A cleanup helper failed before it could publish a status.  Keep
+                # the group registered and record the failure in a lock-lifecycle
+                # field only: the frozen scoring fields are never rewritten here
+                # (#209 E1 P0-1).  Re-raise so main()'s existing failure contract
+                # decides FAIL/BLOCKED instead of publishing an optimistic PASS.
+                audit['cleanupRaised'] = f'{type(error).__name__}: {error}'
+                raise
             finally:
                 if child is not None:
                     if child.returncode is not None:
                         audit['exitCode'] = child.returncode
                         audit['status'] = 'DONE' if child.returncode == 0 else 'FAIL'
+                    # Lock lifecycle only.  ``processTreeCleanup`` keeps exactly
+                    # the value the frozen scoring block wrote; a verified probe
+                    # still needs a reaped leader and no cleanup error before the
+                    # shared lease may be released (#209 E1 P0-1).
                     verified = (audit.get('processTreeCleanup') == CLEANUP_VERIFIED
                                 and child.returncode is not None
-                                and not audit.get('cleanupBlocked'))
-                    if audit.get('processTreeCleanup') == CLEANUP_VERIFIED and not verified:
-                        # A verified probe still needs a reaped leader and no
-                        # cleanup error before the shared lock may be released.
-                        audit['processTreeCleanup'] = CLEANUP_NOT_VERIFIED
-                        audit['cleanupBlocked'] = (audit.get('cleanupBlocked')
-                                                   or 'leader not reaped')
+                                and not audit.get('cleanupBlocked')
+                                and not audit.get('cleanupRaised'))
                     audit['allStopped'] = verified
                     if verified:
                         common.LIVE_GROUPS.discard(child.pid)
                     audit['ownedGroupsRemaining'] = sorted(common.LIVE_GROUPS)
                 else:
-                    audit['allStopped'] = not common.LIVE_GROUPS
+                    audit['allStopped'] = (not common.LIVE_GROUPS
+                                           and not audit.get('cleanupRaised'))
                     audit['ownedGroupsRemaining'] = sorted(common.LIVE_GROUPS)
                 save(output / 'launch.json', audit)
     return audit

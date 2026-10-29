@@ -1,6 +1,6 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
-> **2026-10-29 #209 E1 重登记候选（协调者明确授权，待两家非作者终审与人复核）**：**共享锁只在 E1 本次 launcher 进程组被证实停止后释放**。`run_fixture` 在 `deferred_signals()` 内完成 `Popen` 与 `common.LIVE_GROUPS.add(pgid)`，`finally` 全程再挂起 SIGINT/SIGTERM；只有 `processTreeCleanup=VERIFIED`、leader 已回收且无 `cleanupBlocked` 才从登记移除。未证实时保留 pgid，`common.parity_lock`（#990 A2 协议）在 finally 写 `owner.json.cleanupPending` 并保留租约，dead_pid/expired 不得自动接管；清理 helper 异常会降级为 `NOT_VERIFIED` 并保留登记。probe=VERIFIED 但 leader 未回收/有 cleanup 错误时同样降级，避免“探测成功即释放”的假 PASS。**判分语义零变化**：`cleanup_status` 映射、`status`/`executionStatus`/`freezeStatus`、退出码、阈值、分母、归一化与差异账本均未改；`controls/session_domain.py` 未改（它在父进程租约下运行，不获取/释放共享锁）。只重登记 `session_domain.py` 一行哈希；新正/负控见 `src/pilotdeck-gateway/tests/fixtures/session-domain-lock-release/`，候选树正控与真实存档复算证据见 `_tmp/20261026-issue-209/RESULT.md`；未提交候选不冒充已通过 HEAD 准入或全量原地负控。
+> **2026-10-29 #209 E1 重登记候选（协调者明确授权，待两家非作者终审与人复核）**：**共享锁只在 E1 本次 launcher 进程组被证实停止后释放**。`run_fixture` 在 `deferred_signals()` 内完成 `Popen` 与 `common.LIVE_GROUPS.add(pgid)`，`finally` 全程再挂起 SIGINT/SIGTERM；锁释放只看新字段 `allStopped`（`processTreeCleanup=VERIFIED` 且 leader 已回收且无 `cleanupBlocked`/`cleanupRaised`），未证实则保留 pgid。`common.parity_lock`（#990 A2 协议）在 finally 写 `owner.json.cleanupPending` 并保留租约，dead_pid/expired 不得自动接管。**判分语义零变化**：`processTreeCleanup`/`cleanupBlocked`/`processGroupProbe`/`psCensus` 的读写语句与 main 逐语句一致（AST 对拍，见 fix-r1 证据），`cleanup_status` 映射、`status`/`executionStatus`/`freezeStatus`、退出码、阈值、分母、归一化与差异账本均未改；清理 helper 异常只写新字段 `cleanupRaised` 并继续抛出，由既有失败契约决定 FAIL/BLOCKED，不改写评分字段；`controls/session_domain.py` 未改（它在父进程租约下运行，不获取/释放共享锁）。只重登记 `session_domain.py` 一行哈希；新正/负控见 `src/pilotdeck-gateway/tests/fixtures/session-domain-lock-release/`，候选树正控、真实存档复算与逐条负控见 `_tmp/20261026-issue-209-e1/fix-r1/RESULT.md`；未提交候选不冒充已通过 HEAD 准入或全量原地负控。
 
 > **2026-10-29 #991 fix-r3 重登记候选（协调者明确授权，待两家非作者终审与人复核）**：修复 session-domain-cleanup 恢复正控的 aggregation-audit 回归；`_guard._failure` 四类已处理异常出口统一调用 `common.aggregate_status`，在既有 `AGGREGATION_POINTS` 登记为 `guard-failure`，不新增豁免、不改审计检测器。round 仍输出历史 BLOCKED/error 并从 FAIL 类取 exit 1，其余逐入口异常契约沿用 fix-r2 的 72 格原金样；未可信 common 的 preflight 拒绝仍固定 exit 2。补登记回归与逐策略共享调用断言、五项绑定变异，同步两套旧锚点；仅重登记 `_guard.py`、`test_safety.py` 两行哈希。判分、阈值、分母、归一化、差异账本、清理与租约语义均不变。证据及提交后完整宿主验证见 `_tmp/20261026-issue-991/fix-r3/RESULT.md`；不宣称未提交候选已通过 HEAD 准入或全量原地负控。
 
@@ -190,7 +190,7 @@ eb48c34dbc6c245fa10421bf5a4015acc95a341df0d96b6f336dbafbded0ec5c  ../../scripts/
 6158b25ba9105f17759ff1e2543ade8ab70724f59eef81bc6b551020831b5967  ../../scripts/gateway-parity/run_round.py
 83ba6dd1772bba0888c6530c38fe5f3cb9c6c0531c1c3b158bd5048a1dcd10ad  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
-292d96faf60a18ef6a87075f5de73426f772fbdde05b5d668ac1da2a57b883ee  ../../scripts/gateway-parity/session_domain.py
+c74ebe7d3041b3b07185498230f59cfc1f810b5d33c6c55bd4f542e2975cd41b  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
 d214b691ad77efa6c642577587f12865be046f9b99297c85caae566f9bfd2320  ../../scripts/gateway-parity/controls/session_domain.py
 41b1313fc047e8334a1655b69e277c4bcc451edaf15b79efd37e403e7005dab2  ../../scripts/gateway-parity/fixtures/session-calibration.json

@@ -44,8 +44,10 @@ def invalidate_completed(results, reason):
     The guard restores and re-verifies every mutated file on context exit. When
     it raises there, a previously recorded KILLED row is no longer trustworthy:
     the tree may not be restored. Leaving it green would publish a false pass
-    (#979 P0). Revoke optional compilation receipts too (#1037), keeping the
-    original schema of runners that do not publish a ``compiled`` field.
+    (#979 P0), so this is the single implementation shared by ``run_cases`` and
+    the SQLite-header executor. Revoke optional compilation receipts too
+    (#1037), keeping the original schema of runners that do not publish a
+    ``compiled`` field.
     """
     for row in results:
         row.update(status='INVALID', reason=row['reason'] + '; ' + reason)
