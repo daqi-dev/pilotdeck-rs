@@ -17,6 +17,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, new_output_directory, run_owned, wait_for_slot
+from negative_suite import Case, classify as classify_case, passed
 
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
@@ -42,11 +43,14 @@ MUTANT_ROWS = [
         '#280 edgeclaw-storage/oracle.json differs from the regenerated',
     ),
 ]
+# No `--nocapture`: the guard's `println!` would otherwise be spliced between
+# `test <name> ... ` and `ok`/`FAILED`, so the shared single-line judge in
+# `negative_suite.py` scores a passing positive control as INVALID.
 COMMAND = [
     'cargo', 'test', '--offline', '--locked',
     '--manifest-path', 'src/Cargo.toml',
     '-p', 'pilotdeck-gateway', '--test', 'generator_provenance',
-    '--', '--ignored', '--exact', '--test-threads=1', '--nocapture',
+    '--', '--ignored', '--exact', '--test-threads=1',
 ]
 
 
@@ -58,22 +62,10 @@ def run(output, env, label, test):
     return result
 
 
-def passed(result, test):
-    log = result.stdout + result.stderr
-    return (result.returncode == 0 and f'test {test} ... ok' in log
-            and 'test result: ok. 1 passed;' in log)
-
-
 def classify(result, test, assertion):
-    log = result.stdout + result.stderr
-    if passed(result, test):
-        return 'SURVIVED', 'bound test still passed'
-    if (result.returncode == 101 and 'test result: FAILED' in log
-            and f'test {test} ... FAILED' in log
-            and assertion in log and 'could not compile' not in log
-            and 'error[E' not in log):
-        return 'KILLED', 'bound test failed at its byte comparison'
-    return 'INVALID', 'missing named byte-comparison failure'
+    # Reuse the repository judge so a kill still requires the full named test
+    # and a runtime panic, never a build error or an unrelated failure.
+    return classify_case(result, Case('', None, '', '', test, assertion))
 
 
 def write_summary(output, results):
