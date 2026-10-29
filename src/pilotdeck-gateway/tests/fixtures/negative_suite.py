@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import json
 import subprocess
 
+import pending_reanchor as pending
+
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 
@@ -51,7 +53,7 @@ def invalidate_completed(results, reason):
             row['compiled'] = False
 
 
-def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD'):
+def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', script=None):
     """Return an exit code; each case must pass before and after mutation."""
     results = []
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
@@ -78,16 +80,22 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD'):
     def record(case, status, reason):
         results.append({'mutation': case.mutation, 'test': case.test,
                         'assertion': case.assertion, 'status': status, 'reason': reason})
-        counts = {state: sum(r['status'] == state for r in results)
-                  for state in ('KILLED', 'SURVIVED', 'INVALID')}
+        counts = pending.counts(results)
         (out / 'summary.json').write_text(json.dumps(
             {'controls': results, 'counts': counts}, indent=2) + '\n')
         print(f'{case.mutation}: {status}: {reason}', flush=True)
 
     try:
-        with mutating_sources(root, list(dict.fromkeys(c.path for c in cases)),
-                              baseline=baseline) as originals:
+        registrations = pending.for_script(root, script)
+        paths = list(dict.fromkeys(c.path for c in cases))
+        if registrations:
+            paths.append(root / pending.FIXTURES / pending.REGISTRY)
+        with mutating_sources(root, paths, baseline=baseline) as originals:
             for case in cases:
+                entry = pending.match(registrations, case.mutation)
+                if entry is not None:
+                    record(case, pending.SKIPPED, entry.reason())
+                    continue
                 status, reason, stage = 'INVALID', '', 'anchor'
                 try:
                     changed = mutate(originals[case.path].decode(), case.scope,
@@ -125,8 +133,7 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD'):
                 'controls': results,
                 'counts': {'KILLED': 0, 'SURVIVED': 0, 'INVALID': len(results)},
             }, indent=2) + '\n')
-    counts = {state: sum(r['status'] == state for r in results)
-              for state in ('KILLED', 'SURVIVED', 'INVALID')}
+    counts = pending.counts(results)
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
     return int(not results or any(row['status'] != 'KILLED' for row in results))
 
@@ -230,9 +237,13 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
         if original.count(row[2]) != 1 or row[2] == row[3] or not targets(row):
             raise ValueError(f'{row[0]}: stale/invalid anchor or empty targets')
 
+    registrations = pending.for_script(root, script)
     if args == ['--check']:
         errors = []
         for row in rows:
+            if pending.match(registrations, row[0]) is not None:
+                errors.append(f'{row[0]}: {pending.SKIPPED}')
+                continue
             try:
                 anchor(row, row[1].read_text())
             except Exception as error:
@@ -256,6 +267,8 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
     guarded = list(dict.fromkeys([*paths, Path(script).resolve(), Path(__file__).resolve(),
         fixture_root / 'negative_process.py', fixture_root.parent / 'common/negative_receipt.rs',
         root / 'src/pilotdeck-gateway/src/test_process.rs']))
+    if registrations:
+        guarded.append(root / pending.FIXTURES / pending.REGISTRY)
     results = []
 
     def run(label, row, run_env, *, compile=False):
@@ -287,55 +300,62 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
                 and f'test result: ok. {passed_count} passed; 0 failed;' in result.stdout
                 and result.stdout.count('PDRS_VERIFIED_CHILD ') == child_count)
 
+    def execute(row, item, originals):
+        name, source, old, new = row[:4]
+        original = originals[source].decode()
+        anchor(row, original)
+        try:
+            if not compile_only and not positive(run(name + '-positive', row, env)):
+                raise RuntimeError('positive matrix did not pass with all child receipts')
+            changed = original.replace(old, new, 1)
+            _write_new(out / f'{name}.patch', ''.join(difflib.unified_diff(
+                original.splitlines(True), changed.splitlines(True),
+                fromfile=str(source.relative_to(root)), tofile=str(source.relative_to(root)))))
+            source.write_text(changed)
+            if run(name + '-compile', row, env, compile=True).returncode != 0:
+                raise RuntimeError('mutant did not compile; never a kill')
+            item['compiled'] = True
+            if compile_only:
+                item.update(status='COMPILED', reason='mutant cargo test --no-run passed')
+            else:
+                receipts = ReceiptRun(out, name + '-negative',
+                                      [(prefix + t, a) for t, a in targets(row)])
+                result = run(name + '-negative', row, receipts.environment(env))
+                killed, reason, hits = judge(result, prefix, targets(row), receipts,
+                                             any_cell=name in any_cell)
+                item.update(status='KILLED' if killed else
+                            ('SURVIVED' if positive(result) else 'INVALID'),
+                            reason=reason, hits=hits)
+        except Exception as error:
+            item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+        finally:
+            # Restore inside the guard before the positive check. The
+            # guard also verifies every protected byte on context exit.
+            source.write_bytes(originals[source])
+            if source.read_bytes() != originals[source]:
+                raise RuntimeError('source restoration failed')
+        if not compile_only:
+            item['restoredPass'] = positive(run(name + '-restored', row, env))
+            if not item['restoredPass']:
+                item.update(status='INVALID', reason=item['reason'] + '; restored matrix failed')
+
     for row in selected:
         name, source, old, new = row[:4]
         item = dict(name=name, status='INVALID', reason='not run', compiled=False,
                     restoredPass=False, targets=targets(row))
         try:
             with mutating_sources(root, guarded) as originals:
-                original = originals[source].decode()
-                anchor(row, original)
-                try:
-                    if not compile_only and not positive(run(name + '-positive', row, env)):
-                        raise RuntimeError('positive matrix did not pass with all child receipts')
-                    changed = original.replace(old, new, 1)
-                    _write_new(out / f'{name}.patch', ''.join(difflib.unified_diff(
-                        original.splitlines(True), changed.splitlines(True),
-                        fromfile=str(source.relative_to(root)), tofile=str(source.relative_to(root)))))
-                    source.write_text(changed)
-                    if run(name + '-compile', row, env, compile=True).returncode != 0:
-                        raise RuntimeError('mutant did not compile; never a kill')
-                    item['compiled'] = True
-                    if compile_only:
-                        item.update(status='COMPILED', reason='mutant cargo test --no-run passed')
-                    else:
-                        receipts = ReceiptRun(out, name + '-negative',
-                                              [(prefix + t, a) for t, a in targets(row)])
-                        result = run(name + '-negative', row, receipts.environment(env))
-                        killed, reason, hits = judge(result, prefix, targets(row), receipts,
-                                                     any_cell=name in any_cell)
-                        item.update(status='KILLED' if killed else
-                                    ('SURVIVED' if positive(result) else 'INVALID'),
-                                    reason=reason, hits=hits)
-                except Exception as error:
-                    item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
-                finally:
-                    # Restore inside the guard before the positive check. The
-                    # guard also verifies every protected byte on context exit.
-                    source.write_bytes(originals[source])
-                    if source.read_bytes() != originals[source]:
-                        raise RuntimeError('source restoration failed')
-                if not compile_only:
-                    item['restoredPass'] = positive(run(name + '-restored', row, env))
-                    if not item['restoredPass']:
-                        item.update(status='INVALID', reason=item['reason'] + '; restored matrix failed')
+                entry = pending.match(registrations, name)
+                if entry is not None:
+                    item.update(status=pending.SKIPPED, reason=entry.reason())
+                else:
+                    execute(row, item, originals)
         except Exception as error:
             item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
         results.append(item)
         _write_new(out / f'{name}.result.json', json.dumps(item, indent=2) + '\n')
         print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
-    counts = {state: sum(row['status'] == state for row in results)
-              for state in ('KILLED', 'SURVIVED', 'INVALID', 'COMPILED')}
+    counts = pending.counts(results, ('KILLED', 'SURVIVED', 'INVALID', 'COMPILED'))
     _write_new(out / 'summary.json', json.dumps({'controls': results, 'counts': counts}, indent=2) + '\n')
     print(json.dumps(counts), flush=True)
     success = 'COMPILED' if compile_only else 'KILLED'

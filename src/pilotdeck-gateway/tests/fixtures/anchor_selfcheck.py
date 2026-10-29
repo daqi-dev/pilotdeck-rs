@@ -50,6 +50,9 @@ import time
 import os
 import tokenize
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pending_reanchor as pending
+
 TABLES = {'mutants', 'mutations', 'controls', 'cases', 'runner_mutations'}
 # #996: migrated fixture runners declare compile-time switch bindings in a
 # `switches = [...]` table of (name, path, test, assertion) rows. The counted
@@ -277,6 +280,7 @@ class Anchor:
     line: int = 0
     flags: int = 0
     scope: str = ''
+    text_mutation: bool = True
 
 
 class Static:
@@ -1321,7 +1325,7 @@ def extract(script, root):
     # module is the truth for the executed table, so reconcile it here.
     switch_rows = switch_bindings(tree, static)
     for name, path, _test, _assertion, line in switch_rows:
-        anchors.append(Anchor(name, path, f'::mutants::on("{name}")', 1, line=line))
+        anchors.append(Anchor(name, path, f'::mutants::on("{name}")', 1, line=line, text_mutation=False))
     if switch_rows:
         audit_runtime_switches(script, switch_rows)
     # Imperative secondary replacements used alongside the declarative tables.
@@ -1747,6 +1751,12 @@ def check(root, *, anchors_only=False, environ=None):
     scripts = sorted(fixtures.rglob('*.py'))
     env = os.environ if environ is None else environ
     errors, checked, total, skipped = [], 0, 0, 0
+    matched, pending_names = set(), set()
+    try:
+        registrations = pending.load(root)
+    except (OSError, ValueError) as error:
+        errors.append(str(error))
+        registrations = []
     if not scripts:
         errors.append('no negative scripts discovered')
     # A tracked script that vanished is an error even without signals or a
@@ -1797,17 +1807,42 @@ def check(root, *, anchors_only=False, environ=None):
             checked += 1
             for note in notes:
                 print(f'NON_SOURCE {relative}: {note}')
+            stale = {}
             for anchor in anchors:
                 actual = anchor_count(anchor)
                 total += 1
+                entry = next((entry for entry in registrations
+                              if entry.matches(relative, anchor.name)), None)
+                if entry is not None:
+                    matched.add(entry)
+                    if not anchor.text_mutation:
+                        errors.append(f'{relative} {anchor.name}: pending-reanchor does not apply to compiled switches')
+                        entry = None
+                    elif not pending.supports_host(relative):
+                        errors.append(f'{relative} {anchor.name}: pending-reanchor requires a shared skip entry; migrate the host first')
+                        entry = None
+                detail = (f'{relative}:{anchor.line} {anchor.name}: '
+                          f'{anchor.path.relative_to(root)} expected={anchor.count} actual={actual}')
+                if entry is not None:
+                    pending_names.add((relative, anchor.name))
+                    stale[anchor.name] = stale.get(anchor.name, True) and actual == anchor.count
                 if actual != anchor.count:
-                    errors.append(f'{relative}:{anchor.line} {anchor.name}: {anchor.path.relative_to(root)} expected={anchor.count} actual={actual}')
+                    if entry is not None:
+                        print(f'WARN {detail}: {entry.reason()}')
+                    else:
+                        errors.append(detail)
+            for name, unchanged in stale.items():
+                if unchanged:
+                    print(f'WARN {relative} {name}: pending-reanchor anchor still matches; remove registration / 删除登记')
             print(f'CHECKED {relative}: {len(anchors)} anchors')
         except (Unsupported, SyntaxError, OSError, ValueError, TypeError, KeyError, IndexError, re.error) as error:
             errors.append(f'{relative}: {error}')
+    for entry in registrations:
+        if entry not in matched:
+            errors.append(f'{entry.fixture} {entry.mutation}: pending-reanchor registration has no checked text mutation')
     for error in errors:
         print(f'ERROR {error}')
-    print(f'SUMMARY scripts={len(scripts)} checked={checked} unsupported={skipped} anchors={total} errors={len(errors)} mode={"anchors-only" if anchors_only else "anchors+environment"}')
+    print(f'SUMMARY scripts={len(scripts)} checked={checked} unsupported={skipped} anchors={total} errors={len(errors)} pending-reanchor={len(pending_names)} mode={"anchors-only" if anchors_only else "anchors+environment"}')
     return 1 if errors else 0
 
 
