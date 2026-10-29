@@ -49,7 +49,7 @@ CASES = [
         '        "get" => {\n'
         '            let _ = &connection;\n',
         GATE,
-        '#982 settings-default--gateway-empty: exit code, stderr was',
+        '#982 settings-default--gateway-empty: stderr',
     ),
     (
         'settings-set-url-check-removed',
@@ -59,7 +59,7 @@ CASES = [
         '            // above already precedes both (#982 settings-set--gateway-empty).\n'
         '            let _ = &connection;\n',
         GATE,
-        '#982 settings-set--gateway-empty: exit code, stderr was',
+        '#982 settings-set--gateway-empty: stderr',
     ),
     (
         'settings-url-check-before-subcommand',
@@ -124,7 +124,7 @@ def main():
         try:
             slot = wait_for_slot(REPO / 'scripts/cargo-slots.sh', timeout=300)
             (args.out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
-            suffix = ['--no-run'] if compile_only else [test, '--', '--exact', '--include-ignored', '--nocapture']
+            suffix = ['--no-run'] if compile_only else [test, '--', '--exact', '--include-ignored', '--show-output']
             result = run_owned(command + suffix, cwd=REPO, env=env, timeout=600)
             (args.out / f'{label}.log').write_text(result.stdout + result.stderr)
             return result

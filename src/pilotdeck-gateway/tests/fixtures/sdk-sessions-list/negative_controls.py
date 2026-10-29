@@ -37,7 +37,7 @@ mutations = [
     ('transport-limits-coverage', limits_oracle, '"implementation": "node-native",\n      "frameBytes": 16777217', '"implementation": "ws-default",\n      "frameBytes": 16777217', 'sessions_list_accepts_ts_large_frames', '#983 native large-frame fixture coverage'),
     ('transport-limits-extraction', limits_oracle, '"constructorArgCount": 1', '"constructorArgCount": 2', 'sessions_list_transport_limits_regenerates_identically', '#983 identical TS fixture sdk-transport-limits'),
     ('hello-client-name', transport, '"clientName": "sdk"', '"clientName": "cli"', MATRIX, '#983 hello and request wire sessions-default--argv'),
-    ('hello-client-version', transport, 'params, "pilotdeck-cli")', 'params, "wrong-cli")', MATRIX, '#983 hello and request wire sessions-default--argv'),
+    ('hello-client-version', transport, 'params, "pilotdeck-cli", false)', 'params, "wrong-cli", false)', MATRIX, '#983 hello and request wire sessions-default--argv'),
     ('legacy-request-order', transport, '    id: &\'a str,\n    method: &\'a str,', '    method: &\'a str,\n    id: &\'a str,', MATRIX, '#983 legacy request encoding sessions-default--argv'),
     ('hello-token', transport, '"token": connection.auth_token', '"token": "wrong-token"', MATRIX, '#983 hello and request wire sessions-default--argv'),
     ('rpc-method', sessions, '"list_sessions", params', '"wrong_method", params', MATRIX, '#983 hello and request wire sessions-default--argv'),

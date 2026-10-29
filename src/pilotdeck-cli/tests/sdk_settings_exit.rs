@@ -1,5 +1,5 @@
 //! #1029: replay 157 D1 and 34 supplemental real Node v22.22.0 captures.
-//! Runtime, wire replay, and bounded parity lease reuse the P02 test helpers.
+//! Runtime and bounded parity lease follow the P02 test helper contract.
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -248,30 +248,6 @@ fn snapshot(root: &Path) -> Value {
     serde_json::to_value(entries).expect("#1029 snapshot JSON")
 }
 
-// Object member order is not a protocol difference; compare every key/value,
-// including lone UTF-16 units, without lossy conversion through serde Value.
-fn wire_equal(
-    actual: &pilotdeck_protocol::JsValue,
-    expected: &pilotdeck_protocol::JsValue,
-) -> bool {
-    use pilotdeck_protocol::JsValue;
-    match (actual, expected) {
-        (JsValue::Object(a), JsValue::Object(b)) => {
-            a.len() == b.len()
-                && a.entries().iter().all(|(key, value)| {
-                    b.get_key(key).is_some_and(|other| wire_equal(value, other))
-                })
-        }
-        (JsValue::Array(a), JsValue::Array(b)) => {
-            a.len() == b.len()
-                && a.iter()
-                    .zip(b)
-                    .all(|(value, other)| wire_equal(value, other))
-        }
-        _ => actual == expected,
-    }
-}
-
 async fn replay(listener: TcpListener, case: &Value, pid: u32) {
     let (stream, _) = listener.accept().await.expect("#1029 owned mock accept");
     let mut socket = accept_async(stream).await.expect("#1029 WS upgrade");
@@ -291,7 +267,7 @@ async fn replay(listener: TcpListener, case: &Value, pid: u32) {
                 ),
             );
             let raw = message.to_text().expect("#1029 verified text wire frame");
-            let mut frame = pilotdeck_protocol::parse_json(raw).expect("#1029 JSON wire frame");
+            let frame = pilotdeck_protocol::parse_json(raw).expect("#1029 JSON wire frame");
             if frame
                 .get("type")
                 .and_then(pilotdeck_protocol::JsValue::as_string)
@@ -310,19 +286,13 @@ async fn replay(listener: TcpListener, case: &Value, pid: u32) {
                         case["input"]["id"].as_str().expect("#1029 cell id")
                     ),
                 );
-                if let pilotdeck_protocol::JsValue::Object(ref mut object) = frame {
-                    object.insert(
-                        "id".into(),
-                        pilotdeck_protocol::JsValue::String("<request>".into()),
-                    );
-                }
             }
-            let expected = pilotdeck_protocol::parse_json(
-                row["raw"].as_str().expect("#1029 expected wire JSON"),
-            )
-            .expect("#1029 parse expected wire JSON");
+            let expected = row["raw"]
+                .as_str()
+                .expect("#1029 expected wire JSON")
+                .replace("<request>", &id);
             verify(
-                wire_equal(&frame, &expected),
+                raw == expected,
                 &format!(
                     "#1029 hello and request wire {}",
                     case["input"]["id"].as_str().expect("#1029 cell id")
@@ -552,6 +522,16 @@ async fn settings_matches_ts_matrix() {
 #[tokio::test(flavor = "current_thread")]
 async fn settings_local_preflight_matches_ts_matrix() {
     replay_matrix(true, None).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn settings_hello_matches_ts_bytes() {
+    replay_matrix(false, Some("settings-default--argv")).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn settings_request_matches_ts_bytes() {
+    replay_matrix(false, Some("settings-set--argv")).await;
 }
 
 #[tokio::test(flavor = "current_thread")]
