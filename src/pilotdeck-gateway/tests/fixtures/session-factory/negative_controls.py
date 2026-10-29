@@ -13,7 +13,7 @@ root = Path(__file__).resolve().parents[5]
 fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, classify, passed
+from negative_suite import Case, classify, invalidate_completed, passed
 from _negative_common import mutate
 
 factory = root / 'src/pilotdeck-gateway/src/runtime/session/factory.rs'
@@ -236,8 +236,7 @@ try:
             results.append(row)
             print(f'{name}: {row["status"]}: {row["reason"]}',flush=True)
 except Exception as error:
-    for row in results:
-        row.update(status='INVALID', reason=row['reason']+f'; source guard: {error}')
+    invalidate_completed(results, f'source guard: {error}')
     results.extend(dict(mutation=c[0],test=c[5],assertion=c[6],status='INVALID',compiled=False,reason=f'source guard: {error}') for c in chosen if not any(row['mutation']==c[0] for row in results))
 counts={status:sum(r['status']==status for r in results) for status in ('KILLED','SURVIVED','INVALID','COMPILED')}
 with (out/'summary.json').open('x') as summary:

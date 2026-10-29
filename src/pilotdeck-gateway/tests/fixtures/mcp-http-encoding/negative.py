@@ -95,8 +95,6 @@ def compile_controls(rows, out, env):
     except Exception as error:
         reason = f'source guard: {type(error).__name__}: {error}'
         invalidate_completed(results, reason)
-        for result in results:
-            result['compiled'] = False
         for name, *_ in rows[len(results):]:
             results.append({'mutation': name, 'compiled': False, 'status': 'INVALID',
                             'reason': reason})
