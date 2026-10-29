@@ -8,6 +8,12 @@ if not (_boot_sys.flags.isolated and _boot_sys.flags.ignore_environment
     raise SystemExit(1)
 _boot_sys.dont_write_bytecode = True
 _boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
+if any(_boot_os.path.realpath(entry or _boot_os.curdir) in {
+        _boot_os.path.realpath(_boot_dir),
+        _boot_os.path.realpath(_boot_os.path.join(_boot_dir, 'controls'))}
+       for entry in _boot_sys.path):
+    print('{"verdict":"FAIL","errors":["apparatus directory on sys.path; run the entry file directly with -I"]}')
+    raise SystemExit(1)
 _boot_source = _boot_os.path.join(_boot_dir, 'apparatus.py')
 if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):
     print('{"verdict":"FAIL","errors":["apparatus bootstrap symlink"]}')

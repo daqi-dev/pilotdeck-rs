@@ -9,8 +9,22 @@ with an injected final-restore failure: the persisted summary must be rewritten
 INVALID, never left claiming kills whose sources were not verifiably restored.
 No real source is mutated; nothing here runs cargo or node.
 """
+import os as _boot_os
+import sys as _boot_sys
+
+# #1023: same guard as the driver. -I keeps this directory and tests/fixtures
+# out of module resolution; a reinsertion (unittest discover) is rejected
+# before any local or stdlib module is imported.
+_boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
+_boot_roots = {_boot_dir, _boot_os.path.dirname(_boot_dir)}
+if not _boot_sys.flags.isolated or any(
+        _boot_os.path.realpath(entry or _boot_os.curdir) in _boot_roots
+        for entry in _boot_sys.path):
+    raise SystemExit(f'#1023: unsafe import path; run with -I by file: python3 -I {__file__}')
+
 from contextlib import contextmanager
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import shutil
@@ -20,9 +34,15 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import negative_controls
-from negative_controls import bound_failure_bodies, classify, unittest_blocks
+# Load the sibling driver by explicit absolute path, then bind its names. The
+# guard above keeps a same-named module beside this file from ever winning.
+_boot_driver_path = Path(__file__).resolve().with_name('negative_controls.py')
+_boot_spec = importlib.util.spec_from_file_location('negative_controls', _boot_driver_path)
+_boot_driver = importlib.util.module_from_spec(_boot_spec)
+sys.modules['negative_controls'] = _boot_driver
+_boot_spec.loader.exec_module(_boot_driver)
+negative_controls = _boot_driver
+from negative_controls import bound_failure_bodies, classify, unittest_blocks  # noqa: E402
 
 TEST = 'ContractTests.test_occupied_mock_port_blocks_round'
 MARKER = '#933-5: an occupied 28999 must make the owned mock exit and Block the round'
@@ -387,6 +407,59 @@ FAILED (failures=1)
                          'the source copy must end up byte-identical to its original')
         # The fragment above must really be what the faked run is judged by.
         self.assertEqual(classify(run(1, fail_log), test, fragment)[0], 'KILLED')
+
+
+class IsolationGuardTests(unittest.TestCase):
+    """#1023: the fixture rejects discover/reinsertion before importing."""
+
+    here = Path(__file__).resolve().parent
+
+    def entry(self, name):
+        return self.here / name
+
+    def test_driver_and_test_reject_a_reinserted_fixture_directory(self):
+        # The exact shape unittest discover produces: the start directory is
+        # inserted into sys.path and the module is loaded from a path. The
+        # guard must exit before either local module is imported.
+        for name in ('negative_controls.py', 'test_negative_controls.py'):
+            with self.subTest(entry=name):
+                probe = ('import runpy, sys\n'
+                         'sys.path.insert(0, sys.argv[1])\n'
+                         'runpy.run_path(sys.argv[2], run_name="__main__")\n')
+                result = subprocess.run(
+                    [sys.executable, '-I', '-c', probe, str(self.here), str(self.entry(name)), '--help'],
+                    capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 1,
+                                 f'#1023-5: {name}: a reinserted fixture dir must be rejected')
+                self.assertIn('#1023: unsafe import path', result.stderr,
+                              f'#1023-5: {name}: the guard itself must reject, not a later import error')
+
+    def test_driver_rejects_a_nonisolated_launch(self):
+        result = subprocess.run([sys.executable, '-E', '-s', str(self.entry('negative_controls.py')), '--help'],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1, '#1023-6: without -I the entry must exit at the guard')
+        self.assertIn('#1023: unsafe import path', result.stderr,
+                      '#1023-6: the non-isolated launch must be named by the guard')
+
+    def test_explicit_load_ignores_a_same_directory_negative_process(self):
+        # A same-named module beside the driver must never win: the shared
+        # guard is loaded by its explicit parent path, not through sys.path.
+        with tempfile.TemporaryDirectory(prefix='negctl-1023-') as temp:
+            holder = Path(temp)
+            mirror = holder / 'fixture'
+            mirror.mkdir()
+            shutil.copy2(self.entry('negative_controls.py'), mirror / 'negative_controls.py')
+            shutil.copy2(self.here.parent / 'negative_process.py', holder / 'negative_process.py')
+            marker = holder / 'IMPOSTER_EXECUTED'
+            (mirror / 'negative_process.py').write_text(
+                f'open({str(marker)!r}, "w").write("imposter")\n')
+            result = subprocess.run([sys.executable, '-I', str(mirror / 'negative_controls.py'), '--help'],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0,
+                             '#1023-7: the driver must load its real sibling helper: ' + result.stderr)
+            self.assertFalse(marker.exists(),
+                             '#1023-7: a same-directory negative_process.py must never execute')
+
 
 
 if __name__ == '__main__':

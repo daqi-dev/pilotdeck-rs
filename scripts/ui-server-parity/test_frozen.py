@@ -7,6 +7,12 @@ if not (_boot_sys.flags.isolated and _boot_sys.flags.ignore_environment
     raise SystemExit(1)
 _boot_sys.dont_write_bytecode = True
 _boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
+if any(_boot_os.path.realpath(entry or _boot_os.curdir) in {
+        _boot_os.path.realpath(_boot_dir),
+        _boot_os.path.realpath(_boot_os.path.join(_boot_dir, 'controls'))}
+       for entry in _boot_sys.path):
+    print('{"verdict":"FAIL","errors":["apparatus directory on sys.path; run the entry file directly with -I"]}')
+    raise SystemExit(1)
 _boot_source = _boot_os.path.join(_boot_dir, 'apparatus.py')
 if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):
     print('{"verdict":"FAIL","errors":["apparatus bootstrap symlink"]}')
@@ -262,8 +268,11 @@ class FrozenControls(unittest.TestCase):
                        PYTHONPYCACHEPREFIX=str(cache), PYTHONUSERBASE=str(shadow))
             isolated = subprocess.run([sys.executable, '-I', str(ROOT / 'scripts/ui-server-parity/check_frozen.py')],
                                       env=env, capture_output=True, text=True, timeout=10)
-            self.assertEqual(isolated.returncode, 2, isolated.stderr)
-            self.assertEqual(json.loads(isolated.stdout)['verdict'], 'DRAFT')
+            # The manifest may be a valid draft (2/DRAFT) or a registered
+            # freeze (0/PASS); isolation is the invariant either way.
+            draft = '待定标' in (SPEC / 'FROZEN.md').read_text().splitlines()[0]
+            self.assertEqual(isolated.returncode, 2 if draft else 0, isolated.stderr)
+            self.assertEqual(json.loads(isolated.stdout)['verdict'], 'DRAFT' if draft else 'PASS')
             self.assertFalse(marker.exists())
             self.assertFalse(cache.exists())
             for flags in ([], ['-E', '-s'], ['-I', '-X', f'pycache_prefix={cache}']):
@@ -329,3 +338,57 @@ class FrozenControls(unittest.TestCase):
                                     capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(marker.exists())
+
+    def test_documented_tests_use_direct_isolated_files(self):
+        readme = (ROOT / 'scripts/ui-server-parity/README.md').read_text()
+        block = readme.split('离线验证（不监听）：', 1)[1].split('```sh', 1)[1].split('```', 1)[0]
+        self.assertNotIn('discover', block,
+                         '#1023-1: unittest discover reinserts the apparatus directory')
+        self.assertNotIn('-m unittest', block,
+                         '#1023-1: module invocation cannot be guarded before the import')
+        tests = sorted(path.name for path in (ROOT / 'scripts/ui-server-parity').glob('test_*.py'))
+        self.assertTrue(tests, '#1023-1: the test inventory must not be empty')
+        for name in tests:
+            self.assertIn(f'python3 -I scripts/ui-server-parity/{name}', block,
+                          f'#1023-1: {name} needs an explicit isolated file command')
+
+    def test_entrypoints_reject_reinserted_apparatus_directory(self):
+        apparatus = ROOT / 'scripts/ui-server-parity'
+        entries = [path for path in sorted(apparatus.rglob('*.py'))
+                   if '# Isolated bootstrap' in path.read_text()]
+        self.assertGreaterEqual(len(entries), 20, '#1023-2: guard inventory must not be empty')
+        probe = ('import runpy, sys\n'
+                 'sys.path.insert(0, sys.argv[1])\n'
+                 'runpy.run_path(sys.argv[2], run_name="__main__")\n')
+        for path in entries:
+            relative = path.relative_to(ROOT)
+            with self.subTest(entry=str(relative)):
+                result = subprocess.run(
+                    [sys.executable, '-I', '-c', probe, str(apparatus), str(path), '--help'],
+                    cwd=ROOT, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 1,
+                                 f'#1023-2: {relative} must reject a reinserted apparatus directory')
+                self.assertIn('apparatus directory on sys.path', result.stdout,
+                              f'#1023-2: {relative} must fail at the guard, not a later import')
+
+    def test_discover_form_is_rejected_before_importing_a_test(self):
+        result = subprocess.run(
+            [sys.executable, '-I', '-B', '-m', 'unittest', 'discover',
+             '-s', str(ROOT / 'scripts/ui-server-parity'), '-p', 'test_frozen.py'],
+            cwd=ROOT, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1, '#1023-3: discover must be rejected')
+        self.assertIn('apparatus directory on sys.path', result.stdout + result.stderr,
+                      '#1023-3: the guard must name discover reinsertion, not a later failure')
+
+    def test_every_test_file_runs_by_direct_isolated_entry(self):
+        for path in sorted((ROOT / 'scripts/ui-server-parity').glob('test_*.py')):
+            result = subprocess.run([sys.executable, '-I', str(path), '-h'],
+                                    cwd=ROOT, capture_output=True, text=True, timeout=120)
+            self.assertEqual(result.returncode, 0,
+                             f'#1023-4: {path.name} must run as an explicit file: ' + result.stderr)
+            self.assertIn('usage:', (result.stdout + result.stderr).lower(),
+                          f'#1023-4: {path.name} must reach unittest.main(), not just exit 0')
+
+
+if __name__ == '__main__':
+    unittest.main()
