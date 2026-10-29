@@ -5,7 +5,7 @@ use std::{
     fs,
     io::Read,
     path::Path,
-    process::{Command, ExitStatus, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -205,13 +205,21 @@ pub(crate) fn regenerates_identically(fixture: &str) {
     fs::remove_dir_all(&scratch).expect("#280 remove owned regeneration scratch");
 }
 
+/// Bound on reaping a killed process group and on each pipe drain after the
+/// total deadline. A descendant that escaped the group with `setsid(2)` can
+/// keep the inherited write ends open forever, so no wait after the deadline
+/// may be unbounded.
+const DRAIN_GRACE: Duration = Duration::from_secs(2);
+
 /// Run a fixture generator child under a total deadline.
 ///
 /// `Command::output()` waits forever when the fixture parks a cell before its
 /// completion (a gated LLM request, a stuck predecessor). Poll `try_wait`
 /// instead, keep both pipes drained on reader threads, and at the deadline
-/// kill *and reap* the child before reporting. `PDRS_REGEN_TIMEOUT_SECS`
-/// overrides the 600-second default for slow hosts.
+/// kill *and reap* the child's whole process group before reporting. The
+/// deadline also covers the pipes: a child may exit while a forked descendant
+/// still holds stdout/stderr, so reader joins are bounded too.
+/// `PDRS_REGEN_TIMEOUT_SECS` overrides the 600-second default for slow hosts.
 fn run_generator(
     command: &mut Command,
     fixture: &str,
@@ -222,6 +230,25 @@ fn run_generator(
             .and_then(|value| value.parse().ok())
             .unwrap_or(600),
     );
+    run_generator_with_deadline(command, fixture, deadline)
+}
+
+/// Testable core of [`run_generator`] with an explicit total deadline.
+#[allow(dead_code)]
+pub(crate) fn run_generator_with_deadline(
+    command: &mut Command,
+    fixture: &str,
+    deadline: Duration,
+) -> Result<(ExitStatus, Vec<u8>, Vec<u8>), String> {
+    let start = Instant::now();
+    let deadline_at = start + deadline;
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // A dedicated process group lets the deadline terminate descendants
+        // that inherited our stdout/stderr pipes, not only the direct child.
+        command.process_group(0);
+    }
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -249,42 +276,141 @@ fn run_generator(
         let _ = pipe.read_to_end(&mut buffer);
         buffer
     });
-    let start = Instant::now();
-    let status = loop {
+    loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {}
+            Ok(Some(status)) => {
+                // A direct child can exit while a descendant still owns the
+                // inherited write ends. Wait for EOF only inside the same total
+                // deadline, then fall through to the process-group kill.
+                if stdout_reader.is_finished() && stderr_reader.is_finished() {
+                    let stdout = stdout_reader.join().unwrap_or_default();
+                    let stderr = stderr_reader.join().unwrap_or_default();
+                    return Ok((status, stdout, stderr));
+                }
+                if Instant::now() >= deadline_at {
+                    return Err(generator_deadline_error(
+                        &mut child,
+                        fixture,
+                        deadline,
+                        start.elapsed(),
+                        stdout_reader,
+                        stderr_reader,
+                    ));
+                }
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline_at {
+                    return Err(generator_deadline_error(
+                        &mut child,
+                        fixture,
+                        deadline,
+                        start.elapsed(),
+                        stdout_reader,
+                        stderr_reader,
+                    ));
+                }
+            }
             Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let stdout = stdout_reader.join().unwrap_or_default();
-                let stderr = stderr_reader.join().unwrap_or_default();
+                let pgid = child.id();
+                let status = terminate_generator_tree(&mut child);
+                let (stdout, stdout_stuck) = join_bounded(stdout_reader, DRAIN_GRACE);
+                let (stderr, stderr_stuck) = join_bounded(stderr_reader, DRAIN_GRACE);
                 return Err(format!(
-                    "#280 {fixture}: poll TS generator: {error}\nstdout:\n{}\nstderr:\n{}",
+                    "#280 {fixture}: poll TS generator: {error}; terminated process group \
+                     {pgid} ({status:?}); stdout drain {}; stderr drain {}\nstdout:\n{}\nstderr:\n{}",
+                    drain_state(stdout_stuck),
+                    drain_state(stderr_stuck),
                     String::from_utf8_lossy(&stdout),
                     String::from_utf8_lossy(&stderr)
                 ));
             }
         }
-        if start.elapsed() >= deadline {
-            let _ = child.kill();
-            let status = child
-                .wait()
-                .map_err(|error| format!("#280 {fixture}: reap killed generator: {error}"))?;
-            let stdout = stdout_reader.join().unwrap_or_default();
-            let stderr = stderr_reader.join().unwrap_or_default();
-            return Err(format!(
-                "#280 {fixture}: generator exceeded the {deadline:?} total deadline; \
-                 killed and reaped ({status:?})\nstdout:\n{}\nstderr:\n{}",
-                String::from_utf8_lossy(&stdout),
-                String::from_utf8_lossy(&stderr)
-            ));
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// Kill and reap the generator's process group, with every wait bounded.
+fn terminate_generator_tree(child: &mut Child) -> Option<ExitStatus> {
+    #[cfg(unix)]
+    {
+        // The child was spawned with `process_group(0)`, so its pid is also
+        // the process-group id. `kill_process_group` signals every descendant
+        // that inherited the pipes; a vanished group is a harmless ESRCH.
+        let group = rustix::process::Pid::from_raw(child.id() as i32)
+            .expect("#280 spawned generator has a valid pid");
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+    if let Some(status) = wait_bounded(child, DRAIN_GRACE) {
+        return Some(status);
+    }
+    // The group signal can miss a raced leader; still bound the direct reap.
+    let _ = child.kill();
+    wait_bounded(child, DRAIN_GRACE)
+}
+
+/// Reap `child` without ever waiting longer than `timeout`.
+fn wait_bounded(child: &mut Child, timeout: Duration) -> Option<ExitStatus> {
+    let until = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) => {}
+            Err(_) => return None,
         }
-        thread::sleep(Duration::from_millis(50));
-    };
-    let stdout = stdout_reader.join().unwrap_or_default();
-    let stderr = stderr_reader.join().unwrap_or_default();
-    Ok((status, stdout, stderr))
+        if Instant::now() >= until {
+            return None;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Join one pipe reader, but never block past `timeout` on a pipe that a
+/// detached descendant still holds open. A timed-out thread is left detached
+/// (dropping its handle does not join); the process exits with the test binary.
+fn join_bounded(reader: thread::JoinHandle<Vec<u8>>, timeout: Duration) -> (Vec<u8>, bool) {
+    let until = Instant::now() + timeout;
+    while !reader.is_finished() {
+        if Instant::now() >= until {
+            return (Vec::new(), true);
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    (reader.join().unwrap_or_default(), false)
+}
+
+fn drain_state(stuck: bool) -> &'static str {
+    if stuck {
+        "timed out (pipe still held after the process-group kill)"
+    } else {
+        "reached EOF"
+    }
+}
+
+fn generator_deadline_error(
+    child: &mut Child,
+    fixture: &str,
+    deadline: Duration,
+    elapsed: Duration,
+    stdout_reader: thread::JoinHandle<Vec<u8>>,
+    stderr_reader: thread::JoinHandle<Vec<u8>>,
+) -> String {
+    let pgid = child.id();
+    let status = terminate_generator_tree(child);
+    let (stdout, stdout_stuck) = join_bounded(stdout_reader, DRAIN_GRACE);
+    let (stderr, stderr_stuck) = join_bounded(stderr_reader, DRAIN_GRACE);
+    format!(
+        "#280 {fixture}: generator exceeded the {deadline:?} total deadline after {elapsed:?}; \
+         killed and reaped process group {pgid} ({status:?}); stdout drain {}; stderr drain {}\n\
+         stdout:\n{}\nstderr:\n{}",
+        drain_state(stdout_stuck),
+        drain_state(stderr_stuck),
+        String::from_utf8_lossy(&stdout),
+        String::from_utf8_lossy(&stderr)
+    )
 }
 
 /// Additional generated artifacts consumed by replay tests must not silently
