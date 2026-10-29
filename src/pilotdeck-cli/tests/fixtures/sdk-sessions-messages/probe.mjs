@@ -17,6 +17,12 @@ const require = createRequire(join(baseline, 'package.json'));
 const { WebSocketServer } = require('ws');
 const token = 'd1-fixture-not-a-secret';
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
+// Bind this capture to the compiled modules the child actually loads. These
+// dist files are local build products, not tracked baseline source files.
+const sourceSha256 = Object.fromEntries([
+  'src/cli/sdkCli.ts', 'packages/sdk/src/client.ts', 'dist/src/cli/pilotdeck.js',
+  'dist/src/cli/sdkCli.js', 'packages/sdk/dist/index.js', 'packages/sdk/dist/client.js',
+].map(file => [file, sha(readFileSync(join(baseline, file)))]));
 const save = (name, value) => writeFileSync(join(output, name), JSON.stringify(value,null,2)+'\n', {flag:'wx'});
 const definitions = [
   ['shape-complete', {messages:[{type:'user', text:'中文\n"\\', id:'u1', extra:{'10':10,'2':2,z:[null,false,0,1e20,1e21,1e-7]}, content:[{type:'tool_result',value:'keep'}]}, {type:'assistant.delta',delta:'tail',id:'a1',surrogate:'\ud800'}],cursor:'not-cli-output'}],
@@ -76,14 +82,19 @@ for (const [axis, result, args=['d1-session'], auth=true] of definitions) {
     });
     const disk=snapshot(runtime);
     child=spawn(process.execPath,[join(baseline,'dist/src/cli/pilotdeck.js'),...input.argv],{cwd:join(runtime,'project'),env,stdio:['pipe','pipe','pipe']});
-    const stdout=[]; const stderr=[];
-    child.stdout.on('data',data=>stdout.push(data)); child.stderr.on('data',data=>stderr.push(data));
+    const stdout=[]; const stderr=[]; const events=[];
+    for (const [stream, chunks] of [['stdout', stdout], ['stderr', stderr]]) {
+      child[stream].on('data', data => {
+        chunks.push(data);
+        events.push({stream, bytesBase64:data.toString('base64')});
+      });
+    }
     timer=setTimeout(()=>{timedOut=true;child.kill('SIGKILL');},12000);
     child.stdin.end();
     const [exit,signal]=await once(child,'close');
     assert.equal(timedOut,false,`#1028 bounded live cell ${axis}`);
     assert.deepEqual(snapshot(runtime),disk,`#1028 live disk unchanged ${axis}`);
-    const capture={input,stdout:Buffer.concat(stdout).toString(),stderrRaw:Buffer.concat(stderr).toString(),exit,signal,connections,wire,close:closes,disk};
+    const capture={input,stdout:Buffer.concat(stdout).toString(),stderrRaw:Buffer.concat(stderr).toString(),events,exit,signal,connections,wire,close:closes,disk};
     captures.push(capture);
     console.log(JSON.stringify(capture));
   } finally {
@@ -94,4 +105,4 @@ for (const [axis, result, args=['d1-session'], auth=true] of definitions) {
     rmSync(runtime,{recursive:true});
   }
 }
-save('supplemental.json',{nodeVersion:process.version,sourceSha256:Object.fromEntries(['src/cli/sdkCli.ts','packages/sdk/src/client.ts','dist/src/cli/pilotdeck.js'].map(file=>[file,sha(readFileSync(join(baseline,file)))])),cases:captures});
+save('supplemental.json',{nodeVersion:process.version,sourceSha256,cases:captures});

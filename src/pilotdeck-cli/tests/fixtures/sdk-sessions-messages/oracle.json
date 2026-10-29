@@ -6,7 +6,10 @@
   "supplementalSourceSha256": {
     "src/cli/sdkCli.ts": "d41c08ce59380f85bb81ec8bd2d9bc876c778f9b2ebaea3fd25b1b5f08e288ec",
     "packages/sdk/src/client.ts": "7dc380d0a7e0d3ac1d97210a36b2a18855d27936de9c12ea6cedf74f75e92c2a",
-    "dist/src/cli/pilotdeck.js": "4489ef95805baa7ae2c278aec9bd4683ee6a8b4d838271a984142303f8bd4483"
+    "dist/src/cli/pilotdeck.js": "4489ef95805baa7ae2c278aec9bd4683ee6a8b4d838271a984142303f8bd4483",
+    "dist/src/cli/sdkCli.js": "5734eed2c8e008e22ebd9f9a48b20cfe8808fc16519e32045fe05e08eb1333dc",
+    "packages/sdk/dist/index.js": "4b398b7460f3e33132af606d1ec5df26fc2038638c6647d17008d0d13d8455b3",
+    "packages/sdk/dist/client.js": "1fe1552964726337893b6f294552a385c5cdf5d16a0530e32b5d17f256a2bc49"
   },
   "cases": [
     {
@@ -6223,7 +6226,7 @@
         "timeoutSeconds": 12
       },
       "stdout": "[\n  {\n    \"type\": \"user\",\n    \"text\": \"中文\\n\\\"\\\\\",\n    \"id\": \"u1\",\n    \"extra\": {\n      \"2\": 2,\n      \"10\": 10,\n      \"z\": [\n        null,\n        false,\n        0,\n        100000000000000000000,\n        1e+21,\n        1e-7\n      ]\n    },\n    \"content\": [\n      {\n        \"type\": \"tool_result\",\n        \"value\": \"keep\"\n      }\n    ]\n  },\n  {\n    \"type\": \"assistant.delta\",\n    \"delta\": \"tail\",\n    \"id\": \"a1\",\n    \"surrogate\": \"\\ud800\"\n  }\n]\n",
-      "stderrRaw": "(node:32994) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "stderrRaw": "(node:12537) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
       "exit": 0,
       "signal": null,
       "connections": 1,
@@ -6329,7 +6332,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "ab840fa8bc89e3f1b83576b9d7f8c0368ec42b8829f35a1cb9d53f69d9cf1643"
+        "supplemental.json": "bcd1e2422376b6c727acc6ac787999e8a787bad4c2245409becb2def392237ff"
       }
     },
     {
@@ -6352,7 +6355,7 @@
         "timeoutSeconds": 12
       },
       "stdout": "[]\n",
-      "stderrRaw": "(node:33799) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "stderrRaw": "(node:26219) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
       "exit": 0,
       "signal": null,
       "connections": 1,
@@ -6458,7 +6461,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "ab840fa8bc89e3f1b83576b9d7f8c0368ec42b8829f35a1cb9d53f69d9cf1643"
+        "supplemental.json": "bcd1e2422376b6c727acc6ac787999e8a787bad4c2245409becb2def392237ff"
       }
     },
     {
@@ -6481,7 +6484,7 @@
         "timeoutSeconds": 12
       },
       "stdout": "[]\n",
-      "stderrRaw": "(node:34290) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "stderrRaw": "(node:34754) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
       "exit": 0,
       "signal": null,
       "connections": 1,
@@ -6587,7 +6590,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "ab840fa8bc89e3f1b83576b9d7f8c0368ec42b8829f35a1cb9d53f69d9cf1643"
+        "supplemental.json": "bcd1e2422376b6c727acc6ac787999e8a787bad4c2245409becb2def392237ff"
       }
     },
     {
@@ -6610,7 +6613,7 @@
         "timeoutSeconds": 12
       },
       "stdout": "false\n",
-      "stderrRaw": "(node:34765) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "stderrRaw": "(node:46458) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
       "exit": 0,
       "signal": null,
       "connections": 1,
@@ -6716,7 +6719,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "ab840fa8bc89e3f1b83576b9d7f8c0368ec42b8829f35a1cb9d53f69d9cf1643"
+        "supplemental.json": "bcd1e2422376b6c727acc6ac787999e8a787bad4c2245409becb2def392237ff"
       }
     },
     {
@@ -6739,7 +6742,7 @@
         "timeoutSeconds": 12
       },
       "stdout": "0\n",
-      "stderrRaw": "(node:35252) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "stderrRaw": "(node:61616) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
       "exit": 0,
       "signal": null,
       "connections": 1,
@@ -6845,7 +6848,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "ab840fa8bc89e3f1b83576b9d7f8c0368ec42b8829f35a1cb9d53f69d9cf1643"
+        "supplemental.json": "bcd1e2422376b6c727acc6ac787999e8a787bad4c2245409becb2def392237ff"
       }
     },
     {
@@ -6868,7 +6871,7 @@
         "timeoutSeconds": 12
       },
       "stdout": "\"\"\n",
-      "stderrRaw": "(node:35748) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "stderrRaw": "(node:77552) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
       "exit": 0,
       "signal": null,
       "connections": 1,
@@ -6974,7 +6977,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "ab840fa8bc89e3f1b83576b9d7f8c0368ec42b8829f35a1cb9d53f69d9cf1643"
+        "supplemental.json": "bcd1e2422376b6c727acc6ac787999e8a787bad4c2245409becb2def392237ff"
       }
     },
     {
@@ -6997,7 +7000,7 @@
         "timeoutSeconds": 12
       },
       "stdout": "{\n  \"2\": \"two\",\n  \"10\": \"ten\",\n  \"z\": 1\n}\n",
-      "stderrRaw": "(node:36215) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "stderrRaw": "(node:88451) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
       "exit": 0,
       "signal": null,
       "connections": 1,
@@ -7103,7 +7106,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "ab840fa8bc89e3f1b83576b9d7f8c0368ec42b8829f35a1cb9d53f69d9cf1643"
+        "supplemental.json": "bcd1e2422376b6c727acc6ac787999e8a787bad4c2245409becb2def392237ff"
       }
     },
     {
@@ -7126,7 +7129,7 @@
         "timeoutSeconds": 12
       },
       "stdout": "",
-      "stderrRaw": "(node:36692) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nCannot read properties of null (reading 'messages')\n",
+      "stderrRaw": "(node:99447) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nCannot read properties of null (reading 'messages')\n",
       "exit": 1,
       "signal": null,
       "connections": 1,
@@ -7232,7 +7235,7 @@
       "stderr": "Cannot read properties of null (reading 'messages')\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "ab840fa8bc89e3f1b83576b9d7f8c0368ec42b8829f35a1cb9d53f69d9cf1643"
+        "supplemental.json": "bcd1e2422376b6c727acc6ac787999e8a787bad4c2245409becb2def392237ff"
       }
     },
     {
@@ -7255,7 +7258,7 @@
         "timeoutSeconds": 12
       },
       "stdout": "",
-      "stderrRaw": "(node:37177) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nCannot read properties of undefined (reading 'messages')\n",
+      "stderrRaw": "(node:13978) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nCannot read properties of undefined (reading 'messages')\n",
       "exit": 1,
       "signal": null,
       "connections": 1,
@@ -7361,7 +7364,7 @@
       "stderr": "Cannot read properties of undefined (reading 'messages')\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "ab840fa8bc89e3f1b83576b9d7f8c0368ec42b8829f35a1cb9d53f69d9cf1643"
+        "supplemental.json": "bcd1e2422376b6c727acc6ac787999e8a787bad4c2245409becb2def392237ff"
       }
     },
     {
@@ -7384,7 +7387,7 @@
         "timeoutSeconds": 12
       },
       "stdout": "",
-      "stderrRaw": "(node:37659) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nUsage: pilotdeck sessions messages <session-id>\n",
+      "stderrRaw": "(node:25596) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nUsage: pilotdeck sessions messages <session-id>\n",
       "exit": 1,
       "signal": null,
       "connections": 0,
@@ -7453,7 +7456,7 @@
       "stderr": "Usage: pilotdeck sessions messages <session-id>\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "ab840fa8bc89e3f1b83576b9d7f8c0368ec42b8829f35a1cb9d53f69d9cf1643"
+        "supplemental.json": "bcd1e2422376b6c727acc6ac787999e8a787bad4c2245409becb2def392237ff"
       }
     },
     {
@@ -7476,7 +7479,7 @@
         "timeoutSeconds": 12
       },
       "stdout": "[]\n",
-      "stderrRaw": "(node:38146) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "stderrRaw": "(node:33563) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
       "exit": 0,
       "signal": null,
       "connections": 1,
@@ -7582,7 +7585,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "ab840fa8bc89e3f1b83576b9d7f8c0368ec42b8829f35a1cb9d53f69d9cf1643"
+        "supplemental.json": "bcd1e2422376b6c727acc6ac787999e8a787bad4c2245409becb2def392237ff"
       }
     },
     {
@@ -7607,7 +7610,7 @@
         "timeoutSeconds": 12
       },
       "stdout": "[]\n",
-      "stderrRaw": "(node:38660) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "stderrRaw": "(node:44500) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
       "exit": 0,
       "signal": null,
       "connections": 1,
@@ -7714,7 +7717,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "ab840fa8bc89e3f1b83576b9d7f8c0368ec42b8829f35a1cb9d53f69d9cf1643"
+        "supplemental.json": "bcd1e2422376b6c727acc6ac787999e8a787bad4c2245409becb2def392237ff"
       }
     },
     {
@@ -7734,7 +7737,7 @@
         "timeoutSeconds": 12
       },
       "stdout": "",
-      "stderrRaw": "(node:39134) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nGateway auth token is required. Set PILOTDECK_TOKEN or pass --auth-token.\n",
+      "stderrRaw": "(node:54830) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nGateway auth token is required. Set PILOTDECK_TOKEN or pass --auth-token.\n",
       "exit": 1,
       "signal": null,
       "connections": 0,
@@ -7803,7 +7806,7 @@
       "stderr": "Gateway auth token is required. Set PILOTDECK_TOKEN or pass --auth-token.\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "ab840fa8bc89e3f1b83576b9d7f8c0368ec42b8829f35a1cb9d53f69d9cf1643"
+        "supplemental.json": "bcd1e2422376b6c727acc6ac787999e8a787bad4c2245409becb2def392237ff"
       }
     }
   ]

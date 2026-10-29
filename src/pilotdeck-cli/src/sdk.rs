@@ -282,7 +282,7 @@ mod tests {
             messages_usage
         );
         assert_eq!(run(&["sessions", "messages", ""]), messages_usage);
-        assert!(run(&["sessions", "messages", "s1"]).starts_with("TODO"));
+        // The messages network branch is covered by sdk_sessions_messages_exit.
         let resume_usage = "Usage: pilotdeck resume <session-id> <prompt>";
         assert_eq!(run(&["resume"]), resume_usage);
         assert_eq!(run(&["resume", "--model", "m", "--json"]), resume_usage);
