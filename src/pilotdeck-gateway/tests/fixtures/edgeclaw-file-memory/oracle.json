@@ -7025,6 +7025,224 @@
           "content": "---\nname: 并发9😀\ndescription: test\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: s9\n---\n\n"
         }
       ]
+    },
+    {
+      "name": "get-maxlines-order-975",
+      "options": {},
+      "operations": [
+        {
+          "method": "writeRaw",
+          "input": {
+            "relativePath": "Project/invalid.md",
+            "content": "invalid"
+          }
+        },
+        {
+          "method": "writeRaw",
+          "input": {
+            "relativePath": "Project/valid.md",
+            "content": "---\nname: valid\ndescription: valid\ntype: project\nscope: project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\none\ntwo\n"
+          }
+        },
+        {
+          "method": "getMemoryRecordsByIds",
+          "input": {
+            "ids": [],
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "method": "getMemoryRecordsByIds",
+          "input": {
+            "ids": [
+              "Project/missing.md"
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "method": "getMemoryRecordsByIds",
+          "input": {
+            "ids": [
+              "Project/invalid.md"
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "method": "getMemoryRecordsByIds",
+          "input": {
+            "ids": null,
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "method": "getMemoryRecordsByIds",
+          "input": {
+            "ids": {},
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "method": "getMemoryRecordsByIds",
+          "input": {
+            "ids": [
+              ""
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "method": "getMemoryRecordsByIds",
+          "input": {
+            "ids": [
+              "Project/valid.md"
+            ],
+            "maxLines": {
+              "toString": null
+            }
+          }
+        },
+        {
+          "method": "getMemoryRecordsByIds",
+          "input": {
+            "maxLines": {
+              "toString": null
+            }
+          }
+        }
+      ],
+      "observations": [
+        null,
+        null,
+        [],
+        [],
+        [],
+        {
+          "error": "TypeError",
+          "message": "Cannot read properties of null (reading 'map')"
+        },
+        {
+          "error": "TypeError",
+          "message": "ids.map is not a function"
+        },
+        {
+          "error": "EISDIR"
+        },
+        {
+          "error": "TypeError",
+          "message": "Cannot convert object to primitive value"
+        },
+        {
+          "error": "TypeError",
+          "message": "Cannot read properties of undefined (reading 'map')"
+        }
+      ],
+      "readback": {
+        "rootDir": "$ROOT",
+        "workspaceMode": "single",
+        "generalMode": false,
+        "profilePath": "global/UserIdentity/user-profile.md",
+        "entries": [
+          {
+            "name": "valid",
+            "description": "valid",
+            "type": "project",
+            "scope": "project",
+            "updatedAt": "2026-10-22T00:00:00.000Z",
+            "projectId": "current_project",
+            "file": "valid.md",
+            "relativePath": "Project/valid.md",
+            "absolutePath": "$ROOT/Project/valid.md"
+          }
+        ],
+        "records": [
+          {
+            "name": "valid",
+            "description": "valid",
+            "type": "project",
+            "scope": "project",
+            "updatedAt": "2026-10-22T00:00:00.000Z",
+            "projectId": "current_project",
+            "file": "valid.md",
+            "relativePath": "Project/valid.md",
+            "absolutePath": "$ROOT/Project/valid.md",
+            "content": "one\ntwo",
+            "preview": "one two"
+          }
+        ],
+        "summary": {
+          "identityBackground": [],
+          "files": []
+        },
+        "metas": [],
+        "hints": [],
+        "overview": {
+          "totalFiles": 1,
+          "projectMemories": 1,
+          "feedbackMemories": 0,
+          "userProfiles": 0,
+          "changedFilesSinceLastDream": 1,
+          "tmpTotalFiles": 0,
+          "tmpFeedbackMemories": 0,
+          "tmpProjectMemories": 0,
+          "projectMetaCount": 0,
+          "latestMemoryAt": "2026-10-22T00:00:00.000Z"
+        },
+        "bundle": {
+          "memoryFiles": [
+            {
+              "name": "valid",
+              "description": "valid",
+              "type": "project",
+              "scope": "project",
+              "projectId": "current_project",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "file": "valid.md",
+              "relativePath": "Project/valid.md",
+              "content": "one\ntwo"
+            }
+          ],
+          "projectMetas": []
+        },
+        "version": "40381e55f4",
+        "snapshot": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Project Memory\n- [valid](Project/valid.md) — valid\n"
+          },
+          {
+            "relativePath": "Project/valid.md",
+            "content": "---\nname: valid\ndescription: valid\ntype: project\nscope: project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\none\ntwo\n"
+          }
+        ]
+      },
+      "files": [
+        {
+          "relativePath": "MEMORY.md",
+          "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Project Memory\n- [valid](Project/valid.md) — valid\n"
+        },
+        {
+          "relativePath": "Project/invalid.md",
+          "content": "invalid"
+        },
+        {
+          "relativePath": "Project/valid.md",
+          "content": "---\nname: valid\ndescription: valid\ntype: project\nscope: project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\none\ntwo\n"
+        }
+      ]
     }
   ]
 }

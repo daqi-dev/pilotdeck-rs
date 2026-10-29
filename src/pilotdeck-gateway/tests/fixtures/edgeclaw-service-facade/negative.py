@@ -100,6 +100,11 @@ ANCHORS = {
     # fix-r5 P2-2: the facade must reuse the indexer's UTF-16 message, not the
     # old lossy `Display` copy.
     'heartbeat-message-not-reused': '#775 ServiceError::js_message must reuse HeartbeatError::message (lone surrogate preserved)',
+    'service-get-maxlines-early': '#975 service maxLines must stay unconverted without a record',
+    'file-get-maxlines-early': '#975 file maxLines must stay unconverted without a record',
+    'file-get-maxlines-skip': '#975 valid record must reach maxLines conversion in every route',
+    'file-get-ids-unchecked': '#975 file ids map error must precede maxLines conversion',
+
 }
 
 
@@ -267,39 +272,44 @@ MUTANTS = [
         '            } else if !pilotdeck_gateway::mutants::on("encode-negative-zero")\n                && *number == 0.0\n                && number.is_sign_negative()\n            {',
         '            } else if false\n                && *number == 0.0\n                && number.is_sign_negative()\n            {',
     ),
-    # fix-r5 P2-1: TS defaults only `undefined`; `null <= 0` yields empty
-    # content and the oracle records that in scenario 4. fix-r7 P1: bind the
-    # dedicated null test, not the whole facade steps array.
+    # #975: preserve the older coercion regressions after passing raw values.
     mutation(
-        'get-null-maxlines',
-        SERVICE,
-        '            Some(value) => super::storage::overview::to_number(value)?,',
-        '            Some(JsValue::Null) => 80.0,\n'
-        '            Some(value) => super::storage::overview::to_number(value)?,',
+        'get-null-maxlines', SERVICE,
+        'crate::mutants::on("get-null-maxlines")', 'true',
         test='service_get_null_max_lines_matches_ts_empty_content',
     ),
-    # fix-r6 P1: restore the old non-number fallback in `service.get`.
-    # fix-r7 P1: keep `Some(JsValue::Null) => 0.0` intact and only replace the
-    # new ToNumber path. The dedicated seven-row test must be the sole killer;
-    # the null witness test must still pass under this mutant.
     mutation(
-        'get-nonnumber-maxlines',
-        SERVICE,
-        '            Some(value) => super::storage::overview::to_number(value)?,',
-        '            Some(JsValue::Null) => 0.0,\n'
-        '            Some(value) => value.as_number().unwrap_or(80.0),',
+        'get-nonnumber-maxlines', SERVICE,
+        '            Some(value) => value.clone(),',
+        '            Some(JsValue::Null) => JsValue::Number(0.0),\n'
+        '            Some(value) => JsValue::Number(value.as_number().unwrap_or(80.0)),',
         test='service_get_coerces_non_number_max_lines',
         witness='service_get_null_max_lines_matches_ts_empty_content',
     ),
-    # fix-r6 P1 sibling: same regression in the FileMemoryStore adapter.
     mutation(
-        'file-memory-nonnumber-maxlines',
-        FILE_MEMORY,
-        '                    Some(value) => {\n'
-        '                        crate::runtime::memory::edgeclaw::storage::overview::to_number(value)?\n'
-        '                    }',
-        '                    Some(value) => value.as_number().unwrap_or(80.0),',
+        'file-memory-nonnumber-maxlines', FILE_MEMORY,
+        'crate::mutants::on("file-memory-nonnumber-maxlines")', 'true',
         test='file_memory_store_get_records_coerces_non_number_max_lines',
+    ),
+    mutation(
+        'service-get-maxlines-early', SERVICE,
+        'crate::mutants::on("service-get-maxlines-early")', 'true',
+        test='service_get_maxlines_deferred_975',
+    ),
+    mutation(
+        'file-get-maxlines-early', FILE_MEMORY,
+        'crate::mutants::on("file-get-maxlines-early")', 'true',
+        test='file_get_maxlines_deferred_975',
+    ),
+    mutation(
+        'file-get-maxlines-skip', FILE_MEMORY,
+        'crate::mutants::on("file-get-maxlines-skip")', 'true',
+        test='get_maxlines_converts_existing_records_975',
+    ),
+    mutation(
+        'file-get-ids-unchecked', FILE_MEMORY,
+        'crate::mutants::on("file-get-ids-unchecked")', 'true',
+        test='file_get_ids_before_maxlines_975',
     ),
     # fix-r5 P2-2: restore the old hand-copied Heartbeat arm. `IndexError`
     # `Display` is lossy for a lone surrogate, so the dedicated test fails.

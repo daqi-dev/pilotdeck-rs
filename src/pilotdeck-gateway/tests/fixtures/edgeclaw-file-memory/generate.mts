@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { sourceClosureSha256 } from '../../baseline_source_guard.mjs';
 import { bindBaseline } from '../_shared/generator_guard.mjs';
-import {freezeClock,replay,readBack,clean,tree} from './observe.mts';
+import {freezeClock,replay,readBack,clean,tree,maxLinesOrderOperations} from './observe.mts';
 assert.ok(process.env.PDRS_BASELINE); assert.ok(process.argv[2]);
 const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const source = 'src/context/memory/edgeclaw-memory-core/src/core/file-memory.ts';
@@ -132,6 +132,7 @@ const repo = new MemoryRepository(join(scratch,'wiring.sqlite'),{memoryDir:join(
 const wiringCandidate = {type:'user',scope:'global',name:'User😀',description:'身份',profile:'Rust 工程师',capturedAt:'2026-10-22T00:00:00.000Z',sourceSessionKey:'s'};
 repo.getGlobalUserStore().upsertCandidate(wiringCandidate);
 repo.getFileMemoryStore().repairManifests();
+run('get-maxlines-order-975',{},maxLinesOrderOperations());
 const wiring = {candidate:wiringCandidate,global:clean(readBack(repo.getGlobalUserStore()),wiringRoot),workspace:clean(readBack(repo.getFileMemoryStore()),wiringRoot),files:tree(wiringRoot)};
 repo.close();
 // Both repository stores keep their distinct options even when roots resolve
@@ -144,6 +145,6 @@ sameRepo.getFileMemoryStore().repairManifests();
 const sameRootWiring = {candidate:project,global:clean(readBack(sameRepo.getGlobalUserStore()),sameRoot),workspace:clean(readBack(sameRepo.getFileMemoryStore()),sameRoot),files:tree(sameRoot)};
 sameRepo.close();
 const oracle = {wiring,sameRootWiring,sourceCommit:provenance.ref,sourceSha256,nodeVersion:process.version,scenarios};
-mkdirSync(output,{recursive:true}); const text = `${JSON.stringify(oracle,null,2)}\n`; writeFileSync(join(output,'oracle.json'),text);
+mkdirSync(output,{recursive:true}); const text = `${JSON.stringify(oracle,null,2)}\n`; writeFileSync(join(output,'oracle.json'),text,{flag:'wx'});
 console.log(`oracle sha256 ${createHash('sha256').update(text).digest('hex')}; ${scenarios.length} scenarios`);
 rmSync(scratch,{recursive:true,force:true});

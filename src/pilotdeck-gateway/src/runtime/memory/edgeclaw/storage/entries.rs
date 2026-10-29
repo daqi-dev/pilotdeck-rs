@@ -132,6 +132,13 @@ impl EdgeClawFileStores {
     /// `ids` is the raw JS argument: `ids.filter` throws before any read when it
     /// is not an array; non-string elements are ignored exactly as TS.
     pub fn get_memory_records_by_ids(&self, ids: &JsValue, max_lines: f64) -> Result<JsValue> {
+        self.get_memory_records_by_ids_raw(ids, &JsValue::Number(max_lines))
+    }
+    pub(crate) fn get_memory_records_by_ids_raw(
+        &self,
+        ids: &JsValue,
+        max_lines: &JsValue,
+    ) -> Result<JsValue> {
         let ids = batch_ids(ids)?
             .iter()
             .filter_map(JsValue::as_string)
@@ -142,7 +149,7 @@ impl EdgeClawFileStores {
     fn get_memory_records_by_id_strings(
         &self,
         ids: &[JsString],
-        max_lines: f64,
+        max_lines: &JsValue,
     ) -> Result<JsValue> {
         let mut seen = HashSet::new();
         let unique = ids
@@ -169,7 +176,7 @@ impl EdgeClawFileStores {
         }
         let read = |store: &super::super::file_memory::FileMemoryStore, ids| {
             let mut input = ids_input(ids, "ids");
-            input.insert("maxLines".into(), JsValue::Number(max_lines));
+            input.insert("maxLines".into(), max_lines.clone());
             store.get_memory_records_by_ids(&input)
         };
         let mut records = array(read(&self.workspace_memory, workspace)?);

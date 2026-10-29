@@ -580,22 +580,26 @@ impl EdgeClawMemoryService {
         Ok(self.repository.list_memory_entries(options)?)
     }
 
-    /// `get` (`service.ts:984-986`): the TS default parameter applies only to
-    /// `undefined`. Every other value reaches `trimContentLines`, whose
-    /// `maxLines <= 0` / `lines.length <= maxLines` are JS relational
-    /// comparisons: `ToPrimitive` then `ToNumber`. Reuse the repository's
-    /// measured Number() port instead of treating non-numbers as the default.
+    /// Keep `maxLines` uncoerced through repository routing. TS only converts it
+    /// in `trimContentLines`, after ids validation and a successful record read.
     pub fn get(&self, ids: &JsValue, max_lines: Option<&JsValue>) -> Result<JsValue> {
         let max_lines = match max_lines {
-            None | Some(JsValue::Undefined) => 80.0,
-            Some(JsValue::Null) if crate::mutants::on("get-null-maxlines") => 80.0,
-            Some(JsValue::Null) if crate::mutants::on("get-nonnumber-maxlines") => 0.0,
-            Some(value) if crate::mutants::on("get-nonnumber-maxlines") => {
-                value.as_number().unwrap_or(80.0)
+            None | Some(JsValue::Undefined) => JsValue::Number(80.0),
+            Some(JsValue::Null) if crate::mutants::on("get-null-maxlines") => JsValue::Number(80.0),
+            Some(JsValue::Null) if crate::mutants::on("get-nonnumber-maxlines") => {
+                JsValue::Number(0.0)
             }
-            Some(value) => super::storage::overview::to_number(value)?,
+            Some(value) if crate::mutants::on("get-nonnumber-maxlines") => {
+                JsValue::Number(value.as_number().unwrap_or(80.0))
+            }
+            Some(value) => value.clone(),
         };
-        Ok(self.repository.get_memory_records_by_ids(ids, max_lines)?)
+        if crate::mutants::on("service-get-maxlines-early") {
+            super::storage::overview::to_number(&max_lines)?;
+        }
+        Ok(self
+            .repository
+            .get_memory_records_by_ids_raw(ids, &max_lines)?)
     }
 
     pub fn get_user_summary(&self) -> Result<JsValue> {

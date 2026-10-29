@@ -1762,3 +1762,225 @@ fn run_node(command: &mut Command, scratch: &Path) {
         fs::read_to_string(stdout).unwrap_or_default()
     );
 }
+
+// #975: all setup/validation failures on these mutation-bound paths carry this
+// issue's message. The fixture owns a synthetic HOME and never uses the host's.
+struct GetOrder975 {
+    root: PathBuf,
+    service: EdgeClawMemoryService,
+    external_id: String,
+}
+impl GetOrder975 {
+    fn new() -> Self {
+        use sha1::{Digest, Sha1};
+        let root =
+            std::env::temp_dir().join(format!("pdrs-get-order-975-{}", uuid::Uuid::new_v4()));
+        let home = root.join("home");
+        fs::create_dir_all(&home).expect("#975 setup home");
+        let open = |workspace| {
+            let mut options = ServiceOptions::new(workspace);
+            options.root_dir = Some(root.join("memory"));
+            EdgeClawMemoryService::with_dependencies(
+                options,
+                ServiceDependencies {
+                    home: Some(home.clone()),
+                    clock: Some(Arc::new(|| NOW.to_owned())),
+                    now_ms: Some(Arc::new(|| NOW_MS)),
+                    llm_config: Some(JsValue::Object(JsObject::new())),
+                    ..Default::default()
+                },
+            )
+            .expect("#975 setup service")
+        };
+        let service = open(home.join(".pilotdeck"));
+        let peer = open(root.join("peer"));
+        for store in [
+            &service.repository.workspace_memory,
+            &service.repository.global_user_memory,
+            &peer.repository.workspace_memory,
+        ] {
+            let dir = store.get_root_dir().join("Project");
+            fs::create_dir_all(&dir).expect("#975 setup records directory");
+            fs::write(dir.join("valid.md"), "---\nname: valid\ndescription: valid\ntype: project\nscope: project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\none\ntwo\n")
+                .expect("#975 setup valid record");
+            fs::write(dir.join("invalid.md"), "invalid").expect("#975 setup invalid record");
+            fs::create_dir_all(dir.join("directory.md")).expect("#975 setup EISDIR record");
+        }
+        peer.close().expect("#975 close peer");
+        let hash = format!(
+            "{:x}",
+            Sha1::digest(root.join("peer").to_string_lossy().as_bytes())
+        );
+        let external_id = format!("external:{}:Project/valid.md", &hash[..10]);
+        Self {
+            root,
+            service,
+            external_id,
+        }
+    }
+    fn poison() -> JsValue {
+        let mut value = JsObject::new();
+        value.insert("toString".into(), JsValue::Null);
+        JsValue::Object(value)
+    }
+    fn file_get(&self, ids: JsValue) -> Result<JsValue, (String, String)> {
+        let mut input = JsObject::new();
+        input.insert("ids".into(), ids);
+        input.insert("maxLines".into(), Self::poison());
+        self.service
+            .repository
+            .workspace_memory
+            .get_memory_records_by_ids(&input)
+            .map_err(|error| (error.js_name().into(), error.to_string()))
+    }
+    fn get(&self, ids: JsValue) -> Result<JsValue, (String, String)> {
+        self.service
+            .get(&ids, Some(&Self::poison()))
+            .map_err(|error| (error.js_name().into(), error.to_string()))
+    }
+}
+impl Drop for GetOrder975 {
+    fn drop(&mut self) {
+        let _ = self.service.close();
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+fn ids975(ids: &[&str]) -> JsValue {
+    JsValue::Array(ids.iter().map(|id| JsValue::from(*id)).collect())
+}
+
+#[test]
+fn service_get_maxlines_deferred_975() {
+    let fixture = GetOrder975::new();
+    for ids in [
+        ids975(&[]),
+        ids975(&["Project/missing.md"]),
+        ids975(&["", " "]),
+        ids975(&["Project/invalid.md"]),
+        ids975(&["global/Project/missing.md"]),
+        ids975(&["external:unknown:Project/missing.md"]),
+        JsValue::Array(vec![
+            JsValue::Null,
+            JsValue::Bool(false),
+            JsValue::Number(1.0),
+        ]),
+    ] {
+        assert_eq!(
+            fixture.get(ids.clone()),
+            Ok(JsValue::Array(vec![])),
+            "#975 service maxLines must stay unconverted without a record: {ids:?}"
+        );
+    }
+}
+
+#[test]
+fn service_get_ids_before_maxlines_975() {
+    let fixture = GetOrder975::new();
+    for (ids, message) in [
+        (
+            JsValue::Null,
+            "Cannot read properties of null (reading 'filter')",
+        ),
+        (
+            JsValue::Undefined,
+            "Cannot read properties of undefined (reading 'filter')",
+        ),
+        (
+            JsValue::Object(JsObject::new()),
+            "ids.filter is not a function",
+        ),
+    ] {
+        assert_eq!(
+            fixture.get(ids),
+            Err(("TypeError".into(), message.into())),
+            "#975 service ids filter error must precede maxLines conversion"
+        );
+    }
+}
+
+#[test]
+fn file_get_maxlines_deferred_975() {
+    let fixture = GetOrder975::new();
+    for ids in [
+        ids975(&[]),
+        ids975(&["Project/missing.md"]),
+        ids975(&["Project/invalid.md"]),
+    ] {
+        assert_eq!(
+            fixture.file_get(ids.clone()),
+            Ok(JsValue::Array(vec![])),
+            "#975 file maxLines must stay unconverted without a record: {ids:?}"
+        );
+    }
+}
+
+#[test]
+fn file_get_ids_before_maxlines_975() {
+    let fixture = GetOrder975::new();
+    for (ids, message) in [
+        (
+            JsValue::Null,
+            "Cannot read properties of null (reading 'map')",
+        ),
+        (
+            JsValue::Undefined,
+            "Cannot read properties of undefined (reading 'map')",
+        ),
+        (
+            JsValue::Object(JsObject::new()),
+            "ids.map is not a function",
+        ),
+    ] {
+        assert_eq!(
+            fixture.file_get(ids),
+            Err(("TypeError".into(), message.into())),
+            "#975 file ids map error must precede maxLines conversion"
+        );
+    }
+}
+
+#[test]
+fn get_maxlines_converts_existing_records_975() {
+    let fixture = GetOrder975::new();
+    let expected = Err((
+        "TypeError".into(),
+        "Cannot convert object to primitive value".into(),
+    ));
+    for id in [
+        "Project/valid.md",
+        "global/Project/valid.md",
+        &fixture.external_id,
+    ] {
+        assert_eq!(
+            fixture.get(ids975(&[id])),
+            expected,
+            "#975 valid record must reach maxLines conversion in every route: {id}"
+        );
+    }
+    assert_eq!(
+        fixture.file_get(ids975(&["Project/valid.md"])),
+        expected,
+        "#975 valid direct record must reach maxLines conversion"
+    );
+}
+
+#[test]
+fn get_reads_before_maxlines_975() {
+    let fixture = GetOrder975::new();
+    let expected = Err((
+        "Error".into(),
+        "EISDIR: illegal operation on a directory, read".into(),
+    ));
+    assert_eq!(
+        fixture.get(ids975(&["Project/directory.md"])),
+        expected,
+        "#975 service file read error must precede maxLines conversion"
+    );
+    for id in ["Project/directory.md", ""] {
+        assert_eq!(
+            fixture.file_get(ids975(&[id])),
+            expected,
+            "#975 direct file read error must precede maxLines conversion: {id:?}"
+        );
+    }
+}

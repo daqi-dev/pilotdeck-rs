@@ -741,7 +741,7 @@ impl EdgeClawFileStores {
     pub(super) fn entry_external_records(
         &self,
         ids: &[JsString],
-        max_lines: f64,
+        max_lines: &JsValue,
     ) -> Result<Vec<JsValue>> {
         let mut groups: Vec<(String, Vec<JsValue>)> = vec![];
         for id in ids {
@@ -785,7 +785,7 @@ impl EdgeClawFileStores {
             };
             let mut input = JsObject::new();
             put(&mut input, "ids", JsValue::Array(paths));
-            put(&mut input, "maxLines", JsValue::Number(max_lines));
+            put(&mut input, "maxLines", max_lines.clone());
             for mut record in extract_objects(&snapshot.store.get_memory_records_by_ids(&input)?) {
                 let mut path = format!("{EXTERNAL_RECORD_PREFIX}{key}:")
                     .encode_utf16()

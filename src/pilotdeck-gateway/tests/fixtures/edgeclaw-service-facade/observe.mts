@@ -388,6 +388,22 @@ function specs(): Spec[] {
         {op: 'close'},
       ],
     },
+    {
+      name: 'get-maxlines-order-975',
+      paths: {workspace: 'workspace', rootDir: 'root'},
+      seeds: [
+        {store: 'workspace', method: 'upsertCandidate', input: CANDIDATE('project', 'Alpha note')},
+        {store: 'global', method: 'upsertCandidate', input: CANDIDATE('user', 'User order')},
+      ],
+      buildOps: (service, ids) => {
+        const globalId = service.list({kinds: ['user']})[0].relativePath;
+        const cases = [[], ['Project/missing.md'], ['', ' ', null, 1, false],
+          null, {}, undefined, [ids.entry], ['global/UserIdentity/missing.md'], [globalId],
+          ['external:unknown:Project/missing.md']];
+        return [...cases.map(ids => ({op: 'get', args: {ids, maxLines: {toString: null}}})),
+          {op: 'close'}];
+      },
+    },
   ];
 }
 
