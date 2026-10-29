@@ -12,6 +12,21 @@ exclusive marker its FAIL block must carry. Every Python mutant is compiled and
 every shell mutant is ``bash -n`` checked before its bound positive test runs.
 All selected rows run to completion; any non-KILLED row is a nonzero exit. A
 stale anchor or a failed compile is INVALID and keeps going.
+
+Per-row results live in memory only (#1059). ``summary.json`` (a bare list of
+rows, unchanged for its readers) is published exactly once, after
+``mutating_sources`` restored every guarded file and verified it byte-for-byte
+against the baseline. A failure or cancellation therefore leaves either no
+``summary.json`` or an INVALID one; a reader that treats a missing summary as
+failure can never observe an all-KILLED file from a cancelled run. An old
+``summary.json`` is deleted before the run starts (and before
+``new_output_directory``'s non-empty check), so a previous success cannot be
+inherited. The guard exit catches ``BaseException``: a ``KeyboardInterrupt`` or
+``SystemExit`` during the restore/re-verify window voids the recorded rows and
+publishes INVALID before it is re-raised (the #979/#1037 shared semantics). If
+that void publish is itself interrupted (a second SIGINT), no summary is
+published at all — missing means failure (fail-closed), not the previous
+all-KILLED row set (#1059, the #209 E1 sibling fix).
 """
 import argparse
 from contextlib import contextmanager
@@ -27,13 +42,15 @@ import time
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned
+from negative_process import mutating_sources, new_output_directory, run_owned
+from negative_suite import invalidate_completed
 
 ROOT = Path(__file__).resolve().parents[5]
 A1_TEST = ROOT / 'scripts/parity/controls/lock_release.py'
 ROUND = ROOT / 'scripts/parity/round.py'
 B2_TEST = ROOT / 'src/pilotdeck-gateway/tests/fixtures/parity-lock-release/test_lock_release.py'
 B2_SHELL = ROOT / 'scripts/ui-server-parity/calibrate.sh'
+RUNNER = Path(__file__).resolve()
 
 MUTATIONS = [
     # A1: the shared lease is deleted even when a spawned session group was
@@ -117,6 +134,40 @@ MUTATIONS = [
      "mkdir -p /tmp/pdrs-parity.lock\n"
      "trap 'rmdir /tmp/pdrs-parity.lock' EXIT\n"
      'exec python3 -I - "$B2_SCRIPT_DIR/calibrate.py" "$@" <<\'PY\''),
+    # The runner guard catches only Exception, so a cancellation
+    # (KeyboardInterrupt / SystemExit) during restore skips the INVALID
+    # publication and leaves no final summary; the bound test requires the
+    # void publish (#1059 P0-2).
+    ('runner-baseexception-narrowed', RUNNER,
+     "    except BaseException as error:\n"
+     "        reason = f'source guard: {type(error).__name__}: {error}'",
+     "    except Exception as error:\n"
+     "        reason = f'source guard: {type(error).__name__}: {error}'"),
+    # Put the pre-fix "publish each row, verify later" order back: record()
+    # writes summary.json while the guarded restore is still unverified. A
+    # SIGINT in the later void publish then leaves that all-KILLED file behind
+    # (#1059 P0, paired mutant for the structural publication).
+    ('runner-publish-before-verify', RUNNER,
+     "def record(out, results, name, status, reason):\n"
+     "    \"\"\"Append a row in memory; the disk summary is published once, later.\n"
+     "\n"
+     "    The outcome of an earlier row must never be readable as the final result\n"
+     "    while the guarded restore is still unverified (#1059).\n"
+     "    \"\"\"\n"
+     "    results.append({'mutation': name, 'status': status, 'reason': reason})\n"
+     "    print(f'{name}: {status}: {reason}', flush=True)",
+     "def record(out, results, name, status, reason):\n"
+     "    results.append({'mutation': name, 'status': status, 'reason': reason})\n"
+     "    print(f'{name}: {status}: {reason}', flush=True)\n"
+     "    write_summary(out, results)"),
+    # The startup retirement is skipped, so a previous all-KILLED summary is
+    # still readable when this run's void publish is interrupted (#1059 P0).
+    ('runner-stale-summary-kept', RUNNER,
+     "    raw = Path(args.output).resolve()\n"
+     "    retire_stale_summary(raw)\n"
+     "    out = new_output_directory(args.output)",
+     "    raw = Path(args.output).resolve()\n"
+     "    out = new_output_directory(args.output)"),
 ]
 
 CHECKS = {
@@ -154,6 +205,15 @@ CHECKS = {
                             '#209 B2 never steals a lease'),
     'b2-shell-unconditional-trap': ('LockGateControls.test_shell_has_no_unconditional_release',
                                     '#209 calibrate.sh must not release on every EXIT'),
+    'runner-baseexception-narrowed': (
+        'RunnerInvalidationControls.test_final_guard_interrupt_rewrites_summary',
+        '#1059 P0-2 a cancellation after the last row must not keep KILLED'),
+    'runner-publish-before-verify': (
+        'RunnerInvalidationControls.test_interrupt_during_void_publish_leaves_no_killed_summary',
+        '#1059 P0-3 an interrupt during the void publish must not leave a readable KILLED summary'),
+    'runner-stale-summary-kept': (
+        'RunnerInvalidationControls.test_interrupt_during_void_publish_leaves_no_killed_summary',
+        '#1059 P0-3 an interrupt during the void publish must not leave a readable KILLED summary'),
 }
 
 
@@ -243,10 +303,52 @@ def compile_mutant(name, path, mutant):
     return 'Python compile: PASS\n'
 
 
+def _counts(results):
+    return {state: sum(row['status'] == state for row in results)
+            for state in ('KILLED', 'SURVIVED', 'INVALID')}
+
+
+def write_summary(out, results):
+    """Publish the one final summary atomically.
+
+    This is called exactly once per normal run, after every guarded file was
+    restored and byte-verified, and once from the failure handler (INVALID).
+    The payload stays the bare list of rows this suite's readers expect; a
+    reader that checks "the file exists" must never observe a half-written
+    JSON document, so the payload goes to a sibling temp file and is renamed
+    over ``summary.json`` (#166 r8).
+    """
+    payload = json.dumps(results, indent=2) + '\n'
+    target = out / 'summary.json'
+    tmp = out / 'summary.json.tmp'
+    tmp.write_text(payload)
+    tmp.replace(target)
+
+
+def retire_stale_summary(out):
+    """Delete a pre-existing final summary before any mutation starts.
+
+    ``new_output_directory`` refuses to reuse a non-empty evidence directory,
+    so this runs first on the resolved path: a directory that holds only an
+    old ``summary.json`` becomes empty and can be used, while a directory that
+    still holds other evidence is left in place and the normal refusal fires.
+    Deleting (rather than keeping a same-directory ``.prev``) is deliberate:
+    the old success must not remain readable as this run's result, and a
+    same-directory rename would still make the directory non-empty.
+    """
+    target = out / 'summary.json'
+    if target.exists():
+        target.unlink()
+
+
 def record(out, results, name, status, reason):
+    """Append a row in memory; the disk summary is published once, later.
+
+    The outcome of an earlier row must never be readable as the final result
+    while the guarded restore is still unverified (#1059).
+    """
     results.append({'mutation': name, 'status': status, 'reason': reason})
     print(f'{name}: {status}: {reason}', flush=True)
-    (out / 'summary.json').write_text(json.dumps(results, indent=2) + '\n')
 
 
 def check_anchors(selected):
@@ -265,6 +367,10 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--only', action='append')
     parser.add_argument('--check-anchors', action='store_true')
+    parser.add_argument('--baseline', default='HEAD',
+                        help='tree-ish the guarded sources must equal; HEAD for '
+                             'the delivered post-commit run (a dirty rehearsal may '
+                             'pass git stash create)')
     args = parser.parse_args()
     known = {row[0] for row in MUTATIONS}
     if args.only and (set(args.only) - known or len(args.only) != len(set(args.only))):
@@ -276,14 +382,21 @@ def main():
     if args.output is None:
         print('--output is required unless --check-anchors is used', file=sys.stderr)
         return 2
-    out = args.output.resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    # Fail-closed from the first instruction: no previous success may survive
+    # into this run's evidence directory. This has to run before
+    # new_output_directory's non-empty check, otherwise an old summary would
+    # make the directory unusable while still being readable by others.
+    raw = Path(args.output).resolve()
+    retire_stale_summary(raw)
+    out = new_output_directory(args.output)
     results = []
     try:
-        paths = list(dict.fromkeys([*(row[1] for row in selected)]))
+        paths = list(dict.fromkeys([RUNNER, *(row[1] for row in selected)]))
         # #209 negative controls mutate frozen apparatus: hold the same
-        # /tmp/pdrs-parity.lock the real runs use, loaded from HEAD bytes.
-        with parity_lease(), mutating_sources(ROOT, paths) as originals:
+        # /tmp/pdrs-parity.lock the real runs use, loaded from baseline bytes.
+        # RUNNER is guarded too because the runner rows mutate this delivered
+        # runner to prove the cancellation regression bites (#1059).
+        with parity_lease(), mutating_sources(ROOT, paths, baseline=args.baseline) as originals:
             for name, source, old, new in selected:
                 status, reason = 'INVALID', 'not executed'
                 test, message = CHECKS[name]
@@ -317,12 +430,25 @@ def main():
                 except Exception as error:
                     status, reason = 'INVALID', reason + f'; restoration test: {error}'
                 record(out, results, name, status, reason)
-    except Exception as error:
+    except BaseException as error:
+        reason = f'source guard: {type(error).__name__}: {error}'
+        # #979/#1037 + #1059: a guard/restoration failure voids every
+        # already-recorded row in memory, then publishes INVALID. The disk
+        # never held a final summary before this point (record() is memory
+        # only), so an interrupt inside this publish — even a second SIGINT —
+        # leaves no summary at all instead of the old all-KILLED file. Missing
+        # summary is the fail-closed signal.
+        invalidate_completed(results, reason)
         for name, *_ in selected[len(results):]:
-            record(out, results, name, 'INVALID', f'mutation guard: {error}')
+            record(out, results, name, 'INVALID', reason)
+        write_summary(out, results)
+        if not isinstance(error, Exception):
+            raise
         return 2
-    counts = {state: sum(row['status'] == state for row in results)
-              for state in ('KILLED', 'SURVIVED', 'INVALID')}
+    # Reaching here means mutating_sources restored every guarded file and
+    # verified it against the baseline. Only now may a final summary exist.
+    write_summary(out, results)
+    counts = _counts(results)
     print(json.dumps(counts), flush=True)
     return 0 if counts['KILLED'] == len(results) else 1
 
