@@ -1,5 +1,5 @@
-//! One owned connection for the CLI's ordinary RPCs; no reconnect loop or SDK
-//! background tasks. Dropping this future also drops the socket and its timers.
+//! Owned CLI sockets for ordinary RPCs and the run control/query pair.
+//! No reconnect loop or background tasks; dropping an owner drops its socket.
 use super::Connection;
 use crate::Failure;
 use futures_util::{SinkExt, StreamExt};
@@ -18,6 +18,12 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_RECEIVE_BYTES: usize = 128 * 1024 * 1024;
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+fn websocket_config() -> WebSocketConfig {
+    WebSocketConfig::default()
+        .max_frame_size(Some(MAX_RECEIVE_BYTES))
+        .max_message_size(Some(MAX_RECEIVE_BYTES))
+}
 
 fn error(message: &str) -> Failure {
     Failure::Error(message.into())
@@ -80,62 +86,76 @@ async fn request_inner(
     client_version: &str,
     settings_order: bool,
 ) -> Result<JsValue, Failure> {
-    // Preserve the measured Node v22.22.0 successes through 100 MiB + 1.
-    // A finite frame cap rejects hostile length headers before allocation;
-    // the message cap also bounds accumulated fragments. Security exception:
-    // specs/gateway-parity/diffs/D1-SDK-WS-RESOURCE-LIMIT-001.md.
-    let config = WebSocketConfig::default()
-        .max_frame_size(Some(MAX_RECEIVE_BYTES))
-        .max_message_size(Some(MAX_RECEIVE_BYTES));
-    let (mut socket, _) = timeout(
-        CONNECT_TIMEOUT,
-        connect_async_with_config(&connection.gateway_url, Some(config), false),
-    )
-    .await
-    .map_err(|_| error("Gateway connection timed out."))?
-    .map_err(|_| error("Gateway connection failed."))?;
-    let result = async {
-        timeout(CONNECT_TIMEOUT, async {
+    let mut transport = Transport::connect(connection, client_version, settings_order).await?;
+    let result = transport.request(method, params).await;
+    transport.close().await;
+    result
+}
+
+/// A run retains its control connection while the query uses a second socket.
+/// Ordinary RPC callers still create and close exactly one owner per call.
+pub(super) struct Transport {
+    socket: Socket,
+    settings_order: bool,
+    stream_sequence: f64,
+    pub(super) server_info: JsValue,
+}
+
+impl Transport {
+    pub(super) async fn connect(
+        connection: &Connection,
+        client_version: &str,
+        settings_order: bool,
+    ) -> Result<Self, Failure> {
+        // Retain P02's registered 128 MiB receive bounds on every connection.
+        let config = websocket_config();
+        let (mut socket, _) = timeout(
+            CONNECT_TIMEOUT,
+            connect_async_with_config(&connection.gateway_url, Some(config), false),
+        )
+        .await
+        .map_err(|_| error("Gateway connection timed out."))?
+        .map_err(|_| error("Gateway connection failed."))?;
+        let hello = timeout(CONNECT_TIMEOUT, async {
             send_hello(&mut socket, connection, client_version, settings_order).await?;
             loop {
-                if string_field(&receive(&mut socket).await?, "type").as_deref() == Some("hello_ok")
-                {
-                    return Ok::<_, Failure>(());
+                let frame = receive(&mut socket).await?;
+                if string_field(&frame, "type").as_deref() == Some("hello_ok") {
+                    return Ok::<_, Failure>(frame);
                 }
             }
         })
         .await
-        .map_err(|_| error("Gateway hello timed out."))??;
-
-        let id = uuid::Uuid::new_v4().to_string();
-        // One deadline covers send and every unrelated frame; traffic cannot
-        // keep an unanswered request alive by resetting the timer.
-        timeout(REQUEST_TIMEOUT, async {
-            if settings_order {
-                send(
-                    &mut socket,
-                    SettingsRequestFrame {
-                        kind: "request",
-                        request_id: &id,
-                        method,
-                        params,
-                    },
-                )
-                .await?;
-            } else {
-                send(
-                    &mut socket,
-                    RequestFrame {
-                        kind: "request",
-                        id: &id,
-                        method,
-                        params,
-                    },
-                )
-                .await?;
+        .map_err(|_| error("Gateway hello timed out."))
+        .and_then(|result| result);
+        match hello {
+            Ok(frame) => Ok(Self {
+                socket,
+                settings_order,
+                stream_sequence: -1.0,
+                server_info: frame
+                    .get("serverInfo")
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined),
+            }),
+            Err(error) => {
+                close_socket(&mut socket).await;
+                Err(error)
             }
+        }
+    }
+
+    pub(super) async fn request(
+        &mut self,
+        method: &str,
+        params: impl Serialize,
+    ) -> Result<JsValue, Failure> {
+        let id = uuid::Uuid::new_v4().to_string();
+        // A single deadline includes send and all unrelated frames.
+        timeout(REQUEST_TIMEOUT, async {
+            self.send_request(&id, method, params).await?;
             loop {
-                let frame = receive(&mut socket).await?;
+                let frame = receive(&mut self.socket).await?;
                 if string_field(&frame, "type").as_deref() != Some("response")
                     || string_field(&frame, "id").as_deref() != Some(&id)
                 {
@@ -155,11 +175,116 @@ async fn request_inner(
         .await
         .map_err(|_| error(&format!("Gateway request timed out: {method}")))?
     }
-    .await;
-    // TS client.close() starts an empty close handshake. Do not await peer
-    // cooperation indefinitely, and never replace the RPC error with cleanup.
+
+    async fn send_request(
+        &mut self,
+        id: &str,
+        method: &str,
+        params: impl Serialize,
+    ) -> Result<(), Failure> {
+        let id = id.to_owned();
+        // Preserve the ordinary RPC envelope and its lossless params. Bound
+        // stream submission as well: a non-reading peer cannot block send forever.
+        timeout(REQUEST_TIMEOUT, async {
+            if self.settings_order {
+                send(
+                    &mut self.socket,
+                    SettingsRequestFrame {
+                        kind: "request",
+                        request_id: &id,
+                        method,
+                        params,
+                    },
+                )
+                .await
+            } else {
+                send(
+                    &mut self.socket,
+                    RequestFrame {
+                        kind: "request",
+                        id: &id,
+                        method,
+                        params,
+                    },
+                )
+                .await
+            }
+        })
+        .await
+        .map_err(|_| error(&format!("Gateway request timed out: {method}")))?
+    }
+
+    pub(super) async fn start_stream(
+        &mut self,
+        method: &str,
+        params: impl Serialize,
+    ) -> Result<String, Failure> {
+        let id = uuid::Uuid::new_v4().to_string();
+        self.send_request(&id, method, params).await?;
+        self.stream_sequence = -1.0;
+        Ok(id)
+    }
+
+    /// Stream events have no ordinary-RPC timeout in the SDK. The `final` bit,
+    /// socket closure, or transport error ends this wait; terminal payloads alone
+    /// must not close a stream that can still carry lifecycle events.
+    pub(super) async fn stream_event(
+        &mut self,
+        id: &str,
+    ) -> Result<Option<(JsValue, bool)>, Failure> {
+        loop {
+            let frame = receive(&mut self.socket).await?;
+            if string_field(&frame, "id").as_deref() != Some(id) {
+                continue;
+            }
+            match string_field(&frame, "type").as_deref() {
+                Some("event") => {
+                    let sequence = frame
+                        .get("seq")
+                        .and_then(JsValue::as_number)
+                        .filter(|seq| seq.is_finite() && *seq >= 0.0 && seq.fract() == 0.0)
+                        .ok_or_else(|| {
+                            error(&format!(
+                                "Gateway event sequence must be a non-negative integer for {id}."
+                            ))
+                        })?;
+                    if sequence <= self.stream_sequence {
+                        continue;
+                    }
+                    if sequence != self.stream_sequence + 1.0 {
+                        return Err(error(&format!(
+                            "Gateway event sequence gap for {id}: expected {}, received {sequence}.",
+                            self.stream_sequence + 1.0
+                        )));
+                    }
+                    self.stream_sequence = sequence;
+                    return Ok(Some((
+                        frame.get("event").cloned().unwrap_or(JsValue::Undefined),
+                        matches!(frame.get("final"), Some(JsValue::Bool(true))),
+                    )));
+                }
+                Some("response") if matches!(frame.get("ok"), Some(JsValue::Bool(true))) => {
+                    return Ok(None);
+                }
+                Some("response") if frame.get("ok").and_then(JsValue::as_bool) == Some(false) => {
+                    let message = frame.get("error").and_then(|v| string_field(v, "message"));
+                    return Err(error(
+                        message.as_deref().unwrap_or("Gateway stream failed."),
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub(super) async fn close(&mut self) {
+        // Cleanup never replaces the original RPC/stream error.
+        close_socket(&mut self.socket).await;
+    }
+}
+
+async fn close_socket(mut socket: &mut Socket) {
     let _ = timeout(CLOSE_TIMEOUT, SinkExt::close(&mut socket)).await;
-    result
 }
 
 // Field declaration order is the SDK's JSON.stringify insertion order.
@@ -236,7 +361,7 @@ async fn receive(socket: &mut Socket) -> Result<JsValue, Failure> {
     }
 }
 
-fn string_field(value: &JsValue, name: &str) -> Option<String> {
+pub(super) fn string_field(value: &JsValue, name: &str) -> Option<String> {
     value
         .get(name)?
         .as_string()
