@@ -311,12 +311,17 @@ def lock_guard(lock, timeout=GUARD_TIMEOUT):
         yield
 
 
-def discard_unpublished_lease(lock, mine, identity):
+def discard_unpublished_lease(lock, mine, identity, owner_identity, written):
     """#1064: 回收本次获取中已 mkdir 但从未发布的租约目录（获取被取消/写入失败）。
 
-    只删归属可证的目录：inode 身份不匹配、目录非空于身份捕获前、或 owner.json
-    是外来完整字节时原样保留，交给 README 的人工流程。清理自身的 OSError 一律
-    吞掉（best-effort），不掩盖触发清理的原始异常。
+    只删归属三证俱全的目录：目录 inode 与本次捕获的 identity 一致、owner.json
+    的 inode 与本次 O_EXCL 创建时捕获的一致、且 owner 磁盘字节逐字节等于本次
+    已证写入的前缀（written）。identity 为 None（mkdir 未执行/未返回、或身份
+    尚未捕获）一律保留——「目录为空」不是本次创建的证明（r1 P1-1）；owner 字节
+    解析失败或内容不是本次所写也不是（r1 P1-2：`null\\n`、损坏 JSON、外来前缀
+    形态字节均保留）。mine 是调用方当次租约身份，供保留目录的人工排查关联；
+    回收判定本身只用字节级证明。清理自身的 OSError 一律吞掉（best-effort），
+    不掩盖触发清理的原始异常。
     """
     try:
         current = lock.lstat()
@@ -324,14 +329,7 @@ def discard_unpublished_lease(lock, mine, identity):
         return
     if not stat.S_ISDIR(current.st_mode):
         return
-    if identity is None:
-        # mkdir 与身份捕获之间被取消：目录仍为空才可证是本次创建的。
-        try:
-            if any(lock.iterdir()):
-                return
-        except OSError:
-            return
-    elif (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
+    if identity is None or (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
         return
     try:
         entries = set(os.listdir(lock))
@@ -340,11 +338,19 @@ def discard_unpublished_lease(lock, mine, identity):
     if entries - {'owner.json'}:
         return
     if 'owner.json' in entries:
+        if owner_identity is None:
+            return
         try:
-            published = json.loads((lock / 'owner.json').read_text())
-        except (OSError, ValueError):
-            published = None
-        if published is not None and published != mine:
+            owner = (lock / 'owner.json').lstat()
+        except OSError:
+            return
+        if (owner.st_dev, owner.st_ino) != (owner_identity.st_dev, owner_identity.st_ino):
+            return
+        try:
+            on_disk = (lock / 'owner.json').read_bytes()
+        except OSError:
+            return
+        if on_disk != written:
             return
         try:
             (lock / 'owner.json').unlink()
@@ -362,48 +368,70 @@ def parity_lock(lock=LOCK, timeout=GUARD_TIMEOUT):
     mine = {'pid': os.getpid(), 'timestamp': time.time(), 'token': uuid.uuid4().hex}
     identity = None
     directory = None
-    with lock_guard(lock, timeout):
-        # mkdir 本身在 try 覆盖内：落盘后的任何取消都进回收分支；而 mkdir 失败
-        # （目录属于他人/前驱）先被 FileExistsError 子句接走，绝不进入回收——
-        # 用子句顺序而非标志位判别「是否本次创建」，没有标志位赋值前的信号窗口。
-        try:
-            lock.mkdir(mode=0o700)
-            identity = lock.lstat()
-            directory = os.open(lock, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-            current = os.fstat(directory)
-            if (identity.st_dev, identity.st_ino) != (current.st_dev, current.st_ino) or current.st_uid != os.getuid():
-                raise Blocked('lock directory changed before ownership write')
-            fd = os.open('owner.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
-            with os.fdopen(fd, 'w') as owner:
-                json.dump(mine, owner)
-        except FileExistsError as error:
-            raise Blocked(f'parity lock held: {lock}') from error
-        except BaseException:
-            # 只可能是本次 mkdir 创建的目录：归属可证才回收，否则原样保留。
-            # 先回收再关 fd：清理途中若再来一次中断，至多丢 fd/掩盖原异常的链，
-            # 不会因关 fd 的顺序跳过回收本身。
-            discard_unpublished_lease(lock, mine, identity)
-            if directory is not None:
-                os.close(directory)
-            raise
     try:
+        with lock_guard(lock, timeout):
+            # 「是否本次创建」以 identity 是否捕获为准：identity 只在 lock.mkdir()
+            # 正常返回之后赋值，mkdir 未执行/未返回/身份未捕获时保持 None，回收
+            # 一律不进（r1 P1-1）；赋值与 lstat 之间的极窄信号窗口同样保守保留。
+            owner_identity = None
+            written = None
+            try:
+                try:
+                    lock.mkdir(mode=0o700)
+                except FileExistsError as error:
+                    # 只接 mkdir：目录属于他人/前驱时只报既有 Blocked，绝不回收
+                    # （r1 P2-1：owner.json 的 O_EXCL 冲突不在此子句，走下面的
+                    # 回收分支并关闭目录 fd，FileExistsError 原样上抛）。
+                    raise Blocked(f'parity lock held: {lock}') from error
+                identity = lock.lstat()
+                directory = os.open(lock, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                current = os.fstat(directory)
+                if (identity.st_dev, identity.st_ino) != (current.st_dev, current.st_ino) or current.st_uid != os.getuid():
+                    raise Blocked('lock directory changed before ownership write')
+                payload = json.dumps(mine).encode()
+                fd = os.open('owner.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+                try:
+                    owner_identity = os.fstat(fd)
+                    written = b''
+                    view = memoryview(payload)
+                    while view:
+                        view = view[os.write(fd, view):]
+                    # 循环完整走完，payload 已全部落盘且计数可证；循环中被取消时
+                    # written 停在上一次已证前缀，磁盘多出的字节按外来保留。
+                    written = payload
+                finally:
+                    os.close(fd)
+            except BaseException:
+                # 只回收归属三证俱全的目录，否则原样保留并上抛原异常；先回收再关
+                # fd：清理途中若再来一次中断，至多丢 fd/掩盖原异常的链，不会因关
+                # fd 的顺序跳过回收本身。
+                discard_unpublished_lease(lock, mine, identity, owner_identity, written)
+                if directory is not None:
+                    os.close(directory)
+                    directory = None
+                raise
         yield mine
     finally:
-        # 不论正常还是任何异常（含 KeyboardInterrupt）：只有本次启动的进程组全部被 stop_group 证实停止，才释放锁
-        release = not LIVE_GROUPS
-        try:
-            # 释放阶段同样有界（#1064 P1-1）：卡死的兄弟不能让清理无限期阻塞；
-            # 超时抛 Blocked、lease 原样保留，交给 README 的人工流程。
-            with lock_guard(lock, timeout):
-                current = lock.lstat()
-                if (identity.st_dev, identity.st_ino) != (current.st_dev, current.st_ino):
-                    raise Blocked('lock directory changed; retaining lock')
-                fd = os.open('owner.json', os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
-                with os.fdopen(fd) as owner:
-                    if json.load(owner) != mine:
-                        raise Blocked('lock ownership changed; retaining lock')
-                if release:
-                    os.unlink('owner.json', dir_fd=directory)
-                    lock.rmdir()
-        finally:
-            os.close(directory)
+        # 获取从未完成（Blocked/未执行）或取消回收分支已关掉 fd 并清空时（directory
+        # 为 None），没有可释放的租约，也不吞正在传播的异常。本 finally 从进入
+        # lock_guard 之前就开始覆盖：guard 临界区退出与 yield 之间的取消同样走
+        # 释放路径，不留无回收窗口（r1 concurrency P2-1），目录 fd 也不会泄漏。
+        if directory is not None:
+            # 不论正常还是任何异常（含 KeyboardInterrupt）：只有本次启动的进程组全部被 stop_group 证实停止，才释放锁
+            release = not LIVE_GROUPS
+            try:
+                # 释放阶段同样有界（#1064 P1-1）：卡死的兄弟不能让清理无限期阻塞；
+                # 超时抛 Blocked、lease 原样保留，交给 README 的人工流程。
+                with lock_guard(lock, timeout):
+                    current = lock.lstat()
+                    if (identity.st_dev, identity.st_ino) != (current.st_dev, current.st_ino):
+                        raise Blocked('lock directory changed; retaining lock')
+                    fd = os.open('owner.json', os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+                    with os.fdopen(fd) as owner:
+                        if json.load(owner) != mine:
+                            raise Blocked('lock ownership changed; retaining lock')
+                    if release:
+                        os.unlink('owner.json', dir_fd=directory)
+                        lock.rmdir()
+            finally:
+                os.close(directory)
