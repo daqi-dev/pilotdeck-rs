@@ -209,27 +209,51 @@ impl EdgeClawStorage {
         path: impl AsRef<Path>,
         clock: FileMemoryClock,
     ) -> Result<Self, StorageError> {
+        let storage = Self::connect(path, clock)?;
+        storage.initialize()?;
+        Ok(storage)
+    }
+
+    /// Node opens and validates DatabaseSync before file-store construction;
+    /// schema initialization follows it. Keep those phases separate (#778).
+    pub(super) fn connect(
+        path: impl AsRef<Path>,
+        clock: FileMemoryClock,
+    ) -> Result<Self, StorageError> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
             fs::create_dir_all(parent)?;
         }
-        let conn = Connection::open(&path)?;
-        // `node:sqlite`'s `DatabaseSync` leaves `PRAGMA busy_timeout` at 0
-        // (measured on Node 22.22.0: a second writer fails immediately with
-        // `ERR_SQLITE_ERROR` / "database is locked"). rusqlite's `open` sets
-        // `sqlite3_busy_timeout(db, 5000)` instead, so overwrite it explicitly.
+        let conn = Connection::open(&path).map_err(|error| match error {
+            // rusqlite appends the filename to SQLITE_CANTOPEN; Node exposes
+            // sqlite3_errmsg alone (native-default sqlite-directory probe).
+            rusqlite::Error::SqliteFailure(code, _)
+                if code.code == rusqlite::ErrorCode::CannotOpen =>
+            {
+                rusqlite::Error::SqliteFailure(code, Some("unable to open database file".into()))
+            }
+            other => other,
+        })?;
+        // Node DatabaseSync uses no busy wait. A corrupt file is rejected at
+        // construction (native-default sqlite-corrupt), before memory files.
         conn.busy_timeout(Duration::ZERO)?;
-        conn.execute_batch("PRAGMA journal_mode = WAL;")?;
-        conn.execute_batch(INIT_SQL)?;
-        let storage = Self {
+        conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))?;
+        Ok(Self {
             path,
             conn: Mutex::new(Some(conn)),
             clock,
-        };
-        storage.migrate_pipeline_state()?;
-        Ok(storage)
+        })
+    }
+
+    pub(super) fn initialize(&self) -> Result<(), StorageError> {
+        {
+            let conn = self.conn()?;
+            conn.execute_batch("PRAGMA journal_mode = WAL;")?;
+            conn.execute_batch(INIT_SQL)?;
+        }
+        self.migrate_pipeline_state()
     }
 
     pub fn path(&self) -> &Path {

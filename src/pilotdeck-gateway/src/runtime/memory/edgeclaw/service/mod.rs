@@ -71,6 +71,8 @@ impl HeartbeatLogger for LoggerAdapter {
     }
 }
 
+pub type LlmConfigResolver = Arc<dyn Fn(Option<&LlmOptions>) -> JsValue + Send + Sync>;
+
 /// Injected host seams. Production callers use [`Default::default`]; fixtures
 /// pass a frozen clock, a scripted random token and a loopback transport.
 #[derive(Default)]
@@ -91,6 +93,9 @@ pub struct ServiceDependencies {
     pub logger: Option<Arc<dyn ServiceLogger>>,
     /// Pre-resolved `buildLlmConfig` value; defaults to the real env/home read.
     pub llm_config: Option<JsValue>,
+    /// Resolve the actual constructor LLM options with an isolated env/home.
+    /// Unlike `llm_config`, this seam still exercises factory option wiring.
+    pub llm_config_resolver: Option<LlmConfigResolver>,
     /// Test seam for the dream success tail: called between installing the
     /// last-dream snapshot and replacing the live roots, with the tail's root
     /// operation scope held. The two-thread tail-race regression parks one
@@ -180,6 +185,48 @@ pub enum ServiceError {
     Heartbeat(HeartbeatError),
     Llm(LlmError),
 }
+impl From<ServiceError> for crate::runtime::memory::MemoryProviderError {
+    fn from(error: ServiceError) -> Self {
+        fn storage(error: &StorageError) -> (Option<String>, bool) {
+            match error {
+                StorageError::HostRequired(_) => (Some("JS_HOST_REQUIRED".into()), true),
+                StorageError::Closed => (Some("ERR_INVALID_STATE".into()), false),
+                StorageError::Sqlite(rusqlite::Error::SqliteFailure(..)) => {
+                    (Some("ERR_SQLITE_ERROR".into()), false)
+                }
+                StorageError::Io(error) => (
+                    crate::node_io::lookup(error).map(|(code, _)| code.into()),
+                    false,
+                ),
+                _ => (None, false),
+            }
+        }
+        fn file(error: &FileMemoryError) -> (Option<String>, bool) {
+            match error {
+                FileMemoryError::Storage(error) => storage(error),
+                _ => (error.io_code().map(str::to_owned), false),
+            }
+        }
+        let (code, requires_host) = match &error {
+            ServiceError::File(error) => file(error),
+            ServiceError::Storage(error) => storage(error),
+            ServiceError::Heartbeat(HeartbeatError::File(error)) => file(error),
+            ServiceError::Heartbeat(HeartbeatError::Storage(error)) => storage(error),
+            _ => (None, false),
+        };
+        Self {
+            name: error.js_name().into(),
+            message: error.js_message(),
+            code: if crate::mutants::on("native-error-code-drop") {
+                None
+            } else {
+                code
+            },
+            requires_host,
+        }
+    }
+}
+
 impl ServiceError {
     pub fn js_name(&self) -> &'static str {
         match self {
@@ -288,6 +335,74 @@ impl EdgeClawMemoryService {
             .map_err(Into::into)
     }
 
+    /// Read-only constructor observation shared by the source parity fixtures.
+    #[doc(hidden)]
+    pub fn factory_configuration(&self) -> JsValue {
+        let mut out = JsObject::new();
+        for (key, path) in [
+            ("workspaceDir", &self.workspace_dir),
+            ("dataDir", &self.data_dir),
+            ("dbPath", &self.db_path),
+            ("memoryDir", &self.memory_dir),
+        ] {
+            out.insert(
+                key.into(),
+                JsValue::String(path.to_string_lossy().as_ref().into()),
+            );
+        }
+        out.insert(
+            "source".into(),
+            JsValue::String(self.source.as_str().into()),
+        );
+        out.insert(
+            "captureStrategy".into(),
+            JsValue::String(
+                match self.capture_strategy {
+                    CaptureStrategy::LastTurn => "last_turn",
+                    CaptureStrategy::FullSession => "full_session",
+                }
+                .into(),
+            ),
+        );
+        out.insert(
+            "includeAssistant".into(),
+            JsValue::Bool(self.include_assistant),
+        );
+        out.insert(
+            "maxMessageChars".into(),
+            JsValue::Number(self.max_message_chars),
+        );
+        out.insert(
+            "heartbeatBatchSize".into(),
+            JsValue::Number(
+                self.indexer
+                    .lock()
+                    .expect("indexer poisoned")
+                    .configured_batch_size() as f64,
+            ),
+        );
+        let settings = &self.default_indexing_settings;
+        let mut value = JsObject::new();
+        value.insert(
+            "reasoningMode".into(),
+            JsValue::String(settings.reasoning_mode.clone().into()),
+        );
+        value.insert(
+            "autoIndexIntervalMinutes".into(),
+            JsValue::Number(settings.auto_index_interval_minutes),
+        );
+        value.insert(
+            "autoDreamIntervalMinutes".into(),
+            JsValue::Number(settings.auto_dream_interval_minutes),
+        );
+        out.insert("defaultIndexingSettings".into(), JsValue::Object(value));
+        out.insert(
+            "extractorConfig".into(),
+            self.extractor.configuration().clone(),
+        );
+        JsValue::Object(out)
+    }
+
     pub fn new(options: ServiceOptions) -> Result<Self> {
         Self::with_dependencies(options, ServiceDependencies::default())
     }
@@ -308,6 +423,7 @@ impl EdgeClawMemoryService {
             runtime,
             logger,
             llm_config,
+            llm_config_resolver,
             #[cfg(test)]
             dream_tail_gate,
         } = dependencies;
@@ -394,7 +510,10 @@ impl EdgeClawMemoryService {
 
         let config = match llm_config {
             Some(config) => config,
-            None => build_llm_config(options.llm.as_ref()),
+            None => match llm_config_resolver {
+                Some(resolve) => resolve(options.llm.as_ref()),
+                None => build_llm_config(options.llm.as_ref()),
+            },
         };
         let mut extractor = LlmMemoryExtractor::new(
             config,
@@ -597,6 +716,10 @@ impl EdgeClawMemoryService {
     /// in `trimContentLines`, after ids validation and a successful record read.
     pub fn get(&self, ids: &JsValue, max_lines: Option<&JsValue>) -> Result<JsValue> {
         let max_lines = match max_lines {
+            None if crate::mutants::on("native-get-omitted-maxlines") => JsValue::Number(0.0),
+            Some(JsValue::Undefined) if crate::mutants::on("native-get-undefined-maxlines") => {
+                JsValue::Number(0.0)
+            }
             None | Some(JsValue::Undefined) => JsValue::Number(80.0),
             Some(JsValue::Null) if crate::mutants::on("get-null-maxlines") => JsValue::Number(80.0),
             Some(JsValue::Null) if crate::mutants::on("get-nonnumber-maxlines") => {

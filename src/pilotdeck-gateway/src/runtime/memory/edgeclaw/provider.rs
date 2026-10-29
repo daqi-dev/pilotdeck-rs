@@ -109,9 +109,7 @@ impl EdgeClawMemoryServiceLike for EdgeClawMemoryService {
     }
 }
 fn service_error(error: ServiceError) -> MemoryProviderError {
-    let mut result = MemoryProviderError::new(error.js_message());
-    result.name = error.js_name().into();
-    result
+    error.into()
 }
 
 pub struct EdgeClawMemoryProviderOptions {

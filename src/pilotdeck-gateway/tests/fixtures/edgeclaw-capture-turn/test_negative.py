@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 FIXTURE = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location(
@@ -68,6 +69,31 @@ class RestoredPositiveFailure(unittest.TestCase):
         self.assertEqual(restored_error, 'exit=1',
                          '#774 nonzero restore reason must carry the exit code')
 
+
+
+class SharedVerdicts(unittest.TestCase):
+    mutant = dict(test='bound_test', anchor='#778 witness', failure='assertion')
+    log = ('test bound_test ... FAILED\nthread panicked at '
+           + negative.TEST_FILE + ':1:1:\nassertion failed: #778 witness\n'
+           + 'test result: FAILED\n')
+
+    def test_shared_invalid_is_preserved(self):
+        with patch.object(negative, 'shared_classify', return_value=('INVALID', 'shared reason')) as call:
+            self.assertEqual(negative.classify_control(self.mutant, 101, self.log), ('INVALID', 'shared reason'))
+            result, bound = call.call_args.args
+            self.assertEqual((result.returncode, result.stdout, bound.test, bound.assertion),
+                             (101, self.log, 'bound_test', '#778 witness'))
+
+    def test_bound_failure_and_invalid_counterexamples(self):
+        self.assertEqual(negative.classify_control(self.mutant, 101, self.log)[0], 'KILLED')
+        for raw in [self.log.replace(negative.TEST_FILE, 'unrelated.rs'),
+                    self.log + 'could not compile',
+                    self.log.replace('#778 witness', 'other assertion'),
+                    self.log.replace('bound_test', 'other_test')]:
+            with self.subTest(raw=raw):
+                self.assertEqual(negative.classify_control(self.mutant, 101, raw)[0], 'INVALID')
+        positive = 'test bound_test ... ok\ntest result: ok. 1 passed;\n'
+        self.assertEqual(negative.classify_control(self.mutant, 0, positive)[0], 'SURVIVED')
 
 if __name__ == '__main__':
     unittest.main()

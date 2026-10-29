@@ -430,6 +430,19 @@ impl EdgeClawFileStores {
         general_workspace: Option<PathBuf>,
         clock: FileMemoryClock,
     ) -> Result<Self> {
+        // sqlite.ts creates these directories before constructing either file
+        // store. Besides ordering side effects, this preserves mkdir's first
+        // failing path when rootDir is occupied by a file (#778).
+        if let Some(parent) = db.as_ref().parent().filter(|p| !p.as_os_str().is_empty()) {
+            io_mkdir(parent)?;
+        }
+        io_mkdir(&memory)?;
+        io_mkdir(&global)?;
+        let storage = if crate::mutants::on("native-database-open-late") {
+            None
+        } else {
+            Some(EdgeClawStorage::connect(&db, clock.clone())?)
+        };
         let global_user_memory = Arc::new(FileMemoryStore::with_clock(
             global,
             repository_global_options(),
@@ -471,9 +484,14 @@ impl EdgeClawFileStores {
                 clock.clone(),
             )?,
         };
+        let storage = match storage {
+            Some(storage) => storage,
+            None => EdgeClawStorage::connect(db, clock)?,
+        };
+        storage.initialize()?;
         Ok(Self {
             repository,
-            storage: EdgeClawStorage::with_clock(db, clock)?,
+            storage,
             workspace_memory,
             global_user_memory,
             temp_now_ms: Arc::new(|| {

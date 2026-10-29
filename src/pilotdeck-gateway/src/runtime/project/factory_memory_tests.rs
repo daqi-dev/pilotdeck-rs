@@ -127,7 +127,7 @@ impl NativeMemoryService for RecordingMemory {
     fn clear_session(&self, _: &JsString) -> Result<(), MemoryProviderError> {
         Err(MemoryProviderError::new("management outside this fixture"))
     }
-    fn close(&self) {
+    fn close(&self) -> Result<(), MemoryProviderError> {
         self.closes.fetch_add(1, Ordering::SeqCst);
         if let Some(gate) = &self.close_gate {
             gate.entered.notify_one();
@@ -143,6 +143,7 @@ impl NativeMemoryService for RecordingMemory {
             gate.exited.store(true, Ordering::SeqCst);
             assert!(!timeout.timed_out(), "close gate was never released");
         }
+        Ok(())
     }
 }
 
@@ -556,12 +557,8 @@ async fn context_memory_absent_disabled_and_factory_none_prepare_without_memory(
 }
 
 #[tokio::test]
-async fn context_memory_native_unported_and_factory_failures_do_not_publish_generation() {
+async fn context_memory_factory_failures_do_not_publish_generation() {
     for (source, expected) in [
-        (
-            MemoryBundleFamilySource::new(),
-            "ProjectMemoryBundle requires an injected provider factory; the native EdgeClaw provider is not ported.",
-        ),
         (
             MemoryBundleFamilySource::new().with_provider_factory(Arc::new(|_| {
                 Err(MemoryBundleError::Factory(MemoryProviderError::new(

@@ -94,8 +94,9 @@ impl NativeMemoryService for FakeNativeService {
     fn clear_session(&self, _: &JsString) -> Result<(), MemoryProviderError> {
         Ok(())
     }
-    fn close(&self) {
+    fn close(&self) -> Result<(), MemoryProviderError> {
         self.events.push("close");
+        Ok(())
     }
 }
 
@@ -966,14 +967,27 @@ async fn missing_factory_matches_native_selection() {
     assert!(resources.memory.is_none());
     missing.dispose().await.unwrap();
 
-    let mut enabled = ProjectMemoryBundleOptions::new(PROJECT);
-    enabled.config = Some(MemoryConfig::new(true, "edgeclaw"));
+    let scratch = Scratch::new();
+    let mut enabled = ProjectMemoryBundleOptions::new(scratch.0.join("project"));
+    let mut config = MemoryConfig::new(true, "edgeclaw");
+    config.root_dir = scratch.0.join("store").to_string_lossy().as_ref().into();
+    enabled.config = Some(config);
     let bundle = ProjectMemoryBundle::new(enabled);
-    assert_eq!(
-        bundle.stage().unwrap_err(),
-        MemoryBundleError::NativeProviderNotPorted
+    let resources = bundle.stage().expect("#778 native default construction");
+    assert!(resources.memory.is_some(), "#778 native default resolver");
+    assert!(
+        resources.maintenance.is_some(),
+        "#778 native default maintenance"
     );
-    bundle.dispose().await.unwrap();
+    assert!(
+        resources.management.is_some(),
+        "#778 native default management"
+    );
+    bundle.dispose().await.expect("#778 native default close");
+    bundle
+        .dispose()
+        .await
+        .expect("#778 native default close once");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

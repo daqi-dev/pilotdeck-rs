@@ -3,7 +3,7 @@
 //! Ports `ProjectMemoryBundle.ts:41-86` (stage/dispose and injected provider
 //! ownership) and `createLocalGateway.ts:1238-1259` (`memory_list` /
 //! `memory_wipe`). The EdgeClaw sqlite store is introduced by A6.6-pr10a in
-//! [`edgeclaw`]; provider composition itself still takes an injected factory.
+//! [`edgeclaw`]; provider composition defaults to the native EdgeClaw factory.
 use crate::runtime::project::{
     DisposeFuture, Now, RuntimeError, RuntimeJsError, RuntimeResources, TelemetryClient,
 };
@@ -42,8 +42,8 @@ pub trait MemoryManagementService: Send + Sync {
     fn clear_session(&self, session_key: &JsString) -> Result<(), MemoryProviderError>;
 }
 
-/// The native EdgeClaw service shape, used only by the deprecated
-/// `createProvider` injection point. No EdgeClaw implementation lives here.
+/// Native EdgeClaw service contract shared by the default factory and the
+/// deprecated `createProvider` injection point.
 pub trait NativeMemoryService: Send + Sync {
     fn run_due_scheduled_maintenance(&self, reason: &str) -> MemoryFuture<'_, ()>;
     fn list(&self, limit: usize) -> Result<Vec<JsValue>, MemoryProviderError>;
@@ -51,7 +51,7 @@ pub trait NativeMemoryService: Send + Sync {
     /// JS string identity: the raw UTF-16 units, not a lossy `String`, so a
     /// lone surrogate reaches the provider as `"\ud800"` rather than U+FFFD.
     fn clear_session(&self, session_key: &JsString) -> Result<(), MemoryProviderError>;
-    fn close(&self);
+    fn close(&self) -> Result<(), MemoryProviderError>;
 }
 
 pub type MemoryFuture<'a, T> =
@@ -309,7 +309,6 @@ pub enum MemoryBundleError {
     /// error (`ProjectMemoryBundle.ts:57-73`): `name`, `code`, and UTF-16
     /// `message` survive instead of collapsing into a plain `String`.
     Factory(MemoryProviderError),
-    NativeProviderNotPorted,
 }
 impl MemoryBundleError {
     /// The original JS error for [`Self::Factory`], for callers that project
@@ -328,12 +327,7 @@ impl fmt::Display for MemoryBundleError {
                 f.write_str("ProjectMemoryBundle.stage called more than once.")
             }
             Self::AlreadyDisposing => f.write_str("ProjectMemoryBundle is already disposing."),
-            Self::Factory(error) => {
-                f.write_str(&String::from_utf16_lossy(error.message.units()))
-            }
-            Self::NativeProviderNotPorted => f.write_str(
-                "ProjectMemoryBundle requires an injected provider factory; the native EdgeClaw provider is not ported.",
-            ),
+            Self::Factory(error) => f.write_str(&String::from_utf16_lossy(error.message.units())),
         }
     }
 }
@@ -491,17 +485,19 @@ impl ProjectMemoryBundle {
                 telemetry: self.options.telemetry.clone(),
             };
             factory(&input).map(|created| created.map(wrap_native))
-        } else if self
-            .options
-            .config
-            .as_ref()
-            .is_some_and(|config| config.enabled && config.provider.equals_str("edgeclaw"))
-        {
-            Err(MemoryBundleError::NativeProviderNotPorted)
-        } else {
-            // The native factory returns undefined for missing/disabled
-            // configurations; the injected factory covers those states here.
+        } else if crate::mutants::on("native-default-empty") {
             Ok(None)
+        } else {
+            let input = NativeMemoryProviderOptions {
+                project_root: self.options.project_root.clone(),
+                config: self.options.config.clone(),
+                model_config: self.options.model_config.clone(),
+                agent_model: self.options.agent_model.clone(),
+                now: self.options.now.clone(),
+                telemetry: self.options.telemetry.clone(),
+            };
+            edgeclaw::factory::create_from_config(&input)
+                .map(|created| created.map(|native| wrap_native(native.into_native())))
         };
         match created {
             Ok(Some(provider)) => {
@@ -607,8 +603,9 @@ fn wrap_native(native: NativeProjectMemoryProvider) -> ProjectMemoryProvider {
     let dispose: MemoryDisposeFn = Arc::new(move || {
         let service = Arc::clone(&dispose_service);
         Box::pin(async move {
-            service.close();
-            Ok(())
+            service
+                .close()
+                .map_err(|error| RuntimeError::from(MemoryBundleError::Factory(error)))
         })
     });
     ProjectMemoryProvider {
