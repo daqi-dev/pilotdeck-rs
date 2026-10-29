@@ -275,6 +275,19 @@ pub struct EdgeClawMemoryService {
 }
 
 impl EdgeClawMemoryService {
+    /// Context-facing facade (`service.ts:900-913`); the retriever owns cache
+    /// and its extractor timeout, and deliberately does not accept a signal.
+    pub async fn retrieve_context(
+        &self,
+        query: &JsString,
+        options: &super::retriever::RetrievalOptions,
+    ) -> Result<JsObject> {
+        self.retriever
+            .retrieve_context(query, options)
+            .await
+            .map_err(Into::into)
+    }
+
     pub fn new(options: ServiceOptions) -> Result<Self> {
         Self::with_dependencies(options, ServiceDependencies::default())
     }

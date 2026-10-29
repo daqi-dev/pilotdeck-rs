@@ -21,6 +21,7 @@ pub mod heartbeat;
 pub mod llm;
 pub mod messages;
 mod node_fs;
+pub mod provider;
 #[path = "retrieval/helpers.rs"]
 pub mod retrieval;
 #[path = "retrieval/retriever.rs"]

@@ -222,7 +222,7 @@ impl LlmMemoryExtractor {
     pub async fn decide_file_memory_route(
         &self,
         input: &DecideFileMemoryRouteInput,
-        debug: &mut dyn FnMut(JsValue),
+        debug: &mut (impl FnMut(JsValue) + ?Sized),
     ) -> MemoryRoute {
         let system_prompt = JsString::from(
             [
@@ -281,7 +281,7 @@ impl LlmMemoryExtractor {
     pub async fn select_recall_project(
         &self,
         input: &SelectRecallProjectInput,
-        debug: &mut dyn FnMut(JsValue),
+        debug: &mut (impl FnMut(JsValue) + ?Sized),
     ) -> JsObject {
         if input.shortlist.is_empty() {
             return JsObject::new();
@@ -440,7 +440,7 @@ impl LlmMemoryExtractor {
     pub async fn select_file_manifest_entries(
         &self,
         input: &SelectFileManifestEntriesInput,
-        debug: &mut dyn FnMut(JsValue),
+        debug: &mut (impl FnMut(JsValue) + ?Sized),
     ) -> Vec<JsString> {
         let system_prompt = JsString::from(
             [
