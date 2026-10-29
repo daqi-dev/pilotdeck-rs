@@ -86,12 +86,14 @@ fn array_or_empty(value: &Value) -> &[Value] {
 /// TS property access: `result.indexStats` on the maintenance outcome is
 /// `undefined` when the key is absent (both runDueScheduledMaintenance sides
 /// spread the key only when present), and `observe.mts::encode` renders that
-/// explicitly. A serde `Null` (the indexing of a missing key) must not fake
-/// the JS `undefined`.
+/// explicitly. An explicit `null` must not fake the JS `undefined`: the TS
+/// observer's `encode` wraps only `undefined` and returns `null` unchanged,
+/// so a present value — `null` included — is kept verbatim and only a
+/// missing key becomes the envelope (`index_stats_null_is_not_ts_undefined`).
 fn ts_undefined_or(value: &Value, key: &str) -> Value {
     match value.get(key) {
-        Some(field) if !field.is_null() => field.clone(),
-        _ => json!({"$type": "undefined"}),
+        Some(field) => field.clone(),
+        None => json!({"$type": "undefined"}),
     }
 }
 
@@ -1389,6 +1391,67 @@ fn rust_matches_ts_oracle() {
                 "#776 scenario {name}: {key} differs from the real TS"
             );
         }
+    }
+}
+
+/// #1036 fix-r2 (review P0): `observe.mts::encode` wraps only `undefined`
+/// in the `{"$type": "undefined"}` envelope and returns an explicit `null`
+/// unchanged, and the two unindexed maintenance cells' oracle values are that
+/// envelope (oracle.json `maintenance-interval-just-before` /
+/// `maintenance-backlog-below`). The observation normalization must render
+/// only an absent key as `undefined`: a regressed
+/// `MaintenanceOutcome::to_value()` that emits `indexStats: null` instead of
+/// omitting the key has to fail those cells, not pass them as `undefined`.
+/// The regressed shape is injected here because the product never emits it
+/// today — without this cell the ruler would cover that regression nowhere.
+#[test]
+fn index_stats_null_is_not_ts_undefined() {
+    let envelope = json!({"$type": "undefined"});
+    // The current product shape: the key is absent when indexing did not run
+    // (service/orchestration.rs inserts it only for `Some(stats)`), so the
+    // cell comparison passes against the envelope.
+    let absent = ts_undefined_or(&json!({"indexRan": false, "dreamRan": false}), "indexStats");
+    assert_eq!(
+        absent, envelope,
+        "#1036 absent indexStats must stay the undefined envelope"
+    );
+    // A regressed `to_value()` emitting an explicit null must stay null and
+    // fail against the oracle's envelope — not be normalized to `undefined`.
+    let mut regressed = JsObject::new();
+    regressed.insert("indexRan".into(), JsValue::Bool(false));
+    regressed.insert("indexStats".into(), JsValue::Null);
+    let observed = ts_undefined_or(&encode_js(&JsValue::Object(regressed)), "indexStats");
+    assert_eq!(
+        observed,
+        Value::Null,
+        "#1036 explicit null indexStats must stay null: a regressed \
+         MaintenanceOutcome::to_value emitting null has to fail the oracle \
+         cells that require undefined, not pass as undefined"
+    );
+    // Bind the expectation to the real oracle: the unindexed cells require
+    // the envelope, so the null above would fail their comparison.
+    let oracle: Value = serde_json::from_str(ORACLE).expect("#1036 oracle is valid JSON");
+    let scenarios = oracle["scenarios"]
+        .as_array()
+        .expect("#1036 oracle scenarios");
+    for cell in [
+        "maintenance-interval-just-before",
+        "maintenance-backlog-below",
+    ] {
+        let expected = scenarios
+            .iter()
+            .find(|scenario| scenario["name"] == cell)
+            .unwrap_or_else(|| panic!("#1036 oracle is missing scenario {cell}"))
+            ["observed"]["result"]["indexStats"]
+            .clone();
+        assert_eq!(
+            expected, envelope,
+            "#1036 oracle cell {cell} must require the undefined envelope"
+        );
+        assert_ne!(
+            observed, expected,
+            "#1036 the explicit null must fail the {cell} oracle comparison"
+        );
     }
 }
 
