@@ -1,7 +1,9 @@
 //! SDK CLI dispatch and shared connection preflight.
+mod output;
 mod sessions;
 mod settings;
 mod transport;
+mod turn;
 use crate::paths::{self, Env};
 use crate::{Failure, stdout_line};
 use pilotdeck_protocol::json_syntax;
@@ -42,8 +44,9 @@ pub fn run_sdk_cli(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure
             Ok(0)
         }
         Some("run") => {
-            create_client(&read_connection(&argv[1..], env, cwd)?)?;
-            Err(Failure::Todo("pilotdeck run (SDK sessions.create)"))
+            let connection = read_connection(&argv[1..], env, cwd)?;
+            create_client(&connection)?;
+            turn::run(&argv[1..], &connection)
         }
         Some("resume") => run_resume(&argv[1..], env, cwd),
         Some("sessions") => sessions::run(&argv[1..], env, cwd),
@@ -289,7 +292,7 @@ mod tests {
         assert_eq!(run(&["resume", ""]), resume_usage);
         // The prompt is checked only after sessions.resume reaches the Gateway.
         assert!(run(&["resume", "s1"]).starts_with("TODO pilotdeck resume"));
-        assert!(run(&["run"]).starts_with("TODO pilotdeck run"));
+        // The run network branch is covered by sdk_run_exit.
     }
 
     #[test]
