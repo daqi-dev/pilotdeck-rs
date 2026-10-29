@@ -3,7 +3,7 @@
 use super::Connection;
 use crate::Failure;
 use futures_util::{SinkExt, StreamExt};
-use pilotdeck_protocol::{JsValue, parse_json};
+use pilotdeck_protocol::{JsValue, number::number_to_string, parse_json};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -283,8 +283,9 @@ fn next_sequence(frame: &JsValue, id: &str, previous: f64) -> Result<Option<f64>
     }
     if sequence != previous + 1.0 {
         return Err(error(&format!(
-            "Gateway event sequence gap for {id}: expected {}, received {sequence}.",
-            previous + 1.0
+            "Gateway event sequence gap for {id}: expected {}, received {}.",
+            number_to_string(previous + 1.0),
+            number_to_string(sequence)
         )));
     }
     Ok(Some(sequence))
@@ -386,7 +387,12 @@ mod tests {
             "../../tests/fixtures/sdk-run-validation/oracle.json"
         ))
         .expect("#1058 sequence validation oracle");
-        for case in oracle["sequences"].as_array().expect("#1058 sequence rows") {
+        let rows = oracle["sequences"].as_array().expect("#1058 sequence rows");
+        verify(
+            rows.len() == 15,
+            "#1058 registered sequence validation rows",
+        );
+        for case in rows {
             let input = &case["input"];
             let frame = parse_json(&input.to_string()).expect("#1058 sequence frame JSON");
             let result = next_sequence(

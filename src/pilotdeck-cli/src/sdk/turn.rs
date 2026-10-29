@@ -251,7 +251,9 @@ mod tests {
             "../../tests/fixtures/sdk-run-validation/oracle.json"
         ))
         .expect("#1058 model validation oracle");
-        for case in oracle["models"].as_array().expect("#1058 model rows") {
+        let rows = oracle["models"].as_array().expect("#1058 model rows");
+        verify(rows.len() == 12, "#1058 registered model validation rows");
+        for case in rows {
             let input = &case["input"];
             let catalog =
                 pilotdeck_protocol::parse_json(&json!({"items":input["items"]}).to_string())

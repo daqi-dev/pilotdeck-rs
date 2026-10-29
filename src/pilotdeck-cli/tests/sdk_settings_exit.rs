@@ -33,39 +33,9 @@ const URL: &str = "ws://127.0.0.1:28999/ws";
 const BOUND: Duration = Duration::from_secs(15);
 static PORT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-// Bind the negative verdict to the current libtest and exact assertion; arbitrary
-// server/CLI text cannot forge a kill. Uses negative_suite.ReceiptRun's protocol.
-fn verify(condition: bool, assertion: &str) {
-    if condition {
-        return;
-    }
-    if let Ok(config) = std::env::var("PDRS_NEGATIVE_RECEIPTS") {
-        let config: Value = serde_json::from_str(&config).expect("#1029 receipt configuration");
-        let thread = std::thread::current();
-        let name = thread.name().expect("#1029 named test");
-        for target in config["targets"].as_array().expect("#1029 receipt targets") {
-            if target["test"] == name && target["assertion"] == assertion {
-                let path = Path::new(target["path"].as_str().expect("#1029 receipt path"));
-                let temporary = path.with_extension("tmp");
-                let mut receipt = fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&temporary)
-                    .expect("#1029 fresh receipt");
-                receipt
-                    .write_all(
-                        config["nonce"]
-                            .as_str()
-                            .expect("#1029 receipt nonce")
-                            .as_bytes(),
-                    )
-                    .expect("#1029 receipt write");
-                fs::rename(temporary, path).expect("#1029 atomic receipt publication");
-            }
-        }
-    }
-    panic!("{assertion}");
-}
+#[path = "common/negative_receipt.rs"]
+mod negative_receipt;
+use negative_receipt::verify;
 
 struct Runtime(PathBuf);
 impl Runtime {

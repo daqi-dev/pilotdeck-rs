@@ -46,6 +46,9 @@ for (const input of [
   {name:'negative', previous:-1, seq:-1}, {name:'fractional', previous:-1, seq:0.5},
   {name:'missing', previous:-1}, {name:'null', previous:-1, seq:null},
   {name:'string', previous:-1, seq:'0'}, {name:'boolean', previous:-1, seq:false},
+  {name:'large-received', previous:-1, seq:1e21},
+  {name:'rounded-received', previous:-1, seq:9007199254740993},
+  {name:'large-expected', previous:1e21, seq:1e22},
 ]) {
   const transport = new GatewayTransport({url:'unused', token:'unused'});
   let output = {sequence:null};
