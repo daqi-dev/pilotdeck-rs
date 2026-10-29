@@ -634,3 +634,169 @@ fn regenerates_identically(fixture: &str) {
 fn sessions_messages_oracle_regenerates_identically() {
     regenerates_identically("sdk-sessions-messages");
 }
+
+#[test]
+#[ignore = "requires Node v22.22.0; corrupts private capture inputs, never reruns TS"]
+fn sessions_messages_extraction_rejects_unbound_evidence() {
+    let node = std::env::var_os("NODE22").unwrap_or_else(|| "node".into());
+    let version = Command::new(&node)
+        .arg("--version")
+        .output()
+        .expect("#1028 integrity guard Node version");
+    verify(
+        version.status.success() && version.stdout == b"v22.22.0\n",
+        "#1028 integrity guard requires Node v22.22.0",
+    );
+    let original: Value =
+        serde_json::from_str(include_str!("fixtures/sdk-sessions-messages/source.json"))
+            .expect("#1028 integrity original source");
+    // Preserve raw values: the observed wire includes a lone UTF-16 surrogate,
+    // which serde_json::Value deliberately cannot materialize as a Rust String.
+    type RawObject = BTreeMap<String, Box<serde_json::value::RawValue>>;
+    let supplemental: RawObject = serde_json::from_str(
+        original["supplemental.json"]
+            .as_str()
+            .expect("#1028 integrity supplemental bytes"),
+    )
+    .expect("#1028 integrity supplemental JSON");
+    let extract = |source: &Value| {
+        let runtime = Runtime::new();
+        fs::write(
+            runtime.0.join("generate.mjs"),
+            include_str!("fixtures/sdk-sessions-messages/generate.mjs"),
+        )
+        .expect("#1028 private generator");
+        fs::write(
+            runtime.0.join("source.json"),
+            serde_json::to_vec(source).expect("#1028 private source serialization"),
+        )
+        .expect("#1028 private source");
+        let output = runtime.0.join("extracted");
+        let result = Command::new(&node)
+            .arg(runtime.0.join("generate.mjs"))
+            .arg(&output)
+            .output()
+            .expect("#1028 private extraction");
+        (result, fs::read(output.join("oracle.json")).ok())
+    };
+    let positive = || {
+        let (result, oracle) = extract(&original);
+        verify(
+            result.status.success() && oracle.as_deref() == Some(ORACLE.as_bytes()),
+            "#1028 integrity positive extracts identical fixture",
+        );
+    };
+    positive();
+    let mut cases = Vec::new();
+    for file in [
+        "dist/src/cli/pilotdeck.js",
+        "dist/src/cli/sdkCli.js",
+        "packages/sdk/dist/index.js",
+        "packages/sdk/dist/client.js",
+    ] {
+        for invalid in [false, true] {
+            let mut changed = supplemental.clone();
+            let mut hashes: Value = serde_json::from_str(
+                changed
+                    .get("sourceSha256")
+                    .expect("#1028 source hashes exist")
+                    .get(),
+            )
+            .expect("#1028 recorded source hashes");
+            if invalid {
+                hashes[file] = "not-a-sha256".into();
+            } else {
+                hashes
+                    .as_object_mut()
+                    .expect("#1028 provenance object")
+                    .remove(file);
+            }
+            changed.insert(
+                "sourceSha256".into(),
+                serde_json::value::to_raw_value(&hashes).expect("#1028 changed source hashes"),
+            );
+            let mut source = original.clone();
+            source["supplemental.json"] = serde_json::to_string(&changed)
+                .expect("#1028 changed supplemental provenance")
+                .into();
+            let kind = if invalid { "invalid" } else { "missing" };
+            cases.push((
+                format!("{kind} provenance {file}"),
+                source,
+                format!("#1028 compiled provenance {file}"),
+            ));
+        }
+    }
+    let host = "raw/host-b10/cases/sessions-messages--argv/events.json";
+    for supplemental_case in [false, true] {
+        for stream in ["stdout", "stderr"] {
+            let mut source = original.clone();
+            let mut changed = supplemental.clone();
+            let mut captures: Vec<RawObject> = serde_json::from_str(
+                changed
+                    .get("cases")
+                    .expect("#1028 supplemental captures exist")
+                    .get(),
+            )
+            .expect("#1028 raw supplemental captures");
+            let mut events: Value = if supplemental_case {
+                serde_json::from_str(
+                    captures
+                        .first()
+                        .expect("#1028 first supplemental capture")
+                        .get("events")
+                        .expect("#1028 supplemental events exist")
+                        .get(),
+                )
+                .expect("#1028 supplemental events JSON")
+            } else {
+                serde_json::from_str(source[host].as_str().expect("#1028 host events bytes"))
+                    .expect("#1028 host events JSON")
+            };
+            let event = events
+                .as_array_mut()
+                .expect("#1028 recorded events array")
+                .iter_mut()
+                .find(|event| event["stream"] == stream)
+                .expect("#1028 recorded stream event");
+            event["bytesBase64"] = "".into();
+            let (kind, id) = if supplemental_case {
+                captures
+                    .first_mut()
+                    .expect("#1028 first supplemental capture to change")
+                    .insert(
+                        "events".into(),
+                        serde_json::value::to_raw_value(&events)
+                            .expect("#1028 changed stream events"),
+                    );
+                changed.insert(
+                    "cases".into(),
+                    serde_json::value::to_raw_value(&captures).expect("#1028 changed captures"),
+                );
+                source["supplemental.json"] = serde_json::to_string(&changed)
+                    .expect("#1028 changed supplemental events")
+                    .into();
+                ("supplemental", "sessions-messages--shape-complete")
+            } else {
+                source[host] = events.to_string().into();
+                ("host", "sessions-messages--argv")
+            };
+            cases.push((
+                format!("{kind} {stream} events"),
+                source,
+                format!("#1028 raw {stream}/events bytes {id}"),
+            ));
+        }
+    }
+    for (label, source, expected) in cases {
+        let (result, oracle) = extract(&source);
+        verify(
+            !result.status.success()
+                && String::from_utf8_lossy(&result.stderr).contains(&expected)
+                && oracle.is_none(),
+            &format!("#1028 extraction rejects {label}"),
+        );
+        println!("#1028 extraction rejects {label}: {expected}");
+    }
+    positive();
+}

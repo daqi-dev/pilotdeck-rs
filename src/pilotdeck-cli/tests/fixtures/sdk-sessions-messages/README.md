@@ -8,7 +8,13 @@
 
 唯一 CLI 输出归一化是 `specs/cli-parity/normalization.md` §6 允许的 TS stderr 开头 SQLite 完整两行。请求 UUID 只在 mock 回放中替换为 `<request>`，CLI 输出不变。补充响应保留原始 JSON 字符串，避免 serde_json 在载入测试定义时拒绝孤立 UTF-16 代理项；这些字符仍通过实际 transport/JS codec 与完整 stdout 比较。
 
+fix-r1 的 13 格由更新后的探针重新执行，`sourceSha256` 在启动 CLI 前记录 `dist/src/cli/pilotdeck.js`、`dist/src/cli/sdkCli.js`、`packages/sdk/dist/index.js`、`packages/sdk/dist/client.js`，以及两份源码；这些 dist 文件是本地构建产物，未被基线 Git 跟踪。哈希标识本次实际使用的产物，不证明它们由某份源码可复现构建。39 格宿主原件的 `events.json` 和 13 格补充原件的 `events` 均按流拼回 bytes，必须分别等于原始 stdout/stderr 后才能剥警告；原件保留完整事件。ignored `sessions_messages_extraction_rejects_unbound_evidence` 用独立临时输入验证四个编译模块 SHA 缺失/非法及两组原件的 stdout/stderr 事件损坏均被专属断言拒绝，前后各核一次完整正控。该检查不将补充探针升级为 D0 跨流顺序验收。
+
 Rust 测试 `tests/sdk_sessions_messages_exit.rs` 原样沿用 P02 的隔离目录、进程回收、wire 回放和有界租约实现；本包范围不允许把 P02 私有助手抽成共享模块，因此只在新文件复用同一实现，不改变租约语义。获取 `/tmp/pdrs-parity.lock` 最多等待 180 秒，释放 guard 最多 2 秒，不回收前驱锁。每格 mock/CLI 最多 15 秒。SIGINT/SIGTERM 在收到 `read_session_messages` 后发送，覆盖请求前驱永不回复时的取消；没有新增 transport 生命周期逻辑。原有 P02 的超时/租约边界测试和 128 MiB WebSocket 上限继续有效。
+
+已知债务：P02/P03 测试助手重复，需单独迁移到共享模块并验证两套租约/回收边界，前置于 D 阶段收尾；由协调者转跟进，本轮不抽取。P02 的生成器同样缺少 events/原始 bytes 校验，需在 D1 对拍证据收尾前补齐；本轮只修 P03。
+
+范围限制：messages 大响应未对拍，52 格不覆盖 100 MiB+1 或 128 MiB 邻域；P02 的大帧成功证据不能代替 messages 完整历史输出验收。128 MiB 上限同样作用于 messages，范围补充见 `specs/gateway-parity/diffs/D1-SDK-WS-RESOURCE-LIMIT-001-R1.md`，不声称新增加了 TS 大响应等价证据。
 
 先设置调用方的 `CARGO_TARGET_DIR`、两个 `line-tables-only` profile，并运行 `scripts/cargo-slots.sh`，然后在 `src/` 执行：
 
@@ -24,7 +30,7 @@ PDRS_BASELINE=/path/to/PilotDeck node \
   src/pilotdeck-cli/tests/fixtures/sdk-sessions-messages/probe.mjs NEW_OUTPUT_DIR
 ```
 
-负控位于 `src/pilotdeck-gateway/tests/fixtures/sdk-sessions-messages/negative_controls.py`，与 P02 同处以便 main 的 anchor_selfcheck 发现。18 个源码/fixture 变异分别覆盖 RPC、session/project 参数、首 ID、空白 ID、usage、messages 投影/nullish/标量/完整数组、result 错误、成功退出码、52 格覆盖数及金样/原件重生成。三项 `--node-runtime` 控制覆盖 PATH 与 NODE22 版本选择、版本命令非零退出。
+负控位于 `src/pilotdeck-gateway/tests/fixtures/sdk-sessions-messages/negative_controls.py`，与 P02 同处以便 main 的 anchor_selfcheck 发现。26 个源码/fixture 变异覆盖原有 18 项（RPC、session/project 参数、首 ID、空白 ID、usage、messages 投影/nullish/标量/完整数组、result 错误、成功退出码、52 格覆盖数及金样/原件重生成），另加四个编译模块清单项和 stdout/stderr、宿主/补充事件校验的八项旁路变异。`first-id` 精确绑定矩阵真实首个失败格 `sessions-messages--missing-h`。三项 `--node-runtime` 控制覆盖 PATH 与 NODE22 版本选择、版本命令非零退出。
 
 源码变异通过共享 `mutating_sources`，所有产品源码、测试、fixture 和执行器必须等于 HEAD；新文件未提交时拒跑。每项顺序执行正控、应用变异、`cargo test --no-run`、负控、恢复正控，使用 `negative_suite` 的当前 nonce 回执与精确测试名/消息判杀；全部执行完再汇总，任一 SURVIVED/INVALID 非零退出。必须使用调用方传入的 `CARGO_TARGET_DIR`，不使用影子仓库或第二构建目录，不使用 quiet/nocapture。预计长于 20 分钟的全量由协调者提交后在宿主执行：
 

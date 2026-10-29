@@ -10,6 +10,13 @@ const output = resolve(process.argv[2]);
 const read = path => { assert.ok(Object.hasOwn(bundled,path), `#1028 source missing ${path}`); return Buffer.from(bundled[path]); };
 const json = path => JSON.parse(read(path));
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
+function verifyEvents(events, stdout, stderr, id) {
+  for (const [stream, bytes] of [['stdout', stdout], ['stderr', stderr]]) {
+    const observed = Buffer.concat(events.filter(event => event.stream === stream)
+      .map(event => Buffer.from(event.bytesBase64, 'base64')));
+    assert.deepEqual(observed, bytes, `#1028 raw ${stream}/events bytes ${id}`);
+  }
+}
 const inputs = json('cases.json');
 assert.equal(inputs.length, 39, '#1028 registered 39 messages cells');
 assert.equal(read('raw/node-version.stdout.bin').toString(), 'v22.22.0\n', '#1028 source Node version');
@@ -30,6 +37,7 @@ const cases = inputs.map(input => {
   const stdout = load('stdout.bin'), stderr = load('stderr.bin');
   assert.equal(sha(stdout), result.stdoutSha256, '#1028 source stdout digest');
   assert.equal(sha(stderr), result.stderrSha256, '#1028 source stderr digest');
+  verifyEvents(JSON.parse(load('events.json')), stdout, stderr, input.id);
   const mock = input.mockGateway ? load('mock.stdout.jsonl').toString().trim().split('\n').map(JSON.parse) : [];
   const wire = mock.filter(r => ['send','receive'].includes(r.kind)).map(r => ({kind:r.kind, frame:r.frame}));
   // IDs are observations, not CLI output: bind each replay response to the actual UUID.
@@ -50,8 +58,18 @@ const cases = inputs.map(input => {
 const supplemental = json('supplemental.json');
 assert.equal(supplemental.nodeVersion, 'v22.22.0', '#1028 live Node version');
 assert.equal(supplemental.cases.length, 13, '#1028 registered live shape and ID cells');
+for (const file of [
+  'dist/src/cli/pilotdeck.js',
+  'dist/src/cli/sdkCli.js',
+  'packages/sdk/dist/index.js',
+  'packages/sdk/dist/client.js',
+]) {
+  assert.match(supplemental.sourceSha256[file] ?? '', /^[0-9a-f]{64}$/, `#1028 compiled provenance ${file}`);
+}
 for (const captured of supplemental.cases) {
   const item = structuredClone(captured);
+  verifyEvents(item.events, Buffer.from(item.stdout), Buffer.from(item.stderrRaw), item.input.id);
+  delete item.events; // The original events remain in source.json, before normalization.
   const requests = item.wire.filter(row=>row.kind==='receive' && row.frame.type==='request');
   assert.ok(requests.length<=1, '#1028 one live RPC');
   const id = requests[0]?.frame.id;
