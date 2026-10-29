@@ -4180,7 +4180,8 @@ async fn recreation_idle_dispose_panic_cannot_skip_drain() {
     retry_idle_panic("dispose-panic").await;
 }
 
-async fn retry_cancelled_error(via_owner: bool, after_send: bool) {
+async fn retry_cancelled_error(via_owner: bool, after_send: bool, idle_sweep: bool) {
+    let now = Arc::new(std::sync::atomic::AtomicI64::new(0));
     let h = Harness::new("r2-cancelled-error");
     let (old, _original, gate) = retry_fault(&h, "error").await;
     let owner = if via_owner {
@@ -4189,6 +4190,11 @@ async fn retry_cancelled_error(via_owner: bool, after_send: bool) {
             factory: h.factory.clone(),
         }));
         options.idle_sweep_interval_ms = 0;
+        if idle_sweep {
+            let clock = now.clone();
+            options.now_ms = Arc::new(move || clock.load(Ordering::SeqCst));
+            options.idle_timeout_ms = 10;
+        }
         let owner = SessionOwner::new(options);
         owner
             .get_or_create(h.context())
@@ -4234,6 +4240,17 @@ async fn retry_cancelled_error(via_owner: bool, after_send: bool) {
         .await
         .expect("#1022 r2 cancelled caller completes before retry");
     }
+    if idle_sweep {
+        let owner = owner.as_ref().expect("#1022 r3 idle sweep owner");
+        now.store(11, Ordering::SeqCst);
+        owner.sweep_idle();
+        assert!(
+            owner
+                .current_handle(&h.context().session_key)
+                .is_some_and(|current| current.same_identity(&old)),
+            "#1022 r3 idle sweep retains pending cleanup error"
+        );
+    }
     let error = followup_bounded("r2 error replay", create())
         .await
         .err()
@@ -4276,7 +4293,9 @@ async fn retry_cancelled_error(via_owner: bool, after_send: bool) {
         "#1022 r2 old storage closes once"
     );
     if let Some(owner) = owner {
-        owner.shutdown().await.expect("#1022 r2 owner cleanup");
+        followup_bounded("r2 owner cleanup", owner.shutdown())
+            .await
+            .expect("#1022 r2 owner cleanup");
     } else {
         new.dispose("cleanup".into())
             .await
@@ -4286,19 +4305,129 @@ async fn retry_cancelled_error(via_owner: bool, after_send: bool) {
 }
 #[tokio::test]
 async fn recreation_cancelled_factory_error_is_replayed() {
-    retry_cancelled_error(false, false).await;
+    retry_cancelled_error(false, false, false).await;
 }
 #[tokio::test]
 async fn recreation_unconsumed_factory_error_is_replayed() {
-    retry_cancelled_error(false, true).await;
+    retry_cancelled_error(false, true, false).await;
 }
 #[tokio::test]
 async fn recreation_cancelled_owner_error_is_replayed() {
-    retry_cancelled_error(true, false).await;
+    retry_cancelled_error(true, false, false).await;
 }
 #[tokio::test]
 async fn recreation_unconsumed_owner_error_is_replayed() {
-    retry_cancelled_error(true, true).await;
+    retry_cancelled_error(true, true, false).await;
+}
+
+#[tokio::test]
+async fn recreation_cancelled_owner_error_survives_idle_sweep() {
+    retry_cancelled_error(true, false, true).await;
+}
+#[tokio::test]
+async fn recreation_unconsumed_owner_error_survives_idle_sweep() {
+    retry_cancelled_error(true, true, true).await;
+}
+
+async fn cancelled_timeout_retry(finish_predecessor: bool) {
+    let h = Harness::with_fence_timeout("r3-cancelled-timeout", Duration::from_millis(50));
+    let old = followup_bounded("r3 initial factory", h.factory.create(h.context(), None))
+        .await
+        .expect("#1022 r3 initial factory succeeds");
+    let mut options = SessionOwnerOptions::new(Arc::new(RetryInitialFactory {
+        initial: Mutex::new(Some(old.clone())),
+        factory: h.factory.clone(),
+    }));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    followup_bounded("r3 initial owner", owner.get_or_create(h.context()))
+        .await
+        .expect("#1022 r3 initial owner succeeds");
+    let activity = old
+        .begin_activity()
+        .expect("#1022 r3 predecessor holds activity");
+    assert!(
+        owner.mark_session_dirty(&h.context().session_key, "r3"),
+        "#1022 r3 mark dirty"
+    );
+    let mut sent = owner.creations_sent_for_test();
+    let expected_sent = *sent.borrow() + 1;
+    let mut waiting = owner.get_or_create(h.context());
+    let poll = std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx))).await;
+    assert!(
+        poll.is_pending(),
+        "#1022 r3 caller waits for active predecessor"
+    );
+    drop(waiting);
+    followup_bounded(
+        "r3 cancelled timeout sent",
+        sent.wait_for(|count| *count >= expected_sent),
+    )
+    .await
+    .expect("#1022 r3 abandoned BUSY sent before predecessor completes");
+    assert_eq!(
+        old.state(),
+        HandleState::Draining,
+        "#1022 r3 predecessor still draining at timeout"
+    );
+    assert_eq!(
+        lock(&h.observed.bindings).len(),
+        1,
+        "#1022 r3 timeout cannot publish replacement"
+    );
+    if !finish_predecessor {
+        let error = followup_bounded(
+            "r3 active predecessor retry",
+            owner.get_or_create(h.context()),
+        )
+        .await
+        .err()
+        .expect("#1022 r3 active predecessor still rejects retry");
+        assert_eq!(
+            error.js_error().and_then(|error| error.code.as_deref()),
+            Some("SESSION_WRITER_BUSY"),
+            "#1022 r3 active predecessor preserves BUSY"
+        );
+        assert_eq!(
+            lock(&h.observed.bindings).len(),
+            1,
+            "#1022 r3 active predecessor cannot create storage"
+        );
+    }
+    // The never-completing observation ends here: releasing the real activity
+    // guard is the only event that can let the owned predecessor drain finish.
+    drop(activity);
+    followup_bounded("r3 predecessor completion", old.dispose("finish".into()))
+        .await
+        .expect("#1022 r3 predecessor completes after activity release");
+    let new = followup_bounded(
+        "r3 retry after completed drain",
+        owner.get_or_create(h.context()),
+    )
+    .await
+    .expect("#1022 r3 completed drain must discard abandoned BUSY");
+    assert!(
+        !new.same_identity(&old),
+        "#1022 r3 completed drain publishes replacement"
+    );
+    assert_eq!(
+        lock(&h.observed.bindings).len(),
+        2,
+        "#1022 r3 retry constructs exactly one replacement"
+    );
+    followup_bounded("r3 owner shutdown", owner.shutdown())
+        .await
+        .expect("#1022 r3 owner shutdown succeeds");
+    h.finish("r3-cancelled-timeout").await;
+}
+
+#[tokio::test]
+async fn recreation_cancelled_timeout_retries_after_drain() {
+    cancelled_timeout_retry(true).await;
+}
+#[tokio::test]
+async fn recreation_cancelled_timeout_keeps_active_predecessor() {
+    cancelled_timeout_retry(false).await;
 }
 
 #[tokio::test]

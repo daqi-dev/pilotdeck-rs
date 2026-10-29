@@ -15,7 +15,7 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib r
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --audit
 ```
 
-135 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
+150 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --compile "$OUT_COMPILE"
@@ -50,7 +50,7 @@ writer lease在dispose/rollback一开始被take到局部WriterCloseGuard；guard
 
 fix-r4 将 handle 的 writer guard 接管提前到 adapter.abort 之前，覆盖 abort panic 尚未调用 session.dispose 的路径；正常资源钩子的最后写入仍在 guard Drop 前。factory.new 明确拒绝 ZERO 预算；到期仍完成 canonical path 和一次非阻塞租约尝试，只有忙锁等待受 deadline 约束（忙锁可等待时间仍扣除路径解析耗时）。耗尽预算用真实前驱活动、受控暂停 factory future、虚拟时钟与实际 lease 释放验证，不用 sleep 猜时序。
 
-新增五项：`writer-abort-panic-cleanup`、`writer-zero-budget`、`writer-expired-budget-skips-try`、`same-key-concurrent-skip-cache`、`same-key-cached-skip-cache`。same-key 新变异直接跳过缓存返回；原两条只覆盖 dirty，证据范围按 `A7.2-SESSION-SAME-KEY-001-R1` 更正。未提交产品源码的 mutating_sources 拒跑必须保留；本地一条样本不代表全部135项已编译/判杀。
+原 #745 fix-r4 新增五项：`writer-abort-panic-cleanup`、`writer-zero-budget`、`writer-expired-budget-skips-try`、`same-key-concurrent-skip-cache`、`same-key-cached-skip-cache`。same-key 新变异直接跳过缓存返回；原两条只覆盖 dirty，证据范围按 `A7.2-SESSION-SAME-KEY-001-R1` 更正。未提交产品源码的 mutating_sources 拒跑必须保留；本地一条样本不代表全部150项已编译/判杀。
 
 #1022 补全 ticket 排队负控、FIFO/取消/截止、慢路径预算与 drain seed。`writer_busy_wait_timeout` 不限制 prepare、storage construction、canonicalization 或单次 OS 文件打开/锁尝试的墙钟时间；路径时间仍消耗后续忙锁剩余预算。`followups.mts` 用真实 stdio 实测 drain checkpoint 与 abort throw 后清理，`followups_regenerates_identically` 重新采集并逐字节比较。Rust 的 abort panic 被捕获后仍等 activity 清空再调用 session.dispose，保留原错误；测试保留旧 handle 验证资源无需等 clone Drop。
 
@@ -59,3 +59,7 @@ fix-r4 将 handle 的 writer guard 接管提前到 adapter.abort 之前，覆盖
 #1022 fix-r1：原 `same-key-ticket-bypassed` 在 fdeea180d 实跑 KILLED；两个 worker 都跳过 enter，第二个不会等待前驱信号，不修改这条有效变异。abort 的 &str/String panic 原文与 TS `ABORT_1022` 比对，非字符串 payload 沿用 fallback。已成功取得重建快照的前驱保留 source 到 owner 重试，首次 dispose 错误仍返回；只有已 Disposed 且 activity 已归还时才跳过旧错误，外部提前 dispose 不授予资格。追加差异范围见 `A7.2-SESSION-DRAIN-FILE-STATE-001-R1.md`。
 
 新增 dispose-throw 真实 stdio 金样证明 drain 后 checkpoint 与资源清理，不宣称整个 TS factory/retry 端到端一致；`dispose_failure_followups_regenerates_identically` 重跑完整生成器。新变异与改写的旧锚点均须提交后宿主逐项编译、执行；当前未提交源码触发 HEAD 守卫是 INVALID，绝不计入 COMPILED/KILLED。
+
+#1022 fix-r2 新增 13 项 `r2-*` 变异；fix-r3 再加两项，总数 150。`r3-owner-replays-drained-busy` 与 `r3-idle-sweeps-pending-error` 使用 `#[cfg(test)]` 内的 `option_env!` 编译期开关，分别绑定取消后 drain 完成的重试与 idle sweep 保留未消费清理错误。两项不写产品源码；执行器持有同一树锁、逐项 no-run、精确测试、清除开关后重跑正控。原有 148 项仍必须满足原地变异的 HEAD 守卫，开关模式不豁免任何源码变异。仅编译两项可用 `--compile OUT r3-owner-replays-drained-busy r3-idle-sweeps-pending-error`；完整样本去掉 `--compile` 并只选一个名字。所有 cargo 均复用调用方 target，最终全族由协调者在宿主执行。
+
+pending 仅在错误码为 `SESSION_WRITER_BUSY` 且前驱 `recreation_drained()` 后失效；dispose 清理错误继续保留到外层 caller 消费。idle sweep 不移除 pending record。真实 TS AgentHandle 的 disposal/retry 四格复用 `session-disposal-retry` 金样；Rust future 取消、writer budget、pending 跨 sweep 保留不宣称 TS Router 端到端一致，范围补充见 `A7.2-SESSION-DRAIN-FILE-STATE-001-R3.md`。`writer_busy_wait_timeout` 的墙钟排除项也包括 initial recreation snapshot。

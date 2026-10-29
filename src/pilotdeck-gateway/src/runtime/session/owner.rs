@@ -234,8 +234,32 @@ impl SessionOwner {
                 .lock()
                 .unwrap()
                 .records
-                .get(&context.session_key)
-                .and_then(|record| record.unreported_creation_error.clone());
+                .get_mut(&context.session_key)
+                .and_then(|record| {
+                    // A cancelled caller may leave a transient BUSY behind.
+                    // Completed drain makes that retryable; cleanup errors must
+                    // still reach the public caller, even if the factory worker
+                    // has already acknowledged the underlying disposal error.
+                    let stale_busy =
+                        record
+                            .unreported_creation_error
+                            .as_ref()
+                            .is_some_and(|error| {
+                                error
+                                    .js_error
+                                    .as_ref()
+                                    .and_then(|error| error.code.as_deref())
+                                    == Some("SESSION_WRITER_BUSY")
+                            })
+                            && record.handle.recreation_drained();
+                    #[cfg(test)]
+                    let stale_busy =
+                        stale_busy && option_env!("PDRS_1022_R3_REPLAY_DRAINED_BUSY").is_none();
+                    if stale_busy {
+                        record.unreported_creation_error.take();
+                    }
+                    record.unreported_creation_error.clone()
+                });
             let outcome = if let Some(error) = &pending {
                 Err((**error).clone())
             } else {
@@ -729,10 +753,16 @@ impl SessionOwner {
             .iter()
             .filter(|key| {
                 let record = &state.records[*key];
+                // Idle eviction has no caller to receive an abandoned error.
+                let no_pending_error = record.unreported_creation_error.is_none();
+                #[cfg(test)]
+                let no_pending_error =
+                    no_pending_error || option_env!("PDRS_1022_R3_SWEEP_PENDING_ERROR").is_some();
                 !state
                     .gates
                     .get(*key)
                     .is_some_and(|gate| gate.strong_count() > 0)
+                    && no_pending_error
                     && !self.0.turns.admission.has_active_turn(key)
                     && !self.0.turns.admission.has_maintenance(key)
                     && now.saturating_sub(record.last_used) > self.0.options.idle_timeout_ms

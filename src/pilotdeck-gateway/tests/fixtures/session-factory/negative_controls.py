@@ -12,7 +12,7 @@ import sys
 root = Path(__file__).resolve().parents[5]
 fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 from negative_suite import Case, classify, invalidate_completed, passed
 from _negative_common import mutate
 
@@ -172,14 +172,24 @@ cases = [
     ('r2-factory-send-counts-as-consume', factory, 'let _ = send.send((result, disposal_failure));', 'if let Some(previous) = &disposal_failure { previous.report_recreation_error(); }\n                let _ = send.send((result, disposal_failure));', None, prefix+'recreation_unconsumed_factory_error_is_replayed', '#1022 r2 cancelled caller cleanup error must be replayed'),
     ('r2-factory-consume-not-acknowledged', factory, 'previous.report_recreation_error();', 'let _ = previous;', None, prefix+'recreation_cancelled_factory_error_is_replayed', '#1022 r2 consumed cleanup error allows retry'),
     ('r2-owner-error-not-retained', owner, 'record.unreported_creation_error = Some(error.clone());', 'record.unreported_creation_error = None;', None, prefix+'recreation_cancelled_owner_error_is_replayed', '#1022 r2 cancelled caller cleanup error must be replayed'),
-    ('r2-owner-pending-error-ignored', owner, '.and_then(|record| record.unreported_creation_error.clone());', '.and_then(|record| { let _ = record; None::<Arc<RuntimeError>> });', None, prefix+'recreation_unconsumed_owner_error_is_replayed', '#1022 r2 cancelled caller cleanup error must be replayed'),
+    ('r2-owner-pending-error-ignored', owner, 'record.unreported_creation_error.clone()\n                });', 'None::<Arc<RuntimeError>>\n                });', None, prefix+'recreation_unconsumed_owner_error_is_replayed', '#1022 r2 cancelled caller cleanup error must be replayed'),
     ('r2-owner-consume-not-acknowledged', owner, 'record.unreported_creation_error = None;', 'let _ = record;', None, prefix+'recreation_cancelled_owner_error_is_replayed', '#1022 r2 consumed cleanup error allows retry'),
     ('r2-disposal-fixture-regeneration', Path(__file__).parents[1] / 'session-disposal-retry/oracle.json', '"name": "unobserved-error",', '"name": "wrong-unobserved-error",', None, prefix+'disposal_retry_regenerates_identically', '#280 session-disposal-retry/oracle.json differs'),
     ('r2-disposal-probe-error', Path(__file__).parents[1] / 'session-disposal-retry/generate.mts', "if(name!=='success')throw Error('DISPOSE_1022')", "if(false)throw Error('DISPOSE_1022')", None, prefix+'disposal_retry_regenerates_identically', '#1022 r2 TS disposal error'),
 
     ('r2-owner-acknowledges-wrong-error', owner, '.is_some_and(|pending| Arc::ptr_eq(pending, &error))', '.is_some_and(|pending| { let _ = (pending, &error); true })', None, prefix+'recreation_old_error_waiter_cannot_clear_new_error', '#1022 r2 old waiter cannot acknowledge newer failure'),
     ('r2-guard-drop-panic-is-success', handle, 'self.outcome.is_some() && !std::thread::panicking()', 'self.outcome.is_some()', None, prefix+'recreation_idle_guard_drop_panic_cannot_skip_drain', '#1022 r2 panic predecessor never creates replacement storage'),
+    ('r3-owner-replays-drained-busy', owner, 'option_env!("PDRS_1022_R3_REPLAY_DRAINED_BUSY").is_none()', 'false', None, prefix+'recreation_cancelled_timeout_retries_after_drain', '#1022 r3 completed drain must discard abandoned BUSY'),
+    ('r3-idle-sweeps-pending-error', owner, 'option_env!("PDRS_1022_R3_SWEEP_PENDING_ERROR").is_some()', 'true', None, prefix+'recreation_cancelled_owner_error_survives_idle_sweep', '#1022 r3 idle sweep retains pending cleanup error'),
 ]
+
+# These two cfg(test) branches are selected at compile time by option_env!.
+# Their before/after expressions above also let the ordinary anchor auditor
+# verify the exact source location. No source bytes are mutated for them.
+compile_switches = {
+    'r3-owner-replays-drained-busy': 'PDRS_1022_R3_REPLAY_DRAINED_BUSY',
+    'r3-idle-sweeps-pending-error': 'PDRS_1022_R3_SWEEP_PENDING_ERROR',
+}
 
 def audit():
     rows = []
@@ -229,6 +239,8 @@ env = os.environ.copy()
 if not env.get('CARGO_TARGET_DIR') or not env.get('PDRS_BASELINE'):
     raise SystemExit('caller must set CARGO_TARGET_DIR and PDRS_BASELINE')
 env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only', CARGO_TERM_QUIET='false')
+for switch in compile_switches.values():
+    env.pop(switch, None)
 names = set(args[1:])
 if names - {c[0] for c in cases}:
     raise SystemExit('unknown mutation')
@@ -246,38 +258,89 @@ def run(label, test, compile=False):
     return result
 
 results=[]
-try:
-    with mutating_sources(root, list(dict.fromkeys(c[1] for c in chosen))) as originals:
-        for name,path,old,new,scope,test,assertion in chosen:
-            row=dict(mutation=name,test=test,assertion=assertion,status='INVALID',reason='',compiled=False)
-            try:
-                changed=mutate(originals[path].decode(),scope,[(old,new)])
-                if not compile_only and not passed(run(name+'-positive',test),test):
-                    raise RuntimeError('bound positive test failed')
-                path.write_text(changed)
-                if run(name+'-compile',test,compile=True).returncode:
-                    raise RuntimeError('mutant compile failed')
-                row['compiled']=True
-                if compile_only:
-                    row.update(status='COMPILED',reason='mutant no-run passed')
-                else:
-                    status,reason=classify(run(name+'-negative',test),Case(name,path,old,new,test,assertion,scope))
-                    row.update(status=status,reason=reason)
-            except Exception as error:
-                row.update(status='INVALID',reason=f'{type(error).__name__}: {error}')
-            finally:
-                path.write_bytes(originals[path])
-            if not compile_only:
+source_cases = [c for c in chosen if c[0] not in compile_switches]
+switch_cases = [c for c in chosen if c[0] in compile_switches]
+
+def compile_and_classify(row, case):
+    name,path,old,new,scope,test,assertion = case
+    if run(name+'-compile',test,compile=True).returncode:
+        raise RuntimeError('mutant compile failed')
+    row['compiled']=True
+    if compile_only:
+        row.update(status='COMPILED',reason='mutant no-run passed')
+    else:
+        status,reason=classify(run(name+'-negative',test),Case(name,path,old,new,test,assertion,scope))
+        row.update(status=status,reason=reason)
+
+def restored(row, name, test):
+    if not compile_only:
+        try:
+            if not passed(run(name+'-restored',test),test):
+                row.update(status='INVALID',reason=row['reason']+'; restored test failed')
+        except Exception as error:
+            row.update(status='INVALID',reason=row['reason']+f'; restored: {error}')
+    results.append(row)
+    print(f'{name}: {row["status"]}: {row["reason"]}',flush=True)
+
+def guard_failed(group, error):
+    # A failed guard means the tree may not be restored: every row recorded so
+    # far is untrusted, not only this group's (#979 P0 / #1037, shared
+    # invalidate_completed also revokes ``compiled``). Unrun rows stay INVALID.
+    invalidate_completed(results, f'guard: {error}')
+    recorded = {row['mutation'] for row in results}
+    for name,path,old,new,scope,test,assertion in group:
+        if name not in recorded:
+            results.append(dict(mutation=name,test=test,assertion=assertion,status='INVALID',compiled=False,reason=f'guard: {error}'))
+
+source_guard_error = None
+
+if source_cases:
+    try:
+        with mutating_sources(root, list(dict.fromkeys(c[1] for c in source_cases))) as originals:
+            for name,path,old,new,scope,test,assertion in source_cases:
+                row=dict(mutation=name,test=test,assertion=assertion,status='INVALID',reason='',compiled=False)
                 try:
-                    if not passed(run(name+'-restored',test),test):
-                        row.update(status='INVALID',reason=row['reason']+'; restored test failed')
+                    changed=mutate(originals[path].decode(),scope,[(old,new)])
+                    if not compile_only and not passed(run(name+'-positive',test),test):
+                        raise RuntimeError('bound positive test failed')
+                    path.write_text(changed)
+                    compile_and_classify(row, (name,path,old,new,scope,test,assertion))
                 except Exception as error:
-                    row.update(status='INVALID',reason=row['reason']+f'; restored: {error}')
-            results.append(row)
-            print(f'{name}: {row["status"]}: {row["reason"]}',flush=True)
-except Exception as error:
-    invalidate_completed(results, f'source guard: {error}')
-    results.extend(dict(mutation=c[0],test=c[5],assertion=c[6],status='INVALID',compiled=False,reason=f'source guard: {error}') for c in chosen if not any(row['mutation']==c[0] for row in results))
+                    row.update(status='INVALID',reason=f'{type(error).__name__}: {error}')
+                finally:
+                    path.write_bytes(originals[path])
+                restored(row, name, test)
+    except Exception as error:
+        source_guard_error = error
+        guard_failed(source_cases, error)
+
+# Compile-time controls never write product sources. They still serialize with
+# source mutators through the official tree lock; no HEAD guard is bypassed for
+# the source-mutation group above.
+if switch_cases and source_guard_error is not None:
+    # Never run compile-time controls on a tree the source guard could not
+    # prove restored.
+    guard_failed(switch_cases, f'source guard failed earlier: {source_guard_error}')
+elif switch_cases:
+    try:
+        with tree_lock(root):
+            for name,path,old,new,scope,test,assertion in switch_cases:
+                row=dict(mutation=name,test=test,assertion=assertion,status='INVALID',reason='',compiled=False)
+                switch = compile_switches[name]
+                try:
+                    mutate(path.read_text(),scope,[(old,new)])
+                    if not compile_only and not passed(run(name+'-positive',test),test):
+                        raise RuntimeError('bound positive test failed')
+                    env[switch] = '1'
+                    compile_and_classify(row, (name,path,old,new,scope,test,assertion))
+                except Exception as error:
+                    row.update(status='INVALID',reason=f'{type(error).__name__}: {error}')
+                finally:
+                    env.pop(switch, None)
+                restored(row, name, test)
+    except Exception as error:
+        guard_failed(switch_cases, error)
+
 counts={status:sum(r['status']==status for r in results) for status in ('KILLED','SURVIVED','INVALID','COMPILED')}
 with (out/'summary.json').open('x') as summary:
     json.dump(dict(controls=results,counts=counts),summary,indent=2);summary.write('\n')

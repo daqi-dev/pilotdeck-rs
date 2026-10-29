@@ -445,8 +445,8 @@ pub type Admission =
 pub struct FactoryOptions {
     /// Predecessor drain + occupied process-lock wait budget, chosen by the
     /// host's cancellation policy (e.g. POST_CANCEL_EXIT_TIMEOUT), not a total
-    /// wall-clock deadline for create. Must be positive. Prepare, drained
-    /// snapshot, storage construction, path resolution and the single OS file-open/lock attempt
+    /// wall-clock deadline for create. Must be positive. Prepare, initial recreation
+    /// snapshot, drained snapshot, storage construction, path resolution and the single OS file-open/lock attempt
     /// are excluded: blocking filesystem I/O cannot be cancelled by this budget.
     /// Resolution time still consumes the remaining process-lock wait; at
     /// expiry only a nonblocking process-lock attempt is permitted.
