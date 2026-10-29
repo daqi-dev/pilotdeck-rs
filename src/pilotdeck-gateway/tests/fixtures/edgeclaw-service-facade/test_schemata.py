@@ -45,14 +45,25 @@ class SchemataTests(unittest.TestCase):
                             raise subprocess.TimeoutExpired(['fixture'], 1)
                         bad = label.endswith('-negative') and test == 'sample'
                         answer = result(test, 'FAILED' if bad else 'ok', row['anchor'], runner.legacy.TEST_FILE)
+                        # The legacy runner launches the test binary directly, so
+                        # its libtest output carries no facade prefix in either the
+                        # status line or the thread header (#818).
                         answer.stdout = answer.stdout.replace(runner.PREFIX, '')
+                        answer.stderr = answer.stderr.replace(runner.PREFIX, '')
                         return answer
-                    self.assertEqual(runner.legacy.run_mutant(row, original, invoke)[0], 'INVALID')
-                    self.assertEqual(source.read_bytes(), original)
-                    self.assertIn('sample-restored', calls)
+                    self.assertEqual(runner.legacy.run_mutant(row, original, invoke)[0],
+                                     'INVALID',
+                                     '#818 an interrupted legacy phase must invalidate, not kill')
+                    self.assertEqual(source.read_bytes(), original,
+                                     '#818 every legacy phase must restore the source bytes')
+                    self.assertIn('sample-restored', calls,
+                                  '#818 the successor phase must still run after an interruption')
                     successor = dict(row, name='second')
-                    self.assertEqual(runner.legacy.run_mutant(successor, original, invoke)[0], 'KILLED')
-                    self.assertEqual(source.read_bytes(), original)
+                    self.assertEqual(runner.legacy.run_mutant(successor, original, invoke)[0],
+                                     'KILLED',
+                                     '#818 a later valid mutant must stay KILLED after an interruption')
+                    self.assertEqual(source.read_bytes(), original,
+                                     '#818 mutating and restored phases must leave the source intact')
 
     def test_complete_suite_and_restore_after_failure(self):
         bindings = [binding('first'), binding('second')]
@@ -97,7 +108,30 @@ class SchemataTests(unittest.TestCase):
                         source_file='pilotdeck-gateway/src/../tests/edgeclaw_service_facade.rs')
                 rows = list(runner.execute_suite([row], invoke, prefix=runner.PREFIX,
                                                  verdict=verdict))
-                self.assertEqual(rows[0]['status'], expected)
+                self.assertEqual(rows[0]['status'], expected,
+                                 f'#818 synthetic libtest log verdict must be {expected}')
+
+    def test_bare_panic_line_is_not_evidence(self):
+        # #818 negative control: the exact bound marker without the named
+        # test's own libtest thread header must stay INVALID, never KILLED.
+        row = binding('sample')
+        response = SimpleNamespace(
+            returncode=101,
+            stdout=f'test {runner.PREFIX}sample ... FAILED\ntest result: FAILED',
+            stderr='panicked at pilotdeck-gateway/src/../tests/'
+                   f"edgeclaw_service_facade.rs:1:1:\n{row['anchor']}")
+
+        def invoke(label, test, selector, _row):
+            return response if selector else result(test)
+
+        def verdict(response_, bound):
+            return runner.legacy.classify(
+                response_, bound,
+                source_file='pilotdeck-gateway/src/../tests/edgeclaw_service_facade.rs')
+
+        rows = list(runner.execute_suite([row], invoke, prefix=runner.PREFIX, verdict=verdict))
+        self.assertEqual(rows[0]['status'], 'INVALID',
+                         '#818 a bare panic line without the thread header is not evidence')
 
     def test_environment_and_request_validation(self):
         env = runner.clean_environment({'PDRS_MUTANT': 'bad', 'PDRS_FACADE_ENCODER_MUTANT': 'bad', 'KEEP': 'yes'})

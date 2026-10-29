@@ -71,7 +71,9 @@ def cargo_result(test, state='ok', anchor=''):
     return SimpleNamespace(returncode=0 if state == 'ok' else 101,
         stdout=f'test {test} ... {state}\n'
                + ('test result: ok. 1 passed;' if state == 'ok' else 'test result: FAILED'),
-        stderr='' if state == 'ok' else f'panicked at src/pilotdeck-gateway/src/mutants.rs:1:1:\n{anchor}')
+        # Real libtest header: the shared judge only reads the named test's own
+        # `thread '<name>' panicked at` block (#818), never a bare line.
+        stderr='' if state == 'ok' else f"thread '{test}' panicked at src/pilotdeck-gateway/src/mutants.rs:1:1:\n{anchor}")
 
 
 class SwitchNegativeTests(unittest.TestCase):
@@ -131,11 +133,14 @@ class SwitchNegativeTests(unittest.TestCase):
     def test_all_controls_kill_with_per_row_commands(self):
         with tempfile.TemporaryDirectory() as temp:
             code, document, calls, source_bytes, original = self.run_main(temp, self.killing_cargo)
-        self.assertEqual((code, source_bytes), (0, original))
+        self.assertEqual((code, source_bytes), (0, original),
+                         '#818 every boundary control must kill and restore the source')
         self.assertEqual(document['counts'],
-                         {'KILLED': len(runner.MUTATIONS), 'SURVIVED': 0, 'INVALID': 0})
+                         {'KILLED': len(runner.MUTATIONS), 'SURVIVED': 0, 'INVALID': 0},
+                         '#818 every boundary control must be KILLED')
         self.assertEqual([row['status'] for row in document['controls']],
-                         ['KILLED'] * len(runner.MUTATIONS))
+                         ['KILLED'] * len(runner.MUTATIONS),
+                         '#818 every boundary row must publish KILLED')
         # Each row drives its own cargo shape and selector environment.
         by_test = {}
         for row in runner.MUTATIONS:
@@ -147,10 +152,35 @@ class SwitchNegativeTests(unittest.TestCase):
             rows = by_test.get(test)
             if rows is None:
                 continue
-            self.assertIn(selector, {row[5] for row in rows})
-            self.assertTrue(all(set(row[6]) <= set(command) for row in rows))
+            self.assertIn(selector, {row[5] for row in rows},
+                          '#818 each row must run under its own selector')
+            self.assertTrue(all(set(row[6]) <= set(command) for row in rows),
+                            '#818 each row must carry its declared cargo arguments')
         gates = [command for command, _ in calls if '--test' in command]
-        self.assertTrue(gates and all('mutants_boundary' in command for command in gates))
+        self.assertTrue(gates and all('mutants_boundary' in command for command in gates),
+                        '#818 the boundary build gate must run')
+
+    def test_bare_panic_line_is_not_a_kill(self):
+        # #818 negative control: the same marker without the bound test's own
+        # libtest thread header must stay INVALID, never a synthetic kill.
+        def bare_cargo(command, *, source, rows, original, **_):
+            if Path(command[0]).name != 'cargo' or '--no-run' in command:
+                return SimpleNamespace(returncode=0, stdout='compiled', stderr='')
+            text = source.read_text()
+            active = next((row for row in rows if row[2] in original and row[2] not in text), None)
+            test = command[command.index('--') - 1]
+            if active is not None:
+                answer = cargo_result(active[4], 'FAILED', runner.MESSAGES[active[0]])
+                answer.stderr = answer.stderr.replace(f"thread '{active[4]}' ", '')
+                return answer
+            return cargo_result(test, 'ok')
+        with tempfile.TemporaryDirectory() as temp:
+            code, document, _calls, source_bytes, original = self.run_main(temp, bare_cargo)
+        self.assertEqual((code, source_bytes), (1, original),
+                         '#818 a headerless panic must fail the whole boundary suite')
+        self.assertEqual(document['counts'],
+                         {'KILLED': 0, 'SURVIVED': 0, 'INVALID': len(runner.MUTATIONS)},
+                         '#818 every headerless synthetic kill must be INVALID')
 
     def test_survivor_keeps_the_summary_nonzero(self):
         def surviving_cargo(command, **_):
