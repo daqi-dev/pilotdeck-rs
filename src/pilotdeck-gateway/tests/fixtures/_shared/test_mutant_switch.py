@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 # anchor-selfcheck: unsupported tests of the shared switch executor, no product source mutations
-"""#996 failure-path tests; no cargo or product source writes."""
+"""#996 failure-path tests; no cargo or product source writes.
+
+The #1037 tests prove the real entrypoint and the shared executor revoke every
+already completed row when an exit check fails; ``--negative-controls`` no-ops
+the shared invalidation in memory and requires those tests to die.  The
+#996-pr2 fix-r2 tests prove every turn-family entry passes its declaring
+script and the requested selection to the shared run, so the executor-side
+denominator check sees a runtime-shrunk or emptied table.
+"""
+import contextlib
+import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -13,6 +24,17 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mutant_switch as shared
+
+FIXTURES = Path(__file__).resolve().parents[1]
+
+
+def load_entry(fixture='turn-runner-tail'):
+    """Load a real schemata entry, as a runner would."""
+    spec = importlib.util.spec_from_file_location(
+        fixture.replace('-', '_') + '_schemata', FIXTURES / fixture / 'schemata.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def result(test, state='ok', anchor='', file='pilotdeck-gateway/src/fixture.rs'):
@@ -142,6 +164,63 @@ class MutantSwitchTests(unittest.TestCase):
                 self.assertEqual(
                     list(shared.execute_suite([row], invoke))[0]['status'], expected)
 
+    def test_list_tests_run_every_cell_and_align_anchors(self):
+        row = dict(name='cells', test=['first_cell', 'second_cell'],
+                   anchor=['#996 first_cell anchor', '#996 second_cell anchor'],
+                   path=Path('/fixture.rs'))
+        seen = []
+        judged = []
+
+        def verdict(value, bound):
+            judged.append(bound['anchor'])
+            return shared.classify(value, SimpleNamespace(
+                test=bound['test'], assertion=bound['anchor']))
+
+        def invoke(label, test, selector, bound):
+            seen.append((label, test, selector))
+            if selector is None:
+                return result(test)
+            return result(test, 'FAILED', f'#996 {test} anchor')
+
+        produced = list(shared.execute_suite([row], invoke, verdict=verdict))
+        self.assertEqual(produced[0]['status'], 'KILLED')
+        self.assertEqual(produced[0]['reason'], 'bound test failed at its assertion')
+        # positive + restored phases run both cells without a selector
+        self.assertEqual([entry[1] for entry in seen if entry[2] is None],
+                         ['first_cell', 'second_cell', 'first_cell', 'second_cell'])
+        # negatives use indexed labels and the verdict sees one aligned anchor
+        # per cell, so no cell is judged by another cell's anchor.
+        negatives = [entry for entry in seen if entry[2] == 'cells']
+        self.assertEqual([entry[0] for entry in negatives],
+                         ['cells-negative-1of2', 'cells-negative-2of2'])
+        self.assertEqual(judged, ['#996 first_cell anchor', '#996 second_cell anchor'])
+
+    def test_list_tests_fail_closed_when_one_cell_survives(self):
+        row = dict(name='cells', test=['first_cell', 'second_cell'],
+                   anchor=['#996 first_cell anchor', '#996 second_cell anchor'],
+                   path=Path('/fixture.rs'))
+
+        def invoke(label, test, selector, bound):
+            if selector is None:
+                return result(test)
+            state = 'FAILED' if test == 'first_cell' else 'ok'
+            return result(test, state, f'#996 {test} anchor')
+
+        produced = list(shared.execute_suite([row], invoke))
+        self.assertEqual(produced[0]['status'], 'SURVIVED')
+        self.assertIn('second_cell', produced[0]['reason'])
+
+    def test_preflight_requires_aligned_anchors_for_list_tests(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / 'source.rs'
+            source.write_text('crate::mutants::on("cells")')
+            row = dict(name='cells', test=['first_cell', 'second_cell'],
+                       anchor='#996 single anchor', path=source)
+            with self.assertRaises(ValueError):
+                shared.preflight([row])
+            row['anchor'] = ['#996 first', '#996 second']
+            shared.preflight([row])
+
     def test_verdict_and_passed_use_the_prefixed_test(self):
         seen = []
         def verdict(value, bound):
@@ -206,6 +285,59 @@ class MutantSwitchTests(unittest.TestCase):
             document = json.loads((out / 'summary.json').read_text())
             self.assertEqual(document['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 2})
             self.assertTrue(all('runner:' in row['reason'] for row in document['controls']))
+
+    def test_run_invalidates_completed_kills_when_exit_checks_fail(self):
+        # #1037: this executor never writes sources, so the mutating guard's
+        # restore/verify exit has two analogs that run after every row:
+        # verify_unchanged and the denominator check. When either raises after
+        # all rows already completed KILLED, the shared invalidate_completed
+        # (#979) must revoke them — an all-KILLED summary with exit 0 would
+        # publish a false pass.
+        for fault in ('verify', 'denominator'):
+            with tempfile.TemporaryDirectory() as temp:
+                # No subTest: a failure must stay attributable to this method's
+                # name for the negative control that no-ops the invalidation.
+                rows = [binding('first'), binding('second')]
+                out = Path(temp) / 'out'
+                out.mkdir()
+                guarded = [Path(temp) / 'guarded.rs']
+                guarded[0].write_text('fixture\n')
+                binary = Path(temp) / 'test-binary'
+                binary.write_bytes(b'fixture binary\n')
+
+                def process(command, **kwargs):
+                    if command[:2] == ['git', 'rev-parse']:
+                        return SimpleNamespace(returncode=0, stdout='test-head\n', stderr='')
+                    if command[0] == 'cargo':
+                        return SimpleNamespace(returncode=0, stdout='build fixture', stderr='')
+                    selector = kwargs['env'].get(shared.SELECTOR)
+                    return result(command[1], 'FAILED' if selector else 'ok',
+                                  '#996 ' + command[1], 'fixture.rs')
+
+                with patch.object(shared, 'run_owned', side_effect=process), \
+                        patch.object(shared, 'wait_for_slot',
+                                     return_value=SimpleNamespace(stdout='', stderr='')), \
+                        patch.object(shared, 'artifact', return_value=binary), \
+                        patch.object(shared, 'verify_unchanged' if fault == 'verify'
+                                     else 'enforce_denominator',
+                                     side_effect=RuntimeError('#1037 injected exit failure')):
+                    code = shared.run(Path(temp), out, rows, {}, guarded=guarded,
+                                      script=Path(temp) / 'schemata.py'
+                                      if fault == 'denominator' else None)
+                self.assertEqual(code, 1,
+                                 '#1037 a failing exit check must exit nonzero')
+                document = json.loads((out / 'summary.json').read_text())
+                self.assertEqual(document['counts'],
+                                 {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 2},
+                                 '#1037 a failing exit check must revoke every '
+                                 'completed kill')
+                for row in document['controls']:
+                    self.assertEqual(row['status'], 'INVALID',
+                                     '#1037 every completed row must be invalidated')
+                    self.assertTrue(row['reason'].startswith(
+                        'bound test failed at its assertion; runner: RuntimeError: '
+                        '#1037 injected exit failure'),
+                        '#1037 invalidation must preserve the completed diagnostic')
 
     def test_denominator_drift_fails_the_whole_suite(self):
         # #996 fix-r4 review P1: the static whitelist and the import-time audit
@@ -370,5 +502,266 @@ class MutantSwitchTests(unittest.TestCase):
                       '#996 r5 the invalidated row must name the check')
 
 
+class SchemataEntryTests(unittest.TestCase):
+    """#1037: the real turn-runner-tail entry must revoke its kills on failure."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.entry = load_entry()
+
+    def test_schemata_entry_invalidates_completed_kills(self):
+        # #1037: exercise the real entrypoint end to end (argparse, preflight,
+        # the shared run) with every owned process replaced: all declared rows
+        # complete KILLED, then the exit verification fails. The published
+        # summary must show only INVALID rows and main() must return nonzero;
+        # the revocation goes through the shared negative_suite.
+        # invalidate_completed (#979), never a second copy.
+        entry = self.entry
+        module = entry.mutant_switch
+        # One synthetic panic containing every declared anchor: the default
+        # verdict must still bind each row to its own assertion.
+        anchors = ' '.join(row[3] for row in entry.switches)
+        selectors = []
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / 'out'
+            binary = Path(temp) / 'test-binary'
+            binary.write_bytes(b'fixture binary\n')
+
+            def process(command, **kwargs):
+                if command[:2] == ['git', 'rev-parse']:
+                    return SimpleNamespace(returncode=0, stdout='test-head\n', stderr='')
+                if command[0] == 'cargo':
+                    return SimpleNamespace(returncode=0, stdout='build fixture', stderr='')
+                selector = kwargs['env'].get(module.SELECTOR)
+                selectors.append(selector)
+                return result(command[1], 'FAILED' if selector else 'ok', anchors,
+                              'fixture.rs')
+
+            with patch.object(module, 'run_owned', side_effect=process), \
+                    patch.object(module, 'wait_for_slot',
+                                 return_value=SimpleNamespace(stdout='', stderr='')), \
+                    patch.object(module, 'artifact', return_value=binary), \
+                    patch.object(module, 'verify_unchanged',
+                                 side_effect=RuntimeError(
+                                     '#1037 injected verification failure')), \
+                    patch.dict(os.environ, {'CARGO_TARGET_DIR': str(Path(temp) / 'unused')}), \
+                    patch.object(sys, 'argv', ['schemata.py', str(out)]):
+                code = entry.main()
+            self.assertEqual(code, 1, '#1037 the real entry must exit nonzero '
+                                       'when the exit verification fails')
+            document = json.loads((out / 'summary.json').read_text())
+            self.assertEqual(len(document['controls']), len(entry.switches),
+                             '#1037 every declared switch must stay accounted for')
+            self.assertEqual(document['counts']['KILLED'], 0,
+                             '#1037 no completed kill may stay green after the '
+                             'exit failure')
+            self.assertEqual(document['counts']['INVALID'], len(entry.switches),
+                             '#1037 every completed kill must be revoked as INVALID')
+            for row in document['controls']:
+                self.assertIn('#1037 injected verification failure', row['reason'],
+                             '#1037 every row must retain the injected exit failure')
+            self.assertEqual(selectors.count(None), 2 * len(entry.switches),
+                             '#1037 positive and restored phases must really '
+                             'complete for every row')
+            self.assertEqual(len(selectors), 3 * len(entry.switches),
+                             '#1037 the suite must really complete before the '
+                             'exit check')
+
+
+class SchemataDenominatorTests(unittest.TestCase):
+    """#996-pr2 fix-r2: every turn-family entry wires the denominator check.
+
+    The five entries whose negative controls became compile-time switches in
+    this PR called ``mutant_switch.run`` without ``script`` / ``requested``,
+    so the shared executor skipped the fix-r4 denominator check: a ``main()``
+    the static audit cannot see could shrink the executed table and still
+    publish rc=0.  Each entry must therefore finish its run through the real
+    ``enforce_denominator`` with its own declaring script.
+    """
+
+    ENTRIES = ('turn-runner-tail', 'turn-gates', 'turn-prompt-hooks',
+               'turn-start-notices', 'tool-budget-cwd')
+
+    @classmethod
+    def setUpClass(cls):
+        cls.entries = [load_entry(name) for name in cls.ENTRIES]
+
+    def entry_run(self, entry, argv, shrink=None):
+        """Run the real main() with every owned process replaced.
+
+        Every declared row completes KILLED (one synthetic panic carries all
+        anchors), exactly like the review's memory-only reproduction; the
+        exit code and the published summary are the witnesses.  ``shrink``
+        rewrites the runtime selection, the shape of drift the import-time
+        audit cannot see.
+        """
+        module = entry.mutant_switch
+        # All-cells rows bind a list of anchors; one synthetic panic still
+        # carries every one of them.
+        anchors = ' '.join(' '.join(row[3]) if isinstance(row[3], list) else row[3]
+                           for row in entry.switches)
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / 'out'
+            binary = Path(temp) / 'test-binary'
+            binary.write_bytes(b'fixture binary\n')
+
+            def process(command, **kwargs):
+                if command[:2] == ['git', 'rev-parse']:
+                    return SimpleNamespace(returncode=0, stdout='test-head\n', stderr='')
+                if command[0] == 'cargo':
+                    return SimpleNamespace(returncode=0, stdout='build fixture', stderr='')
+                selector = kwargs['env'].get(module.SELECTOR)
+                return result(command[1], 'FAILED' if selector else 'ok', anchors,
+                              'fixture.rs')
+
+            selected, patches = module.selected, [
+                patch.object(module, 'run_owned', side_effect=process),
+                patch.object(module, 'wait_for_slot',
+                             return_value=SimpleNamespace(stdout='', stderr='')),
+                patch.object(module, 'artifact', return_value=binary)]
+            if shrink is not None:
+                def shrunk(rows, names, _selected=selected, _shrink=shrink):
+                    return _shrink(_selected(rows, names))
+                patches.append(patch.object(module, 'selected', side_effect=shrunk))
+            with contextlib.ExitStack() as stack:
+                for item in patches:
+                    stack.enter_context(item)
+                stack.enter_context(patch.dict(
+                    os.environ, {'CARGO_TARGET_DIR': str(Path(temp) / 'unused')}))
+                stack.enter_context(patch.object(
+                    sys, 'argv', ['schemata.py', str(out), *argv]))
+                stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+                code = entry.main()
+                document = json.loads((out / 'summary.json').read_text())
+        return code, document
+
+    def test_entries_report_runtime_shrunk_tables(self):
+        # A main() that shrinks the executed table to one switch must lose the
+        # whole suite: nonzero exit, the executed row INVALID with the drift
+        # difference, and the last declared switch (tail-regeneration for the
+        # tail entry) named as missing.  No subTest: a failure must stay
+        # attributable to this method's name for the negative control.
+        for entry in self.entries:
+            name = Path(entry.__file__).parent.name
+            code, document = self.entry_run(entry, [], shrink=lambda rows: rows[:1])
+            self.assertNotEqual(
+                code, 0, f'#996-pr2 {name}: a runtime-shrunk switch table '
+                         'must exit nonzero')
+            self.assertEqual(
+                document['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                f'#996-pr2 {name}: the drifted run must count the executed '
+                'row INVALID')
+            reason = document['controls'][0]['reason']
+            self.assertIn('switch denominator drift', reason,
+                          f'#996-pr2 {name}: the row must name the denominator check')
+            self.assertIn(f"'{entry.switches[-1][0]}'", reason,
+                          f'#996-pr2 {name}: the drift must list the last '
+                          'declared switch as missing')
+
+    def test_entries_report_emptied_tables(self):
+        # A main() that empties the executed table whole leaves no row to
+        # invalidate; the entry must still publish one suite-level
+        # switch-denominator INVALID row and exit nonzero.
+        for entry in self.entries:
+            name = Path(entry.__file__).parent.name
+            code, document = self.entry_run(entry, [], shrink=lambda rows: [])
+            self.assertNotEqual(
+                code, 0, f'#996-pr2 {name}: a runtime-emptied switch table '
+                         'must exit nonzero')
+            self.assertEqual(
+                document['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                f'#996-pr2 {name}: an emptied table must keep a suite-level '
+                'INVALID row')
+            self.assertEqual(
+                document['controls'][0]['name'], 'switch-denominator',
+                f'#996-pr2 {name}: the suite-level row must be the '
+                'denominator check')
+            self.assertIn(f"'{entry.switches[-1][0]}'",
+                          document['controls'][0]['reason'],
+                          f'#996-pr2 {name}: the drift must list every '
+                          'declared switch')
+
+    def test_entries_explicit_subset_stays_green(self):
+        # The fix must not overreach: an explicitly requested legal subset is
+        # its own denominator and must keep the suite green.
+        for entry in self.entries:
+            name = Path(entry.__file__).parent.name
+            code, document = self.entry_run(entry, [entry.switches[0][0]])
+            self.assertEqual(
+                code, 0, f'#996-pr2 {name}: an explicit legal subset must '
+                         'stay green')
+            self.assertEqual(
+                document['counts'], {'KILLED': 1, 'SURVIVED': 0, 'INVALID': 0},
+                f'#996-pr2 {name}: the requested switch must stay KILLED')
+
+
+def negative_controls():
+    """No-op the shared exit checks in memory, then every guarded test must
+    die at its named assertion (no source edits, no cargo).
+
+    #1037: ``invalidate_completed`` no-opped must fail the exit-failure tests
+    at their ``#1037`` assertions.  #996-pr2 fix-r2: ``enforce_denominator``
+    no-opped (the in-memory shape of an entry that stops passing ``script`` /
+    ``requested``, so the shared run skips the check) must fail the drift
+    tests at their ``#996-pr2`` assertions.
+    """
+    def noop_invalidation(module):
+        return patch.object(module, 'invalidate_completed', new=lambda *_a, **_k: None)
+
+    def noop_denominator(module):
+        return patch.object(module, 'enforce_denominator', new=lambda *_a, **_k: None)
+
+    def bound_module(test_class):
+        """The switch module whose exit check the mutation no-ops."""
+        for attribute in ('entry', 'entries'):
+            if attribute in test_class.__dict__:
+                value = test_class.__dict__[attribute]
+                return (value[0] if isinstance(value, list) else value).mutant_switch
+        if test_class is not MutantSwitchTests:
+            test_class.setUpClass()
+            return bound_module(test_class)
+        return shared
+
+    targets = (
+        (MutantSwitchTests, 'test_run_invalidates_completed_kills_when_exit_checks_fail',
+         'invalidation-noop', noop_invalidation, '#1037'),
+        (SchemataEntryTests, 'test_schemata_entry_invalidates_completed_kills',
+         'invalidation-noop', noop_invalidation, '#1037'),
+        (SchemataDenominatorTests, 'test_entries_report_runtime_shrunk_tables',
+         'denominator-noop', noop_denominator, '#996-pr2'),
+        (SchemataDenominatorTests, 'test_entries_report_emptied_tables',
+         'denominator-noop', noop_denominator, '#996-pr2'),
+    )
+    results = []
+    for test_class, method, mutation, patcher, marker in targets:
+        label = method + '-' + mutation
+        try:
+            with patcher(bound_module(test_class)):
+                stream = io.StringIO()
+                outcome = unittest.TextTestRunner(stream=stream, verbosity=2).run(
+                    unittest.defaultTestLoader.loadTestsFromName(method, test_class))
+            print(stream.getvalue(), end='')
+            observed = {test._testMethodName for test, _ in
+                        outcome.failures + outcome.errors}
+            traces = [trace for _, trace in outcome.failures + outcome.errors]
+            killed = (outcome.testsRun > 0 and not outcome.skipped
+                      and observed == {method}
+                      and all(marker in trace for trace in traces))
+            results.append({'mutation': label,
+                            'status': 'KILLED' if killed else 'SURVIVED'
+                            if outcome.wasSuccessful() else 'INVALID',
+                            'reason': f'observed failures={sorted(observed)}'})
+        except Exception as error:
+            results.append({'mutation': label, 'status': 'INVALID',
+                            'reason': f'{type(error).__name__}: {error}'})
+    print(json.dumps(results, indent=2))
+    return int(any(row['status'] != 'KILLED' for row in results))
+
+
 if __name__ == '__main__':
+    if sys.argv[1:] == ['--negative-controls']:
+        raise SystemExit(negative_controls())
+    if sys.argv[1:]:
+        raise SystemExit('usage: test_mutant_switch.py [--negative-controls]')
     unittest.main()

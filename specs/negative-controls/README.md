@@ -51,6 +51,13 @@
     而 `any()` 对空结果列表为假——退出码与 summary 都会假通过。分母核对在
     drift 且执行行为空时补一条套件级 `switch-denominator` INVALID 行（reason
     即差集），使每个入口的最终失败判定与 summary 都带上漂移原因，非零退出。
+  - **turn 族五个 switches 表入口全接入（#996-pr2 fix-r2 起）**：turn-runner-tail /
+    turn-gates / turn-prompt-hooks / turn-start-notices / tool-budget-cwd 的
+    `schemata.py` 一律以 `script=`（自身）与 `requested=`（用户请求）调共享 `run()`，
+    不再漏过执行器侧分母核对。`_shared/test_mutant_switch.py` 的入口级自测对五个
+    真实入口各覆盖运行期缩表 / 清空表（INVALID + 非零退出）与合法显式子集（保持
+    绿）；`--negative-controls` 把 `enforce_denominator` 置 no-op（等价于入口不传
+    `script`）后，缩表 / 清空表自测必须在 `#996-pr2` 断言处死。
 
 ### #749 原生 WS 的逐项编译及 nonce 回执执行形态
 

@@ -15,7 +15,9 @@ pub(crate) struct PromptHooks {
 struct AbortOnDrop(Option<hooks::Cancellation>);
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {
-        if let Some(signal) = &self.0 {
+        if let Some(signal) = &self.0
+            && !crate::mutants::on("prompt-cancel-signal")
+        {
             signal.abort();
         }
     }
@@ -37,18 +39,25 @@ impl TurnRunner {
         })
     }
     pub async fn submit_prompt(mut self, input: AgentInput, cancel: Cancellation) -> Transition {
-        self.require(Phase::Accepted)?;
-        if self.prompt_submitted {
+        if !crate::mutants::on("prompt-accepted-first") {
+            self.require(Phase::Accepted)?;
+        }
+        if self.prompt_submitted && !crate::mutants::on("prompt-submitted-once") {
             return Err(RecorderError::State("Prompt already submitted.".into()));
         }
         self.start_collector().await;
         let prompt = match input {
             AgentInput::Text(text) => text,
             AgentInput::Blocks(blocks) => {
+                if blocks.is_empty() && crate::mutants::on("tail-empty-blocks") {
+                    return Err(RecorderError::State("mutated empty blocks".into()));
+                }
                 let mut units = Vec::new();
                 let mut first = true;
                 for block in &blocks {
-                    if matches!(block, JsValue::Null | JsValue::Undefined) {
+                    if matches!(block, JsValue::Null | JsValue::Undefined)
+                        && !crate::mutants::on("prompt-null-block")
+                    {
                         let kind = if *block == JsValue::Null {
                             "null"
                         } else {
@@ -69,9 +78,13 @@ impl TurnRunner {
                         .get("text")
                         .filter(|v| !matches!(v, JsValue::Null | JsValue::Undefined))
                     {
+                        let null_block =
+                            crate::mutants::on("prompt-text-coercion").then(|| JsValue::Null);
                         units.extend(
-                            crate::js_value::to_string_units_checked(text)
-                                .map_err(|e| RecorderError::State(e.message().into()))?,
+                            crate::js_value::to_string_units_checked(
+                                null_block.as_ref().unwrap_or(text),
+                            )
+                            .map_err(|e| RecorderError::State(e.message().into()))?,
                         );
                     }
                 }
@@ -109,18 +122,28 @@ impl TurnRunner {
             // cancelled turn, however, must not wait on an uncooperative hook.
             let result = tokio::select! {
                 biased;
-                _ = cancel.cancelled() => LifecycleDispatchResult::default(),
+                _ = async {
+                    if crate::mutants::on("prompt-cancel-pending") {
+                        std::future::pending::<()>().await
+                    } else {
+                        cancel.cancelled().await
+                    }
+                } => LifecycleDispatchResult::default(),
                 result = dispatch => {
                     on_drop.0 = None;
-                    result.map_err(|e| RecorderError::State(e.message))?
+                    if crate::mutants::on("prompt-dispatch-reject") {
+                        result.unwrap_or_default()
+                    } else {
+                        result.map_err(|e| RecorderError::State(e.message))?
+                    }
                 },
             };
-            self.prompt_blocked = result
-                .effects
-                .iter()
-                .any(|e| matches!(e, HookEffect::Block { .. }));
+            self.prompt_blocked = result.effects.iter().any(|e| {
+                matches!(e, HookEffect::Block { .. }) && !crate::mutants::on("prompt-block-effect")
+            });
             if !self.prompt_blocked
                 && let Some(JsValue::Array(messages)) = result.to_value().get("messages")
+                && !crate::mutants::on("prompt-hook-context")
             {
                 self.messages.extend(messages.iter().cloned());
             }
@@ -128,7 +151,7 @@ impl TurnRunner {
         self.set_tail_prompt(prompt.clone());
         self.prompt_submitted = true;
         let event = self.event(
-            super::HOST_LIFECYCLE_EVENTS[2],
+            super::host_lifecycle_events()[2],
             [("prompt", JsValue::String(prompt))],
         );
         Ok((self, vec![event]))

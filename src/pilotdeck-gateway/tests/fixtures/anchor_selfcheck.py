@@ -112,7 +112,9 @@ try:
             if not isinstance(switch_path, (str, os.PathLike)):
                 document['error'] = 'a runtime switches row has a non-path mutation target'
                 break
-            if not isinstance(switch_test, str) or not switch_test:
+            if not ((isinstance(switch_test, str) and switch_test)
+                    or (isinstance(switch_test, list) and switch_test
+                        and all(isinstance(item, str) and item for item in switch_test))):
                 document['error'] = 'a runtime switches row has an empty or non-string test binding'
                 break
             if not ((isinstance(switch_assertion, str) and switch_assertion)
@@ -191,8 +193,8 @@ FIELD_ORDER = {'sidecar-payload/negative.py': (1, 4, 5)}
 # These ordered rewrites cannot be counted as whole-file replacements. Keep
 # them separate from the JSON-only provenance exceptions below.
 SEQUENTIAL_ROWS = {
-    ('turn-gates/negative.py', 'factory-ready-priority'): 'moves the lazy factory branch before cancellation with ordered replacements on the first select',
-    ('turn-gates/negative.py', 'omit-prepared-cleanup'): 'moves pending_host.handoff with ordered removal and insertion',
+    # #996: the turn-gates ordered rows were deleted with negative.py; the
+    # table stays empty until another control needs an ordered replacement.
 }
 ROW_EXCEPTIONS = {
     ('session-abort-contract/negative.py', 'tampered-source-hash'): 'JSON provenance corruption, not a source replacement',
@@ -1032,7 +1034,9 @@ def switch_bindings(tree, static):
             if name in seen:
                 raise Unsupported(f'line {line}: duplicate switch name: {name}')
             seen.add(name)
-            if not isinstance(test, str) or not test:
+            if not ((isinstance(test, str) and test)
+                    or (isinstance(test, list) and test
+                        and all(isinstance(item, str) and item for item in test))):
                 raise Unsupported(f'{name}: invalid switch test binding')
             if not ((isinstance(assertion, str) and assertion)
                     or (isinstance(assertion, list) and assertion

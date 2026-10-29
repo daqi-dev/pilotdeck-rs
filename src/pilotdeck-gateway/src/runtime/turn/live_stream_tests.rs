@@ -998,7 +998,7 @@ async fn received_turn_failed_dropped_after_delivered_input_accepted_is_rejected
     let (session, final_received) =
         session_with_final("live-cancel-queued-turn-failed", handler.clone()).await;
     let mut turn = session.submit_turn_for_test(input(), options()).unwrap();
-    for event_type in crate::runtime::turn::runner::HOST_LIFECYCLE_EVENTS {
+    for event_type in crate::runtime::turn::runner::host_lifecycle_events() {
         assert_eq!(
             next(turn.as_mut()).await.unwrap().unwrap().get("type"),
             Some(&event_type.into()),
@@ -1972,7 +1972,7 @@ async fn host_buffer_failures_cut_off_later_events_and_terminals() {
 
 #[tokio::test]
 async fn host_buffer_lifecycle_leak_fails_closed() {
-    for kind in crate::runtime::turn::runner::HOST_LIFECYCLE_EVENTS {
+    for kind in crate::runtime::turn::runner::host_lifecycle_events() {
         let (inner, handler, rx) = buffered_handler(4);
         let integrity = handler.integrity.clone();
         let mut turn = stream(

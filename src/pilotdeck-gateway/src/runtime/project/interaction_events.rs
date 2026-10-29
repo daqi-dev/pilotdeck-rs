@@ -117,7 +117,13 @@ impl TurnEvents {
     pub fn host_started(&self) -> Result<Vec<JsObject>, HostError> {
         let generation = lock(&self.generation);
         let mut turn = lock(&self.turn);
-        check(&generation, &turn).map(|()| take_notices(&mut turn))
+        if crate::mutants::on("notices-stale") || crate::mutants::on("notices-closed") {
+            Ok(take_notices(&mut turn))
+        } else if crate::mutants::on("notices-buffer-isolation") {
+            check(&generation, &turn).map(|()| std::mem::take(&mut turn.events))
+        } else {
+            check(&generation, &turn).map(|()| take_notices(&mut turn))
+        }
     }
     /// Checked counterpart of the transport's legacy infallible drain hook.
     pub fn drain(&self) -> Result<Vec<JsObject>, HostError> {
@@ -198,7 +204,12 @@ impl event::EventSink for TurnEvents {
     }
 }
 fn take_notices(turn: &mut TurnState) -> Vec<JsObject> {
-    std::mem::take(&mut turn.notices)
+    let notices = if crate::mutants::on("notices-once") {
+        turn.notices.clone()
+    } else {
+        std::mem::take(&mut turn.notices)
+    };
+    notices
         .into_iter()
         .map(|notice| notice.to_warning(&turn.identity.session_id, &turn.identity.turn_id))
         .collect()

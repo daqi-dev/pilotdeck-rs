@@ -465,7 +465,15 @@ pending_case!(drop_pending, "drop-pending");
 #[ignore = "requires fixed TS baseline and Node v22.22.0"]
 fn regenerates_identically() {
     assert!(
-        std::panic::catch_unwind(|| baseline::regenerates_identically("turn-prompt-hooks")).is_ok(),
+        std::panic::catch_unwind(|| {
+            // #996: prompt-regeneration corrupts the loaded committed oracle
+            // (baseline commit -> zeros), never the fixture on disk.
+            baseline::regenerates_identically_with(
+                "turn-prompt-hooks",
+                crate::mutants::on("prompt-regeneration"),
+            )
+        })
+        .is_ok(),
         "#741 prompt fixture regeneration"
     );
 }

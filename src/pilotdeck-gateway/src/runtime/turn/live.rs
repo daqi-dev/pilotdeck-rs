@@ -197,7 +197,11 @@ impl LiveSessionAdapter {
                         lifecycle.retain_turn(handler.clone());
                     }
                     let manifest = handler.manifest().clone();
-                    let events = handler.ports().events;
+                    let events = if crate::mutants::on("notices-wiring") {
+                        None
+                    } else {
+                        handler.ports().events
+                    };
                     let prompt_hooks =
                         handler
                             .ports()
@@ -305,7 +309,7 @@ impl LiveSession for LiveSessionAdapter {
             execution: Some(Box::pin(async move {
                 let (client, inner, lease, manifest, interaction_events, prompt_hooks, lifecycle) = tokio::select! {
                     biased;
-                    _ = cancellation.cancelled() => {
+                    _ = cancellation.cancelled(), if !crate::mutants::on("gates-factory-ready-priority") => {
                         return Ok(ExecuteResult::Aborted { terminal: None });
                     }
                     // select constructs every branch before polling; keep the
@@ -316,7 +320,14 @@ impl LiveSession for LiveSessionAdapter {
                     .as_ref()
                     .and_then(super::live_session::SessionLifecycle::steer);
                 let _ = session_sender.send(lifecycle);
-                let pending_host = crate::host::TurnScope::new(inner.clone(), close_timeout);
+                let mut pending_host = Some(crate::host::TurnScope::new(
+                    inner.clone(),
+                    if crate::mutants::on("gates-prepared-close-timeout") {
+                        std::time::Duration::from_secs(5)
+                    } else {
+                        close_timeout
+                    },
+                ));
                 let mut runner = TurnRunner::new(
                     recorder,
                     lease,
@@ -325,11 +336,24 @@ impl LiveSession for LiveSessionAdapter {
                 )
                 .with_session_steer(session_steer)
                 .with_interaction_events(interaction_events)
-                .with_prompt_hooks(prompt_hooks);
+                .with_prompt_hooks(if crate::mutants::on("prompt-wiring") {
+                    None
+                } else {
+                    prompt_hooks
+                });
                 if let Some(tail) = tail {
-                    runner = runner.with_tail(tail, cancellation.clone(), tail_options);
+                    if crate::mutants::on("tail-live-tail-wiring") {
+                        let _ = (tail, cancellation.clone(), tail_options);
+                    } else {
+                        runner = runner.with_tail(tail, cancellation.clone(), tail_options);
+                    }
                 }
                 // Transfer the actual driver before any host event can arrive.
+                if crate::mutants::on("gates-omit-prepared-cleanup")
+                    && let Some(pending) = pending_host.take()
+                {
+                    pending.handoff();
+                }
                 let _ = recording_sender.send(Recording::new(runner, owner));
                 if let Some(manifest) = manifest {
                     for (key, value) in manifest.entries() {
@@ -352,6 +376,13 @@ impl LiveSession for LiveSessionAdapter {
                     Ok(client)
                 });
                 // No connection or execute can start until both durable gates commit.
+                let client = if crate::mutants::on("gates-eager-connect") {
+                    let client = client.await;
+                    let client: HostFuture<HostClient> = Box::pin(async move { client });
+                    client
+                } else {
+                    client
+                };
                 let Ok(messages) = execute_wait.await else {
                     return Ok(ExecuteResult::Aborted { terminal: None });
                 };
@@ -363,7 +394,9 @@ impl LiveSession for LiveSessionAdapter {
                     _ = cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),
                     client = client => client?,
                 };
-                pending_host.handoff();
+                if let Some(pending) = pending_host.take() {
+                    pending.handoff();
+                }
                 let identity = request.identity.clone();
                 handler
                     .with_pump(
@@ -556,7 +589,12 @@ impl LiveTurn for LiveTurnStream {
                     return self.deliver_recorded(event);
                 }
                 if self.execute_ready.is_some() && self.recording.is_some() {
-                    if self.preflight < 3 {
+                    let preflight_bound = if crate::mutants::on("prompt-gate") {
+                        2
+                    } else {
+                        3
+                    };
+                    if self.preflight < preflight_bound {
                         let (kind, action) = if self.preflight == 0 {
                             ("turn_started", RecordingAction::Start)
                         } else if self.preflight == 1 {
@@ -583,7 +621,10 @@ impl LiveTurn for LiveTurnStream {
                         .unwrap()
                         .runner_mut()
                         .expect("settled preflight");
-                    if let Some(error) = runner.prompt_block_error() {
+                    if let Some(error) = runner
+                        .prompt_block_error()
+                        .filter(|_| !crate::mutants::on("prompt-block-gate"))
+                    {
                         return self
                             .begin_recording(
                                 RecordingAction::Fail(error),
@@ -594,7 +635,11 @@ impl LiveTurn for LiveTurnStream {
                             .await;
                     }
                     runner.begin_tail_work();
-                    let messages = runner.messages().to_vec();
+                    let messages = if crate::mutants::on("prompt-execute-context") {
+                        self.input.loop_messages()
+                    } else {
+                        runner.messages().to_vec()
+                    };
                     let _ = self.execute_ready.take().unwrap().send(messages);
                 }
                 let mut delivered = None;
@@ -626,7 +671,10 @@ impl LiveTurn for LiveTurnStream {
                 return match self.result.take() {
                     Some(result) => match self.finish(result) {
                         Ok(Some(event)) => self.record_event(event, true, false, None).await,
-                        Err(error) if self.accepted => {
+                        Err(error)
+                            if self.accepted
+                                && !crate::mutants::on("gates-discard-host-failure") =>
+                        {
                             let failure = crate::metadata::object([
                                 ("code", "agent_invalid_state".into()),
                                 ("message", error.message.as_str().into()),
@@ -665,7 +713,11 @@ impl LiveTurnStream {
             result = execution => {
                 self.execution = None;
                 match result {
-                    Err(error) if error.kind == HostErrorKind::Session => Err(RuntimeError::new(error.message)),
+                    Err(error) if error.kind == HostErrorKind::Session
+                        && !crate::mutants::on("budget-live-prefix") =>
+                    {
+                        Err(RuntimeError::new(error.message))
+                    }
                     Err(error) => Err(map_host_error(error)),
                     result => { self.result = Some(result); Ok(None) }
                 }
@@ -699,6 +751,7 @@ impl LiveTurnStream {
         }
         if event.get("type") == Some(&"tool_result".into())
             && let Some(runner) = self.recording.as_mut().and_then(Recording::runner_mut)
+            && !crate::mutants::on("tail-live-tool-observation")
         {
             runner.observe_tool_result(event.get("result").unwrap_or(&JsValue::Undefined));
         }
@@ -853,13 +906,19 @@ impl LiveTurnStream {
         }
         // Completion fallback is itself a committed failure. Publish the runner's
         // result, never the original success whose persistence failed.
-        if self.execute_ready.is_some() || events.len() != 1 || event == JsValue::Null {
+        if self.execute_ready.is_some()
+            || (events.len() != 1 && !crate::mutants::on("gates-original-success-after-fallback"))
+            || event == JsValue::Null
+        {
             self.recorded.extend(events);
             let event = self.recorded.pop_front().expect("transition events");
             return self.deliver_recorded(event);
         }
         if terminal {
             self.release();
+            if crate::mutants::on("gates-duplicate-normal-terminal") {
+                self.recorded.push_back(event.clone());
+            }
         }
         Ok(Some(event))
     }
@@ -869,6 +928,9 @@ impl LiveTurnStream {
             self.accepted = true;
         }
         if event.get("type") == Some(&"turn_completed".into()) {
+            if crate::mutants::on("gates-duplicate-host-terminal") {
+                self.recorded.push_back(event.clone());
+            }
             self.release();
         }
         Ok(Some(event))
@@ -1012,7 +1074,13 @@ impl LiveTurnStream {
                 self.recording
                     .as_ref()
                     .and_then(Recording::runner)
-                    .map(|runner| runner.messages().to_vec())
+                    .map(|runner| {
+                        if crate::mutants::on("prompt-abort-context") {
+                            self.input.loop_messages()
+                        } else {
+                            runner.messages().to_vec()
+                        }
+                    })
                     .unwrap_or_else(|| self.input.loop_messages()),
             ),
         );
@@ -1598,10 +1666,15 @@ impl StreamIntegrity {
                 "Stream integrity violation: event after the terminal (premature final).",
             ));
         }
-        if super::runner::HOST_LIFECYCLE_EVENTS
-            .iter()
-            .any(|kind| event_type.equals_str(kind))
-        {
+        if super::runner::host_lifecycle_events().iter().any(|kind| {
+            if crate::mutants::on("gates-sidecar-lifecycle-leak") {
+                false
+            } else if crate::mutants::on("tail-host-prompt-rejection") {
+                *kind != "user_prompt_submitted" && event_type.equals_str(kind)
+            } else {
+                event_type.equals_str(kind)
+            }
+        }) {
             return Err(RuntimeError::new(
                 "Stream integrity violation: host lifecycle event in AgentLoop stream.",
             ));
@@ -2027,7 +2100,7 @@ mod tests {
     #[test]
     fn host_lifecycle_set_is_complete() {
         assert_eq!(
-            super::super::runner::HOST_LIFECYCLE_EVENTS,
+            super::super::runner::host_lifecycle_events(),
             ["turn_started", "input_accepted", "user_prompt_submitted"],
             "#936 host prefix set"
         );
@@ -2059,7 +2132,7 @@ mod tests {
             host.observe_terminal(outcome("success").as_ref()).is_err(),
             "host status is not loop evidence"
         );
-        for kind in super::super::runner::HOST_LIFECYCLE_EVENTS {
+        for kind in super::super::runner::host_lifecycle_events() {
             let integrity = StreamIntegrity::new();
             assert!(
                 integrity

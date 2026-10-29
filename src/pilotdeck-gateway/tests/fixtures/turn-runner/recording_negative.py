@@ -33,7 +33,7 @@ mutations = [
     ('poisoned-guard', source, 'self.runner.as_ref().is_none_or(TurnRunner::is_complete)', 'self.runner.as_ref().is_some_and(TurnRunner::is_complete)'),
     ('idle-settle-error', source, '.ok_or_else(|| RecorderError::State("No recording transition is pending.".into()))?', '.expect("mutant requires pending")'),
     ('owner-attached', source, 'runner.owner = Some(owner);', 'drop(owner);'),
-    ('worker-owner', runner, 'let owner = self.owner.clone();', 'let owner: Option<Arc<dyn Send + Sync>> = None;'),
+    ('worker-owner', runner, 'let owner = if crate::mutants::on("gates-release-pending-slot") {\n            None\n        } else {\n            self.owner.clone()\n        };', 'let owner: Option<Arc<dyn Send + Sync>> = None;'),
     ('text-value', source, '.cloned()', '.map(|_| "probe".into())'),
     ('text-shape', source, '.ok_or_else(invalid)?', '.unwrap_or_else(|| "mutant".into())'),
     ('input-kind', source, 'kind.equals_str("text")', '!kind.equals_str("blocks")'),

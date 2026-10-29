@@ -4,11 +4,18 @@ use std::{fmt::Debug, fs::OpenOptions, io::Write};
 
 pub(crate) const CONFIG_ENV: &str = "PDRS_NEGATIVE_RECEIPTS";
 const PARENT_ENV: &str = "PDRS_NEGATIVE_PARENT_TEST";
+/// Same selector spelling as `crate::mutants::on`; workers re-execute the
+/// test binary and re-read it, so a forged value must not survive either.
+const MUTANT_ENV: &str = "PDRS_MUTANT";
 
-/// Keep env_clear isolation, forwarding only the receipt protocol and actual
-/// libtest parent identity. Never trust a caller-supplied parent identity.
+/// Keep env_clear isolation, forwarding only the receipt protocol, the
+/// #996 compile-time switch selection, and actual libtest parent identity.
+/// Never trust a caller-supplied parent identity.
 pub(crate) fn forward_to_worker(env: &mut Vec<(String, String)>) {
-    env.retain(|(key, _)| key != CONFIG_ENV && key != PARENT_ENV);
+    env.retain(|(key, _)| key != CONFIG_ENV && key != PARENT_ENV && key != MUTANT_ENV);
+    if let Ok(selected) = std::env::var(MUTANT_ENV) {
+        env.push((MUTANT_ENV.into(), selected));
+    }
     if let Ok(config) = std::env::var(CONFIG_ENV) {
         let thread = std::thread::current();
         let parent = thread.name().expect("#946 named libtest parent");

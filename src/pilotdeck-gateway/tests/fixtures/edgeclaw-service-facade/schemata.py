@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import negative as legacy
 from negative_process import run_owned, tree_lock, wait_for_slot
+from negative_suite import invalidate_completed
 from _shared.mutant_switch import (artifact, clean_environment, enforce_denominator,
                                     execute_suite, publish_summary,
                                     raw_timeout, record_sources, selector_environment,
@@ -152,8 +153,10 @@ def run(output, selected, env, requested=()):
                                 declared=anchor_selfcheck.static_mutant_names(declaration, ROOT))
     except Exception as error:
         reason = f'runner: {type(error).__name__}: {error}'
-        for row in rows:
-            row.update(status='INVALID', reason=row['reason'] + '; ' + reason)
+        # #1037: a guard or verification failure must revoke every already
+        # completed row through the one shared implementation (#979), never a
+        # second copy; otherwise an all-KILLED summary publishes a false pass.
+        invalidate_completed(rows, reason)
         for row in selected[len(rows):]:
             rows.append({key: row[key] for key in ('name', 'test', 'anchor')} | {
                 'status': 'INVALID', 'reason': reason})

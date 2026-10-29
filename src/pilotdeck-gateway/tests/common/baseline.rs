@@ -180,6 +180,17 @@ fn generator_command(
 /// in `_shared/regeneration-masks.tsv`. Callers are `#[ignore]` tests.
 #[allow(dead_code)]
 pub(crate) fn regenerates_identically(fixture: &str) {
+    regenerates_identically_with(fixture, false)
+}
+
+/// #996: regeneration negative controls flip `corrupt_committed` through a
+/// `crate::mutants::on` switch at the library-test call site, corrupting the
+/// *loaded* committed bytes (baseline commit -> zeros) — the same edit the
+/// old text-replacement control wrote to the fixture on disk. The switch
+/// cannot live here: this module is also compiled into every
+/// integration-test crate, where the library's switches do not exist.
+#[allow(dead_code)]
+pub(crate) fn regenerates_identically_with(fixture: &str, corrupt_committed: bool) {
     let baseline = std::path::PathBuf::from(
         std::env::var("PDRS_BASELINE").expect("#280 set PDRS_BASELINE to the PilotDeck checkout"),
     );
@@ -229,6 +240,11 @@ pub(crate) fn regenerates_identically(fixture: &str) {
     let generated = generated_oracle_bytes(fixture, &scratch, &stdout)
         .unwrap_or_else(|error| panic!("#280 {fixture}: {error}"));
     let committed = fs::read(fixtures.join("oracle.json")).expect("#280 read committed oracle");
+    let committed = if corrupt_committed {
+        zero_commit(&committed)
+    } else {
+        committed
+    };
     // Keep the scratch on mismatch so the differing bytes can be inspected.
     regeneration_masks::compare(fixture, "oracle.json", &generated, &committed, (None, None))
         .unwrap_or_else(|error| {
@@ -752,4 +768,18 @@ pub(crate) fn generated_oracle_bytes(
         ));
     }
     fs::read(&found[0]).map_err(|error| error.to_string())
+}
+
+/// #996: the in-memory corruption `corrupt_committed` applies — the same
+/// bytes the old text-replacement control wrote to the fixture on disk.
+fn zero_commit(bytes: &[u8]) -> Vec<u8> {
+    let commit = BASELINE_COMMIT.as_bytes();
+    let at = bytes
+        .windows(commit.len())
+        .position(|window| window == commit)
+        .expect("#996 baseline commit is present in every committed oracle");
+    let mut corrupted = bytes[..at].to_vec();
+    corrupted.extend_from_slice(b"0000000000000000000000000000000000000000");
+    corrupted.extend_from_slice(&bytes[at + commit.len()..]);
+    corrupted
 }

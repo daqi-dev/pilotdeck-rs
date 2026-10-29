@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import run_owned, tree_lock, wait_for_slot
-from negative_suite import classify, passed
+from negative_suite import classify, invalidate_completed, passed
 
 SELECTOR = 'PDRS_MUTANT'
 STATES = ('KILLED', 'SURVIVED', 'INVALID')
@@ -120,6 +120,16 @@ def switch_site(name):
     return f'::mutants::on("{name}")'
 
 
+def as_tests(value):
+    """A bound test is one name or a nonempty list; lists are all-cells rows."""
+    if isinstance(value, str) and value:
+        return [value]
+    if (isinstance(value, list) and value
+            and all(isinstance(item, str) and item for item in value)):
+        return list(value)
+    raise ValueError(f'invalid test binding: {value!r}')
+
+
 def preflight(rows):
     """Every switch must exist exactly once in its bound source file."""
     def bound(value):
@@ -140,6 +150,12 @@ def preflight(rows):
         for key in ('test', 'anchor'):
             if not bound(row.get(key)):
                 errors.append(f'{name}: missing {key} binding')
+        # All-cells rows bind one assertion per test, so no cell is judged by
+        # another cell's anchor.
+        tests, anchors = row.get('test'), row.get('anchor')
+        if isinstance(tests, list) and not (isinstance(anchors, list)
+                                            and len(anchors) == len(tests)):
+            errors.append(f'{name}: list tests require an aligned assertion list')
     if errors:
         raise ValueError('\n'.join(errors))
 
@@ -153,33 +169,67 @@ def selected(rows, requested):
 
 
 def execute_suite(selected_rows, invoke, verdict=None, prefix=''):
-    """One bad row must not hide later rows; invoke owns bounded children."""
+    """One bad row must not hide later rows; invoke owns bounded children.
+
+    A row's test binding is one name or a nonempty list. List rows are
+    all-cells bindings: every test must pass in the positive and restored
+    phases and fail at its own assertion under mutation.
+    """
     if verdict is None:
         def verdict(result, row):
             return classify(result, SimpleNamespace(test=row['test'], assertion=row['anchor']))
 
+    def phase(name, phase_name, tests, selector, row):
+        """Invoke each bound test once; return the names that did not pass."""
+        failed = []
+        for index, test in enumerate(tests):
+            label = (f'{name}-{phase_name}' if len(tests) == 1
+                     else f'{name}-{phase_name}-{index + 1}of{len(tests)}')
+            if not passed(invoke(label, test, selector, row), prefix + test):
+                failed.append(test)
+        return failed
+
     for row in selected_rows:
         status, reason = 'INVALID', ''
         try:
-            name, test, witness = row['name'], row['test'], row.get('witness')
-            if not passed(invoke(name + '-positive', test, None, row), prefix + test):
+            name, witness = row['name'], row.get('witness')
+            tests = as_tests(row['test'])
+            witnesses = as_tests(witness) if witness else []
+            if phase(name, 'positive', tests, None, row):
                 reason = 'positive control did not pass the bound test'
-            elif witness and not passed(invoke(name + '-witness-positive', witness, None, row),
-                                        prefix + witness):
+            elif witness and phase(name, 'witness-positive', witnesses, None, row):
                 reason = 'witness test did not pass before mutation'
             else:
-                witness_failed = witness and not passed(
-                    invoke(name + '-witness-negative', witness, name, row), prefix + witness)
-                result = invoke(name + '-negative', test, name, row)
-                status, reason = verdict(result, dict(row, test=prefix + test))
+                witness_failed = bool(witness
+                                      and phase(name, 'witness-negative', witnesses, name, row))
+                anchors = row.get('anchor')
+                aligned = (len(tests) > 1 and isinstance(anchors, list)
+                           and len(anchors) == len(tests))
+                verdicts = [
+                    verdict(
+                        invoke(
+                            f'{name}-negative' if len(tests) == 1
+                            else f'{name}-negative-{index + 1}of{len(tests)}',
+                            test, name, row),
+                        dict(row, test=prefix + test,
+                             anchor=anchors[index] if aligned else anchors))
+                    for index, test in enumerate(tests)]
+                unaccounted = [(test, state, why)
+                               for test, (state, why) in zip(tests, verdicts)
+                               if state != 'KILLED']
+                if not unaccounted:
+                    status, reason = 'KILLED', 'bound test failed at its assertion'
+                else:
+                    status = unaccounted[0][1]
+                    reason = '; '.join(f'{test}: {why}'
+                                      for test, _state, why in unaccounted)
                 if witness_failed:
                     status, reason = 'INVALID', reason + '; witness test failed under mutation'
         except Exception as error:
             status, reason = 'INVALID', f'{type(error).__name__}: {error}'
         # Fresh process, no selector: also run after exceptions and failed positives.
         try:
-            if not passed(invoke(row['name'] + '-restored', row['test'], None, row),
-                          prefix + row['test']):
+            if phase(row['name'], 'restored', as_tests(row['test']), None, row):
                 status, reason = 'INVALID', reason + '; restored bound test did not pass'
         except Exception as error:
             status, reason = 'INVALID', reason + f'; restored: {type(error).__name__}: {error}'
@@ -314,8 +364,11 @@ def run(root, output, selected_rows, env, *, guarded, script=None, requested=(),
                 enforce_denominator(root, script, rows, requested)
     except Exception as error:
         reason = f'runner: {type(error).__name__}: {error}'
-        for row in rows:
-            row.update(status='INVALID', reason=row['reason'] + '; ' + reason)
+        # #1037: a guard or verification failure (record_sources, the exit
+        # verify_unchanged, the denominator check) must revoke every already
+        # completed row through the one shared implementation (#979), never a
+        # second copy; otherwise an all-KILLED summary publishes a false pass.
+        invalidate_completed(rows, reason)
         for row in selected_rows[len(rows):]:
             rows.append({key: row[key] for key in ('name', 'test', 'anchor')} | {
                 'status': 'INVALID', 'reason': reason})

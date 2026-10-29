@@ -192,6 +192,11 @@ fn peer(mode: &str, pid: Option<&Path>) -> Deployment {
     if let Some(pid) = pid {
         env.insert("PDRS_PEER_PID".into(), pid.to_string_lossy().into_owned());
     }
+    if crate::mutants::on("gates-multi-turn-peer-marker") {
+        // #996: the sidecar's execute marker loses its per-PID suffix, so the
+        // second turn collides on the shared exclusive file.
+        env.insert("PDRS_PEER_SHARED_MARKER".into(), "1".into());
+    }
     env.insert("PILOTDECK_AGENT_LOOP_TRANSPORT".into(), "stdio".into());
     env.insert(
         "PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND".into(),

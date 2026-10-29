@@ -160,7 +160,12 @@ impl SessionTail {
         let this = self.clone();
         tokio::task::spawn_blocking(move || {
             let _owner = owner;
-            let _serial = serial;
+            // The old control dropped the serial lock early (`drop(serial)`),
+            // so the switch must release the guard, not merely rebind it.
+            let mut serial_lock = Some(serial);
+            if crate::mutants::on("tail-metadata-serial") {
+                drop(serial_lock.take());
+            }
             if this.disposed.is_cancelled() {
                 return Ok(());
             }
@@ -169,7 +174,7 @@ impl SessionTail {
                 &turn,
                 JsValue::Object(metadata.clone()),
             )?;
-            if !snapshot {
+            if !snapshot || crate::mutants::on("tail-snapshot-mutates-memory") {
                 merge(
                     &mut this
                         .state
@@ -192,14 +197,17 @@ impl SessionTail {
         cancel: Cancellation,
         options: &JsValue,
     ) {
-        if !self.config.auto_generate_title || text.is_empty() {
+        if crate::mutants::on("tail-title-disabled")
+            || !self.config.auto_generate_title
+            || text.is_empty()
+        {
             return;
         }
         let Some(provider) = self.config.title_provider.clone() else {
             return;
         };
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if self.disposed.is_cancelled()
+        if (self.disposed.is_cancelled() && !crate::mutants::on("tail-title-after-dispose"))
             || titled(&state.metadata)
             || state
                 .pending
@@ -219,7 +227,9 @@ impl SessionTail {
             pending.signal.cancel(None);
         }
         state.pending = Some(pending.clone());
-        drop(state);
+        if !crate::mutants::on("tail-title-locked-port") {
+            drop(state);
+        }
         let selected = options
             .get("modelOverride")
             .filter(|v| !matches!(v, JsValue::Null | JsValue::Undefined))
@@ -257,13 +267,21 @@ impl SessionTail {
                 tokio::select! {
                     biased;
                     _=disposed.cancelled()=>break None,
-                    _=cancel.cancelled(), if pending.linked.load(Ordering::SeqCst)=>{if pending.linked.swap(false,Ordering::SeqCst) { pending.signal.cancel(None); }},
+                    _=cancel.cancelled(), if pending.linked.load(Ordering::SeqCst)=>{
+                        if crate::mutants::on("tail-title-detach-race") {
+                            pending.signal.cancel(None);
+                            pending.linked.store(false,Ordering::SeqCst);
+                        } else if pending.linked.swap(false,Ordering::SeqCst) {
+                            pending.signal.cancel(None);
+                        }
+                    },
                     _=pending.unlink.cancelled(), if pending.linked.load(Ordering::SeqCst)=>{pending.linked.store(false,Ordering::SeqCst);},
                     result=&mut future=>break result.ok().flatten(),
                 }
             };
             if !disposed.is_cancelled()
-                && !pending.signal.is_cancelled()
+                && (!pending.signal.is_cancelled()
+                    || crate::mutants::on("tail-title-aborted-write"))
                 && let Some(title) = title.filter(|s| !s.is_empty())
                 && let Some(this) = weak.upgrade()
                 && !titled(this.snapshot().as_object().expect("metadata object"))
@@ -283,14 +301,28 @@ impl SessionTail {
                 ]);
                 if let JsValue::Object(fields) = &mut patch {
                     if let Some(id) = provider.provider_id {
-                        fields.insert("titleProviderId".into(), JsValue::String(id));
+                        fields.insert(
+                            if crate::mutants::on("tail-title-provenance") {
+                                "lostTitleProviderId"
+                            } else {
+                                "titleProviderId"
+                            }
+                            .into(),
+                            JsValue::String(id),
+                        );
                     }
                     if let Some(model) = provider.model_provenance {
                         fields.insert("titleModel".into(), model);
                     }
                     fields.insert(
                         "titleMessageSequences".into(),
-                        JsValue::Array(vec![JsValue::Number(sequence as f64)]),
+                        JsValue::Array(vec![JsValue::Number(
+                            if crate::mutants::on("tail-title-sequence") {
+                                0.0
+                            } else {
+                                sequence as f64
+                            },
+                        )]),
                     );
                     fields.insert("updatedAt".into(), JsValue::String((this.now)()));
                 }
@@ -323,7 +355,10 @@ impl SessionTail {
         {
             return;
         }
-        snapshot.insert("isSnapshot".into(), JsValue::Bool(true));
+        snapshot.insert(
+            "isSnapshot".into(),
+            JsValue::Bool(!crate::mutants::on("tail-snapshot-marker")),
+        );
         snapshot.insert("updatedAt".into(), JsValue::String((self.now)()));
         let _ = self.record(turn.clone(), snapshot, true, Some(owner)).await;
     }
@@ -445,26 +480,59 @@ impl TurnRunner {
         tail.human = history.iter().chain(accepted).cloned().collect();
         let prompt = human_text(accepted);
         let model = metadata.and_then(|m| m.get("modelSelection"));
-        if prompt.is_empty() && model.is_none() {
+        if prompt.is_empty() && model.is_none() || crate::mutants::on("tail-listing-disabled") {
             return;
         }
         let mut patch = JsObject::new();
         if !prompt.is_empty() {
+            let bound = if crate::mutants::on("tail-listing-utf16-limit") {
+                1199
+            } else {
+                1200
+            };
             let bounded = JsValue::String(JsString::from_utf16(
-                prompt.units()[..prompt.len_utf16().min(1200)].to_vec(),
+                prompt.units()[..prompt.len_utf16().min(bound)].to_vec(),
             ));
             if !tail
                 .session
                 .snapshot()
-                .get("firstPrompt")
+                .get(if crate::mutants::on("tail-listing-first-overwrite") {
+                    "missingFirstPrompt"
+                } else {
+                    "firstPrompt"
+                })
                 .is_some_and(super::super::submit::truthy)
             {
-                patch.insert("firstPrompt".into(), bounded.clone());
+                patch.insert(
+                    if crate::mutants::on("tail-listing-first") {
+                        "lostFirstPrompt"
+                    } else {
+                        "firstPrompt"
+                    }
+                    .into(),
+                    bounded.clone(),
+                );
             }
-            patch.insert("lastPrompt".into(), bounded);
+            patch.insert(
+                if crate::mutants::on("tail-listing-last") {
+                    "lostLastPrompt"
+                } else {
+                    "lastPrompt"
+                }
+                .into(),
+                bounded,
+            );
         }
         if let Some(model) = model {
-            patch.insert("modelSelection".into(), model.clone());
+            patch.insert(
+                if crate::mutants::on("tail-listing-model") {
+                    "lostModelSelection"
+                } else {
+                    "modelSelection"
+                }
+                .into(),
+                model.clone(),
+            );
         }
         patch.insert("updatedAt".into(), JsValue::String((tail.session.now)()));
         let _ = tail
@@ -473,7 +541,11 @@ impl TurnRunner {
                 self.turn.clone(),
                 patch,
                 false,
-                Some((self.lease.clone(), self.owner.clone())),
+                if crate::mutants::on("tail-metadata-owner") {
+                    None
+                } else {
+                    Some((self.lease.clone(), self.owner.clone()))
+                },
             )
             .await;
     }
@@ -481,7 +553,9 @@ impl TurnRunner {
         let Some(tail) = &mut self.tail else {
             return;
         };
-        if !tail.session.config.collect_file_artifacts {
+        if !tail.session.config.collect_file_artifacts
+            && !crate::mutants::on("tail-artifact-disabled")
+        {
             return;
         }
         let Some(cwd) = tail.session.config.cwd.clone() else {
@@ -533,7 +607,8 @@ impl TurnRunner {
         let Some(collector) = tail.collector.take() else {
             return;
         };
-        let status = if result.get("type") == Some(&"success".into()) {
+        let succeeded = result.get("type") == Some(&"success".into());
+        let status = if succeeded || crate::mutants::on("tail-artifact-status") {
             "complete"
         } else {
             "incomplete"
@@ -546,7 +621,7 @@ impl TurnRunner {
         })
         .await
         .unwrap_or_default();
-        if artifacts.is_empty() {
+        if artifacts.is_empty() || crate::mutants::on("tail-artifact-omitted") {
             return;
         }
         let written = artifacts.clone();
@@ -582,7 +657,7 @@ impl TurnRunner {
                 .map(content_text)
                 .unwrap_or_default(),
         );
-        if response.is_empty() {
+        if response.is_empty() != crate::mutants::on("tail-suggestion-empty-assistant") {
             return;
         }
         let input = SuggestionInput {
@@ -593,7 +668,9 @@ impl TurnRunner {
             signal: tail.cancel.clone(),
         };
         match generate(input).await {
-            Ok(Some(suggestion)) if !suggestion.is_empty() => {
+            Ok(Some(suggestion))
+                if !suggestion.is_empty() != crate::mutants::on("tail-delete-suggestion") =>
+            {
                 self.emit_tail(self.event(
                     "prompt_suggestion",
                     [("suggestion", JsValue::String(suggestion))],
@@ -607,7 +684,9 @@ impl TurnRunner {
                         .chain(message.units().iter().take(200).copied())
                         .collect(),
                 );
-                (tail.session.config.debug)(message);
+                if !crate::mutants::on("tail-drop-suggestion-error-diagnostic") {
+                    (tail.session.config.debug)(message);
+                }
             }
             _ => {}
         }

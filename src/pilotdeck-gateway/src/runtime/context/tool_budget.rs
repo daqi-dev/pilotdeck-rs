@@ -326,14 +326,39 @@ impl ToolResultBudget {
     pub fn new(options: ToolResultBudgetOptions) -> Result<Self, ToolBudgetError> {
         let raw = JsString::from(options.tool_results_dir.to_string_lossy().as_ref());
         let tool_results_dir = if is_absolute(&raw) {
+            if crate::mutants::on("budget-absolute-reads-cwd") {
+                let _ = std::env::current_dir().map_err(|error| {
+                    ToolBudgetError::new(
+                        crate::node_io::diagnostic_or_unknown(&error, "uv_cwd", None).1,
+                    )
+                })?;
+            }
             normalize(&raw)
         } else {
-            let cwd = std::env::current_dir().map_err(|error| {
-                ToolBudgetError::new(
-                    crate::node_io::diagnostic_or_unknown(&error, "uv_cwd", None).1,
-                )
-            })?;
-            join(&JsString::from(cwd.to_string_lossy().as_ref()), &raw)
+            let cwd = if crate::mutants::on("budget-cwd-root-fallback") {
+                std::env::current_dir()
+                    .map(|path| JsString::from(path.to_string_lossy().as_ref()))
+                    .unwrap_or_else(|_| JsString::from("/"))
+            } else {
+                let cwd = std::env::current_dir().map_err(|error| {
+                    ToolBudgetError::new(if crate::mutants::on("budget-cwd-rust-display") {
+                        error.to_string()
+                    } else {
+                        crate::node_io::diagnostic_or_unknown(
+                            &error,
+                            if crate::mutants::on("budget-cwd-syscall") {
+                                "read"
+                            } else {
+                                "uv_cwd"
+                            },
+                            None,
+                        )
+                        .1
+                    })
+                })?;
+                JsString::from(cwd.to_string_lossy().as_ref())
+            };
+            join(&cwd, &raw)
         };
         Ok(Self {
             max_result_size_chars: options
