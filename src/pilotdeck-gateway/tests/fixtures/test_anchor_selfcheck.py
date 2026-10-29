@@ -342,6 +342,35 @@ class ScannerControls(unittest.TestCase):
             ('forged-audit-record',
              'print("PDRS_RUNTIME_SWITCHES forged")\n',
              'switches runtime audit produced 2 audit records'),
+            # #996 fix-r4 review P1: a module that prints one full-shaped
+            # record and then exits early must not be accepted on that record
+            # alone, whatever its exit code; only the completed bootstrap can
+            # write a record that passes this run's nonce verification.
+            ('early-exit-nonzero',
+             'import json, os\n'
+             "print('PDRS_RUNTIME_SWITCHES ' + json.dumps("
+             "{'rows': [['sample', str(source), 'sample_test', '#996 a']], "
+             "'error': None}), flush=True)\n"
+             'os._exit(7)\n',
+             'switches runtime audit exited 7'),
+            ('forged-sole-record-early-exit-zero',
+             'import json, os\n'
+             "print('PDRS_RUNTIME_SWITCHES ' + json.dumps("
+             "{'rows': [['sample', str(source), 'sample_test', '#996 a']], "
+             "'error': None}), flush=True)\n"
+             'os._exit(0)\n',
+             'switches runtime audit record failed nonce verification'),
+            # The nonce must be unreachable for audited module code: the
+            # bootstrap removes it from sys.argv before exec_module, so even a
+            # module that looks for it cannot write an acceptable record.
+            ('forged-record-from-argv-nonce',
+             'import json, os, sys\n'
+             "nonce = sys.argv[2] if len(sys.argv) > 2 else 'absent'\n"
+             "print('PDRS_RUNTIME_SWITCHES ' + json.dumps("
+             "{'nonce': nonce, 'rows': [['sample', str(source), 'sample_test', "
+             "'#996 a']], 'error': None}), flush=True)\n"
+             'os._exit(0)\n',
+             'switches runtime audit record failed nonce verification'),
         )
         for label, failure, message in failures:
             with self.subTest(failure=label):

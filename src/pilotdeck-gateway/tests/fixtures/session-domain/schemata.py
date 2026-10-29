@@ -110,7 +110,8 @@ def main():
         output.mkdir(parents=True, exist_ok=False)
         return mutant_switch.run(ROOT, output, chosen,
                                  mutant_switch.clean_environment(os.environ),
-                                 guarded=GUARDED)
+                                 guarded=GUARDED, script=Path(__file__),
+                                 requested=args.names)
     except (ValueError, OSError) as error:
         print(f'preflight: {error}', file=sys.stderr)
         return 2

@@ -42,6 +42,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -72,16 +73,24 @@ SWITCH_DYNAMIC_SYMBOLS = {'setattr', 'globals', 'vars'}
 # `switches` object is reconciled row by row with the static rows. The child
 # answers with exactly one prefixed JSON audit record; duplicates (a forged
 # decoy line), import failures, timeouts, non-list tables and malformed rows
-# all fail closed.
+# all fail closed. #996 fix-r4: a nonzero child exit is an error even with a
+# single plausible record (an early `os._exit` after printing one), and the
+# record must carry a per-run nonce that the parent generates and passes via
+# argv; the bootstrap removes it from sys.argv *before* executing the module,
+# so audited module code cannot read it and only the completed bootstrap can
+# write an acceptable record. Forged audit output from deliberately
+# obfuscating module code is out of scope (checker threat model,
+# specs/negative-controls/README.md).
 RUNTIME_SWITCH_PREFIX = 'PDRS_RUNTIME_SWITCHES '
 RUNTIME_SWITCH_TIMEOUT = 30
 RUNTIME_SWITCH_BOOTSTRAP = '''\
 import importlib.util, json, os, sys
 name = 'pdrs_switch_runtime_audit'
+nonce = sys.argv.pop()
 spec = importlib.util.spec_from_file_location(name, sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[name] = module
-document = {'rows': None, 'error': None}
+document = {'nonce': nonce, 'rows': None, 'error': None}
 try:
     spec.loader.exec_module(module)
     table = getattr(module, 'switches', None)
@@ -1017,16 +1026,33 @@ def switch_bindings(tree, static):
     return bindings
 
 
+def static_switch_names(script, root):
+    """The statically declared switch identities of a switches-table script.
+
+    #996 fix-r4: the executor-side denominator check calls this same
+    switch_bindings extraction the checker uses, so a table shrunk or grown
+    between the static audit and the actual execution (for example inside a
+    ``main()`` the import-time audit never runs) is reported as drift instead
+    of silently executing a different suite than the declared one.
+    """
+    tree = ast.parse(script.read_text(encoding='utf-8'), filename=str(script))
+    static = Static(script, root, tree)
+    return {name for name, _path, _test, _assertion, _line in switch_bindings(tree, static)}
+
+
 def runtime_switch_table(script):
     """Import the switches-table script isolated; return its executed rows.
 
     The child never runs as ``__main__`` and answers with exactly one prefixed
     JSON audit record; anything else (import failure, timeout, a forged or
-    duplicated record, a non-JSON record) fails closed. Output goes to a real
-    temporary file, not a pipe, so a descendant that survives the timeout kill
-    cannot hold collection open (#528 shape).
+    duplicated record, a non-JSON record, a nonzero exit, a record without
+    this run's nonce) fails closed. Output goes to a real temporary file, not
+    a pipe, so a descendant that survives the timeout kill cannot hold
+    collection open (#528 shape).
     """
-    command = [sys.executable or 'python3', '-I', '-B', '-c', RUNTIME_SWITCH_BOOTSTRAP, str(script)]
+    nonce = secrets.token_hex(16)
+    command = [sys.executable or 'python3', '-I', '-B', '-c', RUNTIME_SWITCH_BOOTSTRAP,
+               str(script), nonce]
     with tempfile.TemporaryFile() as report:
         try:
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
@@ -1041,6 +1067,12 @@ def runtime_switch_table(script):
             raise Unsupported(f'switches runtime audit exceeded {RUNTIME_SWITCH_TIMEOUT}s') from None
         report.seek(0)
         finished = report.read().decode('utf-8', 'replace')
+    if process.returncode != 0:
+        # #996 fix-r4: a module that prints a plausible record and then exits
+        # early (even with 0) must never be accepted on that record alone.
+        tail = finished[-160:].replace('\n', ' ')
+        raise Unsupported(f'switches runtime audit exited {process.returncode} '
+                          f'(expected 0); output tail: {tail!r}')
     records = [line[len(RUNTIME_SWITCH_PREFIX):] for line in finished.splitlines()
                if line.startswith(RUNTIME_SWITCH_PREFIX)]
     if len(records) != 1:
@@ -1053,6 +1085,9 @@ def runtime_switch_table(script):
         raise Unsupported(f'switches runtime audit record is not JSON: {error}') from error
     if not isinstance(document, dict):
         raise Unsupported('switches runtime audit record is not an object')
+    if document.get('nonce') != nonce:
+        raise Unsupported('switches runtime audit record failed nonce verification: '
+                          'only the completed bootstrap can write an acceptable record')
     if document.get('error') is not None:
         raise Unsupported(f'switches runtime audit failed: {document["error"]}')
     if not isinstance(document.get('rows'), list):
