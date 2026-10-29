@@ -46,6 +46,19 @@ MUTATIONS = [
     ('a1-cleanup-errors-ignored', ROUND,
      "    return {'allStopped': not errors and not remaining, 'remaining': remaining, 'errors': errors}",
      "    return {'allStopped': not remaining, 'remaining': remaining, 'errors': errors}"),
+    # A1: the leader's final bounded wait timeout is ignored, so cleanup is
+    # called proven even though the leader was never reaped.
+    ('a1-wait-timeout-ignored', ROUND,
+     "    except subprocess.TimeoutExpired:\n        errors.append('leader did not exit')",
+     "    except subprocess.TimeoutExpired:\n        pass"),
+    # A1: the final absence probe's OSError is read as "group gone".
+    ('a1-probe-error-gone', ROUND,
+     "        except OSError as error:\n"
+     "            errors.append(str(error))\n"
+     "            remaining.append(proc.pid)\n"
+     "            break",
+     "        except OSError:\n"
+     "            break"),
     # A1: a retained cleanupPending lease is taken over as a dead/expired lock.
     ('a1-takeover-ignores-pending', ROUND,
      "                if reason and not damaged and not (previous and previous.get('cleanupPending')):",
@@ -69,6 +82,18 @@ MUTATIONS = [
     ('b2-cleanup-errors-ignored', B2_SHELL,
      "    return {'allStopped': not errors and not remaining, 'remaining': remaining,",
      "    return {'allStopped': not remaining, 'remaining': remaining,"),
+    # B2: the leader's final bounded wait timeout is ignored.
+    ('b2-wait-timeout-ignored', B2_SHELL,
+     "    except subprocess.TimeoutExpired:\n        errors.append('leader did not exit')",
+     "    except subprocess.TimeoutExpired:\n        pass"),
+    # B2: the final absence probe's OSError is read as "group gone".
+    ('b2-probe-error-gone', B2_SHELL,
+     "        except OSError as error:\n"
+     "            errors.append(str(error))\n"
+     "            remaining.append(proc.pid)\n"
+     "            break",
+     "        except OSError:\n"
+     "            break"),
     ('b2-signals-not-deferred', B2_SHELL,
      '    old = signal.pthread_sigmask(signal.SIG_BLOCK, DEFERRED)',
      '    old = signal.pthread_sigmask(signal.SIG_UNBLOCK, DEFERRED)'),
@@ -99,6 +124,10 @@ CHECKS = {
                            '#209 an unproven group must retain the shared lock'),
     'a1-cleanup-errors-ignored': ('LockReleaseControls.test_cleanup_error_is_unproven',
                                   '#209 kill/wait OSError must leave the group unproven'),
+    'a1-wait-timeout-ignored': ('LockReleaseControls.test_wait_timeout_blocks_round',
+                                '#209 wait timeout must leave the round BLOCKED'),
+    'a1-probe-error-gone': ('LockReleaseControls.test_probe_error_blocks_round',
+                            '#209 probe OSError must leave the round BLOCKED'),
     'a1-takeover-ignores-pending': ('LockReleaseControls.test_cleanup_pending_cannot_be_stolen',
                                     '#209 cleanupPending lock must be refused'),
     'a1-signals-not-deferred': ('LockReleaseControls.test_signals_deferred_across_spawn',
@@ -111,6 +140,10 @@ CHECKS = {
                            '#209 an unproven group must retain the lease'),
     'b2-cleanup-errors-ignored': ('LockGateControls.test_cleanup_error_returns_blocked_and_retains_lease',
                                   '#209 cleanup OSError must return BLOCKED'),
+    'b2-wait-timeout-ignored': ('LockGateControls.test_wait_timeout_returns_blocked_and_retains_lease',
+                                '#209 wait timeout must return BLOCKED'),
+    'b2-probe-error-gone': ('LockGateControls.test_probe_error_returns_blocked_and_retains_lease',
+                            '#209 probe OSError must return BLOCKED'),
     'b2-signals-not-deferred': ('LockGateControls.test_signals_deferred_across_spawn',
                                 '#209 SIGINT/SIGTERM must be blocked during spawn/cleanup'),
     'b2-acquisition-pending-false': ('LockGateControls.test_acquisition_publishes_pending',
