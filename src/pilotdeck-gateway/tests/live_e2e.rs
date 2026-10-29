@@ -34,7 +34,7 @@ use pilotdeck_gateway::{
             SessionContext, SessionOwner, SessionOwnerOptions,
             factory::{
                 FactoryOptions, FactoryStorage, PreparedResources, PreparedSession,
-                ProjectSessionFactory, SessionBinding,
+                ProjectSessionFactory, SessionBinding, SessionStorage,
             },
         },
         steer::MutationRecorder,
@@ -1029,7 +1029,7 @@ async fn run_case_transport(scenario: &str, websocket: bool) {
         create_storage: Arc::new(move |context| {
             let directory = storage_dir.clone();
             Box::pin(async move {
-                Ok(FactoryStorage::new(
+                Ok(SessionStorage::Unlocked(FactoryStorage::new(
                     Arc::new(JsonlTranscriptStore::new()),
                     TranscriptKey {
                         project_root: directory.join("sandbox"),
@@ -1037,7 +1037,7 @@ async fn run_case_transport(scenario: &str, websocket: bool) {
                         transcript_path: directory.join("transcript.jsonl"),
                         session_id: context.session_key,
                     },
-                ))
+                )))
             })
         }),
         admission: None,

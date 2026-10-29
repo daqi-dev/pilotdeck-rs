@@ -339,7 +339,7 @@ impl Harness {
                         }
                     })
                 });
-                Ok(storage)
+                Ok(SessionStorage::Unlocked(storage))
             })
         });
         let diagnostic_obs = observed.clone();
@@ -1834,7 +1834,7 @@ async fn writer_lease_excludes_second_factory_and_alias() {
         create_storage: Arc::new(move |context| {
             let root = alias.clone();
             Box::pin(async move {
-                Ok(FactoryStorage::new(
+                Ok(SessionStorage::Unlocked(FactoryStorage::new(
                     Arc::new(JsonlTranscriptStore::new()),
                     TranscriptKey {
                         project_root: root.clone(),
@@ -1842,7 +1842,7 @@ async fn writer_lease_excludes_second_factory_and_alias() {
                         session_id: context.session_key,
                         transcript_path: root.join("session-745.jsonl"),
                     },
-                ))
+                )))
             })
         }),
         admission: None,
@@ -1873,6 +1873,440 @@ async fn writer_lease_excludes_second_factory_and_alias() {
         .await
         .expect("#745 second factory disposal");
     h.finish("writer-lease").await;
+}
+
+/// #1019: a factory whose storage is a real `PersistenceResources::create_session`
+/// recording adopted through the fence transfer. `opens` counts opener runs,
+/// so exclusion tests can prove a rejected factory never opened the recording.
+fn adopt_factory(
+    h: &Harness,
+    opens: Arc<AtomicUsize>,
+    transcript_path: PathBuf,
+    memory: bool,
+    admission: Option<Admission>,
+) -> Arc<ProjectSessionFactory> {
+    let persistence = Arc::new(
+        crate::runtime::project::persistence::PersistenceResources::for_tests(
+            h.root.clone(),
+            h.root.join("home"),
+        ),
+    );
+    let session_id: JsString = "session-745".into();
+    Arc::new(ProjectSessionFactory::new(FactoryOptions {
+        writer_busy_wait_timeout: h.factory.options.writer_busy_wait_timeout,
+        prepare: h.factory.options.prepare.clone(),
+        create_storage: Arc::new(move |_context| {
+            let persistence = persistence.clone();
+            let session_id = session_id.clone();
+            let open_path = if memory {
+                None
+            } else {
+                Some(transcript_path.clone())
+            };
+            let plan_path = transcript_path.clone();
+            let opens = opens.clone();
+            Box::pin(async move {
+                let open: OpenRecording = Arc::new(move || {
+                    opens.fetch_add(1, Ordering::SeqCst);
+                    persistence.create_session(session_id.clone(), open_path.clone())
+                });
+                Ok(SessionStorage::Recording(RecordingPlan {
+                    transcript_path: plan_path,
+                    open,
+                }))
+            })
+        }),
+        admission,
+        diagnostic: Arc::new(|_| {}),
+    }))
+}
+
+#[tokio::test]
+async fn writer_adopt_creates_recreates_closes_and_reopens() {
+    let h = Harness::new("adopt-lifecycle");
+    let opens = Arc::new(AtomicUsize::new(0));
+    let factory = adopt_factory(
+        &h,
+        opens.clone(),
+        h.root.join("session-745.jsonl"),
+        false,
+        None,
+    );
+    let first = bounded("adopt first create", factory.create(h.context(), None))
+        .await
+        .expect("#1019 adopted first create is not busy");
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        1,
+        "#1019 adopted first create opens the recording once"
+    );
+    lock(&h.observed.bindings)[0]
+        .recorder
+        .writer()
+        .record_session_metadata(
+            &"session-745".into(),
+            &"adopt".into(),
+            js(r#"{"adopt":true}"#),
+        )
+        .expect("#1019 adopted writer appends through the transferred fence");
+    // Recreate: the predecessor's close thread releases the flock before the
+    // process mutex, so the deferred opener cannot observe the in-flight
+    // release and the first recreation must not report busy.
+    let second = bounded(
+        "adopt recreate",
+        factory.create(h.context(), Some(first.clone())),
+    )
+    .await
+    .expect("#1019 adopted recreate is not busy");
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        2,
+        "#1019 adopted recreate opens the recording once more"
+    );
+    assert_eq!(
+        second.state(),
+        HandleState::Active,
+        "#1019 recreated adopted handle is active"
+    );
+    second
+        .dispose("adopt close".into())
+        .await
+        .expect("#1019 adopted session closes");
+    let reopened = bounded("adopt reopen", factory.create(h.context(), None))
+        .await
+        .expect("#1019 adopted reopen after close is not busy");
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        3,
+        "#1019 adopted reopen opens the recording once more"
+    );
+    reopened
+        .dispose("adopt reopen cleanup".into())
+        .await
+        .expect("#1019 adopted reopen cleanup");
+    let transcript = std::fs::read_to_string(h.root.join("session-745.jsonl"))
+        .expect("#1019 adopted transcript written");
+    assert_eq!(
+        transcript.lines().count(),
+        1,
+        "#1019 adopted writes land exactly once"
+    );
+    factory
+        .dispose()
+        .await
+        .expect("#1019 adopt lifecycle factory disposal");
+    h.finish("adopt-lifecycle").await;
+}
+
+#[tokio::test]
+async fn writer_adopt_excludes_second_factory_and_alias() {
+    let h = Harness::new("adopt-exclusion");
+    let opens = Arc::new(AtomicUsize::new(0));
+    let path = h.root.join("session-745.jsonl");
+    let factory = adopt_factory(&h, opens.clone(), path.clone(), false, None);
+    let first = bounded("adopt exclusion create", factory.create(h.context(), None))
+        .await
+        .expect("#1019 adopted exclusion baseline");
+    std::fs::create_dir(h.root.join("nested")).expect("#1019 adopt alias directory");
+    for label in ["direct", "alias"] {
+        let alias_opens = Arc::new(AtomicUsize::new(0));
+        let plan_path = if label == "direct" {
+            path.clone()
+        } else {
+            h.root.join("nested/../session-745.jsonl")
+        };
+        let second = adopt_factory(&h, alias_opens.clone(), plan_path, false, None);
+        let error = bounded(label, second.create(h.context(), None))
+            .await
+            .err()
+            .expect("#1019 adopted lease excludes a second factory");
+        assert_eq!(
+            error.js_error().and_then(|e| e.code.as_deref()),
+            Some("SESSION_WRITER_BUSY"),
+            "#1019 second factory is the typed busy error"
+        );
+        assert_eq!(
+            alias_opens.load(Ordering::SeqCst),
+            0,
+            "#1019 rejected second factory never opens the recording"
+        );
+        second
+            .dispose()
+            .await
+            .unwrap_or_else(|e| panic!("#1019 rejected second factory {label} cleanup: {e}"));
+    }
+    first
+        .dispose("adopt exclusion cleanup".into())
+        .await
+        .expect("#1019 adopted exclusion baseline cleanup");
+    let after = bounded("adopt exclusion reopen", factory.create(h.context(), None))
+        .await
+        .expect("#1019 adopted lease is free after close");
+    after
+        .dispose("adopt exclusion reopen cleanup".into())
+        .await
+        .expect("#1019 adopted reopen cleanup");
+    factory
+        .dispose()
+        .await
+        .expect("#1019 adopt exclusion factory disposal");
+    h.finish("adopt-exclusion").await;
+}
+
+#[tokio::test]
+async fn writer_adopt_fence_excludes_unlocked_writer() {
+    let h = Harness::new("adopt-unlocked-exclusion");
+    let opens = Arc::new(AtomicUsize::new(0));
+    let factory = adopt_factory(
+        &h,
+        opens.clone(),
+        h.root.join("session-745.jsonl"),
+        false,
+        None,
+    );
+    let adopted = bounded(
+        "adopt unlocked exclusion create",
+        factory.create(h.context(), None),
+    )
+    .await
+    .expect("#1019 adopted unlocked exclusion baseline");
+    // The transferred fence must still exclude the factory's own unlocked path.
+    let error = bounded(
+        "unlocked second create",
+        h.factory.create(h.context(), None),
+    )
+    .await
+    .err()
+    .expect("#1019 adopted fence excludes an unlocked second writer");
+    assert_eq!(
+        error.js_error().and_then(|e| e.code.as_deref()),
+        Some("SESSION_WRITER_BUSY"),
+        "#1019 unlocked second writer is the typed busy error"
+    );
+    adopted
+        .dispose("adopt unlocked exclusion cleanup".into())
+        .await
+        .expect("#1019 adopted baseline cleanup");
+    // The reverse direction: an unlocked live writer excludes the adopter on
+    // the shared process mutex, before its opener ever runs.
+    let unlocked = bounded("unlocked recreate", h.factory.create(h.context(), None))
+        .await
+        .expect("#1019 unlocked recreate after adopted close");
+    let reverse = bounded("adopt reverse create", factory.create(h.context(), None))
+        .await
+        .err()
+        .expect("#1019 live unlocked writer rejects the adopted opener");
+    assert_eq!(
+        reverse.js_error().and_then(|e| e.code.as_deref()),
+        Some("SESSION_WRITER_BUSY"),
+        "#1019 rejected adopter is the typed busy error"
+    );
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        1,
+        "#1019 excluded adopter never opens against the live unlocked writer"
+    );
+    unlocked
+        .dispose("unlocked cleanup".into())
+        .await
+        .expect("#1019 unlocked cleanup");
+    let resumed = bounded("adopt resumed create", factory.create(h.context(), None))
+        .await
+        .expect("#1019 adopted create succeeds after the unlocked writer closes");
+    resumed
+        .dispose("adopt resumed cleanup".into())
+        .await
+        .expect("#1019 adopted resumed cleanup");
+    factory
+        .dispose()
+        .await
+        .expect("#1019 adopt unlocked exclusion factory disposal");
+    h.finish("adopt-unlocked-exclusion").await;
+}
+
+#[tokio::test]
+async fn writer_adopt_busy_is_typed_session_writer_busy() {
+    let h = Harness::new("adopt-external-lock");
+    let opens = Arc::new(AtomicUsize::new(0));
+    let path = h.root.join("session-745.jsonl");
+    let factory = adopt_factory(&h, opens.clone(), path.clone(), false, None);
+    let (_, external) =
+        crate::storage::LedgerLock::acquire(&path).expect("#1019 external ledger holder setup");
+    let error = bounded(
+        "adopt external lock create",
+        factory.create(h.context(), None),
+    )
+    .await
+    .err()
+    .expect("#1019 external fence rejects the adopted open");
+    assert_eq!(
+        error.js_error().and_then(|e| e.code.as_deref()),
+        Some("SESSION_WRITER_BUSY"),
+        "#1019 opener lock contention is the typed busy error"
+    );
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        1,
+        "#1019 opener ran once under the external lock"
+    );
+    drop(external);
+    let handle = bounded(
+        "adopt external lock retry",
+        factory.create(h.context(), None),
+    )
+    .await
+    .expect("#1019 adopted create succeeds after the external holder leaves");
+    handle
+        .dispose("adopt external lock cleanup".into())
+        .await
+        .expect("#1019 adopted external lock cleanup");
+    factory
+        .dispose()
+        .await
+        .expect("#1019 adopt external lock factory disposal");
+    h.finish("adopt-external-lock").await;
+}
+
+#[tokio::test]
+async fn writer_adopt_rejects_unfenced_recording() {
+    let h = Harness::new("adopt-memory");
+    let opens = Arc::new(AtomicUsize::new(0));
+    let factory = adopt_factory(
+        &h,
+        opens.clone(),
+        h.root.join("memory-plan.jsonl"),
+        true,
+        None,
+    );
+    let error = bounded("adopt memory create", factory.create(h.context(), None))
+        .await
+        .err()
+        .expect("#1019 unfenced recording must not join a session");
+    assert!(
+        error.message.contains("no ledger fence"),
+        "#1019 unfenced recording rejection message: {error}"
+    );
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        1,
+        "#1019 memory opener ran once"
+    );
+    assert_eq!(
+        h.leases(),
+        0,
+        "#1019 unfenced rejection releases prepared resources"
+    );
+    factory
+        .dispose()
+        .await
+        .expect("#1019 adopt memory factory disposal");
+    h.finish("adopt-memory").await;
+}
+
+#[tokio::test]
+async fn writer_adopt_opener_failure_releases_prepared() {
+    let h = Harness::new("adopt-opener-failure");
+    let opens = Arc::new(AtomicUsize::new(0));
+    let path = h.root.join("eisdir.jsonl");
+    std::fs::create_dir(&path).expect("#1019 opener failure path setup");
+    let factory = adopt_factory(&h, opens.clone(), path.clone(), false, None);
+    let error = bounded(
+        "adopt opener failure create",
+        factory.create(h.context(), None),
+    )
+    .await
+    .err()
+    .expect("#1019 opener failure rejects the session");
+    assert_ne!(
+        error.js_error().and_then(|e| e.code.as_deref()),
+        Some("SESSION_WRITER_BUSY"),
+        "#1019 opener failure is the storage error, not lock contention"
+    );
+    assert!(
+        error.message.contains("Is a directory"),
+        "#1019 opener failure surfaces the storage error: {error}"
+    );
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        1,
+        "#1019 opener failure ran the opener once"
+    );
+    assert_eq!(
+        h.leases(),
+        0,
+        "#1019 opener failure releases prepared resources"
+    );
+    std::fs::remove_dir(&path).expect("#1019 opener failure cleanup path");
+    let handle = bounded(
+        "adopt opener failure retry",
+        factory.create(h.context(), None),
+    )
+    .await
+    .expect("#1019 adopted create succeeds after the opener failure is cleared");
+    handle
+        .dispose("adopt opener failure cleanup".into())
+        .await
+        .expect("#1019 adopted opener failure cleanup");
+    factory
+        .dispose()
+        .await
+        .expect("#1019 adopt opener failure factory disposal");
+    h.finish("adopt-opener-failure").await;
+}
+
+#[tokio::test]
+async fn writer_adopt_failure_rolls_back_and_reopens() {
+    let h = Harness::new("adopt-rollback");
+    let opens = Arc::new(AtomicUsize::new(0));
+    let admission: Admission = Arc::new(|_: SessionContext| {
+        Box::pin(async { Err(RuntimeError::new("ADOPT_ADMISSION_BOOM")) })
+    });
+    let factory = adopt_factory(
+        &h,
+        opens.clone(),
+        h.root.join("session-745.jsonl"),
+        false,
+        Some(admission),
+    );
+    let error = bounded("adopt rollback create", factory.create(h.context(), None))
+        .await
+        .err()
+        .expect("#1019 post-adoption failure rejects the session");
+    assert_eq!(
+        error.message, "ADOPT_ADMISSION_BOOM",
+        "#1019 admission failure surfaces after the fence transfer"
+    );
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        1,
+        "#1019 rollback opened the recording once"
+    );
+    assert_eq!(h.leases(), 0, "#1019 rollback releases prepared resources");
+    factory
+        .dispose()
+        .await
+        .expect("#1019 adopt rollback factory disposal");
+    // The rollback's close thread releases the fence before the process mutex,
+    // so the next opener deterministically observes a free lock.
+    let retry = adopt_factory(
+        &h,
+        opens.clone(),
+        h.root.join("session-745.jsonl"),
+        false,
+        None,
+    );
+    let handle = bounded("adopt rollback reopen", retry.create(h.context(), None))
+        .await
+        .expect("#1019 rollback released the fence for the next create");
+    handle
+        .dispose("adopt rollback reopen cleanup".into())
+        .await
+        .expect("#1019 adopted rollback reopen cleanup");
+    retry
+        .dispose()
+        .await
+        .expect("#1019 adopt rollback retry factory disposal");
+    h.finish("adopt-rollback").await;
 }
 
 #[tokio::test]
@@ -2889,9 +3323,11 @@ async fn writer_close_panic_releases_lease() {
 #[tokio::test]
 async fn writer_rollback_close_panic_releases_lease() {
     let h = Harness::new("rollback-close-panic");
-    let mut storage = (h.factory.options.create_storage)(h.context())
-        .await
-        .expect("#745 rollback storage");
+    let mut storage = match (h.factory.options.create_storage)(h.context()).await {
+        Ok(SessionStorage::Unlocked(storage)) => storage,
+        Ok(SessionStorage::Recording(_)) => panic!("#745 rollback storage is unlocked"),
+        Err(error) => panic!("#745 rollback storage: {error}"),
+    };
     *lock(&storage.writer_lease) = Some(
         acquire_writer(
             storage.recorder.writer().path().to_owned(),
@@ -3034,7 +3470,7 @@ async fn writer_factory_rejects_already_locked_storage() {
             let root = root.clone();
             let path = path.clone();
             Box::pin(async move {
-                Ok(FactoryStorage::new(
+                Ok(SessionStorage::Unlocked(FactoryStorage::new(
                     store,
                     TranscriptKey {
                         project_root: root.clone(),
@@ -3042,7 +3478,7 @@ async fn writer_factory_rejects_already_locked_storage() {
                         transcript_path: path,
                         session_id: context.session_key,
                     },
-                ))
+                )))
             })
         }),
         admission: None,
@@ -3137,9 +3573,11 @@ async fn writer_disposal_preserves_final_hooks() {
 #[tokio::test]
 async fn writer_rollback_close_preserves_final_hook() {
     let h = Harness::new("rollback-final-write");
-    let mut storage = (h.factory.options.create_storage)(h.context())
-        .await
-        .expect("#745 final hook storage");
+    let mut storage = match (h.factory.options.create_storage)(h.context()).await {
+        Ok(SessionStorage::Unlocked(storage)) => storage,
+        Ok(SessionStorage::Recording(_)) => panic!("#745 final hook storage is unlocked"),
+        Err(error) => panic!("#745 final hook storage: {error}"),
+    };
     *lock(&storage.writer_lease) = Some(
         acquire_writer(
             storage.recorder.writer().path().to_owned(),
@@ -4447,7 +4885,12 @@ async fn writer_busy_budget_excludes_drained_snapshot() {
             let blocker = blocker.clone();
             let observe = observe.clone();
             Box::pin(async move {
-                let storage = storage.await?;
+                let storage = match storage.await? {
+                    SessionStorage::Unlocked(storage) => storage,
+                    SessionStorage::Recording(_) => {
+                        panic!("#1022 r2 slow snapshot storage is unlocked")
+                    }
+                };
                 let lease = acquire_writer(
                     storage.recorder.writer().path().to_owned(),
                     tokio::time::Instant::now() + Duration::from_secs(5),
@@ -4457,7 +4900,7 @@ async fn writer_busy_budget_excludes_drained_snapshot() {
                     tokio::sync::OwnedMutexGuard::mutex(&lease._process),
                 ));
                 *lock(&blocker) = Some(lease);
-                Ok(storage)
+                Ok(SessionStorage::Unlocked(storage))
             })
         }),
         admission: None,

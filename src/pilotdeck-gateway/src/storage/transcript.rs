@@ -271,7 +271,7 @@ impl JsonlLedgerStore {
     }
     #[cfg(test)]
     pub(super) fn clone_lock_for_test(&self) -> io::Result<File> {
-        self._lock.0.try_clone()
+        self._lock.file.try_clone()
     }
     fn replace(&mut self, appended: &[u8]) -> Result<()> {
         self.check_health()?;
@@ -433,10 +433,15 @@ pub(crate) fn canonical_transcript_path(supplied: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-pub(crate) struct LedgerLock(File);
+pub(crate) struct LedgerLock {
+    file: File,
+    path: PathBuf,
+}
 impl LedgerLock {
     /// Shared single-writer fence. Resolve aliases before opening the stable
     /// sibling lock inode, and retain it for the actual writer's lifetime.
+    /// The retained canonical path lets a transfer verify the fence really
+    /// guards the path the holder resolved (#1019).
     pub(crate) fn acquire(supplied: &Path) -> Result<(PathBuf, Self)> {
         let path = canonical_transcript_path(supplied)?;
         let mut lock_path = path.as_os_str().to_os_string();
@@ -453,7 +458,11 @@ impl LedgerLock {
             )),
             fs::TryLockError::Error(error) => error.into(),
         })?;
-        Ok((path, Self(lock)))
+        Ok((path.clone(), Self { file: lock, path }))
+    }
+    /// The canonical path this fence actually guards.
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
     }
 }
 impl Drop for LedgerLock {
@@ -461,7 +470,7 @@ impl Drop for LedgerLock {
         // Explicit unlock matters when a concurrent process spawn briefly
         // inherits a duplicate descriptor before exec closes it (CLOEXEC).
         // Closing only this File would keep that shared flock alive.
-        let _ = self.0.unlock();
+        let _ = self.file.unlock();
     }
 }
 pub(super) fn uuid() -> io::Result<String> {
