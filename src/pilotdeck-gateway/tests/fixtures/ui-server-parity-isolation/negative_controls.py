@@ -9,7 +9,10 @@ FROZEN pin so the preflight admits the copy, and runs the bound test in
 failed at its own ``#1023-N`` assertion.  SURVIVED means the mutation left the
 test green; INVALID means the row could not run or reached another failure.
 The discover row builds a probe from the real guard bytes: with the guard the
-start directory is rejected, without it unittest runs the probe.
+start directory is rejected, without it unittest runs the probe.  The alias row
+replays the shipped guard bytes under case/symlink spellings (disabling the
+guard admits the probe as its paired positive control) and then restores the
+pre-fix realpath comparison so ``#1023-6`` must fail on admission.
 
 No checkout source is written and no cargo runs.  Run all rows, print a
 summary, and exit nonzero unless every row is KILLED.
@@ -45,6 +48,25 @@ APPARATUS = 'scripts/ui-server-parity'
 SPEC = 'specs/ui-server-parity'
 SEPARATOR = '-' * 70
 HEADER = re.compile(r'^(FAIL|ERROR): (\S+) \(([^)]+)\)')
+# Shipped guard anchor (#1023 fix-r3): identity comparison over (device, inode).
+IDENTITY_GUARD = (
+    'if any(\n'
+    '        _boot_os.path.isdir(entry or _boot_os.curdir)\n'
+    '        and any(_boot_os.path.isdir(root)\n'
+    '                and _boot_os.path.samefile(entry or _boot_os.curdir, root)\n'
+    "                for root in (_boot_dir, _boot_os.path.join(_boot_dir, 'controls')))\n"
+    '        for entry in _boot_sys.path):')
+# Prefix only, so disabling keeps the rest of the same condition syntactically valid.
+GUARD = ('if any(\n'
+         '        _boot_os.path.isdir(entry or _boot_os.curdir)\n')
+GUARD_OFF = ('if False and any(\n'
+             '        _boot_os.path.isdir(entry or _boot_os.curdir)\n')
+# The pre-fix-r3 spelling comparison this row restores to prove #1023-6 kills it.
+REALPATH_GUARD = (
+    'if any(_boot_os.path.realpath(entry or _boot_os.curdir) in {\n'
+    '        _boot_os.path.realpath(_boot_dir),\n'
+    "        _boot_os.path.realpath(_boot_os.path.join(_boot_dir, 'controls'))}\n"
+    '       for entry in _boot_sys.path):')
 
 
 def copy_apparatus(destination):
@@ -75,7 +97,11 @@ def rewrite_source(root, relative, old, new):
     text = path.read_text()
     if text.count(old) != 1:
         raise AssertionError(f'{relative}: anchor occurs {text.count(old)} times, expected 1')
-    path.write_text(text.replace(old, new, 1))
+    mutated = text.replace(old, new, 1)
+    # A mutant that cannot compile is INVALID, never a killed test: verify here
+    # before any run, in-process so no __pycache__ lands in the apparatus copy.
+    compile(mutated, str(path), 'exec')
+    path.write_text(mutated)
     refresh_pin(root, relative)
 
 
@@ -137,9 +163,7 @@ def row_readme(root):
 
 def row_guard(root):
     relative = APPARATUS + '/check_frozen.py'
-    rewrite_source(root, relative,
-           'if any(_boot_os.path.realpath(entry or _boot_os.curdir) in {',
-           'if False and any(_boot_os.path.realpath(entry or _boot_os.curdir) in {')
+    rewrite_source(root, relative, GUARD, GUARD_OFF)
     return run_bound(root, 'FrozenControls.test_entrypoints_reject_reinserted_apparatus_directory'), \
         'FrozenControls.test_entrypoints_reject_reinserted_apparatus_directory', '#1023-2:'
 
@@ -157,9 +181,7 @@ def discover_probe(root, guarded):
     end = source.index('raise SystemExit(1)', source.index(marker)) + len('raise SystemExit(1)')
     prefix = source[:end]
     if not guarded:
-        old = 'if any(_boot_os.path.realpath(entry or _boot_os.curdir) in {'
-        new = 'if False and any(_boot_os.path.realpath(entry or _boot_os.curdir) in {'
-        prefix = prefix.replace(old, new, 1)
+        prefix = prefix.replace(GUARD, GUARD_OFF, 1)
     probe = (prefix + '\n\nimport unittest\n\n\n'
              'class Probe(unittest.TestCase):\n'
              '    def test_runs(self):\n'
@@ -184,38 +206,66 @@ def row_discover(root):
     return closed, 'discover-guard', '#1023-3:'
 
 
+def guard_head(relative):
+    """Shipped guard bytes up to and including its exit; no apparatus preflight."""
+    text = (ROOT / relative).read_text()
+    end = text.index('raise SystemExit(1)', text.index('apparatus directory on sys.path'))
+    return text[:end + len('raise SystemExit(1)')]
+
+
 def alias_reinsertion(root):
-    """#1023 fix-r2 P2: the guard bytes must reject alias spellings of itself."""
-    text = Path(__file__).read_text()
-    head = text[:text.index('\nimport argparse\n')]
-    base = root / 'alias' / 'apparatus'
-    base.mkdir(parents=True)
-    (base / 'entry.py').write_text(head + "\nprint('REACHED')\n")
-    link = root / 'alias' / 'linked'
-    link.symlink_to(base, target_is_directory=True)
-    forms = [(base, link / 'entry.py'), (link, base / 'entry.py')]
-    case = base.with_name(base.name.upper())
-    if case.is_dir() and _boot_os.path.samefile(case, base):
-        forms += [(base, case / 'entry.py'), (case, base / 'entry.py')]
+    """#1023 fix-r3 P1: identity guards reject case/symlink alias spellings.
+
+    The probes use the shipped guard bytes of a root entry and a controls
+    entry, so this row regresses the real guards, not a paraphrase. The
+    disabled copies are the paired positive control: without the guard the
+    probe prints REACHED. The returned #1023-6 run must fail at its own
+    assertion after the guard is restored to the pre-fix realpath comparison.
+    """
     probe = ('import runpy, sys\n'
              'sys.path.insert(0, sys.argv[1])\n'
              'runpy.run_path(sys.argv[2], run_name="probe")\n')
-    for path_dir, entry in forms:
-        closed = subprocess.run(
+
+    def run(path_dir, entry):
+        return subprocess.run(
             [sys.executable, '-I', '-c', probe, str(path_dir), str(entry)],
             cwd=root, capture_output=True, text=True, timeout=60)
-        if closed.returncode != 1 or 'unsafe import path' not in closed.stderr:
+
+    base = root / 'alias' / 'apparatus'
+    (base / 'controls').mkdir(parents=True)
+    link = root / 'alias' / 'linked'
+    link.symlink_to(base, target_is_directory=True)
+    case = base.with_name(base.name.upper())
+    if not (case.is_dir() and _boot_os.path.samefile(case, base)):
+        raise AssertionError('case-insensitive volume required for the #1023 alias regression')
+    placements = (
+        (APPARATUS + '/check_frozen.py', base / 'entry.py',
+         [(case, base / 'entry.py'), (link, base / 'entry.py'),
+          (base / 'controls', base / 'entry.py'),
+          (base, case / 'entry.py'), (base, link / 'entry.py')]),
+        (APPARATUS + '/controls/run_all.py', base / 'controls' / 'entry.py',
+         [(case, base / 'controls' / 'entry.py'),
+          (case / 'controls', base / 'controls' / 'entry.py'),
+          (base, case / 'controls' / 'entry.py')]),
+    )
+    for relative, entry, forms in placements:
+        head = guard_head(relative)
+        entry.write_text(head + "\nprint('REACHED')\n")
+        for path_dir, guarded_entry in forms:
+            closed = run(path_dir, guarded_entry)
+            if (closed.returncode != 1
+                    or 'apparatus directory on sys.path' not in (closed.stdout + closed.stderr)):
+                raise AssertionError(
+                    f'guarded alias {path_dir} / {guarded_entry} was admitted: '
+                    f'rc={closed.returncode}')
+        entry.write_text(head.replace(GUARD, GUARD_OFF, 1) + "\nprint('REACHED')\n")
+        opened = run(forms[0][0], forms[0][1])
+        if opened.returncode != 0 or 'REACHED' not in opened.stdout:
             raise AssertionError(
-                f'guarded alias {path_dir} / {entry} was admitted: rc={closed.returncode}')
-    (base / 'entry.py').write_text(
-        head.replace('if not _boot_sys.flags.isolated or any(', 'if False and any(', 1)
-        + "\nprint('REACHED')\n")
-    opened = subprocess.run(
-        [sys.executable, '-I', '-c', probe, str(base), str(link / 'entry.py')],
-        cwd=root, capture_output=True, text=True, timeout=60)
-    if opened.returncode != 0 or 'REACHED' not in opened.stdout:
-        raise AssertionError('disabling the guard did not admit the alias probe')
-    return closed, 'alias-reinsertion', '#1023-11:'
+                f'disabling the guard for {relative} did not admit the alias probe')
+    rewrite_source(root, APPARATUS + '/check_frozen.py', IDENTITY_GUARD, REALPATH_GUARD)
+    return run_bound(root, 'FrozenControls.test_entry_guards_reject_alias_spellings'), \
+        'FrozenControls.test_entry_guards_reject_alias_spellings', '#1023-6:'
 
 
 ROWS = {
@@ -242,7 +292,9 @@ def main():
                 copy_apparatus(root)
                 try:
                     result, test, marker = action(root)
-                    if name in ('discover-guard-removed', 'alias-reinsertion'):
+                    if name == 'discover-guard-removed':
+                        # The row already asserts both arms (guarded rejection and
+                        # unguarded discovery); there is no bound unit test.
                         status, reason = ('KILLED', 'guard rejected the probe and the unguarded probe ran')
                     else:
                         status, reason = classify(result, test, marker)

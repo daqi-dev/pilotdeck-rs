@@ -7,10 +7,15 @@ if not (_boot_sys.flags.isolated and _boot_sys.flags.ignore_environment
     raise SystemExit(1)
 _boot_sys.dont_write_bytecode = True
 _boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
-if any(_boot_os.path.realpath(entry or _boot_os.curdir) in {
-        _boot_os.path.realpath(_boot_dir),
-        _boot_os.path.realpath(_boot_os.path.join(_boot_dir, 'controls'))}
-       for entry in _boot_sys.path):
+# Identity, not spelling: a case-insensitive alias, a symlinked spelling or a
+# mixed ``//`` form names this very directory while the string differs
+# (fix-r3 P1, same defect as #701 fix-r2). Nonexistent sys.path entries skip.
+if any(
+        _boot_os.path.isdir(entry or _boot_os.curdir)
+        and any(_boot_os.path.isdir(root)
+                and _boot_os.path.samefile(entry or _boot_os.curdir, root)
+                for root in (_boot_dir, _boot_os.path.join(_boot_dir, 'controls')))
+        for entry in _boot_sys.path):
     print('{"verdict":"FAIL","errors":["apparatus directory on sys.path; run the entry file directly with -I"]}')
     raise SystemExit(1)
 _boot_source = _boot_os.path.join(_boot_dir, 'apparatus.py')
@@ -370,6 +375,63 @@ class FrozenControls(unittest.TestCase):
                                  f'#1023-2: {relative} must reject a reinserted apparatus directory')
                 self.assertIn('apparatus directory on sys.path', result.stdout,
                               f'#1023-2: {relative} must fail at the guard, not a later import')
+
+    def test_entry_guards_compare_directory_identity(self):
+        apparatus = ROOT / 'scripts/ui-server-parity'
+        entries = [path for path in sorted(apparatus.rglob('*.py'))
+                   if '# Isolated bootstrap' in path.read_text()]
+        self.assertGreaterEqual(len(entries), 20, '#1023-5: guard inventory must not be empty')
+        for path in entries:
+            relative = path.relative_to(ROOT)
+            with self.subTest(entry=str(relative)):
+                text = path.read_text()
+                head = text[:text.index('raise SystemExit(1)',
+                                        text.index('apparatus directory on sys.path'))]
+                self.assertIn('_boot_os.path.samefile', head,
+                              f'#1023-5: {relative} must compare directory identity, not spelling')
+                self.assertNotIn('realpath', head,
+                                 f'#1023-5: {relative} must not compare realpath strings')
+
+    def test_entry_guards_reject_alias_spellings(self):
+        apparatus = ROOT / 'scripts/ui-server-parity'
+        entries = [path for path in sorted(apparatus.rglob('*.py'))
+                   if '# Isolated bootstrap' in path.read_text()]
+        self.assertGreaterEqual(len(entries), 20, '#1023-6: guard inventory must not be empty')
+        probe = ('import runpy, sys\n'
+                 'sys.path.insert(0, sys.argv[1])\n'
+                 'runpy.run_path(sys.argv[2], run_name="__main__")\n')
+        marker = '#1023-6: the guard must reject an analogous directory spelling'
+        with tempfile.TemporaryDirectory(prefix='b2-alias-') as temp:
+            link = Path(temp) / 'linked-apparatus'
+            link.symlink_to(apparatus, target_is_directory=True)
+            aliases = [link]
+            case = apparatus.with_name(apparatus.name.upper())
+            if case.is_dir():
+                try:
+                    same_case = os.path.samefile(case, apparatus)
+                except OSError:
+                    same_case = False
+                if same_case:
+                    aliases.append(case)
+            for path in entries:
+                relative = path.relative_to(apparatus)
+                label = str(path.relative_to(ROOT))
+                forms = ([(alias, path) for alias in aliases]
+                         + [(apparatus, alias / relative) for alias in aliases])
+                for on_path, entry in forms:
+                    with self.subTest(entry=label, spelling=str(on_path)):
+                        result = subprocess.run(
+                            [sys.executable, '-I', '-c', probe, str(on_path),
+                             str(entry), '--help'],
+                            cwd=ROOT, capture_output=True, text=True, timeout=60)
+                        self.assertEqual(
+                            result.returncode, 1,
+                            f'{marker}: {label} via {on_path} was admitted '
+                            f'(rc={result.returncode})')
+                        self.assertIn(
+                            'apparatus directory on sys.path', result.stdout,
+                            f'{marker}: {label} via {on_path} failed later than the guard: '
+                            + (result.stdout + result.stderr)[:200])
 
     def test_discover_form_is_rejected_before_importing_a_test(self):
         result = subprocess.run(
