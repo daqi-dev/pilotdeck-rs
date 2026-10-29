@@ -45,7 +45,9 @@ def result(test, state='ok', anchor='', file='pilotdeck-gateway/src/fixture.rs')
     return SimpleNamespace(returncode=0 if state == 'ok' else 101,
         stdout=f'test {test} ... {state}\n'
                + ('test result: ok. 1 passed;' if state == 'ok' else 'test result: FAILED'),
-        stderr='' if state == 'ok' else f'panicked at {file}:1:1:\n{anchor}')
+        # Real libtest header: the shared judge only reads the named test's own
+        # `thread '<name>' panicked at` block (#818), never a bare line.
+        stderr='' if state == 'ok' else f"thread '{test}' panicked at {file}:1:1:\n{anchor}")
 
 
 def binding(name, witness=None, path=None):
@@ -139,9 +141,12 @@ class MutantSwitchTests(unittest.TestCase):
                 raise subprocess.TimeoutExpired(['test'], 1)
             return result(test, 'FAILED' if selector else 'ok', row['anchor'])
         produced = list(shared.execute_suite(rows, invoke))
-        self.assertEqual([row['status'] for row in produced], ['INVALID', 'KILLED'])
-        self.assertIn(('first-restored', None), calls)
-        self.assertIn(('second-negative', 'second'), calls)
+        self.assertEqual([row['status'] for row in produced], ['INVALID', 'KILLED'],
+                         '#818 a timeout must invalidate its row and a later mutant must kill')
+        self.assertIn(('first-restored', None), calls,
+                      '#818 an interrupted row must still restore its source')
+        self.assertIn(('second-negative', 'second'), calls,
+                      '#818 the successor negative run must still happen')
 
     def test_positive_witness_and_restore_fail_closed(self):
         for failed in ('sample-positive', 'sample-restored', 'sample-witness-positive',
@@ -166,7 +171,32 @@ class MutantSwitchTests(unittest.TestCase):
                 def invoke(label, test, selector, _row):
                     return response if selector else result(test)
                 self.assertEqual(
-                    list(shared.execute_suite([row], invoke))[0]['status'], expected)
+                    list(shared.execute_suite([row], invoke))[0]['status'], expected,
+                    f'#818 synthetic libtest log verdict must be {expected}')
+
+    def test_bare_and_foreign_panic_headers_are_not_kills(self):
+        # #818 negative control: re-use the exact marker in a layout the shared
+        # judge must reject, proving the thread-header repair never widened it.
+        row = binding('sample')
+        responses = {
+            'bare': SimpleNamespace(
+                returncode=101,
+                stdout='test sample ... FAILED\ntest result: FAILED',
+                stderr=f"panicked at pilotdeck-gateway/src/fixture.rs:1:1:\n{row['anchor']}"),
+            'foreign': SimpleNamespace(
+                returncode=101,
+                stdout='test sample ... FAILED\ntest result: FAILED',
+                stderr="thread 'sibling' panicked at "
+                       f"pilotdeck-gateway/src/fixture.rs:1:1:\n{row['anchor']}"),
+        }
+        for label, response in responses.items():
+            with self.subTest(header=label):
+                def invoke(_label, test, selector, _row):
+                    return response if selector else result(test)
+                produced = list(shared.execute_suite([row], invoke))
+                self.assertEqual(produced[0]['status'], 'INVALID',
+                                 '#818 a panic without the bound test thread header '
+                                 'is not a kill')
 
     def test_list_tests_run_every_cell_and_align_anchors(self):
         row = dict(name='cells', test=['first_cell', 'second_cell'],
@@ -253,8 +283,10 @@ class MutantSwitchTests(unittest.TestCase):
                 if command[0] == 'cargo':
                     return SimpleNamespace(returncode=0, stdout='build fixture', stderr='')
                 selector = kwargs['env'].get(shared.SELECTOR)
-                self.assertIn('--exact', command)
-                self.assertTrue(command[0].endswith('test-binary') or Path(command[0]).is_file())
+                self.assertIn('--exact', command,
+                              '#818 the executor must bind one exact test name')
+                self.assertTrue(command[0].endswith('test-binary') or Path(command[0]).is_file(),
+                                '#818 the executor must run the precompiled test binary')
                 return result(command[1], 'FAILED' if selector else 'ok',
                               '#996 ' + command[1], 'fixture.rs')
             binary = Path(temp) / 'test-binary'
@@ -263,15 +295,22 @@ class MutantSwitchTests(unittest.TestCase):
                  patch.object(shared, 'wait_for_slot',
                               return_value=SimpleNamespace(stdout='', stderr='')), \
                  patch.object(shared, 'artifact', return_value=binary):
-                self.assertEqual(shared.run(Path(temp), out, rows, {}, guarded=guarded), 0)
+                self.assertEqual(shared.run(Path(temp), out, rows, {}, guarded=guarded), 0,
+                                 '#818 the clean precompiled run must exit zero')
             document = json.loads((out / 'summary.json').read_text())
-            self.assertEqual(document['counts'], {'KILLED': 2, 'SURVIVED': 0, 'INVALID': 0})
-            self.assertEqual([row['name'] for row in document['controls']], ['first', 'second'])
-            self.assertEqual(json.loads((out / 'source.json').read_text())['head'], 'test-head')
+            self.assertEqual(document['counts'], {'KILLED': 2, 'SURVIVED': 0, 'INVALID': 0},
+                             '#818 every clean row must be KILLED')
+            self.assertEqual([row['name'] for row in document['controls']], ['first', 'second'],
+                             '#818 the summary must list every executed row')
+            self.assertEqual(json.loads((out / 'source.json').read_text())['head'], 'test-head',
+                             '#818 source.json must record the git HEAD')
             self.assertIn('not a claim of committed HEAD equivalence',
-                          (out / 'source.json').read_text())
-            self.assertEqual(guarded[0].read_text(), 'fixture\n')
-            self.assertTrue((out / 'first-negative.json').exists())
+                          (out / 'source.json').read_text(),
+                          '#818 source.json must not claim committed-HEAD equivalence')
+            self.assertEqual(guarded[0].read_text(), 'fixture\n',
+                             '#818 the precompiled run must not edit guarded sources')
+            self.assertTrue((out / 'first-negative.json').exists(),
+                            '#818 each row must publish its negative-run receipt')
 
     def test_run_marks_remaining_rows_when_precompile_fails(self):
         rows = [binding('first'), binding('second')]
