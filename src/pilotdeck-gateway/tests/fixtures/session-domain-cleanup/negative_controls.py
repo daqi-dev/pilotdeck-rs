@@ -135,8 +135,8 @@ MUTATIONS = [
      "                     f'and an empty live-member census: {detail}')",
      "    return 'alive', 'mutant: empty-group probe removed'"),
     ('cleanup-status-write-removed', SOURCE,
-     "            audit['processTreeCleanup'] = audit['processGroupProbe']['status']",
-     "            audit['processTreeCleanup'] = CLEANUP_VERIFIED"),
+     "        audit['processTreeCleanup'] = audit['processGroupProbe']['status']",
+     "        audit['processTreeCleanup'] = CLEANUP_VERIFIED"),
     ('top-level-mapping-relaxed', SOURCE,
      "    return ('PASS' if audit.get('processTreeCleanup') == CLEANUP_VERIFIED\n"
      "            else CLEANUP_UNVERIFIED_STATUS)",
