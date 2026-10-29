@@ -17,6 +17,20 @@
 //! its install and its replace. Deterministic latches only: every wait is a
 //! bounded channel receive with a dedicated failure message, and the parked
 //! thread holds the tail scope for exactly as long as the test decides.
+//!
+//! #1036 P2-3: "the second dream did not install" is no longer inferred from
+//! a silent 5s timeout. On a slow CI machine the second dream can still be
+//! inside its earlier LLM awaits when such a window expires, and a per-call
+//! scope regression would then fake a pass. Instead the test proves, with no
+//! time inference at all: (a) while the first dream is parked, BOTH root
+//! operation locks are held — `try_lock` from the test thread must fail, so
+//! a per-call scope regression fails immediately and deterministically;
+//! (b) the second dream's first root-lock acquisition attempt arrives
+//! through the file-memory `lock_test_hook` (it blocks on the very first
+//! repository call of `dream`, long before its tail — a service-level
+//! pre-scope seam would never fire for the blocked thread), so with both
+//! locks provably held, the second dream's first root acquisition cannot
+//! complete until the first dream releases it.
 #![allow(clippy::too_many_lines)]
 
 use bytes::Bytes;
@@ -32,7 +46,9 @@ use pilotdeck_gateway::runtime::{
 use pilotdeck_protocol::{JsObject, JsValue};
 // This file is compiled as a library test module (`--lib`), so it reuses the
 // crate's one `test_scratch` module instead of loading scratch.rs a second time
-// (clippy::duplicate_mod).
+// (clippy::duplicate_mod). The file-memory lock machinery below is likewise
+// reached through the crate (`pub(crate)` since #1036).
+use crate::runtime::memory::edgeclaw::file_memory::{absolute, lock_test_hook, operation_lock};
 use crate::test_scratch::Scratch;
 use serde_json::{Value, json};
 use std::{
@@ -251,7 +267,7 @@ fn build_service(
     let config = build_llm_config_with(Some(&llm), None, &|_| None);
     let mut options = ServiceOptions::new(dir.join("workspace"));
     options.root_dir = Some(dir.join("root"));
-    let gate = Arc::new(move || gate.park());
+    let park_gate = Arc::new(move || gate.park());
     Arc::new(
         EdgeClawMemoryService::with_dependencies(
             options,
@@ -260,7 +276,7 @@ fn build_service(
                 clock: Some(Arc::new(|| NOW.to_owned())),
                 now_ms: Some(Arc::new(|| NOW_MS)),
                 transport: Some(Arc::new(transport)),
-                dream_tail_gate: Some(gate),
+                dream_tail_gate: Some(park_gate),
                 llm_config: Some(config),
                 ..ServiceDependencies::default()
             },
@@ -278,6 +294,14 @@ struct DreamReport {
     error: Option<String>,
 }
 
+/// One lock-acquisition attempt from the second dream's thread: the
+/// operation lock's registry key (the hook fires pre-`lock`, so an attempt
+/// observed here has NOT acquired the lock yet).
+#[derive(Debug)]
+struct LockProbe {
+    key: usize,
+}
+
 fn spawn_dream(
     service: Arc<EdgeClawMemoryService>,
     transport: RaceTransport,
@@ -285,9 +309,23 @@ fn spawn_dream(
     refine: (u16, String),
     meta: (u16, String),
     reports: mpsc::Sender<DreamReport>,
+    lock_probe: Option<mpsc::Sender<LockProbe>>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         transport.register(plan, refine, meta);
+        if let Some(lock_probe) = lock_probe {
+            // The second dream: forward every lock attempt this thread makes,
+            // pre-`lock` (the hook fires inside `OperationGuard::enter` right
+            // before `Mutex::lock`). While the first dream is parked, both
+            // root locks are provably held, so the second dream's first root
+            // attempt is literally parked inside `Mutex::lock` — the
+            // deterministic "second dream did not install" signal.
+            lock_test_hook::set(move |event| {
+                if !event.acquired {
+                    let _ = lock_probe.send(LockProbe { key: event.key });
+                }
+            });
+        }
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -393,6 +431,7 @@ fn dream_tail_cannot_interleave_across_threads() {
     }));
 
     let (reports_tx, reports) = mpsc::channel();
+    let (lock_tx, lock_rx) = mpsc::channel();
     let dream_a = spawn_dream(
         service.clone(),
         transport.clone(),
@@ -400,6 +439,7 @@ fn dream_tail_cannot_interleave_across_threads() {
         refine_a,
         meta_a,
         reports_tx.clone(),
+        None,
     );
     let parked = events
         .recv_timeout(Duration::from_secs(30))
@@ -411,9 +451,52 @@ fn dream_tail_cannot_interleave_across_threads() {
         "#776 tail race: unexpected first gate event"
     );
 
-    // The first dream is now parked strictly between its install and its
-    // replace. Start the second dream on another thread: while the first is
-    // parked, the second must not be able to install its own snapshot.
+    // #1036 P2-3: the first dream is parked strictly between its install and
+    // its replace, so the shared tail scope must hold BOTH root operation
+    // locks. Prove it without any time inference: `try_lock` from this
+    // thread must fail. A regression back to per-call scopes frees the locks
+    // here and fails this assertion deterministically — no silent-timeout
+    // interpretation is possible.
+    let workspace_lock = operation_lock(
+        &absolute(service.repository.workspace_memory.get_root_dir())
+            .expect("#1036 tail race resolve workspace root"),
+    )
+    .expect("#1036 tail race workspace operation lock");
+    let global_lock = operation_lock(
+        &absolute(service.repository.global_user_memory.get_root_dir())
+            .expect("#1036 tail race resolve global root"),
+    )
+    .expect("#1036 tail race global operation lock");
+    let workspace_key = Arc::as_ptr(&workspace_lock) as usize;
+    let global_key = Arc::as_ptr(&global_lock) as usize;
+    for (name, lock) in [("workspace", &workspace_lock), ("global", &global_lock)] {
+        match lock.try_lock() {
+            Ok(guard) => {
+                drop(guard);
+                gate.release_all();
+                panic!(
+                    "#1036 tail race: the {name} root operation lock was free while \
+                     the first dream was parked between install and replace — the \
+                     dream success tail must hold one shared root operation scope"
+                );
+            }
+            // Only `WouldBlock` proves the parked dream holds this lock; a
+            // poisoned lock is a hard failure, not ownership evidence.
+            Err(std::sync::TryLockError::WouldBlock) => {}
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                gate.release_all();
+                panic!(
+                    "#1036 tail race: the {name} root operation lock was poisoned \
+                     before the try_lock proof — ownership of the parked dream \
+                     cannot be established"
+                );
+            }
+        }
+    }
+
+    // The first dream provably holds both root locks. Start the second dream
+    // on another thread: while the first is parked, the second must not be
+    // able to install its own snapshot.
     let dream_b = spawn_dream(
         service.clone(),
         transport,
@@ -421,39 +504,41 @@ fn dream_tail_cannot_interleave_across_threads() {
         refine_b,
         meta_b,
         reports_tx,
+        Some(lock_tx),
     );
-    match events.recv_timeout(Duration::from_secs(5)) {
-        Ok(GateEvent::SecondParked) => {
-            gate.release_all();
-            panic!(
-                "#776 tail race: the second dream installed its last-dream \
-                 snapshot while the first was parked between install and \
-                 replace — the dream success tail must share one root \
-                 operation scope"
-            );
-        }
-        Ok(GateEvent::FirstParked) => {
-            gate.release_all();
-            panic!("#776 tail race: the tail gate fired twice for one dream")
-        }
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            // The expected outcome: the second dream is stuck on the root
-            // operation locks the first dream holds across its whole tail.
-            // Drain anything that arrived in the same instant.
-            if let Ok(event) = events.try_recv() {
+    // Deterministic blocking signal (issue #1036 P2-3): the second dream
+    // blocks at its very first repository call — `get_overview` inside
+    // `reconcile_auto_dream_anchor`, long before any LLM await — so its
+    // first root-lock attempt arrives through the hook while the first dream
+    // is still parked. The attempt is forwarded pre-`lock`, so this is an
+    // "about to lock" signal, not proof of a blocked thread; what the signal
+    // does prove, together with both root locks held above, is that the
+    // second dream's first root acquisition cannot complete until the first
+    // dream releases it. Non-root attempts (free locks simply acquire and
+    // the dream proceeds) are skipped until a root attempt arrives.
+    loop {
+        let probe = lock_rx
+            .recv_timeout(Duration::from_secs(30))
+            .unwrap_or_else(|_| {
                 gate.release_all();
                 panic!(
-                    "#776 tail race: the second dream installed its \
-                     last-dream snapshot while the first was parked between \
-                     install and replace — the dream success tail must share \
-                     one root operation scope ({event:?} arrived late)"
-                );
-            }
+                    "#1036 tail race: the second dream never attempted a root \
+                     operation lock while the first was parked (bounded wait)"
+                )
+            });
+        if probe.key == workspace_key || probe.key == global_key {
+            break;
         }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            gate.release_all();
-            panic!("#776 tail race: the tail gate event channel closed early")
-        }
+    }
+    // It cannot have parked at the tail gate either — that would mean its
+    // install already ran while the first dream was parked.
+    if let Ok(event) = events.try_recv() {
+        gate.release_all();
+        panic!(
+            "#1036 tail race: the second dream reached the tail gate while \
+             the first was parked ({event:?}) — its install must have run \
+             without the shared root operation scope"
+        );
     }
 
     // Release the first dream: its replace, dispose and state writes run to

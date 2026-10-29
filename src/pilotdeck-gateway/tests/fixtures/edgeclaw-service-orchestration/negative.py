@@ -29,6 +29,26 @@ and is compiled into the library test binary (`--lib`), because the
 binds the concurrent flush cell's `capturedSessions == 2` assertion, and
 `wal-read-becomes-write` binds the real `control.sqlite` reader assertion.
 `heartbeat/indexer.rs` joined the guarded source set.
+
+#1036: the tail-race "second dream did not install" signal is now the
+deterministic `try_lock` proof, so `dream-tail-scope`'s anchor is the new
+"root operation lock was free" panic. The three new boundary cells bind
+`interval-boundary-inclusive` / `interval-scale-ms` / `backlog-threshold-lower`.
+`MemoryRepositoryStage` gained a `Drop` fallback (P2-5), which masks the old
+skip-cleanup shapes: `stage-dispose-on-error` now removes only the fallback
+`mark()` (double-counting `disposed`), `stage-dispose-skip-cleanup` no-ops the
+shared `cleanup()` body, and the new `stage-drop-cleanup` /
+`stage-cancel-counter` bind the
+`dream_cancellation_disposes_stage_and_balances_counters` test.
+
+fix-r1 P2-2: `MemoryRepositoryStage::dispose` resets the `disposed` flag when
+`cleanup` fails, keeping TS's repeatable-cleanup semantics; the new
+`dispose-retry-resets-flag` mutant binds the dedicated
+`failed_dispose_retry_still_removes_staged_roots` cell in edgeclaw_snapshots.
+`Drop` now keys on a separate explicit-attempt latch, so it still cleans a
+cancelled dream's never-disposed stage (`stage-drop-cleanup` keeps that
+binding) while a FAILED explicit dispose keeps its residue like TS —
+`stage-drop-explicit-residue` binds the `restore-dispose-failure` oracle cell.
 """
 import json
 import os
@@ -69,6 +89,9 @@ WAL_TWO_PROCESS_FILE = 'pilotdeck-gateway/tests/edgeclaw_wal_two_process.rs'
 # fix-r2: the parked-flush cell cannot observe a widened session_keys;
 # this deterministic cell exercises the same flush -> run_heartbeat filter.
 FLUSH_FILTER_TEST = 'flush_session_filter_is_honored'
+# #1036 P2-5: the dream-cancellation cell — a dropped `dream` future must
+# still dispose its stage (Drop fallback) and keep the counters balanced.
+DREAM_CANCEL_TEST = 'dream_cancellation_disposes_stage_and_balances_counters'
 
 
 ANCHORS = {
@@ -127,9 +150,12 @@ ANCHORS = {
         '#776 session-filter: flush captured sessions outside its sessionKeys',
     # fix-r1 P1-1: the dream success tail must hold one shared root operation
     # scope across install and replace (two-thread tail-race regression).
+    # #1036 P2-3: the kill is the deterministic `try_lock` proof — with
+    # per-call scopes both root locks are free while the first dream parks,
+    # so the test thread grabs one and fails at this dedicated panic.
     'dream-tail-scope':
-        '#776 tail race: the second dream installed its last-dream snapshot '
-        'while the first was parked between install and replace',
+        '#1036 tail race: the workspace root operation lock was free while '
+        'the first dream was parked between install and replace',
     # fix-r1 P1-6: node:sqlite keeps `busy_timeout` at 0, so a cross-process
     # write-lock failure must be immediate; a 5s wait fails the elapsed bound.
     'wal-busy-timeout':
@@ -143,6 +169,38 @@ ANCHORS = {
     'wal-read-becomes-write':
         '#776 wal-two-process: the pending s0 session must still be readable '
         'under the write lock',
+    # #1036 item 1: `hasElapsedMinutes` is an inclusive boundary — a capture
+    # exactly one default interval old must index. `>` makes the exact cell
+    # skip indexing.
+    'interval-boundary-inclusive':
+        '#776 scenario maintenance-interval-exact: observed differs from the real TS',
+    # #1036 item 1: the interval is scaled in whole minutes; shrinking the
+    # scale makes the just-before cell (1ms short) index anyway.
+    'interval-scale-ms':
+        '#776 scenario maintenance-interval-just-before: observed differs from the real TS',
+    # #1036 item 2: 19 pending dialogue turns are below the `>= 20` backlog
+    # threshold; lowering it to 19 indexes the below-threshold cell.
+    'backlog-threshold-lower':
+        '#776 scenario maintenance-backlog-below: observed differs from the real TS',
+    # #1036 P2-5: the stage's own `Drop` must clean the staged roots when a
+    # cancelled dream never disposes explicitly; inverting the swap check
+    # leaves all three `.dream-*` temp siblings behind.
+    'stage-drop-cleanup':
+        '#1036 dream-cancel: the cancelled dream left staged dream temp dirs behind',
+    # fix-r1 P2-2: after a FAILED explicit dispose, `Drop` must not clean —
+    # TS keeps the residue observable (the `restore-dispose-failure` oracle
+    # cell), and only the caller's retry may remove it.
+    'stage-drop-explicit-residue':
+        'scenario "restore-dispose-failure"',
+    # #1036 P2-5: the dispose-fallback guard's `Drop` must balance
+    # `dream_stages_disposed` with `created` for a cancelled dream.
+    'stage-cancel-counter':
+        '#1036 dream-cancel: a cancelled dream must still dispose its stage',
+    # fix-r1 P2-2: a failed cleanup must reset the `disposed` flag, so the
+    # retried dispose really removes the staged roots instead of reporting
+    # the never-cleaned first attempt as success.
+    'dispose-retry-resets-flag':
+        '#1036 dispose-retry: the retried dispose left the staged temp',
 }
 
 
@@ -209,9 +267,15 @@ MUTANTS = [
         '    ordered',
     ),
     mutation(
+        # #1036 P2-5: the stage's own `Drop` now cleans up after a skipped
+        # explicit dispose, so removing the whole block would survive. The
+        # binding mutation drops only the fallback `mark()` — the guard then
+        # counts the same dispose a second time and `disposed` becomes 2
+        # where the real TS oracle cell says 1.
         'stage-dispose-on-error',
         ORCHESTRATION,
         '            Err(error) => {\n'
+        '                _dispose_fallback.mark();\n'
         '                self.dream_stages_disposed.fetch_add(1, Ordering::Relaxed);\n'
         '                return match stage.dispose() {\n'
         '                    Ok(()) => Err(error),\n'
@@ -219,7 +283,11 @@ MUTANTS = [
         '                };\n'
         '            }',
         '            Err(error) => {\n'
-        '                return Err(error);\n'
+        '                self.dream_stages_disposed.fetch_add(1, Ordering::Relaxed);\n'
+        '                return match stage.dispose() {\n'
+        '                    Ok(()) => Err(error),\n'
+        '                    Err(dispose_error) => Err(dispose_error.into()),\n'
+        '                };\n'
         '            }',
     ),
     mutation(
@@ -245,20 +313,28 @@ MUTANTS = [
         '            Self::Scheduled => "scheduled-mutated",',
     ),
     mutation(
+        # #1036 P2-5: with the `Drop` fallback, `drop(stage)` cleans up just
+        # like the explicit dispose, so that shape would survive. The binding
+        # mutation no-ops the shared `cleanup()` body itself — every dispose
+        # path (explicit or Drop) then leaves the staged `.dream-*` siblings
+        # behind and the dream-stage-error cell's `stageTempLeft` fails.
         'stage-dispose-skip-cleanup',
-        ORCHESTRATION,
-        '            Err(error) => {\n'
-        '                self.dream_stages_disposed.fetch_add(1, Ordering::Relaxed);\n'
-        '                return match stage.dispose() {\n'
-        '                    Ok(()) => Err(error),\n'
-        '                    Err(dispose_error) => Err(dispose_error.into()),\n'
-        '                };\n'
-        '            }',
-        '            Err(error) => {\n'
-        '                self.dream_stages_disposed.fetch_add(1, Ordering::Relaxed);\n'
-        '                drop(stage);\n'
-        '                return Err(error);\n'
-        '            }',
+        SNAPSHOTS,
+        '    fn cleanup(&self) -> Result<()> {\n'
+        '        let _ = self.repository.close();\n'
+        '        for p in [\n'
+        '            &self.staged_workspace_root,\n'
+        '            &self.staged_global_root,\n'
+        '            &self.staged_db_path,\n'
+        '        ] {\n'
+        '            remove(&self.io, p)?;\n'
+        '        }\n'
+        '        Ok(())\n'
+        '    }',
+        '    fn cleanup(&self) -> Result<()> {\n'
+        '        let _ = self.repository.close();\n'
+        '        Ok(())\n'
+        '    }',
     ),
     mutation(
         'dream-replace-skip',
@@ -359,6 +435,90 @@ MUTANTS = [
         '        conn.busy_timeout(Duration::from_secs(5))?;',
         test=WAL_TWO_PROCESS_TEST,
         test_file=WAL_TWO_PROCESS_FILE,
+    ),
+    # #1036 item 1: the interval comparison is inclusive. The exact cell has
+    # `nowMs - anchorMs == intervalMinutes * 60_000`, so `>` skips its index.
+    mutation(
+        'interval-boundary-inclusive',
+        ORCHESTRATION,
+        '    Ok(now_ms - anchor_ms >= interval_minutes * 60_000.0)',
+        '    Ok(now_ms - anchor_ms > interval_minutes * 60_000.0)',
+    ),
+    # #1036 item 1: a minute is 60_000 ms. Shrinking the scale by 1ms makes
+    # the just-before cell (exactly 1ms short of the interval) index anyway.
+    mutation(
+        'interval-scale-ms',
+        ORCHESTRATION,
+        '    Ok(now_ms - anchor_ms >= interval_minutes * 60_000.0)',
+        '    Ok(now_ms - anchor_ms >= interval_minutes * 59_999.0)',
+    ),
+    # #1036 item 2: the backlog threshold is `>= 20`; 19 pending turns must
+    # not index. Lowering the threshold to 19 indexes the below-threshold
+    # cell (its fresh anchor keeps the interval path false there).
+    mutation(
+        'backlog-threshold-lower',
+        ORCHESTRATION,
+        'const AUTO_INDEX_PENDING_DIALOGUE_TURN_THRESHOLD: i64 = 20;',
+        'const AUTO_INDEX_PENDING_DIALOGUE_TURN_THRESHOLD: i64 = 19;',
+    ),
+    # #1036 P2-5: the stage's `Drop` must actually clean up when a cancelled
+    # dream never disposes explicitly; consuming the flag without cleaning
+    # leaves the three `.dream-*` temp siblings behind.
+    mutation(
+        'stage-drop-cleanup',
+        SNAPSHOTS,
+        '        if !*self.explicit.get_mut() {\n'
+        '            let _ = self.cleanup();\n'
+        '        }',
+        '        let _ = self.explicit.get_mut();',
+        test=DREAM_CANCEL_TEST,
+    ),
+    # fix-r1 P2-2: `Drop` keys on the explicit-attempt latch, not the success
+    # latch. Keying on `disposed` makes a failed dispose's residue disappear
+    # at drop time, and the `restore-dispose-failure` oracle cell (which
+    # keeps the `.global/.control.sqlite.restore-*` leftovers, like TS) fails.
+    mutation(
+        'stage-drop-explicit-residue',
+        SNAPSHOTS,
+        '        if !*self.explicit.get_mut() {\n'
+        '            let _ = self.cleanup();\n'
+        '        }',
+        '        if !*self.disposed.get_mut() {\n'
+        '            let _ = self.cleanup();\n'
+        '        }',
+        test='rust_seed_and_snapshot_lifecycle_match_ts',
+        test_file='pilotdeck-gateway/tests/edgeclaw_snapshots.rs',
+    ),
+    # #1036 P2-5: the dispose-fallback guard must keep `dream_stages_disposed`
+    # balanced with `created` for a cancelled dream; removing its increment
+    # leaves the counter at (1, 0).
+    mutation(
+        'stage-cancel-counter',
+        ORCHESTRATION,
+        '        if !self.disposed.get() {\n'
+        '            self.service\n'
+        '                .dream_stages_disposed\n'
+        '                .fetch_add(1, Ordering::Relaxed);\n'
+        '        }',
+        '        if !self.disposed.get() {\n'
+        '            // mutated: a cancelled dream no longer balances the counter\n'
+        '        }',
+        test=DREAM_CANCEL_TEST,
+    ),
+    # fix-r1 P2-2: without the reset, the flag latched by the faulted first
+    # `dispose` makes the retry return `Ok(())` without cleaning, and the
+    # staged `.memory/.global/.control.sqlite.retry-*` siblings survive.
+    mutation(
+        'dispose-retry-resets-flag',
+        SNAPSHOTS,
+        '        let result = self.cleanup();\n'
+        '        if result.is_err() {\n'
+        '            self.disposed.store(false, Ordering::Release);\n'
+        '        }\n'
+        '        result',
+        '        self.cleanup()',
+        test='failed_dispose_retry_still_removes_staged_roots',
+        test_file='pilotdeck-gateway/tests/edgeclaw_snapshots.rs',
     ),
 ]
 

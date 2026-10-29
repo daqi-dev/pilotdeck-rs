@@ -717,6 +717,67 @@ function cells(): Cell[] {
         };
       },
     },
+    // #1036 items 1/2: boundary cells for the two `>=` decisions in
+    // `runDueScheduledMaintenance`. `hasElapsedMinutes` uses an inclusive
+    // boundary (`nowMs - anchorMs >= intervalMinutes * 60_000`, probed on the
+    // real TS with node v22.22.0: a capture at exactly the default 30-minute
+    // interval before NOW indexes; one millisecond later does not). The
+    // backlog path counts pending dialogue turns with `>= 20`, so 19 pending
+    // turns must NOT trigger (a fresh anchor 1s after NOW keeps the interval
+    // path false too). All three are appended at the END: Math.random cycling
+    // is process-wide, so earlier cells must keep drawing the same values.
+    {
+      name: 'maintenance-interval-exact',
+      captures: [
+        {messages: MESSAGES, input: {sessionKey: 'old', timestamp: '2026-10-21T23:30:00.000Z'}},
+      ],
+      run: async (ctx) => {
+        ctx.steps.push(
+          response({should_store: true, labels: [{type: 'project', reason: 'r'}]}),
+          response({skip: false, reason: '', name: 'Exact Note', description: 'Exact description', markdown: '## Summary\nExact body'}),
+        );
+        const result = await ctx.service.runDueScheduledMaintenance();
+        return {
+          result: {indexRan: result.indexRan, dreamRan: result.dreamRan, indexStats: result.indexStats},
+          files: ctx.files(),
+          pipeline: ctx.pipeline(['autoIndexAnchorAt', 'autoDreamAnchorAt', 'lastIndexedAt']),
+          requestKinds: ctx.kinds(),
+        };
+      },
+    },
+    {
+      name: 'maintenance-interval-just-before',
+      captures: [
+        {messages: MESSAGES, input: {sessionKey: 'old', timestamp: '2026-10-21T23:30:00.001Z'}},
+      ],
+      run: async (ctx) => {
+        const result = await ctx.service.runDueScheduledMaintenance();
+        return {
+          result: {indexRan: result.indexRan, dreamRan: result.dreamRan, indexStats: result.indexStats},
+          files: ctx.files(),
+          pipeline: ctx.pipeline(['autoIndexAnchorAt', 'autoDreamAnchorAt', 'lastIndexedAt']),
+          l0: ctx.l0(),
+          requestKinds: ctx.kinds(),
+        };
+      },
+    },
+    {
+      name: 'maintenance-backlog-below',
+      captures: Array.from({length: 19}, (_unused, index) => ({
+        messages: MESSAGES,
+        input: {sessionKey: `s${index + 1}`, timestamp: '2026-10-22T00:00:01.000Z'},
+      })),
+      run: async (ctx) => {
+        const result = await ctx.service.runDueScheduledMaintenance();
+        return {
+          result: {indexRan: result.indexRan, dreamRan: result.dreamRan, indexStats: result.indexStats},
+          files: ctx.files(),
+          pipeline: ctx.pipeline(['autoIndexAnchorAt', 'autoDreamAnchorAt', 'lastIndexedAt']),
+          l0: ctx.l0(),
+          requestKinds: ctx.kinds(),
+        };
+      },
+    },
   ];
 }
 

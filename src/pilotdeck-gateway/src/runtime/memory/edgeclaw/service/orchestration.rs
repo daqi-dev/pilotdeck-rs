@@ -278,6 +278,33 @@ impl From<DreamRunnerError> for ServiceError {
     }
 }
 
+/// Drop fallback for the dream stage lifecycle counter (issue #1036 P2-5).
+/// `dream` counts every stage it creates; the explicit dispose paths call
+/// [`Self::mark`] before their own increment, so a dream that runs to
+/// completion (success or any propagated error) counts exactly once — and a
+/// dream whose future is dropped at an await point still counts here, keeping
+/// the `dream_stage_counters()` pair balanced. The flag is a `Cell` because
+/// the service's async paths are already `!Send` (they hold `&mut dyn FnMut`
+/// seams), and the guard must stay writable across the LLM awaits.
+struct DreamStageDisposeFallback<'a> {
+    service: &'a EdgeClawMemoryService,
+    disposed: std::cell::Cell<bool>,
+}
+impl DreamStageDisposeFallback<'_> {
+    fn mark(&self) {
+        self.disposed.set(true);
+    }
+}
+impl Drop for DreamStageDisposeFallback<'_> {
+    fn drop(&mut self) {
+        if !self.disposed.get() {
+            self.service
+                .dream_stages_disposed
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
 impl EdgeClawMemoryService {
     /// `getPipelineTimestamp` (`service.ts:674-677`): a string that trims to
     /// non-empty, else `undefined`.
@@ -423,6 +450,17 @@ impl EdgeClawMemoryService {
             .await?;
         self.dream_stages_created.fetch_add(1, Ordering::Relaxed);
         let stage = self.repository.create_dream_stage("dream")?;
+        // #1036 P2-5: a Rust caller can drop this future at any await point
+        // (`tokio::time::timeout`, `select!`); TS has no cancellation, so no
+        // oracle cell covers it. Neither explicit dispose path below runs in
+        // that case: the stage's own `Drop` removes the staged roots, and this
+        // guard keeps `dream_stages_disposed` balanced with `created`. The
+        // explicit paths `mark()` before their own increment, so a dream that
+        // completes never counts twice.
+        let _dispose_fallback = DreamStageDisposeFallback {
+            service: self,
+            disposed: std::cell::Cell::new(false),
+        };
         // The TS `try` around the staged run (`service.ts:809-821`): any
         // failure first disposes the stage, then rethrows (a failing dispose
         // replaces the error, as a throw inside the `catch` block would).
@@ -443,6 +481,7 @@ impl EdgeClawMemoryService {
         let (outcome, staged_snapshot) = match staged {
             Ok(staged) => staged,
             Err(error) => {
+                _dispose_fallback.mark();
                 self.dream_stages_disposed.fetch_add(1, Ordering::Relaxed);
                 return match stage.dispose() {
                     Ok(()) => Err(error),
@@ -454,6 +493,7 @@ impl EdgeClawMemoryService {
         // throws before any install work (the `outcome` half is structurally
         // impossible here — `run` returns a valid result or an error).
         if !js_truthy(&staged_snapshot) {
+            _dispose_fallback.mark();
             self.dream_stages_disposed.fetch_add(1, Ordering::Relaxed);
             return match stage.dispose() {
                 Ok(()) => Err(ServiceError::File(FileMemoryError::Invalid(
@@ -473,6 +513,14 @@ impl EdgeClawMemoryService {
         // LLM await happens inside it, and every repository call below
         // reenters the same thread's already-held guards.
         let _tail_scope = self.repository.snapshot_operation_scope()?;
+        // #1036 negative control (feature-gated `PDRS_MUTANT` switch): regress
+        // to per-call locking by releasing the shared scope before the tail
+        // body, like the pre-fix-r1 code — every repository call below then
+        // takes and releases its own guards while the first dream is parked.
+        // The tail-race regression must fail deterministically under it.
+        if crate::mutants::on("dream-tail-per-call-locks") {
+            drop(_tail_scope);
+        }
         // TS wraps install/replace in `try { ... } finally { dispose }`
         // (`service.ts:826-857`): a dispose failure in `finally` overrides
         // the guarded error, exactly like a throw in the block.
@@ -531,6 +579,7 @@ impl EdgeClawMemoryService {
                 Ok(())
             })()
         };
+        _dispose_fallback.mark();
         self.dream_stages_disposed.fetch_add(1, Ordering::Relaxed);
         match stage.dispose() {
             Ok(()) => install?,

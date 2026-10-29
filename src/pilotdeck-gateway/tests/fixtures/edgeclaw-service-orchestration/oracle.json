@@ -3106,6 +3106,793 @@
         ],
         "l0": []
       }
+    },
+    {
+      "name": "maintenance-interval-exact",
+      "script": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"should_store\\\":true,\\\"labels\\\":[{\\\"type\\\":\\\"project\\\",\\\"reason\\\":\\\"r\\\"}]}\"}}]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"skip\\\":false,\\\"reason\\\":\\\"\\\",\\\"name\\\":\\\"Exact Note\\\",\\\"description\\\":\\\"Exact description\\\",\\\"markdown\\\":\\\"## Summary\\\\nExact body\\\"}\"}}]}"
+        }
+      ],
+      "seeds": [],
+      "captures": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "old",
+            "timestamp": "2026-10-21T23:30:00.000Z"
+          }
+        }
+      ],
+      "settings": null,
+      "setState": null,
+      "gate": null,
+      "during": null,
+      "awaitDuring": false,
+      "observed": {
+        "result": {
+          "indexRan": true,
+          "dreamRan": false,
+          "indexStats": {
+            "capturedSessions": 1,
+            "writtenFiles": 1,
+            "writtenUserFiles": 0,
+            "writtenProjectFiles": 1,
+            "writtenFeedbackFiles": 0,
+            "userProfilesUpdated": 0,
+            "failedSessions": 0
+          }
+        },
+        "files": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Exact Note](project.meta.md) — Exact description\n\n## Project Memory\n- [Exact Note](Project/exact-note-cc4af60bd3.md) — Exact description\n"
+          },
+          {
+            "relativePath": "Project/exact-note-cc4af60bd3.md",
+            "content": "---\nname: Exact Note\ndescription: Exact description\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-21T23:30:00.000Z\nsource_session_key: old\n---\n## Summary\nExact body\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Exact Note\ndescription: Exact description\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nExact description\n"
+          }
+        ],
+        "pipeline": {
+          "autoIndexAnchorAt": null,
+          "autoDreamAnchorAt": "2026-10-22T00:00:00.000Z",
+          "lastIndexedAt": "2026-10-21T23:30:00.000Z"
+        },
+        "requestKinds": [
+          "unknown",
+          "unknown"
+        ]
+      },
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "autoDreamAnchorAt",
+            "state_json": "\"2026-10-22T00:00:00.000Z\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "state_key": "lastIndexedAt",
+            "state_json": "\"2026-10-21T23:30:00.000Z\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "state_key": "lastIndexedCursor:old",
+            "state_json": "\"2026-10-21T23:30:00.000Z\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "state_key": "recentIndexTraces",
+            "state_json": "[{\"indexTraceId\":\"index_trace_f2361a5a33\",\"sessionKey\":\"old\",\"trigger\":\"scheduled\",\"startedAt\":\"2026-10-22T00:00:00.000Z\",\"status\":\"completed\",\"isNoOp\":false,\"displayStatus\":\"Completed\",\"batchSummary\":{\"l0Ids\":[\"old_5c3d08e622_raw\"],\"segmentCount\":1,\"focusUserTurnCount\":1,\"fromTimestamp\":\"2026-10-21T23:30:00.000Z\",\"toTimestamp\":\"2026-10-21T23:30:00.000Z\"},\"steps\":[{\"stepId\":\"index_trace_f2361a5a33:step:1\",\"kind\":\"index_start\",\"title\":\"Index Started\",\"status\":\"info\",\"inputSummary\":\"trigger=scheduled\",\"outputSummary\":\"Preparing batch indexing for old.\",\"titleI18n\":{\"key\":\"trace.step.index_start\",\"fallback\":\"Index Started\"},\"outputSummaryI18n\":{\"key\":\"trace.text.index_start.output.preparing_batch\",\"args\":[\"old\"],\"fallback\":\"Preparing batch indexing for {0}.\"}},{\"stepId\":\"index_trace_f2361a5a33:step:2\",\"kind\":\"batch_loaded\",\"title\":\"Batch Loaded\",\"status\":\"info\",\"inputSummary\":\"1 segments from 2026-10-21T23:30:00.000Z to 2026-10-21T23:30:00.000Z\",\"outputSummary\":\"2 messages loaded into batch context.\",\"metrics\":{\"segmentCount\":1,\"focusUserTurnCount\":1},\"details\":[{\"key\":\"batch-summary\",\"label\":\"Batch Summary\",\"labelI18n\":{\"key\":\"trace.detail.batch_summary\",\"fallback\":\"Batch Summary\"},\"kind\":\"kv\",\"entries\":[{\"label\":\"sessionKey\",\"value\":\"old\"},{\"label\":\"from\",\"value\":\"2026-10-21T23:30:00.000Z\"},{\"label\":\"to\",\"value\":\"2026-10-21T23:30:00.000Z\"},{\"label\":\"l0Ids\",\"value\":\"old_5c3d08e622_raw\"}]},{\"key\":\"batch-context\",\"label\":\"Batch Context\",\"labelI18n\":{\"key\":\"trace.detail.batch_context\",\"fallback\":\"Batch Context\"},\"kind\":\"json\",\"json\":[{\"index\":0,\"role\":\"user\",\"content\":\"alpha user\"},{\"index\":1,\"role\":\"assistant\",\"content\":\"alpha assistant\"}]}],\"titleI18n\":{\"key\":\"trace.step.batch_loaded\",\"fallback\":\"Batch Loaded\"},\"inputSummaryI18n\":{\"key\":\"trace.text.batch_loaded.input\",\"args\":[\"1\",\"2026-10-21T23:30:00.000Z\",\"2026-10-21T23:30:00.000Z\"],\"fallback\":\"{0} segments from {1} to {2}\"},\"outputSummaryI18n\":{\"key\":\"trace.text.batch_loaded.output\",\"args\":[\"2\"],\"fallback\":\"{0} messages loaded into batch context.\"}},{\"stepId\":\"index_trace_f2361a5a33:step:3\",\"kind\":\"focus_turns_selected\",\"title\":\"Focus Turns Selected\",\"status\":\"success\",\"inputSummary\":\"1 user turns in this batch.\",\"outputSummary\":\"User turns will be classified one by one.\",\"details\":[{\"key\":\"focus-turn-selection-summary\",\"label\":\"Focus Selection Summary\",\"labelI18n\":{\"key\":\"trace.detail.focus_selection_summary\",\"fallback\":\"Focus Selection Summary\"},\"kind\":\"kv\",\"entries\":[{\"label\":\"userTurns\",\"value\":\"1\"},{\"label\":\"assistantMessagesInContext\",\"value\":\"1\"},{\"label\":\"assistantUsedAsContextOnly\",\"value\":\"yes\"}]},{\"key\":\"focus-turn-1\",\"label\":\"Focus Turn 1\",\"labelI18n\":{\"key\":\"trace.detail.focus_turn\",\"args\":[\"1\"],\"fallback\":\"Focus Turn {0}\"},\"kind\":\"text\",\"text\":\"alpha user\"}],\"titleI18n\":{\"key\":\"trace.step.focus_turns_selected\",\"fallback\":\"Focus Turns Selected\"},\"inputSummaryI18n\":{\"key\":\"trace.text.focus_turns_selected.input\",\"args\":[\"1\"],\"fallback\":\"{0} user turns in this batch.\"},\"outputSummaryI18n\":{\"key\":\"trace.text.focus_turns_selected.output.classifying\",\"fallback\":\"User turns will be classified one by one.\"}},{\"stepId\":\"index_trace_f2361a5a33:step:4\",\"kind\":\"classification\",\"title\":\"Classification\",\"status\":\"success\",\"inputSummary\":\"alpha user\",\"outputSummary\":\"classified=project\",\"refs\":{\"classification\":[\"project\"]},\"details\":[{\"key\":\"focus-turn-text-old_5c3d08e622_raw\",\"label\":\"Focus User Turn\",\"labelI18n\":{\"key\":\"trace.detail.focus_user_turn\",\"fallback\":\"Focus User Turn\"},\"kind\":\"text\",\"text\":\"alpha user\"},{\"key\":\"classification-result-old_5c3d08e622_raw\",\"label\":\"Classification Result\",\"labelI18n\":{\"key\":\"trace.detail.classification_result\",\"fallback\":\"Classification Result\"},\"kind\":\"kv\",\"entries\":[{\"label\":\"sessionKey\",\"value\":\"old\"},{\"label\":\"timestamp\",\"value\":\"2026-10-21T23:30:00.000Z\"},{\"label\":\"result\",\"value\":\"project\"}]},{\"key\":\"classification-labels-old_5c3d08e622_raw\",\"label\":\"Classification Labels\",\"labelI18n\":{\"key\":\"trace.detail.classifier_candidates\",\"fallback\":\"Classifier Candidates\"},\"kind\":\"json\",\"json\":[{\"type\":\"project\",\"reason\":\"r\",\"evidence\":\"\"}]}],\"promptDebug\":{\"requestLabel\":\"Memory turn classification\",\"systemPrompt\":\"You classify one focus user turn for a long-term memory indexing pipeline.\\n\\nYou are only deciding categories. Do not generate the memory file yet.\\n\\nRules:\\n- Base the decision on the focus user turn first.\\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\\n- Assistant text is context only. Never classify something that exists only in assistant wording.\\n- A turn can match multiple categories, but at most once per category.\\n- Allowed categories:\\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\\n- Identity test: only use user when the focus turn is describing the user as a person.\\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\\n- If the user explicitly says \\\"请记住\\\", \\\"帮我记住\\\", or \\\"remember this\\\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\\n- If nothing durable should be remembered, return should_store=false and labels=[].\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"should_store\\\": true,\\n  \\\"labels\\\": [\\n    {\\n      \\\"type\\\": \\\"user | project | feedback\\\",\\n      \\\"reason\\\": \\\"why this category applies\\\",\\n      \\\"evidence\\\": \\\"short quote or evidence summary from the focus turn\\\"\\n    }\\n  ]\\n}\",\"userPrompt\":\"{\\n  \\\"current_project_meta\\\": null,\\n  \\\"focus_user_turn\\\": {\\n    \\\"role\\\": \\\"user\\\",\\n    \\\"content\\\": \\\"alpha user\\\"\\n  },\\n  \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n    \\\"turn_index\\\": 1,\\n    \\\"messages\\\": [\\n      {\\n        \\\"role\\\": \\\"user\\\",\\n        \\\"content\\\": \\\"alpha user\\\"\\n      },\\n      {\\n        \\\"role\\\": \\\"assistant\\\",\\n        \\\"content\\\": \\\"alpha assistant\\\"\\n      }\\n    ]\\n  },\\n  \\\"previous_turns\\\": [],\\n  \\\"next_turns\\\": []\\n}\",\"rawResponse\":\"{\\\"should_store\\\":true,\\\"labels\\\":[{\\\"type\\\":\\\"project\\\",\\\"reason\\\":\\\"r\\\"}]}\",\"parsedResult\":{\"should_store\":true,\"labels\":[{\"type\":\"project\",\"reason\":\"r\"}]}}},{\"stepId\":\"index_trace_f2361a5a33:step:5\",\"kind\":\"project_create\",\"title\":\"project Create\",\"status\":\"success\",\"inputSummary\":\"project | r\",\"outputSummary\":\"created=Exact Note\",\"refs\":{\"candidateType\":\"project\"},\"details\":[{\"key\":\"create-project-old_5c3d08e622_raw\",\"label\":\"project Create Result\",\"kind\":\"json\",\"json\":{\"classification\":{\"type\":\"project\",\"reason\":\"r\",\"evidence\":\"\"},\"candidate\":{\"type\":\"project\",\"name\":\"Exact Note\",\"description\":\"Exact description\",\"body\":\"## Summary\\nExact body\"}}}],\"promptDebug\":{\"requestLabel\":\"Project memory create\",\"systemPrompt\":\"You create one append-only project memory note from a focus user turn.\\n\\nRules:\\n- Create at most one project note.\\n- The note belongs to the current project only.\\n- Capture durable project facts: what the project is, stable scope, goals, key progress, blockers, risks, important decisions, important next steps.\\n- Do not reduce the note to a vague status line.\\n- Do not focus on highly volatile percentages, fleeting schedules, or trivial short-term updates unless they reveal a durable blocker/risk/fact.\\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\\n- Keep the note readable markdown.\\n- Prefer meaningful headings when useful, such as: ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes.\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"skip\\\": false,\\n  \\\"reason\\\": \\\"\\\",\\n  \\\"name\\\": \\\"short project-memory title\\\",\\n  \\\"description\\\": \\\"one-line description\\\",\\n  \\\"markdown\\\": \\\"markdown body\\\"\\n}\",\"userPrompt\":\"{\\n  \\\"classification\\\": {\\n    \\\"type\\\": \\\"project\\\",\\n    \\\"reason\\\": \\\"r\\\",\\n    \\\"evidence\\\": \\\"\\\"\\n  },\\n  \\\"context\\\": {\\n    \\\"current_project_meta\\\": null,\\n    \\\"focus_user_turn\\\": {\\n      \\\"role\\\": \\\"user\\\",\\n      \\\"content\\\": \\\"alpha user\\\"\\n    },\\n    \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n      \\\"turn_index\\\": 1,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"alpha user\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"alpha assistant\\\"\\n        }\\n      ]\\n    },\\n    \\\"previous_turns\\\": [],\\n    \\\"next_turns\\\": []\\n  }\\n}\",\"rawResponse\":\"{\\\"skip\\\":false,\\\"reason\\\":\\\"\\\",\\\"name\\\":\\\"Exact Note\\\",\\\"description\\\":\\\"Exact description\\\",\\\"markdown\\\":\\\"## Summary\\\\nExact body\\\"}\",\"parsedResult\":{\"skip\":false,\"reason\":\"\",\"name\":\"Exact Note\",\"description\":\"Exact description\",\"markdown\":\"## Summary\\nExact body\"}}},{\"stepId\":\"index_trace_f2361a5a33:step:6\",\"kind\":\"persist\",\"title\":\"Persist\",\"status\":\"success\",\"inputSummary\":\"1 candidates ready to persist.\",\"outputSummary\":\"1 memory files written.\",\"details\":[{\"key\":\"persisted-files-old_5c3d08e622_raw\",\"label\":\"Persisted Files\",\"labelI18n\":{\"key\":\"trace.detail.persisted_files\",\"fallback\":\"Persisted Files\"},\"kind\":\"json\",\"json\":[{\"type\":\"project\",\"name\":\"Exact Note\",\"projectId\":\"current_project\",\"relativePath\":\"Project/exact-note-cc4af60bd3.md\",\"storageKind\":\"project\"}]}]},{\"stepId\":\"index_trace_f2361a5a33:step:7\",\"kind\":\"index_finished\",\"title\":\"Index Finished\",\"status\":\"success\",\"inputSummary\":\"segments=1\",\"outputSummary\":\"stored=1, failed=0\",\"metrics\":{\"storedResults\":1,\"failed\":0},\"details\":[{\"key\":\"stored-results\",\"label\":\"Stored Results\",\"labelI18n\":{\"key\":\"trace.detail.stored_results\",\"fallback\":\"Stored Results\"},\"kind\":\"json\",\"json\":[{\"candidateType\":\"project\",\"candidateName\":\"Exact Note\",\"scope\":\"project\",\"projectId\":\"current_project\",\"relativePath\":\"Project/exact-note-cc4af60bd3.md\",\"storageKind\":\"project\"}]}],\"titleI18n\":{\"key\":\"trace.step.index_finished\",\"fallback\":\"Index Finished\"}}],\"storedResults\":[{\"candidateType\":\"project\",\"candidateName\":\"Exact Note\",\"scope\":\"project\",\"projectId\":\"current_project\",\"relativePath\":\"Project/exact-note-cc4af60bd3.md\",\"storageKind\":\"project\"}],\"finishedAt\":\"2026-10-22T00:00:00.000Z\"}]",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/svc-21/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": [
+          {
+            "l0_index_id": "old_5c3d08e622_raw",
+            "session_key": "old",
+            "timestamp": "2026-10-21T23:30:00.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 1,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "name": "maintenance-interval-just-before",
+      "script": [],
+      "seeds": [],
+      "captures": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "old",
+            "timestamp": "2026-10-21T23:30:00.001Z"
+          }
+        }
+      ],
+      "settings": null,
+      "setState": null,
+      "gate": null,
+      "during": null,
+      "awaitDuring": false,
+      "observed": {
+        "result": {
+          "indexRan": false,
+          "dreamRan": false,
+          "indexStats": {
+            "$type": "undefined"
+          }
+        },
+        "files": [],
+        "pipeline": {
+          "autoIndexAnchorAt": "2026-10-21T23:30:00.001Z",
+          "autoDreamAnchorAt": null,
+          "lastIndexedAt": null
+        },
+        "l0": [
+          {
+            "key": "old",
+            "indexed": false
+          }
+        ],
+        "requestKinds": []
+      },
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "autoIndexAnchorAt",
+            "state_json": "\"2026-10-21T23:30:00.001Z\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/svc-22/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": [
+          {
+            "l0_index_id": "old_81471ec746_raw",
+            "session_key": "old",
+            "timestamp": "2026-10-21T23:30:00.001Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "name": "maintenance-backlog-below",
+      "script": [],
+      "seeds": [],
+      "captures": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s1",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s2",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s3",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s4",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s5",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s6",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s7",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s8",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s9",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s10",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s11",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s12",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s13",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s14",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s15",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s16",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s17",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s18",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        },
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": "alpha user"
+            },
+            {
+              "role": "assistant",
+              "content": "alpha assistant"
+            }
+          ],
+          "input": {
+            "sessionKey": "s19",
+            "timestamp": "2026-10-22T00:00:01.000Z"
+          }
+        }
+      ],
+      "settings": null,
+      "setState": null,
+      "gate": null,
+      "during": null,
+      "awaitDuring": false,
+      "observed": {
+        "result": {
+          "indexRan": false,
+          "dreamRan": false,
+          "indexStats": {
+            "$type": "undefined"
+          }
+        },
+        "files": [],
+        "pipeline": {
+          "autoIndexAnchorAt": "2026-10-22T00:00:01.000Z",
+          "autoDreamAnchorAt": null,
+          "lastIndexedAt": null
+        },
+        "l0": [
+          {
+            "key": "s1",
+            "indexed": false
+          },
+          {
+            "key": "s2",
+            "indexed": false
+          },
+          {
+            "key": "s3",
+            "indexed": false
+          },
+          {
+            "key": "s4",
+            "indexed": false
+          },
+          {
+            "key": "s5",
+            "indexed": false
+          },
+          {
+            "key": "s6",
+            "indexed": false
+          },
+          {
+            "key": "s7",
+            "indexed": false
+          },
+          {
+            "key": "s8",
+            "indexed": false
+          },
+          {
+            "key": "s9",
+            "indexed": false
+          },
+          {
+            "key": "s10",
+            "indexed": false
+          },
+          {
+            "key": "s11",
+            "indexed": false
+          },
+          {
+            "key": "s12",
+            "indexed": false
+          },
+          {
+            "key": "s13",
+            "indexed": false
+          },
+          {
+            "key": "s14",
+            "indexed": false
+          },
+          {
+            "key": "s15",
+            "indexed": false
+          },
+          {
+            "key": "s16",
+            "indexed": false
+          },
+          {
+            "key": "s17",
+            "indexed": false
+          },
+          {
+            "key": "s18",
+            "indexed": false
+          },
+          {
+            "key": "s19",
+            "indexed": false
+          }
+        ],
+        "requestKinds": []
+      },
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "autoIndexAnchorAt",
+            "state_json": "\"2026-10-22T00:00:01.000Z\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/svc-23/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": [
+          {
+            "l0_index_id": "s10_b85f5ecc02_raw",
+            "session_key": "s10",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s11_b85f5ecc02_raw",
+            "session_key": "s11",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s12_b85f5ecc02_raw",
+            "session_key": "s12",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s13_b85f5ecc02_raw",
+            "session_key": "s13",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s14_b85f5ecc02_raw",
+            "session_key": "s14",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s15_b85f5ecc02_raw",
+            "session_key": "s15",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s16_b85f5ecc02_raw",
+            "session_key": "s16",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s17_b85f5ecc02_raw",
+            "session_key": "s17",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s18_b85f5ecc02_raw",
+            "session_key": "s18",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s19_b85f5ecc02_raw",
+            "session_key": "s19",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s1_b85f5ecc02_raw",
+            "session_key": "s1",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s2_b85f5ecc02_raw",
+            "session_key": "s2",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s3_b85f5ecc02_raw",
+            "session_key": "s3",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s4_b85f5ecc02_raw",
+            "session_key": "s4",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s5_b85f5ecc02_raw",
+            "session_key": "s5",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s6_b85f5ecc02_raw",
+            "session_key": "s6",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s7_b85f5ecc02_raw",
+            "session_key": "s7",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s8_b85f5ecc02_raw",
+            "session_key": "s8",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0_index_id": "s9_b85f5ecc02_raw",
+            "session_key": "s9",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages_json": "[{\"role\":\"user\",\"content\":\"alpha user\"},{\"role\":\"assistant\",\"content\":\"alpha assistant\"}]",
+            "source": "edgeclaw",
+            "indexed": 0,
+            "created_at": "2026-10-22T00:00:00.000Z"
+          }
+        ]
+      }
     }
   ]
 }

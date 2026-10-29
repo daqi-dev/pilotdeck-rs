@@ -30,7 +30,7 @@ const sources = [
 ];
 const sourceSha256 = sourceClosureSha256(baseline, commit, gitExecutable, sources);
 const observed = await collect(baseline);
-assert.equal(observed.scenarios.length, 20, `expected 20 scenarios, got ${observed.scenarios.length}`);
+assert.equal(observed.scenarios.length, 23, `expected 23 scenarios, got ${observed.scenarios.length}`);
 const oracle = {
   sourceCommit,
   sourceSha256,
