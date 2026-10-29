@@ -54,6 +54,9 @@ R = _load('round', _ROOT / 'round.py')
 
 class LockReleaseControls(unittest.TestCase):
     def setUp(self):
+        # _tmp/ is gitignored, so a fresh checkout has no such directory yet;
+        # TemporaryDirectory(dir=...) refuses to create the parent itself.
+        (G.WORKTREE / '_tmp').mkdir(parents=True, exist_ok=True)
         self.tmp = tempfile.TemporaryDirectory(prefix='pdrs-a1-lock-', dir=G.WORKTREE / '_tmp')
         self.root = Path(self.tmp.name)
         self.addCleanup(self.tmp.cleanup)
