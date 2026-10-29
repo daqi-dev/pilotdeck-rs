@@ -320,7 +320,7 @@ def main():
         with mutating_sources(root, list(dict.fromkeys(case[1] for case in selected))) as originals:
             for name, path, old, new, test, assertion in selected:
                 status, reason = 'INVALID', 'not executed'
-                args = [test, '--', '--exact', '--ignored', '--nocapture']
+                args = [test, '--', '--exact', '--ignored']
                 try:
                     content = originals[path].decode()
                     if content.count(old) != 1:

@@ -394,7 +394,7 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
                 time.sleep(30)
                 slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True, timeout=10)
             assert slots.returncode == 0
-            command = ['cargo', 'test', '--offline', '--manifest-path', str(rust / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib', used_test, '--', '--nocapture']
+            command = ['cargo', 'test', '--offline', '--manifest-path', str(rust / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib', used_test, '--']
             run_env = dict(env)
             if case: run_env['PDRS_SUBMIT_CASE'] = case
             else: run_env.pop('PDRS_SUBMIT_CASE', None)
@@ -408,7 +408,7 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
                 if name == 'baseline':
                     # The production-host unit filter must also be green before
                     # any mutation of submit_host.rs is judged.
-                    host_run = run_owned(['cargo', 'test', '--offline', '--manifest-path', str(rust / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib', host_test, '--', '--nocapture'], cwd=repo, env=run_env, timeout=240)
+                    host_run = run_owned(['cargo', 'test', '--offline', '--manifest-path', str(rust / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib', host_test, '--'], cwd=repo, env=run_env, timeout=240)
                     raw += '\n' + host_run.stdout + host_run.stderr
                     returncode = returncode or host_run.returncode
             except subprocess.TimeoutExpired as error:

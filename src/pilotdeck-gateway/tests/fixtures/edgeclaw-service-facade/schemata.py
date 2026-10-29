@@ -118,7 +118,7 @@ def run(output, selected, env, requested=()):
                 child_env = selector_environment(env, selector)
                 # The two cwd-changing tests are ignored in a full library run.
                 # Exact, separate processes also safely run those bindings here.
-                command = [str(binary), PREFIX + test, '--exact', '--nocapture', '--include-ignored']
+                command = [str(binary), PREFIX + test, '--exact', '--include-ignored']
                 begin = time.monotonic()
                 try:
                     result = run_owned(command, cwd=ROOT / 'src/pilotdeck-gateway',

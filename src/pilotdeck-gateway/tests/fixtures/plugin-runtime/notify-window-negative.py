@@ -47,14 +47,14 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
         'cargo', 'test', '--offline', '--manifest-path', str(ROOT / 'src/Cargo.toml'),
         '-p', 'pilotdeck-gateway', '--lib',
         TEST,
-        '--', '--exact', '--nocapture', '--test-threads=1',
+        '--', '--exact', '--test-threads=1',
     ]
     # #813 r14: the unmutated bound test must be green first; otherwise a
     # pre-existing failure (load-sensitive deadline, merge fallout) would be
-    # misread as this mutation's kill.
-    # Without --nocapture: captured output keeps libtest's `test <name> ... ok` line intact.
-    baseline = run_owned([arg for arg in command if arg != '--nocapture'],
-                         cwd=ROOT, env=env, timeout=240)
+    # misread as this mutation's kill. No `--nocapture`: captured output keeps
+    # libtest's `test <name> ... ok/FAILED` line intact for baseline_passed()
+    # and named_test_killed().
+    baseline = run_owned(command, cwd=ROOT, env=env, timeout=240)
     baseline_output = baseline.stdout + baseline.stderr
     (OUT / 'baseline.log').write_text(baseline_output)
     if not (baseline.returncode == 0 and baseline_passed(baseline_output, TEST)):

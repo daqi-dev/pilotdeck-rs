@@ -87,7 +87,7 @@ def main():
     results = []
     for name, path, before, after, test in selected:
         status, reason = 'INVALID', ''
-        arguments = [test, '--', '--exact', '--include-ignored', '--nocapture']
+        arguments = [test, '--', '--exact', '--include-ignored']
         try:
             with mutating_sources(root, [path]) as originals:
                 original = originals[path].decode()

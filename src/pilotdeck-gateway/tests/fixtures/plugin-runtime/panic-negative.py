@@ -126,7 +126,7 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
                 result = run_owned([
                     'cargo', 'test', '--offline', '--manifest-path', str(ROOT / 'src/Cargo.toml'),
                     '-p', 'pilotdeck-gateway', '--lib', test_name,
-                    '--', '--exact', '--nocapture', '--test-threads=1',
+                    '--', '--exact', '--test-threads=1',
                 ], cwd=ROOT, env=ENV, timeout=max(1, min(150, 590 - (time.monotonic() - start))))
                 exit_code = result.returncode
                 output = result.stdout + result.stderr
@@ -159,7 +159,7 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
                 result = run_owned([
                     'cargo', 'test', '--offline', '--manifest-path', str(ROOT / 'src/Cargo.toml'),
                     '-p', 'pilotdeck-gateway', '--lib', test_name,
-                    '--', '--exact', '--nocapture', '--test-threads=1',
+                    '--', '--exact', '--test-threads=1',
                 ], cwd=ROOT, env=ENV, timeout=max(1, min(150, 590 - (time.monotonic() - start))))
                 exit_code = result.returncode
                 output = result.stdout + result.stderr

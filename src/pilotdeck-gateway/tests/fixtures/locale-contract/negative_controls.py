@@ -138,7 +138,10 @@ def main():
             (out / f'{name}.{label}.log').write_text(result.stdout + result.stderr)
             return result
 
-        args = command + [test, '--', '--exact', '--nocapture', '--format', 'pretty']
+        # No `--nocapture`: it splices the test's stdout into the
+        # `test <name> ... ok/FAILED` status line (#938 r14) that
+        # negative_suite.passed()/classify() match exactly.
+        args = command + [test, '--', '--exact', '--format', 'pretty']
         entered = False
         try:
             with mutating_sources(root, [path]) as originals:

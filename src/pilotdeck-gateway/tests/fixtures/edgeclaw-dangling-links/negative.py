@@ -208,7 +208,7 @@ def main():
                 log.write(gate.stdout + gate.stderr)
                 log.flush()
                 args = command + (
-                    ['--', selected, '--test-threads', '2', '--nocapture']
+                    ['--', selected, '--test-threads', '2']
                     if selected
                     else ['--', '--test-threads', '2'])
                 result = run_owned(args, cwd=root, env=env, timeout=900)

@@ -170,7 +170,7 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
                 path.write_bytes(modified[path])
             run_env = dict(env)
             if control.get('case'): run_env['PDRS_SUBMIT_CASE'] = control['case']
-            cmd = command + [control['test'], '--', '--exact', '--nocapture']
+            cmd = command + [control['test'], '--', '--exact']
             timed_out = False
             budget = min(240, max(1, deadline - time.monotonic()))
             try:

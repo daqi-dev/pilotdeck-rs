@@ -117,7 +117,7 @@ def main():
             for name, path, old, new, test, assertion in selected:
                 status, reason = 'INVALID', 'not executed'
                 target = 'config_snapshot' if test in {'config_snapshot_regenerates_identically', 'all_successful_config_corpus_cases_have_snapshot_projections'} else 'config_changes'
-                args = [test, '--', '--exact', '--include-ignored', '--nocapture']
+                args = [test, '--', '--exact', '--include-ignored']
                 try:
                     content = originals[path].decode()
                     if content.count(old) != 1:
