@@ -42,6 +42,8 @@ BINDINGS = {
 }
 
 LIB_BINDINGS = {
+    'live-terminal-case-inventory': ('runtime::turn::live::tests::terminal_message_boundaries_match_ts', '#748 exact terminal boundary inventory', 'live.rs', 'live.rs'),
+    'live-terminal-falsy-final': ('runtime::turn::live::tests::terminal_message_boundaries_match_ts', '#748 TS terminal message boundary', 'live.rs', 'live.rs'),
     'live-diagnostic-message': ('host::tests::close_drains_stderr_exit_tail_before_aborting_pump', '#748 stderr stays in bounded diagnostic field', '../../host/mod.rs', '../../host/tests.rs'),
     'live-message-field-classification': ('runtime::turn::live::stream_tests::progress_message_text_is_not_a_canonical_message', '#748 progress message text bypasses canonical classification', 'live.rs', 'live_stream_tests.rs'),
     'live-context-detached': ('runtime::turn::submit::tests::context_budget_delayed_write_precedes_terminal_and_eof', '#748 context status must settle before native terminal', 'submit.rs', 'submit_tests.rs'),
