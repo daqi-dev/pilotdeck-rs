@@ -29,10 +29,15 @@ use tokio::sync::watch;
 
 const ORACLE: &str = include_str!("../../../tests/fixtures/turn-submit/oracle.json");
 fn js(value: &Value) -> JsValue {
-    parse_json(&value.to_string()).unwrap()
+    parse_json(&value.to_string()).expect("#748 submit fixture prerequisite")
 }
 fn json(value: &JsValue) -> Value {
-    serde_json::from_str(&stringify_json(value).unwrap().unwrap()).unwrap()
+    serde_json::from_str(
+        &stringify_json(value)
+            .expect("#748 submit fixture prerequisite")
+            .expect("#748 submit fixture prerequisite"),
+    )
+    .expect("#748 submit fixture prerequisite")
 }
 #[derive(Default)]
 struct Log {
@@ -47,7 +52,10 @@ struct Log {
 }
 impl Log {
     fn host(&self, value: &str) {
-        self.host.lock().unwrap().push(value.into());
+        self.host
+            .lock()
+            .expect("#748 submit fixture prerequisite")
+            .push(value.into());
     }
 }
 struct Gate(watch::Sender<bool>);
@@ -65,6 +73,7 @@ impl Gate {
 }
 struct Session {
     setup: Value,
+    status_recorder: Option<Arc<crate::storage::recorder::Recorder>>,
     native: Vec<JsValue>,
     submits: AtomicUsize,
     log: Arc<Log>,
@@ -90,7 +99,7 @@ impl LiveSession for Arc<Session> {
             self.log
                 .durable
                 .lock()
-                .unwrap()
+                .expect("#748 submit fixture prerequisite")
                 .push(json!({"op":"abort", "reason":json(&JsValue::String(reason.clone()))}));
         }
         self.accepted.open();
@@ -116,7 +125,7 @@ impl LiveSession for Arc<Session> {
             self.log
                 .durable
                 .lock()
-                .unwrap()
+                .expect("#748 submit fixture prerequisite")
                 .push(json!({"op":"execution", "execution":json(field(&options,"execution"))}));
         }
         let submission = self.submits.fetch_add(1, Ordering::SeqCst);
@@ -153,9 +162,9 @@ impl LiveTurn for Stream {
             let session = &self.session;
             if self.index == 1 && !self.accepted {
                 self.accepted = true;
-                session.log.durable.lock().unwrap().push(json!({"op":"accept_begin", "messages":[{"role":"user","content":[{"type":"text", "text":json(field(&self.input,"text"))}]}]}));
+                session.log.durable.lock().expect("#748 submit fixture prerequisite").push(json!({"op":"accept_begin", "messages":[{"role":"user","content":[{"type":"text", "text":json(field(&self.input,"text"))}]}]}));
                 session.accepted.wait().await;
-                session.log.durable.lock().unwrap().push(json!({"op":if session.setup["transcriptFailure"] == true {"accept_failed"} else {"accept_committed"}}));
+                session.log.durable.lock().expect("#748 submit fixture prerequisite").push(json!({"op":if session.setup["transcriptFailure"] == true {"accept_failed"} else {"accept_committed"}}));
             }
             if self.index >= 2 && session.setup["transcriptFailure"] != true {
                 session.terminal.wait().await;
@@ -164,6 +173,13 @@ impl LiveTurn for Stream {
                 }
             }
             if let Some(event) = self.native.get(self.index) {
+                if event.get("type") == Some(&"turn_completed".into())
+                    && session.setup["statusRecordGate"] == true
+                {
+                    session.status_recorder.as_ref().expect("#748 status probe recorder")
+                        .complete_turn(&"s".into(), &"r".into(), js(&json!({"type":"success","sessionId":"s","turnId":"r","stopReason":"completed","turns":1})))
+                        .expect("#748 native terminal transcript");
+                }
                 self.index += 1;
                 return Ok(Some(event.clone()));
             }
@@ -212,7 +228,7 @@ impl SubmitSnapshots for TestSnapshots {
                 .log
                 .host(if pre { "snapshot_pre" } else { "snapshot_post" });
             if !pre {
-                self.session.log.durable.lock().unwrap().push(json!({"op":"snapshot_post", "input": {"workspaceId": input.workspace_id, "sessionId": input.session_id, "turnId":input.turn_id, "runId":input.run_id, "workspaceDir":input.workspace_dir, "workspaceStable":input.workspace_stable, "failureKind":input.failure_kind, "failureReason":input.failure_reason}}));
+                self.session.log.durable.lock().expect("#748 submit fixture prerequisite").push(json!({"op":"snapshot_post", "input": {"workspaceId": input.workspace_id, "sessionId": input.session_id, "turnId":input.turn_id, "runId":input.run_id, "workspaceDir":input.workspace_dir, "workspaceStable":input.workspace_stable, "failureKind":input.failure_kind, "failureReason":input.failure_reason}}));
             }
             Ok(WorkspaceSnapshotResult {
                 snapshot_id: "fixture".into(),
@@ -457,14 +473,22 @@ impl SubmitHostServices for Services {
                     .log
                     .durable
                     .lock()
-                    .unwrap()
-                    .push(json!({"op":"status", "status":json(status), "wire":stringify_json(status).unwrap().unwrap()}));
+                    .expect("#748 submit fixture prerequisite")
+                    .push(json!({"op":"status", "status":json(status), "wire":stringify_json(status).expect("#748 submit fixture prerequisite").expect("#748 submit fixture prerequisite")}));
             }
             if self.session.setup["statusRecordGate"] == true
                 && field(status, "event") == &JsValue::from("context_budget")
             {
                 self.session.log.host("status_waiting");
+                let _owned = StatusProbeDrop(self.session.log.clone());
                 self.prepare.wait().await;
+                self.session
+                    .status_recorder
+                    .as_ref()
+                    .expect("#748 status probe recorder")
+                    .writer()
+                    .record_agent_status_message(&"s".into(), &"r".into(), status)
+                    .expect("#748 delayed status transcript");
                 self.session.log.host("status_released");
             }
             if self.session.setup["statusRecordFailure"] == true {
@@ -533,7 +557,7 @@ impl TurnRunRegistry for Registry {
         self.log
             .registry
             .lock()
-            .unwrap()
+            .expect("#748 submit fixture prerequisite")
             .push(json!({"op":"accept","requestMaterial":display(&input.request_material)}));
         if self.setup["registryAcceptFailure"] == true {
             return Box::pin(async {
@@ -548,7 +572,7 @@ impl TurnRunRegistry for Registry {
         self.log
             .registry
             .lock()
-            .unwrap()
+            .expect("#748 submit fixture prerequisite")
             .push(json!({"op":"events"}));
         self.track(self.port.events(run))
     }
@@ -556,7 +580,7 @@ impl TurnRunRegistry for Registry {
         self.log
             .registry
             .lock()
-            .unwrap()
+            .expect("#748 submit fixture prerequisite")
             .push(json!({"op":"append", "event":json(event)}));
         if self.setup["registryAppendFailure"] == true {
             return Box::pin(async {
@@ -597,11 +621,21 @@ async fn collect(mut stream: TurnSubmission, log: Arc<Log>) {
                     is(&event, "type", "error") && is(&event, "code", "turn_timeout");
                 log.guard_wire
                     .lock()
-                    .unwrap()
-                    .push(stringify_json(&event).unwrap().unwrap());
-                log.visible.lock().unwrap().push(json(&event));
+                    .expect("#748 submit fixture prerequisite")
+                    .push(
+                        stringify_json(&event)
+                            .expect("#748 submit fixture prerequisite")
+                            .expect("#748 submit fixture prerequisite"),
+                    );
+                log.visible
+                    .lock()
+                    .expect("#748 submit fixture prerequisite")
+                    .push(json(&event));
                 let hold = if timeout_error {
-                    log.consumer_hold.lock().unwrap().clone()
+                    log.consumer_hold
+                        .lock()
+                        .expect("#748 submit fixture prerequisite")
+                        .clone()
                 } else {
                     None
                 };
@@ -611,7 +645,7 @@ async fn collect(mut stream: TurnSubmission, log: Arc<Log>) {
             }
             Ok(None) => break,
             Err(error) => {
-                *log.thrown.lock().unwrap() = Some(error.message);
+                *log.thrown.lock().expect("#748 submit fixture prerequisite") = Some(error.message);
                 break;
             }
         }
@@ -619,30 +653,56 @@ async fn collect(mut stream: TurnSubmission, log: Arc<Log>) {
     log.ended.store(true, Ordering::SeqCst);
 }
 async fn replay_case(case: &Value) {
-    let name = case["name"].as_str().unwrap();
+    let name = case["name"]
+        .as_str()
+        .expect("#748 submit fixture prerequisite");
     // Order-only cases (inline, not oracle-replayed) still drive the full
     // turn; they skip the byte-for-byte per-step comparison because their
     // expected values are not part of the frozen fixture.
     let order_only = case["orderOnly"] == true;
     let controlled_clock = case["steps"]
         .as_array()
-        .unwrap()
+        .expect("#748 submit fixture prerequisite")
         .iter()
         .any(|s| s == "timeout");
     if controlled_clock {
         tokio::time::pause();
     }
     let root = std::env::temp_dir().join(format!("pdrs-submit-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(&root).expect("#748 submit fixture prerequisite");
     let log = Arc::new(Log::default());
     let setup = &case["setup"];
     if setup["holdTimeoutConsumer"] == true {
-        *log.consumer_hold.lock().unwrap() = Some(Arc::new(Gate::new()));
+        *log.consumer_hold
+            .lock()
+            .expect("#748 submit fixture prerequisite") = Some(Arc::new(Gate::new()));
     }
     let coordinator = Arc::new(TurnEventCoordinator::new());
     let session = Arc::new(Session {
         setup: setup.clone(),
-        native: case["native"].as_array().unwrap().iter().map(js).collect(),
+        status_recorder: if setup["statusRecordGate"] == true {
+            let recorder = Arc::new(crate::storage::recorder::Recorder::new(
+                Arc::new(crate::storage::JsonlTranscriptStore::new()),
+                crate::storage::TranscriptKey {
+                    project_root: root.clone(),
+                    pilot_home: root.join("home"),
+                    transcript_path: root.join("status-transcript.jsonl"),
+                    session_id: "s".into(),
+                },
+            ));
+            recorder
+                .start_turn(&"s".into(), &"r".into())
+                .expect("#748 status probe start");
+            Some(recorder)
+        } else {
+            None
+        },
+        native: case["native"]
+            .as_array()
+            .expect("#748 submit fixture prerequisite")
+            .iter()
+            .map(js)
+            .collect(),
         submits: AtomicUsize::new(0),
         log: log.clone(),
         coordinator: coordinator.clone(),
@@ -658,13 +718,19 @@ async fn replay_case(case: &Value) {
     let mut options = SessionOwnerOptions::new(factory.clone());
     options.idle_sweep_interval_ms = 0;
     let owner = SessionOwner::new(options);
-    owner.get_or_create(context()).await.unwrap();
+    owner
+        .get_or_create(context())
+        .await
+        .expect("#748 submit fixture prerequisite");
     if setup["busy"] == true {
         assert!(owner.begin_turn(&"s".into(), &"other".into()).is_some());
     }
     let registry = Arc::new(Registry {
-        port: FileRegistry::new(FileRunRegistry::open(root.join("registry.json")).unwrap())
-            .unwrap(),
+        port: FileRegistry::new(
+            FileRunRegistry::open(root.join("registry.json"))
+                .expect("#748 submit fixture prerequisite"),
+        )
+        .expect("#748 submit fixture prerequisite"),
         log: log.clone(),
         setup: setup.clone(),
         pending: Arc::default(),
@@ -702,7 +768,11 @@ async fn replay_case(case: &Value) {
         ),
     });
     if setup["workspaceBusy"] == true {
-        let workspace = JsString::from(setup["workspace"].as_str().unwrap());
+        let workspace = JsString::from(
+            setup["workspace"]
+                .as_str()
+                .expect("#748 submit fixture prerequisite"),
+        );
         assert!(submitter.workspace_admissions.reserve(
             &workspace,
             &RunRef {
@@ -722,16 +792,61 @@ async fn replay_case(case: &Value) {
     let consumer = tokio::spawn(collect(stream, log.clone()));
     let mut abort = None;
     let mut close = None;
-    for (index, step) in case["steps"].as_array().unwrap().iter().enumerate() {
-        match step.as_str().unwrap() {
+    for (index, step) in case["steps"]
+        .as_array()
+        .expect("#748 submit fixture prerequisite")
+        .iter()
+        .enumerate()
+    {
+        match step.as_str().expect("#748 submit fixture prerequisite") {
             "observe" => {}
+            "status-enter" => {
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    while !log
+                        .host
+                        .lock()
+                        .expect("#748 context gate log")
+                        .iter()
+                        .any(|call| call == "status_waiting")
+                    {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .expect("#748 context gate entered");
+                crate::negative_assert!(
+                    !status_probe_types(&root)
+                        .iter()
+                        .any(|kind| kind == "turn_result"),
+                    "#748 context status must settle before native terminal"
+                );
+            }
+            "status-release" => services.prepare.open(),
+            "status-deadline" => {
+                tokio::time::advance(Duration::from_millis(21)).await;
+                settle(&registry).await;
+                crate::negative_assert!(
+                    log.host
+                        .lock()
+                        .expect("#748 context deadline log")
+                        .iter()
+                        .any(|call| call == "status_dropped"),
+                    "#748 context status wait ends at abort budget"
+                );
+            }
             "accept" => session.accepted.open(),
             "terminal" => session.terminal.open(),
             "end" => session.end.open(),
             "prepare" => services.prepare.open(),
             "sdk" => admission.sdk.open(),
             "recovery" => admission.recovery.open(),
-            "resume" => log.consumer_hold.lock().unwrap().as_ref().unwrap().open(),
+            "resume" => log
+                .consumer_hold
+                .lock()
+                .expect("#748 submit fixture prerequisite")
+                .as_ref()
+                .expect("#748 submit fixture prerequisite")
+                .open(),
             "timeout" => {
                 tokio::time::advance(Duration::from_millis(1000)).await;
             }
@@ -741,7 +856,7 @@ async fn replay_case(case: &Value) {
                     owner
                         .abort_turn(&"s".into(), Some(&"r".into()), Some(&"stop".into()))
                         .await
-                        .unwrap();
+                        .expect("#748 submit fixture prerequisite");
                 }));
             }
             "close" => {
@@ -754,12 +869,23 @@ async fn replay_case(case: &Value) {
                 let mut second = input.clone();
                 second["runId"] = "r2".into();
                 let mut stream = submitter.submit(js(&second));
-                while let Some(event) = stream.next().await.unwrap() {
+                while let Some(event) = stream
+                    .next()
+                    .await
+                    .expect("#748 submit fixture prerequisite")
+                {
                     log.guard_wire
                         .lock()
-                        .unwrap()
-                        .push(stringify_json(&event).unwrap().unwrap());
-                    log.visible.lock().unwrap().push(json(&event));
+                        .expect("#748 submit fixture prerequisite")
+                        .push(
+                            stringify_json(&event)
+                                .expect("#748 submit fixture prerequisite")
+                                .expect("#748 submit fixture prerequisite"),
+                        );
+                    log.visible
+                        .lock()
+                        .expect("#748 submit fixture prerequisite")
+                        .push(json(&event));
                 }
             }
             other => panic!("unknown fixture step: {other}"),
@@ -772,15 +898,19 @@ async fn replay_case(case: &Value) {
         if let Some(calls) = expected["hostCalls"].as_array_mut() {
             calls.retain(|v| v != "sdk_dirty");
         }
-        let mut actual = json!({"visible":*log.visible.lock().unwrap(), "hostCalls":*log.host.lock().unwrap(), "durableCalls":*log.durable.lock().unwrap(), "registryCalls":*log.registry.lock().unwrap(), "active":owner.has_active_turn(&"s".into()), "ended":log.ended.load(Ordering::SeqCst), "thrown":*log.thrown.lock().unwrap()});
+        let mut actual = json!({"visible":*log.visible.lock().expect("#748 submit fixture prerequisite"), "hostCalls":*log.host.lock().expect("#748 submit fixture prerequisite"), "durableCalls":*log.durable.lock().expect("#748 submit fixture prerequisite"), "registryCalls":*log.registry.lock().expect("#748 submit fixture prerequisite"), "active":owner.has_active_turn(&"s".into()), "ended":log.ended.load(Ordering::SeqCst), "thrown":*log.thrown.lock().expect("#748 submit fixture prerequisite")});
         if setup["failureGuard"].is_object() {
-            actual["guardWire"] = json!(*log.guard_wire.lock().unwrap());
+            actual["guardWire"] = json!(
+                *log.guard_wire
+                    .lock()
+                    .expect("#748 submit fixture prerequisite")
+            );
         }
         if case["capabilityOnly"] == true {
             assert!(
                 actual["visible"]
                     .as_array()
-                    .unwrap()
+                    .expect("#748 submit fixture prerequisite")
                     .iter()
                     .any(|e| e["code"] == "CAPABILITY_UNAVAILABLE"),
                 "assertion failed: {name}: explicit capability refusal"
@@ -790,7 +920,7 @@ async fn replay_case(case: &Value) {
             assert!(
                 !actual["hostCalls"]
                     .as_array()
-                    .unwrap()
+                    .expect("#748 submit fixture prerequisite")
                     .iter()
                     .any(|c| c == "submit"),
                 "{name}: no native submit"
@@ -802,62 +932,48 @@ async fn replay_case(case: &Value) {
             );
         }
     }
-    consumer.await.unwrap();
+    consumer.await.expect("#748 submit fixture prerequisite");
     if setup["statusRecordGate"] == true {
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while !log
-                .host
-                .lock()
-                .expect("#748 pending status log")
-                .iter()
-                .any(|call| call == "status_waiting")
-            {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("#748 status callback entered");
-        assert!(
-            !log.host
-                .lock()
-                .expect("#748 pending status log")
-                .iter()
-                .any(|call| call == "status_released"),
-            "#748 status still pending at turn completion"
-        );
-        assert!(
+        let released = case["steps"]
+            .as_array()
+            .expect("#748 status steps")
+            .iter()
+            .any(|step| step == "status-release");
+        crate::negative_assert!(
             !owner.has_active_turn(&"s".into()),
             "#748 pending status cannot retain admission"
         );
-        assert!(
-            log.visible
+        let rows = status_probe_types(&root);
+        let expected = if released {
+            vec!["turn_started", "agent_status_message", "turn_result"]
+        } else {
+            vec!["turn_started", "turn_result"]
+        };
+        crate::negative_assert_eq!(
+            rows,
+            expected,
+            "#748 context status transcript order at EOF"
+        );
+        crate::negative_assert!(
+            log.host
                 .lock()
-                .expect("#748 completed event log")
+                .expect("#748 status lifetime log")
                 .iter()
-                .any(|event| event["type"] == "turn_completed"),
-            "#748 pending status cannot delay terminal"
+                .any(|call| call == "status_dropped"),
+            "#748 context status callback has no detached owner"
         );
         services.prepare.open();
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while !log
-                .host
-                .lock()
-                .expect("#748 released status log")
-                .iter()
-                .any(|call| call == "status_released")
-            {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("#748 status callback cleanup");
     }
     // InProcessGateway releases the attachment lease in the pump finally
     // (:1767-1773) before afterTurnCompleted (:1850) — including the timeout
     // takeover, where the outer finally only `void`s the pump. Measured by
     // the real-TS probe ts-probe-lease-after-order.out; pinned for every
     // scenario that acquires a lease.
-    let host = log.host.lock().unwrap().clone();
+    let host = log
+        .host
+        .lock()
+        .expect("#748 submit fixture prerequisite")
+        .clone();
     // Tri-state: a scenario that presents attachments must acquire a lease,
     // so a missing record is a harness failure, not a pass. A scenario that
     // presents none must not record a release; otherwise the harness could
@@ -882,14 +998,18 @@ async fn replay_case(case: &Value) {
         (false, None, _) => {}
     }
     if let Some(abort) = abort {
-        abort.await.unwrap();
+        abort.await.expect("#748 submit fixture prerequisite");
     }
     if let Some(close) = close {
-        close.await.unwrap().unwrap();
+        close
+            .await
+            .expect("#748 submit fixture prerequisite")
+            .expect("#748 submit fixture prerequisite");
     }
     // Reopen after all FIFO appends have drained, to compare persisted entries
     // rather than a second in-memory FileRunRegistry cache.
-    let reopened = FileRunRegistry::open(root.join("registry.json")).unwrap();
+    let reopened = FileRunRegistry::open(root.join("registry.json"))
+        .expect("#748 submit fixture prerequisite");
     let run = RunRef {
         session_key: "s".into(),
         project_key: Some("p".into()),
@@ -899,7 +1019,7 @@ async fn replay_case(case: &Value) {
         assert!(
             reopened
                 .events(&run, None, None)
-                .unwrap()
+                .expect("#748 submit fixture prerequisite")
                 .iter()
                 .any(|e| is(field(e, "event"), "code", "CAPABILITY_UNAVAILABLE")),
             "{name}: durable capability refusal"
@@ -910,14 +1030,19 @@ async fn replay_case(case: &Value) {
         assert_eq!(
             reopened
                 .events(&run, None, None)
-                .unwrap()
+                .expect("#748 submit fixture prerequisite")
                 .iter()
                 .map(json)
                 .collect::<Vec<_>>(),
-            case["registryEvents"].as_array().unwrap().clone(),
+            case["registryEvents"]
+                .as_array()
+                .expect("#748 submit fixture prerequisite")
+                .clone(),
             "{name}: durable events"
         );
-        let record = reopened.get(&run).unwrap();
+        let record = reopened
+            .get(&run)
+            .expect("#748 submit fixture prerequisite");
         let actual_record = record.map(|record| {
         let record = json(record.as_json());
         let mut value = json!({"state":record["state"],"lastSeq":record["lastSeq"],"revision":record["revision"]});
@@ -928,19 +1053,25 @@ async fn replay_case(case: &Value) {
     }
     if setup["sdkChanged"] == true && setup["workspaceBusy"] != true {
         factory.recreate.store(true, Ordering::SeqCst);
-        owner.get_or_create(context()).await.unwrap();
+        owner
+            .get_or_create(context())
+            .await
+            .expect("#748 submit fixture prerequisite");
         assert_eq!(
             factory.created.load(Ordering::SeqCst),
             2,
             "changed SDK config must dirty the cached handle"
         );
     }
-    owner.shutdown().await.unwrap();
+    owner
+        .shutdown()
+        .await
+        .expect("#748 submit fixture prerequisite");
     drop(submitter);
     drop(host);
     drop(registry);
     drop(reopened);
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("#748 submit fixture prerequisite");
     if controlled_clock {
         tokio::time::resume();
     }
@@ -956,11 +1087,15 @@ async fn real_ts_submit_scenarios() {
     }
     let oracle = json(&oracle);
     let mut selected = 0;
-    for case in oracle["cases"].as_array().unwrap() {
-        if std::env::var("PDRS_SUBMIT_CASE")
-            .ok()
-            .is_none_or(|name| name == case["name"].as_str().unwrap())
-        {
+    for case in oracle["cases"]
+        .as_array()
+        .expect("#748 submit fixture prerequisite")
+    {
+        if std::env::var("PDRS_SUBMIT_CASE").ok().is_none_or(|name| {
+            name == case["name"]
+                .as_str()
+                .expect("#748 submit fixture prerequisite")
+        }) {
             selected += 1;
             tokio::time::timeout(Duration::from_secs(20), replay_case(case))
                 .await
@@ -1061,7 +1196,7 @@ async fn unavailable_capabilities_are_explicitly_refused() {
         case["capabilityOnly"] = true.into();
         tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
             .await
-            .unwrap();
+            .expect("#748 submit fixture prerequisite");
     }
     assert!(
         selected > 0,
@@ -1103,14 +1238,59 @@ fn real_ts_utf16_preflight() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn pending_context_budget_status_cannot_hold_turn_completion() {
     let case = json!({"name":"pending-context-budget", "orderOnly":true,
-        "setup":{"statusRecordGate":true}, "steps":["observe","accept","terminal","end"], "results":[],
+        "setup":{"statusRecordGate":true}, "steps":["observe","accept","terminal","status-enter","status-deadline","end"], "results":[],
         "native":[{"type":"turn_started"},{"type":"input_accepted"},
             {"type":"context_budget","snapshot":{"tokens":0,"maxContextTokens":128000,"reservedOutputTokens":0,"totalContextTokens":128000,"canContinue":true}},
             {"type":"turn_completed","result":{"type":"success","stopReason":"completed","usage":{}}}]});
     tokio::time::timeout(Duration::from_secs(5), replay_case(&case))
         .await
         .expect("#748 pending status bounded turn");
+}
+
+struct StatusProbeDrop(Arc<Log>);
+impl Drop for StatusProbeDrop {
+    fn drop(&mut self) {
+        self.0.host("status_dropped");
+    }
+}
+fn status_probe_types(root: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(root.join("status-transcript.jsonl"))
+        .expect("#748 status transcript after EOF")
+        .lines()
+        .map(|line| {
+            let value: Value =
+                serde_json::from_str(line).expect("#748 status transcript complete JSONL");
+            value["type"]
+                .as_str()
+                .expect("#748 status transcript row type")
+                .to_owned()
+        })
+        .collect()
+}
+
+#[tokio::test(start_paused = true)]
+async fn context_budget_delayed_write_precedes_terminal_and_eof() {
+    let case = json!({"name":"ordered-context-budget", "orderOnly":true,
+        "setup":{"statusRecordGate":true}, "steps":["observe","accept","terminal","status-enter","status-release","end"], "results":[],
+        "native":[{"type":"turn_started"},{"type":"input_accepted"},
+            {"type":"context_budget","snapshot":{"tokens":0,"maxContextTokens":128000,"reservedOutputTokens":0,"totalContextTokens":128000,"canContinue":true}},
+            {"type":"turn_completed","result":{"type":"success","stopReason":"completed","usage":{}}}]});
+    tokio::time::timeout(Duration::from_secs(5), replay_case(&case))
+        .await
+        .expect("#748 ordered status bounded turn");
+}
+
+#[tokio::test(start_paused = true)]
+async fn context_budget_cancelled_wait_does_not_retain_admission() {
+    let case = json!({"name":"cancelled-context-budget", "orderOnly":true,
+        "setup":{"statusRecordGate":true}, "steps":["observe","accept","terminal","status-enter","abort","status-deadline","end"], "results":[],
+        "native":[{"type":"turn_started"},{"type":"input_accepted"},
+            {"type":"context_budget","snapshot":{"tokens":0,"maxContextTokens":128000,"reservedOutputTokens":0,"totalContextTokens":128000,"canContinue":true}},
+            {"type":"turn_completed","result":{"type":"success","stopReason":"completed","usage":{}}}]});
+    tokio::time::timeout(Duration::from_secs(5), replay_case(&case))
+        .await
+        .expect("#748 cancelled status bounded turn");
 }

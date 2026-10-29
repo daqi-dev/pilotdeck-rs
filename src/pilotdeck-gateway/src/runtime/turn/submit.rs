@@ -1096,13 +1096,7 @@ impl TurnSubmitter {
                         ("text", "context_budget".into()),
                         ("detail", event.clone()),
                     ]);
-                    // InProcessGateway does not await this best-effort callback:
-                    // a stalled status store must not stall the turn or cancellation.
-                    let host = self.host.clone();
-                    let run = run.clone();
-                    tokio::spawn(async move {
-                        let _ = host.record_failure(&run, &status).await;
-                    });
+                    self.record_context_budget(run, &status).await;
                 }
                 publisher.gateway_event(event);
             }
@@ -1119,6 +1113,38 @@ impl TurnSubmitter {
             }
         }
         Ok(())
+    }
+
+    async fn record_context_budget(&self, run: &RunRef, status: &JsValue) {
+        // TS synchronously enqueues this fire-and-forget write in its writer
+        // tail before advancing the loop. Rust must settle the callback before
+        // polling the native stream again, otherwise turn_result can overtake it.
+        // Bound the wait by the existing abort budget: a broken callback must
+        // not retain admission forever. Dropping this future cancels its wait;
+        // an already-started blocking store operation remains owned by the store.
+        if crate::mutants::on("live-context-detached") {
+            let host = self.host.clone();
+            let run = run.clone();
+            let status = status.clone();
+            tokio::spawn(async move {
+                let _ = host.record_failure(&run, &status).await;
+            });
+            return;
+        }
+        match tokio::time::timeout(
+            Duration::from_millis(if crate::mutants::on("live-context-unbounded") {
+                3_600_000
+            } else {
+                self.host.abort_turn_timeout_ms()
+            }),
+            self.host.record_failure(run, status),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => eprintln!("context_budget status recording failed (best effort)"),
+            Err(_) => eprintln!("context_budget status recording timed out (best effort)"),
+        }
     }
 }
 

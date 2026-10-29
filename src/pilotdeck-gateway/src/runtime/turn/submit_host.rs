@@ -283,6 +283,13 @@ impl SubmitHost for GatewaySubmitHost {
                                 }
                             }
                             JsValue::String(mode) if mode.equals_str("plan") => "plan",
+                            JsValue::String(mode) if mode.equals_str("ask") => {
+                                if crate::mutants::on("live-run-mode-ask") {
+                                    "agent"
+                                } else {
+                                    "ask"
+                                }
+                            }
                             _ => "agent",
                         }
                         .into(),

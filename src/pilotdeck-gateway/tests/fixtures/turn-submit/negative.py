@@ -275,7 +275,7 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
         # paired negative controls for all three arms. Swapping the recorded
         # labels inverts the order assertion; skipping the acquisition and
         # inventing a lease hit the two presence arms.
-        ('lease-order-records-swapped', 'fn host(&self, value: &str) {\n        self.host.lock().unwrap().push(value.into());\n    }', 'fn host(&self, value: &str) {\n        let value = match value {\n            "lease_release" => "after",\n            "after" => "lease_release",\n            other => other,\n        };\n        self.host.lock().unwrap().push(value.into());\n    }', None, None, None),
+        ('lease-order-records-swapped', 'fn host(&self, value: &str) {\n        self.host\n            .lock()\n            .expect("#748 submit fixture prerequisite")\n            .push(value.into());\n    }', 'fn host(&self, value: &str) {\n        let value = match value {\n            "lease_release" => "after",\n            "after" => "lease_release",\n            other => other,\n        };\n        self.host\n            .lock()\n            .expect("#748 submit fixture prerequisite")\n            .push(value.into());\n    }', None, None, None),
         # Paired negative control for the missing-lease arm: presenting
         # attachments but acquiring no lease must fail the tri-state.
         ('lease-acquisition-skipped', 'true => Some(self.services.resolve_attachments(input).await?),', 'true => None::<SubmitAttachmentLease>,', None, None, None),

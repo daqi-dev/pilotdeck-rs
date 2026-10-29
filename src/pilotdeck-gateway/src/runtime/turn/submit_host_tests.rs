@@ -688,3 +688,38 @@ async fn prepare_preserves_explicit_plan_mode_and_false_override() {
         );
     }
 }
+
+#[tokio::test]
+async fn prepare_preserves_ask_run_mode() {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/live-write-order/oracle.json"
+    ));
+    let expected = oracle
+        .get("cases")
+        .and_then(|v| {
+            if let JsValue::Array(v) = v {
+                v.first()
+            } else {
+                None
+            }
+        })
+        .and_then(|v| v.get("runModes"))
+        .and_then(|v| v.get("ask"))
+        .expect("#748 TS ask probe");
+    let fake = Arc::new(Fake::default());
+    let host = make_host(&fake);
+    for fields in [
+        vec![("runMode", "ask".into())],
+        vec![("mode", "plan".into()), ("runMode", "ask".into())],
+    ] {
+        let prepared = host
+            .prepare(&fake.input(&fields), &run())
+            .await
+            .expect("#748 ask prepare");
+        crate::negative_assert_eq!(
+            prepared.options.get("runMode"),
+            Some(expected),
+            "#748 explicit ask run mode survives normalization"
+        );
+    }
+}

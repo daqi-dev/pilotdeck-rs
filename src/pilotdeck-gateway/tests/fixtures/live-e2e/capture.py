@@ -72,7 +72,7 @@ def interrupted(number, _frame):
     raise RuntimeError('#748 capture interrupted by signal ' + str(number))
 
 
-def main():
+def main(driver=None):
     fixture = Path(__file__).resolve().parent
     scenario, output = sys.argv[1:]
     output = Path(output).resolve()
@@ -80,7 +80,7 @@ def main():
     baseline = Path(os.environ['PDRS_BASELINE'])
     env = dict(os.environ, HOME=str(output / 'home'))
     command = ['node', '--import', str(fixture / 'determinism.mjs'), '--import',
-               str(baseline / 'node_modules/tsx/dist/loader.mjs'), str(fixture / 'driver.mts'), scenario, str(output)]
+               str(baseline / 'node_modules/tsx/dist/loader.mjs'), str(driver or fixture / 'driver.mts'), scenario, str(output)]
     # Install before Popen so a signal cannot fall into a window between spawn
     # and ownership. Every operation after spawn is within the same finally.
     signal.signal(signal.SIGTERM, interrupted)

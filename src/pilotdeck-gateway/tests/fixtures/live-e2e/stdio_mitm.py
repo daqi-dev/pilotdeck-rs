@@ -290,7 +290,7 @@ def reap_after_host_eof(process):
 
     A child stuck on module calls to the departed host would otherwise keep the
     main thread blocked on its stdout forever. Give it a grace to finish on its
-    own, then escalate; closing the pipes also ends the blocked reader. The
+    own, then escalate; killing the pipe writers makes the reader see EOF. The
     leader's own exit does not decide this: descendants that inherited the
     group can still hold the pipes open, so the group is always swept.
     """
@@ -298,7 +298,9 @@ def reap_after_host_eof(process):
     while time.monotonic() < deadline and process.poll() is None:
         time.sleep(0.05)
     kill_child_group(process)
-    for stream in (process.stdout, process.stdin):
+    # stdout belongs exclusively to pump_sidecar_to_host. Closing it here
+    # can race select/read and let an unrelated open reuse its descriptor.
+    for stream in (process.stdin,):
         try:
             stream.close()
         except (OSError, ValueError):

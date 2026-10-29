@@ -656,12 +656,12 @@
     "src/web/client/webMessage.ts": "ada604e1438867fc15907e2dcd45daf3339c09c31e07d0cf595cd30fa9eb54a4"
   },
   "apparatusSha256": {
-    "stdio_mitm.py": "1bf52864efc0f0fd8b269602cec442a40dcd4e49e3c65ea59c7fb9e89c98b198",
+    "stdio_mitm.py": "9200bc05ab1e399ea4e5553c9e36d0ccc64e3f420369fee70e4841bf53fc5ef9",
     "io_deadline.py": "630d8c736b04b6fb5c504b32bad267a13807fc277e1a858e658e5bcb5fc33c90",
     "driver.mts": "c8c7156072fcfb87c15895077648cc662604e5c5a0e010b232dca16a7f2161e3",
     "mock_provider.mjs": "8f878cd31ccf1901326b03fc175fb84d91016d26f73cd45b1920c5e5774ed7b7",
     "determinism.mjs": "d602df7f2a5f9cf26774e100c7d2eb03cc37e575d04a3b77cb2c818a8dcaaf6d",
-    "capture.py": "35601b92a82da3897ae6051f1c9d5e77501324adb4621fc5ed10333cb6e2021c"
+    "capture.py": "2fbbda7e9e874f5f0ad7bdd3711a23a2b53125895d07ac21fc5eb6da10f9e324"
   },
   "expectedSha256": {
     "text": "b55bb7b0b45daf24ea278e692289256704b70842e5214143179f70ac795960b2",
