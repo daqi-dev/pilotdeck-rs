@@ -34,16 +34,31 @@ Covered cells: spawn/registration under blocked signals, cleanup under blocked
 signals, verified empty group releases, `GROUP_NOT_EMPTY` retains with explicit
 `cleanupPending`, probe `OSError` retains, a leader that was not reaped retains,
 a refused leader kill (`cleanupBlocked`) retains while `processTreeCleanup`
-stays `VERIFIED` (main's scoring), and a retained lease cannot be stolen by a
-later acquirer.  `RunnerInvalidationControls` drives the mutation runner itself:
-a guard failure after the last row must rewrite `summary.json` as `INVALID`, and
-the guard set must carry both protected sources without a second outer lease.
+stays `VERIFIED` (main's scoring), a cleanup helper that raises after the leader
+settled records `cleanupRaised`, keeps the probe's `VERIFIED` value, propagates
+the error and retains, an `EXITED`-zombie refused kill records `cleanupBlocked`
+and retains (main's unconditional refused branch, fail-closed), and a retained
+lease cannot be stolen by a later acquirer.
+
+A retained lease and the frozen report status are deliberately independent:
+when `allStopped` is false but `processTreeCleanup` is `VERIFIED`, the gateway
+report keeps `status=PASS` (`cleanup_status` only maps `processTreeCleanup`)
+while `launch.json` carries `cleanupPending`/`ownedGroupsRemaining` and the
+shared lease stays retained.  That combination is intentional (#209 E1): the
+frozen scoring fields must match `origin/main`, and lock lifecycle is expressed
+only by `allStopped`/`cleanupPending`, never by rewriting a scoring field.
+
+`RunnerInvalidationControls` drives the mutation runner itself: a guard failure
+after the last row must rewrite `summary.json` as `INVALID`; a
+`KeyboardInterrupt` or `SystemExit` during the guard exit must void the same
+rows and then be re-raised; and the guard set must carry both protected sources
+plus the delivered runner with exactly one `mutating_sources` call.
 
 ## Source-mutation controls (after commit)
 
 ```sh
 python3 -I -B src/pilotdeck-gateway/tests/fixtures/session-domain-lock-release/negative_controls.py \
-  --output _tmp/20261026-issue-209-e1/fix-r1/negative/lock-release
+  --output _tmp/20261026-issue-209-e1/fix-r2/negative/lock-release
 ```
 
 `negative_controls.py` uses `negative_process.mutating_sources`, so it refuses
@@ -59,7 +74,7 @@ Run it only after the coordinator commits the patch; pre-commit it reports
 a concurrent parity run makes the control `INVALID` (busy lock), not a mutation
 window.  `--check-anchors` is the read-only preflight; a stale anchor exits 2.
 
-The nine mutants are:
+The thirteen mutants are:
 
 - `e1-release-ungated` — deletes the group's registration even when cleanup is
   unverified.
@@ -73,17 +88,29 @@ The nine mutants are:
   reaped.
 - `e1-cleanup-blocked-ignored` — lets a recorded cleanup error pass the release
   gate.
+- `e1-cleanup-raised-ignored` — lets a recorded cleanup-helper exception pass
+  the release gate.
+- `e1-exited-refused-exempted` — puts back the `EXITED`-zombie exemption, so a
+  refused kill of an unreaped leader releases the lease.
 - `e1-takeover-ignores-pending` — lets `common.parity_lock` reclaim a lease
   that still has `cleanupPending` (shared protocol row).
+- `e1-allstopped-optimistic` — publishes `allStopped=True` although the owned
+  group was not proven stopped; the bound probe-OSError test must fail at
+  `#209 probe OSError must not report allStopped`.
 - `e1-scoring-downgrade-restored` — puts the P0-1 downgrade back
   (`processTreeCleanup=NOT_VERIFIED` whenever the lease is retained); the bound
   test must fail at `#209 P0-1 a verified probe must keep main scoring`.
+- `e1-runner-baseexception-narrowed` — narrows the runner's guard exit back to
+  `except Exception`, so a cancellation keeps the last all-KILLED summary; the
+  bound test must fail at `#209 P0-2 a cancellation after the last row must not
+  keep KILLED`.
 
 Every mutant is compiled before its bound positive runs.  Rows report
 `KILLED` / `SURVIVED` / `INVALID` and the run continues to the last selected
 row; only an all-`KILLED` batch exits 0.  `new_output_directory` refuses a
-non-empty output directory.  If the outer source guard or restoration raises,
-the shared `negative_suite.invalidate_completed()` rewrites every
-already-recorded `KILLED` row to `INVALID`, the unexecuted rows are added, the
-on-disk `summary.json` is rewritten unconditionally (#979/#1037), and the exit
-is 2.
+non-empty output directory.  If the outer source guard or restoration raises —
+including `KeyboardInterrupt` / `SystemExit` during restore/re-verify — the
+shared `negative_suite.invalidate_completed()` rewrites every already-recorded
+`KILLED` row to `INVALID`, the unexecuted rows are added, the on-disk
+`summary.json` is atomically rewritten unconditionally (#979/#1037), and the
+`Exception` path exits 2 while a cancellation is re-raised.
