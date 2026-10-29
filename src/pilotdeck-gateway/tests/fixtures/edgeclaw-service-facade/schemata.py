@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import negative as legacy
 from negative_process import run_owned, tree_lock, wait_for_slot
-from _shared.mutant_switch import (artifact, clean_environment, execute_suite, publish_summary,
+from _shared.mutant_switch import (artifact, clean_environment, enforce_denominator,
+                                    execute_suite, publish_summary,
                                     raw_timeout, record_sources, selector_environment,
                                     verify_unchanged)
 
@@ -58,7 +59,7 @@ def selected_rows(requested):
     return [row for row in legacy.MUTANTS if not requested or row['name'] in requested]
 
 
-def run(output, selected, env):
+def run(output, selected, env, requested=()):
     started = time.monotonic()
     build_seconds = 0.0
     rows = []
@@ -141,6 +142,14 @@ def run(output, selected, env):
                 publish_summary(output, rows, started, build_seconds)
                 print(f"{row['name']}: {row['status']}: {row['reason']}", flush=True)
             verify_unchanged(ROOT, hashes)
+            # #996 fix-r5: the same post-execution denominator as the shared
+            # run(). The declared source is negative.py's statically extracted
+            # mutation table, never the runtime legacy.MUTANTS the executed
+            # rows could already have shrunk (r4 review P1).
+            import anchor_selfcheck
+            declaration = Path(legacy.__file__).resolve()
+            enforce_denominator(ROOT, declaration, rows, requested,
+                                declared=anchor_selfcheck.static_mutant_names(declaration, ROOT))
     except Exception as error:
         reason = f'runner: {type(error).__name__}: {error}'
         for row in rows:
@@ -173,7 +182,7 @@ def main():
             raise ValueError('NEW_OUTPUT_DIR and caller CARGO_TARGET_DIR are required')
         output = Path(args.output).resolve()
         output.mkdir(parents=True, exist_ok=False)
-        return run(output, selected, clean_environment(os.environ))
+        return run(output, selected, clean_environment(os.environ), requested=args.names)
     except (ValueError, OSError) as error:
         print(f'preflight: {error}', file=sys.stderr)
         return 2

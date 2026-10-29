@@ -93,9 +93,10 @@ class SwitchNegativeTests(unittest.TestCase):
 
         return source, rows, guard, original
 
-    def run_main(self, temp, cargo):
+    def run_main(self, temp, cargo, rows=None):
         """Drive main() against the temporary source; capture every command."""
-        source, rows, guard, original = self.prepare(temp)
+        source, prepared, guard, original = self.prepare(temp)
+        rows = prepared if rows is None else rows
         out = Path(temp) / 'out'
         calls = []
 
@@ -198,6 +199,29 @@ class SwitchNegativeTests(unittest.TestCase):
             self.assertEqual(by_name[stale]['status'], 'INVALID')
             self.assertIn('stale anchor', by_name[stale]['reason'])
             self.assertEqual(source.read_bytes(), original)
+
+    def test_runtime_shrink_fails_the_whole_suite(self):
+        # #996 fix-r5: this entry's MUTATIONS table is its own declaration, so
+        # a main() that drops a row at runtime used to publish the shorter
+        # suite as an all-KILLED success. The shared post-execution check must
+        # reconcile the executed names with the script's static table.
+        with tempfile.TemporaryDirectory() as temp:
+            _source, prepared, _guard, _original = self.prepare(temp)
+            dropped = prepared[0][0]
+            code, document, _calls, source_bytes, original = self.run_main(
+                temp, self.killing_cargo, rows=prepared[1:])
+        self.assertEqual(code, 1, '#996 r5 a dropped declared row must fail '
+                                  'the whole boundary suite')
+        self.assertEqual(source_bytes, original,
+                         '#996 r5 the drifted run must still restore the source')
+        self.assertEqual(document['counts'],
+                         {'KILLED': 0, 'SURVIVED': 0, 'INVALID': len(prepared) - 1},
+                         '#996 r5 the drifted run must count every row INVALID')
+        reasons = [row['reason'] for row in document['controls']]
+        self.assertTrue(all('switch denominator drift' in reason for reason in reasons),
+                        '#996 r5 every drifted row must name the denominator check')
+        self.assertTrue(any(f'missing=[{dropped!r}]' in reason for reason in reasons),
+                        f'#996 r5 the drift must list the missing {dropped}')
 
     def test_source_guard_failure_fails_every_row_closed(self):
         @contextlib.contextmanager

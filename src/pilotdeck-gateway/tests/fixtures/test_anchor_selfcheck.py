@@ -410,6 +410,54 @@ class ScannerControls(unittest.TestCase):
         self.assertIn('errors=0', report,
                       '#996 r3 the whole-tree audit must report no errors')
 
+    def test_static_mutant_names_extracts_the_declared_table(self):
+        # #996 fix-r5: entries whose declaration is a legacy mutation table
+        # get their executor-side denominator from this static extraction:
+        # tuple rows and mutation()/mutate() rows both declare their first
+        # field as the identity; duplicates, dict rows and tableless scripts
+        # (including switches-table entries) fail closed.
+        root = PATH.resolve().parents[4]
+        self.write("mutants = [('sample', source, 'before', 'after'),\n"
+                   "          mutate('other', source, 'before', 'changed')]\n")
+        self.assertEqual(CHECK.static_mutant_names(self.script, root), {'sample', 'other'},
+                         '#996 r5 both row shapes must declare their identity')
+        for body, message in (
+            ("mutants = [('sample', source, 'before', 'after'),\n"
+             "          mutation('sample', source, 'before', 'changed')]\n",
+             'duplicate mutation name'),
+            ("mutants = [dict(name='sample', path=source, old='before', new='after')]\n",
+             'unsupported mutation row'),
+            ("value = 1\n", 'no statically declared mutation table found'),
+            ("switches = [('sample', source, 'sample_test', '#996 anchor')]\n",
+             'no statically declared mutation table found'),
+        ):
+            with self.subTest(body=body):
+                self.write(body)
+                with self.assertRaisesRegex(CHECK.Unsupported, message):
+                    CHECK.static_mutant_names(self.script, root)
+        self.write("mutants = [('sample', source, 'before', 'after')]\n")
+        self.assertEqual(CHECK.static_mutant_names(self.script, root), {'sample'},
+                         '#996 r5 the restored table must extract its identity again')
+
+    def test_facade_static_names_match_the_runtime_table(self):
+        # #996 fix-r5 positive control: the production facade denominator is
+        # this static extraction; it must keep matching the table the module
+        # actually imports, for both facade execution entries.
+        root = PATH.resolve().parents[4]
+        for relative, attribute in (('edgeclaw-service-facade/negative.py', 'MUTANTS'),
+                                   ('edgeclaw-service-facade/switch_negative.py', 'MUTATIONS')):
+            with self.subTest(script=relative):
+                script = PRODUCTION_FIXTURES / relative
+                declared = CHECK.static_mutant_names(script, root)
+                spec = importlib.util.spec_from_file_location('pdrs_r5_probe', script)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                self.assertEqual(declared, {row[0] if isinstance(row, tuple) else row['name']
+                                             for row in getattr(module, attribute)},
+                                 f'#996 r5 {relative} must extract the runtime table exactly')
+                self.assertEqual(len(declared), len(getattr(module, attribute)),
+                                 f'#996 r5 {relative} must not lose or forge an identity')
+
     def test_marker_scripts_cannot_hide_a_switch_table(self):
         self.source.write_text('crate::mutants::on("sample")\n')
         self.write("switches = [('sample', source, 'sample_test', '#996 anchor')]\n")

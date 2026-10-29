@@ -283,6 +283,30 @@ class MutantSwitchTests(unittest.TestCase):
             self.assertIn("extra=['forged']", document['controls'][0]['reason'],
                           '#996 r4 the beyond-declaration drift must list the switch')
 
+    def test_declared_denominator_covers_legacy_tables(self):
+        # #996 fix-r5: entries whose declaration is a legacy mutation table
+        # (the edgeclaw-service-facade runner and boundary control) supply the
+        # checker's static extraction as the declared denominator; drift then
+        # invalidates the whole suite through the same shared check.
+        rows = [binding('first'), binding('second')]
+        drift = shared.denominator_drift(Path(tempfile.gettempdir()), None, rows, (),
+                                         declared={'first', 'second', 'dropped'})
+        self.assertIn("missing=['dropped']", drift,
+                      '#996 r5 a legacy-table drop must be reported as drift')
+        self.assertIsNone(shared.denominator_drift(Path(tempfile.gettempdir()), None, rows,
+                                                   ['first'], declared={'first', 'second'}),
+                          '#996 r5 an explicit selection stays its own denominator')
+        enforced = [dict(binding('first'), status='KILLED', reason='')]
+        with tempfile.TemporaryDirectory() as temp, patch('sys.stderr') as quiet:
+            quiet.write = lambda *_: None
+            self.assertTrue(shared.enforce_denominator(Path(temp), None, enforced, (),
+                                                        declared={'second'}),
+                            '#996 r5 drift must be returned to the caller')
+        self.assertEqual([row['status'] for row in enforced], ['INVALID'],
+                         '#996 r5 drift must invalidate every executed row')
+        self.assertIn('switch denominator drift', enforced[0]['reason'],
+                      '#996 r5 the invalidated row must name the check')
+
 
 if __name__ == '__main__':
     unittest.main()

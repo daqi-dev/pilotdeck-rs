@@ -1040,6 +1040,42 @@ def static_switch_names(script, root):
     return {name for name, _path, _test, _assertion, _line in switch_bindings(tree, static)}
 
 
+def static_mutant_names(script, root):
+    """The statically declared mutation identities of a mutation-table script.
+
+    #996 fix-r5: the edgeclaw-service-facade entries consume legacy mutation
+    tables (negative.py's MUTANTS rows, switch_negative.py's MUTATIONS rows)
+    instead of a switches table, so their executor-side denominator check
+    calls this same table_rows extraction the checker uses instead of
+    static_switch_names: a table shrunk or grown between the static audit and
+    the actual execution is still reported as drift, never published as a
+    shorter success. The runtime table itself is never a denominator.
+    """
+    tree = ast.parse(script.read_text(encoding='utf-8'), filename=str(script))
+    static = Static(script, root, tree)
+    names = set()
+    for row in table_rows(tree, static):
+        for local in static.contexts(row):
+            if isinstance(row, ast.Call) and isinstance(row.func, ast.Name) \
+                    and row.func.id in ('mutation', 'mutate'):
+                fields = row.args
+            elif isinstance(row, ast.Tuple):
+                fields = row.elts
+            else:
+                raise Unsupported(f'line {row.lineno}: unsupported mutation row')
+            if not fields:
+                raise Unsupported(f'line {row.lineno}: mutation row without a name')
+            name = static.value(fields[0], row.lineno, local)
+            if not isinstance(name, str) or not name:
+                raise Unsupported(f'line {row.lineno}: invalid mutation name')
+            if name in names:
+                raise Unsupported(f'line {row.lineno}: duplicate mutation name: {name}')
+            names.add(name)
+    if not names:
+        raise Unsupported('no statically declared mutation table found')
+    return names
+
+
 def runtime_switch_table(script):
     """Import the switches-table script isolated; return its executed rows.
 

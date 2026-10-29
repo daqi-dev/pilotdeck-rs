@@ -41,6 +41,12 @@
     `anchor_selfcheck.py` 同一提取函数（`switch_bindings`）得到的静态声明集合比对；
     不等（含显式选择超出声明集合）即整套 `status=INVALID`、列出差集、非零退出。
     这是 `main()` 等执行期改表（静态白名单与导入期对账都看不到的地方）的结构性闭合。
+  - **分母核对覆盖全部执行入口（#996 fix-r5 起）**：声明源不是 `switches` 表的
+    执行入口走同一共享 `mutant_switch.enforce_denominator`，声明集合由检查器对
+    legacy 变异表的同一静态提取（`static_mutant_names`）得到，**不取运行期表**：
+    edgeclaw-service-facade 的预编译套件（`schemata.py`，声明源为其
+    `negative.py` 的 `MUTANTS`，显式选择即用户请求的子集）与文本替换边界负控
+    （`switch_negative.py`，声明源即自身的 `MUTATIONS`）。
 
 ### 检查器威胁模型（2026-10-29 人定，#996）
 
