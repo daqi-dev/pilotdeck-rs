@@ -1,12 +1,23 @@
 """Contract tests use clearly synthetic recordings, never calibration evidence."""
 import sys
+import os
 
 # -I keeps PYTHONPATH, user site and the script directory out of module
 # resolution.  Without it, exit before importing anything: a same-named stdlib
 # file beside this entry (json.py, pathlib.py, tempfile.py) would otherwise
 # execute before the guard. Discover can add the directory back even with
-# -I, so reject that path too. ``sys`` is builtin/frozen and already loaded.
-if not sys.flags.isolated or __file__.rpartition('/')[0] in sys.path:
+# -I, so reject that path too. Both boot imports are safe: ``sys`` is builtin
+# and ``os`` has been frozen since CPython 3.11, so neither can be shadowed
+# from the reinserted directory.
+# The directory is identified by (device, inode), not by its spelling: a
+# case-insensitive alias or a mixed ``//``/symlink form names this very
+# directory while the raw string differs (fix-r2 GLM sibling P1).
+_boot_dir = os.path.dirname(os.path.realpath(__file__))
+_boot_reinserted = any(
+    os.path.isdir(entry or os.curdir)
+    and os.path.samefile(entry or os.curdir, _boot_dir)
+    for entry in sys.path)
+if not sys.flags.isolated or _boot_reinserted:
     raise SystemExit(f'#701: unsafe import path; run with -I by file: python3 -I {__file__}')
 
 import importlib.util
@@ -400,17 +411,97 @@ print(json.dumps({'prefixes': prefixes, 'dontWrite': sys.dont_write_bytecode,
         for name in ENTRY_FILES:
             with self.subTest(entry=name):
                 body = module_statements((SCRIPT / name).read_text())
-                self.assertGreaterEqual(len(body), 2, f'#701: {name}: missing isolated guard')
+                self.assertGreaterEqual(len(body), 5, f'#701: {name}: missing isolated guard')
                 self.assertEqual(ast.unparse(body[0]), 'import sys',
-                                 f'#701: {name}: only "import sys" may load before the guard')
-                guard = body[1]
+                                 f'#701: {name}: only boot-essential imports may load before the guard')
+                self.assertEqual(ast.unparse(body[1]), 'import os',
+                                 f'#701: {name}: os is frozen (3.11+) and safe before the guard')
+                self.assertEqual(
+                    ast.unparse(body[2]),
+                    '_boot_dir = os.path.dirname(os.path.realpath(__file__))',
+                    f'#701: {name}: the guard must resolve this directory once')
+                identity = ast.unparse(body[3])
+                self.assertTrue(identity.startswith('_boot_reinserted = any('),
+                                f'#701: {name}: the guard must build one reinsertion flag')
+                self.assertIn('os.path.samefile(entry or os.curdir, _boot_dir)', identity,
+                              f'#701: {name}: the guard must compare directory identity, not spelling')
+                guard = body[4]
                 self.assertIsInstance(guard, ast.If,
-                                      f'#701: {name}: the isolated guard must be the second statement')
+                                      f'#701: {name}: the isolated guard must follow the boot prelude')
                 self.assertEqual(ast.unparse(guard.test),
-                                 "not sys.flags.isolated or __file__.rpartition('/')[0] in sys.path",
+                                 'not sys.flags.isolated or _boot_reinserted',
                                  f'#701: {name}: the guard must reject non-isolated or reinserted paths')
                 self.assertTrue(any(isinstance(node, ast.Raise) for node in guard.body),
                                 f'#701: {name}: the guard must exit before loading anything')
+
+    def test_entries_reject_a_mixed_spelling_reinsertion(self):
+        """#701 fix-r2: the same directory under another spelling is still that directory."""
+        marker = '#701: a reinserted entry directory must be rejected whatever its spelling'
+        probe = ('import runpy, sys\n'
+                 'sys.path.insert(0, sys.argv[1])\n'
+                 'sys.argv = [sys.argv[2], "--help"]\n'
+                 'runpy.run_path(sys.argv[0], run_name="__main__")\n')
+        with tempfile.TemporaryDirectory(prefix='d0-alias-') as temp:
+            # Stage an on-disk copy: the negative-control harness substitutes
+            # read_text/copy2 for the mutated entry, and a subprocess must see
+            # those bytes while still starting in a fresh interpreter.
+            staged = Path(temp) / 'apparatus'
+            staged.mkdir()
+            for fname in MIRROR_FILES:
+                shutil.copy2(SCRIPT / fname, staged / fname)
+            link = Path(temp) / 'linked-apparatus'
+            link.symlink_to(staged, target_is_directory=True)
+            forms = [(staged, link), (link, staged)]
+            case = staged.with_name(staged.name.upper())
+            if case.is_dir():
+                try:
+                    same_case = os.path.samefile(case, staged)
+                except OSError:
+                    same_case = False
+                if same_case:
+                    forms += [(staged, case), (case, staged)]
+            for name in ENTRY_FILES:
+                for on_path, entry_dir in forms:
+                    with self.subTest(entry=name, spelling=str(on_path)):
+                        result = subprocess.run(
+                            [sys.executable, '-I', '-c', probe, str(on_path),
+                             str(entry_dir / name)],
+                            capture_output=True, text=True, timeout=60)
+                        self.assertEqual(result.returncode, 1,
+                                         f'{marker}: {name}: rc={result.returncode}')
+                        self.assertTrue(
+                            result.stderr.startswith('#701: unsafe import path'),
+                            f'{marker}: {name}: the guard itself must reject, got '
+                            + result.stderr[:200])
+                        self.assertIn(str(entry_dir / name), result.stderr,
+                                      f'{marker}: {name}: the entry itself must reject, got '
+                                      + result.stderr[:200])
+            # The checkout's own bytes reject too (no staging involved).
+            real = subprocess.run(
+                [sys.executable, '-I', '-c', probe, str(SCRIPT),
+                 str(SCRIPT / 'run_round.py')],
+                capture_output=True, text=True, timeout=60)
+            self.assertEqual(real.returncode, 1, marker + ': checkout entry')
+            self.assertIn(str(SCRIPT / 'run_round.py'), real.stderr,
+                          marker + ': checkout entry must reject itself')
+            # Paired control: the same staged bytes with just the raise
+            # disabled must let the mixed spelling reach the entry body.
+            text = (staged / 'run_round.py').read_text()
+            head = text[:text.index('\nimport importlib.util\n')]
+            raise_line = ("    raise SystemExit(f'#701: unsafe import path; "
+                          "run with -I by file: python3 -I {__file__}')")
+            self.assertEqual(head.count(raise_line), 1,
+                             '#701 control: the guard raise anchor is stale')
+            (staged / 'probe.py').write_text(
+                head.replace(raise_line, '    pass  # control: guard disabled', 1)
+                + "\nprint('REACHED')\n")
+            admitted = subprocess.run(
+                [sys.executable, '-I', '-c', probe, str(staged), str(link / 'probe.py')],
+                capture_output=True, text=True, timeout=60)
+            self.assertEqual(admitted.returncode, 0,
+                             '#701 control: ' + admitted.stderr[-300:])
+            self.assertIn('REACHED', admitted.stdout,
+                          '#701 control: the mixed spelling must reach the file')
 
     def test_apparatus_modules_load_by_explicit_path_only(self):
         for name in APPARATUS_FILES:
@@ -439,7 +530,7 @@ print(json.dumps({'prefixes': prefixes, 'dontWrite': sys.dont_write_bytecode,
                 tree = ast.parse(source)
                 body = module_statements(source)
                 self.assertEqual(
-                    [ast.dump(node) for node in body[2:2 + len(expected)]],
+                    [ast.dump(node) for node in body[5:5 + len(expected)]],
                     [ast.dump(node) for node in expected],
                     f'#701: {name}: must load the shared bootstrap by explicit source path')
                 for node in ast.walk(tree):

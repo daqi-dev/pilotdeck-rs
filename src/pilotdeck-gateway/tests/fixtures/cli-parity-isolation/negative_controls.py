@@ -12,9 +12,17 @@ means the test could not run, compile, or reach the exclusive assertion.
 No environment row writes to the checkout. Every mirror is removed on exit;
 run all rows and summarise; any non-KILLED row is a nonzero exit.
 """
+import os
 import sys
 
-if not sys.flags.isolated or __file__.rpartition('/')[0] in sys.path:
+# #1023 fix-r2: identify the directory by (device, inode), not by spelling, so
+# a case-insensitive or symlinked alias cannot reinsert it.
+_boot_dir = os.path.dirname(os.path.realpath(__file__))
+_boot_roots = (_boot_dir, os.path.dirname(_boot_dir))
+if not sys.flags.isolated or any(
+        os.path.isdir(entry or os.curdir)
+        and any(os.path.samefile(entry or os.curdir, root) for root in _boot_roots)
+        for entry in sys.path):
     raise SystemExit(f'#701: unsafe import path; run with -I by file: python3 -I {__file__}')
 
 import argparse
@@ -79,16 +87,27 @@ def statements(tree):
 
 def guard_problem(tree):
     body = statements(tree)
-    if len(body) < 2:
-        return 'missing import sys and the isolated guard'
+    if len(body) < 5:
+        return 'missing the boot prelude and the isolated guard'
     first = body[0]
     if not (isinstance(first, ast.Import)
             and [alias.name for alias in first.names] == ['sys']):
         return f'first executable statement is {ast.unparse(first)[:80]!r}, not "import sys"'
-    guard = body[1]
+    second = body[1]
+    if not (isinstance(second, ast.Import)
+            and [alias.name for alias in second.names] == ['os']):
+        return f'second statement is {ast.unparse(second)[:80]!r}, not "import os"'
+    resolved = ast.unparse(body[2])
+    if resolved != '_boot_dir = os.path.dirname(os.path.realpath(__file__))':
+        return f'directory resolution is {resolved[:80]!r}'
+    identity = ast.unparse(body[3])
+    if (not identity.startswith('_boot_reinserted = any(')
+            or 'os.path.samefile(entry or os.curdir, _boot_dir)' not in identity):
+        return f'reinsertion check is {identity[:80]!r}, not a samefile identity check'
+    guard = body[4]
     if not isinstance(guard, ast.If):
-        return 'second statement is not the isolated guard'
-    expected = "not sys.flags.isolated or __file__.rpartition('/')[0] in sys.path"
+        return 'the isolated guard is not the fifth statement'
+    expected = 'not sys.flags.isolated or _boot_reinserted'
     if ast.unparse(guard.test) != expected:
         return f'guard tests {ast.unparse(guard.test)!r}, not {expected!r}'
     if not any(isinstance(node, ast.Raise) for node in guard.body):
@@ -321,9 +340,18 @@ def bootstrap_regressions(apparatus):
         path = apparatus / entry
         original = path.read_text()
         yield (f'bootstrap/path-guard/{entry}', path,
-               original.replace(" or __file__.rpartition('/')[0] in sys.path", '', 1),
+               original.replace(' or _boot_reinserted', '', 1),
                'test_isolated_guard_is_the_first_statement',
                f'#701: {entry}: the guard must reject non-isolated or reinserted paths')
+        if entry == 'run_round.py':
+            spelling = original.replace(
+                'os.path.samefile(entry or os.curdir, _boot_dir)',
+                '(entry or os.curdir) == _boot_dir', 1)
+            if spelling == original:
+                raise AssertionError('#701: the samefile identity anchor is stale')
+            yield ('bootstrap/spelling-identity', path, spelling,
+                   'test_entries_reject_a_mixed_spelling_reinsertion',
+                   '#701: a reinserted entry directory must be rejected whatever its spelling')
         yield (f'bootstrap/local-load/{entry}', path,
                original + '\ndef _load(name, path):\n    return __import__(name)\n', method,
                f'#701: {entry}: entry must not define its own _load')
@@ -371,7 +399,7 @@ def bootstrap_regressions(apparatus):
            '#701: src/pilotdeck-cli/tests/fixtures/chat-search/README.md:16: CLI parity command requires -I')
     path = apparatus / 'test_cli_parity.py'
     yield ('discover/path-guard', path,
-           path.read_text().replace(" or __file__.rpartition('/')[0] in sys.path", '', 1),
+           path.read_text().replace(' or _boot_reinserted', '', 1),
            'test_discover_rejects_reinserted_path_before_stdlib',
            '#701: discover must reject the reinserted path before importing json')
     path = apparatus / 'README.md'
@@ -485,7 +513,8 @@ def bootstrap_checks(apparatus, rows, output, selection):
         record(rows, name, status, reason)
         rows[-1].update(test=test, assertion=assertion, compiled=compiled,
                         mutationKind=('temporary unit-test mirror' if method.startswith((
-                            'test_each_entry', 'test_discover', 'test_bootstrap_cache', 'test_apparatus_inventory')) else
+                            'test_each_entry', 'test_discover', 'test_bootstrap_cache',
+                            'test_apparatus_inventory', 'test_entries_reject')) else
                                       'in-memory AST input' if path.suffix == '.py' else 'in-memory document'))
 
 

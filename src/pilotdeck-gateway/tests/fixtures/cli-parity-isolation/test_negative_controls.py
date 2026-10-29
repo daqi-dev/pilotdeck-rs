@@ -1,8 +1,15 @@
 # anchor-selfcheck: unsupported synthetic unittest results and private Python mirrors, no in-place product mutation table
 """#701: kill-judge forgeries, inventory gaps, and private mirror boundaries."""
+import os
 import sys
 
-if not sys.flags.isolated or __file__.rpartition('/')[0] in sys.path:
+# #1023 fix-r2: identify the directory by (device, inode), not by spelling.
+_boot_dir = os.path.dirname(os.path.realpath(__file__))
+_boot_roots = (_boot_dir, os.path.dirname(_boot_dir))
+if not sys.flags.isolated or any(
+        os.path.isdir(entry or os.curdir)
+        and any(os.path.samefile(entry or os.curdir, root) for root in _boot_roots)
+        for entry in sys.path):
     raise SystemExit(f'#701: unsafe import path; run with -I by file: python3 -I {__file__}')
 
 import importlib.util
