@@ -39,7 +39,7 @@ fn matrix(name: &str, test: &str) {
     if std::env::var("PDRS_TRANSCRIPT_RESOLVE_CHILD").as_deref() != Ok(test) {
         let mut child =
             Command::new(std::env::current_exe().expect("#942 matrix test binary path"))
-                .args(["--exact", test, "--nocapture"])
+                .args(["--exact", test, "--nocapture", "--test-threads=2"])
                 .env("PDRS_TRANSCRIPT_RESOLVE_CHILD", test)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())

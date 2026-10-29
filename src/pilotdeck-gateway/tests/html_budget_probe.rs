@@ -76,7 +76,16 @@ fn bounded_peak_rss_is_lower_than_full() {
         let output = Command::new("/usr/bin/time")
             .arg("-l")
             .arg(std::env::current_exe().expect("#942 rss-probe test binary path"))
-            .args(["--ignored", "--exact", "probe", "--nocapture"])
+            // #942 fix-r1: `--test-threads=2` pins the multithreaded libtest
+            // layout so this printing child cannot splice its `mode=` lines
+            // into the receipt line under an ambient RUST_TEST_THREADS=1.
+            .args([
+                "--ignored",
+                "--exact",
+                "probe",
+                "--nocapture",
+                "--test-threads=2",
+            ])
             .env("PDRS_PROBE", mode)
             .output()
             .expect("#942 rss-probe child collect");
@@ -99,8 +108,21 @@ fn bounded_peak_rss_is_lower_than_full() {
             .parse::<u64>()
             .unwrap()
     };
-    let full = peak("deep-full-2.5");
-    let bounded = peak("deep-bounded-2.5");
+    // #942 fix-r1 (host r2): a single sample per mode flipped under macmini
+    // load (bounded measured above full, restored code passing minutes later),
+    // because peak RSS is inflated by whatever external memory pressure the
+    // one measurement happened to see. Take the minimum of three alternating
+    // rounds instead — external pressure only ever inflates a sample, so the
+    // minimum is each mode's least-disturbed measurement while both modes see
+    // the same load — and keep the same 50 MiB gate on those minima. Still
+    // separates the modes locally: min(full)-min(bounded) = ~144 MiB
+    // (1,159,610,368 vs 1,008,828,416 bytes; fix-r1/rss-samples.out).
+    let mut full = u64::MAX;
+    let mut bounded = u64::MAX;
+    for _ in 0..3 {
+        full = full.min(peak("deep-full-2.5"));
+        bounded = bounded.min(peak("deep-bounded-2.5"));
+    }
     assert!(
         bounded + 50 * 1024 * 1024 < full,
         "full={full} bytes, bounded={bounded} bytes"

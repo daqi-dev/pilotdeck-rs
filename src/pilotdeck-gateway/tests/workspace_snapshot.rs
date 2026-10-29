@@ -1845,6 +1845,14 @@ impl Drop for KilledOnDrop {
     }
 }
 
+/// The child's `CAPTURED=`/`FOLLOWER=`/`LIST_ERR=` sentinel lines are this
+/// rerun's receipt (#942, same shape as the grep helper's handshake panic):
+/// a renamed `fifo_manifests_child_round` makes libtest run zero tests and
+/// still exit 0, and the caller's `stdout.contains("CAPTURED=committed")`
+/// (and the other sentinel `contains`) then fails with this round's output —
+/// never a vacuous pass. The `contains` criteria are also interleaving
+/// tolerant, so an ambient single-threaded libtest splicing the sentinels
+/// into the `test <name> ...` line cannot flip this site.
 #[cfg(unix)]
 fn fifo_child_round(root: &Path) -> String {
     use std::io::Read as _;

@@ -541,7 +541,12 @@ fn cold_restart_fences_accepted_and_running_without_inventing_unknown_result() {
         let stderr = scratch.path().join(format!("{initial}.stderr"));
         let mut child =
             Command::new(std::env::current_exe().expect("#942 cold-restart test binary path"))
-                .args(["--exact", "cold_restart_child", "--nocapture"])
+                .args([
+                    "--exact",
+                    "cold_restart_child",
+                    "--nocapture",
+                    "--test-threads=2",
+                ])
                 .env("PDRS_A52_CHILD_PATH", &path)
                 .env("PDRS_A52_CHILD_STATE", initial)
                 .stdout(fs::File::create(&stdout).expect("#942 cold-restart stdout log"))

@@ -5,7 +5,19 @@
 /// `test result:` summary reporting one passing test (same literal prefix as
 /// `src/test_process.rs` `run_case`), and the per-test `... ok` line the
 /// `tests/fixtures/exact-rerun-receipt/` executor keys on. Keep the copy in
-/// `src/pilotdeck-cli/src/skills_migrate.rs` in sync (no shared crate there).
+/// `src/pilotdeck-cli/src/skills_migrate.rs` in sync (no shared crate there),
+/// and the Python twin `libtest_receipt` in
+/// `src/pilotdeck-yaml/tests/run_resource_scaling.py` (no shared language):
+/// the three drift independently, and drift only ever loosens a check.
+///
+/// #942 fix-r1: the exact `test <name> ... ok` line assumes the multithreaded
+/// libtest layout, where the name+result line is emitted atomically after the
+/// test body. Single-threaded libtest prints `test <name> ... ` *before* the
+/// body runs, so a child that prints to stdout splices its output into that
+/// line under an ambient `RUST_TEST_THREADS=1`. Every spawn feeding this
+/// criterion therefore pins `--test-threads=2` (the explicit flag overrides
+/// the env default); the `..._under_single_thread_ambient` test in
+/// `src/runtime/turn/read_tests.rs` is the regression guard.
 pub(crate) fn single_pass(status: &std::process::ExitStatus, test: &str, output: &str) -> bool {
     let summaries: Vec<&str> = output
         .lines()

@@ -481,6 +481,7 @@ async fn replays_ts_mcp_http_proxy_scenarios() {
                 "--exact",
                 "replays_ts_mcp_http_proxy_scenarios",
                 "--nocapture",
+                "--test-threads=2",
             ])
             .env_remove("PDRS_MCP_PROXY_CASE")
             .env_remove("PDRS_MCP_PROXY_URL")

@@ -646,7 +646,18 @@ fn run_events_pathological_depth_last_seq_is_bounded() {
     let start = Instant::now();
     let mut child = ReapedChild(
         Command::new(std::env::current_exe().expect("#942 lastseq-depth test binary path"))
-            .args(["--exact", CHILD, "--ignored", "--nocapture"])
+            // #942 fix-r1: pin the multithreaded libtest layout. Single-threaded
+            // libtest prints `test <name> ... ` before the body runs, so the
+            // child's marker lands inside the receipt line under an ambient
+            // RUST_TEST_THREADS=1; the explicit flag overrides that env default
+            // and the name+result line is emitted atomically after the body.
+            .args([
+                "--exact",
+                CHILD,
+                "--ignored",
+                "--nocapture",
+                "--test-threads=2",
+            ])
             .env("PDRS_TURN_READ_LASTSEQ_DEPTH_CHILD", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -706,6 +717,36 @@ fn run_events_pathological_depth_last_seq_is_bounded() {
     assert!(
         start.elapsed() < DEADLINE,
         "100,000-layer lastSeq join exceeded 10 s"
+    );
+}
+
+/// #942 fix-r1 regression (r2 review Codex P1): an ambient
+/// `RUST_TEST_THREADS=1` used to break the child receipt above —
+/// single-threaded libtest prints `test <name> ... ` before the body runs,
+/// so the child's marker spliced itself into the line `single_pass` keys on
+/// and the parent failed at its `#942 lastseq-depth rerun matched no test`
+/// assertion while the child had actually passed (`1 passed`, exit 0). Every
+/// receipt-fed rerun now pins `--test-threads=2`; this re-runs the whole
+/// parent test with the hostile ambient variable set, exactly the original
+/// failing command, so a regression back to the env-default layout fails
+/// here instead of on a quiet single-threaded CI box.
+#[test]
+fn run_events_pathological_depth_last_seq_is_bounded_under_single_thread_ambient() {
+    const PARENT: &str =
+        "runtime::turn::read::tests::run_events_pathological_depth_last_seq_is_bounded";
+    let output =
+        Command::new(std::env::current_exe().expect("#942 lastseq-depth ambient test binary"))
+            .args(["--exact", PARENT, "--nocapture"])
+            .env("RUST_TEST_THREADS", "1")
+            .stdin(Stdio::null())
+            .output()
+            .expect("#942 lastseq-depth ambient child spawn");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        crate::test_exact_receipt::single_pass(&output.status, PARENT, &stdout),
+        "#942 fix-r1 single-thread ambient broke the receipt: {}\n{stdout}\n{stderr}",
+        output.status
     );
 }
 

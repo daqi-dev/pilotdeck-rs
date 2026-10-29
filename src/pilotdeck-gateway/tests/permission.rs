@@ -656,6 +656,7 @@ async fn deleted_process_cwd_fails_the_decision() {
                 "--exact",
                 "deleted_process_cwd_fails_the_decision",
                 "--nocapture",
+                "--test-threads=2",
             ])
             .env("PDRS_DELETED_CWD_CHILD", "1")
             .output()
