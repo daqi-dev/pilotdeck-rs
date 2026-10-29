@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import run_owned, tree_lock, wait_for_slot
-from negative_suite import classify, invalidate_completed, passed
+from negative_suite import ReceiptRun, classify, invalidate_completed, judge, passed
 
 SELECTOR = 'PDRS_MUTANT'
 STATES = ('KILLED', 'SURVIVED', 'INVALID')
@@ -168,16 +168,35 @@ def selected(rows, requested):
     return [row for row in rows if not requested or row['name'] in requested]
 
 
-def execute_suite(selected_rows, invoke, verdict=None, prefix=''):
+def execute_suite(selected_rows, invoke, verdict=None, prefix='', receipt_run=None):
     """One bad row must not hide later rows; invoke owns bounded children.
 
     A row's test binding is one name or a nonempty list. List rows are
     all-cells bindings: every test must pass in the positive and restored
     phases and fail at its own assertion under mutation.
+
+    #996-pr2 fix-r3: ``receipt_run`` (a fresh ``negative_suite.ReceiptRun``
+    factory) rebinds the negative phase to the #946 nonce receipt protocol
+    the old ``matrix_main`` judged by. Each cell's child runs with this run's
+    receipt config — the invoke reads the receipt from the bound row's
+    ``receipt`` field — and the default verdict is ``negative_suite.judge``:
+    a named FAILED line plus this run's nonce receipt, never diagnostic prose.
+    Every cell must still hit its own assertion, and a missing, stale or
+    echoed receipt is INVALID, not a kill.
     """
     if verdict is None:
-        def verdict(result, row):
-            return classify(result, SimpleNamespace(test=row['test'], assertion=row['anchor']))
+        if receipt_run is None:
+            def verdict(result, row):
+                return classify(result, SimpleNamespace(test=row['test'], assertion=row['anchor']))
+        else:
+            def verdict(result, row):
+                killed, why, _hits = judge(result, '', [(row['test'], row['anchor'])],
+                                           row['receipt'])
+                if killed:
+                    return 'KILLED', why
+                if passed(result, row['test']):
+                    return 'SURVIVED', 'bound test still passed'
+                return 'INVALID', why
 
     def phase(name, phase_name, tests, selector, row):
         """Invoke each bound test once; return the names that did not pass."""
@@ -205,15 +224,17 @@ def execute_suite(selected_rows, invoke, verdict=None, prefix=''):
                 anchors = row.get('anchor')
                 aligned = (len(tests) > 1 and isinstance(anchors, list)
                            and len(anchors) == len(tests))
-                verdicts = [
-                    verdict(
-                        invoke(
-                            f'{name}-negative' if len(tests) == 1
-                            else f'{name}-negative-{index + 1}of{len(tests)}',
-                            test, name, row),
-                        dict(row, test=prefix + test,
-                             anchor=anchors[index] if aligned else anchors))
-                    for index, test in enumerate(tests)]
+                verdicts = []
+                for index, test in enumerate(tests):
+                    label = (f'{name}-negative' if len(tests) == 1
+                             else f'{name}-negative-{index + 1}of{len(tests)}')
+                    anchor = anchors[index] if aligned else anchors
+                    # The negative child sees the per-cell bound row, so a
+                    # receipt-mode invoke can forward this run's config.
+                    bound = dict(row, test=prefix + test, anchor=anchor)
+                    if receipt_run is not None:
+                        bound['receipt'] = receipt_run(label, [(prefix + test, anchor)])
+                    verdicts.append(verdict(invoke(label, test, name, bound), bound))
                 unaccounted = [(test, state, why)
                                for test, (state, why) in zip(tests, verdicts)
                                if state != 'KILLED']
@@ -320,7 +341,7 @@ def verify_unchanged(root, hashes):
 
 
 def run(root, output, selected_rows, env, *, guarded, script=None, requested=(),
-        prefix='', test_timeout=240, build_timeout=900, verdict=None):
+        prefix='', test_timeout=240, build_timeout=900, verdict=None, receipts=False):
     """Execute every selected switch; return the process exit code.
 
     With ``script`` (the declaring execution entry) the run finishes with the
@@ -328,6 +349,13 @@ def run(root, output, selected_rows, env, *, guarded, script=None, requested=(),
     the executed switch names must match the statically declared ones (or the
     explicitly requested selection), or the whole suite is reported INVALID
     with the difference and exits nonzero.
+
+    ``receipts`` rebinds every negative phase to the #946 nonce receipt
+    protocol: entries whose old judging required a nonce receipt
+    (``negative_suite.ReceiptRun`` / ``judge``, the ``matrix_main`` semantics)
+    must not lose it by migrating here (#996-pr2 fix-r3). Each negative child
+    runs with a fresh receipt config, and only this run's nonce receipts
+    count as kill evidence.
     """
     started = time.monotonic()
     build_seconds = 0.0
@@ -341,9 +369,15 @@ def run(root, output, selected_rows, env, *, guarded, script=None, requested=(),
                 # Exact binding still runs one test, including explicit TS guards.
                 command = [str(binary), prefix + test, '--exact', '--nocapture', '--include-ignored']
                 begin = time.monotonic()
+                child_env = selector_environment(env, selector)
+                receipt = row.get('receipt')
+                if receipt is not None:
+                    # The bound assertions learn this run's nonce through the
+                    # environment; the verdict only accepts its receipt files.
+                    child_env = receipt.environment(child_env)
                 try:
                     result = run_owned(command, cwd=root / 'src/pilotdeck-gateway',
-                                       env=selector_environment(env, selector),
+                                       env=child_env,
                                        timeout=test_timeout)
                 except subprocess.TimeoutExpired as error:
                     (output / (label + '.log')).write_text(raw_timeout(error))
@@ -355,7 +389,10 @@ def run(root, output, selected_rows, env, *, guarded, script=None, requested=(),
                 }, indent=2) + '\n')
                 return result
 
-            for row in execute_suite(selected_rows, invoke, verdict, prefix):
+            for row in execute_suite(selected_rows, invoke, verdict, prefix,
+                                     receipt_run=(lambda label, targets:
+                                                  ReceiptRun(output, label, targets))
+                                     if receipts else None):
                 rows.append(row)
                 publish_summary(output, rows, started, build_seconds)
                 print(f"{row['name']}: {row['status']}: {row['reason']}", flush=True)

@@ -7,7 +7,10 @@ already completed row when an exit check fails; ``--negative-controls`` no-ops
 the shared invalidation in memory and requires those tests to die.  The
 #996-pr2 fix-r2 tests prove every turn-family entry passes its declaring
 script and the requested selection to the shared run, so the executor-side
-denominator check sees a runtime-shrunk or emptied table.
+denominator check sees a runtime-shrunk or emptied table.  The fix-r3 tests
+prove the entries that judged by nonce receipt before the migration keep that
+judging on the shared executor: the #889 replay counter-examples stay
+INVALID against the real tool-budget-cwd entry.
 """
 import contextlib
 import importlib.util
@@ -24,6 +27,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mutant_switch as shared
+import negative_suite
 
 FIXTURES = Path(__file__).resolve().parents[1]
 
@@ -611,6 +615,14 @@ class SchemataDenominatorTests(unittest.TestCase):
                 if command[0] == 'cargo':
                     return SimpleNamespace(returncode=0, stdout='build fixture', stderr='')
                 selector = kwargs['env'].get(module.SELECTOR)
+                # A receipt entry's child writes the assertion receipt exactly
+                # as negative_receipt::record_failure does: this run's nonce
+                # into the configured fresh path for the bound test.
+                config = kwargs['env'].get('PDRS_NEGATIVE_RECEIPTS')
+                if selector and config:
+                    receipt_config = json.loads(config)
+                    for target in receipt_config['targets']:
+                        Path(target['path']).write_text(receipt_config['nonce'])
                 return result(command[1], 'FAILED' if selector else 'ok', anchors,
                               'fixture.rs')
 
@@ -696,6 +708,234 @@ class SchemataDenominatorTests(unittest.TestCase):
                 f'#996-pr2 {name}: the requested switch must stay KILLED')
 
 
+class ReceiptProtocolTests(unittest.TestCase):
+    """#996-pr2 fix-r3: nonce receipts, not prose, are the switch-entry kills.
+
+    The tool-budget-cwd controls were judged through ``matrix_main`` before
+    this PR: a kill required this run's nonce receipt for the bound
+    assertion, so a setup failure whose diagnostic merely echoed the anchor
+    stayed INVALID (#889).  The fix-r3 review reproduced the migrated entry
+    losing that requirement — an ordinary marker in prose killed.  These
+    tests rebind the protocol on the shared executor path and replay the
+    #889 counter-examples against the real entry.
+    """
+
+    WORKER = 'runtime::context::tool_budget::cwd_tests::environment_worker'
+    SETUP = 'called Result::unwrap() on an Err value: PermissionDenied'
+    SHAPES = ('r2-no-echo', 'r2-ordinary-marker', 'r3-no-echo',
+              'r3-old-stdout-panic', 'r4-conflicting',
+              'r4-old-summary-after-real', 'r4-old-summary-before-real')
+
+    @classmethod
+    def setUpClass(cls):
+        cls.entry = load_entry('tool-budget-cwd')
+
+    def replay_diagnostics(self, anchor, test):
+        """The seven #889 replay shapes for one bound (test, assertion).
+
+        The real failure stays a setup unwrap; only the diagnostic prose
+        changes, and the parent's own panic carries the worker context.
+        """
+        worker = self.WORKER
+        old_panic = (f"thread '{worker}' panicked at regression.rs:64:5:\n"
+                     f'assertion `left == right` failed: {anchor}\n')
+        summary = 'test result: FAILED. 0 passed; 1 failed; 0 ignored;\n\n'
+        setup_panic = f"thread '{worker}' panicked at regression.rs:64:5:\n{self.SETUP}\n"
+        parent = (f"thread '{test}' panicked at test_process.rs:32:37:\n"
+                  f'{worker}/relative-deleted: expected one passed test and '
+                  'receipt relative-deleted: exit status: 101\nrunning 1 test\n')
+        shapes = {
+            'r2-no-echo': setup_panic,
+            'r2-ordinary-marker': f'diagnostic: checking {anchor}\n' + setup_panic,
+            'r3-no-echo': setup_panic,
+            'r3-old-stdout-panic': old_panic + summary + setup_panic,
+            'r4-conflicting': setup_panic + old_panic,
+            'r4-old-summary-after-real': setup_panic + summary + old_panic,
+            'r4-old-summary-before-real': summary + old_panic + setup_panic,
+        }
+        return {name: parent + body for name, body in shapes.items()}
+
+    def entry_replay(self, stderr_for, *, write=False):
+        """Run the real tool-budget-cwd entry with every owned child replaced.
+
+        Positive and restored phases pass; every negative child reports the
+        named FAILED line with diagnostics from ``stderr_for(test, anchor,
+        nonce)``.  With ``write`` the child also writes this run's nonce into
+        the configured receipt path, exactly as
+        ``negative_receipt::record_failure`` does.
+        """
+        entry = self.entry
+        module = entry.mutant_switch
+        anchors = {}
+        for row in entry.switches:
+            tests = row[2] if isinstance(row[2], list) else [row[2]]
+            bound = row[3] if isinstance(row[3], list) else [row[3]] * len(tests)
+            anchors.update(zip(tests, bound))
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / 'out'
+            binary = Path(temp) / 'test-binary'
+            binary.write_bytes(b'fixture binary\n')
+
+            def process(command, **kwargs):
+                if command[:2] == ['git', 'rev-parse']:
+                    return SimpleNamespace(returncode=0, stdout='test-head\n', stderr='')
+                if command[0] == 'cargo':
+                    return SimpleNamespace(returncode=0, stdout='build fixture', stderr='')
+                selector = kwargs['env'].get(module.SELECTOR)
+                if selector is None:
+                    return result(command[1])
+                test = command[1]
+                config = kwargs['env'].get('PDRS_NEGATIVE_RECEIPTS')
+                receipt_config = json.loads(config) if config else None
+                if write and receipt_config:
+                    for target in receipt_config['targets']:
+                        Path(target['path']).write_text(receipt_config['nonce'])
+                nonce = receipt_config['nonce'] if receipt_config else None
+                return SimpleNamespace(returncode=101, stdout=(
+                    f'test {test} ... FAILED\n\nfailures:\n    {test}\n\n'
+                    'test result: FAILED. 0 passed; 1 failed; 0 ignored;\n'),
+                    stderr=stderr_for(test, anchors[test], nonce))
+
+            with patch.object(module, 'run_owned', side_effect=process), \
+                    patch.object(module, 'wait_for_slot',
+                                 return_value=SimpleNamespace(stdout='', stderr='')), \
+                    patch.object(module, 'artifact', return_value=binary), \
+                    patch.dict(os.environ,
+                               {'CARGO_TARGET_DIR': str(Path(temp) / 'unused')}), \
+                    patch.object(sys, 'argv', ['schemata.py', str(out)]), \
+                    contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = entry.main()
+            document = json.loads((out / 'summary.json').read_text())
+        return code, document
+
+    def test_execute_suite_receipt_mode_binds_the_fresh_nonce(self):
+        # The shared executor's receipt mode: only the fresh nonce receipt of
+        # the bound assertion kills. Prose echoes, stale files, a surviving
+        # bound test, and a missing receipt never do.
+        row = binding('sample')
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / 'receipts'
+            out.mkdir()
+            runs = iter(f'run{index}' for index in range(100))
+
+            def receipt_run(label, targets):
+                # A fresh parent per call: each sub-case reuses the label.
+                parent = out / next(runs)
+                parent.mkdir()
+                return negative_suite.ReceiptRun(parent, label, targets)
+
+            def child(writes, stale=None, echo=False, survives=False):
+                def invoke(label, test, selector, bound):
+                    if selector is None or survives:
+                        return result(test)
+                    receipt = bound['receipt']
+                    if writes:
+                        receipt.paths[(test, bound['anchor'])].write_text(
+                            stale if stale is not None else receipt.nonce)
+                    response = result(test, 'FAILED')
+                    if echo:
+                        # Echoing even this run's public nonce is not a file
+                        # receipt.
+                        response.stderr += receipt.nonce
+                    return response
+                return invoke
+
+            produced = list(shared.execute_suite([row], child(True),
+                                                 receipt_run=receipt_run))
+            self.assertEqual(produced[0]['status'], 'KILLED',
+                             '#996-pr3 the fresh nonce receipt must kill')
+            for invoke, why in ((child(False), 'no receipt file'),
+                                (child(True, stale='0' * 64), 'stale nonce'),
+                                (child(False, echo=True), 'echoed nonce')):
+                with self.subTest(why=why):
+                    produced = list(shared.execute_suite([row], invoke,
+                                                         receipt_run=receipt_run))
+                    self.assertEqual(produced[0]['status'], 'INVALID',
+                                     f'#996-pr3 {why} must not kill')
+                    self.assertIn('lack current assertion receipts',
+                                  produced[0]['reason'],
+                                  f'#996-pr3 {why} must name the missing receipt')
+            produced = list(shared.execute_suite([row], child(False, survives=True),
+                                                 receipt_run=receipt_run))
+            self.assertEqual(produced[0]['status'], 'SURVIVED',
+                             '#996-pr3 a passing bound test must stay SURVIVED')
+
+    def test_execute_suite_rejects_marker_prose_without_receipt(self):
+        # The fix-r3 review's reproduction, verbatim on the fixed path: a
+        # worker that fails in setup with PermissionDenied while its
+        # diagnostic happens to contain the bound assertion marker.
+        row = binding('sample')
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / 'receipts'
+            out.mkdir()
+
+            def invoke(label, test, selector, bound):
+                if selector is None:
+                    return result(test)
+                return SimpleNamespace(returncode=101, stdout=(
+                    f'test {test} ... FAILED\n'
+                    'test result: FAILED. 0 passed; 1 failed;'), stderr=(
+                    f'diagnostic: checking {bound["anchor"]}\n'
+                    'thread worker panicked at regression.rs:47:5:\n'
+                    'called Result::unwrap() on an Err value: PermissionDenied\n'))
+
+            produced = list(shared.execute_suite([row], invoke,
+                                                 receipt_run=lambda label, targets:
+                                                 negative_suite.ReceiptRun(out, label, targets)))
+        self.assertEqual(produced[0]['status'], 'INVALID',
+                         '#996-pr3 marker prose without a receipt must not kill')
+        self.assertIn('lack current assertion receipts', produced[0]['reason'],
+                      '#996-pr3 the refused kill must name the missing receipt')
+
+    def test_issue889_replays_never_kill_the_switch_entry(self):
+        # The review's P0 as the regression it demanded: every #889 replay
+        # shape — including r2-ordinary-marker with this run's nonce echoed —
+        # must stay INVALID on the migrated entry, exactly as the old
+        # matrix_main judge held it (test_negative_suite.py:407).  No subTest:
+        # a failure must stay attributable to this method for the negative
+        # control that no-ops the receipt verdict.
+        for shape in self.SHAPES:
+            for echo in (False, True):
+                def stderr_for(test, anchor, nonce, shape=shape, echo=echo):
+                    body = self.replay_diagnostics(anchor, test)[shape]
+                    if echo and nonce:
+                        # Echoing even this run's public nonce in either
+                        # stream is not a file receipt.
+                        body += nonce
+                    return body
+
+                code, document = self.entry_replay(stderr_for)
+                self.assertNotEqual(
+                    code, 0,
+                    f'#996-pr3 {shape}/echo={echo}: a replay without this '
+                    "run's receipt must not exit green")
+                self.assertEqual(
+                    document['counts'],
+                    {'KILLED': 0, 'SURVIVED': 0, 'INVALID': len(document['controls'])},
+                    f'#996-pr3 {shape}/echo={echo}: prose must not kill the entry')
+                for control in document['controls']:
+                    self.assertIn(
+                        'lack current assertion receipts', control['reason'],
+                        f'#996-pr3 {shape}/echo={echo}: the refused kill must '
+                        'name the missing receipt')
+
+    def test_authentic_nonce_receipts_kill_every_switch(self):
+        # The positive pair: the entry must still kill when the bound child
+        # really writes this run's nonce receipt for the bound assertion,
+        # including both cells of the all-cells row.
+        def stderr_for(test, anchor, nonce):
+            return f'panicked at fixture.rs:1:1:\n{anchor}\n'
+
+        code, document = self.entry_replay(stderr_for, write=True)
+        self.assertEqual(code, 0,
+                         '#996-pr3 authentic receipts must keep the suite green')
+        self.assertEqual(document['counts'],
+                         {'KILLED': len(document['controls']), 'SURVIVED': 0,
+                          'INVALID': 0},
+                         '#996-pr3 every switch must be killed by its receipt')
+
+
 def negative_controls():
     """No-op the shared exit checks in memory, then every guarded test must
     die at its named assertion (no source edits, no cargo).
@@ -704,13 +944,40 @@ def negative_controls():
     at their ``#1037`` assertions.  #996-pr2 fix-r2: ``enforce_denominator``
     no-opped (the in-memory shape of an entry that stops passing ``script`` /
     ``requested``, so the shared run skips the check) must fail the drift
-    tests at their ``#996-pr2`` assertions.
+    tests at their ``#996-pr2`` assertions.  #996-pr2 fix-r3: ``judge``
+    replaced by the pre-fix prose verdict (the migration's lost receipt
+    requirement) must fail the replay test, and a ``ReceiptRun`` whose config
+    never reaches the child must fail the authentic-kill test, both at their
+    ``#996-pr3`` assertions.
     """
     def noop_invalidation(module):
         return patch.object(module, 'invalidate_completed', new=lambda *_a, **_k: None)
 
     def noop_denominator(module):
         return patch.object(module, 'enforce_denominator', new=lambda *_a, **_k: None)
+
+    def noop_judge(module):
+        """The fix-r3 regression shape: a named FAILED line plus the anchor
+        echoed in diagnostic prose kills, without this run's nonce receipt."""
+        def judge(result, prefix, targets, receipts, **kwargs):
+            log = result.stdout + result.stderr
+            if (result.returncode == 101 and 'FAILED' in log
+                    and any(anchor in log for _, anchor in targets)):
+                return True, 'named assertions produced current nonce receipts', []
+            return False, 'missing bound runtime failure', []
+        return patch.object(module, 'judge', new=judge)
+
+    def silent_receipts(module):
+        """The inverse shape: the receipt protocol stays wired but the child
+        never receives the run's config, so authentic runs cannot kill."""
+        class Silent:
+            def __init__(self, *args, **kwargs):
+                pass
+            def environment(self, env):
+                return env
+            def matches(self, *args, **kwargs):
+                return False
+        return patch.object(module, 'ReceiptRun', new=Silent)
 
     def bound_module(test_class):
         """The switch module whose exit check the mutation no-ops."""
@@ -732,6 +999,10 @@ def negative_controls():
          'denominator-noop', noop_denominator, '#996-pr2'),
         (SchemataDenominatorTests, 'test_entries_report_emptied_tables',
          'denominator-noop', noop_denominator, '#996-pr2'),
+        (ReceiptProtocolTests, 'test_issue889_replays_never_kill_the_switch_entry',
+         'judge-noop', noop_judge, '#996-pr3'),
+        (ReceiptProtocolTests, 'test_authentic_nonce_receipts_kill_every_switch',
+         'receipts-silent', silent_receipts, '#996-pr3'),
     )
     results = []
     for test_class, method, mutation, patcher, marker in targets:

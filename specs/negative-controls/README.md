@@ -58,6 +58,16 @@
     真实入口各覆盖运行期缩表 / 清空表（INVALID + 非零退出）与合法显式子集（保持
     绿）；`--negative-controls` 把 `enforce_denominator` 置 no-op（等价于入口不传
     `script`）后，缩表 / 清空表自测必须在 `#996-pr2` 断言处死。
+  - **迁移不改判杀语义：nonce 回执在开关执行器上保留（#996-pr2 fix-r3 起）**：
+    旧入口以 `matrix_main`（`negative_suite.ReceiptRun`/`judge`）判杀的控项，迁到
+    共享 `mutant_switch.run` 后必须传 `receipts=True`——负控相子进程携带本轮回执
+    配置，判杀只认被绑定断言写出的本轮 nonce 回执加具名 FAILED 行；setup 失败、
+    诊断文本恰含锚点、回显 nonce 均判 INVALID（#889 replay 反例对迁移后入口重跑，
+    `_shared/test_mutant_switch.py` 的 `ReceiptProtocolTests`）。本 PR 五个旧入口中
+    仅 tool-budget-cwd 用回执判杀，已接回；其余四个旧入口为文本 classify，语义
+    不变。`--negative-controls` 把 `judge` 换成 prose 判杀（迁移丢回执的形状）后
+    replay 自测必须死在 `#996-pr3` 断言；把回执配置改为不下发后，真实回执判杀
+    自测必须死在 `#996-pr3` 断言。
 
 ### #749 原生 WS 的逐项编译及 nonce 回执执行形态
 
