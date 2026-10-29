@@ -12,7 +12,10 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 #[path = "common/baseline.rs"]
@@ -540,6 +543,63 @@ fn rust_seed_and_snapshot_lifecycle_match_ts() {
         replay(&s.0, c);
     }
 }
+/// #1036 fix-r1 P2-2: a failed `dispose` must not latch the `disposed` flag.
+/// TS's `dispose` was repeatable cleanup, so a first attempt whose `remove`
+/// fails has to stay retryable — the retry must really remove the staged
+/// roots instead of returning a success that never cleaned anything. (`Drop`
+/// deliberately does NOT take that retry: the `restore-dispose-failure`
+/// oracle cell keeps a failed explicit dispose's residue observable, exactly
+/// like TS.)
+#[test]
+fn failed_dispose_retry_still_removes_staged_roots() {
+    let scratch = Scratch::new();
+    let root = &scratch.0;
+    seed(root);
+    let mut r = open(root);
+    // The stage captures the hook at creation, so arm the fault before it;
+    // EIO on the first Remove of the staged workspace root only.
+    let armed = Arc::new(AtomicBool::new(false));
+    let armed_hook = armed.clone();
+    r.set_snapshot_io_hook(Arc::new(move |op, p, _| {
+        if op == SnapshotIoOperation::Remove
+            && armed_hook.load(Ordering::SeqCst)
+            && p.to_string_lossy().contains(".memory.retry-")
+        {
+            return Err(io::Error::from_raw_os_error(5));
+        }
+        Ok(())
+    }));
+    let stage = r
+        .create_dream_stage("retry")
+        .expect("#1036 dispose-retry: create the dream stage");
+    let staged = [
+        stage.staged_workspace_root.clone(),
+        stage.staged_global_root.clone(),
+        stage.staged_db_path.clone(),
+    ];
+    for p in &staged {
+        assert!(
+            p.exists(),
+            "#1036 dispose-retry: the staged temp {p:?} must exist before dispose"
+        );
+    }
+    armed.store(true, Ordering::SeqCst);
+    stage
+        .dispose()
+        .expect_err("#1036 dispose-retry: the faulted first dispose must fail");
+    armed.store(false, Ordering::SeqCst);
+    stage
+        .dispose()
+        .expect("#1036 dispose-retry: the retried dispose must clean the staged roots");
+    for p in &staged {
+        assert!(
+            !p.exists(),
+            "#1036 dispose-retry: the retried dispose left the staged temp {p:?} behind"
+        );
+    }
+    r.close()
+        .expect("#1036 dispose-retry: close the repository");
+}
 fn node(script: &str, args: &[&Path]) {
     let base = std::env::var("PDRS_BASELINE").unwrap();
     let mut child = Command::new("node")
@@ -565,6 +625,9 @@ fn node(script: &str, args: &[&Path]) {
         }
         if start.elapsed() > Duration::from_secs(55) {
             child.kill().unwrap();
+            // Reap before panicking: a killed-but-unwaited child is a zombie on
+            // Unix and would keep the output pipes open (issue #1036 P2-4).
+            let _ = child.wait();
             panic!("Node verifier exceeded 55s");
         }
         std::thread::sleep(Duration::from_millis(20));

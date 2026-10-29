@@ -389,10 +389,11 @@ class ScannerControls(unittest.TestCase):
 
     def test_production_schemata_runtime_audit_stays_clean(self):
         # fix-r3 positive control: the whole production repository must keep
-        # checking with the runtime reconciliation active. All three schemata
+        # checking with the runtime reconciliation active. All four schemata
         # are covered: session-domain and host-factory are checked through
-        # their switches tables, edgeclaw-service-facade stays the marked
-        # precompiled runner whose anchors live in negative.py.
+        # their switches tables, #1036's orchestration control through its own,
+        # and edgeclaw-service-facade stays the marked precompiled runner
+        # whose anchors live in negative.py.
         signals = patch.dict(CHECK.UNSUPPORTED_SIGNALS, PRODUCTION_UNSUPPORTED_SIGNALS, clear=True)
         signals.start()
         self.addCleanup(signals.stop)
@@ -401,6 +402,8 @@ class ScannerControls(unittest.TestCase):
             code = CHECK.check(PATH.resolve().parents[4], anchors_only=True)
         report = output.getvalue()
         self.assertEqual(code, 0, f'#996 r3 production check must stay clean\n{report}')
+        self.assertIn('CHECKED edgeclaw-service-orchestration/switch_negative.py: 1 anchors', report,
+                      '#1036 fix-r0 the orchestration switch table must reconcile its runtime row')
         self.assertIn('CHECKED session-domain/schemata.py: 49 anchors', report,
                       '#996 r3 session-domain must reconcile its 49 runtime rows')
         self.assertIn('CHECKED host-factory/schemata.py: 3 anchors', report,

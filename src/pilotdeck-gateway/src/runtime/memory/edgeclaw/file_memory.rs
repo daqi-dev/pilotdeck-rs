@@ -200,8 +200,10 @@ impl Drop for OperationGuard<'_> {
 }
 /// Thread-local hooks run at actual mutex acquisition points, never on a
 /// same-thread reentry. Production builds contain neither hooks nor callbacks.
+/// `pub(crate)` since #1036: the two-thread dream tail-race regression
+/// (compiled as a `#[path]` module of the crate root) uses the same hooks.
 #[cfg(test)]
-pub(super) mod lock_test_hook {
+pub(crate) mod lock_test_hook {
     use super::*;
     pub struct Event {
         pub key: usize,
@@ -227,7 +229,7 @@ pub(super) mod lock_test_hook {
         }
     }
 }
-pub(super) fn operation_lock(root: &Path) -> Result<Arc<Mutex<()>>> {
+pub(crate) fn operation_lock(root: &Path) -> Result<Arc<Mutex<()>>> {
     type Locks = HashMap<PathBuf, Weak<Mutex<()>>>;
     static LOCKS: OnceLock<Mutex<Locks>> = OnceLock::new();
     let mut locks = LOCKS

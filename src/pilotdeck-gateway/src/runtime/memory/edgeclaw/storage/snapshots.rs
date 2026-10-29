@@ -17,7 +17,10 @@ use sha1::{Digest, Sha1};
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 type Result<T> = std::result::Result<T, FileMemoryError>;
 const KEYS: [&str; 3] = ["lastDreamAt", "lastDreamStatus", "lastDreamSummary"];
@@ -46,11 +49,34 @@ pub struct MemoryRepositoryStage {
     pub staged_global_root: PathBuf,
     pub staged_db_path: PathBuf,
     io: SnapshotIoHook,
+    /// Latched by the first [`Self::dispose`] call, whatever its outcome:
+    /// [`Drop`] only cleans a stage nobody ever disposed explicitly. TS has
+    /// no cancellation and leaves a failed explicit dispose's residue to
+    /// the caller (the `restore-dispose-failure` oracle cell), who may still
+    /// retry `dispose` itself.
+    explicit: AtomicBool,
+    /// Set once a cleanup succeeded: a successful `dispose` stays idempotent
+    /// while a failed one remains retryable (#1036 fix-r1 P2-2 — TS's
+    /// `dispose` was repeatable cleanup).
+    disposed: AtomicBool,
 }
 impl MemoryRepositoryStage {
-    /// Explicit, repeatable cleanup, as in TS. No implicit Drop cleanup: callers
-    /// may retain a stage or inspect its partial state after a failed operation.
+    /// Explicit cleanup, as in TS. Idempotent for a stage whose cleanup
+    /// succeeded: a second `dispose` returns `Ok(())` instead of removing
+    /// again. A failed cleanup resets the success latch so a retrying caller
+    /// gets another chance instead of a success that never cleaned.
     pub fn dispose(&self) -> Result<()> {
+        self.explicit.store(true, Ordering::Release);
+        if self.disposed.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        let result = self.cleanup();
+        if result.is_err() {
+            self.disposed.store(false, Ordering::Release);
+        }
+        result
+    }
+    fn cleanup(&self) -> Result<()> {
         let _ = self.repository.close();
         for p in [
             &self.staged_workspace_root,
@@ -60,6 +86,22 @@ impl MemoryRepositoryStage {
             remove(&self.io, p)?;
         }
         Ok(())
+    }
+}
+impl Drop for MemoryRepositoryStage {
+    /// Fallback cleanup (issue #1036 P2-5): every completed path disposes
+    /// explicitly, but a `dream` future dropped at an await point (caller
+    /// timeout, `select!`) owns an undisposed stage. TS has no cancellation
+    /// so no oracle cell covers this; `Drop` removes the staged roots here
+    /// on a best-effort basis, because it cannot propagate errors. A stage
+    /// whose owner already attempted an explicit `dispose` is NOT cleaned
+    /// here: TS keeps a failed dispose's residue observable (the
+    /// `restore-dispose-failure` cell), and only the caller's own retry may
+    /// remove it.
+    fn drop(&mut self) {
+        if !*self.explicit.get_mut() {
+            let _ = self.cleanup();
+        }
     }
 }
 fn s(s: impl AsRef<str>) -> JsValue {
@@ -653,6 +695,8 @@ impl EdgeClawFileStores {
             staged_global_root: gl,
             staged_db_path: db,
             io: h.clone(),
+            explicit: AtomicBool::new(false),
+            disposed: AtomicBool::new(false),
         })
     }
     pub fn replace_live_roots_with_stage(

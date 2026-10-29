@@ -83,6 +83,18 @@ fn array_or_empty(value: &Value) -> &[Value] {
     value.as_array().map(Vec::as_slice).unwrap_or(&[])
 }
 
+/// TS property access: `result.indexStats` on the maintenance outcome is
+/// `undefined` when the key is absent (both runDueScheduledMaintenance sides
+/// spread the key only when present), and `observe.mts::encode` renders that
+/// explicitly. A serde `Null` (the indexing of a missing key) must not fake
+/// the JS `undefined`.
+fn ts_undefined_or(value: &Value, key: &str) -> Value {
+    match value.get(key) {
+        Some(field) if !field.is_null() => field.clone(),
+        _ => json!({"$type": "undefined"}),
+    }
+}
+
 /// The same checked encoding as `observe.mts::encode`.
 fn encode_js(value: &JsValue) -> Value {
     match value {
@@ -1230,6 +1242,66 @@ async fn run_scenario(
                 "requestKinds": ctx.kinds(),
             }))
         }
+        // #1036 item 1: elapsed == the default 30-minute interval exactly —
+        // the inclusive `>=` boundary must index (probed on real TS).
+        "maintenance-interval-exact" => {
+            let outcome = service
+                .run_due_scheduled_maintenance("scheduled")
+                .await
+                .expect("#1036 interval-exact maintenance");
+            let full = encode_js(&outcome.to_value());
+            ctx.clean(json!({
+                "result": {
+                    "indexRan": full["indexRan"],
+                    "dreamRan": full["dreamRan"],
+                    "indexStats": ts_undefined_or(&full, "indexStats"),
+                },
+                "files": ctx.files(),
+                "pipeline": ctx.pipeline(&["autoIndexAnchorAt", "autoDreamAnchorAt", "lastIndexedAt"]),
+                "requestKinds": ctx.kinds(),
+            }))
+        }
+        // #1036 item 1: one millisecond short of the interval — must NOT
+        // index. The TS cell's return object keeps `l0` here (the pending
+        // session survives unindexed), so this arm mirrors that shape.
+        "maintenance-interval-just-before" => {
+            let outcome = service
+                .run_due_scheduled_maintenance("scheduled")
+                .await
+                .expect("#1036 just-before maintenance");
+            let full = encode_js(&outcome.to_value());
+            ctx.clean(json!({
+                "result": {
+                    "indexRan": full["indexRan"],
+                    "dreamRan": full["dreamRan"],
+                    "indexStats": ts_undefined_or(&full, "indexStats"),
+                },
+                "files": ctx.files(),
+                "pipeline": ctx.pipeline(&["autoIndexAnchorAt", "autoDreamAnchorAt", "lastIndexedAt"]),
+                "l0": ctx.l0(),
+                "requestKinds": ctx.kinds(),
+            }))
+        }
+        // #1036 item 2: 19 pending dialogue turns — below the `>= 20`
+        // backlog threshold, so no indexing must run.
+        "maintenance-backlog-below" => {
+            let outcome = service
+                .run_due_scheduled_maintenance("scheduled")
+                .await
+                .expect("#1036 backlog-below maintenance");
+            let full = encode_js(&outcome.to_value());
+            ctx.clean(json!({
+                "result": {
+                    "indexRan": full["indexRan"],
+                    "dreamRan": full["dreamRan"],
+                    "indexStats": ts_undefined_or(&full, "indexStats"),
+                },
+                "files": ctx.files(),
+                "pipeline": ctx.pipeline(&["autoIndexAnchorAt", "autoDreamAnchorAt", "lastIndexedAt"]),
+                "l0": ctx.l0(),
+                "requestKinds": ctx.kinds(),
+            }))
+        }
         other => panic!("#776 unknown scenario {other}"),
     };
 
@@ -1552,6 +1624,97 @@ fn flush_session_filter_is_honored() {
         );
     });
     service.close().expect("#776 session-filter: close service");
+}
+
+/// #1036 P2-5: a dropped (cancelled) `dream` future must still dispose its
+/// stage. TS never cancels — `dispose` always runs in `finally` — so no oracle
+/// cell can cover it; a Rust caller can drop the future at any await point
+/// (`tokio::time::timeout`, `select!`, `abort`). Park the dream at its first
+/// staged LLM request, abort it there, and prove the Drop fallback removed
+/// every `.<root>.dream-*` staged temp sibling and kept `dream_stages_disposed`
+/// balanced with `dream_stages_created`.
+#[test]
+fn dream_cancellation_disposes_stage_and_balances_counters() {
+    let scratch = Scratch::new("edgeclaw-service-orchestration-cancel");
+    let root = scratch.path();
+    let dir = root.join("svc-cancel");
+    fs::create_dir_all(dir.join("workspace")).expect("#1036 cancel scenario workspace");
+    fs::create_dir_all(dir.join("home")).expect("#1036 cancel scenario home");
+    let step = |value: Value| {
+        (
+            200,
+            json!({"choices": [{"message": {"content": value.to_string()}}]}).to_string(),
+        )
+    };
+    // The plan request parks and the dream future is aborted there; the step
+    // content never reaches the dream.
+    let steps = vec![step(
+        json!({"clusters": [], "summary": "cancel plan summary"}),
+    )];
+    let (transport, mut gate) = ScriptedTransport::new(steps, Some(1));
+    let gate = gate.as_mut().expect("#1036 cancel scenario gate");
+    let math_index = Arc::new(AtomicUsize::new(0));
+    let service = Arc::new(build_service(
+        &dir,
+        Arc::new(transport.clone()),
+        &math_index,
+    ));
+    let store = service.repository.get_file_memory_store();
+    for name in ["Cancel one", "Cancel two"] {
+        let input = json!({
+            "type": "project",
+            "scope": "project",
+            "name": name,
+            "description": format!("{name} description"),
+            "body": format!("## Summary\n{name} body"),
+            "capturedAt": NOW,
+            "sourceSessionKey": format!("cancel-seed-{}", name.to_lowercase().replace(' ', "-")),
+        });
+        store
+            .execute("upsertCandidate", &js_object_from(&input))
+            .expect("#1036 cancel scenario seed upsertCandidate");
+    }
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("#1036 cancel scenario runtime");
+    runtime.block_on(tokio::task::LocalSet::new().run_until(async {
+        transport.arm();
+        let gated = service.clone();
+        let dream =
+            tokio::task::spawn_local(async move { gated.dream(DreamTrigger::Manual).await });
+        gate.wait("dream-cancel").await;
+        // Cancel the parked dream: the future is dropped inside its staged LLM
+        // await, exactly where a `tokio::time::timeout` would drop it.
+        dream.abort();
+        let cancelled = dream.await;
+        assert!(
+            cancelled.is_err(),
+            "#1036 dream-cancel: the parked dream completed after abort"
+        );
+    }));
+    let (created, disposed) = service.dream_stage_counters();
+    assert_eq!(
+        (created, disposed),
+        (1, 1),
+        "#1036 dream-cancel: a cancelled dream must still dispose its stage \
+         (created {created}, disposed {disposed})"
+    );
+    let ctx = Ctx {
+        service: service.clone(),
+        transport,
+        root: root.to_path_buf(),
+        workspace_hash: hash_text(&JsString::from(
+            service.workspace_dir.to_string_lossy().into_owned(),
+        )),
+    };
+    assert_eq!(
+        ctx.stage_temp_left(),
+        json!([]),
+        "#1036 dream-cancel: the cancelled dream left staged dream temp dirs behind"
+    );
+    service.close().expect("#1036 dream-cancel: close service");
 }
 
 #[test]
