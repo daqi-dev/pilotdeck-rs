@@ -1,25 +1,29 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported disposable Python meta-controls with verified import bootstrap
 """#994 shared runner meta-controls; commit first, then run against real HEAD.
 
 No cargo is launched: each Python mutant is syntax-checked before its bound
 unittest runs. Every control restores, reruns, and contributes to the summary.
 """
+import ast
+import builtins
+import importlib.abc
+import importlib.util
 import json
 import os
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_process import _head_bytes, SourceBaselineError
 
 root = Path(__file__).resolve().parents[5]
 fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
 shared = fixtures / '_shared/negative_control.py'
 process = fixtures / 'negative_process.py'
 tests = fixtures / 'test_negative_adaptive.py'
+_process_api = ContextVar('verified_process_api')
 cases = [
     ('floor-too-small', shared, 'MIN_RUN_SECONDS = 20', 'MIN_RUN_SECONDS = 1',
      'AdaptiveTests.test_floor_and_multiplier', '#994 minimum runtime'),
@@ -51,28 +55,144 @@ cases = [
 ]
 
 
+class SourceBaselineError(RuntimeError):
+    pass
+
+
+def git_bytes(*args):
+    # Independent bootstrap: never ask the module being checked to verify itself.
+    return subprocess.check_output(['git', '-C', str(root), *args], timeout=30)
+
+
+def input_paths(commit):
+    entries = git_bytes('ls-tree', '-r', '-z', '--name-only', commit, '--',
+                        fixtures.relative_to(root).as_posix())
+    available = {}
+    for entry in entries.split(b'\0'):
+        if not entry:
+            continue
+        path = root / os.fsdecode(entry)
+        relative = path.relative_to(fixtures)
+        if path.suffix == '.py' and (relative.parts[0] == '_shared' or
+                (path.parent == fixtures and not path.name.startswith('test_')) or path == tests):
+            parts = list(relative.with_suffix('').parts)
+            if parts[-1] == '__init__':
+                parts.pop()
+            available['.'.join(parts)] = path
+    pending = ['_shared.negative_control', 'negative_process', 'test_negative_adaptive']
+    if any(name not in available for name in pending):
+        raise SourceBaselineError('#994 required inputs missing from HEAD')
+    selected = {}
+    while pending:
+        name = pending.pop()
+        if name in selected:
+            continue
+        path = selected[name] = available[name]
+        package = name if path.name == '__init__.py' else name.rpartition('.')[0]
+        source = git_bytes('show', f'{commit}:{path.relative_to(root).as_posix()}')
+        imports = []
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                imports.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ''
+                if node.level:
+                    module = importlib.util.resolve_name('.' * node.level + module, package)
+                imports.append(module)
+                imports.extend(f'{module}.{alias.name}' for alias in node.names)
+        # Include package initializers as well as transitive, function-local and
+        # relative imports. Sources and the inventory come from one fixed OID.
+        for imported in [name, *imports]:
+            parts = imported.split('.')
+            for index in range(1, len(parts) + 1):
+                dependency = '.'.join(parts[:index])
+                if dependency in available and dependency not in selected:
+                    pending.append(dependency)
+    return sorted(selected.values())
+
+
+def verify_bytes(contents, message):
+    for path, data in contents.items():
+        if not path.is_file() or path.read_bytes() != data:
+            raise SourceBaselineError(f'#994 {path.relative_to(root)}: {message}')
+
+
+@contextmanager
+def trusted_process(contents):
+    """Load local imports only from independently verified, committed bytes.
+
+    A private import scope also ignores a stale negative_process in sys.modules.
+    No copied Git/build state, and no working-tree module executes at bootstrap.
+    """
+    modules = {}
+    packages = {'_shared'}
+    for path, data in contents.items():
+        parts = list(path.relative_to(fixtures).with_suffix('').parts)
+        if parts[-1] == '__init__':
+            parts.pop()
+            packages.add('.'.join(parts))
+        for index in range(1, len(parts)):
+            packages.add('.'.join(parts[:index]))
+        modules['.'.join(parts)] = (path, data)
+    names = set(modules) | packages
+
+    def verified_import(name, globals=None, locals=None, fromlist=(), level=0):
+        absolute = (importlib.util.resolve_name('.' * level + name, globals['__package__'])
+                    if level else name)
+        if absolute not in names and absolute.split('.')[0] not in sys.stdlib_module_names:
+            raise ImportError(f'#994 unverified shared import: {absolute}')
+        return builtins.__import__(name, globals, locals, fromlist, level)
+
+    class VerifiedLoader(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname in names:
+                return importlib.util.spec_from_loader(fullname, self, is_package=fullname in packages)
+            if fullname.split('.')[0] not in sys.stdlib_module_names:
+                raise ImportError(f'#994 unverified shared import: {fullname}')
+            return None
+
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, module):
+            if module.__name__ in modules:
+                path, data = modules[module.__name__]
+                module.__file__ = str(path)
+                module.__dict__['__builtins__'] = dict(vars(builtins), __import__=verified_import)
+                exec(compile(data, str(path), 'exec'), module.__dict__)
+
+    roots = {name.split('.')[0] for name in names}
+    saved = {name: sys.modules.pop(name) for name in list(sys.modules) if name.split('.')[0] in roots}
+    search_path = sys.path[:]
+    loader = VerifiedLoader()
+    sys.meta_path.insert(0, loader)
+    try:
+        yield importlib.import_module('negative_process')
+    finally:
+        sys.meta_path.remove(loader)
+        for name in list(sys.modules):
+            if name.split('.')[0] in roots:
+                sys.modules.pop(name, None)
+        sys.modules.update(saved)
+        sys.path[:] = search_path
+
+
 @contextmanager
 def verified_inputs():
-    """Hold the normal tree/product guard without scheduling real file writes.
-
-    mutating_sources always restores its listed paths, even if they never
-    changed. An empty write set avoids that truncate/write window on SIGKILL.
-    The copied inputs still receive the SAME byte-for-byte HEAD check, under
-    the SAME tree lock; neither an alternate baseline nor a Git copy is used.
-    """
-    with mutating_sources(root, []):
-        contents = {}
-        for path in (shared, process, tests):
-            relative = path.relative_to(root).as_posix()
-            data = _head_bytes(root, relative, 'HEAD')
-            if not path.is_file() or path.read_bytes() != data:
-                raise SourceBaselineError(root, relative, 'differs from HEAD')
-            contents[path] = data
-        yield contents
-        for path, data in contents.items():
-            relative = path.relative_to(root).as_posix()
-            if path.read_bytes() != data or _head_bytes(root, relative, 'HEAD') != data:
-                raise SourceBaselineError(root, relative, 'changed during isolated controls')
+    commit = git_bytes('rev-parse', 'HEAD').decode().strip()
+    contents = {path: git_bytes('show', f'{commit}:{path.relative_to(root).as_posix()}')
+                for path in input_paths(commit)}
+    verify_bytes(contents, 'differs from HEAD')
+    with trusted_process(contents) as api, api.mutating_sources(root, [], baseline=commit):
+        verify_bytes(contents, 'differs from HEAD')
+        token = _process_api.set(api)
+        try:
+            yield contents
+        finally:
+            _process_api.reset(token)
+            verify_bytes(contents, 'changed during isolated controls')
+            if git_bytes('rev-parse', 'HEAD').decode().strip() != commit:
+                raise SourceBaselineError('#994 HEAD changed during isolated controls')
 
 
 @contextmanager
@@ -98,11 +218,11 @@ def run_case(case, directory, out, original):
     command = [sys.executable, '-B', str(directory / tests.relative_to(root)), test]
     row = dict(name=name, status='INVALID', reason='not run', compiled=False, restoredPass=False)
 
-    def run(label, command):
+    def run(label, argv):
         # Fresh bytecode namespace also keeps py_compile output off the real
         # tree. -B prevents stale same-second imports of equal-sized mutants.
         env = dict(os.environ, PYTHONPYCACHEPREFIX=str(out / (label + '-cache')))
-        result = run_owned(command, cwd=directory, env=env, timeout=30)
+        result = _process_api.get().run_owned(argv, cwd=directory, env=env, timeout=30)
         (out / (label + '.log')).write_text(result.stdout + result.stderr)
         return result
 
@@ -113,7 +233,7 @@ def run_case(case, directory, out, original):
         result = run(name + '-positive', command)
         if result.returncode != 0:
             raise RuntimeError('bound positive unittest did not pass')
-        copied.write_text(text.replace(before, after, 1))
+        copied.write_bytes(text.replace(before, after, 1).encode())
         compiled = run(name + '-compile', [sys.executable, '-m', 'py_compile', str(copied)])
         if compiled.returncode != 0:
             raise RuntimeError('Python mutant does not compile; never a kill')
@@ -151,7 +271,6 @@ def main():
     out = Path(sys.argv[1]).resolve()
     out.mkdir(parents=True, exist_ok=False)
     records = []
-    # wait_for_slot is intentionally unused: this suite launches only Python.
     for case in cases:
         name, path, before, after, test, marker = case
         row = dict(name=name, status='INVALID', reason='not run', compiled=False, restoredPass=False)
@@ -169,7 +288,8 @@ def main():
               for state in ('KILLED', 'SURVIVED', 'INVALID')}
     (out / 'summary.json').write_text(json.dumps({'controls': records, 'counts': counts}, indent=2) + '\n')
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
-    return int(any(row['status'] != 'KILLED' for row in records))
+    return int(not records or len(records) != len(cases) or
+               any(row['status'] != 'KILLED' for row in records))
 
 
 if __name__ == '__main__':

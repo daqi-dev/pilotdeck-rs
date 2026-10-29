@@ -118,9 +118,13 @@ known_differences.json是TS原值/Rust当前原值/category/test的单一维护�
 
 ### 未提交候选树的正控入口（#994 重开）
 
-旧 `PDRS_NEGATIVE_BASELINE` 任意 Git tree 覆盖已停用；设置它不会改变正式负控的 HEAD 守卫。
+仅本套 `negative_controls.py` 停用旧 `PDRS_NEGATIVE_BASELINE` 任意 Git tree 覆盖；
+设置它不会改变本套正式负控的 HEAD 守卫，其他套件仍按各自入口处理。
 未提交候选先用 `--baseline-only` 检查选中变异所绑定的正控；它直接编译当前树，沿用调用方的产品 target，
 不创建源码副本、不写产品源码、不执行变异。这样候选验证不会因未提交源码被整套记为 INVALID。
+候选入口从来源采集到汇总写入一直持有同一源码树锁；前驱一直不释放时最多等待 60 秒后报错。
+环境复用共享 `environment()`，移除三个 oracle 覆盖并统一 wrapper、incremental 和临时目录。
+`negative_private.py` 没有 `--baseline-only`；其未提交候选仍只能跑内存负控。
 
 ```sh
 export CARGO_TARGET_DIR="$PWD/_build/cargo-target"
@@ -132,6 +136,7 @@ python3 src/pilotdeck-gateway/tests/fixtures/network-timing/negative_controls.py
 
 编译与运行仍由 `CargoTests` 分阶段计时并留原始日志。候选入口记录 `BASELINE_PASS` / `BASELINE_FAIL` /
 `BASELINE_ERROR`，逐项跑完后任一未通过即非零；`summary.json` 明示 `mutationValidation: false`，
+并记录 `commit`、`dirty`（完整 `git status --porcelain -- src`）和 `candidateDirty`，脏候选不能冒充已提交正控。
 没有 KILLED 或 restoredPass。这只证明候选正控，不能代替正式负控验收。
 提交后由协调者使用上文独立持久 `negctl-target` 跑正式负控；若受当前会话固定产品 target 约束，
 只交付脚本和正控证据，不通过换 Git 基线或复用产品 target 绕过隔离要求。

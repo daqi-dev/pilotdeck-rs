@@ -20,6 +20,8 @@ jobs:
         run: python3 -m unittest -v test_metadata_io_driver.EnvironmentControls
       - name: metadata observer generation 正负控（自有文件）
         run: node src/pilotdeck-gateway/tests/test_metadata_observer.mjs
+      - name: 共享执行器隔离与候选正控回归（#994）
+        run: python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py
 
   # 保留必需检查名；三个并行 job 任一非 success（含取消/跳过）都拒绝合并。
   check:

@@ -136,6 +136,14 @@ MARKER_PATTERN = re.compile(r'^#\s*anchor-selfcheck:\s*unsupported(?:\s+(.*))?$'
 # exempted helpers must remain free of these signals. The reason stays above;
 # neither a new filename nor a reason alone can hide a source mutation table.
 UNSUPPORTED_SIGNALS = {
+    # #994: meta-controls mutate disposable Python modules or in-memory loaders;
+    # their import/bootstrap machinery is outside the product-anchor grammar.
+    'negative-adaptive/negative_controls.py': {'table:cases'},
+    'negative-adaptive/isolation_negative.py': {'table:CONTROLS'},
+    'negative_process.py': set(),
+    '_shared/negative_control.py': set(),
+    'test_negative_adaptive.py': set(),
+    'test_negative_adaptive_isolation.py': set(),
     'native-topology/run.py': {'table:CASES'},
     'native-topology/controls.py': {'call:mutate'},
     'negative_suite.py': {'call:mutate'},

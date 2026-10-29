@@ -274,6 +274,32 @@ class EnvironmentControls(unittest.TestCase):
                             == ['node src/pilotdeck-gateway/tests/test_metadata_observer.mjs']
                             for step in observer_steps), '#904 observer generation control runs')
 
+    def test_required_job_runs_shared_isolation_regressions(self):
+        command = 'python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py'
+        jobs = self.ci_jobs('#994')
+        steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#994')
+        matching = [step for step in steps if self.ci_run_commands(step, '#994') == [command]]
+        self.assertEqual(len(matching), 1, '#994 required CI job must run isolation regressions')
+        fields = self.ci_step_fields(matching[0], '#994')
+        for key in ('if', 'continue-on-error'):
+            self.assertNotIn(key, fields, '#994 isolation CI step must be unconditional and required')
+        self.assertIn(fields.get('working-directory'), (None, ('.', [])),
+                      '#994 isolation CI step must run from repository root')
+
+    def test_isolation_ci_regressions_are_rejected(self):
+        workflow = self.ci_workflow_fixture()
+        command = 'run: python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py'
+        cases = [(name, workflow.replace(command, changed, 1), message) for name, changed, message in (
+            ('isolation-ci-removed', 'run: true', '#994 required CI job must run isolation regressions'),
+            ('isolation-ci-commented', '# ' + command, '#994 required CI job must run isolation regressions'),
+            ('isolation-ci-skipped', 'if: false\n        ' + command,
+             '#994 isolation CI step must be unconditional and required'),
+            ('isolation-ci-ignored', 'continue-on-error: true\n        ' + command,
+             '#994 isolation CI step must be unconditional and required'),
+            ('isolation-ci-wrong-cwd', 'working-directory: src\n        ' + command,
+             '#994 isolation CI step must run from repository root'))]
+        self.check_ci_mutations(cases, 'test_required_job_runs_shared_isolation_regressions', '#994')
+
     def test_each_npm_job_sets_up_its_own_node_before_installing(self):
         runtime_jobs = set()
         for name, body in self.ci_jobs().items():
