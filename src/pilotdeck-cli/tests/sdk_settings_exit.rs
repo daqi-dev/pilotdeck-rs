@@ -1,4 +1,4 @@
-//! #1029: replay 157 D1 and 34 supplemental real Node v22.22.0 captures.
+//! #1029: replay 157 D1 and 36 supplemental real Node v22.22.0 captures.
 //! Runtime and bounded parity lease follow the P02 test helper contract.
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -252,6 +252,7 @@ async fn replay(listener: TcpListener, case: &Value, pid: u32) {
     let (stream, _) = listener.accept().await.expect("#1029 owned mock accept");
     let mut socket = accept_async(stream).await.expect("#1029 WS upgrade");
     let mut id = String::new();
+    let mut wire_checks = Vec::new();
     for row in case["wire"].as_array().expect("#1029 wire rows") {
         if row["kind"] == "receive" {
             let message = socket
@@ -290,24 +291,29 @@ async fn replay(listener: TcpListener, case: &Value, pid: u32) {
             let expected = row["raw"]
                 .as_str()
                 .expect("#1029 expected wire JSON")
-                .replace("<request>", &id);
-            verify(
+                .replacen("\"id\":\"<request>\"", &format!("\"id\":\"{id}\""), 1);
+            wire_checks.push((
                 raw == expected,
-                &format!(
+                format!(
                     "#1029 hello and request wire {}",
                     case["input"]["id"].as_str().expect("#1029 cell id")
                 ),
-            );
+            ));
         } else {
             let raw = row["raw"]
                 .as_str()
                 .expect("#1029 original wire JSON")
-                .replace("<request>", &id);
+                .replacen("\"id\":\"<request>\"", &format!("\"id\":\"{id}\""), 1);
             socket
                 .send(Message::Text(raw.into()))
                 .await
                 .expect("#1029 mock response");
         }
+    }
+    // Finish the deterministic reply barrier before reporting a wire mismatch.
+    // A bad hello must not strand the child waiting for hello_ok (or its RPC).
+    for (matches, assertion) in wire_checks {
+        verify(matches, &assertion);
     }
     let signal = case["input"]["signal"].as_str();
     let rejected = case["input"]["acceptToken"] != case["input"]["env"]["PILOTDECK_SDK_AUTH_TOKEN"]
@@ -544,14 +550,24 @@ async fn settings_raw_params_preserve_deep_object() {
     replay_matrix(false, Some("settings-extra--set-deep-object")).await;
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn settings_request_preserves_placeholder_literals() {
+    replay_matrix(false, Some("settings-extra--set-request-literal")).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn settings_response_preserves_placeholder_literals() {
+    replay_matrix(false, Some("settings-extra--get-request-literal")).await;
+}
+
 async fn replay_matrix(local_only: bool, selected: Option<&str>) {
     let _port = PORT.lock().await;
     let _lock = ParityLock::acquire().await;
     let oracle: Value = serde_json::from_str(ORACLE).expect("#1029 TS oracle JSON");
     let cases = oracle["cases"].as_array().expect("#1029 oracle cells");
     verify(
-        cases.len() == 191,
-        "#1029 157 registered cells plus 34 live settings boundary cells",
+        cases.len() == 193,
+        "#1029 157 registered cells plus 36 live settings boundary cells",
     );
     if let Some(id) = selected {
         verify(

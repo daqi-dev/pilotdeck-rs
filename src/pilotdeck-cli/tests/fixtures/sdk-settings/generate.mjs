@@ -49,7 +49,7 @@ const cases = inputs.map(input => {
 });
 const supplemental = json('supplemental.json');
 assert.equal(supplemental.nodeVersion, 'v22.22.0', '#1029 live Node version');
-assert.equal(supplemental.cases.length, 34, '#1029 registered live settings boundary cells');
+assert.equal(supplemental.cases.length, 36, '#1029 registered live settings boundary cells');
 for (const captured of supplemental.cases) {
   const item = structuredClone(captured);
   if (item.status === 'TRIGGER_NOT_REACHED') {

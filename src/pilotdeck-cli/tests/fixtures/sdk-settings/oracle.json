@@ -20658,7 +20658,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -20771,7 +20771,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -20884,7 +20884,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -20997,7 +20997,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -21110,7 +21110,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -21223,7 +21223,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -21336,7 +21336,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -21449,7 +21449,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -21563,7 +21563,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -21677,7 +21677,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -21791,7 +21791,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -21905,7 +21905,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -21997,7 +21997,7 @@
       "stderr": "Usage: pilotdeck settings set '<json>'\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -22089,7 +22089,7 @@
       "stderr": "Invalid settings JSON: Unexpected end of JSON input\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -22182,7 +22182,7 @@
       "stderr": "Usage: pilotdeck settings set '<json>'\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -22275,7 +22275,7 @@
       "stderr": "Usage: pilotdeck settings set '<json>'\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -22392,7 +22392,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -22508,7 +22508,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -22602,7 +22602,7 @@
       "stderr": "Invalid settings JSON: Expected property name or '}' in JSON at position 1 (line 1 column 2)\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -22719,7 +22719,7 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -22810,7 +22810,7 @@
       "stderr": "Usage: pilotdeck settings set '<json>'\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -22903,7 +22903,7 @@
       "stderr": "updateSettings settings must be an object.\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -22996,7 +22996,7 @@
       "stderr": "updateSettings settings must be an object.\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -23089,7 +23089,7 @@
       "stderr": "updateSettings settings must be an object.\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -23182,7 +23182,7 @@
       "stderr": "Invalid settings JSON: Expected property name or '}' in JSON at position 1 (line 1 column 2)\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -23275,7 +23275,7 @@
       "stderr": "gatewayUrl and authToken are required; pass them in query options or createPilotDeckClient defaults.\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -23365,7 +23365,7 @@
       "stderr": "Gateway auth token is required. Set PILOTDECK_TOKEN or pass --auth-token.\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -23455,7 +23455,7 @@
       "stderr": "Gateway auth token is required. Set PILOTDECK_TOKEN or pass --auth-token.\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -23545,7 +23545,7 @@
       "stderr": "Gateway auth token is required. Set PILOTDECK_TOKEN or pass --auth-token.\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -23636,7 +23636,7 @@
       "stderr": "Usage: pilotdeck settings <get|set> ...\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -23727,7 +23727,7 @@
       "stderr": "Usage: pilotdeck settings <get|set> ...\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -23824,7 +23824,7 @@
       "stderr": "Usage: pilotdeck settings <get|set> ...\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -23921,7 +23921,7 @@
       "stderr": "Usage: pilotdeck settings <get|set> ...\n",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     },
     {
@@ -24037,7 +24037,238 @@
       "stderr": "",
       "source": "supplemental.json",
       "sha256": {
-        "supplemental.json": "1bf82dc7fab7677b7d5e3352f66f0cc5295f62f8ae4e490f2eda1028c512dcf6"
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
+      }
+    },
+    {
+      "status": "OBSERVED",
+      "signalDelivered": false,
+      "input": {
+        "id": "settings-extra--set-request-literal",
+        "leaf": "settings-extra",
+        "axis": "set-request-literal",
+        "argv": [
+          "settings",
+          "set",
+          "{\"value\":\"<request>\",\"id\":\"<request>\",\"nested\":{\"id\":\"<request>\"}}"
+        ],
+        "stdinHex": "",
+        "env": {
+          "PILOTDECK_SDK_AUTH_TOKEN": "d1-fixture-not-a-secret"
+        },
+        "mockGateway": true,
+        "acceptToken": "d1-fixture-not-a-secret",
+        "mode": "supplemental",
+        "timeoutSeconds": 12
+      },
+      "stdout": "{\"updated\":true}\n",
+      "stderrRaw": "(node:14270) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "exit": 0,
+      "signal": null,
+      "connections": 1,
+      "wire": [
+        {
+          "kind": "receive",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"0.1.0\",\"token\":\"d1-fixture-not-a-secret\"}"
+        },
+        {
+          "kind": "send",
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{}}"
+        },
+        {
+          "kind": "receive",
+          "raw": "{\"type\":\"request\",\"id\":\"<request>\",\"method\":\"update_settings\",\"params\":{\"source\":\"localSettings\",\"settings\":{\"value\":\"<request>\",\"id\":\"<request>\",\"nested\":{\"id\":\"<request>\"}}}}"
+        },
+        {
+          "kind": "send",
+          "raw": "{\"type\":\"response\",\"id\":\"<request>\",\"ok\":true,\"result\":{\"id\":\"<request>\",\"value\":\"<request>\"}}"
+        }
+      ],
+      "close": [
+        {
+          "code": 1005,
+          "reason": ""
+        }
+      ],
+      "disk": {
+        ".": {
+          "type": "directory",
+          "mode": 448
+        },
+        "bin": {
+          "type": "directory",
+          "mode": 448
+        },
+        "home": {
+          "type": "directory",
+          "mode": 448
+        },
+        "openssl.cnf": {
+          "type": "file",
+          "mode": 384,
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "pilot": {
+          "type": "directory",
+          "mode": 448
+        },
+        "pilot/pilotdeck.yaml": {
+          "type": "file",
+          "mode": 384,
+          "size": 17,
+          "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+        },
+        "project": {
+          "type": "directory",
+          "mode": 448
+        },
+        "project/keep.txt": {
+          "type": "file",
+          "mode": 384,
+          "size": 13,
+          "sha256": "b68f092bcfb9c25c602bad1a6491f15f779c8af47eddf990cfa528e9feb429a3"
+        },
+        "tmp": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-cache": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-config": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-data": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-state": {
+          "type": "directory",
+          "mode": 448
+        }
+      },
+      "stderr": "",
+      "source": "supplemental.json",
+      "sha256": {
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
+      }
+    },
+    {
+      "status": "OBSERVED",
+      "signalDelivered": false,
+      "input": {
+        "id": "settings-extra--get-request-literal",
+        "leaf": "settings-extra",
+        "axis": "get-request-literal",
+        "argv": [
+          "settings",
+          "get"
+        ],
+        "stdinHex": "",
+        "env": {
+          "PILOTDECK_SDK_AUTH_TOKEN": "d1-fixture-not-a-secret"
+        },
+        "mockGateway": true,
+        "acceptToken": "d1-fixture-not-a-secret",
+        "mode": "supplemental",
+        "timeoutSeconds": 12
+      },
+      "stdout": "{\n  \"id\": \"<request>\",\n  \"value\": \"<request>\",\n  \"nested\": {\n    \"id\": \"<request>\"\n  }\n}\n",
+      "stderrRaw": "(node:14301) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+      "exit": 0,
+      "signal": null,
+      "connections": 1,
+      "wire": [
+        {
+          "kind": "receive",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"0.1.0\",\"token\":\"d1-fixture-not-a-secret\"}"
+        },
+        {
+          "kind": "send",
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{}}"
+        },
+        {
+          "kind": "receive",
+          "raw": "{\"type\":\"request\",\"id\":\"<request>\",\"method\":\"resolve_settings\",\"params\":{}}"
+        },
+        {
+          "kind": "send",
+          "raw": "{\"type\":\"response\",\"id\":\"<request>\",\"ok\":true,\"result\":{\"id\":\"<request>\",\"value\":\"<request>\",\"nested\":{\"id\":\"<request>\"}}}"
+        }
+      ],
+      "close": [
+        {
+          "code": 1005,
+          "reason": ""
+        }
+      ],
+      "disk": {
+        ".": {
+          "type": "directory",
+          "mode": 448
+        },
+        "bin": {
+          "type": "directory",
+          "mode": 448
+        },
+        "home": {
+          "type": "directory",
+          "mode": 448
+        },
+        "openssl.cnf": {
+          "type": "file",
+          "mode": 384,
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "pilot": {
+          "type": "directory",
+          "mode": 448
+        },
+        "pilot/pilotdeck.yaml": {
+          "type": "file",
+          "mode": 384,
+          "size": 17,
+          "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+        },
+        "project": {
+          "type": "directory",
+          "mode": 448
+        },
+        "project/keep.txt": {
+          "type": "file",
+          "mode": 384,
+          "size": 13,
+          "sha256": "b68f092bcfb9c25c602bad1a6491f15f779c8af47eddf990cfa528e9feb429a3"
+        },
+        "tmp": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-cache": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-config": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-data": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-state": {
+          "type": "directory",
+          "mode": 448
+        }
+      },
+      "stderr": "",
+      "source": "supplemental.json",
+      "sha256": {
+        "supplemental.json": "cffd928a2bd9ddd6f40e65967115dcad599f302f9a9386de58be403a94c21fc6"
       }
     }
   ]
