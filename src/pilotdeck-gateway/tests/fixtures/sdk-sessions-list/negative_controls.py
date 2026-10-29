@@ -26,6 +26,7 @@ lease_tests = root / 'src/pilotdeck-cli/tests/sdk_sessions_list_exit.rs'
 MATRIX = 'sessions_list_matches_ts_matrix'
 LIFECYCLE = 'sessions_list_transport_boundaries'
 oracle = root / 'src/pilotdeck-cli/tests/fixtures/sdk-sessions-list/oracle.json'
+source = root / 'src/pilotdeck-cli/tests/fixtures/sdk-sessions-list/source.json'
 mutations = [
     ('hello-version', transport, '"protocolVersion": pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION', '"protocolVersion": "0.0"', MATRIX, '#983 hello and request wire sessions-default--argv'),
     ('websocket-default-limits', transport, 'WebSocketConfig::default()\n        .max_frame_size(Some(MAX_RECEIVE_BYTES))\n        .max_message_size(Some(MAX_RECEIVE_BYTES))', 'WebSocketConfig::default()', 'sessions_list_accepts_ts_large_frames', '#983 TS native accepts 16777217 byte frame'),
@@ -62,6 +63,7 @@ mutations = [
     ('pong-payload', transport, '.flush()', '.send(Message::Pong(vec![0].into()))', LIFECYCLE, '#983 exact pong wrong-id-and-ping'),
     ('codec-number-order', sessions, 'let raw = stringify_json(value)', 'let raw = stringify_json(&JsValue::Null)', MATRIX, '#983 TS output and exit sessions-default--argv'),
     ('original-extraction', oracle, '"nodeVersion": "v22.22.0"', '"nodeVersion": "v0.0.0"', 'sessions_list_oracle_regenerates_identically', '#983 identical TS fixture sdk-sessions-list'),
+    ('source-extraction', source, '"raw/host-b07/cases/sessions-default--argv/stdout.bin": "[', '"raw/host-b07/cases/sessions-default--argv/stdout.bin": "Z', 'sessions_list_oracle_regenerates_identically', '#983 identical TS fixture sdk-sessions-list'),
     ('lease-no-wait', lease_tests, 'if !waiting {', 'if !waiting { return Err(error); } if !waiting {', 'parity_lock_waits_for_predecessor', '#983 occupied lease waits before acquisition'),
     ('lease-timeout-kind', lease_tests, 'io::ErrorKind::TimedOut,', 'io::ErrorKind::Other,', 'parity_lock_times_out_without_reclaiming', '#983 occupied lease fails explicitly at deadline'),
     ('lease-late-acquisition', lease_tests, 'if waiting && Instant::now() >= deadline {', 'if waiting && Instant::now() >= deadline && path.exists() {', 'parity_lock_does_not_acquire_after_deadline', '#983 expired waiter cannot acquire released lease'),
@@ -221,7 +223,7 @@ def main():
                root / 'src/pilotdeck-cli/Cargo.toml', root / 'src/Cargo.lock', Path(__file__).resolve(),
                root / 'src/pilotdeck-cli/tests/sdk_sessions_list_exit.rs',
                oracle, root / 'src/pilotdeck-cli/tests/fixtures/sdk-sessions-list/generate.mjs',
-               root / 'src/pilotdeck-cli/tests/fixtures/sdk-sessions-list/source.json',
+               source,
                limits_oracle, root / 'src/pilotdeck-cli/tests/fixtures/sdk-transport-limits/generate.mjs',
                Path(__file__).resolve().parents[1] / 'negative_process.py',
                Path(__file__).resolve().parents[1] / 'negative_suite.py']

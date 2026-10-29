@@ -846,19 +846,25 @@ fn regenerates_identically(fixture: &str) {
         version.stdout == b"v22.22.0\n",
         "#983 selected Node must report v22.22.0 before extraction",
     );
-    let result = Command::new(&node)
+    let mut command = Command::new(&node);
+    if fixture == "sdk-sessions-list" {
+        command.env_remove("PDRS_D1_PLAN");
+    }
+    let result = command
         .arg(directory.join("generate.mjs"))
         .arg(&output)
         .output()
         .expect("#983 run extraction guard");
-    assert!(
-        result.status.success(),
-        "#983 extraction failed: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
+    if !result.status.success() {
+        eprintln!(
+            "#983 extraction failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
     verify(
-        fs::read(output.join("oracle.json")).expect("#983 regenerated oracle")
-            == fs::read(directory.join("oracle.json")).expect("#983 checked-in oracle"),
+        result.status.success()
+            && fs::read(output.join("oracle.json")).expect("#983 regenerated oracle")
+                == fs::read(directory.join("oracle.json")).expect("#983 checked-in oracle"),
         &format!("#983 identical TS fixture {fixture}"),
     );
 }
