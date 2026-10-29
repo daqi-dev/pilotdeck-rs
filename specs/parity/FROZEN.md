@@ -1,5 +1,7 @@
 # 冻结记录
 
+> **2026-10-30 重登记（#1067 A1 控制新检出 setUp 修复，**AI 代批，待人复核**）**：只改 `scripts/parity/controls/lock_release.py` 的 setUp：先 `(G.WORKTREE / '_tmp').mkdir(parents=True, exist_ok=True)` 再建 TemporaryDirectory（同文件 _assert_cleanup_blocks_round / test_interrupt 两条用例已有同写法）。`_tmp/` 被 .gitignore，新检出不存在，原 setUp 每用例抛 FileNotFoundError，宿主负控 17 项里 8 项 A1 全 INVALID「bound positive test did not pass」（与 #1056 同类）。不改产品 `round.py`、锁协议、判分语义、阈值、分母、归一化、比较器；`round.py` 与 `README.md` 哈希不变。验证：`git archive HEAD` 全新检出（无 `_tmp/`、无 .git）上修复前 9/9 setUp FileNotFoundError（原始输出 `_tmp/20261026-issue-1067/raw/01`），修复后 9/9 OK（raw/02）；删 mkdir 行的变异体 9/9 FAILED、恢复后 OK（raw/03、raw/04）。`check_frozen` 复跑 PASS。
+
 > **2026-10-26 fix-r2 重登记（#209 A1 清理故障路径恢复，**AI 代批，待人复核**）**：只改 `scripts/parity/controls/lock_release.py` 的测试：保留 fix-r1 的「TERM/KILL 投递失败但最终 ESRCH 成功」用例，补回 fix-r1 删掉的 wait 超时与最终探测 OSError 两条故障路径，各自独立注入并走真实 `stop_group → _stop_group` 与 `round.main()` 清理门：断言 round BLOCKED、LIVE_GROUPS / 共享锁 / `cleanupPending` 保留。四条新分支各配负控（wait 错误被忽略、探测 OSError 被当作组已消失），本机 17/17 KILLED。产品 `round.py`、判分语义、阈值、分母、归一化、比较器均未动；`round.py` 与 `README.md` 哈希不变。`check_frozen` 复跑 PASS。
 
 > **2026-10-26 fix-r1 重登记（#209 A1 测试补强，**AI 代批，待人复核**）**：只改 `scripts/parity/controls/lock_release.py` 的测试断言：清理 OSError 用例改为「组已消失（最终 ESRCH 成功）但 TERM/KILL 投递失败」，使 `errors` 单独决定 `allStopped`；cleanupPending 接管用例的 `assertRaises` 专属消息即绑定失败点，去掉其内部与绑定消息不一致的 `self.fail`。产品 `round.py`、判分语义、阈值、分母、归一化、比较器均未动；`round.py` 与 `README.md` 哈希不变。`check_frozen` 复跑 PASS。
@@ -19,7 +21,7 @@
 | `scripts/parity/check_ruler.py` | `34c8d0999aee2eff…` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/controls/README.md` | `36aee14ea36dcd70…` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/controls/review_r1.py` | `7466fdf193cb8a9c…` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
-| `scripts/parity/controls/lock_release.py` | `1faff334841bf266…` | 2026-10-26 #209 A1 fix-r2 重登记（**AI 代批，待人复核**） | 信号挂起 / 残留组保留 / cleanupPending 拒绝接管 / 中断 BLOCKED；TERM-KILL 失败、wait 超时、最终探测 OSError 三条未证实路径与接管断言即负控绑定失败点 |
+| `scripts/parity/controls/lock_release.py` | `571fe225db5ab6eb…` | 2026-10-30 #1067 重登记（**AI 代批，待人复核**） | 信号挂起 / 残留组保留 / cleanupPending 拒绝接管 / 中断 BLOCKED；TERM-KILL 失败、wait 超时、最终探测 OSError 三条未证实路径与接管断言即负控绑定失败点；setUp 先建 `_tmp/`（新检出可跑） |
 | `scripts/parity/controls/run_all.py` | `3836225887515560…` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/g03_compare.py` | `ce60e7c3705f4ee1…` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/round.py` | `e70e6f3b63a814eb…` | 2026-10-26 #209 A1 重登记（**AI 代批，待人复核**） | 锁只在本次会话组证实停止后释放；清理期间挂起 SIGINT/SIGTERM |
