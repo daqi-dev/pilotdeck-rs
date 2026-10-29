@@ -28,6 +28,14 @@ fn negative_fixture_anchors_and_checker_controls() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     for (script, args) in [
         ("test_anchor_selfcheck.py", &[][..]),
+        (
+            "test_negative_process.py",
+            &[
+                "OutputDirectoryGuard",
+                "OutputDirectoryClaim",
+                "OutputDirectoryRunnerTests",
+            ][..],
+        ),
         ("negative-restore/test_restore.py", &[][..]),
         (
             "negative-restore/test_restore.py",
