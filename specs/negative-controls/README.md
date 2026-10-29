@@ -47,6 +47,10 @@
     edgeclaw-service-facade 的预编译套件（`schemata.py`，声明源为其
     `negative.py` 的 `MUTANTS`，显式选择即用户请求的子集）与文本替换边界负控
     （`switch_negative.py`，声明源即自身的 `MUTATIONS`）。
+  - **空执行表也是漂移（#996 fix-r6 起）**：运行期把整表清空时没有可标记的行，
+    而 `any()` 对空结果列表为假——退出码与 summary 都会假通过。分母核对在
+    drift 且执行行为空时补一条套件级 `switch-denominator` INVALID 行（reason
+    即差集），使每个入口的最终失败判定与 summary 都带上漂移原因，非零退出。
 
 ### 检查器威胁模型（2026-10-29 人定，#996）
 

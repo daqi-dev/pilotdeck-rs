@@ -208,6 +208,22 @@ class SchemataTests(unittest.TestCase):
                             '#996 r5 every drifted row must name the denominator check')
             self.assertTrue(any(f'missing=[{dropped!r}]' in reason for reason in reasons),
                             f'#996 r5 the drift must list the missing {dropped}')
+            # #996 fix-r6 review P0: the table emptied whole at runtime leaves
+            # no executed row, and any() over an empty row list reads False, so
+            # an entrance without the ``not rows`` guard could exit 0 with an
+            # all-zero summary. The suite-level row must decide the exit code
+            # and stay in the summary here too.
+            code, document = suite([], label='emptied')
+            self.assertEqual(code, 1, '#996 r6 the emptied runtime table must fail '
+                                      'the whole facade suite')
+            self.assertEqual(document['counts'],
+                             {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                             '#996 r6 the emptied run must keep a suite-level INVALID row')
+            reason = document['controls'][0]['reason']
+            self.assertIn('switch denominator drift', reason,
+                          '#996 r6 the suite-level row must name the denominator check')
+            self.assertIn(dropped, reason,
+                          '#996 r6 the drift must still list the declared names')
             # A matching full denominator keeps the whole suite green.
             code, document = suite(full, label='clean')
             self.assertEqual(code, 0, '#996 r5 a matching denominator must stay green')

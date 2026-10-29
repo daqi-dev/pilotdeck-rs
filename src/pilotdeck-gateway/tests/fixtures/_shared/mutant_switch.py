@@ -226,6 +226,13 @@ def enforce_denominator(root, script, rows, requested=(), declared=None):
     Both the shared switches-table run() and the facade's own execution
     entries finish with this check, so no runner can publish a shrunken or
     forged success regardless of which table shape it consumes.
+
+    #996 fix-r6: a table emptied whole at runtime leaves no executed row to
+    invalidate, and ``any()`` over an empty row list reads False, so the drift
+    used to reach neither the summary nor (for the callers without a
+    ``not rows`` guard) the exit code. The suite-level row keeps the INVALID
+    reason in the published summary and fails every caller's final ``any()``,
+    so no entry re-derives the empty-table check on its own.
     """
     drift = denominator_drift(root, script, rows, requested, declared)
     if drift:
@@ -234,6 +241,9 @@ def enforce_denominator(root, script, rows, requested=(), declared=None):
         for row in rows:
             row.update(status='INVALID',
                        reason=f'{row["reason"]}; {drift}' if row['reason'] else drift)
+        if not rows:
+            rows.append({'name': 'switch-denominator', 'test': '-', 'anchor': '-',
+                         'status': 'INVALID', 'reason': drift})
         print(drift, file=sys.stderr)
     return drift
 

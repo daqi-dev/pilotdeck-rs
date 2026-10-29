@@ -223,6 +223,40 @@ class SwitchNegativeTests(unittest.TestCase):
         self.assertTrue(any(f'missing=[{dropped!r}]' in reason for reason in reasons),
                         f'#996 r5 the drift must list the missing {dropped}')
 
+    def test_runtime_empty_table_exits_nonzero(self):
+        # #996 fix-r6 review P0: r5 only reconciled a shrunken table; a main()
+        # that empties MUTATIONS whole at runtime left results=[], the final
+        # any() read False, and main() returned 0 with an all-zero summary
+        # (the review's in-memory repro). The shared check now keeps a
+        # suite-level INVALID row, which also decides this entry's exit code.
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / 'out'
+
+            @contextlib.contextmanager
+            def emptied_table(_root, _paths):
+                yield {}
+
+            with patch.object(runner, 'MUTATIONS', []), \
+                    patch.object(runner, 'mutating_sources', emptied_table), \
+                    patch.object(sys, 'argv', ['switch_negative.py', str(out)]), \
+                    patch.dict(os.environ, {'CARGO_TARGET_DIR': temp}), \
+                    patch('sys.stderr') as quiet:
+                quiet.write = lambda *_: None
+                code = runner.main()
+            document = json.loads((out / 'summary.json').read_text())
+        declared = sorted(name for name, *_ in runner.MUTATIONS)
+        self.assertNotEqual(code, 0, '#996 r6 a runtime table emptied whole must '
+                                      'exit nonzero, not publish an empty success')
+        self.assertEqual(document['counts'],
+                         {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                         '#996 r6 the emptied run must keep a suite-level INVALID row')
+        reason = document['controls'][0]['reason']
+        self.assertIn('switch denominator drift', reason,
+                      '#996 r6 the suite-level row must name the denominator check')
+        for name in declared:
+            self.assertIn(name, reason,
+                          f'#996 r6 the drift must list the missing {name}')
+
     def test_source_guard_failure_fails_every_row_closed(self):
         @contextlib.contextmanager
         def guard(_root, _paths):
