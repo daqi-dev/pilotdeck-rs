@@ -77,7 +77,7 @@ def main():
     def run(name, test, phase, selector, args, compile_only=False):
         command = ['cargo', 'test', '--offline', '--locked', '--manifest-path', str(ROOT / 'src/Cargo.toml'),
                    '-p', 'pilotdeck-gateway', *args]
-        command += ['--no-run'] if compile_only else [test, '--', '--exact', '--nocapture']
+        command += ['--no-run'] if compile_only else [test, '--', '--exact']
         with (out / f'{name}-{phase}.log').open('w') as log:
             try:
                 slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=900)

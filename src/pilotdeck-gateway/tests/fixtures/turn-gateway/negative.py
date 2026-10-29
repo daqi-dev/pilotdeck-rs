@@ -188,11 +188,11 @@ with mutating_sources(repo, [gateway, connection, registry]) as snapshots:
             timed_out = False
             if mutant['name'] == 'baseline':
                 # The module filter still proves every existing test is green.
-                command = base_command + [GATEWAY, '--', '--nocapture', '--test-threads=1']
+                command = base_command + [GATEWAY, '--', '--test-threads=1']
             else:
                 # #813: run the one named test and require its own FAILED line
                 # plus a marker inside its own panic block.
-                command = base_command + [mutant['test'], '--', '--exact', '--nocapture', '--test-threads=1']
+                command = base_command + [mutant['test'], '--', '--exact', '--test-threads=1']
             try:
                 run = run_owned(command, cwd=repo, env=run_env, timeout=180)
                 raw = run.stdout + run.stderr

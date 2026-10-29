@@ -485,7 +485,7 @@ def main():
     results = []
 
     def run(label, mutant_test, include_ignored=False, compile_only=False):
-        args = ['--', mutant_test, '--exact', '--nocapture']
+        args = ['--', mutant_test, '--exact']
         if include_ignored:
             # libtest option, so it stays after cargo's `--` separator.
             args.insert(1, '--include-ignored')

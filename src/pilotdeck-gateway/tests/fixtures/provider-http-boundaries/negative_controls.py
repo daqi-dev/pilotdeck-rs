@@ -112,7 +112,7 @@ def main():
         try:
             slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=300)
             (args.out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
-            suffix = ['--no-run'] if compile_only else [test, '--', '--exact', '--include-ignored', '--nocapture']
+            suffix = ['--no-run'] if compile_only else [test, '--', '--exact', '--include-ignored']
             result = run_owned(command + suffix, cwd=root, env=env, timeout=600)
             (args.out / f'{label}.log').write_text(result.stdout + result.stderr)
             return result

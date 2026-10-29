@@ -161,7 +161,7 @@ with mutating_sources(repo, [gateway, submit, tests, submit_tests, session]) as 
                 run_env[key] = value
             module = 'submit' if control['test'] == cap_test else 'gateway'
             test_name = f"runtime::turn::{module}::tests::{control['test']}"
-            cmd = command + [test_name, '--', '--exact', '--nocapture']
+            cmd = command + [test_name, '--', '--exact']
             timed_out = False
             try:
                 run = run_owned(cmd, cwd=repo, env=run_env, timeout=300)

@@ -54,7 +54,7 @@ def main():
                 gate = gate or wait_for_slot(root / 'scripts/cargo-slots.sh')
                 log.write(gate.stdout + gate.stderr)
                 log.flush()
-                result = run_owned(command + ([test, '--', '--exact', '--nocapture'] if test else []),
+                result = run_owned(command + ([test, '--', '--exact'] if test else []),
                                    cwd=root, env=env, timeout=600)
                 log.write(result.stdout + result.stderr)
                 return result.returncode

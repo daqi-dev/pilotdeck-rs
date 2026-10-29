@@ -94,7 +94,7 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
             wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=max(1, deadline-time.monotonic()))
             result = run_owned(['cargo', 'test', '--offline', '--manifest-path', str(ROOT/'src/Cargo.toml'),
                                 '-p', 'pilotdeck-gateway', '--test', 'plugin_runtime', test, '--', '--exact',
-                                '--nocapture', '--test-threads=1'], cwd=ROOT, env=MUTANT_ENV,
+                                '--test-threads=1'], cwd=ROOT, env=MUTANT_ENV,
                                timeout=max(1, min(120, deadline-time.monotonic())))
             log = result.stdout + result.stderr
             (OUTPUT / f'baseline-{test}.log').write_text(log)
@@ -111,7 +111,7 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
                 SOURCE.write_text(mutation)
                 result = run_owned(['cargo', 'test', '--offline', '--manifest-path', str(ROOT/'src/Cargo.toml'),
                                     '-p', 'pilotdeck-gateway', '--test', 'plugin_runtime', test, '--', '--exact',
-                                    '--nocapture', '--test-threads=1'], cwd=ROOT, env=MUTANT_ENV,
+                                    '--test-threads=1'], cwd=ROOT, env=MUTANT_ENV,
                                    timeout=max(1, min(120, deadline-time.monotonic())))
                 log = result.stdout + result.stderr
                 (OUTPUT / f'{name}.log').write_text(log)

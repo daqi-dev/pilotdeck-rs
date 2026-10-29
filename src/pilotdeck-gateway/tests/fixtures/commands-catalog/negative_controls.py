@@ -106,7 +106,10 @@ def main():
             # No -q (#942): cargo forwards it to libtest as --quiet, which drops
             # the per-test lines this script's KILLED/restored criteria match.
             command = ['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', target, test]
-            test_args = ['--', '--exact', '--format', 'pretty', '--nocapture']
+            # No `--nocapture`: it splices the test's stdout into the
+            # `test <name> ... ok/FAILED` status line (#938 r14), which
+            # baseline_passed()/named_test_killed() match exactly.
+            test_args = ['--', '--exact', '--format', 'pretty']
             if ignored:
                 test_args.append('--ignored')
             def run(label, args):

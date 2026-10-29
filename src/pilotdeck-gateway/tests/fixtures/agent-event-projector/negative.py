@@ -954,7 +954,6 @@ fn directory_flags() -> rustix::fs::OFlags {
                         args = [
                             "projector::tests::" if used_test is None else used_test,
                             "--",
-                            "--nocapture",
                         ]
                         if used_test is not None:
                             args.insert(-1, "--exact")
