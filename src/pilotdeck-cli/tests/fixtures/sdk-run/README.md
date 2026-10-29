@@ -34,10 +34,20 @@ PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck node src/pilotdeck-c
 
 ## fix-r1 边界补充
 
-`../sdk-run-validation/` 直接调用真实 SDK 的模型解析与序号处理方法，补 12 个模型格和 12 个序号格。它只证明字段选择/验证，不证明异常 query 的 socket 生命周期。Rust 的两个纯验证函数由实际 run/stream 路径调用；单测逐字比较 Node 观测结果，独立 ignored 重生成守卫重新执行真实 TS。
+`../sdk-run-validation/` 直接调用真实 SDK 的模型解析与序号处理方法，补 12 个模型格和 15 个序号格（含 fix-r2 的极大 received、Number 舍入、极大 expected）。它只证明字段选择/验证，不证明异常 query 的 socket 生命周期。Rust 的两个纯验证函数由实际 run/stream 路径调用；单测逐字比较 Node 观测结果，独立 ignored 重生成守卫重新执行真实 TS。
 
 `run_token_file_reaches_gateway` 持有相同端口租约，验证有效 token 文件进入网络路径后的拒绝连接字节；成功路径仍由 `run--token-file` 原金样回放。旧 preflight 测试不再保留 P02 run 占位断言。
 
 stdin 仍是明确缺口：Rust 在 current_thread 运行时同步 `read_to_end`；control 在等待 stdin 和 query 期间没有独立轮询。TS `sdkCli.ts` 使用异步文件读取且未设置字节上限（本轮仅读码，未实测慢 stdin/心跳/取消）。只换 spawn_blocking 不能补 control 轮询；完整修复须补永不 EOF、取消、ping 和内存策略矩阵，前置于 #123 P06–P08 生命周期验收。本轮不擅增字节上限。
 
 负控表以 `--check` 输出为准。三个产品变异常量已删除；runner 对真实表达式/代码块变异，并增加纯函数模型/序号和 canPrompt/canElicit/旧占位回退配对。HEAD 守卫拒绝本轮未提交新文件时，先提交再由协调者运行 `--compile-only` 全表和负控全表；拒绝不是编译通过或 KILLED。
+
+## fix-r2 评审修复与剩余边界
+
+两条纯校验测试分别要求恰好 12/15 行，循环外用专属 nonce 收据断言防止空 oracle 假通过；负控表含 `model-oracle-empty` / `sequence-oracle-empty`。gap 的 expected/received 都使用共享 JS Number 格式函数，并各有回退到 Rust Display 的变异。新增三格由真实 SDK `handleMessage` 同步调用采集，沿用 `run_validation_oracle_regenerates_identically` 守卫。
+
+`run_token_file_reaches_gateway` 是派生 Rust 用例：输入/磁盘取 token-file 金样，拒绝连接的 stdout/stderr/exit 取 `run--gateway-unreachable` 金样；不声称它是单独的完整 TS 宿主采集。三份 CLI 兄弟套件复用现有 `common/negative_receipt.rs`，负控 guarded 清单同步包含该模块。sessions-list 的旧副本原先直写最终收据，迁移后沿用共享模块的 tmp+rename 原子发布；settings/messages 原本已原子发布。
+
+尚未对齐的模型异常形状：真实 Node v22.22.0 探针表明数值/布尔 provider、数值 model 会原样返回，而 Rust `ModelOverride` 仍为字符串；`items:[null]` 在 TS 抛 TypeError，Rust 走未唯一解析错误。缺 items/空 items/空请求以及非 bool available 的 TS 行为已另采，但未加入本轮受守卫金样。原始探针与逐格结果在本轮 RESULT 所引证据，完整类型转换和错误形状须前置于 #123 P06–P08 模型异常验收；本节不声明异常形状已全部对齐。
+
+CLI 与 gateway 收据协议的 nonce/绝对路径/重复目标/sync_all 硬化仍有差异；本轮仅收敛 CLI 副本，不改协议。跨套件硬化及其协议负控须前置于下一次收据协议修改。

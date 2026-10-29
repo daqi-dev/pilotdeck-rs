@@ -694,17 +694,17 @@ async fn run_channel_and_two_connections() {
 async fn run_token_file_reaches_gateway() {
     let _port = PORT.lock().await;
     let _lease = ParityLock::acquire().await;
-    // Node v22.22.0 runSdkCli with the same token-file input, no mock listener:
-    // exit 1, empty stdout, and these stderr bytes after the registered warning.
-    // Keep the mock-success input/disk from the full TS run--token-file capture.
+    // Keep the token-file input/disk and reuse the registered refusal oracle's
+    // output. This derived case is not a separate full TS host capture.
     let mut input = case("run--token-file");
+    let refusal = case("run--gateway-unreachable");
     input["input"]["mockGateway"] = json!(false);
     input["connections"] = json!(0);
     input["wire"] = json!([]);
-    input["stdout"] = json!("");
-    input["stderr"] = json!("Gateway connection failed.\n");
-    input["exit"] = json!(1);
-    // Fail before invoking the CLI if an uncooperative listener owns this port.
+    for field in ["stdout", "stderr", "exit"] {
+        input[field] = refusal[field].clone();
+    }
+    // Best-effort conflict check; an external listener may still race after drop.
     let listener = TcpListener::bind(ADDRESS)
         .await
         .expect("#1058 refusal port must be unoccupied");

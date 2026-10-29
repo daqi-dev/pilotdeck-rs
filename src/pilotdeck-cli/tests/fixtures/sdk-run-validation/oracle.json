@@ -343,6 +343,36 @@
       "output": {
         "error": "Gateway event sequence must be a non-negative integer for validation."
       }
+    },
+    {
+      "input": {
+        "name": "large-received",
+        "previous": -1,
+        "seq": 1e+21
+      },
+      "output": {
+        "error": "Gateway event sequence gap for validation: expected 0, received 1e+21."
+      }
+    },
+    {
+      "input": {
+        "name": "rounded-received",
+        "previous": -1,
+        "seq": 9007199254740992
+      },
+      "output": {
+        "error": "Gateway event sequence gap for validation: expected 0, received 9007199254740992."
+      }
+    },
+    {
+      "input": {
+        "name": "large-expected",
+        "previous": 1e+21,
+        "seq": 1e+22
+      },
+      "output": {
+        "error": "Gateway event sequence gap for validation: expected 1e+21, received 1e+22."
+      }
     }
   ]
 }

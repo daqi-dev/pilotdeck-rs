@@ -37,36 +37,9 @@ const TOKEN: &str = "d1-fixture-not-a-secret";
 const BOUND: Duration = Duration::from_secs(15);
 static PORT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-// Bind the negative verdict to the current libtest and exact assertion; arbitrary
-// server/CLI text cannot forge a kill. Uses negative_suite.ReceiptRun's protocol.
-fn verify(condition: bool, assertion: &str) {
-    if condition {
-        return;
-    }
-    if let Ok(config) = std::env::var("PDRS_NEGATIVE_RECEIPTS") {
-        let config: Value = serde_json::from_str(&config).expect("#983 receipt configuration");
-        let thread = std::thread::current();
-        let name = thread.name().expect("#983 named test");
-        for target in config["targets"].as_array().expect("#983 receipt targets") {
-            if target["test"] == name && target["assertion"] == assertion {
-                let mut receipt = fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(target["path"].as_str().expect("#983 receipt path"))
-                    .expect("#983 fresh receipt");
-                receipt
-                    .write_all(
-                        config["nonce"]
-                            .as_str()
-                            .expect("#983 receipt nonce")
-                            .as_bytes(),
-                    )
-                    .expect("#983 receipt write");
-            }
-        }
-    }
-    panic!("{assertion}");
-}
+#[path = "common/negative_receipt.rs"]
+mod negative_receipt;
+use negative_receipt::verify;
 
 struct Runtime(PathBuf);
 impl Runtime {

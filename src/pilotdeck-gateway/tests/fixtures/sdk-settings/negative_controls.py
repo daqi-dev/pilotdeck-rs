@@ -107,6 +107,7 @@ def main():
         return result
 
     guarded = [*sorted((root / 'src/pilotdeck-cli/src').rglob('*.rs')),
+               root / 'src/pilotdeck-cli/tests/common/negative_receipt.rs',
                root / 'src/pilotdeck-cli/Cargo.toml', root / 'src/Cargo.lock', Path(__file__).resolve(),
                tests, *sorted(fixture.glob('*.*')),
                Path(__file__).resolve().parents[1] / 'negative_process.py',

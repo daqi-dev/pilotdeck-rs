@@ -25,6 +25,10 @@ fixture = root / 'src/pilotdeck-cli/tests/fixtures/sdk-run'
 oracle = fixture / 'oracle.json'
 source = fixture / 'source.json'
 mutations = [
+    ('model-oracle-empty', validation / 'oracle.json', '  "models": [', '  "models": [],\n  "discardedModels": [', 'sdk::turn::tests::model_resolution_matches_ts_boundaries', '#1058 registered model validation rows'),
+    ('sequence-oracle-empty', validation / 'oracle.json', '  "sequences": [', '  "sequences": [],\n  "discardedSequences": [', 'sdk::transport::tests::stream_sequence_matches_ts_boundaries', '#1058 registered sequence validation rows'),
+    ('sequence-received-format', transport, 'number_to_string(sequence)', 'sequence.to_string()', 'sdk::transport::tests::stream_sequence_matches_ts_boundaries', '#1058 stream sequence validation'),
+    ('sequence-expected-format', transport, 'number_to_string(previous + 1.0)', '(previous + 1.0).to_string()', 'sdk::transport::tests::stream_sequence_matches_ts_boundaries', '#1058 stream sequence validation'),
     ('stream-correlation', transport, '.as_deref() != Some(id)', '.as_deref() == Some("disabled-stream-filter")', 'run_matches_ts_matrix', '#1058 output bytes and exit'),
     ('model-availability', turn, 'item.get("available").and_then(JsValue::as_bool) != Some(false)', 'true', 'sdk::turn::tests::model_resolution_matches_ts_boundaries', '#1058 model resolution bytes'),
     ('model-unique', turn, 'if let [item] = matches.as_slice()', 'if let Some(item) = matches.first()', 'sdk::turn::tests::model_resolution_matches_ts_boundaries', '#1058 model resolution bytes'),
