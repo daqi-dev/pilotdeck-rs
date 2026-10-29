@@ -253,9 +253,9 @@ fn event_types(events: &[JsValue]) -> Vec<String> {
             event
                 .get("type")
                 .and_then(JsValue::as_string)
-                .expect("every delivered event carries a type")
+                .expect("#748 real sidecar: every delivered event carries a type")
                 .to_utf8()
-                .unwrap()
+                .expect("#748 real sidecar: delivered event type must be UTF-8")
         })
         .collect()
 }
@@ -3825,10 +3825,13 @@ impl crate::host::modules::model::ModelExecution for DeterministicModel {
                     parse_json(
                         r#"{"type":"request_started","provider":"test","model":"deterministic"}"#,
                     )
-                    .unwrap(),
-                    parse_json(r#"{"type":"message_start","role":"assistant"}"#).unwrap(),
-                    parse_json(r#"{"type":"text_delta","text":"hello"}"#).unwrap(),
-                    parse_json(r#"{"type":"message_end","finishReason":"stop"}"#).unwrap(),
+                    .expect("#748 real sidecar prerequisite"),
+                    parse_json(r#"{"type":"message_start","role":"assistant"}"#)
+                        .expect("#748 real sidecar prerequisite"),
+                    parse_json(r#"{"type":"text_delta","text":"hello"}"#)
+                        .expect("#748 real sidecar prerequisite"),
+                    parse_json(r#"{"type":"message_end","finishReason":"stop"}"#)
+                        .expect("#748 real sidecar prerequisite"),
                 ]))) as Box<dyn crate::host::modules::model::ModelStream>,
             )
         })
@@ -3849,7 +3852,10 @@ impl HostHandler for RealSidecarHandler {
         self.model.call(call)
     }
     fn event(&self, event: JsValue) -> HostFuture<()> {
-        self.events.lock().unwrap().push(event);
+        self.events
+            .lock()
+            .expect("#748 real sidecar prerequisite")
+            .push(event);
         Box::pin(async { Ok(()) })
     }
     fn dispose(&self) -> HostFuture<()> {
@@ -3858,23 +3864,26 @@ impl HostHandler for RealSidecarHandler {
 }
 async fn real_sidecar_case(mode: &str) {
     let baseline = std::path::PathBuf::from(
-        std::env::var_os("PDRS_BASELINE").expect("fixed PDRS_BASELINE required"),
+        std::env::var_os("PDRS_BASELINE").expect("#748 real sidecar requires fixed PDRS_BASELINE"),
     );
     let oracle = crate::test_baseline::oracle(include_str!(
         "../../../tests/fixtures/turn-runner/oracle.json"
     ));
-    let JsValue::Array(rows) = oracle.get("sidecar").unwrap() else {
-        panic!("sidecar rows")
+    let JsValue::Array(rows) = oracle
+        .get("sidecar")
+        .expect("#748 real sidecar prerequisite")
+    else {
+        panic!("#748 real sidecar oracle rows must be an array")
     };
     let row = rows
         .iter()
         .find(|r| r.get("name") == Some(&mode.into()))
-        .unwrap();
+        .expect("#748 real sidecar prerequisite");
     let evidence = std::env::var_os("PDRS_STREAM_EVIDENCE")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
         .join(format!("real-sidecar-{mode}-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(evidence.join("home")).unwrap();
+    std::fs::create_dir_all(evidence.join("home")).expect("#748 real sidecar prerequisite");
     let mut command = Command::new("node");
     command
         .args(["--import"])
@@ -3888,7 +3897,10 @@ async fn real_sidecar_case(mode: &str) {
         .arg(&evidence)
         .current_dir(&evidence)
         .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap())
+        .env(
+            "PATH",
+            std::env::var_os("PATH").expect("#748 real sidecar prerequisite"),
+        )
         .env("HOME", evidence.join("home"));
     let client = HostClient::spawn(
         &mut command,
@@ -3900,8 +3912,8 @@ async fn real_sidecar_case(mode: &str) {
         },
     )
     .await
-    .unwrap();
-    let pid = client.child_id().unwrap();
+    .expect("#748 real sidecar prerequisite");
+    let pid = client.child_id().expect("#748 real sidecar prerequisite");
     let handler = Arc::new(RealSidecarHandler {
         model: crate::host::modules::model::Handler::with_ports(
             Arc::new(DeterministicModel),
@@ -3913,7 +3925,11 @@ async fn real_sidecar_case(mode: &str) {
     let initial = Mutex::new(Some(client));
     let inner = handler.clone();
     let session = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
-        let client = initial.lock().unwrap().take().unwrap();
+        let client = initial
+            .lock()
+            .expect("#748 real sidecar prerequisite")
+            .take()
+            .expect("#748 real sidecar prerequisite");
         let inner = inner.clone();
         Box::pin(async move {
             Ok((
@@ -3923,41 +3939,69 @@ async fn real_sidecar_case(mode: &str) {
             ))
         })
     });
-    let mut config = options().as_object().unwrap().clone();
-    for (key,value) in parse_json(r#"{"provider":"test","model":"deterministic","tools":[],"hostModules":{"model":{"methods":["prepare","stream_next","close_stream"]}}}"#).unwrap().as_object().unwrap().entries() {config.insert(key.clone(),value.clone());}
+    let mut config = options()
+        .as_object()
+        .expect("#748 real sidecar prerequisite")
+        .clone();
+    let model_config = parse_json(
+        r#"{"provider":"test","model":"deterministic","tools":[],"hostModules":{"model":{"methods":["prepare","stream_next","close_stream"]}}}"#,
+    )
+    .expect("#748 real sidecar model config JSON");
+    for (key, value) in model_config
+        .as_object()
+        .expect("#748 real sidecar model config object")
+        .entries()
+    {
+        config.insert(key.clone(), value.clone());
+    }
     config.insert("cwd".into(), evidence.to_string_lossy().as_ref().into());
     let mut turn = session
         .submit_turn_for_test(
-            parse_json(r#"{"type":"text","text":"probe"}"#).unwrap(),
+            parse_json(r#"{"type":"text","text":"probe"}"#)
+                .expect("#748 real sidecar prerequisite"),
             JsValue::Object(config),
         )
-        .unwrap();
+        .expect("#748 real sidecar prerequisite");
     let mut events = Vec::new();
-    while let Some(event) = next(turn.as_mut()).await.unwrap() {
+    while let Some(event) = next(turn.as_mut())
+        .await
+        .expect("#748 real sidecar prerequisite")
+    {
         events.push(event);
     }
     assert_reaped(pid).await;
     let types = event_types(&events);
     std::fs::write(
         evidence.join("host-types.json"),
-        serde_json::to_vec_pretty(&types).unwrap(),
+        serde_json::to_vec_pretty(&types).expect("#748 real sidecar prerequisite"),
     )
-    .unwrap();
+    .expect("#748 real sidecar prerequisite");
     if matches!(mode, "success" | "completed-warning") {
         assert_eq!(
-            handler.events.lock().unwrap()[0]
+            handler
+                .events
+                .lock()
+                .expect("#748 real sidecar prerequisite")
+                .first()
+                .expect("#748 real sidecar first loop event")
                 .get("payload")
-                .unwrap()
+                .expect("#748 real sidecar prerequisite")
                 .get("type"),
             Some(&"model_request_started".into()),
             "real sidecar begins with loop event"
         );
-        let JsValue::Array(expected) = row.get("events").unwrap() else {
-            panic!("host events")
+        let JsValue::Array(expected) = row.get("events").expect("#748 real sidecar prerequisite")
+        else {
+            panic!("#748 real sidecar expected host events must be an array")
         };
         let expected: Vec<_> = expected
             .iter()
-            .map(|v| v.as_string().unwrap().to_utf8().unwrap())
+            .map(|v| {
+                v.as_string()
+                    .expect("#748 real sidecar prerequisite")
+                    .to_utf8()
+                    .expect("#748 real sidecar prerequisite")
+            })
             .filter(|kind| {
                 !matches!(
                     kind.as_str(),
@@ -3967,7 +4011,12 @@ async fn real_sidecar_case(mode: &str) {
             .collect();
         assert_eq!(types, expected, "real sidecar full host sequence");
         assert_eq!(
-            events.last().unwrap().get("result").unwrap().get("type"),
+            events
+                .last()
+                .expect("#748 real sidecar prerequisite")
+                .get("result")
+                .expect("#748 real sidecar prerequisite")
+                .get("type"),
             Some(&"success".into()),
             "real sidecar success terminal"
         );
@@ -3982,35 +4031,55 @@ async fn real_sidecar_case(mode: &str) {
             "TS failure/early-final boundary observation"
         );
         assert_eq!(
-            &types[types.len() - 3..],
+            types
+                .get(types.len().saturating_sub(3)..)
+                .expect("#748 real sidecar rejection suffix"),
             ["agent_status", "turn_failed", "turn_completed"],
             "integrity rejection catch order"
         );
         assert_eq!(
-            events.last().unwrap().get("result").unwrap().get("type"),
+            events
+                .last()
+                .expect("#748 real sidecar prerequisite")
+                .get("result")
+                .expect("#748 real sidecar prerequisite")
+                .get("type"),
             Some(&"error".into()),
             "integrity rejection must not publish success"
         );
-        let error = events[events.len() - 2]
+        let error = events
+            .iter()
+            .rev()
+            .nth(1)
+            .expect("#748 real sidecar failure event")
             .get("error")
-            .unwrap()
+            .expect("#748 real sidecar prerequisite")
             .get("message")
-            .unwrap()
+            .expect("#748 real sidecar prerequisite")
             .as_string()
-            .unwrap()
+            .expect("#748 real sidecar prerequisite")
             .to_utf8()
-            .unwrap();
-        assert!(
-            error.contains(if mode == "early-final" {
-                "terminal without proper lifecycle"
-            } else {
-                "sequence"
-            }),
-            "integrity rejection reason: {error}"
-        );
+            .expect("#748 real sidecar prerequisite");
+        if mode == "early-final" {
+            // This peer hides every loop event. The Initial-state gate must
+            // reject it before the separate R2 completion witness is reached.
+            // A relaxed lifecycle mutant still fails closed at that witness;
+            // the cause, rather than the error tail, distinguishes the gates.
+            assert!(
+                error.contains("terminal without proper lifecycle"),
+                "#748 early-final lifecycle rejection reason: {error}"
+            );
+        } else {
+            assert!(
+                error.contains("sequence"),
+                "integrity rejection reason: {error}"
+            );
+        }
     }
     assert_eq!(
-        next(turn.as_mut()).await.unwrap(),
+        next(turn.as_mut())
+            .await
+            .expect("#748 real sidecar prerequisite"),
         None,
         "real sidecar exactly one terminal"
     );
