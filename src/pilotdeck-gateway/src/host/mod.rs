@@ -607,7 +607,11 @@ impl HostClient {
 fn append_diagnostic(error: &mut HostError, connection: &Connection) {
     let stderr = connection.diagnostic();
     if !stderr.is_empty() {
-        error.diagnostic = stderr;
+        if crate::mutants::on("live-diagnostic-message") {
+            error.message.push_str(&stderr);
+        } else {
+            error.diagnostic = stderr;
+        }
     }
 }
 

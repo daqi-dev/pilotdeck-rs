@@ -1274,7 +1274,7 @@ async fn cancel_before_disconnect_never_writes_pre_acceptance_bytes() {
     let error = result.unwrap_err();
     assert_eq!(error.kind, HostErrorKind::Disconnected);
     assert!(!error.accepted);
-    assert!(!error.message.contains("AssertionError"), "{error}");
+    assert!(!error.diagnostic.contains("AssertionError"), "{error}");
     // cancel_run also requires the receipt written only after the quiet window.
 }
 
@@ -1291,7 +1291,10 @@ async fn cancel_disconnect_and_timeout_preserve_unknown_progress() {
         assert_eq!(error.stream_id, Some("stream".into()));
         assert_eq!(error.last_applied_sequence, Some(0.0));
         if mode == "cancel-disconnect" {
-            assert!(error.message.contains("CANCEL-DISCONNECT-TAIL"));
+            assert!(
+                error.diagnostic.contains("CANCEL-DISCONNECT-TAIL"),
+                "#748 cancel diagnostic retains stderr tail"
+            );
         }
     }
     for (mode, kind) in [
@@ -1304,7 +1307,7 @@ async fn cancel_disconnect_and_timeout_preserve_unknown_progress() {
         assert!(!error.accepted);
         assert_eq!(error.stream_id, None);
         assert_eq!(error.last_applied_sequence, None);
-        assert!(!error.message.contains("AssertionError"), "{error}");
+        assert!(!error.diagnostic.contains("AssertionError"), "{error}");
     }
     // Race EOF with successful event application; compare observed application,
     // independent of which ready branch the parent's select chooses first.
@@ -1407,13 +1410,17 @@ async fn close_drains_stderr_exit_tail_before_aborting_pump() {
     let error = HostClient::spawn(&mut command("stderr-on-close"), None, bounded)
         .await
         .err()
-        .unwrap();
-    assert_eq!(error.kind, HostErrorKind::Protocol);
-    assert!(error.diagnostic.contains("EXIT-STDERR-TAIL"), "{error}");
-    assert!(!error.diagnostic.contains("discarded-prefix"));
-    assert!(
-        !error.diagnostic.is_empty(),
-        "#748 child diagnostic retained"
+        .expect("#748 stderr-on-close produces protocol error");
+    assert_eq!(
+        error.kind,
+        HostErrorKind::Protocol,
+        "#748 stderr-on-close error kind"
+    );
+    crate::negative_assert!(
+        error.diagnostic.contains("EXIT-STDERR-TAIL")
+            && !error.message.contains("EXIT-STDERR-TAIL")
+            && !error.diagnostic.contains("discarded-prefix"),
+        "#748 stderr stays in bounded diagnostic field"
     );
     assert!(
         error.diagnostic.len() <= 64,

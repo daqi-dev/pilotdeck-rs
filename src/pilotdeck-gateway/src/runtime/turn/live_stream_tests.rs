@@ -392,6 +392,33 @@ fn assert_aborted_turn(event: &JsValue, turn: &str) {
 }
 
 #[tokio::test]
+async fn progress_message_text_is_not_a_canonical_message() {
+    let (_sender, receiver) = mpsc::channel(1);
+    let integrity = Arc::new(StreamIntegrity::new());
+    *integrity
+        .module_id
+        .lock()
+        .expect("#748 progress module lock") = Some("fixture".into());
+    let mut turn = stream(Box::pin(std::future::pending()), receiver, integrity);
+    let event = parse_json(
+        r#"{"type":"tool_progress","sessionId":"session","turnId":"turn","toolCallId":"read-1","toolName":"read","message":"reading","createdAt":"2026-10-26T00:00:00Z","moduleId":"fixture"}"#,
+    )
+    .expect("#748 progress fixture parses");
+    let (receipt, mut acknowledged) = oneshot::channel();
+    let received = turn
+        .record_event(event.clone(), false, true, Some(receipt))
+        .await;
+    crate::negative_assert!(
+        received
+            .as_ref()
+            .is_ok_and(|value| value.as_ref() == Some(&event))
+            && acknowledged.try_recv().is_ok()
+            && turn.pending_durable.is_none(),
+        "#748 progress message text bypasses canonical classification"
+    );
+}
+
+#[tokio::test]
 async fn next_streams_payloads_with_backpressure_and_projects_final_once() {
     let expected = [
         r#"{"type":"model_request_started","sessionId":"session","turnId":"turn"}"#,
@@ -4121,7 +4148,7 @@ async fn bound_malformed_durable_messages_fail_before_yield_and_persist_terminal
         turn.accepted = true;
         turn.callback_cancel = Some(Cancellation::default());
         let (receipt, ack) = oneshot::channel();
-        assert!(
+        crate::negative_assert!(
             turn.record_event(
                 parse_json(raw).expect("#748 bad wire JSON"),
                 false,
@@ -4164,5 +4191,173 @@ async fn bound_malformed_durable_messages_fail_before_yield_and_persist_terminal
             1,
             "#748 bad wire failure durable once"
         );
+    }
+}
+
+#[test]
+fn success_final_requires_loop_completion_witness() {
+    let (_tx, rx) = mpsc::channel(1);
+    let integrity = Arc::new(StreamIntegrity::new());
+    let turn = stream(
+        Box::pin(async { Ok(ExecuteResult::Aborted { terminal: None }) }),
+        rx,
+        integrity,
+    );
+    let prefix =
+        parse_json(r#"{"type":"model_request_started"}"#).expect("#748 witness model prefix");
+    turn.integrity
+        .observe_source(&prefix, true)
+        .expect("#748 witness received prefix");
+    turn.delivered
+        .observe_source(&prefix, true)
+        .expect("#748 witness applied prefix");
+    let terminal = parse_json(r#"{"payload":{"result":{"type":"success","sessionId":"session","turnId":"turn","stopReason":"completed","turns":1},"messages":[]}}"#).expect("#748 witness terminal");
+    let result = turn.finish(Ok(ExecuteResult::Terminal(terminal)));
+    crate::negative_assert!(
+        result.is_err_and(
+            |error| error.message == "Sidecar success final arrived before loop completion."
+        ),
+        "#748 success final requires loop completion witness"
+    );
+}
+
+#[tokio::test]
+async fn wire_durable_messages_match_ts_yield_before_callback() {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/live-write-order/oracle.json"
+    ));
+    for (kind, row_kind, message, case) in [
+        (
+            "assistant_message",
+            "assistant_message",
+            r#"{"role":"assistant","content":[{"type":"text","text":"hello"}]}"#,
+            "text",
+        ),
+        (
+            "tool_results_projected",
+            "tool_result_message",
+            r#"{"role":"user","content":[{"type":"tool_result","toolUseId":"read","content":[{"type":"text","text":"ok"}]}]}"#,
+            "tool",
+        ),
+    ] {
+        for fail in [false, true] {
+            let name = if fail {
+                if kind == "assistant_message" {
+                    "assistant-error"
+                } else {
+                    "tool-error"
+                }
+            } else {
+                case
+            };
+            let JsValue::Array(cases) = oracle.get("cases").expect("#748 order probe cases") else {
+                panic!("#748 order probe cases array")
+            };
+            let row = cases
+                .iter()
+                .find(|row| row.get("name") == Some(&name.into()))
+                .expect("#748 order probe case");
+            let JsValue::Array(trace) = row.get("trace").expect("#748 TS order trace") else {
+                panic!("#748 TS order trace array")
+            };
+            let position = |label: &str| {
+                trace
+                    .iter()
+                    .position(|v| v == &JsValue::from(label))
+                    .expect("#748 TS ordering label")
+            };
+            assert!(
+                position(&format!("yield:{kind}")) < position(&format!("durable:begin:{row_kind}")),
+                "#748 TS actual yield before durable"
+            );
+            let root = std::env::temp_dir().join(format!("pdrs-order-{}", uuid::Uuid::new_v4()));
+            let recorder = Arc::new(Recorder::new(
+                Arc::new(RecordingStore {
+                    disk: crate::storage::JsonlTranscriptStore::new(),
+                    kind: row_kind,
+                    fail: usize::from(fail),
+                    completes: AtomicUsize::new(0),
+                    attempts: AtomicUsize::new(0),
+                    gate: Mutex::new(None),
+                }),
+                crate::storage::TranscriptKey {
+                    project_root: root.clone(),
+                    pilot_home: root.join("home"),
+                    transcript_path: root.join("session.jsonl"),
+                    session_id: "session".into(),
+                },
+            ));
+            let (_tx, rx) = mpsc::channel(1);
+            let integrity = Arc::new(StreamIntegrity::new());
+            *integrity.module_id.lock().expect("#748 durable module") = Some("fixture".into());
+            let mut turn = stream(
+                Box::pin(async { Ok(ExecuteResult::Aborted { terminal: None }) }),
+                rx,
+                integrity,
+            );
+            let runner = TurnRunner::new(
+                recorder.clone(),
+                test_lease(),
+                "session".into(),
+                "turn".into(),
+            );
+            let (runner, _) = runner.start().await.expect("#748 durable start");
+            let (runner, _) = runner
+                .accept(turn.input.clone())
+                .await
+                .expect("#748 durable accept");
+            turn.recording = Some(Recording::new(runner, Arc::new(())));
+            turn.accepted = true;
+            turn.callback_cancel = Some(Cancellation::default());
+            let event = crate::metadata::object([
+                ("type", kind.into()),
+                (
+                    "message",
+                    parse_json(message).expect("#748 durable wire message"),
+                ),
+            ]);
+            let (receipt, mut ack) = oneshot::channel();
+            let delivered = turn
+                .record_event(event, false, true, Some(receipt))
+                .await
+                .expect("#748 durable event delivery");
+            crate::negative_assert!(
+                delivered.is_some(),
+                "#748 TS durable message is yielded before callback"
+            );
+            let rows = || {
+                std::fs::read_to_string(recorder.writer().path())
+                    .expect("#748 durable order transcript")
+            };
+            crate::negative_assert!(
+                !rows().contains(&format!("\"type\":\"{row_kind}\"")),
+                "#748 TS durable message is yielded before callback"
+            );
+            assert!(
+                matches!(ack.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
+                "#748 durable ACK waits callback"
+            );
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while turn
+                    .next()
+                    .await
+                    .expect("#748 durable completion")
+                    .is_some()
+                {}
+            })
+            .await
+            .expect("#748 durable bounded close");
+            assert_eq!(
+                rows().contains(&format!("\"type\":\"{row_kind}\"")),
+                !fail,
+                "#748 durable disk follows callback result"
+            );
+            assert_eq!(
+                ack.await.is_ok(),
+                !fail,
+                "#748 durable ACK follows callback result"
+            );
+            std::fs::remove_dir_all(root).expect("#748 durable fixture cleanup");
+        }
     }
 }

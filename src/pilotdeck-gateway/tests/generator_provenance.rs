@@ -1013,3 +1013,5 @@ fn live_e2e_companions_reject_missing_corrupt_and_symlink() {
     }
     fs::remove_dir_all(root).expect("#748 remove owned companion test directory");
 }
+
+regeneration!(live_write_order_regenerates_identically, "live-write-order");

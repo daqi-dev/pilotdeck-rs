@@ -702,19 +702,21 @@ impl LiveTurnStream {
         {
             runner.observe_tool_result(event.get("result").unwrap_or(&JsValue::Undefined));
         }
+        let module_message = event
+            .get("type")
+            .and_then(JsValue::as_string)
+            .is_some_and(|kind| {
+                kind.equals_str("assistant_message") || kind.equals_str("tool_results_projected")
+            });
         let durable_wire = wire
             && self.integrity.module_id.lock().unwrap().is_some()
             && self.recording.is_some()
-            && event
-                .get("type")
-                .and_then(JsValue::as_string)
-                .is_some_and(|kind| {
-                    kind.equals_str("assistant_message")
-                        || kind.equals_str("tool_results_projected")
-                });
+            && module_message;
         if durable_wire {
             let message = event.get("message").cloned().unwrap_or(JsValue::Undefined);
-            if super::runner::classify_durable_message(&message).is_err() {
+            if !crate::mutants::on("live-malformed-durable")
+                && super::runner::classify_durable_message(&message).is_err()
+            {
                 // Never expose malformed payloads. The owned durable transition
                 // records its callback error, then the next poll joins the host
                 // and commits the ordinary failure terminal before releasing.
@@ -722,15 +724,31 @@ impl LiveTurnStream {
                 return Ok(None);
             }
         }
-        if let (Some(module), JsValue::Object(fields)) = (
-            self.integrity.module_id.lock().unwrap().as_ref(),
-            &mut event,
-        ) && let Some(mut message) = fields.get("message").cloned()
+        // TS markModuleOwnedEvent only interprets these two message families.
+        // Other events may carry a human-readable `message` string.
+        if (module_message || crate::mutants::on("live-message-field-classification"))
+            && let (Some(module), JsValue::Object(fields)) = (
+                self.integrity.module_id.lock().unwrap().as_ref(),
+                &mut event,
+            )
+            && let Some(mut message) = fields.get("message").cloned()
         {
             mark_module_message(&mut message, module)?;
             fields.insert("message".into(), message);
         }
         if durable_wire {
+            if crate::mutants::on("live-durable-before-yield") {
+                return self
+                    .begin_recording(
+                        RecordingAction::Durable(
+                            event.get("message").cloned().unwrap_or(JsValue::Undefined),
+                        ),
+                        event,
+                        false,
+                        receipt,
+                    )
+                    .await;
+            }
             self.pending_durable = Some((
                 event.get("message").cloned().unwrap_or(JsValue::Undefined),
                 receipt.take(),
@@ -877,6 +895,7 @@ impl LiveTurnStream {
                 self.integrity.observe_terminal(outcome)?;
                 if outcome.is_some_and(|kind| kind.equals_str("success"))
                     && !*self.integrity.loop_completed.lock().unwrap()
+                    && !crate::mutants::on("live-early-final-witness")
                 {
                     return Err(RuntimeError::new(
                         "Sidecar success final arrived before loop completion.",
@@ -1366,8 +1385,10 @@ impl StreamHandler {
                     // A callback may have passed validation before a later host
                     // drain failed, then waited for ordering or channel capacity.
                     // Check and send atomically with respect to recording failure.
-                    // TS awaits the status callback before yield/ACK. Keep its
-                    // receipt in LiveTurn across cancelled next() borrows.
+                    // TS awaits agent_status persistence before yield, but
+                    // yields assistant/tool messages before the durable callback.
+                    // All three await persistence before ACK; preserve the
+                    // receipt across cancelled next() borrows (live-write-order).
                     let (receipt, recorded) = if record_status
                         && wire
                         && event

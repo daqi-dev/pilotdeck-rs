@@ -650,9 +650,31 @@ fn expectation(scenario: &str) -> Value {
         json!("mitm_premature_final"),
         "#748 TS early-final observed difference"
     );
-    let reference = fs::read_to_string(Path::new(FIXTURE).join("expected/duplicate.json"))
+    let mut reference = fs::read_to_string(Path::new(FIXTURE).join("expected/duplicate.json"))
         .expect("#748 error projection reference");
-    serde_json::from_str(
+    if mutants::on("live-derived-run-count") {
+        reference = reference.replacen("run-duplicate", "missing-run-anchor", 1);
+    }
+    if mutants::on("live-derived-error-count") {
+        reference = reference.replacen(
+            "Sidecar event sequence mismatch: expected 1, got 0.",
+            "missing-error-anchor",
+            1,
+        );
+    }
+    negative_assert_eq!(
+        reference.matches("run-duplicate").count(),
+        19,
+        "#748 early-final run identity replacement count"
+    );
+    negative_assert_eq!(
+        reference
+            .matches("Sidecar event sequence mismatch: expected 1, got 0.")
+            .count(),
+        7,
+        "#748 early-final error replacement count"
+    );
+    let mut expected: Value = serde_json::from_str(
         &reference
             .replace("run-duplicate", "run-early-final")
             .replace(
@@ -660,7 +682,56 @@ fn expectation(scenario: &str) -> Value {
                 "Sidecar success final arrived before loop completion.",
             ),
     )
-    .expect("#748 registered early-final expectation")
+    .expect("#748 registered early-final expectation");
+    if mutants::on("live-derived-event-shape") {
+        expected["events"]
+            .as_array_mut()
+            .expect("#748 derived event mutation")
+            .remove(0);
+    }
+    if mutants::on("live-derived-transcript-shape") {
+        expected["transcript"]
+            .as_array_mut()
+            .expect("#748 derived transcript mutation")
+            .remove(0);
+    }
+    negative_assert_eq!(
+        expected["events"]
+            .as_array()
+            .expect("#748 early-final reference events")
+            .iter()
+            .map(|row| row["type"]
+                .as_str()
+                .expect("#748 early-final reference event type"))
+            .collect::<Vec<_>>(),
+        [
+            "turn_started",
+            "input_accepted",
+            "model_request_started",
+            "agent_status",
+            "error",
+            "turn_completed"
+        ],
+        "#748 early-final explicit error event structure"
+    );
+    negative_assert_eq!(
+        expected["transcript"]
+            .as_array()
+            .expect("#748 early-final reference transcript")
+            .iter()
+            .map(|row| row["type"]
+                .as_str()
+                .expect("#748 early-final reference row type"))
+            .collect::<Vec<_>>(),
+        [
+            "turn_started",
+            "accepted_input",
+            "turn_result",
+            "agent_status_message"
+        ],
+        "#748 early-final explicit error transcript structure"
+    );
+    expected
 }
 fn verify_artifacts() {
     use sha2::{Digest, Sha256};
