@@ -26,9 +26,10 @@ is always empty, which is why a previous success cannot be inherited either
 (#1059 fix-r1: a mistyped ``--output`` must keep the previous run's bytes).
 The guard exit catches ``BaseException``: a ``KeyboardInterrupt`` or
 ``SystemExit`` during the restore/re-verify window voids the recorded rows and
-publishes INVALID before it is re-raised — a zero/``None``-coded ``SystemExit``
-is re-raised as ``SystemExit(2)`` so the published INVALID summary can never
-pair with a success exit code (the #979/#1037 shared semantics). If
+publishes INVALID before it is re-raised — every ``SystemExit`` is re-raised
+as ``SystemExit(2)``, never by its raw code, so the published INVALID summary
+cannot pair with the raw code's process status (256/-256 truncate to a zero
+status on POSIX; the #979/#1037 shared semantics, widened in #1059 fix-r2). If
 that void publish is itself interrupted (a second SIGINT), no summary is
 published at all — missing means failure (fail-closed), not the previous
 all-KILLED row set (#1059, the #209 E1 sibling fix).
@@ -173,18 +174,15 @@ MUTATIONS = [
      "    raw = Path(args.output).resolve()\n"
      "    (raw / 'summary.json').unlink(missing_ok=True)\n"
      "    out = new_output_directory(args.output)\n"),
-    # A zero/None-coded SystemExit escapes unchanged, so a run whose INVALID
-    # summary is already on disk still exits 0 at the process boundary and a
-    # reader that trusts the exit code sees a pass (#1059 fix-r1 P2).
-    ('runner-systemexit-zero-exit', RUNNER,
-     "        if not isinstance(error, Exception):\n"
-     "            if isinstance(error, SystemExit) and not error.code:\n"
-     "                # The INVALID summary is on disk; a zero/None SystemExit code\n"
-     "                # would read as success at the process boundary (#1059 fix-r1).\n"
-     "                raise SystemExit(2) from error\n"
-     "            raise",
-     "        if not isinstance(error, Exception):\n"
-     "            raise"),
+    # The raw-code judgment is restored, so a truthy SystemExit code escapes
+    # the normalization: 256/-256 exit as a zero process status and a string
+    # code exits 1, all with the INVALID summary already on disk (#1059
+    # fix-r2, the Codex r2 P1; killed only at a real process boundary).
+    ('runner-systemexit-raw-code', RUNNER,
+     "        if isinstance(error, SystemExit):\n"
+     "            raise SystemExit(2) from error\n",
+     "        if isinstance(error, SystemExit) and not error.code:\n"
+     "            raise SystemExit(2) from error\n"),
 ]
 
 CHECKS = {
@@ -231,9 +229,9 @@ CHECKS = {
     'runner-retire-before-admission': (
         'RunnerInvalidationControls.test_existing_evidence_is_refused_byte_identical',
         '#1059 P0-4 a pre-existing evidence directory must be refused with every byte preserved'),
-    'runner-systemexit-zero-exit': (
-        'RunnerInvalidationControls.test_final_guard_interrupt_rewrites_summary',
-        '#1059 an INVALID summary must not exit as success'),
+    'runner-systemexit-raw-code': (
+        'RunnerInvalidationControls.test_invalid_exit_normalizes_process_status',
+        '#1059 fix-r2 an INVALID summary must not pair with the raw SystemExit process status'),
 }
 
 
@@ -446,11 +444,13 @@ def main():
         for name, *_ in selected[len(results):]:
             record(out, results, name, 'INVALID', reason)
         write_summary(out, results)
+        # The INVALID summary is on disk, so the exit is normalized instead of
+        # judged by the raw code: 256/-256 truncate to a zero process status on
+        # POSIX and a string code exits 1, none of which may decide how a
+        # coordinator reads this run (#1059 fix-r2, the Codex r2 P1).
+        if isinstance(error, SystemExit):
+            raise SystemExit(2) from error
         if not isinstance(error, Exception):
-            if isinstance(error, SystemExit) and not error.code:
-                # The INVALID summary is on disk; a zero/None SystemExit code
-                # would read as success at the process boundary (#1059 fix-r1).
-                raise SystemExit(2) from error
             raise
         return 2
     # Reaching here means mutating_sources restored every guarded file and

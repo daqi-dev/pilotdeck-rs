@@ -733,9 +733,8 @@ class RunnerInvalidationControls(unittest.TestCase):
             except BaseException as error:
                 # Only the injected cancellation is observed; a real Ctrl-C
                 # (a different exception object) must still abort the test.
-                # A zero/None-coded SystemExit is the one re-wrapping main()
-                # legitimately performs (SystemExit(2)), so it is accepted by
-                # type, not identity.
+                # Every SystemExit is re-wrapped by main() as SystemExit(2)
+                # (#1059 fix-r2), so it is accepted by type, not identity.
                 if error is not guard_error and not (
                         isinstance(guard_error, SystemExit)
                         and isinstance(error, SystemExit)):
@@ -776,10 +775,11 @@ class RunnerInvalidationControls(unittest.TestCase):
                 self.assertIs(type(code), type(canceled),
                               '#1059 P0-2 the cancellation must be re-raised')
                 if isinstance(code, SystemExit):
-                    # fix-r1 P2: the INVALID summary is already on disk, so a
-                    # zero/None SystemExit code would read as success.
-                    self.assertNotIn(code.code, (None, 0),
-                                      '#1059 an INVALID summary must not exit as success')
+                    # fix-r2: the INVALID summary is already on disk, so the
+                    # exit is normalized regardless of the raw code.
+                    self.assertEqual(
+                        code.code, 2,
+                        '#1059 fix-r2 an INVALID summary must pair with exit code 2')
                 self.assertIsNotNone(
                     summary,
                     '#1059 P0-2 a cancellation after the last row must not keep KILLED')
@@ -787,6 +787,72 @@ class RunnerInvalidationControls(unittest.TestCase):
                                  '#1059 P0-2 a cancellation after the last row must not keep KILLED')
                 self.assertIn('source guard', summary[0]['reason'],
                               '#1059 P0-2 invalidation reason must be recorded')
+
+    _EXIT_PROBE = '''
+import contextlib, importlib.util, json, sys
+
+spec = importlib.util.spec_from_file_location('plr_exit_probe', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+# Captured before main() rewrites sys.argv: the guard must inject this exact
+# SystemExit, not whatever sys.argv holds once argparse has seen it.
+code = json.loads(sys.argv[3])
+
+class Guard:
+    def __enter__(self):
+        raise SystemExit(code)
+
+    def __exit__(self, *exc):
+        return False
+
+module.parity_lease = contextlib.nullcontext
+module.mutating_sources = lambda *args, **kwargs: Guard()
+sys.argv = [sys.argv[1], '--output', sys.argv[2], '--only', 'a1-release-ungated']
+raise SystemExit(module.main())
+'''
+
+    def test_invalid_exit_normalizes_process_status(self):
+        """fix-r2 P1: the INVALID publish must exit 2, never the raw code.
+
+        A real child process loads the delivered runner from disk (no edit) and
+        raises ``SystemExit(code)`` at the guard boundary, so the assertion
+        observes the POSIX process status a coordinator would: 256/-256
+        truncate to a zero status and a string code exits 1, which is why the
+        raw code must never decide the exit (#1059 fix-r2, the Codex r2 P1).
+        """
+        message = ('#1059 fix-r2 an INVALID summary must not pair with the raw '
+                   'SystemExit process status')
+        for code in (None, 0, 256, -256, 'msg'):
+            with self.subTest(code=code):
+                out = Path(tempfile.mkdtemp(prefix='exit-', dir=self.root))
+                try:
+                    result = subprocess.run(
+                        [sys.executable, '-I', '-B', '-c', self._EXIT_PROBE,
+                         str(self.runner.RUNNER), str(out), json.dumps(code)],
+                        capture_output=True, text=True, timeout=120)
+                except subprocess.TimeoutExpired as error:
+                    self.fail(f'{message}: SystemExit({code!r}) probe timed out: {error}')
+                self.assertEqual(
+                    result.returncode, 2,
+                    f'{message}: SystemExit({code!r}) exited {result.returncode}: '
+                    f'{result.stdout}{result.stderr}')
+                # The injected cancellation is the exercised path; an
+                # Exception from the stubs also returns 2 and would make the
+                # exit assertion vacuously green.
+                self.assertIn('source guard: SystemExit', result.stdout,
+                              f'{message}: SystemExit({code!r}) wrong path')
+                try:
+                    summary = json.loads((out / 'summary.json').read_text())
+                except (OSError, ValueError) as error:
+                    self.fail(f'{message}: SystemExit({code!r}) summary unreadable: {error}')
+                self.assertIsInstance(summary, list,
+                                      f'{message}: SystemExit({code!r}) bare-list shape')
+                for row in summary:
+                    self.assertIsInstance(row, dict,
+                                          f'{message}: SystemExit({code!r}) row shape')
+                self.assertEqual([row['status'] for row in summary], ['INVALID'],
+                                 f'{message}: SystemExit({code!r}) on-disk rows')
 
     def test_interrupt_during_void_publish_leaves_no_killed_summary(self):
         """P0-3: a SIGINT inside the void publish must not keep KILLED.
