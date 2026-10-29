@@ -15,7 +15,7 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib r
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --audit
 ```
 
-122 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
+135 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --compile "$OUT_COMPILE"
@@ -50,8 +50,12 @@ writer lease在dispose/rollback一开始被take到局部WriterCloseGuard；guard
 
 fix-r4 将 handle 的 writer guard 接管提前到 adapter.abort 之前，覆盖 abort panic 尚未调用 session.dispose 的路径；正常资源钩子的最后写入仍在 guard Drop 前。factory.new 明确拒绝 ZERO 预算；到期仍完成 canonical path 和一次非阻塞租约尝试，只有忙锁等待受 deadline 约束（忙锁可等待时间仍扣除路径解析耗时）。耗尽预算用真实前驱活动、受控暂停 factory future、虚拟时钟与实际 lease 释放验证，不用 sleep 猜时序。
 
-新增五项：`writer-abort-panic-cleanup`、`writer-zero-budget`、`writer-expired-budget-skips-try`、`same-key-concurrent-skip-cache`、`same-key-cached-skip-cache`。same-key 新变异直接跳过缓存返回；原两条只覆盖 dirty，证据范围按 `A7.2-SESSION-SAME-KEY-001-R1` 更正。未提交产品源码的 mutating_sources 拒跑必须保留；本地一条样本不代表全部122项已编译/判杀。
+新增五项：`writer-abort-panic-cleanup`、`writer-zero-budget`、`writer-expired-budget-skips-try`、`same-key-concurrent-skip-cache`、`same-key-cached-skip-cache`。same-key 新变异直接跳过缓存返回；原两条只覆盖 dirty，证据范围按 `A7.2-SESSION-SAME-KEY-001-R1` 更正。未提交产品源码的 mutating_sources 拒跑必须保留；本地一条样本不代表全部135项已编译/判杀。
 
 #1022 补全 ticket 排队负控、FIFO/取消/截止、慢路径预算与 drain seed。`writer_busy_wait_timeout` 不限制 prepare、storage construction、canonicalization 或单次 OS 文件打开/锁尝试的墙钟时间；路径时间仍消耗后续忙锁剩余预算。`followups.mts` 用真实 stdio 实测 drain checkpoint 与 abort throw 后清理，`followups_regenerates_identically` 重新采集并逐字节比较。Rust 的 abort panic 被捕获后仍等 activity 清空再调用 session.dispose，保留原错误；测试保留旧 handle 验证资源无需等 clone Drop。
 
 优先解除 #748b 负控前置：提交后运行 `negative_controls.py OUT same-key-ticket-bypassed`，必须编译成功且 KILLED；本树未提交时 HEAD 守卫拒绝是正确行为。新增负控完整清单与执行状态见任务证据 RESULT，不把静态锚点检查称为运行判杀。
+
+#1022 fix-r1：原 `same-key-ticket-bypassed` 在 fdeea180d 实跑 KILLED；两个 worker 都跳过 enter，第二个不会等待前驱信号，不修改这条有效变异。abort 的 &str/String panic 原文与 TS `ABORT_1022` 比对，非字符串 payload 沿用 fallback。已成功取得重建快照的前驱保留 source 到 owner 重试，首次 dispose 错误仍返回；只有已 Disposed 且 activity 已归还时才跳过旧错误，外部提前 dispose 不授予资格。追加差异范围见 `A7.2-SESSION-DRAIN-FILE-STATE-001-R1.md`。
+
+新增 dispose-throw 真实 stdio 金样证明 drain 后 checkpoint 与资源清理，不宣称整个 TS factory/retry 端到端一致；`dispose_failure_followups_regenerates_identically` 重跑完整生成器。新变异与改写的旧锚点均须提交后宿主逐项编译、执行；当前未提交源码触发 HEAD 守卫是 INVALID，绝不计入 COMPILED/KILLED。

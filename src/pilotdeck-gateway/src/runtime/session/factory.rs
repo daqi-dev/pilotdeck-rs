@@ -458,6 +458,11 @@ impl ProjectSessionFactory {
         previous: Option<LiveSessionHandle>,
     ) -> Result<LiveSessionHandle, RuntimeError> {
         let prepared = (self.options.prepare)(context.clone(), self.mcp.clone()).await?;
+        // Sample before this attempt grants eligibility or starts disposal:
+        // the first cleanup error must still be reported to its caller.
+        let retry_after_drain = previous
+            .as_ref()
+            .is_some_and(LiveSessionHandle::recreation_drained);
         let captured_reload = previous
             .as_ref()
             .map(LiveSessionHandle::recreation_snapshot)
@@ -471,7 +476,9 @@ impl ProjectSessionFactory {
         };
         // A dropped timeout waiter cannot cancel the handle's owned drain task.
         let deadline = tokio::time::Instant::now() + self.options.writer_busy_wait_timeout;
-        if let Some(previous) = &previous {
+        if let Some(previous) = &previous
+            && !retry_after_drain
+        {
             let drained =
                 tokio::time::timeout_at(deadline, previous.dispose("session_recreate".into()))
                     .await;
