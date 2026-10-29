@@ -26,6 +26,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (exclusive_write, mutating_sources,
                               new_output_directory, run_owned, wait_for_slot)
+from negative_suite import invalidate_completed
 
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = 'src/pilotdeck-gateway/tests/fixtures'
@@ -186,6 +187,7 @@ def main():
                 print(f"{row['name']}: {status}: {reason}", flush=True)
     except Exception as error:
         reason = f'source guard: {type(error).__name__}: {error}'
+        invalidate_completed(results, reason)
         for row in ROWS[len(results):]:
             results.append(dict(name=row['name'], test=row['test'], status='INVALID', reason=reason))
     counts = {state: sum(row['status'] == state for row in results)

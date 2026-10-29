@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, run_cases
+from negative_suite import Case, invalidate_completed, run_cases
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/mcp/http.rs'
@@ -76,7 +76,7 @@ def compile_controls(rows, out, env):
     try:
         with mutating_sources(root, list(dict.fromkeys(row[1] for row in rows))) as originals:
             for name, path, old, new, _, _ in rows:
-                result = {'mutation': name, 'compiled': False}
+                result = {'mutation': name, 'compiled': False, 'status': 'INVALID', 'reason': ''}
                 try:
                     path.write_text(mutate(originals[path].decode(), None, [(old, new)]))
                     slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=600)
@@ -85,20 +85,25 @@ def compile_controls(rows, out, env):
                                      '-p', 'pilotdeck-gateway', '--lib', '--no-run'],
                                     cwd=root, env=env, timeout=600)
                     (out / f'{name}-compile.log').write_text(run.stdout + run.stderr)
-                    result.update(compiled=run.returncode == 0, returncode=run.returncode)
+                    result.update(compiled=run.returncode == 0, returncode=run.returncode,
+                                  status='COMPILED' if run.returncode == 0 else 'INVALID')
                 except Exception as error:
                     result['reason'] = f'{type(error).__name__}: {error}'
                 finally:
                     path.write_bytes(originals[path])
                 results.append(result)
     except Exception as error:
+        reason = f'source guard: {type(error).__name__}: {error}'
+        invalidate_completed(results, reason)
+        for result in results:
+            result['compiled'] = False
         for name, *_ in rows[len(results):]:
-            results.append({'mutation': name, 'compiled': False,
-                            'reason': f'source guard: {type(error).__name__}: {error}'})
+            results.append({'mutation': name, 'compiled': False, 'status': 'INVALID',
+                            'reason': reason})
     (out / 'compile-summary.json').write_text(json.dumps(results, indent=2) + '\n')
     for result in results:
         print(json.dumps(result), flush=True)
-    return all(result['compiled'] for result in results)
+    return all(result['compiled'] and result['status'] == 'COMPILED' for result in results)
 
 
 def main():
