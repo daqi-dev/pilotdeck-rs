@@ -115,3 +115,23 @@ known_differences.json是TS原值/Rust当前原值/category/test的单一维护�
 `negative_private.py /fresh/evidence [control...]`，必须由调用方设置CARGO_TARGET_DIR，不另建仓库或target。
 本包未提交时mutating_sources会因cfg(test)接线不匹配HEAD而拒绝全部产品变异；提交后由协调者在宿主执行，不能把拒绝算负控通过。
 内存负控不改源码/金样：registry的130项覆盖剩余25条private差异的TS值/反向值/test/category绑定、三个测试文件属性、三处反向回放守卫及两模块接线；private metadata/trace的848项覆盖所有116个timer格的6个字段、全部152个请求路径。每次必须在绑定断言失败且恢复原值后通过。
+
+### 未提交候选树的正控入口（#994 重开）
+
+旧 `PDRS_NEGATIVE_BASELINE` 任意 Git tree 覆盖已停用；设置它不会改变正式负控的 HEAD 守卫。
+未提交候选先用 `--baseline-only` 检查选中变异所绑定的正控；它直接编译当前树，沿用调用方的产品 target，
+不创建源码副本、不写产品源码、不执行变异。这样候选验证不会因未提交源码被整套记为 INVALID。
+
+```sh
+export CARGO_TARGET_DIR="$PWD/_build/cargo-target"
+export CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_PROFILE_TEST_DEBUG=line-tables-only
+scripts/cargo-slots.sh
+python3 src/pilotdeck-gateway/tests/fixtures/network-timing/negative_controls.py \
+  --baseline-only /fresh/baseline-evidence io-as-microtask
+```
+
+编译与运行仍由 `CargoTests` 分阶段计时并留原始日志。候选入口记录 `BASELINE_PASS` / `BASELINE_FAIL` /
+`BASELINE_ERROR`，逐项跑完后任一未通过即非零；`summary.json` 明示 `mutationValidation: false`，
+没有 KILLED 或 restoredPass。这只证明候选正控，不能代替正式负控验收。
+提交后由协调者使用上文独立持久 `negctl-target` 跑正式负控；若受当前会话固定产品 target 约束，
+只交付脚本和正控证据，不通过换 Git 基线或复用产品 target 绕过隔离要求。
