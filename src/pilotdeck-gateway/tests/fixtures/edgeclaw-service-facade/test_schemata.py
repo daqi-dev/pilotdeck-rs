@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # anchor-selfcheck: unsupported tests of the precompiled runner, no product source mutations
-"""#988 failure-path tests; no cargo or product source writes."""
+"""#988 failure-path tests; no cargo or product source writes.
+
+The #1037 test proves this entry's own run() revokes every already completed row
+when an exit check fails; ``--negative-controls`` no-ops the shared invalidation
+in memory and requires that test to die.
+"""
+import io
 import json
 import os
 from pathlib import Path
@@ -255,6 +261,57 @@ class SchemataTests(unittest.TestCase):
             self.assertEqual(document['counts'], {'KILLED': 2, 'SURVIVED': 0, 'INVALID': 0},
                              '#996 r5 a two-name request must run exactly two rows')
 
+    def test_run_invalidates_completed_kills_when_exit_checks_fail(self):
+        # #1037: the facade entry has its own run() (fix-r5), so the exit
+        # failure the shared executor handles must also revoke this entry's
+        # already completed kills, through the same shared invalidate_completed
+        # (#979) — an all-KILLED summary with exit 0 would publish a false pass.
+        selected = list(runner.legacy.MUTANTS[:2])
+        # One synthetic panic containing both anchors: the facade verdict must
+        # still bind each row to its own assertion.
+        anchors = ' '.join(row['anchor'] for row in selected)
+        for fault in ('verify', 'denominator'):
+            # No subTest: a failure must stay attributable to this method's
+            # name for the negative control that no-ops the invalidation.
+            with tempfile.TemporaryDirectory() as temp:
+                out = Path(temp) / 'out'
+                out.mkdir()
+
+                def process(command, **kwargs):
+                    if command[:2] == ['git', 'rev-parse']:
+                        return SimpleNamespace(returncode=0, stdout='test-head\n', stderr='')
+                    if command[0] == 'cargo':
+                        return SimpleNamespace(returncode=0, stdout='build fixture\n', stderr='')
+                    if command[0] == 'node':
+                        return SimpleNamespace(returncode=0, stdout='v22.22.0\n', stderr='')
+                    selector = kwargs['env'].get('PDRS_MUTANT')
+                    test = command[1][len(runner.PREFIX):]
+                    return result(test, 'FAILED' if selector else 'ok', anchors)
+
+                with patch.object(runner, 'run_owned', side_effect=process), \
+                        patch.object(runner, 'wait_for_slot',
+                                     return_value=SimpleNamespace(stdout='', stderr='')), \
+                        patch.object(runner, 'artifact',
+                                     return_value=Path(__file__).resolve()), \
+                        patch.object(runner, 'verify_unchanged' if fault == 'verify'
+                                     else 'enforce_denominator',
+                                     side_effect=RuntimeError('#1037 injected exit failure')):
+                    code = runner.run(out, selected, {})
+                self.assertEqual(code, 1,
+                                 '#1037 a failing exit check must exit nonzero')
+                document = json.loads((out / 'summary.json').read_text())
+                self.assertEqual(document['counts'],
+                                 {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 2},
+                                 '#1037 a failing exit check must revoke every '
+                                 'completed kill')
+                for row in document['controls']:
+                    self.assertEqual(row['status'], 'INVALID',
+                                     '#1037 every completed row must be invalidated')
+                    self.assertTrue(row['reason'].startswith(
+                        'bound test failed at its assertion; runner: RuntimeError: '
+                        '#1037 injected exit failure'),
+                        '#1037 invalidation must preserve the completed diagnostic')
+
     def test_summary_is_complete_and_atomic(self):
         import time
         with tempfile.TemporaryDirectory() as temp:
@@ -268,5 +325,39 @@ class SchemataTests(unittest.TestCase):
             self.assertFalse((out / 'summary.json.tmp').exists())
 
 
+def negative_controls():
+    """#1037: no-op the shared invalidation in memory; the exit-failure test
+    must then die at its named ``#1037`` assertion (no source edits, no cargo).
+    """
+    results = []
+    method = 'test_run_invalidates_completed_kills_when_exit_checks_fail'
+    mutation = method + '-invalidation-noop'
+    try:
+        with patch.object(runner, 'invalidate_completed', new=lambda *_a, **_k: None):
+            stream = io.StringIO()
+            outcome = unittest.TextTestRunner(stream=stream, verbosity=2).run(
+                unittest.defaultTestLoader.loadTestsFromName(method, SchemataTests))
+        print(stream.getvalue(), end='')
+        observed = {test._testMethodName for test, _ in
+                    outcome.failures + outcome.errors}
+        traces = [trace for _, trace in outcome.failures + outcome.errors]
+        killed = (outcome.testsRun > 0 and not outcome.skipped
+                  and observed == {method}
+                  and all('#1037' in trace for trace in traces))
+        results.append({'mutation': mutation,
+                        'status': 'KILLED' if killed else 'SURVIVED'
+                        if outcome.wasSuccessful() else 'INVALID',
+                        'reason': f'observed failures={sorted(observed)}'})
+    except Exception as error:
+        results.append({'mutation': mutation, 'status': 'INVALID',
+                        'reason': f'{type(error).__name__}: {error}'})
+    print(json.dumps(results, indent=2))
+    return int(any(row['status'] != 'KILLED' for row in results))
+
+
 if __name__ == '__main__':
+    if sys.argv[1:] == ['--negative-controls']:
+        raise SystemExit(negative_controls())
+    if sys.argv[1:]:
+        raise SystemExit('usage: test_schemata.py [--negative-controls]')
     unittest.main()

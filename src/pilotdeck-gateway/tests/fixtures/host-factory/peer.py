@@ -66,7 +66,12 @@ send(response(capabilities, **binding, payload=dict(
 execute = read()
 assert execute["method"] == "execute"
 if pid_file:
-    with open(f"{pid_file}.{os.getpid()}.execute", "x", encoding="utf-8") as out:
+    marker = (
+        f"{pid_file}.execute"
+        if os.environ.get("PDRS_PEER_SHARED_MARKER") == "1"
+        else f"{pid_file}.{os.getpid()}.execute"
+    )
+    with open(marker, "x", encoding="utf-8") as out:
         out.write("execute\n")
 send(response(execute, requestId=execute["requestId"], streamId="stream"))
 identity = {key: execute[key] for key in ("runId", "operationId", "requestId")}

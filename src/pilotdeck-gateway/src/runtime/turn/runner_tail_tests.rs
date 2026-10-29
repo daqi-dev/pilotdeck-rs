@@ -515,7 +515,15 @@ case!(listing_multiblock, "listing-multiblock");
 #[ignore = "requires fixed TS baseline and Node v22.22.0"]
 fn regenerates_identically() {
     assert!(
-        std::panic::catch_unwind(|| baseline::regenerates_identically("turn-runner-tail")).is_ok(),
+        std::panic::catch_unwind(|| {
+            // #996: tail-regeneration corrupts the loaded committed oracle
+            // (baseline commit -> zeros), never the fixture on disk.
+            baseline::regenerates_identically_with(
+                "turn-runner-tail",
+                crate::mutants::on("tail-regeneration"),
+            )
+        })
+        .is_ok(),
         "#742 tail fixture regeneration"
     );
 }

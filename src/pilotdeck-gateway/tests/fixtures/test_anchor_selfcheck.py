@@ -136,6 +136,28 @@ class ScannerControls(unittest.TestCase):
         self.write("switches = [('sample', source, 'sample_test', '#996 a')]\n")
         self.run_check(label='restored-bindings')
 
+    def test_switch_test_binding_accepts_aligned_all_cells_lists(self):
+        # #996: an all-cells row binds one test per cell; the static audit and
+        # the imported runtime table must agree on the same nonempty list.
+        self.source.write_text('crate::mutants::on("sample")\n')
+        self.write("switches = [('sample', source, ['first_test', 'second_test'],"
+                   " ['#996 first anchor', '#996 second anchor'])]\n")
+        self.assertIn('CHECKED sample/negative.py: 1 anchors',
+                      self.run_check(label='list-test-binding'))
+        for body, message in (
+            ("switches = [('sample', source, ['first_test', ''], ['#996 a'])]\n",
+             'invalid switch test'),
+            ("switches = [('sample', source, [], ['#996 a'])]\n",
+             'invalid switch test'),
+            ("switches = [('sample', source, 'first_test', [])]\n", 'invalid switch assertion'),
+        ):
+            with self.subTest(body=body):
+                self.write(body)
+                self.assertIn(message, self.run_check(1))
+        self.write("switches = [('sample', source, ['first_test', 'second_test'],"
+                   " ['#996 first anchor', '#996 second anchor'])]\n")
+        self.run_check(label='restored-list-binding')
+
     def test_switch_table_updates_fail_closed(self):
         # #996 fix-r2: the table name is a whitelist; the single module-level
         # literal assignment is the only supported binding. r1's per-form
@@ -2184,25 +2206,25 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
                 self.script.unlink()
 
     def test_sequential_rows_have_independent_stale_and_reason_checks(self):
-        self.move_script('turn-gates/negative.py')
-        rows = {name: f"({name!r}, source, unknown_scoped_anchor, 'after')"
-                for filename, name in CHECK.SEQUENTIAL_ROWS if filename == 'turn-gates/negative.py'}
-        good = "('good', source, 'before', 'after')"
-        for name in rows:
-            siblings = [row for other, row in rows.items() if other != name]
-            body = 'mutants = [' + ', '.join([good, *siblings, rows[name]]) + ']\n'
-            self.write(body)
-            self.run_check(label=f'sequential-present-{name}')
-            self.write('mutants = [' + ', '.join([good, *siblings]) + ']\n')
-            self.assertIn('stale row exceptions', self.run_check(1, label=f'sequential-missing-{name}'))
-            self.write(body)
-            with patch.dict(CHECK.SEQUENTIAL_ROWS, {('turn-gates/negative.py', name): ''}):
+        # #996: the real turn-gates rows were deleted with the script, so the
+        # stale-row and reason checks run against a synthetic registration.
+        synthetic = ('turn-gates/negative.py', 'ordered-row')
+        with patch.dict(CHECK.SEQUENTIAL_ROWS, {synthetic: 'ordered replacement reason'}, clear=True):
+            self.move_script('turn-gates/negative.py')
+            row = "('ordered-row', source, unknown_scoped_anchor, 'after')"
+            good = "('good', source, 'before', 'after')"
+            self.write(f'mutants = [{good}, {row}]\n')
+            self.run_check(label='sequential-present')
+            self.write(f'mutants = [{good}]\n')
+            self.assertIn('stale row exceptions', self.run_check(1, label='sequential-missing'))
+            self.write(f'mutants = [{good}, {row}]\n')
+            with patch.dict(CHECK.SEQUENTIAL_ROWS, {synthetic: ''}):
                 self.assertIn('empty sequential row reason', self.run_check(1, label='empty-sequential-reason'))
-            self.run_check(label=f'sequential-restored-{name}')
-        # A known row label in another script never inherits this exception.
-        self.move_script('other/negative.py')
-        self.write(body)
-        self.assertIn('unresolved name', self.run_check(1, label='sequential-wrong-file'))
+            self.run_check(label='sequential-restored')
+            # A known row label in another script never inherits this exception.
+            self.move_script('other/negative.py')
+            self.write(f'mutants = [{good}, {row}]\n')
+            self.assertIn('unresolved name', self.run_check(1, label='sequential-wrong-file'))
 
     def test_row_exceptions_validate_shape_and_search_all_sources(self):
         self.script.unlink()

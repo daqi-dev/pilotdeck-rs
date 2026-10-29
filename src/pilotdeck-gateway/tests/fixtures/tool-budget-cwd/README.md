@@ -21,23 +21,14 @@ node --disable-warning=ExperimentalWarning --import "$PDRS_BASELINE/node_modules
 
 ignored 重生成守卫：在 `src/` 下运行 `cargo test -p pilotdeck-gateway --lib runtime::context::tool_budget::cwd_tests::tool_budget_cwd_regenerates_identically -- --ignored --exact`。
 
-负控先 `python3 src/pilotdeck-gateway/tests/fixtures/tool-budget-cwd/negative_controls.py --check` 核 4 个唯一锚点。
-提交后指定 `<新证据目录> [变异名 ...]` 运行。脚本要求调用方设置本树 `CARGO_TARGET_DIR`，经
-`mutating_sources` 默认 HEAD 守卫、`wait_for_slot` 和 `run_owned` 执行正控 → 变异 → 恢复；
-逐项记 KILLED/SURVIVED/INVALID 与原因，全部结束后汇总，任一非 KILLED 则非零退出。
-锚点过期、编译/设置失败、超时均为 INVALID。
+负控（#996 起为编译期开关，旧 `negative_controls.py` 与 `session_negative.py` 文本
+替换表已删除）：源码全部提交后从仓库根执行 `python3 src/pilotdeck-gateway/tests/fixtures/tool-budget-cwd/schemata.py <新证据目录> [开关名 ...]`；调用方必须设置本树 CARGO_TARGET_DIR，脚本不另建 target、也不改任何工作区源码。`--check` 只做锚点预检。6 个开关以 `crate::mutants::on("<名>")` 分支编译进 feature（`pdrs-mutants`）库测试二进制：先 `cargo test --lib --features pdrs-mutants --no-run` 预编译一次，再逐开关以 `PDRS_MUTANT=<名>` 独立进程运行正控/负控/还原相。执行器共享 `tests/fixtures/_shared/mutant_switch.py`；每项记录 KILLED/SURVIVED/INVALID 与原因，任一非 KILLED 退出非零。锚点过期、编译/设置失败、超时均为 INVALID。
 
-4 项覆盖：cwd 根目录回退（含暖缓存格）、syscall/错误格式、绝对路径误读 cwd。
-每项同时绑定测试全名及该测试捕获的 `#885` 消息，避免另一用例的 panic 误充判杀。
-全量可能超过 20 分钟，协调者提交后分批跑，不在未提交树伪造 HEAD。
-
-fix-r1 追加传播回归与负控 `session_negative.py`：`host_factory_tests.rs` 的
-`session_composition_uv_cwd_error_reaches_stream_unwrapped`（worker 子进程删 cwd）经
-`TurnHostFactory::into_live_session` 公开组合入口断言 submit 先接纳、首次轮询返回与
+6 项覆盖：cwd 根目录回退（all-cells，含暖缓存格，两格各自对齐锚点）、syscall/错误
+格式、绝对路径误读 cwd，以及组合传播两项（Session kind 映射、live 前缀原样返回）。
+每项绑定测试全名及该测试捕获的 `#885` 消息，避免另一用例的 panic 误充判杀。
+组合传播负控对应 `host_factory_tests.rs` 的
+`session_composition_uv_cwd_error_reaches_stream_unwrapped`（worker 子进程删 cwd），
+经 `TurnHostFactory::into_live_session` 公开组合入口断言 submit 先接纳、首次轮询返回与
 本 oracle `relative-deleted` 逐字节相同的 uv_cwd 消息、任何生命周期事件之前失败。
-`session_negative.py` 同样先 `--check` 核 2 个唯一锚点（`host_factory.rs` 的 Session
-kind 映射、`live.rs` finish 的原样返回分支），提交后由协调者在 HEAD 守卫下运行；
-正控要求 1 passed 且 1 个 `PDRS_VERIFIED_CHILD` 回执。fix-r2 修正其判杀分类器：父
-panic 文本内嵌 worker 全部输出（`test_process.rs:137`），截断边界只认本模块其他父
-测试 panic、不认被嵌 worker 的 panic 行，worker 专属断言消息因此完整参与判杀（与
-`negative_controls.py` 的既有 worker 排除同型）。
+契约见 `specs/negative-controls/README.md`。

@@ -26,6 +26,13 @@ mutations = {
     'gate-order': (
         path,
         '''                // No connection or execute can start until both durable gates commit.
+                let client = if crate::mutants::on("gates-eager-connect") {
+                    let client = client.await;
+                    let client: HostFuture<HostClient> = Box::pin(async move { client });
+                    client
+                } else {
+                    client
+                };
                 let Ok(messages) = execute_wait.await else {
                     return Ok(ExecuteResult::Aborted { terminal: None });
                 };
@@ -37,7 +44,9 @@ mutations = {
                     _ = cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),
                     client = client => client?,
                 };
-                pending_host.handoff();
+                if let Some(pending) = pending_host.take() {
+                    pending.handoff();
+                }
                 let identity = request.identity.clone();
                 handler
                     .with_pump(
@@ -50,10 +59,17 @@ mutations = {
                 let gated = handler.clone();
                 let mut gated_request = request;
                 let gated_cancellation = cancellation;
-                let gated_pending_host = pending_host;
+                let mut gated_pending_host = pending_host;
                 handler
                     .with_pump(
                         Box::pin(async move {
+                            let client = if crate::mutants::on("gates-eager-connect") {
+                                let client = client.await;
+                                let client: HostFuture<HostClient> = Box::pin(async move { client });
+                                client
+                            } else {
+                                client
+                            };
                             let Ok(messages) = execute_wait.await else {
                                 return Ok(ExecuteResult::Aborted { terminal: None });
                             };
@@ -65,7 +81,9 @@ mutations = {
                                 _ = gated_cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),
                                 client = client => client?,
                             };
-                            gated_pending_host.handoff();
+                            if let Some(pending) = gated_pending_host.take() {
+                                pending.handoff();
+                            }
                             client
                                 .execute_cancellable(gated_request, gated.clone(), gated_cancellation)
                                 .await

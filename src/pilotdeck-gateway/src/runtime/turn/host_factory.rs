@@ -257,7 +257,13 @@ impl TurnHostFactory {
                 let factory = factory.clone();
                 Box::pin(async move { factory.create(&identity, recorder).await })
             })
-            .with_close_timeout(close_timeout);
+            .with_close_timeout(
+                if crate::mutants::on("gates-factory-close-timeout") {
+                    Limits::default().close_timeout
+                } else {
+                    close_timeout
+                },
+            );
         match agent_config {
             Some(config) => session.with_agent_config(config),
             None => session,
@@ -430,7 +436,16 @@ impl TurnHostFactory {
                 Some(Arc::new(
                     storage
                         .create_session(tool_results_dir)
-                        .map_err(|error| HostError::new(HostErrorKind::Session, error.message))?
+                        .map_err(|error| {
+                            HostError::new(
+                                if crate::mutants::on("budget-session-kind") {
+                                    HostErrorKind::Protocol
+                                } else {
+                                    HostErrorKind::Session
+                                },
+                                error.message,
+                            )
+                        })?
                         .context_runtime,
                 ) as Arc<dyn context::ContextRuntime>)
             }

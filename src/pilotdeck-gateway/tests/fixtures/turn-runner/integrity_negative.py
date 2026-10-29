@@ -24,7 +24,7 @@ cases = [
      'wire && *state == IntegrityState::Initial', '*state == IntegrityState::Initial',
      'observe_source', 'runtime::turn::live::tests::host_lifecycle_cannot_justify_a_sidecar_final', 'host status is not loop evidence'),
     ('host-lifecycle-leak', live,
-     '.any(|kind| event_type.equals_str(kind))', '.any(|_| false)',
+     '.iter().any(|kind| {\n            if crate::mutants::on("gates-sidecar-lifecycle-leak") {\n                false\n            } else if crate::mutants::on("tail-host-prompt-rejection") {\n                *kind != "user_prompt_submitted" && event_type.equals_str(kind)\n            } else {\n                event_type.equals_str(kind)\n            }\n        })', '.iter().any(|_| false)',
      'observe_source', 'runtime::turn::live::tests::host_lifecycle_cannot_justify_a_sidecar_final', 'host lifecycle leak must be rejected'),
     ('host-failure-not-loop', live,
      'current == IntegrityState::Failed && *self.wire_events.lock().unwrap() > 0', 'current == IntegrityState::Failed',

@@ -18,14 +18,13 @@ scripts/cargo-slots.sh
 cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib runtime::turn::runner::tail::tests::
 scripts/cargo-slots.sh
 cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib runtime::turn::runner::tail::tests::regenerates_identically -- --exact --ignored
-python3 src/pilotdeck-gateway/tests/fixtures/turn-runner-tail/negative_controls.py --audit
+python3 src/pilotdeck-gateway/tests/fixtures/turn-runner-tail/schemata.py --check
 ```
 
-负控必须在全部源码已提交且等于 HEAD 后运行；不能用副本仓库或改 HEAD 绕过守卫。`--compile <新证据目录> [变异名…]` 逐项验证编译；`<新证据目录> [变异名…]` 运行 baseline / mutant / restored，并由现行 negative_suite 汇总全部结果。未设 CARGO_TARGET_DIR 或 PDRS_BASELINE 时退出。46 项完整负控适合交协调者在宿主运行，不在长会话中后台启动。
+负控（#996 起为编译期开关，旧 `negative_controls.py` 文本替换表已删除）：必须在全部源码已提交且等于 HEAD 后运行；不能用副本仓库或改 HEAD 绕过守卫。46 个开关以 `crate::mutants::on("<名>")` 分支编译进 feature（`pdrs-mutants`）库测试二进制，从仓库根执行 `python3 src/pilotdeck-gateway/tests/fixtures/turn-runner-tail/schemata.py <新证据目录> [开关名 ...]`：先 `cargo test --lib --features pdrs-mutants --no-run` 预编译一次，再逐开关以 `PDRS_MUTANT=<名>` 独立进程运行正控/负控/还原相。执行器共享 `tests/fixtures/_shared/mutant_switch.py`，全程不改工作区源码；未设 CARGO_TARGET_DIR 或 PDRS_BASELINE 时退出。
 
 ```sh
-python3 src/pilotdeck-gateway/tests/fixtures/turn-runner-tail/negative_controls.py --compile _tmp/742-mutants-build
-python3 src/pilotdeck-gateway/tests/fixtures/turn-runner-tail/negative_controls.py _tmp/742-mutants-run
+python3 src/pilotdeck-gateway/tests/fixtures/turn-runner-tail/schemata.py _tmp/996-pr2-tail-mutants-run
 ```
 
-新变异绑定本单断言消息；anchor 过期、编译失败、错误测试失败、源码不等于 HEAD 都是 INVALID，不能算作 KILLED。最终证据见 `_tmp/20261026-issue-742/RESULT.md`，该目录不进提交。
+每个开关绑定本单断言消息；anchor 过期、编译失败、错误测试失败都是 INVALID，不能算作 KILLED。契约见 `specs/negative-controls/README.md`。46 项完整负控适合交协调者在宿主运行，不在长会话中后台启动。

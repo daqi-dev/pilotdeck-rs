@@ -877,6 +877,14 @@ fn oracle_consumers_exist() {
                 .and_then(JsValue::as_string)
             {
                 let name = name.to_utf8().unwrap();
+                // #996: corrupt only the runner_success consumer row, the
+                // same single value the text-replacement control rewrote.
+                let name =
+                    if crate::mutants::on("gates-consumer-exists") && name == "runner_success" {
+                        String::from("runner_nonexistent_consumer")
+                    } else {
+                        name
+                    };
                 assert!(
                     sources.contains(&format!("fn{name}("))
                         || sources.contains(&format!("case!({name},")),

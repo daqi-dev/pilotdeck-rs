@@ -113,7 +113,7 @@ fn fingerprint(path: &Path) -> io::Result<(u64, String)> {
         .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
         .open(path)?;
     let meta = file.metadata()?;
-    if !meta.is_file() {
+    if !meta.is_file() && !crate::mutants::on("tail-nonregular-file") {
         return Err(io::ErrorKind::InvalidInput.into());
     }
     let mut hash = Sha256::new();
@@ -146,13 +146,13 @@ fn hard_internal(relative: &Path) -> bool {
     )
 }
 fn sensitive(name: &str) -> bool {
-    if name == ".env.example" {
+    if name == ".env.example" && !crate::mutants::on("tail-env-example") {
         return false;
     }
     name == ".env"
         || name
             .strip_prefix(".env.")
-            .is_some_and(|suffix| !suffix.is_empty())
+            .is_some_and(|suffix| !suffix.is_empty() || crate::mutants::on("tail-env-dot-boundary"))
         || [
             "credential",
             "credentials",
@@ -210,7 +210,7 @@ impl Collector {
         };
         if relative.as_os_str().is_empty()
             || relative.to_string_lossy().starts_with("..")
-            || hard_internal(relative)
+            || (hard_internal(relative) && !crate::mutants::on("tail-hard-internal"))
         {
             return false;
         }
@@ -219,7 +219,7 @@ impl Collector {
             .unwrap_or_default()
             .to_string_lossy()
             .to_lowercase();
-        if sensitive(&name) {
+        if sensitive(&name) && !crate::mutants::on("tail-sensitive-file") {
             return false;
         }
         let internal = relative
@@ -237,13 +237,15 @@ impl Collector {
             ]
             .iter()
             .any(|p| name.ends_with(p));
-        !internal || self.allowed.iter().any(|allowed| allowed == path)
+        !internal
+            || (!crate::mutants::on("tail-allowed-input")
+                && self.allowed.iter().any(|allowed| allowed == path))
     }
     fn scan(&self) -> Vec<(PathBuf, (u64, String))> {
         let mut out = vec![];
         let mut pending = vec![self.cwd.clone()];
         while let Some(path) = pending.pop() {
-            let stat = if path == self.cwd {
+            let stat = if path == self.cwd && !crate::mutants::on("tail-root-symlink") {
                 fs::metadata(&path)
             } else {
                 fs::symlink_metadata(&path)
@@ -297,7 +299,12 @@ impl Collector {
         }
     }
     fn known_paths(&mut self, value: &JsValue, depth: usize) {
-        if depth > 4 {
+        let bound = if crate::mutants::on("tail-known-depth") {
+            3
+        } else {
+            4
+        };
+        if depth > bound {
             return;
         }
         match value {
@@ -334,9 +341,16 @@ impl Collector {
             .get("error")
             .and_then(|e| e.get("code"))
             .and_then(JsValue::as_string)
-            .is_some_and(|s| NO_MUTATION.iter().any(|v| s.equals_str(v)));
+            .is_some_and(|s| {
+                NO_MUTATION.iter().any(|v| s.equals_str(v))
+                    && !(crate::mutants::on("tail-denied-tool")
+                        && s.equals_str("permission_denied"))
+            });
+        let read_only = READ_ONLY.contains(&name.to_lowercase().as_str())
+            && !(crate::mutants::on("tail-readonly-tool")
+                && name.eq_ignore_ascii_case("read_file"));
         self.mutation |=
-            !READ_ONLY.contains(&name.to_lowercase().as_str()) && (success || !excluded);
+            !crate::mutants::on("tail-tool-observation") && !read_only && (success || !excluded);
         if !success {
             return;
         }
@@ -363,9 +377,21 @@ impl Collector {
         let mut candidates: Vec<_> = self
             .explicit
             .iter()
-            .map(|p| (p.clone(), "tool", None))
+            .map(|p| {
+                (
+                    p.clone(),
+                    if crate::mutants::on("tail-tool-source") {
+                        "workspace_diff"
+                    } else {
+                        "tool"
+                    },
+                    None,
+                )
+            })
             .collect();
-        if self.mutation && !self.overlap.load(Ordering::SeqCst) {
+        if self.mutation
+            && (!self.overlap.load(Ordering::SeqCst) || crate::mutants::on("tail-overlap-diff"))
+        {
             for (path, fp) in self.scan() {
                 if self
                     .baseline
@@ -387,7 +413,7 @@ impl Collector {
                 continue;
             };
             let before = self.baseline.get(&path);
-            if before.is_some_and(|b| b.1 == hash) {
+            if before.is_some_and(|b| b.1 == hash) && !crate::mutants::on("tail-same-file-hash") {
                 continue;
             }
             let relative = path
@@ -395,8 +421,13 @@ impl Collector {
                 .expect("collector contained path")
                 .to_string_lossy()
                 .replace('\\', "/");
-            let id =
-                format!("{:x}", Sha256::digest(format!("{relative}\0{hash}")))[..24].to_owned();
+            let id = format!("{:x}", Sha256::digest(format!("{relative}\0{hash}")))
+                [..if crate::mutants::on("tail-artifact-id") {
+                    23
+                } else {
+                    24
+                }]
+                .to_owned();
             let mut value = object([
                 ("id", id.as_str().into()),
                 (
@@ -410,7 +441,7 @@ impl Collector {
                 ("path", relative.as_str().into()),
                 (
                     "operation",
-                    if before.is_some() {
+                    if before.is_some() && !crate::mutants::on("tail-artifact-operation") {
                         "updated"
                     } else {
                         "created"
@@ -419,7 +450,14 @@ impl Collector {
                 ),
                 ("source", source.into()),
                 ("status", status.into()),
-                ("size", JsValue::Number(size as f64)),
+                (
+                    "size",
+                    JsValue::Number(if crate::mutants::on("tail-artifact-size") {
+                        0.0
+                    } else {
+                        size as f64
+                    }),
+                ),
                 ("sha256", hash.as_str().into()),
             ]);
             let JsValue::Object(fields) = &mut value else {

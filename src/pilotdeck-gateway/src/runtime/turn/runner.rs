@@ -18,8 +18,17 @@ mod prompt;
 #[path = "runner_tail.rs"]
 pub mod tail;
 /// Host-only prefix, shared by emission and sidecar source validation.
-pub const HOST_LIFECYCLE_EVENTS: [&str; 3] =
-    ["turn_started", "input_accepted", "user_prompt_submitted"];
+pub fn host_lifecycle_events() -> [&'static str; 3] {
+    if crate::mutants::on("tail-host-prefix-constant") {
+        [
+            "turn_started",
+            "input_accepted",
+            "mutated_user_prompt_submitted",
+        ]
+    } else {
+        ["turn_started", "input_accepted", "user_prompt_submitted"]
+    }
+}
 pub(crate) use prompt::PromptHooks;
 
 #[derive(Clone)]
@@ -103,7 +112,11 @@ impl TurnRunner {
         mut self,
         events: Option<crate::runtime::project::interaction_events::TurnEvents>,
     ) -> Self {
-        self.interaction_events = events;
+        self.interaction_events = if crate::mutants::on("notices-notify") {
+            None
+        } else {
+            events
+        };
         self
     }
     pub(crate) fn with_session_steer(
@@ -149,7 +162,11 @@ impl TurnRunner {
             self.session.clone(),
             self.turn.clone(),
         );
-        let owner = self.owner.clone();
+        let owner = if crate::mutants::on("gates-release-pending-slot") {
+            None
+        } else {
+            self.owner.clone()
+        };
         tokio::task::spawn_blocking(move || {
             let result = write(&recorder, &session, &turn);
             drop(owner);
@@ -185,10 +202,23 @@ impl TurnRunner {
     }
     pub async fn start(mut self) -> Transition {
         self.require(Phase::New)?;
-        self.io(|r, s, t| r.start_turn(s, t)).await?;
+        if crate::mutants::on("notices-after-durable")
+            && let Some(port) = &self.interaction_events
+        {
+            let _ = port.host_started();
+        }
+        if crate::mutants::on("gates-skip-start") {
+            let _ = self.io(|r, s, t| r.start_turn(s, t)).await;
+        } else {
+            self.io(|r, s, t| r.start_turn(s, t)).await?;
+        }
         self.phase = Phase::Started;
-        let event = self.event(HOST_LIFECYCLE_EVENTS[0], []);
-        let mut events = vec![event];
+        let event = self.event(host_lifecycle_events()[0], []);
+        let mut events = if crate::mutants::on("notices-start-order") {
+            Vec::new()
+        } else {
+            vec![event]
+        };
         if let Some(port) = &self.interaction_events {
             events.extend(
                 port.host_started()
@@ -208,8 +238,13 @@ impl TurnRunner {
         let written = durable.clone();
         if let Err(error) = self
             .io(move |r, s, t| {
-                Ok(r.writer()
-                    .record_accepted_input(s, t, written, input.metadata)?)
+                if crate::mutants::on("gates-skip-accept") {
+                    let _ = (r, s, t, written, input.metadata);
+                    Ok(())
+                } else {
+                    Ok(r.writer()
+                        .record_accepted_input(s, t, written, input.metadata)?)
+                }
             })
             .await
         {
@@ -245,7 +280,7 @@ impl TurnRunner {
         self.messages.extend(durable);
         self.phase = Phase::Accepted;
         let event = self.event(
-            HOST_LIFECYCLE_EVENTS[1],
+            host_lifecycle_events()[1],
             [("messages", JsValue::Array(accepted))],
         );
         Ok((self, vec![event]))
@@ -391,7 +426,17 @@ impl TurnRunner {
         self.close_session_steer().await?;
         self.finish_artifacts(&result).await;
         let written = result.clone();
-        if let Err(error) = self.io(move |r, s, t| r.complete_turn(s, t, written)).await {
+        if let Err(error) = self
+            .io(move |r, s, t| {
+                if crate::mutants::on("gates-skip-complete") {
+                    drop(written);
+                    Ok(())
+                } else {
+                    r.complete_turn(s, t, written)
+                }
+            })
+            .await
+        {
             return self
                 .fail(object([
                     ("code", "agent_invalid_state".into()),
@@ -443,8 +488,15 @@ impl TurnRunner {
             self.finish_artifacts(&result).await;
         }
         let written = result.clone();
-        self.io(move |r, s, t| r.complete_turn(s, t, written))
-            .await?;
+        self.io(move |r, s, t| {
+            if crate::mutants::on("gates-skip-failure-complete") {
+                drop(written);
+                Ok(())
+            } else {
+                r.complete_turn(s, t, written)
+            }
+        })
+        .await?;
         if let JsValue::Object(fields) = &mut result {
             fields.insert("errors".into(), JsValue::Array(vec![error.clone()]));
         }
