@@ -91,6 +91,16 @@ class LockReleaseControls(unittest.TestCase):
         self.registered_at_cleanup = None
         self.run_number = 0
 
+    def _owner(self):
+        """Read the retained lease record without an un-messaged failure point."""
+        path = self.lock / 'owner.json'
+        self.assertTrue(path.is_file(),
+                        '#209 a retained lease must publish owner.json')
+        try:
+            return json.loads(path.read_text())
+        except ValueError as error:
+            self.fail(f'#209 retained lease owner.json must be valid JSON: {error}')
+
     def _run(self, probe, *, wait_states=('EXITED',), child=None,
              kill_leader=None, acquire_lock=False):
         """Drive the real run_fixture cleanup gate with a fake child."""
@@ -154,7 +164,7 @@ class LockReleaseControls(unittest.TestCase):
                          '#209 the group finding must stay visible')
         self.assertTrue(self.lock.exists(),
                         '#209 unverified cleanup must retain the shared lock')
-        owner = json.loads((self.lock / 'owner.json').read_text())
+        owner = self._owner()
         self.assertEqual(owner.get('cleanupPending'), [self.PID],
                          '#209 retained groups must be explicit in owner.json')
 
@@ -168,7 +178,7 @@ class LockReleaseControls(unittest.TestCase):
                                msg='#209 cleanupPending lock must be refused'):
             with C.parity_lock(timeout=0.3, lock=self.lock):
                 pass
-        self.assertEqual(json.loads((self.lock / 'owner.json').read_text()), retained,
+        self.assertEqual(self._owner(), retained,
                          '#209 refused acquisition must preserve the owner record')
 
     def test_probe_oserror_retains_lock(self):
@@ -201,12 +211,18 @@ class LockReleaseControls(unittest.TestCase):
                           acquire_lock=True)
         self.assertIn('leader kill refused', audit.get('cleanupBlocked') or '',
                       '#209 a refused leader kill must be recorded')
-        self.assertEqual(audit.get('processTreeCleanup'), S.CLEANUP_NOT_VERIFIED,
-                         '#209 a cleanup error must deny verification')
+        # Frozen-scoring regression (#209 E1 P0-1): main keeps the probe's
+        # VERIFIED value; only the lock-lifecycle fields may say "not stopped".
+        self.assertEqual(audit.get('processTreeCleanup'), S.CLEANUP_VERIFIED,
+                         '#209 P0-1 a verified probe must keep main scoring (no downgrade)')
+        self.assertIs(audit.get('allStopped'), False,
+                      '#209 a cleanup error must deny allStopped')
         self.assertIn(self.PID, C.LIVE_GROUPS,
                       '#209 a cleanup error must keep the owned group registered')
         self.assertTrue(self.lock.exists(),
                         '#209 a cleanup error must retain the shared lock')
+        self.assertEqual(self._owner().get('cleanupPending'), [self.PID],
+                         '#209 a cleanup error must publish cleanupPending')
 
     def test_spawn_defers_signals(self):
         self._run({'status': S.CLEANUP_VERIFIED, 'pgid': self.PID})
@@ -248,6 +264,90 @@ class LockReleaseControls(unittest.TestCase):
         with self.assertRaises(FileExistsError,
                                msg='#209 output directory reuse must be refused'):
             folder.mkdir(parents=False, exist_ok=False)
+
+
+class RunnerInvalidationControls(unittest.TestCase):
+    """The delivered mutation runner must never keep a stale green summary."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='pdrs-e1-runner-')
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        self.source = self.root / 'mutant_source.py'
+        self.source.write_text('x = 0\n')
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import negative_controls
+        self.runner = negative_controls
+
+    def _drive(self, *, guard_error=None):
+        """Run the real ``main`` with only the guard and subprocess mocked."""
+        out = self.root / 'out'
+        source = self.source
+        values = {
+            1: subprocess.CompletedProcess([], 0, '', 'Ran 1 test\n'),
+            2: subprocess.CompletedProcess(
+                [], 1, '', 'FAIL: test_one\n#209 exclusive message\n'),
+            3: subprocess.CompletedProcess([], 0, '', 'Ran 1 test\n'),
+        }
+        calls = []
+        captured = {}
+
+        def run_owned(command, **kwargs):
+            calls.append(command)
+            return values[len(calls)]
+
+        class Guard:
+            def __enter__(self):
+                return {source: b'x = 0\n'}
+
+            def __exit__(self, *exc):
+                if guard_error is not None:
+                    raise guard_error
+                return False
+
+        def mutating(root, paths, **kwargs):
+            captured['paths'] = list(paths)
+            return Guard()
+
+        with patch.multiple(self.runner,
+                            MUTATIONS=[('one', source, 'x = 0', 'x = 1')],
+                            CHECKS={'one': ('Controls.test_one',
+                                            '#209 exclusive message')},
+                            mutating_sources=mutating,
+                            run_owned=run_owned), \
+                patch.object(sys, 'argv',
+                             [str(Path(self.runner.__file__)), '--output',
+                              str(out), '--only', 'one']):
+            code = self.runner.main()
+        summary = json.loads((out / 'summary.json').read_text())
+        return code, summary, captured.get('paths')
+
+    def test_final_guard_failure_rewrites_summary(self):
+        """P0-2: a guard/restoration failure after the last row must void it."""
+        code, summary, _ = self._drive(guard_error=RuntimeError('restore failed'))
+        self.assertEqual(code, 2, '#209 P0-2 guard failure must exit 2')
+        self.assertEqual(summary['counts'],
+                         {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                         '#209 P0-2 the on-disk summary must not keep KILLED')
+        self.assertTrue(all(row['status'] == 'INVALID'
+                            for row in summary['controls']),
+                        '#209 P0-2 every recorded row must be invalidated')
+        self.assertIn('source guard', summary['controls'][0]['reason'],
+                      '#209 P0-2 invalidation reason must be recorded')
+
+    def test_runner_guards_session_and_common_without_outer_lease(self):
+        """P1: one lease from mutating_sources and both protected sources."""
+        code, summary, paths = self._drive()
+        self.assertEqual(code, 0, '#209 P1 the sample runner must finish green')
+        self.assertEqual(summary['counts'],
+                         {'KILLED': 1, 'SURVIVED': 0, 'INVALID': 0},
+                         '#209 P1 the sample mutant must be killed')
+        self.assertIn(self.runner.SESSION, paths,
+                      '#209 P1 session_domain.py must be protected')
+        self.assertIn(self.runner.COMMON, paths,
+                      '#209 P1 common.py must be protected with session_domain.py')
+        self.assertFalse(hasattr(self.runner, 'parity_lease'),
+                         '#209 P1 no second outer lease may wrap mutating_sources')
 
 
 if __name__ == '__main__':

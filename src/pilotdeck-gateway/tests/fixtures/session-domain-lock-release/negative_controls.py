@@ -13,29 +13,18 @@ the exclusive marker its FAIL block must carry.  Every mutant is compiled
 before its bound positive runs.  All selected rows run to completion; any
 non-KILLED row is a nonzero exit.  A stale anchor or a failed compile is
 INVALID and keeps going.  If the outer source guard or restoration fails, every
-already-recorded row is invalidated (the #979 shared semantics) instead of
-publishing a false green summary.
+already-recorded row is invalidated and the on-disk summary is rewritten
+unconditionally (the #979/#1037 shared semantics) instead of publishing a false
+green summary.
 """
 import argparse
-from contextlib import contextmanager
-import fcntl
 import json
-import os
 from pathlib import Path
-import shutil
-import subprocess
 import sys
-import tempfile
-import time
-import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, new_output_directory, run_owned
-
-try:  # #979 moves this into the shared suite; use it once it is present.
-    from negative_suite import invalidate_completed as _shared_invalidate_completed
-except ImportError:
-    _shared_invalidate_completed = None
+from negative_suite import invalidate_completed
 
 ROOT = Path(__file__).resolve().parents[5]
 SESSION = ROOT / 'scripts/gateway-parity/session_domain.py'
@@ -88,12 +77,23 @@ MUTATIONS = [
      "        audit['processTreeCleanup'] = CLEANUP_VERIFIED"),
     # A cleanup error (refused leader kill) is ignored by the release gate.
     ('e1-cleanup-blocked-ignored', SESSION,
-     "                                and not audit.get('cleanupBlocked'))",
-     "                                and True)"),
+     "                                and not audit.get('cleanupBlocked')\n"
+     "                                and not audit.get('cleanupRaised'))",
+     "                                and not audit.get('cleanupRaised'))"),
     # A retained cleanupPending lease is taken over as a dead/expired lock.
     ('e1-takeover-ignores-pending', COMMON,
      "                    if reason and not damaged and not (previous and previous.get('cleanupPending')):",
      "                    if reason and not damaged:"),
+    # The P0-1 regression: a verified probe is downgraded to NOT_VERIFIED
+    # whenever the leader was not reaped or a cleanup error was recorded.
+    ('e1-scoring-downgrade-restored', SESSION,
+     "                    audit['allStopped'] = verified\n"
+     "                    if verified:",
+     "                    if (audit.get('processTreeCleanup') == CLEANUP_VERIFIED\n"
+     "                            and not verified):\n"
+     "                        audit['processTreeCleanup'] = CLEANUP_NOT_VERIFIED\n"
+     "                    audit['allStopped'] = verified\n"
+     "                    if verified:"),
 ]
 
 CHECKS = {
@@ -117,63 +117,14 @@ CHECKS = {
         '#209 a leader that was not reaped must not be verified'),
     'e1-cleanup-blocked-ignored': (
         'LockReleaseControls.test_leader_kill_refusal_retains_lock',
-        '#209 a cleanup error must deny verification'),
+        '#209 a cleanup error must deny allStopped'),
     'e1-takeover-ignores-pending': (
         'LockReleaseControls.test_takeover_pending_refused',
         '#209 cleanupPending lock must be refused'),
+    'e1-scoring-downgrade-restored': (
+        'LockReleaseControls.test_leader_kill_refusal_retains_lock',
+        '#209 P0-1 a verified probe must keep main scoring (no downgrade)'),
 }
-
-LOCK = Path('/tmp/pdrs-parity.lock')
-
-
-def _owner(lock):
-    try:
-        return json.loads((lock / 'owner.json').read_text())
-    except (OSError, ValueError, TypeError, KeyError):
-        return None
-
-
-def _publish(path, value):
-    temporary = path.with_name(path.name + f'.tmp.{os.getpid()}')
-    temporary.write_text(json.dumps(value) + '\n')
-    temporary.replace(path)
-
-
-@contextmanager
-def parity_lease(lock=LOCK, timeout=60):
-    """Hold the family directory lease while mutating frozen apparatus.
-
-    The control runner is not product code, so this is a small, fail-closed
-    acquisition of the same /tmp/pdrs-parity.lock + .guard protocol.  It never
-    steals a held lease; a busy lock is INVALID, not a mutation window.
-    """
-    mine = {'pid': os.getpid(), 'timestamp': time.time(), 'token': uuid.uuid4().hex,
-            'cleanupPending': True}
-    guard = lock.with_name(lock.name + '.guard')
-    deadline = time.monotonic() + timeout
-    with guard.open('a') as handle:
-        while True:
-            try:
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(f'#209 parity lock guard busy: {lock}')
-                time.sleep(.1)
-        try:
-            if lock.exists():
-                raise TimeoutError(f'#209 parity lock held: {lock}')
-            lock.mkdir()
-            try:
-                _publish(lock / 'owner.json', mine)
-            except BaseException:
-                shutil.rmtree(lock)
-                raise
-            yield
-        finally:
-            if lock.exists() and _owner(lock) == mine:
-                shutil.rmtree(lock)
-            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def require_single_anchor(original, old, name):
@@ -196,27 +147,18 @@ def compile_mutant(name, path, mutant):
     return 'Python compile: PASS\n'
 
 
+def write_summary(out, results):
+    """Publish the current rows; the only summary writer in this runner."""
+    counts = {state: sum(row['status'] == state for row in results)
+              for state in ('KILLED', 'SURVIVED', 'INVALID')}
+    (out / 'summary.json').write_text(json.dumps(
+        {'controls': results, 'counts': counts}, indent=2) + '\n')
+
+
 def record(out, results, name, status, reason):
     results.append({'mutation': name, 'status': status, 'reason': reason})
     print(f'{name}: {status}: {reason}', flush=True)
-    (out / 'summary.json').write_text(json.dumps(
-        {'controls': results, 'counts': {
-            state: sum(row['status'] == state for row in results)
-            for state in ('KILLED', 'SURVIVED', 'INVALID')}}, indent=2) + '\n')
-
-
-def invalidate_completed(results, reason):
-    """A failed source guard invalidates every row already recorded.
-
-    Uses the shared #979 helper when this tree has it; otherwise the identical
-    local semantics: the guard restores and verifies every mutated file on exit.
-    If it raises there, a previously recorded KILLED row is no longer
-    trustworthy and must not survive in the summary.
-    """
-    if _shared_invalidate_completed is not None:
-        return _shared_invalidate_completed(results, reason)
-    for row in results:
-        row.update(status='INVALID', reason=row['reason'] + '; ' + reason)
+    write_summary(out, results)
 
 
 def check_anchors(selected):
@@ -235,6 +177,10 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--only', action='append')
     parser.add_argument('--check-anchors', action='store_true')
+    parser.add_argument('--baseline', default='HEAD',
+                        help='tree-ish the guarded sources must equal; HEAD for '
+                             'the delivered post-commit run (a dirty rehearsal may '
+                             'pass git stash create)')
     args = parser.parse_args()
     known = {row[0] for row in MUTATIONS}
     if args.only and (set(args.only) - known or len(args.only) != len(set(args.only))):
@@ -249,10 +195,14 @@ def main():
     out = new_output_directory(args.output)
     results = []
     try:
-        paths = list(dict.fromkeys([*(row[1] for row in selected)]))
-        # #209 negative controls mutate frozen apparatus: hold the same
-        # /tmp/pdrs-parity.lock the real runs use, loaded from HEAD bytes.
-        with parity_lease(), mutating_sources(ROOT, paths) as originals:
+        # One lease only: mutating_sources acquires the real
+        # /tmp/pdrs-parity.lock through common.parity_lock.  A second outer
+        # lease would make this non-reentrant guard wait on itself (#209 P1).
+        # The protected set always carries common.py: _parity_mutation_lock
+        # refuses a gateway-parity path without it, including an SESSION-only
+        # --only selection.
+        paths = [SESSION, COMMON]
+        with mutating_sources(ROOT, paths, baseline=args.baseline) as originals:
             for name, source, old, new in selected:
                 status, reason = 'INVALID', 'not executed'
                 test, message = CHECKS[name]
@@ -288,9 +238,14 @@ def main():
                 record(out, results, name, status, reason)
     except Exception as error:
         reason = f'source guard: {type(error).__name__}: {error}'
+        # #979/#1037: a guard/restoration failure voids every already-recorded
+        # row in memory, then the summary on disk is rewritten unconditionally.
+        # Without the rewrite the last record() kept an all-KILLED file (#209
+        # P0-2), because selected[len(results):] is empty in this path.
         invalidate_completed(results, reason)
         for name, *_ in selected[len(results):]:
             record(out, results, name, 'INVALID', reason)
+        write_summary(out, results)
         return 2
     counts = {state: sum(row['status'] == state for row in results)
               for state in ('KILLED', 'SURVIVED', 'INVALID')}
