@@ -221,6 +221,7 @@ def main():
                root / 'src/pilotdeck-cli/Cargo.toml', root / 'src/Cargo.lock', Path(__file__).resolve(),
                root / 'src/pilotdeck-cli/tests/sdk_sessions_list_exit.rs',
                oracle, root / 'src/pilotdeck-cli/tests/fixtures/sdk-sessions-list/generate.mjs',
+               root / 'src/pilotdeck-cli/tests/fixtures/sdk-sessions-list/source.json',
                limits_oracle, root / 'src/pilotdeck-cli/tests/fixtures/sdk-transport-limits/generate.mjs',
                Path(__file__).resolve().parents[1] / 'negative_process.py',
                Path(__file__).resolve().parents[1] / 'negative_suite.py']
