@@ -5,11 +5,14 @@ Each selected original test passes, the mutated test must fail its bound behavio
 assertion or explicit impossible-branch guard (not compilation), then the same test passes after guarded restore.
 No other writers/cargo are allowed in this worktree during this script.
 """
+import argparse
+import json
+import os
 import re
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from _shared.negative_control import mutation_suite
+from _shared.negative_control import CargoTests, mutation_suite
 from negative_panic import panic_evidence, named_test_failed
 
 root = Path(__file__).resolve().parents[5]
@@ -225,14 +228,51 @@ def classify(name, result, test):
     return 'INVALID', 'missing bound oracle/typed assertion failure'
 
 
+def baseline_only(rows, output):
+    """Check candidate tests without mutation or a claim of negative coverage.
+
+    This replaces the old arbitrary PDRS_NEGATIVE_BASELINE Git-tree override.
+    Candidate bytes may be uncommitted because this path never mutates them;
+    the formal negative path below still requires HEAD through mutation_suite.
+    """
+    if not os.environ.get('CARGO_TARGET_DIR'):
+        raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
+    output = Path(output).resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    env = dict(os.environ, CARGO_TARGET_DIR=str(Path(os.environ['CARGO_TARGET_DIR']).resolve()))
+    runner = CargoTests(root / 'src', output, env)
+    records = []
+    for name, _path, _old, _new, tests in rows:
+        for index, test in enumerate(tests):
+            row = dict(name=name, test=test, status='BASELINE_ERROR', reason='not run')
+            try:
+                result = runner.run(f'{name}-{index}-baseline', *selection(test), positive=True)
+                row.update(status='BASELINE_PASS' if passed(result, test) else 'BASELINE_FAIL',
+                           reason='selected candidate test must pass with exact cardinality')
+            except Exception as error:
+                row['reason'] = f'{type(error).__name__}: {error}'
+            records.append(row)
+            print(f'{name}/{test}: {row["status"]}: {row["reason"]}', flush=True)
+    with (output / 'summary.json').open('x') as stream:
+        stream.write(json.dumps({'mode': 'baseline-only', 'mutationValidation': False,
+                                 'selections': records}, indent=2) + '\n')
+    return int(not records or any(row['status'] != 'BASELINE_PASS' for row in records))
+
+
 def main():
-    if len(sys.argv) < 2:
-        raise SystemExit('usage: negative_controls.py NEW_OUTPUT_DIR [mutation ...]')
-    requested = sys.argv[2:]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--baseline-only', action='store_true',
+                        help='check candidate positive tests only; never mutates or certifies controls')
+    parser.add_argument('output', metavar='NEW_OUTPUT_DIR')
+    parser.add_argument('mutations', nargs='*')
+    args = parser.parse_args()
+    requested = args.mutations
     selected = [row for row in cases if not requested or row[0] in requested]
     if requested and (len(selected) != len(requested) or len(set(requested)) != len(requested)):
         raise SystemExit('unknown/duplicate control')
-    return mutation_suite('network-timing', selected, sys.argv[1], selection, passed, classify,
+    if args.baseline_only:
+        return baseline_only(selected, args.output)
+    return mutation_suite('network-timing', selected, args.output, selection, passed, classify,
                           guarded=[root / 'src/pilotdeck-gateway/tests/network_timing.rs',
                                    root / 'src/pilotdeck-gateway/tests/web_tools.rs',
                                    root / 'src/pilotdeck-gateway/tests/common/network_timing_background.rs',

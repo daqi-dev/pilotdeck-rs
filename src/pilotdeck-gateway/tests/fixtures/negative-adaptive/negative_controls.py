@@ -6,12 +6,14 @@ unittest runs. Every control restores, reruns, and contributes to the summary.
 """
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
-import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import _head_bytes, SourceBaselineError
 
 root = Path(__file__).resolve().parents[5]
 fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
@@ -49,6 +51,98 @@ cases = [
 ]
 
 
+@contextmanager
+def verified_inputs():
+    """Hold the normal tree/product guard without scheduling real file writes.
+
+    mutating_sources always restores its listed paths, even if they never
+    changed. An empty write set avoids that truncate/write window on SIGKILL.
+    The copied inputs still receive the SAME byte-for-byte HEAD check, under
+    the SAME tree lock; neither an alternate baseline nor a Git copy is used.
+    """
+    with mutating_sources(root, []):
+        contents = {}
+        for path in (shared, process, tests):
+            relative = path.relative_to(root).as_posix()
+            data = _head_bytes(root, relative, 'HEAD')
+            if not path.is_file() or path.read_bytes() != data:
+                raise SourceBaselineError(root, relative, 'differs from HEAD')
+            contents[path] = data
+        yield contents
+        for path, data in contents.items():
+            relative = path.relative_to(root).as_posix()
+            if path.read_bytes() != data or _head_bytes(root, relative, 'HEAD') != data:
+                raise SourceBaselineError(root, relative, 'changed during isolated controls')
+
+
+@contextmanager
+def isolated_inputs(base, contents, out):
+    """Copy verified Python inputs only; never create Git/build state.
+
+    Keeping the repository-relative layout also makes __file__-based imports
+    select the copied shared modules. SIGKILL may leave this disposable copy,
+    but cannot leave a mutant in the caller's checkout.
+    """
+    with tempfile.TemporaryDirectory(prefix='pdrs994-meta-', dir=out) as name:
+        directory = Path(name)
+        for path, data in contents.items():
+            copied = directory / path.relative_to(base)
+            copied.parent.mkdir(parents=True, exist_ok=True)
+            copied.write_bytes(data)
+        yield directory
+
+
+def run_case(case, directory, out, original):
+    name, path, before, after, test, marker = case
+    copied = directory / path.relative_to(root)
+    command = [sys.executable, '-B', str(directory / tests.relative_to(root)), test]
+    row = dict(name=name, status='INVALID', reason='not run', compiled=False, restoredPass=False)
+
+    def run(label, command):
+        # Fresh bytecode namespace also keeps py_compile output off the real
+        # tree. -B prevents stale same-second imports of equal-sized mutants.
+        env = dict(os.environ, PYTHONPYCACHEPREFIX=str(out / (label + '-cache')))
+        result = run_owned(command, cwd=directory, env=env, timeout=30)
+        (out / (label + '.log')).write_text(result.stdout + result.stderr)
+        return result
+
+    try:
+        text = original.decode()
+        if text.count(before) != 1:
+            raise ValueError(f'stale anchor: {name}')
+        result = run(name + '-positive', command)
+        if result.returncode != 0:
+            raise RuntimeError('bound positive unittest did not pass')
+        copied.write_text(text.replace(before, after, 1))
+        compiled = run(name + '-compile', [sys.executable, '-m', 'py_compile', str(copied)])
+        if compiled.returncode != 0:
+            raise RuntimeError('Python mutant does not compile; never a kill')
+        row['compiled'] = True
+        result = run(name + '-negative', command)
+        log = result.stdout + result.stderr
+        failed = f'FAIL: {test.split(".")[-1]} ('
+        block = log.partition(failed)[2].split('\n====')[0]
+        if result.returncode and block and marker in block:
+            row.update(status='KILLED', reason='bound #994 unittest assertion failed')
+        elif result.returncode == 0:
+            row.update(status='SURVIVED', reason='bound unittest still passed')
+        else:
+            row.update(reason='unrelated error or missing named assertion')
+    except Exception as error:
+        row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+    finally:
+        # A failed/no-op restoration must never leave a KILLED record behind.
+        # Only the disposable path is written, including on exceptional exit.
+        copied.write_bytes(original)
+    if copied.read_bytes() != original:
+        row.update(status='INVALID', reason=row['reason'] + '; scratch restoration failed')
+    else:
+        row['restoredPass'] = run(name + '-restored', command).returncode == 0
+        if not row['restoredPass']:
+            row.update(status='INVALID', reason=row['reason'] + '; restored unittest failed')
+    return row
+
+
 def main():
     if not os.environ.get('CARGO_TARGET_DIR'):
         raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
@@ -57,52 +151,18 @@ def main():
     out = Path(sys.argv[1]).resolve()
     out.mkdir(parents=True, exist_ok=False)
     records = []
-
-    def run(label, command):
-        # Fresh bytecode namespace prevents same-second, same-size Python
-        # mutants from accidentally importing their predecessor's .pyc.
-        env = dict(os.environ, PYTHONPYCACHEPREFIX=str(out / (label + '-cache')))
-        result = run_owned(command, cwd=root, env=env, timeout=30)
-        (out / (label + '.log')).write_text(result.stdout + result.stderr)
-        return result
-
     # wait_for_slot is intentionally unused: this suite launches only Python.
-    for name, path, before, after, test, marker in cases:
-        command = [sys.executable, str(tests), test]
+    for case in cases:
+        name, path, before, after, test, marker = case
         row = dict(name=name, status='INVALID', reason='not run', compiled=False, restoredPass=False)
         try:
-            with mutating_sources(root, [path, tests]) as originals:
-                original = originals[path].decode()
-                try:
-                    if original.count(before) != 1:
-                        raise ValueError(f'stale anchor: {name}')
-                    result = run(name + '-positive', command)
-                    if result.returncode != 0:
-                        raise RuntimeError('bound positive unittest did not pass')
-                    path.write_text(original.replace(before, after, 1))
-                    compiled = run(name + '-compile', [sys.executable, '-m', 'py_compile', str(path)])
-                    if compiled.returncode != 0:
-                        raise RuntimeError('Python mutant does not compile; never a kill')
-                    row['compiled'] = True
-                    result = run(name + '-negative', command)
-                    log = result.stdout + result.stderr
-                    failed = f'FAIL: {test.split(".")[-1]} ('
-                    block = log.partition(failed)[2].split('\n====')[0]
-                    if result.returncode and block and marker in block:
-                        row.update(status='KILLED', reason='bound #994 unittest assertion failed')
-                    elif result.returncode == 0:
-                        row.update(status='SURVIVED', reason='bound unittest still passed')
-                    else:
-                        row.update(reason='unrelated error or missing named assertion')
-                except Exception as error:
-                    row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
-                finally:
-                    path.write_bytes(originals[path])
-                row['restoredPass'] = run(name + '-restored', command).returncode == 0
-                if not row['restoredPass']:
-                    row.update(status='INVALID', reason=row['reason'] + '; restored unittest failed')
+            # Verify BOTH executors before importing either into a child.
+            # The real tree is locked, but all mutation writes target copies.
+            with verified_inputs() as contents:
+                with isolated_inputs(root, contents, out) as directory:
+                    row = run_case(case, directory, out, contents[path])
         except Exception as error:
-            row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+            row.update(status='INVALID', reason=f'{type(error).__name__}: {error}', restoredPass=False)
         records.append(row)
         print(f'{name}: {row["status"]}: {row["reason"]}', flush=True)
     counts = {state: sum(row['status'] == state for row in records)
