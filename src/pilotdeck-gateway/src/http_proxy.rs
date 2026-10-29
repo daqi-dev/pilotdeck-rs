@@ -161,7 +161,7 @@ struct ReadState {
 type SharedReadState = Arc<Mutex<ReadState>>;
 
 #[derive(Debug)]
-struct ReadLease(SharedReadState);
+pub(crate) struct ReadLease(SharedReadState);
 impl Drop for ReadLease {
     fn drop(&mut self) {
         let waker = {
@@ -211,7 +211,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for UpgradeReadGate<S> {
     }
 }
 
-fn is_upgrade(request: &Request<Incoming>) -> bool {
+pub(crate) fn is_upgrade(request: &Request<Incoming>) -> bool {
     request.headers().contains_key(header::UPGRADE)
         && request
             .headers()
@@ -222,7 +222,10 @@ fn is_upgrade(request: &Request<Incoming>) -> bool {
             .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
 }
 
-async fn serve_connection_with<S, F, Fut>(stream: S, handler: F) -> Result<(), hyper::Error>
+pub(crate) async fn serve_connection_with<S, F, Fut>(
+    stream: S,
+    handler: F,
+) -> Result<(), hyper::Error>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
@@ -261,6 +264,13 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     U: AsyncRead + AsyncWrite + Unpin,
 {
+    pairing::run(upgraded_stream::<S>(downstream)?, upstream).await
+}
+
+pub(crate) fn upgraded_stream<S>(downstream: hyper::upgrade::Upgraded) -> std::io::Result<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let parts = downstream
         .downcast::<TokioIo<UpgradeReadGate<S>>>()
         .map_err(|_| std::io::Error::other("unexpected downstream upgrade IO type"))?;
@@ -269,7 +279,7 @@ where
     // with the HTTP headers, never a later read while waiting for upstream.
     // Upstream response read-ahead remains intact because it is TS output.
     drop(parts.read_buf);
-    pairing::run(parts.io.into_inner().stream, upstream).await
+    Ok(parts.io.into_inner().stream)
 }
 
 pub(crate) fn strip_hop_headers(headers: &mut hyper::HeaderMap) {

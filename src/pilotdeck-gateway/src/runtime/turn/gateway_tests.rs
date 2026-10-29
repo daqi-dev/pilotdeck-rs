@@ -1244,3 +1244,91 @@ async fn replay_abort_fences(only: Option<&str>) {
         "#813 abort fence filter: must match at least one scenario"
     );
 }
+
+/// #749 transport-only fixture reuses the serial host/session apparatus.
+pub(crate) fn native_ws_fixture(requests: Arc<dyn GatewayRequests>) -> TurnGateway {
+    native_ws_fixture_with_cleanup(requests, async { Ok(()) })
+}
+pub(crate) fn native_ws_fixture_with_cleanup(
+    requests: Arc<dyn GatewayRequests>,
+    cleanup: impl std::future::Future<Output = Result<(), String>> + Send + 'static,
+) -> TurnGateway {
+    native_ws_fixture_with_disposal(requests, cleanup, false)
+}
+struct NativeFixtureSession(Arc<Session>, bool);
+impl LiveSession for NativeFixtureSession {
+    fn snapshot(&self) -> JsValue {
+        self.0.snapshot()
+    }
+    fn abort(&self, reason: &JsString) -> RuntimeResult {
+        self.0.abort(reason)
+    }
+    fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        self.0.submit(input, options)
+    }
+    fn dispose(&self) -> DisposeFuture<'_> {
+        if self.1 {
+            Box::pin(async { Err(RuntimeError::new("#749 injected session disposal failure")) })
+        } else {
+            self.0.dispose()
+        }
+    }
+}
+struct NativeFixtureFactory(Arc<Session>, bool);
+impl SessionFactory for NativeFixtureFactory {
+    fn create(
+        &self,
+        _: SessionContext,
+        _: Option<LiveSessionHandle>,
+    ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+        let session = NativeFixtureSession(self.0.clone(), self.1);
+        Box::pin(async move { Ok(LiveSessionHandle::new(Arc::new(session), None)) })
+    }
+}
+pub(crate) fn native_ws_fixture_with_disposal(
+    requests: Arc<dyn GatewayRequests>,
+    cleanup: impl std::future::Future<Output = Result<(), String>> + Send + 'static,
+    fail_disposal: bool,
+) -> TurnGateway {
+    TurnGateway::start_with_cleanup(
+        TurnReplayOptions::new(),
+        move |coordinator| {
+            let session = Arc::new(Session {
+                thread: std::thread::current().id(),
+                native: vec![
+                    parse_json(r#"{"type":"turn_started","sessionId":"s","turnId":"r"}"#)
+                        .expect("#749 fixture native event"),
+                ],
+                coordinator: coordinator.clone(),
+                accepted: Gate::new(),
+                terminal: Gate::new(),
+                end: Gate::new(),
+                aborts: AtomicUsize::new(0),
+            });
+            let mut options =
+                SessionOwnerOptions::new(Arc::new(NativeFixtureFactory(session, fail_disposal)));
+            options.idle_sweep_interval_ms = 0;
+            let interactions = Arc::new(GatewayInteractionCoordinator::default());
+            Ok(GatewayServices {
+                submitter: Arc::new(TurnSubmitter {
+                    owner: SessionOwner::new(options),
+                    coordinator,
+                    registry: None,
+                    projector: Arc::new(
+                        GatewayAgentEventProjector::new(Default::default())
+                            .expect("#749 fixture projector"),
+                    ),
+                    host: Arc::new(Host {
+                        interactions: interactions.clone(),
+                        finally_failure: false,
+                    }),
+                    workspace_admissions: WorkspaceAdmissions::default(),
+                }),
+                interactions,
+                requests,
+            })
+        },
+        cleanup,
+    )
+    .expect("#749 fixture serial host")
+}

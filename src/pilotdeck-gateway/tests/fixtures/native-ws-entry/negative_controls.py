@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""#749 compile-time switches. HEAD guard is mandatory, including --compile-only.
+
+No source replacement. Caller supplies CARGO_TARGET_DIR; every row is compiled
+before it runs, and every selection is accounted for even after a failed row.
+"""
+import argparse
+import json
+import os
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[5]
+FIXTURE = Path(__file__).resolve().parent
+sys.path.insert(0, str(FIXTURE.parent))
+from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import ReceiptRun, judge, passed
+from _shared.mutant_switch import preflight
+SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_ws.rs'
+PREFIX = 'native_ws::tests::'
+switches = [
+    ('native-ws-drop-text', SOURCE, PREFIX + 'handshake_and_auth', '#749 text delivered'),
+    ('native-ws-after-close', SOURCE, PREFIX + 'close_discards_following_frames', '#749 close discards following requests'),
+    ('native-ws-drop-closed-read', SOURCE, PREFIX + 'close_tail_resumes_on_next_data', '#749 next data resumes buffered tail'),
+    ('native-ws-drop-application-tail', SOURCE, PREFIX + 'application_close_preserves_same_batch_callbacks', '#749 application close same batch matches TS'),
+    ('native-ws-skip-disconnect', SOURCE, PREFIX + 'pending_request_and_disconnect', '#749 disconnect drains pending submit'),
+    ('native-ws-writer-blocks-read', SOURCE, PREFIX + 'read_continues_under_writer_backpressure', '#749 read under write backlog'),
+    ('native-ws-cancel-leak', SOURCE, PREFIX + 'cancelled_server_stops_retained_host', '#749 cancelled server signals retained host'),
+    ('native-ws-unbounded-cancel', SOURCE, PREFIX + 'cancelled_last_host_keeps_deadline', '#749 last host retains explicit deadline'),
+    ('native-ws-bind-policy', SOURCE, PREFIX + 'native_configuration', '#749 native configuration refuses implicit authority'),
+    ('native-ws-token-policy', SOURCE, PREFIX + 'native_configuration', '#749 native configuration refuses implicit authority'),
+    ('native-ws-invalid-upgrade', SOURCE, PREFIX + 'invalid_upgrade', '#749 invalid upgrade rejected'),
+    ('native-ws-retain-reader', SOURCE, PREFIX + 'socket_drops_before_business_drains', '#749 closed socket released before business drain'),
+    ('native-ws-skip-host-cleanup', ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs', PREFIX + 'host_cleanup_precedes_runtime_exit', '#749 owned cleanup called'),
+    ('native-ws-error-skips-cleanup', ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs', PREFIX + 'host_cleanup_runs_after_session_failure', '#749 cleanup runs after session failure'),
+    ('native-ws-skip-drain', SOURCE, PREFIX + 'stop_accepting_drains_existing', '#749 drain waits for existing socket'),
+]
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('output', nargs='?')
+    parser.add_argument('selected', nargs='*')
+    parser.add_argument('--check', action='store_true')
+    parser.add_argument('--compile-only', action='store_true')
+    args = parser.parse_args()
+    preflight([dict(name=n, path=p, test=t, anchor=a) for n, p, t, a in switches])
+    tests = (ROOT / 'src/pilotdeck-gateway/src/native_ws/tests.rs').read_text()
+    for _, _, test, assertion in switches:
+        if 'fn ' + test.split('::')[-1] + '(' not in tests or '"' + assertion + '"' not in tests:
+            raise RuntimeError('#749 stale test/assertion binding: ' + test)
+    if args.check:
+        print(f'#749 {len(switches)} switch bindings valid')
+        return 0
+    if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
+        raise RuntimeError('#749 output and caller CARGO_TARGET_DIR are required')
+    names = args.selected or [row[0] for row in switches]
+    if len(names) != len(set(names)) or set(names) - {row[0] for row in switches}:
+        raise RuntimeError('#749 unknown or repeated selection')
+    selected = [row for row in switches if row[0] in names]
+    output = Path(args.output).resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    env = dict(os.environ, CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only')
+    for key in ('PDRS_MUTANT', ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'CARGO_TERM_QUIET'):
+        env.pop(key, None)
+    guarded = [SOURCE, SOURCE.with_suffix('') / 'tests.rs', ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs',
+               ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway_tests.rs', ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
+               ROOT / 'src/pilotdeck-gateway/src/http_proxy.rs', ROOT / 'src/pilotdeck-gateway/src/frame.rs',
+               ROOT / 'src/pilotdeck-gateway/src/acceptor.rs', ROOT / 'src/pilotdeck-gateway/src/lib.rs',
+               ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
+               FIXTURE.parent / 'negative_process.py', FIXTURE.parent / 'negative_suite.py',
+               FIXTURE.parent / '_shared/mutant_switch.py']
+    guarded += [path for path in FIXTURE.iterdir() if path.is_file()]
+    rows = []
+
+    def run(label, test, current, compile_only=False):
+        slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=900)
+        (output / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
+        command = ['cargo', 'test', '--offline', '--locked', '--manifest-path', 'src/Cargo.toml',
+                   '-p', 'pilotdeck-gateway', '--lib', '--features', 'pdrs-mutants']
+        command += ['--no-run'] if compile_only else [test, '--', '--exact', '--show-output']
+        result = run_owned(command, cwd=ROOT, env=current, timeout=600)
+        (output / (label + '.log')).write_text(result.stdout + result.stderr)
+        return result
+
+    try:
+        with mutating_sources(ROOT, guarded):
+            for name, _, test, assertion in selected:
+                row = dict(name=name, test=test, status='INVALID', reason='not run', compiled=False)
+                try:
+                    changed = dict(env, PDRS_MUTANT=name)
+                    if run(name + '-compile', test, changed, True).returncode:
+                        raise RuntimeError('mutant failed compilation; not a runtime kill')
+                    row['compiled'] = True
+                    if args.compile_only:
+                        row.update(status='COMPILED', reason='feature branches compiled')
+                    else:
+                        if not passed(run(name + '-positive', test, env), test):
+                            raise RuntimeError('positive bound test failed')
+                        receipt = ReceiptRun(output, name, [(test, assertion)])
+                        result = run(name + '-negative', test, receipt.environment(changed))
+                        killed, reason, hits = judge(result, '', [(test, assertion)], receipt)
+                        row.update(status='KILLED' if killed else ('SURVIVED' if passed(result, test) else 'INVALID'), reason=reason, hits=hits)
+                        if not passed(run(name + '-restored', test, env), test):
+                            raise RuntimeError('restored bound test failed')
+                except Exception as error:
+                    row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+                rows.append(row)
+                print(f'{name}: {row["status"]}: {row["reason"]}', flush=True)
+    except Exception as error:
+        reason = f'source guard: {type(error).__name__}: {error}'
+        for row in rows:
+            row.update(status='INVALID', reason=reason, compiled=False)
+        for name, _, test, _ in selected[len(rows):]:
+            rows.append(dict(name=name, test=test, status='INVALID', reason=reason, compiled=False))
+    counts = {state: sum(row['status'] == state for row in rows) for state in ('KILLED', 'SURVIVED', 'INVALID', 'COMPILED')}
+    summary = output / 'summary.json.tmp'
+    summary.write_text(json.dumps({'controls': rows, 'counts': counts}, indent=2) + '\n')
+    summary.replace(output / 'summary.json')
+    print(json.dumps(counts), flush=True)
+    required = 'COMPILED' if args.compile_only else 'KILLED'
+    return int(not rows or any(row['status'] != required for row in rows))
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
