@@ -6,6 +6,7 @@ temporary directory, so they exercise the real baseline check without touching
 this worktree.
 """
 import errno
+import io
 import json
 from contextlib import contextmanager, nullcontext
 import os
@@ -830,7 +831,9 @@ class OutputDirectoryClaim(unittest.TestCase):
                 raw = claim.read_bytes()
                 metadata = json.loads(raw)
                 self.assertEqual(metadata['pid'], os.getpid(), '#1060 claim identifies owner pid')
-                self.assertEqual(metadata['argv'], sys.argv, '#1060 claim records invocation')
+                # List assertEqual adds multiline diffs before the marker.
+                # Keep the bound marker on the AssertionError first line.
+                self.assertTrue(metadata['argv'] == sys.argv, '#1060 claim records invocation')
                 self.assertGreaterEqual(metadata['started_at'], started, '#1060 claim records start time')
                 self.assertLessEqual(metadata['started_at'], time.time(), '#1060 claim time is not future')
                 with self.assertRaises(SystemExit, msg='#1060 completed claim cannot be reused'):
@@ -896,6 +899,159 @@ class OutputDirectoryClaim(unittest.TestCase):
                         '#1060 failed claim write must retain reservation')
         with self.assertRaises(SystemExit, msg='#1060 failed claim cannot be reused'):
             new_output_directory(self.output)
+
+
+def output_directory_runner():
+    path = Path(__file__).resolve().parent / 'negative-output-directory/negative.py'
+    module = ModuleType('output_directory_negative')
+    module.__file__ = str(path)
+    exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+    return module
+
+
+class OutputDirectoryRunnerTests(unittest.TestCase):
+    """#1060 exercise real unittest output and the runner's failure evidence."""
+
+    TEST = 'OutputDirectoryClaim.test_missing_and_empty_paths_have_persistent_metadata'
+    MESSAGE = '#1060 claim records invocation'
+    # Independent expectations captured with local CPython 3.14 / 3.9 probes;
+    # do not derive these from the function being tested.
+    DESCRIPTIONS = (
+        'test_missing_and_empty_paths_have_persistent_metadata '
+        '(__main__.OutputDirectoryClaim.test_missing_and_empty_paths_have_persistent_metadata)',
+        'test_missing_and_empty_paths_have_persistent_metadata (__main__.OutputDirectoryClaim)',
+    )
+
+    def setUp(self):
+        self.runner = output_directory_runner()
+
+    @staticmethod
+    def capture(case):
+        stream = io.StringIO()
+        result = unittest.TextTestRunner(stream=stream, verbosity=2).run(case)
+        return subprocess.CompletedProcess([], int(not result.wasSuccessful()), '', stream.getvalue())
+
+    def metadata_mutant_result(self):
+        row = next(row for row in self.runner.cases if row[0] == 'missing-argv')
+        _, path, old, new, test, assertion = row
+        source = path.read_text()
+        self.assertEqual(source.count(old), 1, '#1060 argv sample must use the unique runner anchor')
+        mutant = ModuleType('claim_metadata_mutant')
+        exec(compile(source.replace(old, new, 1), str(path), 'exec'), mutant.__dict__)
+        # Execute the actual bound test, with only its helper replaced in memory.
+        with patch.dict(globals(), {'new_output_directory': mutant.new_output_directory}), \
+                patch.object(OutputDirectoryClaim, '__module__', '__main__'):
+            result = self.capture(OutputDirectoryClaim(test.rsplit('.', 1)[-1]))
+        return test, assertion, result
+
+    def test_metadata_mutant_has_classifiable_first_line(self):
+        test, assertion, result = self.metadata_mutant_result()
+        failures = [line for line in result.stderr.splitlines() if line.startswith('AssertionError: ')]
+        self.assertEqual(len(failures), 2, '#1060 argv sample must fail both real path subtests')
+        self.assertTrue(all(line.endswith(assertion) for line in failures),
+                        '#1060 bound marker must be on every AssertionError first line')
+        self.assertEqual(self.runner.classify(result, test, assertion)[0], 'KILLED',
+                         '#1060 real argv failure must classify as KILLED')
+        for log in self.formatted_logs(result.stderr):
+            formatted = subprocess.CompletedProcess([], 1, '', log)
+            self.assertEqual(self.runner.classify(formatted, test, assertion)[0], 'KILLED',
+                             '#1060 both observed failure descriptions must kill')
+
+    def test_wrong_failure_identity_or_message_is_invalid(self):
+        test, assertion, result = self.metadata_mutant_result()
+        for log in self.formatted_logs(result.stderr):
+            for old, new in [('OutputDirectoryClaim', 'OtherClass'),
+                             (test.rsplit('.', 1)[-1], 'test_other'), ('__main__', 'another_module'),
+                             ('AssertionError: False is not true : ' + assertion, 'AssertionError: unrelated'),
+                             ('FAIL:', 'ERROR:')]:
+                with self.subTest(replacement=new):
+                    wrong = subprocess.CompletedProcess([], 1, assertion + '\n', log.replace(old, new))
+                    self.assertEqual(self.runner.classify(wrong, test, assertion)[0], 'INVALID',
+                                     '#1060 only the bound test assertion may kill')
+
+    def formatted_logs(self, log):
+        for description in self.DESCRIPTIONS:
+            formatted = log
+            for current in self.DESCRIPTIONS:
+                formatted = formatted.replace(current, description)
+            yield formatted
+
+    def probe(self):
+        def bound(case):
+            for existing in (False, True):
+                with case.subTest(existing=existing):
+                    case.assertTrue(True, '#1060 format probe passes')
+        cls, method = self.TEST.rsplit('.', 1)
+        probe = type(cls, (unittest.TestCase,), {'__module__': '__main__', method: bound})
+        return self.capture(probe(method))
+
+    def test_real_and_legacy_subtest_pass_formats(self):
+        result = self.probe()
+        self.assertTrue(self.runner.passed(result, self.TEST), '#1060 real subtest success must pass')
+        for log in self.formatted_logs(result.stderr):
+            formatted = subprocess.CompletedProcess([], 0, '', log)
+            self.assertTrue(self.runner.passed(formatted, self.TEST),
+                            '#1060 both observed unittest descriptions must pass')
+
+    def test_wrong_identity_skips_and_bad_exit_do_not_pass(self):
+        result = self.probe()
+        for old, new in [('OutputDirectoryClaim', 'OtherClass'),
+                         ('test_missing_and_empty_paths_have_persistent_metadata', 'test_other'),
+                         ('__main__', 'another_module'), ('Ran 1 test', 'Ran 2 tests'),
+                         ('... ok', "... skipped 'reason'"), ('\nOK\n', '\nNOT OK\n')]:
+            with self.subTest(replacement=new):
+                wrong = subprocess.CompletedProcess([], 0, '', result.stderr.replace(old, new))
+                self.assertFalse(self.runner.passed(wrong, self.TEST),
+                                 '#1060 success requires the exact unskipped bound test')
+        result.returncode = 1
+        self.assertFalse(self.runner.passed(result, self.TEST), '#1060 success requires zero exit')
+
+    def test_run_preserves_real_completed_output(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-1060-runner-') as temp:
+            out = Path(temp)
+            result = self.runner.run(out, 'positive', self.TEST)
+            self.assertTrue(self.runner.passed(result, self.TEST), '#1060 real runner positive must pass')
+            self.assertTrue((out / 'positive.log').is_file(), '#1060 completed run must retain a log')
+            self.assertEqual((out / 'positive.log').read_text(), result.stdout + result.stderr,
+                             '#1060 completed output must be preserved')
+            self.assertTrue((out / 'positive.exit').is_file(), '#1060 completed run must retain an exit record')
+            self.assertEqual((out / 'positive.exit').read_text(), '0\n',
+                             '#1060 completed exit must be preserved')
+
+    def test_timeout_preserves_partial_output_and_invalid_exit(self):
+        for stdout, stderr in [(b'partial stdout\n', b'partial stderr\n'),
+                               ('partial stdout\n', 'partial stderr\n'), (None, None)]:
+            with self.subTest(stdout=stdout), \
+                    tempfile.TemporaryDirectory(prefix='pdrs-1060-timeout-') as temp:
+                out = Path(temp)
+                error = subprocess.TimeoutExpired(['probe'], 90, stdout, stderr)
+                with patch.object(self.runner, 'run_owned', side_effect=error):
+                    with self.assertRaises(subprocess.TimeoutExpired,
+                                           msg='#1060 timeout must still propagate') as caught:
+                        self.runner.run(out, 'timeout', self.TEST)
+                self.assertIs(caught.exception, error, '#1060 original timeout must propagate')
+                self.assertTrue((out / 'timeout.log').is_file(), '#1060 timeout must retain a log')
+                raw = 'partial stdout\npartial stderr\n' if stdout else ''
+                self.assertEqual((out / 'timeout.log').read_text(), raw + f'\nTimeoutExpired: {error}\n',
+                                 '#1060 timeout must preserve both partial streams and diagnostic')
+                self.assertTrue((out / 'timeout.exit').is_file(), '#1060 timeout must retain an exit record')
+                self.assertEqual((out / 'timeout.exit').read_text(), 'INVALID: TimeoutExpired\n',
+                                 '#1060 timeout must not invent a completed return code')
+
+    def test_start_error_preserves_diagnostic_and_invalid_exit(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-1060-start-') as temp:
+            out = Path(temp)
+            error = OSError('#1060 injected spawn failure')
+            with patch.object(self.runner, 'run_owned', side_effect=error):
+                with self.assertRaises(OSError, msg='#1060 spawn error must still propagate') as caught:
+                    self.runner.run(out, 'start', self.TEST)
+            self.assertIs(caught.exception, error, '#1060 original spawn error must propagate')
+            self.assertTrue((out / 'start.log').is_file(), '#1060 spawn error must retain a log')
+            self.assertEqual((out / 'start.log').read_text(), f'\nOSError: {error}\n',
+                             '#1060 spawn error must preserve its diagnostic')
+            self.assertTrue((out / 'start.exit').is_file(), '#1060 spawn error must retain an exit record')
+            self.assertEqual((out / 'start.exit').read_text(), 'INVALID: OSError\n',
+                             '#1060 spawn error must not invent a completed return code')
 
 
 if __name__ == "__main__":
