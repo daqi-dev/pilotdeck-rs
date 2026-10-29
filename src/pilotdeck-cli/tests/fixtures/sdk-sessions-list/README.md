@@ -1,6 +1,6 @@
 # #983 sessions 默认 / list
 
-`oracle.json` 由 `generate.mjs` 从 Node v22.22.0 实录的可移植输入 `source.json` 机械提取，不执行 TS、mock 或 sandbox-exec。默认按生成器自身位置读取入库输入，不依赖工作目录或仓外规划证据。`PDRS_D1_PLAN` 未设或为空时用该副本；非空时覆盖为旧 D1 原始实录目录，缺失/损坏则失败，不回退。收录 `sessions-default--*`、`sessions-list--*` 共 76 格，另有 `sessions-unknown--argv`。本守卫只需 Node v22.22.0；同文件 transport 守卫仍以 `PDRS_BASELINE` 为唯一必需的外部数据输入。
+`oracle.json` 由 `generate.mjs` 从 Node v22.22.0 实录的可移植输入 `source.json` 机械提取，不执行 TS、mock 或 sandbox-exec。默认按生成器自身位置读取入库输入，不依赖工作目录或仓外规划证据，忽略父环境的 `PDRS_D1_PLAN`；Rust 守卫还会显式移除该变量。旧 D1 原始实录目录仅通过 `PDRS_D1_PLAN=/path/to/plan node generate.mjs OUTPUT --legacy-plan` 显式启用；变量未设/为空、目录缺失或损坏均失败，不回退。收录 `sessions-default--*`、`sessions-list--*` 共 76 格，另有 `sessions-unknown--argv`。本守卫只需 Node v22.22.0；同文件 transport 守卫仍以 `PDRS_BASELINE` 为唯一必需的外部数据输入。
 
 `source.json` 保存 616 个逻辑文件的 UTF-8 原件内容：77 格场景定义、Node 版本与每格采集记录。入库前核对了 614 个逐格原件的历史 SHA-256；仅将总场景清单缩减到本单 77 格，并从 `result.json` 删除提取器未使用的 `argv`、`env`、`profileSha256`、`processTree` 宿主元数据。旧目录覆盖也做同一投影。金样据此重算 `casesSha256` 与各格 `sha256["result.json"]`；其余输出、退出/信号、WS 帧、落盘期望及摘要完全不变。来源是实际 TS 实录，不是从待比较的 oracle 反向生成输入。
 
@@ -21,7 +21,7 @@ cargo test -p pilotdeck-cli --test sdk_sessions_list_exit \
 
 `NODE22` 优先指定已存在的 Node v22.22.0；未指定时使用 PATH 上的 `node`。守卫先执行所选程序的 `--version`，要求成功退出且报告 `v22.22.0`；不符即带 `#983` 消息失败，不启动生成器、不回落到其他版本。输出目录递归创建、文件以 `wx` 独占写入，原件缺失/内容变化均失败。
 
-52 个负控（原 28 个 CLI/金样变异 + 17 个租约变异 + 7 个 transport 上限/金样变异）定义在 `src/pilotdeck-gateway/tests/fixtures/sdk-sessions-list/negative_controls.py`，复用该目录现有 `negative_process` 与 `negative_suite`，以便 main 的锚点检查器发现。每项先编译，使用当前 nonce + 精确测试名 + 格 ID 判杀；恢复后重跑正控，全项汇总。必须提供 `CARGO_TARGET_DIR`，全部受保护源码/执行器及 `source.json` 等于 HEAD 才可运行；有未提交修复或新文件时拒跑。提交后协调者执行：
+53 个负控（原 28 个 CLI/金样变异 + 17 个租约变异 + 7 个 transport 上限/金样变异 + 1 个入库源变异）定义在 `src/pilotdeck-gateway/tests/fixtures/sdk-sessions-list/negative_controls.py`，复用该目录现有 `negative_process` 与 `negative_suite`，以便 main 的锚点检查器发现。`source-extraction` 仅改入库 `source.json` 中一格 `stdout.bin` 的一个字节，绑定 `sessions_list_oracle_regenerates_identically` 的 `#983 identical TS fixture sdk-sessions-list`；源摘要失败和最终字节不一致均经此断言报告。每项先编译，使用当前 nonce + 精确测试名 + 格 ID 判杀；恢复后重跑正控，全项汇总。必须提供 `CARGO_TARGET_DIR`，全部受保护源码/执行器及 `source.json` 等于 HEAD 才可运行；有未提交修复或新文件时拒跑。提交后协调者执行：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/sdk-sessions-list/negative_controls.py \
