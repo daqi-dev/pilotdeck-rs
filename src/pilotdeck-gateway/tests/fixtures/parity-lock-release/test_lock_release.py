@@ -52,6 +52,7 @@ sys.dont_write_bytecode = True
 
 import ast
 import contextlib
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -730,10 +731,15 @@ class RunnerInvalidationControls(unittest.TestCase):
             try:
                 code = self.runner.main()
             except BaseException as error:
-                if error is not guard_error:
-                    raise
                 # Only the injected cancellation is observed; a real Ctrl-C
                 # (a different exception object) must still abort the test.
+                # A zero/None-coded SystemExit is the one re-wrapping main()
+                # legitimately performs (SystemExit(2)), so it is accepted by
+                # type, not identity.
+                if error is not guard_error and not (
+                        isinstance(guard_error, SystemExit)
+                        and isinstance(error, SystemExit)):
+                    raise
                 code = error
         return code, self._read_summary(out), captured.get('paths'), captured['mutating_calls']
 
@@ -763,11 +769,17 @@ class RunnerInvalidationControls(unittest.TestCase):
     def test_final_guard_interrupt_rewrites_summary(self):
         """P0-2: a cancellation after the last row must void it, then propagate."""
         for canceled in (KeyboardInterrupt('restore interrupted'),
-                         SystemExit('restore exited')):
+                         SystemExit('restore exited'),
+                         SystemExit(0), SystemExit(None)):
             with self.subTest(canceled=type(canceled).__name__):
                 code, summary, _, _ = self._drive(guard_error=canceled)
                 self.assertIs(type(code), type(canceled),
                               '#1059 P0-2 the cancellation must be re-raised')
+                if isinstance(code, SystemExit):
+                    # fix-r1 P2: the INVALID summary is already on disk, so a
+                    # zero/None SystemExit code would read as success.
+                    self.assertNotIn(code.code, (None, 0),
+                                      '#1059 an INVALID summary must not exit as success')
                 self.assertIsNotNone(
                     summary,
                     '#1059 P0-2 a cancellation after the last row must not keep KILLED')
@@ -782,9 +794,10 @@ class RunnerInvalidationControls(unittest.TestCase):
         The publish side is the review's read-only in-memory model: file
         operations are mocks and the SIGINT is a real Python signal raised
         from ``tmp.replace`` while the INVALID payload is being published.
-        The output path itself is a real directory holding an old all-KILLED
-        ``summary.json``, so this also proves startup retirement deletes a
-        previous success before the run starts.
+        Admission and pre-existing evidence are deliberately out of scope
+        here: ``new_output_directory`` is replaced by the model output, and
+        the target-directory lifecycle is pinned by
+        ``test_existing_evidence_is_refused_byte_identical`` (#1059 fix-r1).
         """
         disk = {}
         files = {}
@@ -797,10 +810,6 @@ class RunnerInvalidationControls(unittest.TestCase):
         out = MagicMock(name='out')
         out.__truediv__.side_effect = entry
         tmp = entry('summary.json.tmp')
-        reuse = Path(tempfile.mkdtemp(prefix='reuse-', dir=self.root))
-        stale = reuse / 'summary.json'
-        stale.write_text(json.dumps(
-            [{'mutation': 'one', 'status': 'KILLED', 'reason': '#209 stale'}]) + '\n')
         tmp.write_text.side_effect = lambda payload: disk.update(staged=payload)
 
         def publish(_destination):
@@ -823,6 +832,11 @@ class RunnerInvalidationControls(unittest.TestCase):
         def mutating(root, paths, **kwargs):
             return Guard()
 
+        # raise_signal delivers KeyboardInterrupt only under the default
+        # disposition; a batch parent can inherit SIG_IGN, so install it for
+        # the duration of this test and restore whatever was there.
+        previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+        self.addCleanup(signal.signal, signal.SIGINT, previous)
         with patch.multiple(
                 self.runner,
                 MUTATIONS=[('one', source, 'x = 0', 'x = 1')],
@@ -834,14 +848,13 @@ class RunnerInvalidationControls(unittest.TestCase):
                 run_owned=self._run_owned()), \
                 patch.object(sys, 'argv',
                              [str(Path(self.runner.__file__)), '--output',
-                              str(reuse)]):
+                              str(self.root / 'void-publish')]):
             try:
                 code = self.runner.main()
             except BaseException as error:
                 code = error
         message = ('#1059 P0-3 an interrupt during the void publish must not '
                    'leave a readable KILLED summary')
-        self.assertFalse(stale.exists(), message)
         try:
             summary = json.loads(disk['summary']) if 'summary' in disk else None
         except ValueError as error:
@@ -851,6 +864,63 @@ class RunnerInvalidationControls(unittest.TestCase):
             summary is None
             or [row['status'] for row in summary] != ['KILLED'],
             message)
+
+    def test_existing_evidence_is_refused_byte_identical(self):
+        """fix-r1 P0: a pre-existing evidence directory is refused, never edited.
+
+        The runner used to delete ``summary.json`` before admission, so a
+        mistyped ``--output`` destroyed another run's result and only then got
+        the #953 refusal. Both shapes are pinned here — the old summary alone
+        and the old summary next to other evidence — and every byte (sha256)
+        of the directory must survive. The bound mutant puts the pre-admission
+        unlink back.
+        """
+        message = ('#1059 P0-4 a pre-existing evidence directory must be refused '
+                   'with every byte preserved')
+        stale = json.dumps(
+            [{'mutation': 'one', 'status': 'KILLED', 'reason': '#209 stale'}]) + '\n'
+        for label, extra in (
+                ('summary-only', {}),
+                ('summary-and-evidence',
+                 {'a1-release-ungated-positive.log': 'Ran 1 test\nOK\n'})):
+            with self.subTest(case=label):
+                folder = Path(tempfile.mkdtemp(prefix='reuse-', dir=self.root))
+                (folder / 'summary.json').write_text(stale)
+                for name, text in extra.items():
+                    (folder / name).write_text(text)
+
+                def snapshot():
+                    return {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                            for path in folder.iterdir()}
+
+                before = snapshot()
+
+                def refuse(*_args, **_kwargs):
+                    # Any admitted directory would start the run; fail loudly
+                    # instead of touching this tree (#1059 P0-4 message).
+                    raise RuntimeError('#1059 P0-4 mutation must not start')
+
+                with patch.multiple(self.runner,
+                                    mutating_sources=refuse,
+                                    parity_lease=lambda: contextlib.nullcontext()), \
+                        patch.object(sys, 'argv',
+                                     [str(Path(self.runner.__file__)),
+                                      '--output', str(folder),
+                                      '--only', 'a1-release-ungated']):
+                    try:
+                        code = self.runner.main()
+                    except BaseException as error:
+                        code = error
+                after = snapshot()
+                self.assertEqual(
+                    after, before,
+                    f'{message}: the {label} directory was edited')
+                self.assertEqual(
+                    after.get('summary.json'), before['summary.json'],
+                    f'{message}: summary.json bytes changed ({label})')
+                self.assertIsInstance(code, SystemExit, f'{message} ({label})')
+                self.assertIn('#953 refusing to reuse a non-empty output directory',
+                              str(code), f'{message} ({label})')
 
 
 if __name__ == '__main__':
