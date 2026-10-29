@@ -86,6 +86,7 @@ struct Progress {
     recreation_started: bool,
     disposal_completed: bool,
     recreation_error_reported: bool,
+    recreation_stale_handoff: bool,
 }
 
 struct Inner {
@@ -154,6 +155,20 @@ impl LiveSessionHandle {
         self.0.progress.lock().unwrap().recreation_error_reported = true;
     }
 
+    /// #1020: the factory observed this predecessor already Disposed when it
+    /// took it over (no retained recreation source), so the post-prepare
+    /// snapshot rejection was a stale owner selection — the same-key disposal
+    /// completed after the owner chose `previous` but before this attempt took
+    /// it over. Only the factory sets this after that rejection; the owner may
+    /// retry once. Direct factory callers ignore it and keep the TS error.
+    pub(super) fn mark_recreation_stale_handoff(&self) {
+        self.0.progress.lock().unwrap().recreation_stale_handoff = true;
+    }
+
+    pub(super) fn recreation_stale_handoff(&self) -> bool {
+        self.0.progress.lock().unwrap().recreation_stale_handoff
+    }
+
     /// Only factory recreation calls this after its successful owned drain.
     /// The adapter is disposed, but the retained reload source still owns the
     /// final saved seed. Eligibility was checked before disposal started.
@@ -179,6 +194,7 @@ impl LiveSessionHandle {
                 recreation_started: false,
                 disposal_completed: false,
                 recreation_error_reported: false,
+                recreation_stale_handoff: false,
             }),
             changed: watch::channel(0).0,
         }))
