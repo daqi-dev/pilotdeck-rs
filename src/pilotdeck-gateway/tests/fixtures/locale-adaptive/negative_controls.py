@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """#978: compile-time controls for the adaptive locale idle budget and CPU timing.
 
-The three mutations are ``crate::mutants::on`` branches compiled into the
+The four mutations are ``crate::mutants::on`` branches compiled into the
 feature-enabled library test binary; no source file is rewritten, so there is
 no snapshot to restore. ``CARGO_TARGET_DIR`` must come from the caller.
 Commit first: ``require_head`` refuses a working tree that differs from HEAD.
@@ -22,6 +22,11 @@ ROOT = Path(__file__).resolve().parents[5]
 ORACLE = ROOT / 'src/pilotdeck-gateway/tests/common/oracle_locale.rs'
 LOCALE_TESTS = ROOT / 'src/pilotdeck-gateway/tests/common/oracle_locale_tests.rs'
 TIMING = ROOT / 'src/pilotdeck-gateway/tests/common/timing.rs'
+# The html-cpu-wall-clock kill assertion lives in this product file, not in the
+# switch site above: a dirty copy must refuse the run and enter source.json.
+HTML_COMPAT = (
+    ROOT / 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/html_compat.rs'
+)
 HTML_COMPAT_TESTS = (
     'runtime::tools::builtin::web::html_compat::tests::'
     'cpu_sample_requires_completed_work_and_ignores_preemption'
@@ -37,12 +42,16 @@ switches = [
     ('locale-idle-unbounded', ORACLE,
      'test_oracle_locale::tests::silent_child_expires_at_adaptive_idle_deadline',
      '#978 adaptive idle must still expire for a silent child'),
+    ('locale-sampler-unbounded', ORACLE,
+     'test_oracle_locale::tests::hanging_sampler_is_reaped_and_falls_back_to_base_budget',
+     '#978 sampler must stop a hanging child'),
 ]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 GUARDED = [
     ORACLE,
     LOCALE_TESTS,
     TIMING,
+    HTML_COMPAT,
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',

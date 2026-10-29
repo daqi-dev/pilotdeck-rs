@@ -143,6 +143,68 @@ fn adaptive_idle_caps_at_startup_budget() {
     }
 }
 
+#[test]
+fn completed_sampler_returns_its_output() {
+    let mut command = std::process::Command::new("/bin/sh");
+    command.args(["-c", "printf 42"]);
+    let Sampled::Finished(output) = sample_bounded(command, Duration::from_secs(2)) else {
+        panic!("#978 sampler must return after a completed child");
+    };
+    assert_eq!(
+        output.stdout, b"42",
+        "#978 sampler must preserve completed output"
+    );
+}
+
+#[tokio::test]
+async fn hanging_sampler_is_reaped_and_falls_back_to_base_budget() {
+    let limit = Duration::from_millis(150);
+    let mut command = std::process::Command::new("/bin/sleep");
+    command.arg("30");
+    // #978: a 30 s child returned as TimedOut proves the sample stopped at its
+    // wait bound instead of waiting for the child to exit. No wall-clock
+    // assertion here: a loaded host may deschedule this thread, which must not
+    // turn the positive control red.
+    let Sampled::TimedOut { pid } = sample_bounded(command, limit) else {
+        panic!("#978 sampler must stop a hanging child");
+    };
+    let pid = rustix::process::Pid::from_raw(pid as i32)
+        .expect("#978 sampler must report a valid child pid");
+    assert!(
+        matches!(
+            rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::NOHANG),
+            Err(rustix::io::Errno::CHILD)
+        ),
+        "#978 sampler must reap the killed child"
+    );
+    assert_gone(pid).await;
+    assert_eq!(
+        sampled_budget(None, 8),
+        IDLE_LIMIT,
+        "#978 hung sampler must fall back to the base idle budget"
+    );
+    let missing = std::process::Command::new("/nonexistent/#978-load-sampler");
+    assert!(
+        matches!(sample_bounded(missing, limit), Sampled::Failed),
+        "#978 missing sampler must fall back to the base idle budget"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn sysctl_load_output_parses_the_one_minute_sample() {
+    let output = Output {
+        status: ExitStatus::from_raw(0),
+        stdout: b"{ 1.50 2.25 3.00 }".to_vec(),
+        stderr: Vec::new(),
+    };
+    assert_eq!(
+        parse_load(&output),
+        Some(1.5),
+        "#978 sysctl sampler must read the one-minute load"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn silent_child_expires_at_adaptive_idle_deadline() {
     // #978: the adaptive budget is still a finite no-output deadline. A load of
