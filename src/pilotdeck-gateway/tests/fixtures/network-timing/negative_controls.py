@@ -205,6 +205,12 @@ def classify(name, result, test):
     raw = result.stdout + result.stderr
     bound = (required_failures[name].replace('/', '_').replace('-', '_')
              if test == '*' else selection(test)[1][0])
+    # #818 fix-r6: keep main's completed-run requirement on every branch. A
+    # bound cell's FAILED line and panic are printed before the child can be
+    # SIGABRT/SIGKILL'ed or the summary truncated; neither is a kill. Without
+    # this check the full-suite branch turned an abnormal exit into KILLED.
+    if result.returncode != 101 or 'test result: FAILED.' not in raw:
+        return 'INVALID', 'missing completed failing run (rc=101 + FAILED summary)'
     if test == '*':
         # #818 fix-r5: a full-suite control kills only through the named cell's
         # own panic block; cell text elsewhere in the log is not evidence.
