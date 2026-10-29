@@ -221,7 +221,14 @@ pub fn cpu_duration(sample: &serde_json::Value) -> Option<Duration> {
     if results.len() != 1 || !results[0].starts_with("test result: ok. 1 passed; 0 failed;") {
         return None;
     }
-    let seconds = sample["cpu_seconds"].as_f64()?;
+    // #978: the pre-fix sampler judged wall time, so a loaded host reddened a
+    // linear implementation. This switch re-injects exactly that regression;
+    // the bound unit test's 40 s wall / 0.25 s CPU sample must stay red.
+    let seconds = if pilotdeck_gateway::mutants::on("html-cpu-wall-clock") {
+        sample["wall_seconds"].as_f64()?
+    } else {
+        sample["cpu_seconds"].as_f64()?
+    };
     if !seconds.is_finite() || seconds <= 0.0 {
         return None;
     }
@@ -317,4 +324,28 @@ fn scaling_median_ignores_two_preempted_rounds() {
         "#873 the median must ignore two preempted rounds"
     );
     assert_within_scaling_band("#873 unit linear pair", &sampled, 8.0);
+}
+
+/// #978: the 3x + 150 ms band is unchanged. Prove it still separates a linear
+/// doubling from a quadratic one by injecting both synthetic samples, instead
+/// of rewriting product code: a 1 s -> 2 s pair must pass, and the same 2x
+/// input taking 4 s must breach the band.
+#[test]
+fn linear_band_rejects_quadratic_growth_without_loosening() {
+    let half = Duration::from_secs(1);
+    assert_within_linear_band("#978 unit linear", half, Duration::from_secs(2), 1);
+    let panic = std::panic::catch_unwind(|| {
+        assert_within_linear_band("#978 unit quadratic", half, Duration::from_secs(4), 1)
+    })
+    .expect_err("#978 quadratic sample must breach the 3x + 150 ms band");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or_default();
+    assert!(
+        message.contains("#978 unit quadratic")
+            && message.contains("a quadratic implementation needs about 4x"),
+        "#978 band diagnosis must identify the quadratic breach: {message}"
+    );
 }

@@ -43,9 +43,11 @@ MUTATIONS = [
     # #978 third batch: cpu_duration moved verbatim from html_compat.rs into
     # the shared tests/common/timing.rs, so the anchors follow the helper. The
     # bound unit test stayed in html_compat.rs (receipt macros are lib-only).
+    # The CPU/wall switch is compiled in; this text mutant forces the else
+    # branch to wall time as well, i.e. the pre-fix sampler on every path.
     ('cpu-counts-preemption', TIMING,
-     'let seconds = sample["cpu_seconds"].as_f64()?;',
-     'let seconds = sample["wall_seconds"].as_f64()?;',
+     '        sample["cpu_seconds"].as_f64()?\n    };',
+     '        sample["wall_seconds"].as_f64()?\n    };',
      [(HTML_TEST + 'cpu_sample_requires_completed_work_and_ignores_preemption',
        '#978 CPU sample excludes preemption')]),
     ('cpu-accepts-failed-child', TIMING,

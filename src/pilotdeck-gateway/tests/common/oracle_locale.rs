@@ -12,6 +12,68 @@ const IDLE_LIMIT: Duration = Duration::from_secs(30);
 // must never grant unbounded extensions. This is a wall-clock startup budget.
 const STARTUP_LIMIT: Duration = Duration::from_secs(180);
 
+/// #978: the no-output budget after the first byte. A loaded host can starve
+/// this child for longer than 30 s even though it is runnable, so the old
+/// fixed budget reported a deadlock. Scale the budget by the one-minute load
+/// per CPU, capped by the startup budget; invalid load data keeps the base.
+fn idle_limit_for(load: f64, cpus: usize) -> Duration {
+    if pilotdeck_gateway::mutants::on("locale-idle-nonadaptive") {
+        return IDLE_LIMIT;
+    }
+    if pilotdeck_gateway::mutants::on("locale-idle-unbounded") {
+        return Duration::from_secs(24 * 60 * 60);
+    }
+    if cpus == 0 || !load.is_finite() || load <= 0.0 {
+        return IDLE_LIMIT;
+    }
+    let pressure = load / cpus as f64;
+    Duration::try_from_secs_f64(IDLE_LIMIT.as_secs_f64() * (1.0 + pressure))
+        .map(|limit| limit.clamp(IDLE_LIMIT, STARTUP_LIMIT))
+        .unwrap_or(STARTUP_LIMIT)
+}
+
+/// One-minute load average, read without `unsafe` (the workspace forbids it).
+/// Any failure is reported as `None`, which falls back to the base budget.
+#[cfg(target_os = "linux")]
+fn load_average() -> Option<f64> {
+    let raw = std::fs::read_to_string("/proc/loadavg").ok()?;
+    raw.split_whitespace().next()?.parse().ok()
+}
+
+#[cfg(target_os = "macos")]
+fn load_average() -> Option<f64> {
+    for program in ["/usr/sbin/sysctl", "sysctl"] {
+        if let Ok(output) = std::process::Command::new(program)
+            .args(["-n", "vm.loadavg"])
+            .output()
+            && output.status.success()
+            && let Ok(text) = String::from_utf8(output.stdout)
+            && let Some(value) = text.split_whitespace().nth(1)
+            && let Ok(load) = value.parse()
+        {
+            return Some(load);
+        }
+    }
+    None
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn load_average() -> Option<f64> {
+    None
+}
+
+/// #978: compute the adaptive idle budget before every locale child spawn and
+/// log the inputs, so a host failure shows whether the load was observed.
+fn idle_limit() -> Duration {
+    let cpus = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(0);
+    let load = load_average();
+    let limit = idle_limit_for(load.unwrap_or(0.0), cpus);
+    eprintln!("#978 locale child: adaptive idle={limit:?} load={load:?} cpus={cpus}");
+    limit
+}
+
 struct ChildTrace {
     started: tokio::time::Instant,
     pid: Option<u32>,
@@ -205,9 +267,13 @@ pub(crate) async fn replay_locale_contract(child_test: &str, suite: &str) {
     const MSG: &str = "#887 replay locale contract";
     let fixture: serde_json::Value =
         serde_json::from_str(include_str!("../fixtures/node-locale/oracle.json")).expect(MSG);
+    // #978: recompute the adaptive budget for every child spawn, so a load
+    // spike during a long contract is observed. The deadline still ends on a
+    // finite no-output interval; load only scales that interval.
     // These empty-directory replays have no locale-sensitive names. A missing
     // guard must fail the contract even when all their data still match.
     for case in fixture["localeProbe"].as_array().expect(MSG) {
+        let idle_budget = idle_limit();
         let id = case["id"].as_str().expect(MSG);
         let success = case["locale"] == "en-US";
         let mut child = tokio::process::Command::new(std::env::current_exe().expect(MSG));
@@ -221,11 +287,11 @@ pub(crate) async fn replay_locale_contract(child_test: &str, suite: &str) {
             child.env(key, value.as_str().expect(MSG));
         }
         eprintln!(
-            "#962 locale contract: {suite}/{id} startup={STARTUP_LIMIT:?} idle={IDLE_LIMIT:?}"
+            "#962 locale contract: {suite}/{id} startup={STARTUP_LIMIT:?} idle={idle_budget:?}"
         );
         let child = spawn_child(&mut child)
             .unwrap_or_else(|e| panic!("#962 locale child spawn: {suite}/{id}: {e}"));
-        let output = child_output(child, STARTUP_LIMIT, IDLE_LIMIT)
+        let output = child_output(child, STARTUP_LIMIT, idle_budget)
             .await
             .unwrap_or_else(|e| panic!("#962 replay locale contract: {suite}/{id}: {e}"));
         let log = format!(
