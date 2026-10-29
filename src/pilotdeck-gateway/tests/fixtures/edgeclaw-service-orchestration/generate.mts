@@ -4,7 +4,8 @@ import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {mkdirSync, realpathSync, writeFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
-import {bindSourceTree, sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import {sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import {bindBaseline} from '../_shared/generator_guard.mjs';
 import {ENTRY, collect} from './observe.mts';
 
 assert.ok(process.env.PDRS_BASELINE);
@@ -14,7 +15,7 @@ const baseline = resolve(process.env.PDRS_BASELINE);
 const out = resolve(process.argv[2]);
 const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const git = realpathSync(process.env.PDRS_GIT || execFileSync('which', ['git'], {encoding: 'utf8'}).trim());
-const provenance = bindSourceTree(baseline, commit, git);
+const {sourceCommit, gitExecutable} = bindBaseline({baseline, commit, gitExecutable: git});
 const root = 'src/context/memory/edgeclaw-memory-core/src';
 const sources = [
   `${root}/service.ts`,
@@ -27,11 +28,11 @@ const sources = [
   `${root}/core/retrieval/reasoning-loop.ts`,
   `${root}/message-utils.ts`,
 ];
-const sourceSha256 = sourceClosureSha256(baseline, commit, git, sources);
+const sourceSha256 = sourceClosureSha256(baseline, commit, gitExecutable, sources);
 const observed = await collect(baseline);
 assert.equal(observed.scenarios.length, 20, `expected 20 scenarios, got ${observed.scenarios.length}`);
 const oracle = {
-  sourceCommit: provenance.ref,
+  sourceCommit,
   sourceSha256,
   nodeVersion: process.version,
   entry: ENTRY,
