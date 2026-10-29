@@ -29,7 +29,10 @@ import sys as _boot_sys
 # non-isolated launch and any reinsertion of this directory or tests/fixtures
 # (unittest discover does exactly that) before importing anything else, so a
 # same-named module next to this file can never execute as a bootstrap.
-_boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
+# Both sides of the comparison must be realpaths. abspath keeps a POSIX
+# double-slash prefix (``//Users/...``) while the sys.path side normalises it,
+# so an aliased entry point slipped through the guard (fix-r1 P1-1).
+_boot_dir = _boot_os.path.dirname(_boot_os.path.realpath(__file__))
 _boot_roots = {_boot_dir, _boot_os.path.dirname(_boot_dir)}
 if not _boot_sys.flags.isolated or any(
         _boot_os.path.realpath(entry or _boot_os.curdir) in _boot_roots
@@ -43,18 +46,29 @@ import json
 from pathlib import Path
 import py_compile
 import re
+import socket
 import sys
 import tempfile
+import time
 
-# Load the shared guard by explicit absolute path, register it, then bind the
-# names. The guard above proved no fixture directory is on sys.path, so the
-# from-import below resolves through sys.modules and cannot find an imposter.
+# Load the shared guard by explicit absolute path. A temporary meta-path
+# finder makes the official from-import below resolve to that one file, without
+# reinserting tests/fixtures into sys.path (the fix-r1 P1-1 bypass) and without
+# hand-registering sys.modules. The finder is removed immediately after.
 _boot_module_path = Path(__file__).resolve().parents[1] / 'negative_process.py'
-_boot_spec = importlib.util.spec_from_file_location('negative_process', _boot_module_path)
-_boot_module = importlib.util.module_from_spec(_boot_spec)
-sys.modules['negative_process'] = _boot_module
-_boot_spec.loader.exec_module(_boot_module)
+
+
+class _BootFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname != 'negative_process':
+            return None
+        return importlib.util.spec_from_file_location(fullname, _boot_module_path)
+
+
+_boot_finder = _BootFinder()
+sys.meta_path.insert(0, _boot_finder)
 from negative_process import mutating_sources, run_owned  # noqa: E402
+sys.meta_path.remove(_boot_finder)
 
 root = Path(__file__).resolve().parents[5]
 policy = root / 'scripts/cli-parity/policy.py'
@@ -63,6 +77,16 @@ compare = root / 'scripts/cli-parity/compare.py'
 run_round = root / 'scripts/cli-parity/run_round.py'
 mock_gateway = root / 'scripts/cli-parity/mock_gateway.mjs'
 isolation_probe = root / 'scripts/cli-parity/isolation_probe.mjs'
+
+
+def pinned_mock_port():
+    # Read the port from the same source the bound test uses on every run: a
+    # hand-copied constant would drift, and the mock-port mutant deliberately
+    # changes this value before its negative run.
+    match = re.search(r'^MOCK_PORT = (\d+)$', common.read_text(), re.MULTILINE)
+    if match is None:
+        raise RuntimeError('scripts/cli-parity/common.py has no pinned MOCK_PORT')
+    return int(match.group(1))
 
 # Every mutant is applied to the original independently and names the unit
 # test whose assertion it must turn red. Rows are (name, source, old, new) so
@@ -367,7 +391,36 @@ def classify(result, test, fragments):
     return 'INVALID', 'bound test failed without the #933 assertion (wrong failure point)'
 
 
+def wait_for_port_free(port, timeout=30, interval=0.1):
+    """Wait until the pinned mock port can be bound.
+
+    A killed predecessor's mock can outlive its test process for a moment, or
+    a stale listener can still hold 28999. The host r1 run recorded two INVALID
+    rows for exactly that reason (fix-r1 P1-2). Waiting keeps an owned release
+    from turning the positive control into an environment artefact; a foreign
+    owner still fails, but with a named reason after the bounded wait.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind(('127.0.0.1', port))
+                return
+            except OSError as error:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        f'MOCK_PORT {port} still occupied after {timeout}s: {error}') from error
+        finally:
+            probe.close()
+        time.sleep(interval)
+
+
 def run_test(out, label, test):
+    # A stale listener on the pinned port makes the bound test fail in setUp,
+    # which the judge would record as INVALID (not a product observation).
+    wait_for_port_free(pinned_mock_port())
     # -X pycache_prefix pins this invocation's bytecode cache to a fresh
     # directory: a pyc left next to a (restored) source can otherwise be
     # executed as the mutant whenever its recorded mtime and size match the

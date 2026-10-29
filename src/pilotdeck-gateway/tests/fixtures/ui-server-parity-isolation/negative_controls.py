@@ -17,7 +17,10 @@ summary, and exit nonzero unless every row is KILLED.
 import os as _boot_os
 import sys as _boot_sys
 
-_boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
+# Realpath both sides; abspath preserved a ``//`` entry-point alias while the
+# sys.path side normalised it, so a reinserted fixture directory was admitted
+# (fix-r1 P1-1).
+_boot_dir = _boot_os.path.dirname(_boot_os.path.realpath(__file__))
 _boot_roots = {_boot_dir, _boot_os.path.dirname(_boot_dir)}
 if not _boot_sys.flags.isolated or any(
         _boot_os.path.realpath(entry or _boot_os.curdir) in _boot_roots
@@ -39,7 +42,6 @@ APPARATUS = 'scripts/ui-server-parity'
 SPEC = 'specs/ui-server-parity'
 SEPARATOR = '-' * 70
 HEADER = re.compile(r'^(FAIL|ERROR): (\S+) \(([^)]+)\)')
-ROWS = ('readme-discover', 'entry-guard-removed', 'main-removed', 'discover-guard-removed')
 
 
 def copy_apparatus(destination):
@@ -179,6 +181,14 @@ def row_discover(root):
     return closed, 'discover-guard', '#1023-3:'
 
 
+ROWS = {
+    'readme-discover': row_readme,
+    'entry-guard-removed': row_guard,
+    'main-removed': row_main,
+    'discover-guard-removed': row_discover,
+}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
@@ -188,10 +198,7 @@ def main():
     rows = []
     try:
         with tempfile.TemporaryDirectory(prefix='pdrs-1023-b2-') as temp:
-            for name, action in (('readme-discover', row_readme),
-                                 ('entry-guard-removed', row_guard),
-                                 ('main-removed', row_main),
-                                 ('discover-guard-removed', row_discover)):
+            for name, action in ROWS.items():
                 root = Path(temp) / name
                 root.mkdir()
                 copy_apparatus(root)
