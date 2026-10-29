@@ -28,7 +28,7 @@ pub(super) async fn request(
     method: &str,
     params: Value,
 ) -> Result<JsValue, Failure> {
-    request_with_version(connection, method, params, "pilotdeck-cli").await
+    request_inner(connection, method, params, "pilotdeck-cli", false).await
 }
 
 /// Settings helpers use the SDK's default client version and lossless JSON
@@ -38,6 +38,16 @@ pub(super) async fn request_with_version(
     method: &str,
     params: impl Serialize,
     client_version: &str,
+) -> Result<JsValue, Failure> {
+    request_inner(connection, method, params, client_version, true).await
+}
+
+async fn request_inner(
+    connection: &Connection,
+    method: &str,
+    params: impl Serialize,
+    client_version: &str,
+    settings_order: bool,
 ) -> Result<JsValue, Failure> {
     // Preserve the measured Node v22.22.0 successes through 100 MiB + 1.
     // A finite frame cap rejects hostile length headers before allocation;
@@ -55,14 +65,28 @@ pub(super) async fn request_with_version(
     .map_err(|_| error("Gateway connection failed."))?;
     let result = async {
         timeout(CONNECT_TIMEOUT, async {
-            send(
-                &mut socket,
-                json!({
-                    "type": "hello", "protocolVersion": pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION, "clientName": "sdk",
-                    "clientVersion": client_version, "token": connection.auth_token,
-                }),
-            )
-            .await?;
+            if settings_order {
+                send(
+                    &mut socket,
+                    SettingsHelloFrame {
+                        kind: "hello",
+                        protocol_version: pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,
+                        client_name: "sdk",
+                        client_version,
+                        token: &connection.auth_token,
+                    },
+                )
+                .await?;
+            } else {
+                send(
+                    &mut socket,
+                    json!({
+                        "type": "hello", "protocolVersion": pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION, "clientName": "sdk",
+                        "clientVersion": client_version, "token": connection.auth_token,
+                    }),
+                )
+                .await?;
+            }
             loop {
                 if string_field(&receive(&mut socket).await?, "type").as_deref() == Some("hello_ok")
                 {
@@ -77,11 +101,19 @@ pub(super) async fn request_with_version(
         // One deadline covers send and every unrelated frame; traffic cannot
         // keep an unanswered request alive by resetting the timer.
         timeout(REQUEST_TIMEOUT, async {
-            send(
-                &mut socket,
-                RequestFrame { kind: "request", id: &id, method, params },
-            )
-            .await?;
+            if settings_order {
+                send(
+                    &mut socket,
+                    SettingsRequestFrame { kind: "request", request_id: &id, method, params },
+                )
+                .await?;
+            } else {
+                send(
+                    &mut socket,
+                    RequestFrame { kind: "request", id: &id, method, params },
+                )
+                .await?;
+            }
             loop {
                 let frame = receive(&mut socket).await?;
                 if string_field(&frame, "type").as_deref() != Some("response")
@@ -108,6 +140,29 @@ pub(super) async fn request_with_version(
     // cooperation indefinitely, and never replace the RPC error with cleanup.
     let _ = timeout(CLOSE_TIMEOUT, SinkExt::close(&mut socket)).await;
     result
+}
+
+// Field declaration order is the SDK's JSON.stringify insertion order.
+// Keep these envelopes separate from the legacy sessions serializer below.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsHelloFrame<'a> {
+    #[serde(rename = "type")]
+    kind: &'a str,
+    protocol_version: &'a str,
+    client_name: &'a str,
+    client_version: &'a str,
+    token: &'a str,
+}
+
+#[derive(Serialize)]
+struct SettingsRequestFrame<'a, P> {
+    #[serde(rename = "type")]
+    kind: &'a str,
+    #[serde(rename = "id")]
+    request_id: &'a str,
+    method: &'a str,
+    params: P,
 }
 
 #[derive(Serialize)]

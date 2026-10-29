@@ -26,6 +26,9 @@ MATRIX = 'settings_matches_ts_matrix'
 LOCAL = 'settings_local_preflight_matches_ts_matrix'
 REGENERATE = 'settings_oracle_regenerates_identically'
 mutations = [
+    ('settings-hello-order', transport, "    #[serde(rename = \"type\")]\n    kind: &'a str,\n    protocol_version: &'a str,", "    protocol_version: &'a str,\n    #[serde(rename = \"type\")]\n    kind: &'a str,", 'settings_hello_matches_ts_bytes', '#1029 hello and request wire settings-default--argv'),
+    ('settings-request-order', transport, '    #[serde(rename = "type")]\n    kind: &\'a str,\n    #[serde(rename = "id")]\n    request_id: &\'a str,', '    #[serde(rename = "id")]\n    request_id: &\'a str,\n    #[serde(rename = "type")]\n    kind: &\'a str,', 'settings_request_matches_ts_bytes', '#1029 hello and request wire settings-set--argv'),
+    ('settings-json-escaping', settings, 'RawValue::from_string(encoded)', 'RawValue::from_string(encoded.replace("zh-CN", r"\\u007ah-CN"))', 'settings_request_matches_ts_bytes', '#1029 hello and request wire settings-set--argv'),
     ('dispatch', sdk, 'Some("settings") => run_settings(&argv[1..], env, cwd),', 'Some("setting") => run_settings(&argv[1..], env, cwd),', MATRIX, '#1029 expected gateway lifecycle settings-default--argv'),
     ('default', sdk, 'map_or("get", String::as_str)', 'map_or("unknown", String::as_str)', MATRIX, '#1029 expected gateway lifecycle settings-default--argv'),
     ('get-method', settings, '"resolve_settings",', '"wrong_settings",', MATRIX, '#1029 hello and request wire settings-default--argv'),
@@ -48,8 +51,8 @@ mutations = [
     ('fixed-ack', settings, 'stdout_line("{\\"updated\\":true}");', 'stdout_line("{\\"updated\\":false}");', MATRIX, '#1029 TS output and exit settings-set--argv'),
     ('no-local-write', settings, 'stdout_line("{\\"updated\\":true}");', 'std::fs::write(std::path::Path::new(&std::env::var("PILOT_HOME").unwrap_or_default()).join("settings.json"), b"{}").map_err(|e| Failure::Error(e.to_string()))?; stdout_line("{\\"updated\\":true}");', MATRIX, '#1029 complete disk unchanged settings-set--argv'),
     ('settings-client-version', settings, 'connection, method, params, "0.1.0",', 'connection, method, params, "pilotdeck-cli",', MATRIX, '#1029 hello and request wire settings-default--argv'),
-    ('rawvalue-surrogate', transport, 'serde_json::to_string(&frame)', 'serde_json::to_value(&frame).and_then(|value| serde_json::to_string(&value))', 'settings_raw_params_preserve_lone_surrogates', '#1029 expected text request frame settings-extra--set-surrogate'),
-    ('rawvalue-depth', transport, 'serde_json::to_string(&frame)', 'serde_json::to_value(&frame).and_then(|value| serde_json::to_string(&value))', 'settings_raw_params_preserve_deep_object', '#1029 expected text request frame settings-extra--set-deep-object'),
+    ('rawvalue-surrogate', transport, 'SettingsRequestFrame { kind: "request", request_id: &id, method, params },', 'SettingsRequestFrame { kind: "request", request_id: &id, method, params: serde_json::to_value(params).map_err(|e| error(&e.to_string()))? },', 'settings_raw_params_preserve_lone_surrogates', '#1029 expected text request frame settings-extra--set-surrogate'),
+    ('rawvalue-depth', transport, 'SettingsRequestFrame { kind: "request", request_id: &id, method, params },', 'SettingsRequestFrame { kind: "request", request_id: &id, method, params: serde_json::to_value(params).map_err(|e| error(&e.to_string()))? },', 'settings_raw_params_preserve_deep_object', '#1029 expected text request frame settings-extra--set-deep-object'),
     ('selected-cell-coverage', tests, '.count()\n                == 1', '.count()\n                == 2', 'settings_raw_params_preserve_deep_object', '#1029 exactly one selected TS cell settings-extra--set-deep-object'),
     ('coverage', tests, 'cases.len() == 191', 'cases.len() == 190', MATRIX, '#1029 157 registered cells plus 34 live settings boundary cells'),
     ('oracle-drift', oracle, '"nodeVersion": "v22.22.0"', '"nodeVersion": "v0.0.0"', REGENERATE, '#1029 identical TS fixture sdk-settings'),
