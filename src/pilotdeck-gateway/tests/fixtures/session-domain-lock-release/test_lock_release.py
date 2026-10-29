@@ -102,12 +102,17 @@ class LockReleaseControls(unittest.TestCase):
             self.fail(f'#209 retained lease owner.json must be valid JSON: {error}')
 
     def _run(self, probe, *, wait_states=('EXITED',), child=None,
-             kill_leader=None, acquire_lock=False):
+             kill_leader=None, acquire_lock=False, fixture_launch=False,
+             read_error=None):
         """Drive the real run_fixture cleanup gate with a fake child."""
         child = child if child is not None else FakeChild(self.PID)
         self.run_number += 1
         folder = self.root / f'run-{self.run_number}'
         folder.mkdir()
+        if fixture_launch:
+            cells = folder / 'six-cells'
+            cells.mkdir()
+            (cells / 'launch.json').write_text('{}')
         states = iter(wait_states)
 
         def wait_state(pid, timeout):
@@ -133,6 +138,8 @@ class LockReleaseControls(unittest.TestCase):
         if kill_leader is not None:
             stack.enter_context(patch.object(S.HeldProcessGroup, 'kill_leader',
                                              return_value=kill_leader))
+        if read_error is not None:
+            stack.enter_context(patch.object(S, 'read', side_effect=read_error))
         try:
             if acquire_lock:
                 with C.parity_lock(timeout=2, lock=self.lock):
@@ -187,6 +194,8 @@ class LockReleaseControls(unittest.TestCase):
                          '#209 probe OSError must leave cleanup NOT_VERIFIED')
         self.assertIn('injected #209 probe', audit.get('cleanupBlocked') or '',
                       '#209 probe OSError must be recorded')
+        self.assertIs(audit.get('allStopped'), False,
+                      '#209 probe OSError must not report allStopped')
         self.assertIn(self.PID, C.LIVE_GROUPS,
                       '#209 probe OSError must keep the owned group registered')
         self.assertTrue(self.lock.exists(),
@@ -199,6 +208,8 @@ class LockReleaseControls(unittest.TestCase):
                           kill_leader=('sent', 'RUNNING'), acquire_lock=True)
         self.assertEqual(audit.get('processTreeCleanup'), S.CLEANUP_NOT_VERIFIED,
                          '#209 a leader that was not reaped must not be verified')
+        self.assertIs(audit.get('allStopped'), False,
+                      '#209 a leader that was not reaped must not report allStopped')
         self.assertIn(self.PID, C.LIVE_GROUPS,
                       '#209 a leader that was not reaped must stay registered')
         self.assertTrue(self.lock.exists(),
@@ -223,6 +234,57 @@ class LockReleaseControls(unittest.TestCase):
                         '#209 a cleanup error must retain the shared lock')
         self.assertEqual(self._owner().get('cleanupPending'), [self.PID],
                          '#209 a cleanup error must publish cleanupPending')
+
+    def test_cleanup_raised_retains_lock(self):
+        # A cleanup helper that raises after the leader settled must propagate,
+        # keep the frozen probe value, and retain the lease.  The failing read
+        # stands in for any helper error outside the inner OSError/ValueError
+        # catches; the probe has already published VERIFIED at that point.
+        child = FakeChild(self.PID, returncode=0)
+        with self.assertRaises(RuntimeError,
+                               msg='#209 a cleanup helper error must propagate'):
+            self._run({'status': S.CLEANUP_VERIFIED, 'pgid': self.PID},
+                      child=child, fixture_launch=True,
+                      read_error=RuntimeError('injected #209 cleanup'),
+                      acquire_lock=True)
+        audit = json.loads(
+            (self.root / f'run-{self.run_number}' / 'launch.json').read_text())
+        self.assertEqual(audit.get('processTreeCleanup'), S.CLEANUP_VERIFIED,
+                         '#209 a cleanup helper error must keep the probe scoring')
+        self.assertIn('injected #209 cleanup',
+                      audit.get('cleanupRaised') or '',
+                      '#209 a cleanup helper error must be recorded')
+        self.assertIs(audit.get('allStopped'), False,
+                      '#209 a cleanup helper error must deny allStopped')
+        self.assertIn(self.PID, C.LIVE_GROUPS,
+                      '#209 a cleanup helper error must keep the group registered')
+        self.assertTrue(self.lock.exists(),
+                        '#209 a cleanup helper error must retain the shared lock')
+        self.assertEqual(self._owner().get('cleanupPending'), [self.PID],
+                         '#209 a cleanup helper error must publish cleanupPending')
+
+    def test_exited_refused_kill_retains_lock(self):
+        # An unreaped EXITED leader makes kill_leader refuse with state EXITED.
+        # The r1 frozen-scoring restore keeps main's unconditional refused
+        # branch, so the refusal is recorded and the lease stays retained
+        # (fail-closed); this pins that deliberate main-equivalence.
+        child = FakeChild(self.PID, returncode=None)
+        audit = self._run({'status': S.CLEANUP_VERIFIED, 'pgid': self.PID},
+                          wait_states=('EXITED', 'EXITED'), child=child,
+                          acquire_lock=True)
+        self.assertIn('leader kill refused: state EXITED',
+                      audit.get('cleanupBlocked') or '',
+                      '#209 a refused EXITED kill must be recorded')
+        self.assertEqual(audit.get('processTreeCleanup'), S.CLEANUP_VERIFIED,
+                         '#209 a refused EXITED kill must keep the frozen probe value')
+        self.assertIs(audit.get('allStopped'), False,
+                      '#209 a refused EXITED kill must retain the lease')
+        self.assertIn(self.PID, C.LIVE_GROUPS,
+                      '#209 a refused EXITED kill must stay registered')
+        self.assertTrue(self.lock.exists(),
+                        '#209 a refused EXITED kill must retain the shared lock')
+        self.assertEqual(self._owner().get('cleanupPending'), [self.PID],
+                         '#209 a refused EXITED kill must publish cleanupPending')
 
     def test_spawn_defers_signals(self):
         self._run({'status': S.CLEANUP_VERIFIED, 'pgid': self.PID})
@@ -275,13 +337,16 @@ class RunnerInvalidationControls(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.source = self.root / 'mutant_source.py'
         self.source.write_text('x = 0\n')
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        entry = str(Path(__file__).resolve().parent)
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
+            self.addCleanup(sys.path.remove, entry)
         import negative_controls
         self.runner = negative_controls
 
     def _drive(self, *, guard_error=None):
         """Run the real ``main`` with only the guard and subprocess mocked."""
-        out = self.root / 'out'
+        out = Path(tempfile.mkdtemp(prefix='out-', dir=self.root))
         source = self.source
         values = {
             1: subprocess.CompletedProcess([], 0, '', 'Ran 1 test\n'),
@@ -290,7 +355,7 @@ class RunnerInvalidationControls(unittest.TestCase):
             3: subprocess.CompletedProcess([], 0, '', 'Ran 1 test\n'),
         }
         calls = []
-        captured = {}
+        captured = {'mutating_calls': 0}
 
         def run_owned(command, **kwargs):
             calls.append(command)
@@ -306,6 +371,7 @@ class RunnerInvalidationControls(unittest.TestCase):
                 return False
 
         def mutating(root, paths, **kwargs):
+            captured['mutating_calls'] += 1
             captured['paths'] = list(paths)
             return Guard()
 
@@ -318,13 +384,21 @@ class RunnerInvalidationControls(unittest.TestCase):
                 patch.object(sys, 'argv',
                              [str(Path(self.runner.__file__)), '--output',
                               str(out), '--only', 'one']):
-            code = self.runner.main()
+            try:
+                code = self.runner.main()
+            except BaseException as error:
+                if error is not guard_error:
+                    raise
+                # Only the injected cancellation is observed; a real Ctrl-C
+                # (a different exception object) must still abort the test.
+                code = error
         summary = json.loads((out / 'summary.json').read_text())
-        return code, summary, captured.get('paths')
+        return code, summary, captured.get('paths'), captured['mutating_calls']
 
     def test_final_guard_failure_rewrites_summary(self):
         """P0-2: a guard/restoration failure after the last row must void it."""
-        code, summary, _ = self._drive(guard_error=RuntimeError('restore failed'))
+        code, summary, _, _ = self._drive(
+            guard_error=RuntimeError('restore failed'))
         self.assertEqual(code, 2, '#209 P0-2 guard failure must exit 2')
         self.assertEqual(summary['counts'],
                          {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
@@ -335,9 +409,27 @@ class RunnerInvalidationControls(unittest.TestCase):
         self.assertIn('source guard', summary['controls'][0]['reason'],
                       '#209 P0-2 invalidation reason must be recorded')
 
+    def test_final_guard_interrupt_rewrites_summary(self):
+        """P0-2: a cancellation after the last row must void it, then propagate."""
+        for canceled in (KeyboardInterrupt('restore interrupted'),
+                         SystemExit('restore exited')):
+            with self.subTest(canceled=type(canceled).__name__):
+                code, summary, _, _ = self._drive(guard_error=canceled)
+                self.assertIs(type(code), type(canceled),
+                              '#209 P0-2 the cancellation must be re-raised')
+                self.assertEqual(
+                    summary['counts'],
+                    {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                    '#209 P0-2 a cancellation after the last row must not keep KILLED')
+                self.assertTrue(all(row['status'] == 'INVALID'
+                                    for row in summary['controls']),
+                                '#209 P0-2 every recorded row must be invalidated')
+                self.assertIn('source guard', summary['controls'][0]['reason'],
+                              '#209 P0-2 invalidation reason must be recorded')
+
     def test_runner_guards_session_and_common_without_outer_lease(self):
         """P1: one lease from mutating_sources and both protected sources."""
-        code, summary, paths = self._drive()
+        code, summary, paths, mutating_calls = self._drive()
         self.assertEqual(code, 0, '#209 P1 the sample runner must finish green')
         self.assertEqual(summary['counts'],
                          {'KILLED': 1, 'SURVIVED': 0, 'INVALID': 0},
@@ -346,7 +438,9 @@ class RunnerInvalidationControls(unittest.TestCase):
                       '#209 P1 session_domain.py must be protected')
         self.assertIn(self.runner.COMMON, paths,
                       '#209 P1 common.py must be protected with session_domain.py')
-        self.assertFalse(hasattr(self.runner, 'parity_lease'),
+        self.assertIn(self.runner.RUNNER, paths,
+                      '#209 P1 the delivered runner must be protected for its own row')
+        self.assertEqual(mutating_calls, 1,
                          '#209 P1 no second outer lease may wrap mutating_sources')
 
 

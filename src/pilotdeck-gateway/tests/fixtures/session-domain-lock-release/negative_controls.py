@@ -15,7 +15,10 @@ non-KILLED row is a nonzero exit.  A stale anchor or a failed compile is
 INVALID and keeps going.  If the outer source guard or restoration fails, every
 already-recorded row is invalidated and the on-disk summary is rewritten
 unconditionally (the #979/#1037 shared semantics) instead of publishing a false
-green summary.
+green summary.  The guard exit catches ``BaseException``: a ``KeyboardInterrupt``
+or ``SystemExit`` during the restore/re-verify window voids the recorded rows
+and rewrites ``summary.json`` through an atomic replace before it is re-raised,
+so a cancelled run cannot leave an all-KILLED file behind.
 """
 import argparse
 import json
@@ -29,6 +32,7 @@ from negative_suite import invalidate_completed
 ROOT = Path(__file__).resolve().parents[5]
 SESSION = ROOT / 'scripts/gateway-parity/session_domain.py'
 COMMON = ROOT / 'scripts/gateway-parity/common.py'
+RUNNER = Path(__file__).resolve()
 TEST = Path(__file__).resolve().with_name('test_lock_release.py')
 
 MUTATIONS = [
@@ -80,10 +84,30 @@ MUTATIONS = [
      "                                and not audit.get('cleanupBlocked')\n"
      "                                and not audit.get('cleanupRaised'))",
      "                                and not audit.get('cleanupRaised'))"),
+    # A cleanup helper that raised after the leader settled is ignored by the
+    # release gate (the P0-1 regression: an aborted cleanup must retain).
+    ('e1-cleanup-raised-ignored', SESSION,
+     "                                and not audit.get('cleanupBlocked')\n"
+     "                                and not audit.get('cleanupRaised'))",
+     "                                and not audit.get('cleanupBlocked'))"),
+    # The EXITED-zombie exemption is put back, so a refused kill of an unreaped
+    # leader releases the lease even though the helper did not prove absence.
+    ('e1-exited-refused-exempted', SESSION,
+     "        elif outcome == 'refused':\n"
+     "            audit['cleanupBlocked'] = f'leader kill refused: state {detail}'",
+     "        elif outcome == 'refused' and detail != 'EXITED':\n"
+     "            audit['cleanupBlocked'] = f'leader kill refused: state {detail}'"),
     # A retained cleanupPending lease is taken over as a dead/expired lock.
     ('e1-takeover-ignores-pending', COMMON,
      "                    if reason and not damaged and not (previous and previous.get('cleanupPending')):",
      "                    if reason and not damaged:"),
+    # The lock-lifecycle field is published optimistically even though the
+    # owned group was not proven stopped.
+    ('e1-allstopped-optimistic', SESSION,
+     "                    audit['allStopped'] = verified\n"
+     "                    if verified:",
+     "                    audit['allStopped'] = True\n"
+     "                    if verified:"),
     # The P0-1 regression: a verified probe is downgraded to NOT_VERIFIED
     # whenever the leader was not reaped or a cleanup error was recorded.
     ('e1-scoring-downgrade-restored', SESSION,
@@ -94,6 +118,13 @@ MUTATIONS = [
      "                        audit['processTreeCleanup'] = CLEANUP_NOT_VERIFIED\n"
      "                    audit['allStopped'] = verified\n"
      "                    if verified:"),
+    # The runner guard catches only Exception, so a cancellation (KeyboardInterrupt
+    # / SystemExit) during restore keeps the last all-KILLED summary (#209 P0).
+    ('e1-runner-baseexception-narrowed', RUNNER,
+     "    except BaseException as error:\n"
+     "        reason = f'source guard: {type(error).__name__}: {error}'",
+     "    except Exception as error:\n"
+     "        reason = f'source guard: {type(error).__name__}: {error}'"),
 ]
 
 CHECKS = {
@@ -118,12 +149,24 @@ CHECKS = {
     'e1-cleanup-blocked-ignored': (
         'LockReleaseControls.test_leader_kill_refusal_retains_lock',
         '#209 a cleanup error must deny allStopped'),
+    'e1-cleanup-raised-ignored': (
+        'LockReleaseControls.test_cleanup_raised_retains_lock',
+        '#209 a cleanup helper error must deny allStopped'),
+    'e1-exited-refused-exempted': (
+        'LockReleaseControls.test_exited_refused_kill_retains_lock',
+        '#209 a refused EXITED kill must be recorded'),
     'e1-takeover-ignores-pending': (
         'LockReleaseControls.test_takeover_pending_refused',
         '#209 cleanupPending lock must be refused'),
+    'e1-allstopped-optimistic': (
+        'LockReleaseControls.test_probe_oserror_retains_lock',
+        '#209 probe OSError must not report allStopped'),
     'e1-scoring-downgrade-restored': (
         'LockReleaseControls.test_leader_kill_refusal_retains_lock',
         '#209 P0-1 a verified probe must keep main scoring (no downgrade)'),
+    'e1-runner-baseexception-narrowed': (
+        'RunnerInvalidationControls.test_final_guard_interrupt_rewrites_summary',
+        '#209 P0-2 a cancellation after the last row must not keep KILLED'),
 }
 
 
@@ -147,12 +190,24 @@ def compile_mutant(name, path, mutant):
     return 'Python compile: PASS\n'
 
 
+def _counts(results):
+    return {state: sum(row['status'] == state for row in results)
+            for state in ('KILLED', 'SURVIVED', 'INVALID')}
+
+
 def write_summary(out, results):
-    """Publish the current rows; the only summary writer in this runner."""
-    counts = {state: sum(row['status'] == state for row in results)
-              for state in ('KILLED', 'SURVIVED', 'INVALID')}
-    (out / 'summary.json').write_text(json.dumps(
-        {'controls': results, 'counts': counts}, indent=2) + '\n')
+    """Publish the current rows atomically; the only summary writer here.
+
+    A reader that checks "the file exists" must never observe a half-written
+    JSON document, so the payload goes to a sibling temp file and is renamed
+    over ``summary.json`` (#166 r8).
+    """
+    payload = json.dumps({'controls': results, 'counts': _counts(results)},
+                         indent=2) + '\n'
+    target = out / 'summary.json'
+    tmp = out / 'summary.json.tmp'
+    tmp.write_text(payload)
+    tmp.replace(target)
 
 
 def record(out, results, name, status, reason):
@@ -200,8 +255,9 @@ def main():
         # lease would make this non-reentrant guard wait on itself (#209 P1).
         # The protected set always carries common.py: _parity_mutation_lock
         # refuses a gateway-parity path without it, including an SESSION-only
-        # --only selection.
-        paths = [SESSION, COMMON]
+        # --only selection.  RUNNER is guarded too because one row mutates this
+        # delivered runner to prove the cancellation regression bites.
+        paths = [SESSION, COMMON, RUNNER]
         with mutating_sources(ROOT, paths, baseline=args.baseline) as originals:
             for name, source, old, new in selected:
                 status, reason = 'INVALID', 'not executed'
@@ -236,19 +292,24 @@ def main():
                 except Exception as error:
                     status, reason = 'INVALID', reason + f'; restoration test: {error}'
                 record(out, results, name, status, reason)
-    except Exception as error:
+    except BaseException as error:
         reason = f'source guard: {type(error).__name__}: {error}'
         # #979/#1037: a guard/restoration failure voids every already-recorded
         # row in memory, then the summary on disk is rewritten unconditionally.
         # Without the rewrite the last record() kept an all-KILLED file (#209
         # P0-2), because selected[len(results):] is empty in this path.
+        # BaseException covers the cancellation exits (KeyboardInterrupt /
+        # SystemExit) that interrupted the restore/re-verify window: void the
+        # rows and publish INVALID first, then propagate the cancellation
+        # instead of returning a normal status (#209 P0-2).
         invalidate_completed(results, reason)
         for name, *_ in selected[len(results):]:
             record(out, results, name, 'INVALID', reason)
         write_summary(out, results)
+        if not isinstance(error, Exception):
+            raise
         return 2
-    counts = {state: sum(row['status'] == state for row in results)
-              for state in ('KILLED', 'SURVIVED', 'INVALID')}
+    counts = _counts(results)
     print(json.dumps(counts), flush=True)
     return 0 if counts['KILLED'] == len(results) else 1
 
