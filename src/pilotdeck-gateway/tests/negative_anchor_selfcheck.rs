@@ -27,6 +27,7 @@ fn negative_fixture_anchors_and_checker_controls() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     for (script, args) in [
         ("test_anchor_selfcheck.py", &[][..]),
+        ("negative-restore/test_restore.py", &[][..]),
         // CI prepares the TS baseline after cargo test. This explicit mode still
         // lists missing launcher prerequisites; local invocation is strict.
         ("anchor_selfcheck.py", &["--anchors-only"][..]),
