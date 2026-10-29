@@ -2900,9 +2900,39 @@ async fn writer_fence_uses_configured_budget() {
 
 #[tokio::test]
 async fn writer_factory_rejects_already_locked_storage() {
+    // The failed factory's close thread may retain the locked store even after
+    // dispose and our outer Arcs drop. Observe the OS lock, not those drops.
+    async fn wait_for_unlock(path: &Path) {
+        loop {
+            match crate::storage::LedgerLock::acquire(path) {
+                Ok((_path, lease)) => {
+                    drop(lease);
+                    return; // #1027 lock release observed
+                }
+                Err(crate::storage::LedgerError::Io(error))
+                    if error.kind() == std::io::ErrorKind::WouldBlock =>
+                {
+                    tokio::task::yield_now().await; // #1027 retry only while locked
+                }
+                Err(error) => panic!("#1027 lock release probe failed: {error}"),
+            }
+        }
+    }
+    async fn assert_waiting(future: std::pin::Pin<&mut impl Future<Output = ()>>) {
+        let mut future = future;
+        crate::negative_assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(
+                future.as_mut().poll(cx).is_pending()
+            ))
+            .await,
+            "#1027 lock release wait must remain pending while store is retained"
+        );
+    }
+
     let h = Harness::new("already-locked-storage");
     let (store, path) = JsonlTranscriptStore::open_locked(&h.root.join("session-745.jsonl"))
-        .expect("#745 locked storage owns ledger");
+        .expect("#1027 locked storage owns ledger");
+    let lock_path = path.clone();
     let store = Arc::new(store);
     let retained = store.clone();
     let root = h.root.clone();
@@ -2928,33 +2958,71 @@ async fn writer_factory_rejects_already_locked_storage() {
         admission: None,
         diagnostic: Arc::new(|_| {}),
     });
-    let error = bounded("locked storage create", factory.create(h.context(), None))
-        .await
-        .err()
-        .expect("#745 locked store cannot be double leased");
+    let error = bounded(
+        "#1027 locked storage create",
+        factory.create(h.context(), None),
+    )
+    .await
+    .err()
+    .expect("#1027 locked store cannot be double leased");
     assert_eq!(
         error.js_error().and_then(|e| e.code.as_deref()),
         Some("SESSION_WRITER_BUSY"),
-        "#745 locked store factory error contract"
+        "#1027 locked store factory error contract"
     );
     assert_eq!(
         h.leases(),
         0,
-        "#745 locked store releases prepared resources"
+        "#1027 locked store releases prepared resources"
     );
     factory
         .dispose()
         .await
-        .expect("#745 locked store factory cleanup");
+        .expect("#1027 locked store factory cleanup");
+    let delayed_release = store.clone();
     drop(factory);
     drop(store);
-    let new = h.create("unlocked storage retry").await;
+
+    // Cancellation must not release another holder's lock.
+    let mut cancelled = Box::pin(wait_for_unlock(&lock_path));
+    assert_waiting(cancelled.as_mut()).await;
+    drop(cancelled);
+    assert!(
+        matches!(
+            crate::storage::LedgerLock::acquire(&lock_path),
+            Err(crate::storage::LedgerError::Io(error))
+                if error.kind() == std::io::ErrorKind::WouldBlock
+        ),
+        "#1027 cancelled release wait leaves the store locked"
+    );
+
+    // A holder that never releases must hit the same bounded wait budget.
+    tokio::time::pause();
+    let mut never_released = Box::pin(wait_for_unlock(&lock_path));
+    assert_waiting(never_released.as_mut()).await;
+    let expires = tokio::time::timeout(Duration::from_secs(8), never_released);
+    // Cross the deadline including timer rounding; a yielding waiter keeps a
+    // paused runtime busy, so it cannot auto-advance the remaining timer tick.
+    tokio::time::advance(Duration::from_secs(9)).await;
+    expires
+        .await
+        .expect_err("#1027 retained store wait is bounded");
+    tokio::time::resume();
+
+    let mut released = Box::pin(wait_for_unlock(&lock_path));
+    assert_waiting(released.as_mut()).await;
+    drop(delayed_release);
+    crate::test_negative_receipt::expect_ok(
+        tokio::time::timeout(Duration::from_secs(8), released).await,
+        "#1027 dropped store eventually releases its ledger lock",
+    );
+    let new = h.create("#1027 unlocked storage retry").await;
     assert_eq!(
         new.state(),
         HandleState::Active,
-        "#745 unlocked storage permits create"
+        "#1027 unlocked storage permits create"
     );
-    h.finish("already-locked-storage").await;
+    h.finish("#1027 already-locked-storage").await;
 }
 
 #[tokio::test]
