@@ -127,7 +127,7 @@ cases = [
     ('writer-snapshot-before-prepare', factory, '        let prepared = (self.options.prepare)(context.clone(), self.mcp.clone()).await?;\n        let captured_reload = previous\n            .as_ref()\n            .map(LiveSessionHandle::recreation_snapshot)\n            .transpose();', '        let captured_reload = previous.as_ref().map(LiveSessionHandle::recreation_snapshot).transpose();\n        let prepared = (self.options.prepare)(context.clone(), self.mcp.clone()).await?;', None, prefix+'recreate_snapshot_rejects_disposal_during_prepare', '#745 prepare disposal rejects recreation'),
     ('writer-dispose-panic-guard', factory, 'lock(&self.writer_lease).take()', 'None', None, prefix+'writer_close_panic_releases_lease', '#745 panic lease released'),
     ('writer-rollback-panic-guard', factory, 'lock(&self.writer_lease).take()', 'None', None, prefix+'writer_rollback_close_panic_releases_lease', '#745 rollback panic lease released'),
-    ('writer-already-locked-contract', factory, 'writer_busy()\n            }', 'RuntimeError::new("untyped lock failure")\n            }', None, prefix+'writer_factory_rejects_already_locked_storage', '#745 locked store factory error contract'),
+    ('writer-already-locked-contract', factory, 'writer_busy()\n            }', 'RuntimeError::new("untyped lock failure")\n            }', None, prefix+'writer_factory_rejects_already_locked_storage', '#1027 locked store factory error contract'),
     ('writer-configured-budget', factory, 'tokio::time::Instant::now() + self.options.writer_fence_timeout', 'tokio::time::Instant::now() + crate::host::Limits::default().close_timeout', None, prefix+'writer_fence_uses_configured_budget', '#745 configured budget exceeds default close timeout'),
     ('fence-runtime-registry', test_source, 'serde_json::json!(fence_handle_id(h, &handle))', 'serde_json::json!(fence_handle_id(h, &handle) + 1)', None, prefix+'fence_idle_recreate_beforeload', '#745 fence runtime complete observation fence-idle-recreate-beforeload'),
     ('fence-runtime-results', test_source, '"handle":fence_handle_id(h,handle)', '"handle":fence_handle_id(h,handle) + 1', None, prefix+'fence_idle_twice_beforeload', '#745 fence runtime complete observation fence-idle-twice-beforeload'),
@@ -171,7 +171,7 @@ def audit():
                     offset = at + len(part)
                 return True
             if test_name != 'regenerates_identically' and not any(
-                marker_matches(literal) for literal in literals if '#745 ' in literal):
+                marker_matches(literal) for literal in literals if literal.startswith(('#745 ', '#1027 '))):
                 raise ValueError('bound failure message not found: ' + assertion)
             rows.append(dict(mutation=name, status='CHECKED', test=test, assertion=assertion))
         except Exception as error:
