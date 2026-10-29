@@ -46,7 +46,7 @@ fix-r3 增加真实 TS `prepareDisposal`：第二次 prepare 的 plugin.refresh 
 
 48格现在在 Rust 实际 boundary / event / result 构造同形对象，以原始 oracle 行为底稿，只映射 WRITER-FENCE-001-R1 与 RECREATE-DRAIN-001-R1 明列字段。oldInFlight读取真实 handle.activity；旧turn用activity guard建模，fulfilled由活动归还及drain完成验证，非模型turn返回值。first/second 的完整错误和 handle 身份则直接读取真实 factory/owner 返回。registryAfterEvent也读取owner实际缓存；shutdown提前移除与同key排队仍是未批准差异。
 
-writer lease在dispose/rollback一开始被take到局部WriterCloseGuard；guard在正常退出、panic或JoinError路径先同步截断新写，把writer和租约移交独立blocking线程，已受理写完成后才drop租约；runtime不会被commit锁阻塞，runtime已退出仍可清理。release/close钩子的最后写入仍按原顺序保留。panic释放、旧writer退休、下一次create、非默认fence预算与已open_locked store拒绝均有回归和专属变异。FactoryStorage::new必须接未锁store；#589接线仍须解决PersistenceResources已有lease的转移/复用，不得通过跳过锁绕开排他性。
+writer lease在dispose/rollback一开始被take到局部WriterCloseGuard；guard在正常退出、panic或JoinError路径先同步截断新写，把writer和租约移交独立blocking线程，已受理写完成后才drop租约；runtime不会被commit锁阻塞，runtime已退出仍可清理。release/close钩子的最后写入仍按原顺序保留。panic释放、旧writer退休、下一次create、非默认fence预算与已open_locked store拒绝均有回归和专属变异。FactoryStorage::new必须接未锁store；#1019起已锁recording经`SessionStorage::Recording`/`open_and_adopt`把fence转移给factory租约（编译期开关负控见`session-adopt/`），不得通过跳过锁绕开排他性。
 
 fix-r4 将 handle 的 writer guard 接管提前到 adapter.abort 之前，覆盖 abort panic 尚未调用 session.dispose 的路径；正常资源钩子的最后写入仍在 guard Drop 前。factory.new 明确拒绝 ZERO 预算；到期仍完成 canonical path 和一次非阻塞租约尝试，只有忙锁等待受 deadline 约束（忙锁可等待时间仍扣除路径解析耗时）。耗尽预算用真实前驱活动、受控暂停 factory future、虚拟时钟与实际 lease 释放验证，不用 sleep 猜时序。
 

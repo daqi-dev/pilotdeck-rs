@@ -7,8 +7,9 @@
 use super::{FamilyResource, Resource, RuntimeError, RuntimeResult, StageContext, StageSink};
 use crate::runtime::snapshot::{SnapshotGateway, SnapshotProjects};
 use crate::storage::{
-    ContentAddressedWorkspaceSnapshotRecorder, JsonlTranscriptStore, StoreResult, TranscriptKey,
-    TranscriptRead, TranscriptStore, WorkspaceSnapshotProvider, create_workspace_snapshot_provider,
+    ContentAddressedWorkspaceSnapshotRecorder, JsonlTranscriptStore, LedgerLock, StoreResult,
+    TranscriptKey, TranscriptRead, TranscriptStore, WorkspaceSnapshotProvider,
+    create_workspace_snapshot_provider,
     recorder::{Recorder, RecorderError, RecorderResult},
     resolve_workspace_snapshot_config,
 };
@@ -68,6 +69,17 @@ impl PersistenceResources {
         )
     }
 
+    /// Composition without the project staging sink, for factory adoption
+    /// tests (#1019) that call `create_session` directly.
+    #[cfg(test)]
+    pub(crate) fn for_tests(project_root: PathBuf, pilot_home: PathBuf) -> Self {
+        Self {
+            project_root,
+            pilot_home,
+            snapshots: None,
+        }
+    }
+
     /// Restore a recorder before publishing it to the session. The host supplies
     /// the session storage's resolved transcript path; `None` deliberately selects
     /// memory-only recording (AgentSessionRuntimeBundle.ts:125-142). No home or
@@ -86,15 +98,24 @@ impl PersistenceResources {
         transcript_path: Option<PathBuf>,
     ) -> RecorderResult<SessionRecording> {
         let persistent = transcript_path.is_some();
-        let (store, transcript_path): (Arc<dyn TranscriptStore>, _) = match transcript_path {
+        let (store, locked, transcript_path): (
+            Arc<dyn TranscriptStore>,
+            Option<Arc<JsonlTranscriptStore>>,
+            PathBuf,
+        ) = match transcript_path {
             Some(path) => {
                 // The store retains this spelling for diagnostics while the
                 // key uses the canonical path protected by its writer lock.
                 let (store, path) =
                     JsonlTranscriptStore::open_locked(&path).map_err(RecorderError::Store)?;
-                (Arc::new(store), path)
+                let locked = Arc::new(store);
+                (
+                    locked.clone() as Arc<dyn TranscriptStore>,
+                    Some(locked),
+                    path,
+                )
             }
-            None => (Arc::new(MemoryEvents::default()), PathBuf::new()),
+            None => (Arc::new(MemoryEvents::default()), None, PathBuf::new()),
         };
         let key = TranscriptKey {
             project_root: self.project_root.clone(),
@@ -112,6 +133,7 @@ impl PersistenceResources {
             recorder,
             restored,
             store,
+            locked,
             key,
             persistent,
         })
@@ -133,6 +155,9 @@ pub struct SessionRecording {
     /// The exact restored entries and diagnostics, before any new append.
     pub restored: TranscriptRead,
     store: Arc<dyn TranscriptStore>,
+    /// The same locked store allocation, kept concrete so its ledger fence can
+    /// move out to the factory's writer lease (#1019).
+    locked: Option<Arc<JsonlTranscriptStore>>,
     key: TranscriptKey,
     persistent: bool,
 }
@@ -145,6 +170,16 @@ impl SessionRecording {
         self.store
             .read(&self.key, None)
             .map_err(RecorderError::Store)
+    }
+    /// Transfer this recording to the session factory's writer lease (#1019):
+    /// the store keeps serving reads and appends, while its ledger fence
+    /// leaves the store so the factory can own and release it with the
+    /// writer drain. A memory-only recording has no fence to transfer.
+    pub(crate) fn into_storage(
+        self,
+    ) -> (Arc<dyn TranscriptStore>, TranscriptKey, Option<LedgerLock>) {
+        let fence = self.locked.as_ref().and_then(|store| store.take_fence());
+        (self.store, self.key, fence)
     }
 }
 

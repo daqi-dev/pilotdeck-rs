@@ -156,8 +156,10 @@ pub struct JsonlTranscriptStore {
     /// Write lock; holds the paths whose tail this instance has prepared.
     prepared: Mutex<HashSet<PathBuf>>,
     /// Only project-owned session stores opt into the shared ledger fence.
-    /// The store is retained by every Arc<TranscriptWriter> clone.
-    _owner: Option<LedgerLock>,
+    /// The store is retained by every Arc<TranscriptWriter> clone, so the
+    /// fence spans generations until #1019's holder moves it out (`take_fence`)
+    /// into the factory's writer lease.
+    owner: Mutex<Option<LedgerLock>>,
     /// A project-owned store serves one canonical transcript; diagnostics keep
     /// the original spelling supplied when that writer acquired its fence.
     diagnostic_path: Option<PathBuf>,
@@ -171,12 +173,18 @@ impl JsonlTranscriptStore {
         let (path, owner) = LedgerLock::acquire(path)?;
         Ok((
             Self {
-                _owner: Some(owner),
+                owner: Mutex::new(Some(owner)),
                 diagnostic_path: Some(diagnostic_path),
                 ..Self::default()
             },
             path,
         ))
+    }
+    /// Move this store's ledger fence out (#1019). The caller owns the fence
+    /// from here on, so its release can be tied to the writer drain instead
+    /// of this store's Arc lifetime.
+    pub(crate) fn take_fence(&self) -> Option<LedgerLock> {
+        self.owner.lock().unwrap_or_else(|e| e.into_inner()).take()
     }
     fn lock(&self, path: &Path) -> StoreResult<MutexGuard<'_, HashSet<PathBuf>>> {
         let guard = self.prepared.lock().unwrap_or_else(|e| e.into_inner());

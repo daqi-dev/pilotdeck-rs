@@ -619,6 +619,62 @@ async fn persistence_writer_lock_spans_generations_aliases_and_writer_clones() {
 }
 
 #[tokio::test]
+async fn persistence_into_storage_transfers_fence_to_factory_lease() {
+    let scratch = Scratch::new();
+    let registry = registry(&scratch, false);
+    let lease = registry.acquire(None).unwrap();
+    let handle = resource(&lease);
+    let path = scratch.0.join("transfer.jsonl");
+    let session = native(&handle)
+        .create_session("s".into(), Some(path.clone()))
+        .unwrap();
+    session
+        .recorder
+        .start_turn(&"s".into(), &"first".into())
+        .unwrap();
+    let (store, key, fence) = session.into_storage();
+    let fence = fence.expect("#1019 persistent recording transfers its fence");
+    assert_eq!(
+        fence.path(),
+        key.transcript_path.as_path(),
+        "#1019 transferred fence guards the canonical transcript path"
+    );
+    // The store keeps serving reads without holding the fence itself.
+    assert_eq!(
+        store.read(&key, None).unwrap().entries.len(),
+        1,
+        "#1019 store reads after the fence transfer"
+    );
+    assert!(
+        matches!(
+            native(&handle).create_session("other".into(), Some(path.clone())),
+            Err(RecorderError::Store(LedgerError::Io(error)))
+                if error.kind() == std::io::ErrorKind::WouldBlock
+        ),
+        "#1019 transferred fence still excludes other openers while held"
+    );
+    drop(fence);
+    let reopened = native(&handle)
+        .create_session("s".into(), Some(path.clone()))
+        .unwrap();
+    assert_eq!(
+        reopened.read().unwrap().entries.len(),
+        1,
+        "#1019 next writer opens once the transferred fence drops"
+    );
+    drop((reopened, store));
+    let memory = native(&handle).create_session("m".into(), None).unwrap();
+    assert!(
+        !memory.is_persistent(),
+        "#1019 memory recording is not persistent"
+    );
+    let (_, _, none) = memory.into_storage();
+    assert!(none.is_none(), "#1019 memory recording transfers no fence");
+    drop((handle, lease));
+    bounded(registry.dispose()).await.unwrap();
+}
+
+#[tokio::test]
 async fn persistence_concurrent_open_publishes_exactly_one_writer() {
     let scratch = Scratch::new();
     let registry = registry(&scratch, false);

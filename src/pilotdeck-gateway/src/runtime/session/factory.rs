@@ -7,7 +7,9 @@ use crate::{
     runtime::{
         cleanup_task::lock,
         mcp::registry::SessionMcpRuntimeRegistry,
-        project::{DisposeFuture, RuntimeError, RuntimeLease, RuntimeResult},
+        project::{
+            DisposeFuture, RuntimeError, RuntimeLease, RuntimeResult, persistence::SessionRecording,
+        },
         refresh::BoxFuture,
         turn::{
             host_factory::TurnHostFactory,
@@ -16,13 +18,14 @@ use crate::{
         },
     },
     storage::{
-        Diagnostic, TranscriptKey, TranscriptRead, TranscriptStore, WriterState, recorder::Recorder,
+        Diagnostic, TranscriptKey, TranscriptRead, TranscriptStore, WriterState,
+        recorder::{Recorder, RecorderResult},
     },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock, Weak,
         atomic::{AtomicBool, Ordering},
@@ -157,23 +160,10 @@ async fn acquire_writer_resolved(
     resolved: impl std::future::Future<Output = Result<PathBuf, RuntimeError>>,
     deadline: tokio::time::Instant,
 ) -> Result<WriterLease, RuntimeError> {
-    static WRITERS: OnceLock<Mutex<HashMap<PathBuf, Weak<WriterMutex>>>> = OnceLock::new();
     // Path resolution is not a cancellable busy-lock wait. Its elapsed time
     // consumes the remaining wait budget; after expiry only an idle try remains.
     let path = resolved.await?;
-    let mutex = {
-        let mut writers = lock(WRITERS.get_or_init(Mutex::default));
-        writers.retain(|_, entry| entry.strong_count() != 0);
-        writers
-            .entry(path.clone())
-            .or_default()
-            .upgrade()
-            .unwrap_or_else(|| {
-                let mutex = Arc::new(WriterMutex::new(()));
-                writers.insert(path.clone(), Arc::downgrade(&mutex));
-                mutex
-            })
-    };
+    let mutex = writer_mutex(&path);
     let process = acquire_process_writer(mutex, deadline).await?;
     let file = tokio::task::spawn_blocking(move || crate::storage::LedgerLock::acquire(&path))
         .await
@@ -191,6 +181,106 @@ async fn acquire_writer_resolved(
         _process: process,
         _file: file,
     })
+}
+fn writer_mutex(path: &Path) -> Arc<WriterMutex> {
+    // Shared across factory instances. Weak entries do not retain idle sessions.
+    static WRITERS: OnceLock<Mutex<HashMap<PathBuf, Weak<WriterMutex>>>> = OnceLock::new();
+    let mut writers = lock(WRITERS.get_or_init(Mutex::default));
+    writers.retain(|_, entry| entry.strong_count() != 0);
+    writers
+        .entry(path.to_path_buf())
+        .or_default()
+        .upgrade()
+        .unwrap_or_else(|| {
+            let mutex = Arc::new(WriterMutex::new(()));
+            writers.insert(path.to_path_buf(), Arc::downgrade(&mutex));
+            mutex
+        })
+}
+
+/// A recording the factory adopts (#1019): the supplied transcript path and a
+/// deferred opener that recreates the `SessionRecording` (with its
+/// `open_locked` ledger fence) only when the factory asks for it. The opener
+/// must not re-enter the factory for the same path.
+pub struct RecordingPlan {
+    pub transcript_path: PathBuf,
+    pub open: OpenRecording,
+}
+pub type OpenRecording = Arc<dyn Fn() -> RecorderResult<SessionRecording> + Send + Sync>;
+
+/// Open a host recording and adopt its ledger fence as this factory's writer
+/// lease (#1019). The canonical path's process writer mutex is acquired
+/// before the opener runs: a draining predecessor's close thread releases
+/// the flock before that mutex (`WriterLease` field order), so holding the
+/// mutex proves the file lock is already free — opening earlier would race
+/// that in-flight release and report the first recreation as busy. Running
+/// the opener under the mutex also means a second factory on the same
+/// canonical path cannot open concurrently.
+async fn open_and_adopt(
+    plan: RecordingPlan,
+    deadline: tokio::time::Instant,
+) -> Result<Arc<FactoryStorage>, RuntimeError> {
+    let canonical = tokio::task::spawn_blocking(move || {
+        crate::storage::canonical_transcript_path(&plan.transcript_path)
+    })
+    .await
+    .map_err(|e| RuntimeError::new(e.to_string()))?
+    .map_err(|e| RuntimeError::new(e.to_string()))?;
+    let mutex = writer_mutex(&canonical);
+    let early_open = crate::mutants::on("adopt-open-before-mutex");
+    let process = if early_open {
+        None
+    } else {
+        Some(acquire_process_writer(mutex.clone(), deadline).await?)
+    };
+    let recording = tokio::task::spawn_blocking(move || (plan.open)())
+        .await
+        .map_err(|e| RuntimeError::new(e.to_string()))?
+        .map_err(|error| {
+            if crate::mutants::on("adopt-busy-untyped") {
+                RuntimeError::new(error.to_string())
+            } else {
+                match error {
+                    crate::storage::recorder::RecorderError::Store(
+                        crate::storage::LedgerError::Io(ref io),
+                    ) if io.kind() == std::io::ErrorKind::WouldBlock => writer_busy(),
+                    error => RuntimeError::new(error.to_string()),
+                }
+            }
+        })?;
+    let process = match process {
+        Some(process) => process,
+        None => acquire_process_writer(mutex, deadline).await?,
+    };
+    let (store, key, fence) = recording.into_storage();
+    let mut fence = match fence {
+        Some(fence) if fence.path() == canonical.as_path() => Some(fence),
+        Some(fence) => {
+            return Err(RuntimeError::new(format!(
+                "#1019 adopted ledger fence guards {} while the plan resolved to {}; refusing the transfer",
+                fence.path().display(),
+                canonical.display()
+            )));
+        }
+        None if !crate::mutants::on("adopt-unfenced-recording") => {
+            return Err(RuntimeError::new(
+                "#1019 adopted recording holds no ledger fence (memory-only); refusing to skip the writer fence",
+            ));
+        }
+        None => None,
+    };
+    if crate::mutants::on("adopt-fence-dropped") {
+        // mutant: adopt without the transferred fence
+        fence = None;
+    }
+    let storage = Arc::new(FactoryStorage::new(store, key));
+    if let Some(fence) = fence {
+        *lock(&storage.writer_lease) = Some(WriterLease {
+            _file: fence,
+            _process: process,
+        });
+    }
+    Ok(storage)
 }
 // Each observation belongs to one real process mutex, so parallel tests cannot
 // cross-talk. Weak entries do not retain mutexes or observations after a test.
@@ -352,8 +442,8 @@ impl FactoryStorage {
     /// Supply an unlocked store (for JSONL, `JsonlTranscriptStore::new`).
     /// The factory acquires the canonical writer lease before restore. A store
     /// already owned by `open_locked` / `PersistenceResources::create_session`
-    /// would contend with that lease; #589 must transfer ownership before using
-    /// that combination, rather than bypassing the factory's writer fence.
+    /// would contend with that lease; #1019's `SessionStorage::Recording`
+    /// transfers that ownership to the factory instead of bypassing the fence.
     pub fn new(store: Arc<dyn TranscriptStore>, key: TranscriptKey) -> Self {
         let projection = Arc::new(SessionProjection::default());
         let writer_lease = Arc::new(Mutex::new(None));
@@ -438,8 +528,17 @@ pub type Prepare = Arc<
         + Send
         + Sync,
 >;
+/// The storage a host hands to `create_storage` (#1019). `Unlocked` is the
+/// original contract: a store the factory fences itself. `Recording` defers a
+/// host-owned `SessionRecording` (already fenced by `open_locked`) whose
+/// ledger fence `open_and_adopt` then transfers into the factory's writer
+/// lease, instead of contending with it.
+pub enum SessionStorage {
+    Unlocked(FactoryStorage),
+    Recording(RecordingPlan),
+}
 pub type CreateStorage =
-    Arc<dyn Fn(SessionContext) -> BoxFuture<Result<FactoryStorage, RuntimeError>> + Send + Sync>;
+    Arc<dyn Fn(SessionContext) -> BoxFuture<Result<SessionStorage, RuntimeError>> + Send + Sync>;
 pub type Admission =
     Arc<dyn Fn(SessionContext) -> BoxFuture<Result<Option<JsValue>, RuntimeError>> + Send + Sync>;
 pub struct FactoryOptions {
@@ -551,14 +650,29 @@ impl ProjectSessionFactory {
                 return Err(error);
             }
         };
-        let storage = Arc::new(storage);
+        // A recording's fence transfer uses the pre-construction deadline:
+        // like `create_storage` itself, the opener's file IO spends no
+        // writer-wait budget; only its preceding path resolution does.
+        let (storage, adopted) = match storage {
+            SessionStorage::Unlocked(storage) => (Arc::new(storage), false),
+            SessionStorage::Recording(plan) => match open_and_adopt(plan, deadline).await {
+                Ok(storage) => (storage, true),
+                Err(error) => {
+                    let _ = prepared.resources.release().await;
+                    return Err(error);
+                }
+            },
+        };
         // Creating storage is not waiting for a writer. Slow providers must not
         // spend the remaining drain/lease budget before lease acquisition begins.
         let deadline = tokio::time::Instant::now() + writer_wait_remaining;
         let initialized = async {
-            let lease =
-                acquire_writer(storage.recorder.writer().path().to_owned(), deadline).await?;
-            *lock(&storage.writer_lease) = Some(lease);
+            // An adopted recording already moved its fence into the lease.
+            if !adopted {
+                let lease =
+                    acquire_writer(storage.recorder.writer().path().to_owned(), deadline).await?;
+                *lock(&storage.writer_lease) = Some(lease);
+            }
             if previous.is_none()
                 && let Some(admission) = &self.options.admission
             {
