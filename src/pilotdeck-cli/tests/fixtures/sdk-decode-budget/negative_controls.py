@@ -131,6 +131,13 @@ def main():
                Path(__file__).resolve(), root / 'src/pilotdeck-cli/Cargo.toml',
                root / 'src/pilotdeck-protocol/tests/codec.rs',
                root / 'src/pilotdeck-protocol/Cargo.toml', root / 'src/Cargo.toml',
+               # r4: every other input the bound tests and the judge read (#983).
+               root / 'src/pilotdeck-cli/tests/common/negative_receipt.rs',
+               root / 'src/pilotdeck-cli/tests/fixtures/sdk-run/oracle.json',
+               root / 'src/pilotdeck-cli/tests/fixtures/sdk-sessions-list/oracle.json',
+               root / 'src/pilotdeck-cli/tests/fixtures/sdk-transport-limits/oracle.json',
+               shared / 'negative_panic.py', shared / 'pending_reanchor.py',
+               root / 'scripts/cargo-slots.sh',
                root / 'src/Cargo.lock', shared / 'negative_process.py',
                shared / 'negative_suite.py']
     results = []
