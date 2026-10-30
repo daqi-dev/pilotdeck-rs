@@ -4,7 +4,7 @@
 
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck
-node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-gateway/tests/fixtures/run-registry/generate.mts src/pilotdeck-gateway/tests/fixtures/run-registry
+node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-gateway/tests/fixtures/run-registry/generate.mts /tmp/fresh-run-registry-output
 ```
 
 生成器先断言基线 HEAD，并对 normal 与每个 quirk 场景逐步断言结果类别（created/duplicate/conflict/not_found/terminal/TypeError/record/absent/events:N/ok）及关键字段，防止步骤因引用写错而全部落空；`lock-stale-live` 场景要等满 TS 的 30 秒锁超时，整次生成约 30 秒。
@@ -17,7 +17,17 @@ timeout 600 python3 src/pilotdeck-gateway/tests/fixtures/run-registry/count-nega
 timeout 150 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-gateway/tests/fixtures/run-registry/verify-generation.mts /tmp/fresh-run-registry-output
 ```
 
-双跑程序在同一个真实 Node 进程中独立执行两次生成器，保留相同活 pid；只为无参 `new Date()` 提供从固定起点逐毫秒递增、每次重置的快照时钟。`Date.now()`、锁超时、文件 mtime 和 pid 存活探测均保持真实行为。两次生成后逐文件逐字节比较并打印 oracle 与文件清单 SHA-256，不在生成后改写期望值。普通生成仍使用真实时间；两种方式的输出均由真实 TS registry 产生，消费测试仍按下述既有 pid / 时间归一化规则比较。
+普通生成器为无参 `new Date()` 提供从固定起点逐毫秒递增的快照时钟（#1129）；种子与之后新写的时间必然不同，避免快机器同一毫秒导致旧值集合误判。`Date.now()`、带参 `new Date(ms)`、`Date()`、锁超时、文件 mtime 和 pid 存活探测均保持真实行为。时钟只在普通生成期间安装，结束时恢复；`--verify-rust` 交接路径使用原生时钟。输出目录递归创建，文件独占写入，已有金样不会被覆盖。
+
+双跑程序在同一个真实 Node 进程中独立执行两次普通生成器，保留相同活 pid；每次生成自动重置快照时钟。两次生成后逐文件逐字节比较并打印 oracle 与文件清单 SHA-256，不在生成后改写期望值。两种方式的输出均由真实 TS registry 产生，消费测试仍按下述既有 pid / 时间归一化规则比较。
+
+`verify-timestamps.mts` 将外层无参 Date 固定到同一毫秒，执行真实生成器，检查 11 条孤儿记录的保留/新写时间以及两个 stale-lock accept；旧生成器确定性漏 mask，修复后新写值为 `<new>`，种子原值保留。`timestamp-negative.py` 撤回生成器时钟安装，用该探针的 `#1129` 断言判杀；先编译变异，再验证负控及恢复正控，最后原子汇总。源码须等于 HEAD，调用方必须提供构建目录。
+
+```sh
+node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-gateway/tests/fixtures/run-registry/verify-timestamps.mts /tmp/fresh-run-registry-collision
+python3 src/pilotdeck-gateway/tests/fixtures/run-registry/timestamp-negative.py --check-anchors
+python3 src/pilotdeck-gateway/tests/fixtures/run-registry/timestamp-negative.py /tmp/fresh-run-registry-negative
+```
 
 `oracle.json.scenarios[]`：`initial`（起始快照文件，`null` 为全新）、`lock`（预置锁内容与 mtime 年龄）、`openError`（TS readiness 拒绝）、`steps[]`（accept/append/get/events/mark 的输入与 TS 结果）、`after`（TS 操作后的快照原字节）、`lockLeft`。Rust 默认测试 `real_ts_scenarios_match_outcomes_and_snapshot_bytes` 逐场景重放：结果按值比较，快照按字节比较，只屏蔽本次运行新写入的 `ownerPid`（等于本进程 pid 且不在起始文件中）与 `acceptedAt`/`updatedAt`（不在起始文件中）；Rust 新写的时间戳另验 ISO 格式。
 
