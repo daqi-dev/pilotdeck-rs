@@ -1447,6 +1447,10 @@ fn link_of(wire: &Arc<Wire>) -> &HttpLink {
 #[cfg(test)]
 thread_local! {
     static DETACHED_DISPATCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Handles of the remainders spawned so far, for the panic observation
+    /// below.
+    static DETACHED_TASKS: std::cell::RefCell<Vec<tokio::task::JoinHandle<()>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Dispatched-continuation probe for the `#1114` ordering tests: one count
@@ -1455,10 +1459,22 @@ thread_local! {
 #[cfg(test)]
 fn reset_detached_dispatches() {
     DETACHED_DISPATCHES.with(|count| count.set(0));
+    // Handles an earlier test on this thread left behind are dropped
+    // un-awaited (dropping a handle detaches, never cancels): only this
+    // test's own spawns are observed.
+    DETACHED_TASKS.with(|tasks| tasks.borrow_mut().clear());
 }
 #[cfg(test)]
 fn detached_dispatches() -> usize {
     DETACHED_DISPATCHES.with(|count| count.get())
+}
+/// The remainders spawned since the last reset, for a test to await: a
+/// continuation that was already complete on the inline poll panics when a
+/// spawned remainder re-polls it, and the awaited handle is the only
+/// process-hook-free observable of that panic.
+#[cfg(test)]
+fn take_detached_tasks() -> Vec<tokio::task::JoinHandle<()>> {
+    DETACHED_TASKS.with(|tasks| std::mem::take(&mut *tasks.borrow_mut()))
 }
 
 /// A fire-and-forget send. The baseline queues the continuation's first step
@@ -1489,6 +1505,20 @@ where
     let mut continuation = Box::pin(continuation);
     let mut context = std::task::Context::from_waker(std::task::Waker::noop());
     if continuation.as_mut().poll(&mut context).is_pending() {
+        // Test builds keep the spawned remainder's handle (the output is
+        // dropped inside the wrapper, so one concrete handle type serves
+        // every continuation): a re-polled completed continuation panics
+        // inside the task, and only the awaited handle surfaces that to a
+        // test. fix-r3 removed the process-level panic recorder this
+        // observation used to need — and with it its restore lock-order
+        // hazards and their concurrent-panic regression.
+        #[cfg(test)]
+        DETACHED_TASKS.with(|tasks| {
+            tasks.borrow_mut().push(tokio::spawn(async move {
+                let _ = continuation.await;
+            }))
+        });
+        #[cfg(not(test))]
         tokio::spawn(continuation);
     }
 }

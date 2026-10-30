@@ -440,11 +440,78 @@ async fn mcp_legacy_corrupt_gap_is_observed() {
 // there) and asserts the count at the moment the modeled JS continuation
 // must already have run.
 
+/// What an accepted connection delivered before the client went away. The
+/// closed byte-level criterion of the `#1114` GET tests: zero bytes, a
+/// partial line, and a complete request line stay distinguishable — a
+/// whole-header read that returns `None` on EOF would discard exactly that
+/// distinction (the fix-r2 reading could not prove which it had seen).
+enum Delivered {
+    /// EOF before any byte arrived.
+    Eof,
+    /// Bytes, but no CRLF before EOF: the raw partial content.
+    Partial(Vec<u8>),
+    /// A complete first line, its CRLF excluded.
+    Line(String),
+}
+impl std::fmt::Debug for Delivered {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Delivered::Eof => formatter.write_str("EOF before any byte"),
+            Delivered::Partial(bytes) => write!(
+                formatter,
+                "partial {} byte(s): {:?}",
+                bytes.len(),
+                String::from_utf8_lossy(bytes)
+            ),
+            Delivered::Line(line) => write!(formatter, "line {line:?}"),
+        }
+    }
+}
+
+/// Reads only up to the first CRLF — the request line — and reports exactly
+/// what arrived before any EOF, plus the bytes that already followed the line
+/// in the same segment (for the caller's header/body continuation).
+async fn read_request_line(socket: &mut TcpStream, tag: &'static str) -> (Delivered, Vec<u8>) {
+    let mut arrived = Vec::new();
+    loop {
+        let mut buf = [0; 1024];
+        let n = bounded(socket.read(&mut buf), tag)
+            .await
+            .unwrap_or_else(|error| panic!("{tag}: request line read: {error}"));
+        if n == 0 {
+            return (
+                if arrived.is_empty() {
+                    Delivered::Eof
+                } else {
+                    Delivered::Partial(arrived)
+                },
+                Vec::new(),
+            );
+        }
+        arrived.extend_from_slice(&buf[..n]);
+        if let Some(end) = arrived.windows(2).position(|w| w == b"\r\n") {
+            let rest = arrived.split_off(end + 2);
+            return (
+                Delivered::Line(String::from_utf8_lossy(&arrived[..end]).into_owned()),
+                rest,
+            );
+        }
+    }
+}
+
 /// Reads one request (headers plus Content-Length body); `None` once the
-/// client went away.
-async fn read_request(socket: &mut TcpStream, tag: &'static str) -> Option<String> {
-    let mut request = Vec::new();
+/// client went away. `started` carries bytes already read before this call
+/// (a request line plus whatever followed it in the same segment).
+async fn read_request_from(
+    socket: &mut TcpStream,
+    started: Vec<u8>,
+    tag: &'static str,
+) -> Option<String> {
+    let mut request = started;
     let end = loop {
+        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+            break end + 4;
+        }
         let mut buf = [0; 1024];
         let n = bounded(socket.read(&mut buf), tag)
             .await
@@ -453,9 +520,6 @@ async fn read_request(socket: &mut TcpStream, tag: &'static str) -> Option<Strin
             return None;
         }
         request.extend_from_slice(&buf[..n]);
-        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
-            break end + 4;
-        }
     };
     let headers = String::from_utf8_lossy(&request[..end]);
     let length = headers
@@ -481,6 +545,12 @@ async fn read_request(socket: &mut TcpStream, tag: &'static str) -> Option<Strin
         request.extend_from_slice(&buf[..n]);
     }
     Some(String::from_utf8_lossy(&request).into_owned())
+}
+
+/// Reads one request (headers plus Content-Length body); `None` once the
+/// client went away.
+async fn read_request(socket: &mut TcpStream, tag: &'static str) -> Option<String> {
+    read_request_from(socket, Vec::new(), tag).await
 }
 
 /// Accepts connections, never answers, and reports every complete request:
@@ -601,10 +671,11 @@ async fn first_then_accepted(
 
 /// Answers the first request (the `notifications/initialized` POST) with 202
 /// plus `Connection: close` — the SSE GET must open its own connection — and
-/// on that connection reports what it delivered before the abort closed it:
-/// the request line, or `None` for EOF first. The report itself (either way)
-/// is the observable of the GET having entered the network exchange.
-async fn get_then_connect_server(tag: &'static str) -> (Server, mpsc::Receiver<Option<String>>) {
+/// on that connection reports exactly what it delivered before the abort
+/// closed it: zero bytes, a partial line, or the complete request line. The
+/// report itself (either way) is the observable of the GET having entered the
+/// network exchange.
+async fn get_then_connect_server(tag: &'static str) -> (Server, mpsc::Receiver<Delivered>) {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .unwrap_or_else(|error| panic!("{tag}: bind: {error}"));
@@ -624,21 +695,11 @@ async fn get_then_connect_server(tag: &'static str) -> (Server, mpsc::Receiver<O
                         accepted.unwrap_or_else(|error| panic!("{tag}: accept: {error}"));
                     if !std::mem::replace(&mut first, false) {
                         // The GET's own connect; the client-side abort closes
-                        // it soon after, but the accept queue keeps it. Read
-                        // what it delivered before that close: the line if
-                        // the bytes made it out, `None` when the abort won
-                        // the race first — the caller must not read the
-                        // connection alone as the line having been sent
-                        // (ledger A6.5-MCP-DETACHED-DISPATCH-002).
-                        let delivered = read_request(&mut socket, tag)
-                            .await
-                            .map(|request| {
-                                request
-                                    .split("\r\n")
-                                    .next()
-                                    .unwrap_or_default()
-                                    .to_owned()
-                            });
+                        // it soon after, but the accept queue keeps it. What
+                        // it delivered before that close — zero bytes, a
+                        // partial line, or the complete line — is the closed
+                        // criterion (ledger A6.5-MCP-DETACHED-DISPATCH-002).
+                        let (delivered, _) = read_request_line(&mut socket, tag).await;
                         if reports.send(delivered).await.is_err() {
                             return;
                         }
@@ -675,13 +736,82 @@ async fn get_then_connect_server(tag: &'static str) -> (Server, mpsc::Receiver<O
     )
 }
 
-// Records the panics of the current thread: a spawned remainder that was
-// polled past completion ("`async fn` resumed after completion") must be
-// observable at the assertion, not only as stderr noise.
-#[cfg(test)]
-thread_local! {
-    static DETACHED_PANICS: std::cell::RefCell<Vec<String>> =
-        const { std::cell::RefCell::new(Vec::new()) };
+/// Answers every POST with a keep-alive 202 (no `Connection: close`), so the
+/// SSE GET can ride the very connection its triggering POST used, and reports
+/// what any connection's first request line delivered: the complete line, or
+/// the terminal zero-byte/partial state when the client went away first.
+/// This is the shape of the original #1114 CI flake — its mock server keeps
+/// connections alive — and the shape in which the TS baseline guarantees the
+/// line (fix-r3 probe C, pooled mode: Node v22.22.0, 50/50 runs, the line
+/// landing after `close()` had already returned).
+async fn pooled_line_server(tag: &'static str) -> (Server, mpsc::Receiver<Delivered>) {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap_or_else(|error| panic!("{tag}: bind: {error}"));
+    let address = listener
+        .local_addr()
+        .unwrap_or_else(|error| panic!("{tag}: address: {error}"));
+    let url = Url::parse(&format!("http://{address}/mcp"))
+        .unwrap_or_else(|error| panic!("{tag}: URL: {error}"));
+    let (reports, lines) = mpsc::channel(4);
+    let task = tokio::spawn(async move {
+        let mut connections = JoinSet::new();
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let (mut socket, _) =
+                        accepted.unwrap_or_else(|error| panic!("{tag}: accept: {error}"));
+                    let reports = reports.clone();
+                    connections.spawn(async move {
+                        loop {
+                            let (delivered, rest) = read_request_line(&mut socket, tag).await;
+                            let line = match delivered {
+                                Delivered::Line(line) => line,
+                                // The client went away (or stopped mid-line)
+                                // before any GET: report the terminal state —
+                                // the caller must be able to tell a missing
+                                // dispatch from a swallowed line.
+                                terminal @ (Delivered::Eof | Delivered::Partial(_)) => {
+                                    let _ = reports.send(terminal).await;
+                                    return;
+                                }
+                            };
+                            if line.starts_with("GET ") {
+                                let _ = reports.send(Delivered::Line(line)).await;
+                                return;
+                            }
+                            // The initialized POST: finish reading it, then
+                            // answer a keep-alive 202 so the GET can ride
+                            // this same connection.
+                            let mut started = line.into_bytes();
+                            started.extend_from_slice(b"\r\n");
+                            started.extend_from_slice(&rest);
+                            if read_request_from(&mut socket, started, tag).await.is_none() {
+                                return;
+                            }
+                            socket
+                                .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n")
+                                .await
+                                .unwrap_or_else(|error| panic!("{tag}: keep-alive 202: {error}"));
+                        }
+                    });
+                }
+                result = connections.join_next(), if !connections.is_empty() => {
+                    result
+                        .unwrap_or_else(|| panic!("{tag}: connection task"))
+                        .unwrap_or_else(|error| panic!("{tag}: connection panic: {error}"));
+                }
+            }
+        }
+    });
+    (
+        Server {
+            url,
+            task,
+            requested: None,
+        },
+        lines,
+    )
 }
 
 /// #1114: a 202 for `notifications/initialized` must dispatch the SSE GET
@@ -733,12 +863,18 @@ async fn dispatch_get_before_close() {
 /// bound only turns a missing dispatch into this assertion's failure — on
 /// this code the report arrives in micro-seconds.
 ///
-/// #1114 fix-r2: the server also reads what that connection delivered. On
-/// this timing the request line itself does not land (10/10 runs below read
-/// EOF before any byte) — the registered executor-model difference in ledger
-/// A6.5-MCP-DETACHED-DISPATCH-002, still unresolved — so this test asserts
-/// the exchange entry it can guarantee and prints the delivered state; a
-/// connect-only pass must not be read as the GET line having been sent.
+/// #1114 fix-r2: the server also reads what that connection delivered: EOF
+/// before any byte, 10/10 runs — the honest record of this interleaving.
+///
+/// #1114 fix-r3: the read is closed up to the review's criterion (zero
+/// bytes, a partial line, a complete line stay distinguishable) and the
+/// delivered state is asserted, not just printed. On this fresh-connection
+/// interleaving the TS baseline also delivers zero bytes — fix-r3 probe C,
+/// fresh mode: Node v22.22.0, 50/50 runs, the GET connection accepted with
+/// zero bytes and closed — an abort that lands while the connect is still
+/// in flight retracts the request there too. Rust matching that is parity;
+/// the line-landing guarantee belongs to the pooled shape
+/// (`dispatch_get_line_lands_before_close` below), where TS lands it 50/50.
 #[tokio::test]
 async fn dispatch_get_connects_before_close() {
     let tag = "#1114 GET exchange entry";
@@ -764,8 +900,20 @@ async fn dispatch_get_connects_before_close() {
     )
     .await
     .unwrap_or_else(|error| panic!("{tag}: initialized send: {error}"));
-    // Deterministic barrier: the spawned remainder has not been scheduled
-    // yet, so this close is strictly after the inline first poll.
+    // Deterministic barrier: the spawned remainder has not been polled yet
+    // (a synchronous sleep never yields this runtime, so nothing spawned
+    // runs), so the close below is still strictly before the remainder's
+    // first poll — and strictly after the inline first poll that initiated
+    // the GET's own connect. The sleep only lets the kernel finish that
+    // connect's TCP handshake: without it the accept race was measured at
+    // 1.0–5.9%/2000 (immediate socket drop, load-dependent) vs
+    // 1999–2000/2000 (≥200µs before the drop), and the suite's parallel
+    // load lands inside that window ~3% of runs — the barrier's 200ms is
+    // three orders of magnitude above the measured need. The TS baseline's
+    // slower teardown always lets the handshake finish — probe C fresh
+    // mode: 50/50 runs with the connection accepted and zero bytes — so
+    // this barrier observes the same server-visible state.
+    std::thread::sleep(Duration::from_millis(200));
     link.close();
     crate::negative_assert_eq!(
         super::detached_dispatches(),
@@ -780,12 +928,72 @@ async fn dispatch_get_connects_before_close() {
         delivered.is_some(),
         "#1114 the SSE GET enters the network exchange before close aborts it"
     );
-    // The honest record of what the aborted GET connection delivered: on
-    // this timing the line does not land (the ledger difference above).
-    let line = delivered.flatten();
-    println!(
-        "{tag}: the aborted GET connection delivered: {}",
-        line.as_deref().unwrap_or("EOF before a request line")
+    let delivered = delivered.expect("#1114 GET exchange entry: report arrived");
+    let shape = match &delivered {
+        Delivered::Eof => "eof",
+        Delivered::Partial(_) => "partial",
+        Delivered::Line(_) => "line",
+    };
+    println!("{tag}: the aborted fresh GET connection delivered: {delivered:?}");
+    crate::negative_assert_eq!(
+        shape,
+        "eof",
+        "#1114 the fresh-connection GET delivers zero bytes before close, matching the TS baseline"
+    );
+}
+
+/// #1114 fix-r3: the byte-level guarantee in the shape where the baseline
+/// actually gives it — the shape of the original CI flake. The POST's 202
+/// keeps the connection alive, so the dispatched GET rides the pooled socket;
+/// its request line must land even though `close()` follows the send with no
+/// scheduler turn in between (TS probe C, pooled mode: Node v22.22.0, 50/50
+/// runs, the line landing after `close()` had already returned; the original
+/// issue's 500/500 runs). The `#1114` CI flake itself was this shape: the
+/// mock server keeps connections alive, and the missing GET line was the
+/// undispatched window-A abort, not the in-flight one.
+#[tokio::test]
+async fn dispatch_get_line_lands_before_close() {
+    let tag = "#1114 GET pooled line";
+    let (server, mut connections) = pooled_line_server(tag).await;
+    let wire = Wire::http(HttpLink::new(
+        HttpKind::Streamable,
+        server.url.clone(),
+        vec![],
+        2000.0,
+        2000.0,
+    ));
+    let link = wire
+        .http_link()
+        .unwrap_or_else(|| panic!("{tag}: HTTP link"));
+    super::reset_detached_dispatches();
+    bounded(
+        link.send(
+            &wire,
+            parse_json(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
+                .unwrap_or_else(|error| panic!("{tag}: initialized JSON: {error:?}")),
+        ),
+        tag,
+    )
+    .await
+    .unwrap_or_else(|error| panic!("{tag}: initialized send: {error}"));
+    // Deterministic barrier: the spawned remainder has not been scheduled
+    // yet, so this close is strictly after the inline first poll that
+    // dispatched the GET onto the pooled connection.
+    link.close();
+    crate::negative_assert_eq!(
+        super::detached_dispatches(),
+        1,
+        "#1114 the SSE GET is dispatched before close aborts it"
+    );
+    let delivered = tokio::time::timeout(Duration::from_secs(10), connections.recv())
+        .await
+        .ok()
+        .flatten();
+    let landed = matches!(&delivered, Some(Delivered::Line(line)) if line.starts_with("GET /mcp"));
+    println!("{tag}: the pooled GET connection delivered: {delivered:?}");
+    crate::negative_assert!(
+        landed,
+        "#1114 the pooled-socket GET request line lands before close aborts it"
     );
 }
 
@@ -827,62 +1035,18 @@ async fn dispatch_ready_continuation_is_not_polled_again() {
     );
 }
 
-/// The hook a recorder chains to and eventually restores, handed to both the
-/// chain and the restore through the recorder's mutex.
-type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync>;
-
-/// Installs the `DETACHED_PANICS` recorder hook, chained to the hook that
-/// was current at install time. The previous hook lives in a mutex because
-/// the `Box` itself cannot be handed to both the chain and the restore; the
-/// chain must keep forwarding, so another test's panic keeps its output
-/// while this hook is installed.
-struct PanicRecorder {
-    previous: Arc<Mutex<Option<PanicHook>>>,
-}
-
-impl PanicRecorder {
-    fn hook(chained: Arc<Mutex<Option<PanicHook>>>) -> PanicHook {
-        Box::new(move |info| {
-            DETACHED_PANICS.with(|panics| panics.borrow_mut().push(format!("{info}")));
-            if let Some(previous) = chained.lock().expect("#1114 panic hook lock").as_ref() {
-                previous(info);
-            }
-        })
-    }
-
-    /// Install over an explicit previous hook. The restore verification
-    /// swaps through this so its rounds never hold a `take_hook`→`set_hook`
-    /// gap with the default hook active while the probe storm runs.
-    fn over(previous: PanicHook) -> Self {
-        let previous = Arc::new(Mutex::new(Some(previous)));
-        std::panic::set_hook(Self::hook(previous.clone()));
-        Self { previous }
-    }
-
-    fn install() -> Self {
-        Self::over(std::panic::take_hook())
-    }
-
-    /// #1114 fix-r2: take the previous hook out in its own statement, so
-    /// the `MutexGuard` is released before `set_hook`. The old `if let`
-    /// shape kept the guard alive through the branch body: a concurrently
-    /// panicking thread runs the chained hook while std holds the global
-    /// `HOOK` read lock (panicking.rs `rust_panic_with_hook`) and waits on
-    /// the same mutex, while `set_hook` needs the `HOOK` write lock — a
-    /// lock-order inversion that hangs the whole test binary.
-    fn restore(&self) {
-        let restore = self.previous.lock().expect("#1114 panic hook lock").take();
-        if let Some(previous) = restore {
-            std::panic::set_hook(previous);
-        }
-    }
-}
-
 /// #1114 fix-r1: the same contract at a real detached site. A legacy
 /// transport with no endpoint rejects the send before its first suspension,
 /// so `send_detached`'s continuation is Ready on the inline poll; spawning
 /// it re-polls the finished async block and panics
 /// ("`async fn` resumed after completion").
+///
+/// #1114 fix-r3: the panic is observed through the spawned remainder's join
+/// handle (`detach` stashes it for tests) — the awaited handle is the only
+/// process-hook-free observable of a task panic. This replaces the
+/// process-level `PanicRecorder` of fix-r2, whose `restore` had its own
+/// lock-order hazard and needed a concurrent-panic regression to guard it;
+/// with no hook installed at all, that deadlock class no longer exists.
 #[tokio::test]
 async fn dispatch_ready_send_detached_does_not_panic() {
     let tag = "#1114 Ready send_detached";
@@ -894,7 +1058,6 @@ async fn dispatch_ready_send_detached_does_not_panic() {
         2000.0,
     ));
     super::reset_detached_dispatches();
-    let recorder = PanicRecorder::install();
     wire.send_detached(
         parse_json(r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{}}"#)
             .unwrap_or_else(|error| panic!("{tag}: cancel JSON: {error:?}")),
@@ -917,18 +1080,26 @@ async fn dispatch_ready_send_detached_does_not_panic() {
         parse_json(r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{}}"#)
             .unwrap_or_else(|error| panic!("{tag}: closed cancel JSON: {error:?}")),
     );
+    // Enough scheduler turns for an (unwanted) spawned remainder to run and
+    // panic, and for its handle to settle.
     for _ in 0..16 {
         tokio::task::yield_now().await;
     }
-    let panics = DETACHED_PANICS.with(|panics| std::mem::take(&mut *panics.borrow_mut()));
-    if !panics.is_empty() {
-        println!("{tag}: recorded panics: {panics:?}");
+    let mut panicked = Vec::new();
+    for task in super::take_detached_tasks() {
+        match bounded(task, tag).await {
+            Ok(()) => {}
+            // The watchdog timeout above already panicked its own named
+            // message; only a task panic or cancellation lands here.
+            Err(join) if join.is_panic() => panicked.push(format!("{join}")),
+            Err(join) => panic!("{tag}: detached task cancelled: {join}"),
+        }
     }
-    // Restored before the assertions: a failure must panic through the
-    // normal hook, never wait on the recorder's mutex.
-    recorder.restore();
+    if !panicked.is_empty() {
+        println!("{tag}: panicked detached tasks: {panicked:?}");
+    }
     crate::negative_assert!(
-        panics.is_empty(),
+        panicked.is_empty(),
         "#1114 a first-poll-Ready detached continuation is not spawned and polled again"
     );
     crate::negative_assert_eq!(
@@ -936,137 +1107,6 @@ async fn dispatch_ready_send_detached_does_not_panic() {
         2,
         "#1114 both Ready sends were counted"
     );
-}
-
-/// This scenario's probe payload: the filter hook below keeps the storm's
-/// panics out of the captured output without silencing any other panic.
-const HOOK_RESTORE_PROBE: &str = "#1114 hook-restore probe";
-const HOOK_RESTORE_ASSERTION: &str =
-    "#1114 restoring the panic hook completes while another thread panics";
-/// Marks the re-executed child that runs the raw interleaving.
-const HOOK_RESTORE_CHILD_ENV: &str = "PDRS_1114_HOOK_RESTORE_CHILD";
-const HOOK_RESTORE_CHILD_TEST: &str = "runtime::mcp::http::encoding_tests::\
-dispatch_panic_hook_restore_survives_concurrent_panics";
-
-/// The raw interleaving, run in the re-executed child: a thread panics
-/// continuously while the recorder is installed and restored many times.
-/// On fixed code every loop here is count-bounded and the joins return; the
-/// pre-fix restore wedges the process here (holding the recorder's mutex
-/// across `set_hook` while a probe panic sits in the chained hook holding
-/// the global `HOOK` read lock), which is exactly why the caller keeps it
-/// in a child it can kill.
-fn hook_restore_storm() {
-    let tag = "#1114 panic hook restore child";
-    // A filter hook below the storm: the default hook would print (and
-    // backtrace) every probe panic. It forwards everything but this
-    // scenario's own probe payload.
-    let original = Arc::new(std::panic::take_hook());
-    let filter = move || {
-        let original = original.clone();
-        Box::new(move |info: &std::panic::PanicHookInfo<'_>| {
-            if info.payload().downcast_ref::<&'static str>() != Some(&HOOK_RESTORE_PROBE) {
-                original(info);
-            }
-        }) as Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync>
-    };
-    std::panic::set_hook(filter());
-    let probes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let peer = {
-        let probes = probes.clone();
-        std::thread::spawn(move || {
-            // Bounded storm: the cap keeps a pathological scheduler from
-            // outliving the caller's bound.
-            for seen in 0..300_000usize {
-                let _ = std::panic::catch_unwind(|| std::panic::panic_any(HOOK_RESTORE_PROBE));
-                probes.store(seen + 1, std::sync::atomic::Ordering::SeqCst);
-                if seen % 512 == 0 {
-                    // The recorder keeps every panic of its thread; keep the
-                    // probe thread's record bounded.
-                    DETACHED_PANICS.with(|panics| panics.borrow_mut().clear());
-                }
-            }
-        })
-    };
-    // Storm hot before any swap runs: without this barrier the swaps can
-    // finish before the first probe panic.
-    while probes.load(std::sync::atomic::Ordering::SeqCst) < 4_096 {
-        std::hint::spin_loop();
-    }
-    let swapping = std::thread::spawn(move || {
-        for _ in 0..100_000 {
-            // A fresh filter box per round, installed without `take_hook`:
-            // the default hook must never be the one a storm panic reaches.
-            let recorder = PanicRecorder::over(filter());
-            recorder.restore();
-        }
-    });
-    swapping
-        .join()
-        .unwrap_or_else(|_| panic!("{tag}: swapping thread panicked"));
-    peer.join()
-        .unwrap_or_else(|_| panic!("{tag}: probe thread panicked"));
-    assert!(
-        probes.load(std::sync::atomic::Ordering::SeqCst) >= 4_096,
-        "{tag}: the concurrent panic storm ran"
-    );
-}
-
-/// #1114 fix-r2: `PanicRecorder::restore` must not hold the recorder's mutex
-/// across `set_hook`. Std runs a panic hook with the global `HOOK` read lock
-/// held (panicking.rs `rust_panic_with_hook`), and the recorder's chained
-/// hook waits on that same mutex, so the pre-fix shape — the `MutexGuard` of
-/// an `if let` scrutinee alive through the branch — made `set_hook` wait for
-/// the `HOOK` write lock with the mutex held. Any parallel test that panics
-/// (`registry.rs` `shared_spawn_outcomes_and_cancelled_gate` panics by
-/// design) then hangs the whole test binary.
-///
-/// The interleaving runs in a re-executed child (the #946 worker pattern)
-/// because its failure mode is that wedge: a hung child is killed here and
-/// becomes this test's named failure, while the parent — which never touches
-/// the process's panic hook itself — always returns. The failure is a
-/// returned `Err` with the receipt written first: a panic through the
-/// recorder would be exactly the wait the regression causes.
-#[tokio::test]
-async fn dispatch_panic_hook_restore_survives_concurrent_panics() -> Result<(), String> {
-    let tag = "#1114 panic hook restore";
-    if std::env::var_os(HOOK_RESTORE_CHILD_ENV).is_some() {
-        hook_restore_storm();
-        return Ok(());
-    }
-    let mut child = tokio::process::Command::new(
-        std::env::current_exe().unwrap_or_else(|error| panic!("{tag}: test executable: {error}")),
-    )
-    .arg(HOOK_RESTORE_CHILD_TEST)
-    .arg("--exact")
-    .stdin(std::process::Stdio::null())
-    .stdout(std::process::Stdio::null())
-    .stderr(std::process::Stdio::null())
-    .env(HOOK_RESTORE_CHILD_ENV, "1")
-    // Only this test's own failure is the kill; the child runs the plain
-    // interleaving and must not write this run's receipts.
-    .env_remove("PDRS_NEGATIVE_RECEIPTS")
-    .env_remove("PDRS_NEGATIVE_PARENT_TEST")
-    .spawn()
-    .unwrap_or_else(|error| panic!("{tag}: child spawn: {error}"));
-    let survived = match tokio::time::timeout(Duration::from_secs(10), child.wait()).await {
-        Ok(Ok(status)) => status.success(),
-        Ok(Err(error)) => panic!("{tag}: child wait: {error}"),
-        Err(_) => {
-            // Wedged the way the pre-fix restore does. Kill and fail; the
-            // bound, not the wedge, ends the regression.
-            child
-                .kill()
-                .await
-                .unwrap_or_else(|error| panic!("{tag}: child kill: {error}"));
-            let _ = child.wait().await;
-            false
-        }
-    };
-    if !survived {
-        crate::test_negative_receipt::record_failure(HOOK_RESTORE_ASSERTION);
-        return Err(format!("{tag}: {HOOK_RESTORE_ASSERTION}"));
-    }
-    Ok(())
 }
 
 /// #1114 fix-r1: `Protocol.request` fires `transport.send()` before
