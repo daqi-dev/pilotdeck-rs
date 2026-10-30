@@ -60,8 +60,10 @@ def main():
     if not os.environ.get('CARGO_TARGET_DIR'):
         raise SystemExit('#1120 caller must set CARGO_TARGET_DIR (never substituted)')
     output = Path(sys.argv[1]).resolve()
-    if not output.is_relative_to(root / '_tmp'):
-        raise SystemExit('#1120 output must be in this tree _tmp')
+    # Host chains pass an evidence directory outside the tree; inside the tree
+    # only the ignored _tmp area is acceptable (never next to sources).
+    if output.is_relative_to(root) and not output.is_relative_to(root / '_tmp'):
+        raise SystemExit('#1120 output inside this tree must be under _tmp')
     output.mkdir(parents=True, exist_ok=False)
     results = []
     try:
