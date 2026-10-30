@@ -216,6 +216,20 @@ class CompareVerdictsTests(unittest.TestCase):
                         {'case': 'alpha', 'old': schemas[left], 'new': schemas[right]}],
                         '#1100 format drift preserves both exact schemas')
 
+    def test_mutation_schema_cannot_collapse_to_name(self):
+        row = {'test': 'suite::alpha', 'assertion': '#1110 alpha', 'status': 'KILLED'}
+        result, _ = self.invoke({'controls': [{'mutation': 'alpha', **row}]},
+                                {'controls': [{'name': 'alpha', **row}]})
+        self.assertEqual(result.returncode, 1, '#1110 mutation schema must remain distinct')
+
+    def test_target_schema_cannot_collapse_to_name(self):
+        result, _ = self.invoke(
+            {'controls': [{'name': 'alpha', 'targets': [['suite::alpha', '#1110 alpha']],
+                           'status': 'KILLED'}]},
+            {'controls': [{'name': 'alpha', 'test': 'suite::alpha',
+                           'assertion': '#1110 alpha', 'status': 'KILLED'}]})
+        self.assertEqual(result.returncode, 1, '#1110 target schema must remain distinct')
+
     def test_real_hits_are_compared(self):
         old = json.loads((TESTDATA / 'matrix-main.json').read_text())
         hits = old['controls'][0]['hits']

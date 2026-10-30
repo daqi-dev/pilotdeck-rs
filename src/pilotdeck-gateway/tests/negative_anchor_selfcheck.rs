@@ -39,6 +39,8 @@ fn negative_fixture_anchors_and_checker_controls() {
         ("_negkit/test_compare_verdicts.py", &[][..]),
         ("_negkit/test_contract.py", &[][..]),
         ("_negkit/negative_contract.py", &[][..]),
+        ("_negkit/test_submit_migration.py", &[][..]),
+        ("_negkit/negative_submit_migration.py", &[][..]),
         ("negative-restore/test_restore.py", &[][..]),
         (
             "negative-restore/test_restore.py",
@@ -50,7 +52,7 @@ fn negative_fixture_anchors_and_checker_controls() {
         ("anchor_selfcheck.py", &["--anchors-only"][..]),
     ] {
         let report = python_output(Command::new("python3"), &fixtures.join(script), args)
-            .unwrap_or_else(|error| panic!("{error}"));
+            .unwrap_or_else(|error| panic!("#1110 fixture preflight: {error}"));
         print!("{report}");
     }
 }

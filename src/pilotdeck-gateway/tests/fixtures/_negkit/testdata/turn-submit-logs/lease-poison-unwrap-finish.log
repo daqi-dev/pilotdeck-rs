@@ -1,0 +1,26 @@
+COMMAND cargo test --offline --manifest-path /Users/macmini-01/ws/pdrs-runner-wt/issue-813/src/Cargo.toml -p pilotdeck-gateway --lib runtime::turn::submit_host::tests::finish_pump_releases_a_lease_after_the_leases_mutex_is_poisoned -- --nocapture
+cargo-slots: 在跑 2 / 上限 4
+
+running 1 test
+test runtime::turn::submit_host::tests::finish_pump_releases_a_lease_after_the_leases_mutex_is_poisoned ... FAILED
+
+failures:
+
+failures:
+    runtime::turn::submit_host::tests::finish_pump_releases_a_lease_after_the_leases_mutex_is_poisoned
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2560 filtered out; finished in 0.01s
+
+   Compiling pilotdeck-gateway v0.1.0 (/Users/macmini-01/ws/pdrs-runner-wt/issue-813/src/pilotdeck-gateway)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.62s
+     Running unittests src/lib.rs (_build/cargo-target/debug/deps/pilotdeck_gateway-0665c56702ea3d10)
+
+thread 'runtime::turn::submit_host::tests::finish_pump_releases_a_lease_after_the_leases_mutex_is_poisoned' (36660111) panicked at pilotdeck-gateway/src/runtime/turn/submit_host_tests.rs:332:9:
+poison the leases mutex mid-turn
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'runtime::turn::submit_host::tests::finish_pump_releases_a_lease_after_the_leases_mutex_is_poisoned' (36660111) panicked at pilotdeck-gateway/src/runtime/turn/submit_host.rs:303:14:
+called `Result::unwrap()` on an `Err` value: PoisonError { .. }
+error: test failed, to rerun pass `-p pilotdeck-gateway --lib`
+
+exit=101

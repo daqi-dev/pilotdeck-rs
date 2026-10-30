@@ -11,7 +11,7 @@ python3 -I -B src/pilotdeck-gateway/tests/fixtures/_negkit/negative_compare_verd
 
 ## 输入边界
 
-顶层必须是带 `controls` 数组的 JSON 对象。以下五份宿主原始 JSON 已原字节保存在 `testdata/`，构成真实输出适配清单（路径均相对本目录）：
+标准形态的顶层是带 `controls` 数组的 JSON 对象；#1110 另登记两种严格的旧裸数组形态，见文末。以下五份宿主原始 JSON 已原字节保存在 `testdata/`，构成标准形态真实输出适配清单（路径均相对本目录）：
 
 | 实际产出方 | 行结构（另有元数据） | 固定样本 | 行数 |
 |---|---|---|---|
@@ -92,6 +92,42 @@ reason 提取规则依据 `gateway-entry-guard/negative_controls.py` 的 `classi
 - 最外层 finally 只根据成功结果和 entered 标志计算退出码：全选中项 KILLED 且发布成功为 0；进入守卫前拒跑为 1；进入后任何未通过（含 SURVIVED、INVALID、取消、恢复/核验/发布失败）为 2。异常类型与 `SystemExit.code` 不决定退出码。抽样退出 0 只代表选中项通过。
 
 summary 顶层包括 `mode: full|sample`、按声明次序的 `selected` 名单、完整表的 `total`、`controls` 与 `counts`。每行**恰为** `mutation / test / assertion / status / reason / hits`，可直接交给本目录比对器。没有失败时缺省放行、空 case/oracle、重复 case、未知/重复/空选择或多行断言的兼容模式。比对器忽略顶层 metadata，因此等价依然不等于全量通过。
+
+## 首批存量迁移（#1110 / M6-pr3）
+
+`turn-submit/negative.py` 保留 57 个变异和 `baseline`，`failure-guard/negative.py` 保留 22 个变异和 `baseline-pure/baseline-submit`。两者支持 `--check`；运行参数仍为 `output [case ...]`，抽样总带正控，重复/未知选择拒绝。旧判分器不再参与迁后 runner：`_negkit/submit.py` 只复用 `negative_process` 的 HEAD 源码守卫和进程所有权工具，不复用旧判分和摘要发布。未提交的产品改动不能用 `PDRS_NEGATIVE_BASELINE` 或其他 git 对象放行。
+
+适配器要求三个显式绝对环境路径。`PDRS_BASELINE` 还须是 `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85` 的检出目录；保留调用方 `CARGO_HOME`、`CARGO_TARGET_DIR`，不自建构建目录。每个变异执行正控→应用变异→`cargo test --no-run`→精确测试→恢复字节→恢复正控；编译失败和普通执行异常也检查恢复正控。正控异常支配后续关联 case 为 INVALID，但其余诊断仍执行。取消交给外层 HEAD 守卫还原，恢复核验后才发布摘要。
+
+契约增加三种显式迁移形式，默认 `Case` 的严格断言规则不变：
+
+- `kind='positive'`：完整命名测试清单逐一执行，全绿为 PASS。正控仍占摘要的一行；全表成功允许 PASS/KILLED。turn-submit 从当前测试模块枚举非 ignored 用例，避免旧 runner 写死的 4/10 数量过期。
+- `kind='message'`：旧绑定字符串保留在 assertion；额外 `payload_pattern` 是登记的完整 panic 首行形状。13 份原字节宿主日志覆盖旧 UTF16、能力拒绝、lease 动态消息与 poison。自由子串、stdout、续行、兄弟 panic、裸 `<case>: step`、通用 assertion 和 watchdog 都不能判杀。
+- `kind='location'`：只接两个 poison 用例的完整双 panic 形态：同名测试的刻意 poison 首行，然后精确源码位置上的 unwrap/PoisonError 首行。派生位置要求 before/after 都从 unwrap 开始、源码位于 workspace 内、锚点唯一，列号按 Unicode 码点。原始日志不被裁剪或改写成伪造的进程结果。
+
+`submit_marker` 统一核 oracle 的唯一 case、非 bool 整数 index、范围及 step 文本；turn-submit 完整 marker 也经过同一验证。anchor checker 继续静态检查 57/22 个源码锚点，并对迁后 location 在隔离 Python 子进程调用只读 `build()`，核对实际 case 清单、变异字节及派生位置；产品变异表没有登记为 UNSUPPORTED。
+
+### 两种旧摘要适配
+
+只接受完整已登记键集合，混合/未知字段拒绝；空裸数组仍不可识别（rc=2），不默认为某种 runner。正控行不删除。
+
+|旧形态|规范规则|原始样本与 SHA256|
+|---|---|---|
+|turn-submit 裸数组 `name/test/anchor/anchorKind/status/...`|有效绑定取 anchor；两个 poison case 必须为 location，其余为 message；状态与退出码必须相容；baseline 映射为显式正控绑定|[turn-submit.json](testdata/turn-submit.json)，`202f25585f1e51dbd38117547559e2d0c8c27494616ace526f5df11c21d77f09`|
+|failure-guard 裸数组 `name/case/marker/valid/reason/...`|仅对已登记 22 个变异和两个正控恢复固定 test；valid+相符 reason/exit→KILLED/PASS，明确 survived reason+exit0→SURVIVED，其余失败→INVALID；矛盾字段拒绝|[failure-guard.json](testdata/failure-guard.json)，`844dcee0d96ea6253685a8d95b987f53d0b22b2ceedde4a7dcfb2c6c34dd4379`|
+
+这两种有名适配映射为标准 `mutation/test`；旧输出没有 hits，但判杀绑定唯一测试，故 KILLED 推导为 `[test]`，其余为 `[]`。这项推导只适用于这两个登记形态，标准形态原有 schema/hits 严格比较不变。旧 before/after 是变异描述，不作为绑定比较项；同一 HEAD 和同一组变异必须由迁移运行证据另证，不能只凭摘要宣称。
+
+原件位于主仓 `_tmp/20261026-issue-813/remote-host/neg-turn-submit_negative/summary.json` 与 `_tmp/20261026-issue-813/remote-host.prev-020335/neg-failure-guard_negative/summary.json`。`testdata/turn-submit-logs/` 的 13 个 `.log` 与第一份摘要同目录原件逐字节相同。这些是旧形态回归样本，**不是本次同 HEAD 新旧 runner 全量等价证据**。
+
+```sh
+python3 -I -B src/pilotdeck-gateway/tests/fixtures/turn-submit/negative.py --check
+python3 -I -B src/pilotdeck-gateway/tests/fixtures/failure-guard/negative.py --check
+python3 -I -B src/pilotdeck-gateway/tests/fixtures/_negkit/test_submit_migration.py
+python3 -I -B src/pilotdeck-gateway/tests/fixtures/_negkit/negative_submit_migration.py
+```
+
+迁移单测覆盖上述不变量、原始摘要和日志，以及执行器的编译失败/超时/正控异常/恢复失败/取消。元负控只在内存编译 Python 变异，不写产品源，不创建副本仓库；逐项正控→专属断言失败→恢复正控，全部执行后汇总。两者已接入 `negative_anchor_selfcheck.rs`。
 
 ```sh
 python3 -I -B src/pilotdeck-gateway/tests/fixtures/_negkit/test_contract.py

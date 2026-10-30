@@ -25,6 +25,11 @@ class Case:
     mutation: str
     test: str
     assertion: str
+    # Explicit migration forms; new callers retain the strict default.
+    kind: str = 'assertion'
+    prelude: tuple = ()
+    positive_tests: tuple = ()
+    payload_pattern: str = ''
 
 
 @dataclass
@@ -50,8 +55,26 @@ def select_cases(cases, selected, oracle):
     for case in table:
         for field in ('mutation', 'test', 'assertion'):
             _line(getattr(case, field), field)
-        if not re.fullmatch(r'#[0-9]+ \S[^\r\n]*', case.assertion):
-            raise ValueError('assertion requires an issue-specific single-line marker')
+        if case.kind in ('assertion', 'message') and not marker_is_scoped(case.assertion):
+            raise ValueError('message must identify a scoped assertion')
+        if case.kind == 'assertion':
+            if not re.fullmatch(r'#[0-9]+ \S[^\r\n]*', case.assertion):
+                raise ValueError('assertion requires an issue-specific single-line marker')
+        elif case.kind == 'message':
+            if not case.payload_pattern:
+                raise ValueError('legacy message requires its complete payload pattern')
+            re.compile(case.payload_pattern)
+        elif case.kind == 'location':
+            if (not re.fullmatch(r'[^\s:]+\.rs:[1-9][0-9]*:[1-9][0-9]*', case.assertion)
+                    or case.prelude != ('poison the leases mutex mid-turn',)):
+                raise ValueError('location requires an exact source site and poison prelude')
+        elif case.kind == 'positive':
+            if (not case.positive_tests or len(set(case.positive_tests)) != len(case.positive_tests)
+                    or any(not isinstance(test, str) or not test or re.search(r'\s', test)
+                           for test in case.positive_tests)):
+                raise ValueError('positive requires an explicit nonempty test inventory')
+        else:
+            raise ValueError('unknown case kind')
         if re.search(r'\s', case.test):
             raise ValueError('test requires an exact name without whitespace')
     names = [case.mutation for case in table]
@@ -119,6 +142,16 @@ def classify(result, case):
     named = re.findall(r'^test (\S+) \.\.\. (ok|FAILED|ignored)$', raw, re.MULTILINE)
     totals = re.findall(r'^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; '
                         r'(\d+) ignored;', raw, re.MULTILINE)
+    if case.kind == 'positive':
+        expected = set(case.positive_tests)
+        passed = [test for test, status in named if status == 'ok']
+        valid = (result.returncode == 0 and len(passed) == len(expected)
+                 and set(passed) == expected and bool(totals)
+                 and all(status in ('ok', 'ignored') for _, status in named)
+                 and all(status == 'ok' and failed == '0' for status, _, failed, _ in totals)
+                 and sum(int(count) for count in running) == len(named)
+                 and sum(int(count) for _, count, _, _ in totals) == len(passed))
+        return ('PASS', 'baseline passed', []) if valid else ('INVALID', 'baseline is not green', [])
     if running != ['1'] or len(named) != 1 or named[0][0] != case.test:
         return 'INVALID', 'missing exact single named test', []
     if (result.returncode == 0 and named == [(case.test, 'ok')]
@@ -129,6 +162,8 @@ def classify(result, case):
         return 'INVALID', 'missing normal named test failure', []
     headers = [(index, re.fullmatch(r"thread '([^']+)'(?: \(\d+\))? panicked at .+:", line))
                for index, line in enumerate(lines) if ' panicked at ' in line]
+    if case.kind in ('message', 'location'):
+        return classify_legacy_panic(lines, headers, case)
     if len(headers) != 1 or headers[0][1] is None or headers[0][1][1] != case.test:
         return 'INVALID', 'panic is not exclusively owned by the named test', []
     index = headers[0][0]
@@ -146,6 +181,45 @@ def classify(result, case):
     return 'KILLED', 'named test failed at its assertion', [case.test]
 
 
+def marker_is_scoped(marker):
+    """One shared scope check for all migrated message bindings (#935)."""
+    return (isinstance(marker, str) and bool(marker.strip())
+            and len(marker.splitlines()) == 1
+            and marker != 'assertion' and not marker.startswith('assertion `left == right`')
+            and re.fullmatch(r'"[^"]+":\s*', marker) is None
+            and not marker.rstrip().endswith(': step')
+            and not marker.startswith(HANG_PREFIXES))
+
+
+def classify_legacy_panic(lines, headers, case):
+    """First-line scoped messages or the two recorded poison panic blocks.
+
+    Unlike the old runner, no marker in a source path, continuation line or
+    sibling panic counts. The location form also requires the unwrap payload.
+    """
+    expected = 2 if case.kind == 'location' else 1
+    if (len(headers) != expected
+            or any(match is None or match[1] != case.test for _, match in headers)):
+        return 'INVALID', 'legacy panic ownership/count mismatch', []
+    payloads = [lines[index + 1] if index + 1 < len(lines) else '' for index, _ in headers]
+    for index, _ in headers:
+        for line in lines[index + 1:]:
+            if re.match(r"^(?:thread '|stack backtrace:|note:|test result:|failures:|test \S+ \.\.\. |error: test failed)", line):
+                break
+            if line.lstrip().startswith(HANG_PREFIXES):
+                return 'INVALID', 'timeout/watchdog panic is not an assertion', []
+    if case.kind == 'location':
+        valid = (tuple(payloads[:-1]) == case.prelude
+                 and payloads[-1] == 'called `Result::unwrap()` on an `Err` value: PoisonError { .. }'
+                 and lines[headers[-1][0]].endswith(' panicked at ' + case.assertion + ':'))
+    else:
+        valid = (marker_is_scoped(case.assertion)
+                 and re.fullmatch(case.payload_pattern, payloads[0]) is not None)
+    if not valid:
+        return 'INVALID', 'missing scoped legacy panic binding', []
+    return 'KILLED', 'named test failed at its legacy binding', [case.test]
+
+
 def _invalid(rows, reason):
     for row in rows:
         row.update(status='INVALID', reason=row['reason'] + '; ' + reason, hits=[])
@@ -154,7 +228,8 @@ def _invalid(rows, reason):
 def _document(rows, mode, selected, total):
     return {'mode': mode, 'selected': selected, 'total': total, 'controls': rows,
             'counts': {status: sum(row['status'] == status for row in rows)
-                       for status in ('KILLED', 'SURVIVED', 'INVALID')}}
+                       for status in ('KILLED', 'SURVIVED', 'INVALID') +
+                       (('PASS',) if any(row['status'] == 'PASS' for row in rows) else ())}}
 
 
 def _revoke(output, identity):
@@ -238,6 +313,6 @@ def run(cases, output, *, guard, execute, oracle, selected=None, environ=None):
                 failure += f'; publication rollback: {type(error).__name__}: {error}'
             _invalid(rows, failure)
         success = published and not failure and bool(rows) and all(
-            row['status'] == 'KILLED' for row in rows)
+            row['status'] in ('KILLED', 'PASS') for row in rows)
         code = 0 if success else (2 if entered else 1)
     return RunResult(code, _document(rows, mode, names, total), failure)

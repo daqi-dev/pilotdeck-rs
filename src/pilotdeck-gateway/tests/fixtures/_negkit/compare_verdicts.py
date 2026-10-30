@@ -123,12 +123,100 @@ def normalize(row, index):
             'schema': schema, 'hits': observed_hits(row, field)}
 
 
+def legacy_row(row, index):
+    """The two #1110 raw-array schemas, never a generic array fallback.
+
+    These runners bind exactly one test per mutation and do not emit hits;
+    a successful kill therefore has that one hit. Baselines stay in the table.
+    failure-guard omitted test/status: its recorded case inventory below is
+    the only supported inference, including its explicit survived reason.
+    """
+    field = f'legacy[{index}]'
+    if not isinstance(row, dict):
+        raise InputError(f'{field}: expected an object')
+    turn_fields = {'name', 'case', 'before', 'after', 'exit', 'marker', 'test',
+                   'anchor', 'anchorKind', 'status', 'reason'}
+    guard_fields = {'name', 'case', 'marker', 'before', 'after', 'pid', 'reaped',
+                    'exit', 'timed_out', 'valid', 'reason'}
+    name = required_string(row.get('name'), field + '.name')
+    if row.keys() == turn_fields:
+        test = required_string(row['test'], field + '.test')
+        status = row['status']
+        location = name in ('lease-poison-unwrap-finish', 'lease-poison-unwrap-prepare')
+        if (not isinstance(status, str) or status not in STATUSES
+                or row['anchorKind'] != ('location' if location else 'message')):
+            raise InputError(f'{field}: invalid turn-submit verdict/anchor kind')
+        expected_exit = {'PASS': 0, 'KILLED': 101, 'SURVIVED': 0}.get(status)
+        if expected_exit is not None and (type(row['exit']) is not int or row['exit'] != expected_exit):
+            raise InputError(f'{field}: contradictory turn-submit exit/status')
+        if name == 'baseline':
+            if (any(row[key] is not None for key in ('anchor', 'marker', 'before', 'after', 'case'))
+                    or status not in ('PASS', 'INVALID')):
+                raise InputError(f'{field}: invalid turn-submit baseline')
+            assertion = '#1110 positive baseline'
+        else:
+            required_string(row['before'], field + '.before')
+            if not isinstance(row['after'], str) or row['after'] == row['before']:
+                raise InputError(f'{field}: invalid turn-submit replacement')
+            assertion = required_string(row['anchor'], field + '.anchor')
+            if row['anchorKind'] == 'location' and not re.fullmatch(r'[^\s:]+\.rs:[1-9][0-9]*:[1-9][0-9]*', assertion):
+                raise InputError(f'{field}: invalid source location')
+    elif row.keys() == guard_fields:
+        pure_names = {'tool-threshold-plus-one', 'tool-threshold-minus-one',
+                      'model-threshold-plus-one', 'model-threshold-minus-one',
+                      'counted-classification-wrong', 'prefix-shortest-not-longest',
+                      'exact-unit-skipped', 'success-clears-window', 'trip-latch-ignored',
+                      'trip-message-changed'}
+        submit_names = {
+            'disabled-policy-observed': 'guard-disabled', 'model-not-observed': 'guard-model-trip',
+            'tool-not-observed': 'guard-tool-trip', 'subagent-not-observed': 'guard-subagent-trip',
+            'trip-still-admitted': 'guard-model-trip', 'trip-status-not-recorded': 'guard-tool-trip',
+            'record-error-propagated': 'guard-trip-status-record-failed',
+            'model-metadata-dropped': 'guard-model-trip', 'trip-abort-reason-wrong': 'guard-tool-trip',
+            'guard-wire-order-changed': 'guard-model-trip', 'next-window-keeps-model-count': 'guard-reset-next-turn',
+            'config-snapshotted-before-refresh': 'guard-refresh-enables'}
+        if name not in pure_names | submit_names.keys() | {'baseline-pure', 'baseline-submit'}:
+            raise InputError(f'{field}: unknown failure-guard case')
+        if row['case'] != submit_names.get(name):
+            raise InputError(f'{field}: failure-guard scenario mismatch')
+        pure = name in pure_names or name == 'baseline-pure'
+        test = ('runtime::turn::failure_guard::tests::real_ts_failure_guard_and_classify' if pure
+                else 'runtime::turn::submit::tests::real_ts_submit_scenarios')
+        baseline = name in ('baseline-pure', 'baseline-submit')
+        assertion = '#1110 positive ' + name if baseline else required_string(row['marker'], field + '.marker')
+        if (type(row['valid']) is not bool or type(row['timed_out']) is not bool
+                or type(row['reaped']) is not bool or not isinstance(row['reason'], str)
+                or (baseline and row['marker'] is not None)):
+            raise InputError(f'{field}: invalid failure-guard verdict fields')
+        if not baseline and not assertion.startswith('#813 '):
+            raise InputError(f'{field}: unknown failure-guard marker')
+        if row['valid']:
+            if (row['reason'] != ('baseline passed' if baseline else 'killed')
+                    or type(row['exit']) is not int or row['exit'] != (0 if baseline else 101)
+                    or row['timed_out'] or not row['reaped']):
+                raise InputError(f'{field}: contradictory failure-guard success')
+            status = 'PASS' if baseline else 'KILLED'
+        else:
+            status = 'INVALID'
+            if not baseline and row['reason'] == 'survived (test passed)':
+                if type(row['exit']) is not int or row['exit'] != 0 or row['timed_out'] or not row['reaped']:
+                    raise InputError(f'{field}: contradictory failure-guard survival')
+                status = 'SURVIVED'
+    else:
+        raise InputError(f'{field}: unregistered raw-array schema')
+    return {'case': name, 'status': status, 'schema': 'mutation/test',
+            'bindings': [{'test': test, 'assertion': assertion}],
+            'hits': [test] if status == 'KILLED' else []}
+
+
 def load_table(path):
     if not path.is_file():
         raise InputError('expected a readable regular file')
     with path.open(encoding='utf-8') as stream:
         document = json.load(stream, object_pairs_hook=unique_members,
                              parse_constant=reject_constant)
+    if isinstance(document, list) and document:
+        return [legacy_row(row, index) for index, row in enumerate(document)]
     if not isinstance(document, dict) or not isinstance(document.get('controls'), list):
         raise InputError('expected an object with controls[]')
     return [normalize(row, index) for index, row in enumerate(document['controls'])]
