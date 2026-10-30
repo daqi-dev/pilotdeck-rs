@@ -1322,6 +1322,131 @@
         "context": true,
         "lifecycle": true
       }
-    }
+    },
+    "productionCleanup": [
+      {
+        "mode": "ok",
+        "before": {
+          "calls": [
+            "session"
+          ],
+          "settled": false
+        },
+        "calls": [
+          "session",
+          "project"
+        ],
+        "warnings": [],
+        "settled": true
+      },
+      {
+        "mode": "session-error",
+        "before": {
+          "calls": [
+            "session"
+          ],
+          "settled": false
+        },
+        "calls": [
+          "session",
+          "project"
+        ],
+        "warnings": [
+          {
+            "message": "[pilotdeck] failed to dispose per-session MCP runtimes:",
+            "error": "session failed"
+          }
+        ],
+        "settled": true
+      },
+      {
+        "mode": "project-error",
+        "before": {
+          "calls": [
+            "session"
+          ],
+          "settled": false
+        },
+        "calls": [
+          "session",
+          "project"
+        ],
+        "warnings": [
+          {
+            "message": "[pilotdeck] failed to dispose project runtimes:",
+            "error": "project failed"
+          }
+        ],
+        "settled": true
+      },
+      {
+        "mode": "both-errors",
+        "before": {
+          "calls": [
+            "session"
+          ],
+          "settled": false
+        },
+        "calls": [
+          "session",
+          "project"
+        ],
+        "warnings": [
+          {
+            "message": "[pilotdeck] failed to dispose per-session MCP runtimes:",
+            "error": "session failed"
+          },
+          {
+            "message": "[pilotdeck] failed to dispose project runtimes:",
+            "error": "project failed"
+          }
+        ],
+        "settled": true
+      },
+      {
+        "mode": "release",
+        "before": {
+          "calls": [
+            "session"
+          ],
+          "settled": false
+        },
+        "calls": [
+          "session",
+          "project"
+        ],
+        "warnings": [],
+        "settled": true
+      },
+      {
+        "mode": "cancel",
+        "before": {
+          "calls": [
+            "session"
+          ],
+          "settled": false
+        },
+        "calls": [
+          "session",
+          "project"
+        ],
+        "warnings": [
+          {
+            "message": "[pilotdeck] failed to dispose per-session MCP runtimes:",
+            "error": "cancelled"
+          }
+        ],
+        "settled": true
+      },
+      {
+        "mode": "never",
+        "before": {
+          "calls": [
+            "session"
+          ],
+          "settled": false
+        }
+      }
+    ]
   }
 }
