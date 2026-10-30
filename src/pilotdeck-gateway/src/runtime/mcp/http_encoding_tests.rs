@@ -601,9 +601,10 @@ async fn first_then_accepted(
 
 /// Answers the first request (the `notifications/initialized` POST) with 202
 /// plus `Connection: close` — the SSE GET must open its own connection — and
-/// reports every later accepted TCP connection: the observable of the GET
-/// having entered the network exchange.
-async fn get_then_connect_server(tag: &'static str) -> (Server, mpsc::Receiver<()>) {
+/// on that connection reports what it delivered before the abort closed it:
+/// the request line, or `None` for EOF first. The report itself (either way)
+/// is the observable of the GET having entered the network exchange.
+async fn get_then_connect_server(tag: &'static str) -> (Server, mpsc::Receiver<Option<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .unwrap_or_else(|error| panic!("{tag}: bind: {error}"));
@@ -623,8 +624,22 @@ async fn get_then_connect_server(tag: &'static str) -> (Server, mpsc::Receiver<(
                         accepted.unwrap_or_else(|error| panic!("{tag}: accept: {error}"));
                     if !std::mem::replace(&mut first, false) {
                         // The GET's own connect; the client-side abort closes
-                        // it soon after, but the accept queue keeps it.
-                        if reports.send(()).await.is_err() {
+                        // it soon after, but the accept queue keeps it. Read
+                        // what it delivered before that close: the line if
+                        // the bytes made it out, `None` when the abort won
+                        // the race first — the caller must not read the
+                        // connection alone as the line having been sent
+                        // (ledger A6.5-MCP-DETACHED-DISPATCH-002).
+                        let delivered = read_request(&mut socket, tag)
+                            .await
+                            .map(|request| {
+                                request
+                                    .split("\r\n")
+                                    .next()
+                                    .unwrap_or_default()
+                                    .to_owned()
+                            });
+                        if reports.send(delivered).await.is_err() {
                             return;
                         }
                         continue;
@@ -717,6 +732,13 @@ async fn dispatch_get_before_close() {
 /// request undispatched at the gate and the connection never opens. The
 /// bound only turns a missing dispatch into this assertion's failure — on
 /// this code the report arrives in micro-seconds.
+///
+/// #1114 fix-r2: the server also reads what that connection delivered. On
+/// this timing the request line itself does not land (10/10 runs below read
+/// EOF before any byte) — the registered executor-model difference in ledger
+/// A6.5-MCP-DETACHED-DISPATCH-002, still unresolved — so this test asserts
+/// the exchange entry it can guarantee and prints the delivered state; a
+/// connect-only pass must not be read as the GET line having been sent.
 #[tokio::test]
 async fn dispatch_get_connects_before_close() {
     let tag = "#1114 GET exchange entry";
@@ -750,12 +772,20 @@ async fn dispatch_get_connects_before_close() {
         1,
         "#1114 the SSE GET is dispatched before close aborts it"
     );
-    let saw_get_connect = tokio::time::timeout(Duration::from_secs(10), connections.recv())
+    let delivered = tokio::time::timeout(Duration::from_secs(10), connections.recv())
         .await
-        .is_ok_and(|saw| saw.is_some());
+        .ok()
+        .flatten();
     crate::negative_assert!(
-        saw_get_connect,
+        delivered.is_some(),
         "#1114 the SSE GET enters the network exchange before close aborts it"
+    );
+    // The honest record of what the aborted GET connection delivered: on
+    // this timing the line does not land (the ledger difference above).
+    let line = delivered.flatten();
+    println!(
+        "{tag}: the aborted GET connection delivered: {}",
+        line.as_deref().unwrap_or("EOF before a request line")
     );
 }
 
@@ -797,6 +827,57 @@ async fn dispatch_ready_continuation_is_not_polled_again() {
     );
 }
 
+/// The hook a recorder chains to and eventually restores, handed to both the
+/// chain and the restore through the recorder's mutex.
+type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync>;
+
+/// Installs the `DETACHED_PANICS` recorder hook, chained to the hook that
+/// was current at install time. The previous hook lives in a mutex because
+/// the `Box` itself cannot be handed to both the chain and the restore; the
+/// chain must keep forwarding, so another test's panic keeps its output
+/// while this hook is installed.
+struct PanicRecorder {
+    previous: Arc<Mutex<Option<PanicHook>>>,
+}
+
+impl PanicRecorder {
+    fn hook(chained: Arc<Mutex<Option<PanicHook>>>) -> PanicHook {
+        Box::new(move |info| {
+            DETACHED_PANICS.with(|panics| panics.borrow_mut().push(format!("{info}")));
+            if let Some(previous) = chained.lock().expect("#1114 panic hook lock").as_ref() {
+                previous(info);
+            }
+        })
+    }
+
+    /// Install over an explicit previous hook. The restore verification
+    /// swaps through this so its rounds never hold a `take_hook`→`set_hook`
+    /// gap with the default hook active while the probe storm runs.
+    fn over(previous: PanicHook) -> Self {
+        let previous = Arc::new(Mutex::new(Some(previous)));
+        std::panic::set_hook(Self::hook(previous.clone()));
+        Self { previous }
+    }
+
+    fn install() -> Self {
+        Self::over(std::panic::take_hook())
+    }
+
+    /// #1114 fix-r2: take the previous hook out in its own statement, so
+    /// the `MutexGuard` is released before `set_hook`. The old `if let`
+    /// shape kept the guard alive through the branch body: a concurrently
+    /// panicking thread runs the chained hook while std holds the global
+    /// `HOOK` read lock (panicking.rs `rust_panic_with_hook`) and waits on
+    /// the same mutex, while `set_hook` needs the `HOOK` write lock — a
+    /// lock-order inversion that hangs the whole test binary.
+    fn restore(&self) {
+        let restore = self.previous.lock().expect("#1114 panic hook lock").take();
+        if let Some(previous) = restore {
+            std::panic::set_hook(previous);
+        }
+    }
+}
+
 /// #1114 fix-r1: the same contract at a real detached site. A legacy
 /// transport with no endpoint rejects the send before its first suspension,
 /// so `send_detached`'s continuation is Ready on the inline poll; spawning
@@ -813,14 +894,7 @@ async fn dispatch_ready_send_detached_does_not_panic() {
         2000.0,
     ));
     super::reset_detached_dispatches();
-    let previous = Arc::new(Mutex::new(Some(std::panic::take_hook())));
-    let chained = previous.clone();
-    std::panic::set_hook(Box::new(move |info| {
-        DETACHED_PANICS.with(|panics| panics.borrow_mut().push(format!("{info}")));
-        if let Some(previous) = chained.lock().expect("#1114 panic hook lock").as_ref() {
-            previous(info);
-        }
-    }));
+    let recorder = PanicRecorder::install();
     wire.send_detached(
         parse_json(r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{}}"#)
             .unwrap_or_else(|error| panic!("{tag}: cancel JSON: {error:?}")),
@@ -850,9 +924,9 @@ async fn dispatch_ready_send_detached_does_not_panic() {
     if !panics.is_empty() {
         println!("{tag}: recorded panics: {panics:?}");
     }
-    if let Some(previous) = previous.lock().expect("#1114 panic hook lock").take() {
-        std::panic::set_hook(previous);
-    }
+    // Restored before the assertions: a failure must panic through the
+    // normal hook, never wait on the recorder's mutex.
+    recorder.restore();
     crate::negative_assert!(
         panics.is_empty(),
         "#1114 a first-poll-Ready detached continuation is not spawned and polled again"
@@ -862,6 +936,137 @@ async fn dispatch_ready_send_detached_does_not_panic() {
         2,
         "#1114 both Ready sends were counted"
     );
+}
+
+/// This scenario's probe payload: the filter hook below keeps the storm's
+/// panics out of the captured output without silencing any other panic.
+const HOOK_RESTORE_PROBE: &str = "#1114 hook-restore probe";
+const HOOK_RESTORE_ASSERTION: &str =
+    "#1114 restoring the panic hook completes while another thread panics";
+/// Marks the re-executed child that runs the raw interleaving.
+const HOOK_RESTORE_CHILD_ENV: &str = "PDRS_1114_HOOK_RESTORE_CHILD";
+const HOOK_RESTORE_CHILD_TEST: &str = "runtime::mcp::http::encoding_tests::\
+dispatch_panic_hook_restore_survives_concurrent_panics";
+
+/// The raw interleaving, run in the re-executed child: a thread panics
+/// continuously while the recorder is installed and restored many times.
+/// On fixed code every loop here is count-bounded and the joins return; the
+/// pre-fix restore wedges the process here (holding the recorder's mutex
+/// across `set_hook` while a probe panic sits in the chained hook holding
+/// the global `HOOK` read lock), which is exactly why the caller keeps it
+/// in a child it can kill.
+fn hook_restore_storm() {
+    let tag = "#1114 panic hook restore child";
+    // A filter hook below the storm: the default hook would print (and
+    // backtrace) every probe panic. It forwards everything but this
+    // scenario's own probe payload.
+    let original = Arc::new(std::panic::take_hook());
+    let filter = move || {
+        let original = original.clone();
+        Box::new(move |info: &std::panic::PanicHookInfo<'_>| {
+            if info.payload().downcast_ref::<&'static str>() != Some(&HOOK_RESTORE_PROBE) {
+                original(info);
+            }
+        }) as Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync>
+    };
+    std::panic::set_hook(filter());
+    let probes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let peer = {
+        let probes = probes.clone();
+        std::thread::spawn(move || {
+            // Bounded storm: the cap keeps a pathological scheduler from
+            // outliving the caller's bound.
+            for seen in 0..300_000usize {
+                let _ = std::panic::catch_unwind(|| std::panic::panic_any(HOOK_RESTORE_PROBE));
+                probes.store(seen + 1, std::sync::atomic::Ordering::SeqCst);
+                if seen % 512 == 0 {
+                    // The recorder keeps every panic of its thread; keep the
+                    // probe thread's record bounded.
+                    DETACHED_PANICS.with(|panics| panics.borrow_mut().clear());
+                }
+            }
+        })
+    };
+    // Storm hot before any swap runs: without this barrier the swaps can
+    // finish before the first probe panic.
+    while probes.load(std::sync::atomic::Ordering::SeqCst) < 4_096 {
+        std::hint::spin_loop();
+    }
+    let swapping = std::thread::spawn(move || {
+        for _ in 0..100_000 {
+            // A fresh filter box per round, installed without `take_hook`:
+            // the default hook must never be the one a storm panic reaches.
+            let recorder = PanicRecorder::over(filter());
+            recorder.restore();
+        }
+    });
+    swapping
+        .join()
+        .unwrap_or_else(|_| panic!("{tag}: swapping thread panicked"));
+    peer.join()
+        .unwrap_or_else(|_| panic!("{tag}: probe thread panicked"));
+    assert!(
+        probes.load(std::sync::atomic::Ordering::SeqCst) >= 4_096,
+        "{tag}: the concurrent panic storm ran"
+    );
+}
+
+/// #1114 fix-r2: `PanicRecorder::restore` must not hold the recorder's mutex
+/// across `set_hook`. Std runs a panic hook with the global `HOOK` read lock
+/// held (panicking.rs `rust_panic_with_hook`), and the recorder's chained
+/// hook waits on that same mutex, so the pre-fix shape — the `MutexGuard` of
+/// an `if let` scrutinee alive through the branch — made `set_hook` wait for
+/// the `HOOK` write lock with the mutex held. Any parallel test that panics
+/// (`registry.rs` `shared_spawn_outcomes_and_cancelled_gate` panics by
+/// design) then hangs the whole test binary.
+///
+/// The interleaving runs in a re-executed child (the #946 worker pattern)
+/// because its failure mode is that wedge: a hung child is killed here and
+/// becomes this test's named failure, while the parent — which never touches
+/// the process's panic hook itself — always returns. The failure is a
+/// returned `Err` with the receipt written first: a panic through the
+/// recorder would be exactly the wait the regression causes.
+#[tokio::test]
+async fn dispatch_panic_hook_restore_survives_concurrent_panics() -> Result<(), String> {
+    let tag = "#1114 panic hook restore";
+    if std::env::var_os(HOOK_RESTORE_CHILD_ENV).is_some() {
+        hook_restore_storm();
+        return Ok(());
+    }
+    let mut child = tokio::process::Command::new(
+        std::env::current_exe().unwrap_or_else(|error| panic!("{tag}: test executable: {error}")),
+    )
+    .arg(HOOK_RESTORE_CHILD_TEST)
+    .arg("--exact")
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null())
+    .env(HOOK_RESTORE_CHILD_ENV, "1")
+    // Only this test's own failure is the kill; the child runs the plain
+    // interleaving and must not write this run's receipts.
+    .env_remove("PDRS_NEGATIVE_RECEIPTS")
+    .env_remove("PDRS_NEGATIVE_PARENT_TEST")
+    .spawn()
+    .unwrap_or_else(|error| panic!("{tag}: child spawn: {error}"));
+    let survived = match tokio::time::timeout(Duration::from_secs(10), child.wait()).await {
+        Ok(Ok(status)) => status.success(),
+        Ok(Err(error)) => panic!("{tag}: child wait: {error}"),
+        Err(_) => {
+            // Wedged the way the pre-fix restore does. Kill and fail; the
+            // bound, not the wedge, ends the regression.
+            child
+                .kill()
+                .await
+                .unwrap_or_else(|error| panic!("{tag}: child kill: {error}"));
+            let _ = child.wait().await;
+            false
+        }
+    };
+    if !survived {
+        crate::test_negative_receipt::record_failure(HOOK_RESTORE_ASSERTION);
+        return Err(format!("{tag}: {HOOK_RESTORE_ASSERTION}"));
+    }
+    Ok(())
 }
 
 /// #1114 fix-r1: `Protocol.request` fires `transport.send()` before
