@@ -62,7 +62,9 @@ mod test_process;
 #[cfg(test)]
 #[path = "../tests/common/scratch.rs"]
 mod test_scratch;
-#[cfg(test)]
+// fix-r3 review P2: the module hardcodes `/bin/sh` helpers and calls
+// `rustix::process`, so it is unix-only like `test_write_stage` below.
+#[cfg(all(test, unix))]
 mod test_scratch_publication;
 #[cfg(all(test, unix))]
 #[path = "../tests/common/write_stage.rs"]

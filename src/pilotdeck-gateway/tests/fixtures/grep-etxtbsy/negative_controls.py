@@ -5,20 +5,23 @@ Usage: CARGO_TARGET_DIR=... python3 negative_controls.py OUT [mutation ...]
 Every selected mutant compiles first; all results are reported before exit.
 
 The fix keeps every write descriptor out of the test process: the body is
-piped to a `/bin/sh -c 'cat >"$tmp"'` helper child, the helper is reaped
-within a bounded deadline (killed and reaped past it), and only then are
-chmod + rename applied. The bound stress test
-`script_spawn_survives_concurrent_forks` writes the script through that
-helper and immediately execs it while sibling threads fork continuously; a
-mutant that moves the write back into this process must fail there with
-ETXTBSY (`Os { code: 26, ... "Text file busy" }`), and only that failure
-kills: the test's `#1125 etxtbsy` marker is emitted for raw os error 26
-alone, so any other spawn failure (EAGAIN under fork pressure, a missing
-binary, a non-zero exit) classifies as INVALID, never KILLED. The
-`no-temp-cleanup` and deadline mutants are bound to the lib-only residue
-unit tests instead: they are deterministic and platform-independent. macOS
-uses posix_spawn and never shows the window, so the race mutants are only
-meaningful on a Linux host; run them there (cb8 or CI).
+piped to a `/bin/sh -c 'exec cat >"$tmp"'` helper child, the writer shares
+the deadline through a non-blocking write end (so a stalled read end cannot
+wedge it), and a guard owns the helper from the spawn on — on every exit it
+kills and reaps the helper, reports that through the `reaped` hook, and
+removes the temporary name — before chmod + rename publish the file. The
+bound stress test `script_spawn_survives_concurrent_forks` writes the
+script through that helper and immediately execs it while sibling threads
+fork continuously; a mutant that moves the write back into this process
+must fail there with ETXTBSY (`Os { code: 26, ... "Text file busy" }`),
+and only that failure kills: the test's `#1125 etxtbsy` marker is emitted
+for raw os error 26 alone, so any other spawn failure (EAGAIN under fork
+pressure, a missing binary, a non-zero exit) classifies as INVALID, never
+KILLED. The cleanup, deadline, and writer mutants are bound to the
+lib-only publication unit tests instead: they are deterministic and
+unix-only like the module itself. macOS uses posix_spawn and never shows
+the window, so the two race mutants are a Linux contract (expected
+SURVIVED elsewhere); the other four must kill on every unix host.
 """
 import argparse
 import json
@@ -38,6 +41,7 @@ stress = 'runtime::tools::builtin::grep::tests::script_spawn_survives_concurrent
 residue = 'test_scratch_publication::failed_publication_removes_the_temporary_name'
 stalled = 'test_scratch_publication::a_stalled_helper_is_killed_and_cleaned_up'
 unread = 'test_scratch_publication::a_helper_that_never_reads_hits_the_write_deadline'
+stranger = 'test_scratch_publication::a_stranger_on_the_read_end_still_hits_the_write_deadline'
 cases = [
     # The literal pre-fix shape: Scratch::script itself writes and chmods
     # the exec'd path in the test process, reopening the wide write window.
@@ -49,65 +53,190 @@ cases = [
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
                 .expect("#1125 chmod script");''',
      stress, '#1125 etxtbsy'),
-    # The helper spawn segment regressed to an in-process write of the
-    # temporary name (the fix-r1 shape); every caller is exposed again. The
-    # anchor is only that spawn segment, so unrelated edits to the helper
-    # body cannot stale it (#1125 fix-r2 review P2).
+    # The helper shape regressed to the fix-r1 mutation: the parent itself
+    # writes the FINAL path with the write descriptor open until the end of
+    # the function, right before the caller execs. That shape was proven
+    # killable on cb8 (probe c: 28 ETXTBSY in 300 pressured iterations); the
+    # fix-r2 variant that only wrote the temporary name closed its fd too
+    # early and SURVIVED on the host, so the anchor is again the whole
+    # body of `write_executable_bounded` (#1125 fix-r3 review P2).
     ('helper-in-process-write', helper,
-     '''    write_executable_bounded(path, body, mode, HELPER_DEADLINE, |temporary| {
-        let mut helper = process::Command::new("/bin/sh");
-        helper
-            .arg("-c")
-            .arg("cat >\\"$1\\"")
-            .arg("write-executable")
-            .arg(temporary)
-            .stdin(process::Stdio::piped());
-        helper
-    })''',
-     '''    write_executable_bounded(path, body, mode, HELPER_DEADLINE, |temporary| {
-        std::fs::write(temporary, body).expect("#1125 mutant writes the temporary itself");
-        let mut helper = process::Command::new("/bin/sh");
-        helper
-            .arg("-c")
-            .arg("cat >/dev/null")
-            .arg("write-executable")
-            .stdin(process::Stdio::piped());
-        helper
-    })''',
-     stress, '#1125 etxtbsy'),
-    # A failed publication must not leave the `.tmp-` name behind; bound to
-    # the residue unit test, which fails deterministically (no race, so it
-    # also holds on macOS).
-    ('no-temp-cleanup', helper,
-     '''    if published.is_err() {
-        // Every error exit after the helper may have created the file
-        // removes the temporary name again (#1125 fix-r1 review P2).
-        let _ = fs::remove_file(&temporary);
+     '''    let name = path
+        .file_name()
+        .expect("#1125 executable file name")
+        .to_string_lossy();
+    let temporary = path.with_file_name(format!("{name}.tmp-{}", uuid::Uuid::new_v4()));
+    let expiry = Instant::now() + deadline;
+    let helper = build_helper(&temporary).spawn()?;
+    // #1125 fix-r3 review P2-1: the guard owns the helper from the spawn on,
+    // so every later exit — an error return, a deadline overrun, or a panic
+    // unwinding through this function — kills and reaps it and removes the
+    // temporary name. Killing an already-reaped child is a no-op in std, so
+    // a pid recycled after the wait loop reaped the helper is never
+    // signalled.
+    let mut guard = ReapGuard {
+        helper: Some(helper),
+        temporary: temporary.clone(),
+        reaped: Some(reaped),
+    };
+    let mut stdin = guard
+        .helper
+        .as_mut()
+        .expect("#1125 reap guard holds the helper")
+        .stdin
+        .take()
+        .expect("#1125 helper stdin is piped");
+    set_nonblocking(&mut stdin)?;
+    let (sent, done) = mpsc::channel();
+    let payload = body.as_bytes().to_vec();
+    // #1125 fix-r3 review P2-1: a writer that cannot start is an ordinary
+    // error return, not a panic unwinding past the cleanup: the dropped
+    // closure closes the pipe's write end, so the helper still sees EOF,
+    // and the guard reaps it and removes the temporary name.
+    let writer = thread::Builder::new()
+        .name("#1125 scratch writer".into())
+        .spawn(move || {
+            let written = write_payload_by_deadline(&mut stdin, &payload, expiry, deadline);
+            let _ = sent.send(written);
+            // `stdin` drops with the closure: closing the write end is what
+            // lets the helper see EOF, and a broken pipe was reported by
+            // `written`, never by hanging on the helper.
+        });
+    let written = match writer {
+        Err(error) => Err(error),
+        Ok(writer) => {
+            let reported = done.recv_timeout(expiry.saturating_duration_since(Instant::now()));
+            // #1125 fix-r3 review P2-2: the writer shares the expiry, so it
+            // — and with it the last copy of the pipe's write end — must be
+            // gone shortly after the expiry at the latest, whatever
+            // happened to the helper or to anyone else holding the read
+            // end. The grace absorbs one poll interval of lag.
+            let writer_gone = expiry + WRITER_GRACE;
+            while !writer.is_finished() && Instant::now() < writer_gone {
+                thread::sleep(HELPER_POLL);
+            }
+            assert!(
+                writer.is_finished(),
+                "#1125 helper writer did not exit by its deadline"
+            );
+            match reported {
+                Ok(written) => written,
+                Err(mpsc::RecvTimeoutError::Timeout) => Err(helper_deadline_error(deadline)),
+                // The writer can only end without reporting by panicking,
+                // which still drops the pipe's write end; success is never
+                // assumed.
+                Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::other(
+                    "#1125 helper writer ended without reporting",
+                )),
+            }
+        }
+    };
+    let waited = if matches!(&written, Err(error) if error.kind() == io::ErrorKind::TimedOut) {
+        // The write phase itself overran: the helper cannot be waited out,
+        // the guard below ends it instead.
+        Err(helper_deadline_error(deadline))
+    } else {
+        let helper = guard
+            .helper
+            .as_mut()
+            .expect("#1125 reap guard holds the helper");
+        loop {
+            match helper.try_wait() {
+                Ok(Some(status)) if status.success() => break Ok(()),
+                Ok(Some(status)) => {
+                    break Err(io::Error::other(format!(
+                        "#1125 helper for {} exited with {status}",
+                        temporary.display()
+                    )));
+                }
+                Ok(None) if Instant::now() < expiry => thread::sleep(HELPER_POLL),
+                Ok(None) => break Err(helper_deadline_error(deadline)),
+                // A wait error leaves the helper's state unknown; the guard
+                // still kills and reaps it before this returns (#1125
+                // fix-r3 review P3: every non-disarmed exit reaps).
+                Err(error) => break Err(error),
+            }
+        }
+    };
+    let published = written.and(waited).and_then(|()| {
+        #[cfg(unix)]
+        fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))?;
+        #[cfg(not(unix))]
+        let _ = mode;
+        fs::rename(&temporary, path)
+    });
+    if published.is_ok() {
+        // The wait loop reaped the helper and the rename consumed the
+        // temporary name; the guard has nothing left to do.
+        guard.disarm();
     }
-    published''',
-     '''    published''',
+    published
+}
+''',
+     '''    let mut file = fs::File::create(path)?;
+    io::Write::write_all(&mut file, body.as_bytes())?;
+    #[cfg(unix)]
+    file.set_permissions(fs::Permissions::from_mode(mode))?;
+    #[cfg(not(unix))]
+    let _ = mode;
+    drop(file);
+    Ok(())
+}''',
+     stress, '#1125 etxtbsy'),
+    # A failed publication must not leave the `.tmp-` name behind; the
+    # guard's Drop is the single cleanup point, so the mutant deletes its
+    # remove line. Bound to the residue unit test, which fails
+    # deterministically (no race, so it also holds on macOS).
+    ('no-temp-cleanup', helper,
+     '''            if let Some(report) = self.reaped.take() {
+                report(waited);
+            }
+        }
+        let _ = fs::remove_file(&self.temporary);''',
+     '''            if let Some(report) = self.reaped.take() {
+                report(waited);
+            }
+        }''',
      residue, '#1125 temp residue'),
-    # A helper that overruns its deadline must be killed and reaped, not
-    # leaked (#1125 fix-r2 review P2); bound to the stalled-helper unit
-    # test, whose SIGKILL liveness probe fails deterministically.
+    # An overrun helper must be killed and reaped by the guard, not leaked;
+    # the mutant drops the guard's kill + wait + report, so the stalled
+    # test never receives its kill report (#1125 fix-r3 review P2).
     ('deadline-kill-removed', helper,
-     '''    if exceeded {
-        // The helper cannot be waited out: terminate and reap it so no
-        // process keeps running in this test's name, then fall through to
-        // the temporary-name cleanup below.
-        let _ = helper.kill();
-        let _ = helper.wait();
-    }''',
-     '''    let _ = &helper;''',
-     stalled, '#1125 stalled helper must be killed and reaped'),
+     '''        if let Some(mut helper) = self.helper.take() {
+            let waited = match helper.kill() {
+                Ok(()) => helper.wait(),
+                Err(error) => Err(error),
+            };
+            if let Some(report) = self.reaped.take() {
+                report(waited);
+            }
+        }''',
+     '''        self.helper = None;
+        self.reaped = None;''',
+     stalled, ['#1125 stalled helper kill must be reported',
+               '#1125 stalled helper must be killed and reaped']),
     # The overrun must surface as ErrorKind::TimedOut, never as a bare
-    # helper failure; bound to the never-reading-helper unit test.
+    # helper failure; every construction site (the writer's give-up, the
+    # recv backstop, the wait overrun) calls this one function, so one
+    # mutant covers them all. Bound to the never-reading-helper unit test.
     ('deadline-error-kind', helper,
      '''    io::Error::new(
         io::ErrorKind::TimedOut,''',
      '''    io::Error::new(
         io::ErrorKind::Other,''',
      unread, '#1125 deadline error must be TimedOut'),
+    # The writer must share the deadline: with the give-up removed it stays
+    # blocked on a read end a stranger keeps open, and the parent's own
+    # deadline cannot end it — only the writer-exit guard catches that
+    # (#1125 fix-r3 review P2-2). Bound to the stranger-on-the-read-end test.
+    ('writer-deadline-removed', helper,
+     '''                if Instant::now() >= expiry {
+                    return Err(helper_deadline_error(deadline));
+                }''',
+     '''                if false {
+                    return Err(helper_deadline_error(deadline));
+                }''',
+     stranger, '#1125 helper writer did not exit by its deadline'),
 ]
 
 

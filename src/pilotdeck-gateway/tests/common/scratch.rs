@@ -35,6 +35,11 @@ const HELPER_DEADLINE: Duration = Duration::from_secs(30);
 /// Reap the helper at this granularity once its deadline is running.
 const HELPER_POLL: Duration = Duration::from_millis(5);
 
+/// How far past the shared expiry the writer may lag before it is declared
+/// stuck (#1125 fix-r3 review P2-2); a correct writer gives up at the
+/// expiry, within one [`HELPER_POLL`] sleep.
+const WRITER_GRACE: Duration = Duration::from_millis(500);
+
 pub(crate) struct Scratch {
     path: PathBuf,
     token: String,
@@ -79,107 +84,158 @@ impl Drop for Scratch {
 /// because rename keeps the inode: the fix-r1 temp-name + rename scheme
 /// narrowed the window but never closed it (cb8 probe: 28 ETXTBSY in 300
 /// pressured iterations). Instead the body is piped to a
-/// `/bin/sh -c 'cat >"$tmp"'` helper child: the write descriptor exists
-/// only inside that helper, no fork of this process can inherit it, and
-/// the bounded wait below reaps the helper before `chmod` + `rename`
+/// `/bin/sh -c 'exec cat >"$tmp"'` helper child: the write descriptor exists
+/// only inside that helper, no fork of this process can inherit it, and the
+/// bounded wait below reaps the helper before `chmod` + `rename`
 /// publish the file, so when this returns no process anywhere still holds
 /// it open for writing (cb8 probe: 0 ETXTBSY in 300 pressured iterations).
 ///
 /// `mode` is applied to the temporary name before the rename, so the target
-/// name never exists in a non-executable state, and every error exit after
-/// the helper created the file removes the temporary name again.
+/// name never exists in a non-executable state.
 ///
-/// Every wait on the helper is bounded by `HELPER_DEADLINE` (#1125 fix-r2
-/// review P2): the write end of its stdin pipe can be inherited by a
-/// sibling fork that stalls before its own exec, so `cat` may never see
-/// EOF. Past the deadline the helper is killed and reaped, the temporary
-/// name is removed, and the failure is returned as `ErrorKind::TimedOut`.
+/// Every wait is bounded by [`HELPER_DEADLINE`] (#1125 fix-r2 review P2),
+/// and the bound holds even when the pipe cannot drain — a helper that
+/// never reads, or a stranger still holding the read end after the helper
+/// is killed — because the writer writes through a non-blocking write end
+/// against the same expiry (#1125 fix-r3 review P2-2): it gives up, reports
+/// `ErrorKind::TimedOut`, and drops its copy of the write end before this
+/// returns. A helper that overruns is killed and reaped by the
+/// [`ReapGuard`] on every exit, and every error exit removes the temporary
+/// name again (#1125 fix-r1 review P2).
 pub(crate) fn write_executable(path: &Path, body: &str, mode: u32) -> io::Result<()> {
-    write_executable_bounded(path, body, mode, HELPER_DEADLINE, |temporary| {
-        let mut helper = process::Command::new("/bin/sh");
-        helper
-            .arg("-c")
-            .arg("cat >\"$1\"")
-            .arg("write-executable")
-            .arg(temporary)
-            .stdin(process::Stdio::piped());
-        helper
-    })
+    write_executable_bounded(
+        path,
+        body,
+        mode,
+        HELPER_DEADLINE,
+        |temporary| {
+            let mut helper = process::Command::new("/bin/sh");
+            helper
+                .arg("-c")
+                .arg("exec cat >\"$1\"")
+                .arg("write-executable")
+                .arg(temporary)
+                .stdin(process::Stdio::piped());
+            helper
+        },
+        // The production helper is killed exactly when it overruns; only
+        // the publication tests consume a kill report.
+        |_| {},
+    )
 }
 
 /// The deadline-parameterized core of [`write_executable`]: `build_helper`
 /// receives the temporary name it must pipe the body into, so a test can
 /// substitute a helper that stalls deterministically (#1125 fix-r2 review
-/// P2 asked for exactly that coverage).
+/// P2 asked for exactly that coverage). `reaped` receives the kill + wait
+/// outcome whenever the guard had to end the helper (#1125 fix-r3 review
+/// P2): it is the only liveness evidence the publication tests use, so no
+/// pid is ever read back from a file and signalled.
 pub(crate) fn write_executable_bounded(
     path: &Path,
     body: &str,
     mode: u32,
     deadline: Duration,
     build_helper: impl FnOnce(&Path) -> process::Command,
+    reaped: impl FnOnce(io::Result<process::ExitStatus>),
 ) -> io::Result<()> {
     let name = path
         .file_name()
         .expect("#1125 executable file name")
         .to_string_lossy();
     let temporary = path.with_file_name(format!("{name}.tmp-{}", uuid::Uuid::new_v4()));
-    let mut helper = build_helper(&temporary).spawn()?;
-    // The body is written from a short-lived thread that owns the pipe's
-    // write end: the parent's copy is closed — and reported — before the
-    // bounded wait below starts, and a helper that never reads cannot
-    // wedge this thread in an unbounded in-process write.
-    let mut stdin = helper.stdin.take().expect("#1125 helper stdin is piped");
+    let expiry = Instant::now() + deadline;
+    let helper = build_helper(&temporary).spawn()?;
+    // #1125 fix-r3 review P2-1: the guard owns the helper from the spawn on,
+    // so every later exit — an error return, a deadline overrun, or a panic
+    // unwinding through this function — kills and reaps it and removes the
+    // temporary name. Killing an already-reaped child is a no-op in std, so
+    // a pid recycled after the wait loop reaped the helper is never
+    // signalled.
+    let mut guard = ReapGuard {
+        helper: Some(helper),
+        temporary: temporary.clone(),
+        reaped: Some(reaped),
+    };
+    let mut stdin = guard
+        .helper
+        .as_mut()
+        .expect("#1125 reap guard holds the helper")
+        .stdin
+        .take()
+        .expect("#1125 helper stdin is piped");
+    set_nonblocking(&mut stdin)?;
     let (sent, done) = mpsc::channel();
     let payload = body.as_bytes().to_vec();
-    thread::spawn(move || {
-        // Close the pipe so `cat` sees EOF and exits; a broken pipe is
-        // reported by `written`, never by hanging on the helper.
-        let written = io::Write::write_all(&mut stdin, &payload);
-        drop(stdin);
-        let _ = sent.send(written);
-    });
-    let expiry = Instant::now() + deadline;
-    let mut exceeded = false;
-    let written = match done.recv_timeout(expiry.saturating_duration_since(Instant::now())) {
-        Ok(written) => written,
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            exceeded = true;
-            Err(helper_deadline_error(deadline))
+    // #1125 fix-r3 review P2-1: a writer that cannot start is an ordinary
+    // error return, not a panic unwinding past the cleanup: the dropped
+    // closure closes the pipe's write end, so the helper still sees EOF,
+    // and the guard reaps it and removes the temporary name.
+    let writer = thread::Builder::new()
+        .name("#1125 scratch writer".into())
+        .spawn(move || {
+            let written = write_payload_by_deadline(&mut stdin, &payload, expiry, deadline);
+            let _ = sent.send(written);
+            // `stdin` drops with the closure: closing the write end is what
+            // lets the helper see EOF, and a broken pipe was reported by
+            // `written`, never by hanging on the helper.
+        });
+    let written = match writer {
+        Err(error) => Err(error),
+        Ok(writer) => {
+            let reported = done.recv_timeout(expiry.saturating_duration_since(Instant::now()));
+            // #1125 fix-r3 review P2-2: the writer shares the expiry, so it
+            // — and with it the last copy of the pipe's write end — must be
+            // gone shortly after the expiry at the latest, whatever
+            // happened to the helper or to anyone else holding the read
+            // end. The grace absorbs one poll interval of lag.
+            let writer_gone = expiry + WRITER_GRACE;
+            while !writer.is_finished() && Instant::now() < writer_gone {
+                thread::sleep(HELPER_POLL);
+            }
+            assert!(
+                writer.is_finished(),
+                "#1125 helper writer did not exit by its deadline"
+            );
+            match reported {
+                Ok(written) => written,
+                Err(mpsc::RecvTimeoutError::Timeout) => Err(helper_deadline_error(deadline)),
+                // The writer can only end without reporting by panicking,
+                // which still drops the pipe's write end; success is never
+                // assumed.
+                Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::other(
+                    "#1125 helper writer ended without reporting",
+                )),
+            }
         }
-        // The writer thread can only end without reporting by panicking,
-        // which still drops the pipe's write end; success is never assumed.
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::other(
-            "#1125 helper writer ended without reporting",
-        )),
     };
-    let waited = if exceeded {
+    let waited = if matches!(&written, Err(error) if error.kind() == io::ErrorKind::TimedOut) {
+        // The write phase itself overran: the helper cannot be waited out,
+        // the guard below ends it instead.
         Err(helper_deadline_error(deadline))
     } else {
+        let helper = guard
+            .helper
+            .as_mut()
+            .expect("#1125 reap guard holds the helper");
         loop {
             match helper.try_wait() {
                 Ok(Some(status)) if status.success() => break Ok(()),
                 Ok(Some(status)) => {
                     break Err(io::Error::other(format!(
-                        "#1125 helper sh for {} exited with {status}",
+                        "#1125 helper for {} exited with {status}",
                         temporary.display()
                     )));
                 }
                 Ok(None) if Instant::now() < expiry => thread::sleep(HELPER_POLL),
-                Ok(None) => {
-                    exceeded = true;
-                    break Err(helper_deadline_error(deadline));
-                }
+                Ok(None) => break Err(helper_deadline_error(deadline)),
+                // A wait error leaves the helper's state unknown; the guard
+                // still kills and reaps it before this returns (#1125
+                // fix-r3 review P3: every non-disarmed exit reaps).
                 Err(error) => break Err(error),
             }
         }
     };
-    if exceeded {
-        // The helper cannot be waited out: terminate and reap it so no
-        // process keeps running in this test's name, then fall through to
-        // the temporary-name cleanup below.
-        let _ = helper.kill();
-        let _ = helper.wait();
-    }
     let published = written.and(waited).and_then(|()| {
         #[cfg(unix)]
         fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))?;
@@ -187,12 +243,99 @@ pub(crate) fn write_executable_bounded(
         let _ = mode;
         fs::rename(&temporary, path)
     });
-    if published.is_err() {
-        // Every error exit after the helper may have created the file
-        // removes the temporary name again (#1125 fix-r1 review P2).
-        let _ = fs::remove_file(&temporary);
+    if published.is_ok() {
+        // The wait loop reaped the helper and the rename consumed the
+        // temporary name; the guard has nothing left to do.
+        guard.disarm();
     }
     published
+}
+
+/// Owns the helper between its spawn and the end of
+/// [`write_executable_bounded`]. Drop is the single cleanup point (#1125
+/// fix-r3 review P2-1): on every non-disarmed exit the helper is killed
+/// and reaped — never left running, never signalled through a pid read back
+/// from a file — the kill + wait outcome is handed to `reaped`, and the
+/// temporary name is removed (#1125 fix-r1 review P2).
+struct ReapGuard<R: FnOnce(io::Result<process::ExitStatus>)> {
+    helper: Option<process::Child>,
+    temporary: PathBuf,
+    reaped: Option<R>,
+}
+
+impl<R: FnOnce(io::Result<process::ExitStatus>)> ReapGuard<R> {
+    /// The publication succeeded and the wait loop already reaped the
+    /// helper: there is nothing left to kill, report, or remove.
+    fn disarm(mut self) {
+        self.helper = None;
+        self.reaped = None;
+    }
+}
+
+impl<R: FnOnce(io::Result<process::ExitStatus>)> Drop for ReapGuard<R> {
+    fn drop(&mut self) {
+        if let Some(mut helper) = self.helper.take() {
+            let waited = match helper.kill() {
+                Ok(()) => helper.wait(),
+                Err(error) => Err(error),
+            };
+            if let Some(report) = self.reaped.take() {
+                report(waited);
+            }
+        }
+        let _ = fs::remove_file(&self.temporary);
+    }
+}
+
+/// Write `payload` into the helper's pipe, giving up at `expiry`: the write
+/// end is non-blocking, so a helper (or anyone else) that never drains the
+/// pipe surfaces as `WouldBlock` here instead of an unbounded write (#1125
+/// fix-r3 review P2-2).
+fn write_payload_by_deadline(
+    stdin: &mut process::ChildStdin,
+    payload: &[u8],
+    expiry: Instant,
+    deadline: Duration,
+) -> io::Result<()> {
+    let mut written = 0;
+    while written < payload.len() {
+        match io::Write::write(stdin, &payload[written..]) {
+            // A pipe write with a nonzero request never reports a short
+            // success, so `Ok(0)` cannot happen; treat it as an error.
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "#1125 helper pipe",
+                ));
+            }
+            Ok(count) => written += count,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                // The read end is not keeping up: the deadline — not the
+                // helper — ends the write.
+                if Instant::now() >= expiry {
+                    return Err(helper_deadline_error(deadline));
+                }
+                thread::sleep(HELPER_POLL);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+/// The write end of the helper's pipe is switched to non-blocking on unix
+/// so the writer above can honor the expiry; other targets keep the
+/// blocking default, and the unix-only publication tests are the only
+/// tests that rely on the write deadline (#1125 fix-r3 review P2-2).
+#[cfg(unix)]
+fn set_nonblocking(stdin: &mut process::ChildStdin) -> io::Result<()> {
+    use std::os::fd::AsFd;
+    rustix::fs::fcntl_setfl(stdin.as_fd(), rustix::fs::OFlags::NONBLOCK).map_err(io::Error::from)
+}
+
+#[cfg(not(unix))]
+fn set_nonblocking(_stdin: &mut process::ChildStdin) -> io::Result<()> {
+    Ok(())
 }
 
 fn helper_deadline_error(deadline: Duration) -> io::Error {
