@@ -13,6 +13,8 @@ mod baseline;
 #[path = "support/llm_stub.rs"]
 #[allow(dead_code)]
 mod llm_stub;
+#[path = "../src/mutants.rs"]
+mod mutants;
 
 use llm_stub::LlmStub;
 use pilotdeck_gateway::runtime::{
@@ -116,25 +118,122 @@ fn canonical(value: &JsValue) -> String {
 
 // -- temp dir --------------------------------------------------------------
 
-struct TempDir(PathBuf);
+struct TempDir {
+    owner: PathBuf,
+    repository: PathBuf,
+}
 impl TempDir {
     fn new(name: &str) -> Self {
-        let path = std::env::temp_dir().join(format!(
+        Self::new_in(&std::env::temp_dir(), name)
+    }
+    fn new_in(parent: &Path, name: &str) -> Self {
+        let owner = parent.join(format!(
             "pdrs-770-{name}-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4()
         ));
-        fs::create_dir_all(&path).expect("#770 create temp dir");
-        Self(path)
+        // General-mode discovery scans memory.parent().parent(). A UUID at
+        // the repository level alone leaves that root at the shared temp dir,
+        // where sibling tests' half-open SQLite files become discoverable.
+        let repository = owner.join("case");
+        fs::create_dir_all(&repository).expect("#1098 create isolated repository root");
+        Self { owner, repository }
     }
     fn path(&self) -> &Path {
-        &self.0
+        if crate::mutants::on("heartbeat-shared-discovery-root") {
+            return &self.owner;
+        }
+        &self.repository
     }
 }
 impl Drop for TempDir {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        let _ = fs::remove_dir_all(&self.owner);
     }
+}
+
+#[test]
+fn heartbeat_roots_do_not_discover_sibling_repository() {
+    // Both siblings live under a private lab, even under the old-layout
+    // negative control. No probe scans the real system temporary directory.
+    let lab = TempDir::new("isolation-lab");
+    let general_root = TempDir::new_in(lab.path(), "general");
+    let peer_root = TempDir::new_in(lab.path(), "peer");
+    let open = |root: &Path, general: bool| {
+        let home = root.join("home/.pilotdeck");
+        let workspace = if general {
+            home.clone()
+        } else {
+            root.join("workspace")
+        };
+        fs::create_dir_all(&workspace).expect("#1098 create discovery workspace");
+        let repository = EdgeClawFileStores::with_workspace_clock(
+            root.join("control.sqlite"),
+            root.join("memory"),
+            root.join("root/global"),
+            &workspace,
+            &home,
+            Arc::new(|| NOW.into()),
+        )
+        .expect("#1098 open discovery repository");
+        repository
+            .storage
+            .set_pipeline_state(
+                "workspaceDir",
+                &JsValue::String(workspace.to_string_lossy().as_ref().into()),
+            )
+            .expect("#1098 persist discovery workspace");
+        repository
+    };
+    let general = open(general_root.path(), true);
+    let peer = open(peer_root.path(), false);
+    let mut seed = JsObject::new();
+    seed.insert("projectName".into(), "#1098 peer".into());
+    seed.insert("description".into(), "".into());
+    seed.insert("status".into(), "active".into());
+    peer.get_file_memory_store()
+        .upsert_project_meta(&seed)
+        .expect("#1098 seed peer project");
+    let names = |repository: &EdgeClawFileStores| {
+        let catalog = repository
+            .list_readable_project_catalog()
+            .expect("#1098 read real project catalog");
+        let JsValue::Array(entries) = &catalog else {
+            panic!("#1098 catalog must be an array")
+        };
+        entries
+            .iter()
+            .map(|entry| {
+                entry
+                    .get("projectName")
+                    .and_then(JsValue::as_string)
+                    .expect("#1098 catalog project name")
+                    .to_utf8()
+                    .expect("#1098 catalog project name is UTF-8")
+            })
+            .collect::<Vec<_>>()
+    };
+    let peer_names = names(&peer);
+    assert_eq!(
+        peer_names,
+        ["#1098 peer"],
+        "#1098 peer catalog must prove discovery seed is live"
+    );
+    let oracle: Value = serde_json::from_str(include_str!(
+        "fixtures/edgeclaw-heartbeat-isolation/oracle.json"
+    ))
+    .expect("#1098 isolation TS oracle");
+    assert_eq!(
+        serde_json::json!({"peer":peer_names,"general":names(&general)}),
+        oracle["layouts"]["isolated"],
+        "#1098 heartbeat discovery must not open sibling repositories"
+    );
+}
+
+#[test]
+#[ignore = "requires Node v22.22.0 and the fixed TS checkout"]
+fn isolation_regenerates_identically() {
+    baseline::regenerates_identically("edgeclaw-heartbeat-isolation");
 }
 
 // -- observation helpers ---------------------------------------------------
