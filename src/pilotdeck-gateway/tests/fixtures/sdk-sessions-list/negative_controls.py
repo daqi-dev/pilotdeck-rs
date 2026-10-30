@@ -46,7 +46,9 @@ mutations = [
     ('rpc-error-message', transport, 'string_field(value, "message")', 'string_field(value, "missingMessage")', MATRIX, '#983 TS output and exit sessions-default--gateway-rpc-error'),
     ('list-projection', sessions, '.get("sessions")', '.get("missingSessions")', MATRIX, '#983 TS output and exit sessions-default--argv'),
     ('list-default', sessions, 'map_or("list", String::as_str)', 'map_or("unknown", String::as_str)', MATRIX, '#983 expected gateway lifecycle sessions-default--argv'),
-    ('pretty-indent', pretty, '&"  ".repeat(depth)', '&" ".repeat(depth)', MATRIX, '#983 TS output and exit sessions-default--argv'),
+    # fix-r11: anchor the one reindentation implementation — json_pretty now
+    # delegates to write_json_pretty_into, so the streamed indent is the indent.
+    ('pretty-indent', pretty, 'out.write_all(b"  ")?;', 'out.write_all(b" ")?;', MATRIX, '#983 TS output and exit sessions-default--argv'),
     ('close-handshake', transport, 'SinkExt::close(&mut socket)', 'socket.flush()', MATRIX, '#983 terminal connection closed sessions-default--argv'),
     ('unreachable-message', transport, 'error("Gateway connection failed.")', 'error("Gateway unreachable.")', MATRIX, '#983 TS output and exit sessions-default--gateway-unreachable'),
     ('auth-close-reason', transport, 'frame.reason.to_string()', 'format!("{frame:?}")', MATRIX, '#983 TS output and exit sessions-default--gateway-auth-rejected'),
