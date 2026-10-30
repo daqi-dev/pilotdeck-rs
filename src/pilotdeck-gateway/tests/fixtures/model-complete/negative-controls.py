@@ -52,6 +52,10 @@ from negative_process import mutating_sources  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[5]
 HTTP = ROOT / "src/pilotdeck-gateway/src/runtime/model/http.rs"
+# #1111: the complete-parse family moved from http.rs into http/complete.rs;
+# controls whose anchors are those bytes mutate the new file. Path-only change:
+# anchor text, counts and verdict criteria are unchanged.
+COMPLETE = ROOT / "src/pilotdeck-gateway/src/runtime/model/http/complete.rs"
 MANIFEST = ROOT / "src/Cargo.toml"
 TARGET = os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))
 TEST = "native_complete_model_matches_real_ts_complete"
@@ -85,18 +89,21 @@ ORIGINAL_FILE = STATE_DIR / "original.http.rs"
 CONTROLS = [
     (
         "responses-delegates-to-chat-completions",
+        COMPLETE,
         '"openai-responses" => parse_openai_responses_complete_response(raw, provider_id),',
         '"openai-responses" => parse_openai_complete_response(raw, provider_id),',
         TEST,
     ),
     (
         "openai-finish-reason-uses-tool_calls",
+        COMPLETE,
         'Some("tool_calls" | "function_call") => "tool_call".into(),',
         'Some("tool_calls" | "function_call") => "tool_calls".into(),',
         TEST,
     ),
     (
         "responses-failed-finish-reason-unknown",
+        COMPLETE,
         'Some("failed" | "cancelled") => "error".into(),',
         'Some("failed" | "cancelled") => "unknown".into(),',
         TEST,
@@ -104,6 +111,7 @@ CONTROLS = [
     (
         # Same-source third protocol: the refusal -> content_filter arm.
         "anthropic-refusal-finish-unknown",
+        COMPLETE,
         'Some("refusal") => "content_filter".into(),',
         'Some("refusal") => "unknown".into(),',
         TEST,
@@ -111,12 +119,14 @@ CONTROLS = [
     (
         # The collision case now really reaches nextUniqueToolCallId's `_2`.
         "tool-id-suffix-starts-at-one",
+        COMPLETE,
         "            let mut suffix = 2u64;",
         "            let mut suffix = 1u64;",
         TEST,
     ),
     (
         "complete-retries-429",
+        COMPLETE,
         """            return Err(ModelStreamError::Provider(error));
         }
 
@@ -139,6 +149,7 @@ CONTROLS = [
         # predicate inclusive too and changes the 1.5/1 cases from the pinned
         # request counts and exhausted-error shape.
         "complete-retry-inner-boundary-inclusive",
+        COMPLETE,
         "                if attempt < max_retries && is_retryable_request_error(&error) {",
         "                if attempt <= max_retries && is_retryable_request_error(&error) {",
         TRANSPORT_TEST,
@@ -148,6 +159,7 @@ CONTROLS = [
         # streamTimeoutMs=10 case would fire at 10ms and report the stream
         # message instead of `Model request timed out after 300ms.`.
         "complete-timeout-uses-stream-idle",
+        HTTP,
         """        let ms = field(provider, "timeoutMs")
             .as_number()
             .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS);""",
@@ -160,6 +172,7 @@ CONTROLS = [
         # baseline's requested timeout rejects it: 100ms -> ~1000ms against a
         # 600ms ceiling. This is the P2-1 false-PASS guard for duration scaling.
         "complete-timeout-duration-scaled-tenfold",
+        HTTP,
         """    let deadline = (!timeout_ms.is_nan() && timeout_ms != 0.0)
         .then(|| tokio::time::Instant::now() + duration(timeout_ms));""",
         """    let deadline = (!timeout_ms.is_nan() && timeout_ms != 0.0)
@@ -170,6 +183,7 @@ CONTROLS = [
         # Drop the abort short-circuit: "request aborted" is not a premature
         # close, so the canonical retryable flag would retry 3 times.
         "complete-abort-not-prioritized",
+        COMPLETE,
         """fn is_retryable_request_error(error: &ModelStreamError) -> bool {
     if error.is_abort() {
         return false;
@@ -184,6 +198,7 @@ CONTROLS = [
         # Add one wire field; the per-case method/path/body comparison must
         # reject it even though canonical response and request count match.
         "complete-request-body-extra-field",
+        HTTP,
         "    let final_body = providers::final_body(body, provider);",
         """    let final_body = {
         let mut value = providers::final_body(body, provider);
@@ -196,6 +211,7 @@ CONTROLS = [
     ),
     (
         "anthropic-usage-cache-read-dropped",
+        COMPLETE,
         '    let cache_read = read("cache_read_input_tokens");',
         "    let cache_read: Option<f64> = None;",
         TEST,
@@ -204,12 +220,14 @@ CONTROLS = [
         # Invert the dedupe condition: the duplicate is kept and the
         # non-matching mismatch case drops its first message block.
         "responses-output-text-dedupe-inverted",
+        COMPLETE,
         "    if JsString::from_utf16(rest) == *output_text {",
         "    if JsString::from_utf16(rest) != *output_text {",
         TEST,
     ),
     (
         "anthropic-stop-sequence-unknown",
+        COMPLETE,
         '        Some("end_turn" | "stop_sequence") => "stop".into(),',
         '        Some("end_turn") => "stop".into(),',
         TEST,
@@ -218,6 +236,7 @@ CONTROLS = [
         # The old helper decides emptiness on the raw string, so a
         # whitespace-only id is kept instead of generating a fresh id.
         "openai-tool-id-whitespace-kept",
+        COMPLETE,
         """            let id = id_state.choose(
                 non_empty_trimmed_string(field(record, "id")).cloned(),
                 generated,
@@ -230,6 +249,7 @@ CONTROLS = [
         # The first 200 `{}` is then accepted and the pinned fallback case
         # (2 requests, second-endpoint canonical) fails on request count.
         "anthropic-shape-check-bypassed",
+        HTTP,
         """                    let accepted = parsed.as_ref().is_some_and(|value| {
                         providers::expected_complete_response_shape(
                             field(provider, "protocol"),
@@ -249,6 +269,7 @@ CONTROLS = [
         # Same call-site bypass for Responses: the first 200 `{}` must not be
         # accepted, so the target case's request count/canonical still hold.
         "responses-shape-check-bypassed",
+        HTTP,
         """                    let accepted = parsed.as_ref().is_some_and(|value| {
                         providers::expected_complete_response_shape(
                             field(provider, "protocol"),
@@ -273,6 +294,7 @@ CONTROLS = [
         # `response_text`; r8 moved both onto the shared `CappedText::push`,
         # r9 switched the counter from UTF-16 units to received bytes (#647).
         "capped-text-cap-allows-limit-plus-one",
+        HTTP,
         """        self.bytes += data.len();
         if self.bytes > string_limit() {""",
         """        self.bytes += data.len();
@@ -286,6 +308,7 @@ CONTROLS = [
         # cap, units under it" body pass, and the target test's expect_err
         # fails.
         "capped-text-cap-counts-utf16-units",
+        HTTP,
         """        self.bytes += data.len();""",
         """        self.bytes += String::from_utf8_lossy(data).encode_utf16().count();""",
         LIB_RESPONSE_BYTES_TEST,
@@ -295,6 +318,7 @@ CONTROLS = [
         # default tail. Both builds fall through to usize::MAX, so the pinned
         # V8 literal assertion (not a constant-vs-itself comparison) fails.
         "shape-probe-string-limit-default-removed",
+        HTTP,
         """pub(crate) fn string_limit() -> usize {
     #[cfg(test)]
     {
@@ -322,6 +346,7 @@ CONTROLS = [
         # fails deterministically (r9 replaced the old 70ms wall-clock floor,
         # which only held while the frames were 40ms apart).
         "response-text-returns-before-eof",
+        HTTP,
         """                if let Some(data) = frame.data_ref() {
                     // The string conversion has not run yet; `push` keeps
                     // draining past the cap so EOF / the body idle timeout
@@ -354,7 +379,7 @@ LIB_TESTS = {
 # mutation name there selected the integration target and ran 0 lib tests with
 # exit 0, so every lib baseline looked red and every lib mutant uncatchable
 # (host r1).
-LIB_TEST_NAMES = {control[3] for control in CONTROLS if control[0] in LIB_TESTS}
+LIB_TEST_NAMES = {control[4] for control in CONTROLS if control[0] in LIB_TESTS}
 
 # These controls must fail on the newly pinned target case itself, not on some
 # unrelated assertion or a compile error. The case name is part of the panic
@@ -510,7 +535,10 @@ def reclaim_group_for_signal(pgid: int) -> bool:
 
 
 def state_matches_this_worktree(state: dict) -> bool:
-    return state.get("root") == str(ROOT) and state.get("http") == str(HTTP)
+    return state.get("root") == str(ROOT) and state.get("file") in (
+        str(HTTP),
+        str(COMPLETE),
+    )
 
 
 def startup_check() -> None:
@@ -527,7 +555,8 @@ def startup_check() -> None:
     pid = int(state.get("pid", 0))
     if pid != os.getpid() and pid_alive(pid):
         refuse(f"a recorded control run is still active (pid {pid})")
-    current = sha256(HTTP.read_bytes()) if HTTP.exists() else ""
+    mutated_file = Path(state["file"])
+    current = sha256(mutated_file.read_bytes()) if mutated_file.exists() else ""
     if current == state.get("original_sha256"):
         print("negctl: clearing stale recovery state (source is already the original)")
         clear_state()
@@ -543,9 +572,9 @@ def startup_check() -> None:
     )
 
 
-def begin_mutation(control: str, mutated: bytes) -> None:
+def begin_mutation(control: str, mutated: bytes, path: Path) -> None:
     global _active
-    original = HTTP.read_bytes()
+    original = path.read_bytes()
     original_sha = sha256(original)
     mutated_sha = sha256(mutated)
     if original == mutated:
@@ -558,7 +587,7 @@ def begin_mutation(control: str, mutated: bytes) -> None:
             {
                 "pid": os.getpid(),
                 "root": str(ROOT),
-                "http": str(HTTP),
+                "file": str(path),
                 "control": control,
                 "original_sha256": original_sha,
                 "mutated_sha256": mutated_sha,
@@ -571,8 +600,9 @@ def begin_mutation(control: str, mutated: bytes) -> None:
         "original_sha256": original_sha,
         "mutated_sha256": mutated_sha,
         "control": control,
+        "path": path,
     }
-    atomic_write(HTTP, mutated)
+    atomic_write(path, mutated)
 
 
 def restore_active() -> bool:
@@ -584,15 +614,15 @@ def restore_active() -> bool:
         return False
     _restoring = True
     try:
-        current = sha256(HTTP.read_bytes())
+        current = sha256(_active["path"].read_bytes())
         if current == _active["original_sha256"]:
             pass
         elif current == _active["mutated_sha256"]:
             original = ORIGINAL_FILE.read_bytes()
             if sha256(original) != _active["original_sha256"]:
                 raise SystemExit("negctl: sidecar original SHA-256 mismatch; refusing")
-            atomic_write(HTTP, original)
-            if sha256(HTTP.read_bytes()) != _active["original_sha256"]:
+            atomic_write(_active["path"], original)
+            if sha256(_active["path"].read_bytes()) != _active["original_sha256"]:
                 raise SystemExit("negctl: restore SHA-256 mismatch")
         else:
             print(
@@ -839,7 +869,8 @@ def check_state_command() -> int:
     if state is None:
         print("negctl: clean (no recovery state)")
         return 0
-    current = sha256(HTTP.read_bytes()) if HTTP.exists() else ""
+    mutated_file = Path(state["file"])
+    current = sha256(mutated_file.read_bytes()) if mutated_file.exists() else ""
     if current == state.get("original_sha256"):
         print("negctl: stale recovery state, source is original")
         return 0
@@ -861,7 +892,8 @@ def recover_command() -> int:
     if pid != os.getpid() and pid_alive(pid):
         print(f"negctl: recorded control run still active (pid {pid}); refusing", file=sys.stderr)
         return 5
-    current = sha256(HTTP.read_bytes()) if HTTP.exists() else ""
+    mutated_file = Path(state["file"])
+    current = sha256(mutated_file.read_bytes()) if mutated_file.exists() else ""
     if current == state.get("original_sha256"):
         clear_state()
         print("negctl: source already original; cleared recovery state")
@@ -873,8 +905,8 @@ def recover_command() -> int:
     if sha256(original) != state.get("original_sha256"):
         print("negctl: sidecar original SHA-256 mismatch; refusing", file=sys.stderr)
         return 6
-    atomic_write(HTTP, original)
-    if sha256(HTTP.read_bytes()) != state.get("original_sha256"):
+    atomic_write(mutated_file, original)
+    if sha256(mutated_file.read_bytes()) != state.get("original_sha256"):
         print("negctl: restored SHA-256 mismatch", file=sys.stderr)
         return 6
     clear_state()
@@ -909,15 +941,15 @@ def self_test_hold() -> int:
     """Mutate the real source then wait; a signal handler or --recover restores."""
     install_signal_handlers()
     startup_check()
-    text = HTTP.read_text()
+    text = COMPLETE.read_text()
     anchor = "/// Normalizes Anthropic finish reason to canonical format."
     if text.count(anchor) != 1:
         raise SystemExit(f"negctl: hold anchor count {text.count(anchor)}")
     mutated = text.replace(anchor, anchor + " (negctl recovery hold)", 1)
     wait_for_slot()
-    with mutating_sources(ROOT, [HTTP]):
-        begin_mutation("self-test-hold", mutated.encode())
-        print(f"HELD sha256={sha256(HTTP.read_bytes())}", flush=True)
+    with mutating_sources(ROOT, [COMPLETE]):
+        begin_mutation("self-test-hold", mutated.encode(), COMPLETE)
+        print(f"HELD sha256={sha256(COMPLETE.read_bytes())}", flush=True)
         while True:
             time.sleep(1)
 
@@ -952,21 +984,21 @@ def main(argv: list[str] | None = None) -> int:
     # The model-complete controls write the same product tree as every
     # other in-place negative control: take the shared flock and prove
     # every product byte is HEAD before the first mutation.
-    with mutating_sources(ROOT, [HTTP]):
-        baseline_sha = sha256(HTTP.read_bytes())
+    with mutating_sources(ROOT, [HTTP, COMPLETE]):
+        baseline_sha = {path: sha256(path.read_bytes()) for path in (HTTP, COMPLETE)}
         failures: list[str] = []
         baseline_ok: set[str] = set()
         # #819: every named target must be green before a mutation verdict
         # counts; otherwise a pre-existing failure would masquerade as a kill.
-        for test_name in dict.fromkeys(control[3] for control in CONTROLS):
+        for test_name in dict.fromkeys(control[4] for control in CONTROLS):
             wait_for_slot()
             code, output = run_test(test_name, test_name in LIB_TEST_NAMES)
             if code != 0 or not baseline_passed(output, test_name):
                 failures.append(f"baseline {test_name}: not green (exit {code})")
             else:
                 baseline_ok.add(test_name)
-        for name, old, new, test_name in CONTROLS:
-            text = HTTP.read_text()
+        for name, path, old, new, test_name in CONTROLS:
+            text = path.read_text()
             anchor_count = text.count(old)
             if anchor_count != 1:
                 failures.append(f"{name}: mutation anchor count {anchor_count}")
@@ -978,7 +1010,7 @@ def main(argv: list[str] | None = None) -> int:
             # Slot check must precede the mutation so a waiting script never leaves
             # mutated source visible to another cargo invocation in this worktree.
             wait_for_slot()
-            begin_mutation(name, mutated.encode())
+            begin_mutation(name, mutated.encode(), path)
             try:
                 code, output = run_test(test_name, name in LIB_TESTS)
                 evidence = panic_evidence(output, test_name)
@@ -1009,8 +1041,11 @@ def main(argv: list[str] | None = None) -> int:
             if not restored:
                 failures.append(f"{name}: restore refused; recovery state kept")
                 break
-        if sha256(HTTP.read_bytes()) != baseline_sha:
-            failures.append("final source SHA-256 does not match the pre-run bytes")
+        for path in (HTTP, COMPLETE):
+            if sha256(path.read_bytes()) != baseline_sha[path]:
+                failures.append(
+                    f"final source SHA-256 does not match the pre-run bytes: {path}"
+                )
         if failures:
             print("NEGATIVE CONTROLS FAILED:", *failures, sep="\n  ")
             return 1

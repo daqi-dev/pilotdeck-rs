@@ -51,6 +51,8 @@ recall = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/recall.rs
 sdk_session = root / 'src/pilotdeck-gateway/src/runtime/sdk_session/mod.rs'
 agent_policy = root / 'src/pilotdeck-agent/src/request_materialization_policy.rs'
 http = root / 'src/pilotdeck-gateway/src/runtime/model/http.rs'
+# #1111: the request retry policy moved to http/complete.rs; path-only change.
+complete = root / 'src/pilotdeck-gateway/src/runtime/model/http/complete.rs'
 router_policy = root / 'src/pilotdeck-gateway/src/runtime/model/router/policy.rs'
 web_network = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/network.rs'
 background = root / 'src/pilotdeck-gateway/src/runtime/background.rs'
@@ -136,7 +138,7 @@ cases = [
         (deterministic + deterministic * jitter * random).min(max_delay),
     )''',
      'runtime::model::http::tests::retry_delay_uses_js_math_min_for_nan_and_signed_zero'),
-    ('http-retry-request-min-nan', http,
+    ('http-retry-request-min-nan', complete,
      '''    let jitter = retry_number(provider, "jitter").unwrap_or(0.0);
     let deterministic = base * (attempt + 1.0);
     (
@@ -254,7 +256,7 @@ def package_for(path):
         return 'pilotdeck-protocol'
     if path == agent_policy:
         return 'pilotdeck-agent'
-    if path == http:
+    if path == http or path == complete:
         return 'pilotdeck-gateway-http'
     if path == router_policy:
         return 'pilotdeck-gateway-router'

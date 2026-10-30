@@ -184,7 +184,6 @@ UNSUPPORTED_SIGNALS = {
 REGEX_SCRIPTS = {'background-panic/negative_controls.py'}
 IMPLICIT = {
     'hooks-output/negative.py': 'source',
-    'model-complete/negative-controls.py': 'HTTP',
     'session-owner-hooks/negative.py': 'source',
     'edgeclaw-file-memory/negative.py': 'source',
     'edgeclaw-heartbeat/negative.py': 'helpers',
@@ -1347,7 +1346,7 @@ def extract(script, root):
     extra = {
         'session-owner-hooks/negative.py': ('changed', 'source', None),
         'turn-gateway/negative-fence.py': ('s', 'submit', None),
-        'model-complete/negative-controls.py': ('text', 'HTTP', 'self_test_hold'),
+        'model-complete/negative-controls.py': ('text', 'COMPLETE', 'self_test_hold'),
     }.get(relative)
     if extra:
         receiver, path_name, function = extra

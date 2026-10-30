@@ -140,7 +140,12 @@ EOF、EOF 残片计入），r7 的 cap 负控随之改锚到 `CappedText::push` 
 必须失败）；`response-text-returns-before-eof` 的判据从 70ms 墙钟下限改为
 目标测试断言的 EOF 标志（脚本化的 body 被 poll 到末尾），不再依赖帧间距。
 恢复、进程组回收与 cargo 槽位逻辑未改。共 21
-条，每个变异都先编译，只接受已编译测试的断言失败。
+条，每个变异都先编译，只接受已编译测试的断言失败。#1111 把 complete 解析
+家族（含 `retry_decide_request` / `is_retryable_request_error` / `complete_model`
+与各 parser）搬进 `http/complete.rs` 后，锚在那些字节的 12 条控件与
+`--self-test-hold` 锚点改指新文件：表行各带一个 `HTTP` / `COMPLETE` 路径字段，
+锚文本与判据不变；锚在共享传输（shape probe / `CappedText` / `response_text` /
+超时 / 请求体）的 9 条仍指 `http.rs`。
 
 恢复：变异前把原始字节与 SHA-256 写到 worktree 外的状态目录（默认
 `$TMPDIR/pdrs-negctl-<worktree哈希>`），SIGTERM/SIGINT/SIGHUP 处理器同步恢复；
