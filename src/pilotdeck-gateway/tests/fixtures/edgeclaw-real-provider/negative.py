@@ -64,7 +64,10 @@ def main():
     # only the ignored _tmp area is acceptable (never next to sources).
     if output.is_relative_to(root) and not output.is_relative_to(root / '_tmp'):
         raise SystemExit('#1120 output inside this tree must be under _tmp')
-    output.mkdir(parents=True, exist_ok=False)
+    try:
+        output.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        raise SystemExit('#1120 output must be a fresh directory') from None
     results = []
     try:
         with mutating_sources(root, [source]) as originals:
