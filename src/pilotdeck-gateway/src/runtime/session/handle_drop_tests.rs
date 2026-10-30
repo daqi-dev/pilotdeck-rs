@@ -318,7 +318,7 @@ fn drop_release_matches_ts() {
     let cases = oracle["cases"]
         .as_array()
         .expect("#1010 drop-release case rows");
-    assert_eq!(cases.len(), 5, "#1010 drop-release denominator");
+    assert_eq!(cases.len(), 7, "#1010 drop-release denominator");
     for row in cases {
         let name = row["name"].as_str().expect("#1010 case name");
         assert_eq!(row["node"], "v22.22.0", "#1010 {name} node oracle");
@@ -853,5 +853,125 @@ async fn poisoned_unpolled_fallback_still_completes() {
         session.guards.load(Ordering::SeqCst),
         1,
         "#1010 poisoned fallback takes writer guard"
+    );
+}
+
+/// H1: shutdown while a real HandleActivity keeps the drain parked at changed.
+#[tokio::test]
+async fn activity_wait_shutdown_is_cancelled_once() {
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("#1010 activity wait executor");
+    let session = DropProbe::new();
+    let handle = {
+        let _entered = executor.enter();
+        LiveSessionHandle::new(session.clone(), None)
+    };
+    let activity = handle
+        .begin_activity()
+        .expect("#1010 activity wait admitted");
+    let (entered, mut observed) = watch::channel(false);
+    handle
+        .0
+        .progress
+        .lock()
+        .expect("#1010 activity wait progress")
+        .activity_waiting = Some(entered);
+    let waiter = handle.dispose("activity-wait".into());
+    let executor = std::thread::spawn(move || {
+        executor.block_on(async {
+            tokio::time::timeout(Duration::from_secs(3), observed.wait_for(|v| *v))
+                .await
+                .expect("#1010 drain polled activity wait boundedly")
+                .expect("#1010 activity wait observation alive");
+        });
+        executor
+    })
+    .join()
+    .expect("#1010 activity wait executor driven");
+    assert_eq!(
+        session.dispose_count.load(Ordering::SeqCst),
+        0,
+        "#1010 activity blocks session disposer"
+    );
+    std::thread::spawn(move || drop(executor))
+        .join()
+        .expect("#1010 activity wait executor shutdown");
+    let error = tokio::time::timeout(Duration::from_secs(3), waiter)
+        .await
+        .expect("#1010 activity cancellation returns boundedly")
+        .expect_err("#1010 activity cancellation cannot succeed");
+    assert_eq!(
+        error.message, "Agent session dispose task cancelled.",
+        "#1010 activity cancellation is not fallback or panic"
+    );
+    let mut completion = {
+        let progress = handle
+            .0
+            .progress
+            .lock()
+            .expect("#1010 activity terminal progress");
+        assert_eq!(
+            progress.state,
+            HandleState::Disposed,
+            "#1010 activity cancellation terminal state"
+        );
+        assert!(
+            !progress.disposal_completed,
+            "#1010 activity cancellation remains incomplete"
+        );
+        progress
+            .disposal
+            .as_ref()
+            .expect("#1010 activity completion receiver")
+            .clone()
+    };
+    completion.borrow_and_update();
+    drop(activity);
+    drop(handle);
+    // A closed watch reports Err even if an unseen value remains: use its
+    // stored value, not has_changed alone, to catch a late duplicate result.
+    assert_eq!(
+        completion
+            .borrow()
+            .as_ref()
+            .expect("#1010 activity terminal result")
+            .as_ref()
+            .expect_err("#1010 activity terminal failure")
+            .message,
+        error.message,
+        "#1010 activity drop preserves cancellation result"
+    );
+    assert_eq!(
+        session.guards.load(Ordering::SeqCst),
+        1,
+        "#1010 activity shutdown never rearms fallback"
+    );
+    assert_eq!(
+        session.dispose_count.load(Ordering::SeqCst),
+        0,
+        "#1010 activity shutdown never restarts disposer"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_secs(3), completion.changed())
+            .await
+            .expect("#1010 activity result channel closes boundedly")
+            .is_err(),
+        "#1010 activity drop publishes no second result"
+    );
+    let oracle: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/session-drop-release/oracle.json"
+    ))
+    .expect("#1010 activity TS oracle parses");
+    let case = oracle["cases"]
+        .as_array()
+        .expect("#1010 activity TS cases")
+        .iter()
+        .find(|c| c["name"] == "handle-activity-wait")
+        .expect("#1010 activity TS case");
+    assert_eq!(
+        case["observations"]["pending"]["onDisposeCalls"], 0,
+        "#1010 real TS activity waits before disposal"
     );
 }

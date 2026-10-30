@@ -7,13 +7,15 @@
 |---|---|---|
 | handle-drop-gc | collected=true，onDisposeCalls=0 | implicit Drop 属已登记差异 |
 | abandoned-waiter | disposed，onDisposeCalls=1 | 丢等待者不重复启动清理 |
+| plugin-lease-last-release | 持有最后 lease 时等待；释放后 callback 一次、Promise 幂等 | 三种 lease 活 runtime 的回归 |
+| handle-activity-wait | active run 未结束时 onDispose=0，结束后=1 | activity 等待期间 shutdown 单独登记差异 |
 | process-exit | draining，onDisposeRan=false | queued、dead executor 的异步段不会执行 |
 | process-exit-release-pending | onDispose 已进入，release/close 完成次数 0/0 | release 永不完成时 shutdown 取消 |
 | process-exit-close-pending | onDispose 已进入，release/close 完成次数 1/0 | close 永不完成时 shutdown 取消 |
 
 TS 进程退出后无法继续执行 JS；它没有 Rust 的 Drop、writer guard 或 file/process
 fence。这里仅对齐异步 cleanup 的截止状态，额外的同步释放保障登记于
-`specs/gateway-parity/diffs/A7.2-SESSION-HANDLE-DROP-001-R1.md`（待复核，非评分豁免）。
+`specs/gateway-parity/diffs/A7.2-SESSION-HANDLE-DROP-001-R2.md`（待复核，非评分豁免）。
 
 `oracle.json` 记录源闭包哈希。ignored 守卫 `drop_release_regenerates_identically`
 逐字节复算；`drop_release_preserves_unrelated_out_files` 验证已存在的空目录、
@@ -28,8 +30,9 @@ fence。这里仅对齐异步 cleanup 的截止状态，额外的同步释放保
 handle 的未 poll fallback 现在发布 Disposed 和 executor-stopped 错误；已 poll
 任务的 shutdown 取消与真正 panic 分开报告，均不冒充 hook 完成。Drop 路径恢复
 poisoned progress/lease。new / 首次 push 的 runtime 前提见公共 API 的 # Panics。
-三个 plugin lease 的 dead-executor 计数回收尚未解决，详见追加差异 -R1；已有
-off-runtime 测试只证明捕获的 executor 存活时可跨线程 drop。
+三个 plugin lease 在计数递减前丢失 release 时同步发布持久错误，存活 runtime 的
+dispose/release 有界失败，准入关闭；计数未伪造归零、callback 未宣称完成。
+详见追加更正 -R2；正常 off-runtime Drop 仍使用捕获的 executor。
 
 Rust `factory_tests.rs` 的六个 `*_owned_session_*shutdown*` 用例使用真实
 ProjectSessionFactory/OwnedSession。current-thread runtime 仅显式驱动到门闩；
@@ -50,3 +53,5 @@ node --disable-warning=ExperimentalWarning --expose-gc \
 源码变异必须在协调者提交本补丁后跑，未提交树由共享 guard 拒绝；长套件在宿主跑。
 必须设置调用方的 `CARGO_TARGET_DIR`，禁止新建第二构建目录。每项独立记
 KILLED / SURVIVED / INVALID，全部运行后汇总；无关 panic、编译失败、超时不计杀。
+
+生成器失败后请使用新的 OUT；独占认领后的空目录不作为可复用输出。

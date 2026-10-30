@@ -87,6 +87,8 @@ struct Progress {
     disposal_completed: bool,
     recreation_error_reported: bool,
     recreation_stale_handoff: bool,
+    #[cfg(test)]
+    activity_waiting: Option<watch::Sender<bool>>,
 }
 
 struct Inner {
@@ -206,6 +208,8 @@ impl LiveSessionHandle {
                 disposal_completed: false,
                 recreation_error_reported: false,
                 recreation_stale_handoff: false,
+                #[cfg(test)]
+                activity_waiting: None,
             })),
             changed: watch::channel(0).0,
             // Same contract as PendingSession/ProjectRuntimeRegistry: the
@@ -440,6 +444,29 @@ impl Inner {
                     {
                         break;
                     }
+                    #[cfg(test)]
+                    {
+                        // Observe the actual Pending poll, not merely entry to
+                        // the loop: shutdown tests own the executor at this gate.
+                        let waiting = progress
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .activity_waiting
+                            .clone();
+                        let wait = changed.changed();
+                        tokio::pin!(wait);
+                        let _ = std::future::poll_fn(|cx| {
+                            let polled = wait.as_mut().poll(cx);
+                            if polled.is_pending()
+                                && let Some(waiting) = &waiting
+                            {
+                                waiting.send_replace(true);
+                            }
+                            polled
+                        })
+                        .await;
+                    }
+                    #[cfg(not(test))]
                     let _ = changed.changed().await;
                 }
                 // Production order (TS createAgentSession.ts:223-241 via
