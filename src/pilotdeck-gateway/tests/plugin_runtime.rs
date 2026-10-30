@@ -21,7 +21,12 @@ use std::{
 use tokio::{sync::Mutex as AsyncMutex, task::JoinHandle};
 
 fn js(value: &JsValue) -> Value {
-    serde_json::from_str(&stringify_json(value).unwrap().unwrap()).unwrap()
+    serde_json::from_str(
+        &stringify_json(value)
+            .expect("#1010 plugin-runtime setup/observation must succeed")
+            .expect("#1010 plugin-runtime setup/observation must succeed"),
+    )
+    .expect("#1010 plugin-runtime setup/observation must succeed")
 }
 fn error(e: &PluginRuntimeError) -> Value {
     let mut out =
@@ -55,7 +60,9 @@ fn hooks(h: &HooksSettings) -> Value {
         h.iter()
             .map(|(event, matchers)| {
                 (
-                    event.to_utf8().unwrap(),
+                    event
+                        .to_utf8()
+                        .expect("#1010 plugin-runtime setup/observation must succeed"),
                     json!(
                         matchers
                             .iter()
@@ -83,7 +90,11 @@ fn instruction_json<'a>(
             JsValue::Object(object)
         })
         .collect();
-    Value::String(stringify_json(&JsValue::Array(entries)).unwrap().unwrap())
+    Value::String(
+        stringify_json(&JsValue::Array(entries))
+            .expect("#1010 plugin-runtime setup/observation must succeed")
+            .expect("#1010 plugin-runtime setup/observation must succeed"),
+    )
 }
 fn instructions(c: &[PluginMcpInstructionEntry]) -> Value {
     instruction_json(c.iter().map(|e| (&e.server_name, &e.instructions)))
@@ -95,20 +106,27 @@ fn encode_expected_instructions(value: &mut Value) {
                 if key == "mcpInstructions" {
                     let entries: Vec<_> = value
                         .as_array()
-                        .unwrap()
+                        .expect("#1010 plugin-runtime setup/observation must succeed")
                         .iter()
                         .map(|entry| {
                             assert_eq!(
-                                entry.as_object().unwrap().len(),
+                                entry
+                                    .as_object()
+                                    .expect("#1010 plugin-runtime setup/observation must succeed")
+                                    .len(),
                                 2,
-                                "MCP instruction replay fields"
+                                "#1010 MCP instruction replay fields"
                             );
                             (
                                 pilotdeck_protocol::JsString::from(
-                                    entry["serverName"].as_str().unwrap(),
+                                    entry["serverName"].as_str().expect(
+                                        "#1010 plugin-runtime setup/observation must succeed",
+                                    ),
                                 ),
                                 pilotdeck_protocol::JsString::from(
-                                    entry["instructions"].as_str().unwrap(),
+                                    entry["instructions"].as_str().expect(
+                                        "#1010 plugin-runtime setup/observation must succeed",
+                                    ),
                                 ),
                             )
                         })
@@ -167,7 +185,9 @@ impl Lease {
 }
 type Calls = Arc<Mutex<Vec<Value>>>;
 fn event(c: &Calls, v: Value) {
-    c.lock().unwrap().push(v);
+    c.lock()
+        .expect("#1010 plugin-runtime setup/observation must succeed")
+        .push(v);
 }
 struct Listing {
     calls: Calls,
@@ -208,10 +228,14 @@ impl CommandCatalogListCommands for Listing {
             }
             if step["list"] == "retire" {
                 fs::write(
-                    root.join(step["retire"].as_str().unwrap()),
+                    root.join(
+                        step["retire"]
+                            .as_str()
+                            .expect("#1010 plugin-runtime setup/observation must succeed"),
+                    ),
                     r#"{"name":"retired"}"#,
                 )
-                .unwrap();
+                .expect("#1010 plugin-runtime setup/observation must succeed");
                 let r = runtime.refresh_with_report().await?;
                 event(
                     &calls,
@@ -219,7 +243,8 @@ impl CommandCatalogListCommands for Listing {
                 );
             }
             Ok(CommandsListResult {
-                value: parse_json(&json!({"listed":c.len()}).to_string()).unwrap(),
+                value: parse_json(&json!({"listed":c.len()}).to_string())
+                    .expect("#1010 plugin-runtime setup/observation must succeed"),
             })
         })
     }
@@ -248,24 +273,33 @@ async fn replay(s: &Value) {
     let scratch =
         Scratch(std::env::temp_dir().join(format!("pdrs-runtime-{}", uuid::Uuid::new_v4())));
     let root = &scratch.0;
-    fs::create_dir_all(root.join("home")).unwrap();
-    fs::create_dir_all(root.join("project")).unwrap();
+    fs::create_dir_all(root.join("home"))
+        .expect("#1010 plugin-runtime setup/observation must succeed");
+    fs::create_dir_all(root.join("project"))
+        .expect("#1010 plugin-runtime setup/observation must succeed");
     let calls: Calls = Default::default();
     let gates: HashMap<String, tokio::sync::watch::Sender<bool>> = s["builtins"]
         .as_array()
-        .unwrap()
+        .expect("#1010 plugin-runtime setup/observation must succeed")
         .iter()
         .filter_map(|b| b["gate"].as_str())
         .map(|gate| (gate.to_owned(), tokio::sync::watch::channel(false).0))
         .collect();
     let builtins = s["builtins"]
         .as_array()
-        .unwrap()
+        .expect("#1010 plugin-runtime setup/observation must succeed")
         .iter()
         .map(|b| {
-            let name = b["name"].as_str().unwrap().to_owned();
-            let path = root.join(b["dir"].as_str().unwrap());
-            fs::create_dir_all(&path).unwrap();
+            let name = b["name"]
+                .as_str()
+                .expect("#1010 plugin-runtime setup/observation must succeed")
+                .to_owned();
+            let path = root.join(
+                b["dir"]
+                    .as_str()
+                    .expect("#1010 plugin-runtime setup/observation must succeed"),
+            );
+            fs::create_dir_all(&path).expect("#1010 plugin-runtime setup/observation must succeed");
             let gate = b["gate"].as_str().map(|gate| gates[gate].subscribe());
             let throw_sync = b["throwSync"].as_bool().unwrap_or(false);
             let dispose = b["dispose"].as_str().map(|mode| {
@@ -281,7 +315,9 @@ async fn replay(s: &Value) {
                         event(&calls, json!({"event":"dispose","plugin":name}));
                         if let Some(mut gate) = gate {
                             while !*gate.borrow_and_update() {
-                                gate.changed().await.unwrap();
+                                gate.changed()
+                                    .await
+                                    .expect("#1010 plugin-runtime setup/observation must succeed");
                             }
                             event(&calls, json!({"event":"disposeFinished","plugin":name}));
                         }
@@ -300,16 +336,18 @@ async fn replay(s: &Value) {
                 skills: vec![],
                 output_styles: vec![],
                 hooks_config: None,
-                mcp_servers: b
-                    .get("mcpServers")
-                    .map(|v| parse_json(&v.to_string()).unwrap()),
+                mcp_servers: b.get("mcpServers").map(|v| {
+                    parse_json(&v.to_string())
+                        .expect("#1010 plugin-runtime setup/observation must succeed")
+                }),
                 lsp_servers: None,
                 dispose,
             })
         })
         .collect();
     if s["builtinSkills"] == true {
-        fs::create_dir_all(root.join("builtin-skills")).unwrap();
+        fs::create_dir_all(root.join("builtin-skills"))
+            .expect("#1010 plugin-runtime setup/observation must succeed");
     }
     let runtime = Arc::new(PluginRuntime::new(PluginRuntimeOptions {
         project_root: root.join("project"),
@@ -318,9 +356,15 @@ async fn replay(s: &Value) {
         builtin_plugins: builtins,
         builtin_plugins_enabled: s["enabled"]
             .as_object()
-            .unwrap()
+            .expect("#1010 plugin-runtime setup/observation must succeed")
             .iter()
-            .map(|(k, v)| (k.clone(), v.as_bool().unwrap()))
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.as_bool()
+                        .expect("#1010 plugin-runtime setup/observation must succeed"),
+                )
+            })
             .collect(),
     }));
     let mut leases = HashMap::<String, Lease>::new();
@@ -329,25 +373,52 @@ async fn replay(s: &Value) {
     let mut expected_calls = Vec::new();
     for (index, (step, expected)) in s["steps"]
         .as_array()
-        .unwrap()
+        .expect("#1010 plugin-runtime setup/observation must succeed")
         .iter()
-        .zip(s["results"].as_array().unwrap())
+        .zip(
+            s["results"]
+                .as_array()
+                .expect("#1010 plugin-runtime setup/observation must succeed"),
+        )
         .enumerate()
     {
         let mut actual = json!({});
-        let result: Option<Result<Value, PluginRuntimeError>> = match step["op"].as_str().unwrap() {
+        let result: Option<Result<Value, PluginRuntimeError>> = match step["op"]
+            .as_str()
+            .expect("#1010 plugin-runtime setup/observation must succeed")
+        {
             "write" => {
-                let path = root.join(step["file"].as_str().unwrap());
-                fs::create_dir_all(path.parent().unwrap()).unwrap();
-                fs::write(path, step["text"].as_str().unwrap()).unwrap();
+                let path = root.join(
+                    step["file"]
+                        .as_str()
+                        .expect("#1010 plugin-runtime setup/observation must succeed"),
+                );
+                fs::create_dir_all(
+                    path.parent()
+                        .expect("#1010 plugin-runtime setup/observation must succeed"),
+                )
+                .expect("#1010 plugin-runtime setup/observation must succeed");
+                fs::write(
+                    path,
+                    step["text"]
+                        .as_str()
+                        .expect("#1010 plugin-runtime setup/observation must succeed"),
+                )
+                .expect("#1010 plugin-runtime setup/observation must succeed");
                 None
             }
             "rm" => {
-                let path = root.join(step["file"].as_str().unwrap());
+                let path = root.join(
+                    step["file"]
+                        .as_str()
+                        .expect("#1010 plugin-runtime setup/observation must succeed"),
+                );
                 if path.is_dir() {
-                    fs::remove_dir_all(path).unwrap();
+                    fs::remove_dir_all(path)
+                        .expect("#1010 plugin-runtime setup/observation must succeed");
                 } else {
-                    fs::remove_file(path).unwrap();
+                    fs::remove_file(path)
+                        .expect("#1010 plugin-runtime setup/observation must succeed");
                 }
                 None
             }
@@ -356,8 +427,11 @@ async fn replay(s: &Value) {
                 json!({"generation":runtime.generation().await,"lifecycleState":runtime.lifecycle_state().await.as_str(),"snapshot":ids(&runtime.snapshot().await),"view":commands(&runtime.create_view(Vec::new()).await.all_commands()),"commands":commands(&runtime.all_commands().await),"skills":skills(&runtime.all_skills().await),"mcpServers":js(&JsValue::Object(runtime.mcp_servers().await)),"lspServers":js(&JsValue::Object(runtime.lsp_servers().await)),"mcpInstructions":instructions(&runtime.all_mcp_instructions().await)}),
             )),
             "acquire" => {
-                let id = step["id"].as_str().unwrap().to_owned();
-                Some(match step["kind"].as_str().unwrap(){
+                let id = step["id"]
+                    .as_str()
+                    .expect("#1010 plugin-runtime setup/observation must succeed")
+                    .to_owned();
+                Some(match step["kind"].as_str().expect("#1010 plugin-runtime setup/observation must succeed"){
                     "catalog"=>runtime.acquire_command_catalog().await.map(|l|{
                         let v=json!({"generation":l.generation,"contributions":{"generation":l.contributions.generation,"commands":commands(&l.contributions.commands)}});
                         leases.insert(id,Lease::Catalog(Arc::new(AsyncMutex::new(l))));v
@@ -369,15 +443,24 @@ async fn replay(s: &Value) {
                     }),
                     "legacy"=>runtime.acquire_contribution_snapshot().await.map(|l|{
                         let c=&l.contributions;
-                        let v=json!({"generation":l.generation,"contributions":{"generation":c.generation,"plugins":ids(&c.plugins),"tools":c.tools.len(),"routers":c.routers.len(),"commands":commands(&c.commands),"skills":skills(&c.skills),"hooks":hooks(&c.hooks),"mcpServers":js(&JsValue::Object(c.mcp_servers.clone())),"lspServers":js(&JsValue::Object(c.lsp_servers.clone())),"mcpInstructions":instruction_json(c.mcp_instructions.iter().map(|e|(&e.server_name,e.instructions.as_ref().unwrap())))}});
+                        let v=json!({"generation":l.generation,"contributions":{"generation":c.generation,"plugins":ids(&c.plugins),"tools":c.tools.len(),"routers":c.routers.len(),"commands":commands(&c.commands),"skills":skills(&c.skills),"hooks":hooks(&c.hooks),"mcpServers":js(&JsValue::Object(c.mcp_servers.clone())),"lspServers":js(&JsValue::Object(c.lsp_servers.clone())),"mcpInstructions":instruction_json(c.mcp_instructions.iter().map(|e|(&e.server_name,e.instructions.as_ref().expect("#1010 plugin-runtime setup/observation must succeed"))))}});
                         leases.insert(id,Lease::Legacy(Arc::new(AsyncMutex::new(l))));v
-                    }),_=>panic!("unknown lease")
+                    }),_=>panic!("#1010 unknown lease")
                 })
             }
-            "release" => Some(leases[step["id"].as_str().unwrap()].release().await),
+            "release" => Some(
+                leases[step["id"]
+                    .as_str()
+                    .expect("#1010 plugin-runtime setup/observation must succeed")]
+                .release()
+                .await,
+            ),
             "start" => {
                 let runtime = runtime.clone();
-                let handle = match step["what"].as_str().unwrap() {
+                let handle = match step["what"]
+                    .as_str()
+                    .expect("#1010 plugin-runtime setup/observation must succeed")
+                {
                     "refresh" => {
                         start_eager(async move {
                             runtime.refresh_with_report().await.map(|r| report(&r))
@@ -389,32 +472,57 @@ async fn replay(s: &Value) {
                             .await
                     }
                     "release" => {
-                        let lease = leases[step["id"].as_str().unwrap()].clone();
+                        let lease = leases[step["id"]
+                            .as_str()
+                            .expect("#1010 plugin-runtime setup/observation must succeed")]
+                        .clone();
                         start_eager(async move { lease.release().await.map(|_| json!("done")) })
                             .await
                     }
-                    _ => panic!("unknown start"),
+                    _ => panic!("#1010 unknown start"),
                 };
-                slots.insert(step["slot"].as_str().unwrap().into(), handle);
+                slots.insert(
+                    step["slot"]
+                        .as_str()
+                        .expect("#1010 plugin-runtime setup/observation must succeed")
+                        .into(),
+                    handle,
+                );
                 None
             }
             "await" => Some(
                 slots
-                    .remove(step["slot"].as_str().unwrap())
-                    .unwrap()
+                    .remove(
+                        step["slot"]
+                            .as_str()
+                            .expect("#1010 plugin-runtime setup/observation must succeed"),
+                    )
+                    .expect("#1010 plugin-runtime setup/observation must succeed")
                     .await
-                    .unwrap(),
+                    .expect("#1010 plugin-runtime setup/observation must succeed"),
             ),
             "pending" => Some(Ok(json!(
-                !slots[step["slot"].as_str().unwrap()].is_finished()
+                !slots[step["slot"]
+                    .as_str()
+                    .expect("#1010 plugin-runtime setup/observation must succeed")]
+                .is_finished()
             ))),
             "calls" => {
                 let mut trace = observed_calls.clone();
-                trace.extend(calls.lock().unwrap().iter().cloned());
+                trace.extend(
+                    calls
+                        .lock()
+                        .expect("#1010 plugin-runtime setup/observation must succeed")
+                        .iter()
+                        .cloned(),
+                );
                 Some(Ok(json!(trace)))
             }
             "open" => {
-                gates[step["gate"].as_str().unwrap()].send_replace(true);
+                gates[step["gate"]
+                    .as_str()
+                    .expect("#1010 plugin-runtime setup/observation must succeed")]
+                .send_replace(true);
                 None
             }
             "flush" => {
@@ -471,16 +579,22 @@ async fn replay(s: &Value) {
                 Some(
                     bundle
                         .commands_list(CommandsListInput {
-                            project_key: i["projectKey"].as_str().unwrap().into(),
+                            project_key: i["projectKey"]
+                                .as_str()
+                                .expect("#1010 plugin-runtime setup/observation must succeed")
+                                .into(),
                             query: i["query"].as_str().map(str::to_owned),
                             cursor: i["cursor"].as_str().map(str::to_owned),
-                            limit: i["limit"].as_u64().map(|v| v.try_into().unwrap()),
+                            limit: i["limit"].as_u64().map(|v| {
+                                v.try_into()
+                                    .expect("#1010 plugin-runtime setup/observation must succeed")
+                            }),
                         })
                         .await
                         .map(|r| js(&r.value)),
                 )
             }
-            _ => panic!("unknown step {step}"),
+            _ => panic!("#1010 unknown step {step}"),
         };
         if let Some(r) = result {
             match r {
@@ -488,10 +602,23 @@ async fn replay(s: &Value) {
                 Err(e) => actual["error"] = error(&e),
             }
         }
-        observed_calls.extend(std::mem::take(&mut *calls.lock().unwrap()));
-        expected_calls.extend(expected["calls"].as_array().unwrap().iter().cloned());
+        observed_calls.extend(std::mem::take(
+            &mut *calls
+                .lock()
+                .expect("#1010 plugin-runtime setup/observation must succeed"),
+        ));
+        expected_calls.extend(
+            expected["calls"]
+                .as_array()
+                .expect("#1010 plugin-runtime setup/observation must succeed")
+                .iter()
+                .cloned(),
+        );
         let mut expected = expected.clone();
-        expected.as_object_mut().unwrap().remove("calls");
+        expected
+            .as_object_mut()
+            .expect("#1010 plugin-runtime setup/observation must succeed")
+            .remove("calls");
         if step["op"] == "acquire"
             && let Some(o) = expected.get_mut("result").and_then(Value::as_object_mut)
         {
@@ -507,37 +634,67 @@ async fn replay(s: &Value) {
             assert_eq!(
                 o.remove("outputStyles"),
                 Some(json!([])),
-                "legacy outputStyles has no Rust snapshot counterpart; nonempty values need their own implementation"
+                "#1010 legacy outputStyles has no Rust snapshot counterpart; nonempty values need their own implementation"
             );
         }
         encode_expected_instructions(&mut expected);
         assert_eq!(
-            normalize(actual, root.to_str().unwrap()),
-            normalize(expected, root.to_str().unwrap()),
-            "{} step {index}: {step}",
+            normalize(
+                actual,
+                root.to_str()
+                    .expect("#1010 plugin-runtime setup/observation must succeed")
+            ),
+            normalize(
+                expected,
+                root.to_str()
+                    .expect("#1010 plugin-runtime setup/observation must succeed")
+            ),
+            "#1010 {} step {index}: {step}",
             s["id"]
         );
     }
     for (_, slot) in slots {
-        let _ = slot.await.unwrap();
+        let _ = slot
+            .await
+            .expect("#1010 plugin-runtime setup/observation must succeed");
     }
     let _ = runtime.dispose().await;
     for _ in 0..5 {
         tokio::task::yield_now().await;
     }
-    observed_calls.extend(std::mem::take(&mut *calls.lock().unwrap()));
-    expected_calls.extend(s["teardown"].as_array().unwrap().iter().cloned());
+    observed_calls.extend(std::mem::take(
+        &mut *calls
+            .lock()
+            .expect("#1010 plugin-runtime setup/observation must succeed"),
+    ));
+    expected_calls.extend(
+        s["teardown"]
+            .as_array()
+            .expect("#1010 plugin-runtime setup/observation must succeed")
+            .iter()
+            .cloned(),
+    );
     for call in &mut expected_calls {
         if call["event"] == "listCommands" {
-            call.as_object_mut().unwrap().remove("frozen");
+            call.as_object_mut()
+                .expect("#1010 plugin-runtime setup/observation must succeed")
+                .remove("frozen");
         }
     }
     // JS microtask vs tokio scheduling may move a callback across await/flush;
     // preserve the exact scenario-wide call order and every callback value.
     assert_eq!(
-        normalize(json!(observed_calls), root.to_str().unwrap()),
-        normalize(json!(expected_calls), root.to_str().unwrap()),
-        "{} calls",
+        normalize(
+            json!(observed_calls),
+            root.to_str()
+                .expect("#1010 plugin-runtime setup/observation must succeed")
+        ),
+        normalize(
+            json!(expected_calls),
+            root.to_str()
+                .expect("#1010 plugin-runtime setup/observation must succeed")
+        ),
+        "#1010 {} calls",
         s["id"]
     );
 }
@@ -555,30 +712,51 @@ fn plugin_runtime_oracle_shape() {
     assert_eq!(
         fixture["scenarios"]
             .as_array()
-            .unwrap()
+            .expect("#1010 plugin-runtime setup/observation must succeed")
             .iter()
-            .map(|s| s["id"].as_str().unwrap())
+            .map(|s| s["id"]
+                .as_str()
+                .expect("#1010 plugin-runtime setup/observation must succeed"))
             .collect::<Vec<_>>(),
         REPLAY_IDS,
         "every scenario needs exactly one replay"
     );
     assert_eq!(
-        fixture["scenarios"].as_array().unwrap().len(),
-        fixture["count"].as_u64().unwrap() as usize
+        fixture["scenarios"]
+            .as_array()
+            .expect("#1010 plugin-runtime setup/observation must succeed")
+            .len(),
+        fixture["count"]
+            .as_u64()
+            .expect("#1010 plugin-runtime setup/observation must succeed") as usize
     );
     assert_eq!(
         fixture["scenarios"]
             .as_array()
-            .unwrap()
+            .expect("#1010 plugin-runtime setup/observation must succeed")
             .iter()
-            .map(|s| s["steps"].as_array().unwrap().len())
+            .map(|s| s["steps"]
+                .as_array()
+                .expect("#1010 plugin-runtime setup/observation must succeed")
+                .len())
             .sum::<usize>(),
-        fixture["steps"].as_u64().unwrap() as usize
+        fixture["steps"]
+            .as_u64()
+            .expect("#1010 plugin-runtime setup/observation must succeed") as usize
     );
-    for s in fixture["scenarios"].as_array().unwrap() {
+    for s in fixture["scenarios"]
+        .as_array()
+        .expect("#1010 plugin-runtime setup/observation must succeed")
+    {
         assert_eq!(
-            s["steps"].as_array().unwrap().len(),
-            s["results"].as_array().unwrap().len()
+            s["steps"]
+                .as_array()
+                .expect("#1010 plugin-runtime setup/observation must succeed")
+                .len(),
+            s["results"]
+                .as_array()
+                .expect("#1010 plugin-runtime setup/observation must succeed")
+                .len()
         );
     }
 }
@@ -589,8 +767,8 @@ macro_rules! scenarios {
             #[tokio::test]
             $(#[ignore = $reason])?
             async fn $name() {
-                let s = oracle()["scenarios"].as_array().unwrap().iter().find(|s| s["id"] == $id).unwrap();
-                tokio::time::timeout(Duration::from_secs(10), replay(s)).await.expect(concat!($id, " timed out"));
+                let s = oracle()["scenarios"].as_array().expect("#1010 plugin-runtime setup/observation must succeed").iter().find(|s| s["id"] == $id).expect("#1010 plugin-runtime setup/observation must succeed");
+                tokio::time::timeout(Duration::from_secs(10), replay(s)).await.expect(concat!("#1010 ", $id, " timed out"));
             }
         )*
     };
