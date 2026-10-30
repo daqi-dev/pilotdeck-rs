@@ -3,6 +3,7 @@ import {EventEmitter, once} from 'node:events';
 import {connect} from 'node:net';
 import {Writable} from 'node:stream';
 import {createHash} from 'node:crypto';
+import {mock} from 'node:test';
 
 import {RFC6455_SAMPLE_NONCE} from './sample.mts';
 
@@ -116,6 +117,76 @@ export async function resourceObservations(websocket:any, startGatewayServer:any
   const socketClosed = once(socket,'close');
   socket.destroy(); peer.destroy(); await socketClosed; console.error("#749 resource destroyed"); await closing;
   observations.halfCloseCancelled = {destroyed:socket.destroyed,serverClosed:closed};
+  observations.closeFlush = [];
+  for (const event of ['close', 'eof']) for (const outcome of ['release', 'cancel']) {
+    console.error('#749 closeFlush begin',event,outcome);
+    const server = await startGatewayServer({host:'127.0.0.1',port:0,token:'fixture-token',
+      gateway:{async describeServer(){return {};}}});
+    const peer = connect({port:Number(new URL(server.url).port),host:'127.0.0.1',allowHalfOpen:true});
+    await once(peer,'connect');
+    const chunks:Buffer[]=[];
+    let upgraded!:()=>void;
+    const upgrade=new Promise<void>(resolve=>upgraded=resolve);
+    peer.on('data',data=>{chunks.push(data);if(Buffer.concat(chunks).includes('\r\n\r\n'))upgraded();});
+    peer.write('GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: '+RFC6455_SAMPLE_NONCE+'\r\n\r\n');
+    await upgrade;
+    chunks.length=0;
+    const socket=sockets.find(s=>s.localPort===Number(new URL(server.url).port)&&s.remotePort===peer.localPort);
+    assert.ok(socket?.fixtureTransport,'#749 actual GatewayServer transport captured');
+    const originalWrite=socket._write;
+    let release!:()=>void;
+    // Hold the first actual net.Socket write. end() automatically uncorks a
+    // socket, so cork alone cannot hold the peer-close path deterministically.
+    socket._write=function(chunk:any,encoding:any,callback:any){
+      this._write=originalWrite;
+      release=()=>originalWrite.call(this,chunk,encoding,callback);
+    };
+    socket.fixtureTransport.sendText('x'.repeat(2*1024*1024));
+    assert.equal(typeof release,'function','#749 accepted output reached write gate');
+    mock.timers.enable({apis:['setTimeout','setInterval']});
+    try {
+      // TCP may split the six-byte close frame. Observe the real close()
+      // calling socket.end(), not merely the first data callback.
+      const seen=event==='eof'?once(socket,'end'):new Promise<void>(resolve=>{
+        const end=socket.end;
+        socket.end=function(...args:any[]){const result=end.apply(this,args);resolve();return result;};
+      });
+      if(event==='close')peer.write(Buffer.from([0x88,0x80,1,2,3,4]));else peer.end();
+      await seen;
+      console.error('#749 closeFlush event',event,outcome);
+      let serverClosed=false;
+      const closing=server.close().then(()=>{serverClosed=true;});
+      mock.timers.tick(3_600_000);
+      await new Promise(resolve=>setImmediate(resolve));
+      const before={pendingBytes:socket.writableLength>0,finished:socket.writableFinished,
+        destroyed:socket.destroyed,serverClosed,socketTimeout:socket.timeout??0};
+      assert.deepEqual(before,{pendingBytes:true,finished:false,destroyed:false,serverClosed:false,socketTimeout:0},
+        '#749 TS retains accepted output without close timer');
+      const socketClosed=once(socket,'close');
+      let after:any;
+      if(outcome==='release'){
+        const delivered=event==='close'?once(peer,'end'):new Promise<void>(resolve=>{
+          peer.on('data',()=>{if(Buffer.concat(chunks).length>=2*1024*1024+10)resolve();});
+        });
+        release();await delivered;
+        console.error('#749 closeFlush flushed',event,outcome);
+        const wire=Buffer.concat(chunks);
+        const size=Number(wire.readBigUInt64BE(2));
+        after={size,opcode:wire[0]&15,wireBytes:wire.length,
+          sha256:createHash('sha256').update(wire.subarray(10,10+size)).digest('hex'),
+          tail:wire.subarray(10+size).toString('hex'),finished:socket.writableFinished};
+        // HTTP upgrade sockets allow half-open reads: EOF alone does not call
+        // end(). Observe full delivery, then explicitly cancel the idle half.
+        if(event==='eof'){socket.destroy();peer.destroy();}else peer.end();
+        await socketClosed;await closing;
+      }else{
+        socket.destroy();peer.destroy();await socketClosed;await closing;
+        after={destroyed:socket.destroyed,serverClosed};
+      }
+      observations.closeFlush.push({event,outcome,advancedMs:3_600_000,before,after});
+      console.error('#749 closeFlush done',event,outcome);
+    }finally{mock.timers.reset();socket.destroy();peer.destroy();await server.close().catch(()=>{});}
+  }
   console.error('#749 resource probe', JSON.stringify(observations));
   return observations;
 }

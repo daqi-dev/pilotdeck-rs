@@ -765,7 +765,81 @@
       "halfCloseCancelled": {
         "destroyed": true,
         "serverClosed": true
-      }
+      },
+      "closeFlush": [
+        {
+          "event": "close",
+          "outcome": "release",
+          "advancedMs": 3600000,
+          "before": {
+            "pendingBytes": true,
+            "finished": false,
+            "destroyed": false,
+            "serverClosed": false,
+            "socketTimeout": 0
+          },
+          "after": {
+            "size": 2097152,
+            "opcode": 1,
+            "wireBytes": 2097166,
+            "sha256": "6932fd31e5daf4739b9fa78ff777b2831b0995cc1d0b0093cac80601902013bc",
+            "tail": "880203e8",
+            "finished": true
+          }
+        },
+        {
+          "event": "close",
+          "outcome": "cancel",
+          "advancedMs": 3600000,
+          "before": {
+            "pendingBytes": true,
+            "finished": false,
+            "destroyed": false,
+            "serverClosed": false,
+            "socketTimeout": 0
+          },
+          "after": {
+            "destroyed": true,
+            "serverClosed": true
+          }
+        },
+        {
+          "event": "eof",
+          "outcome": "release",
+          "advancedMs": 3600000,
+          "before": {
+            "pendingBytes": true,
+            "finished": false,
+            "destroyed": false,
+            "serverClosed": false,
+            "socketTimeout": 0
+          },
+          "after": {
+            "size": 2097152,
+            "opcode": 1,
+            "wireBytes": 2097162,
+            "sha256": "6932fd31e5daf4739b9fa78ff777b2831b0995cc1d0b0093cac80601902013bc",
+            "tail": "",
+            "finished": false
+          }
+        },
+        {
+          "event": "eof",
+          "outcome": "cancel",
+          "advancedMs": 3600000,
+          "before": {
+            "pendingBytes": true,
+            "finished": false,
+            "destroyed": false,
+            "serverClosed": false,
+            "socketTimeout": 0
+          },
+          "after": {
+            "destroyed": true,
+            "serverClosed": true
+          }
+        }
+      ]
     }
   }
 }

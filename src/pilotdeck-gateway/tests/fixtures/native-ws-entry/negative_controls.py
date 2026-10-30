@@ -18,8 +18,23 @@ from negative_suite import ReceiptRun, judge, passed
 from _shared.mutant_switch import (preflight, clean_environment, record_sources,
                                    verify_unchanged, enforce_denominator)
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_ws.rs'
+TESTS = ROOT / 'src/pilotdeck-gateway/src/native_ws/tests.rs'
 PREFIX = 'native_ws::tests::'
 switches = [
+    ('native-ws-shorten-eof-deadline', SOURCE, PREFIX + 'close_budget_covers_accepted_bytes', '#749 close budget covers accepted bytes'),
+    ('native-ws-short-close-budget', SOURCE, PREFIX + 'accepted_output_flushes_after_close_or_eof', '#749 accepted output survives delayed flush'),
+    ('native-ws-ignore-flush-bytes', SOURCE, PREFIX + 'close_budget_covers_accepted_bytes', '#749 close budget covers accepted bytes'),
+    ('native-ws-cancel-leaks-permit', SOURCE, PREFIX + 'stalled_output_is_bounded_and_cancellable', '#749 blocked flush releases resources'),
+    ('native-ws-close-oracle-missing', TESTS, PREFIX + 'close_flush_fixture_records_ts_lifecycle', '#749 TS close flush matrix is complete'),
+    ('native-ws-large-oracle-empty', TESTS, PREFIX + 'large_output_matches_ts', '#749 large output fixture has exactly two required sizes'),
+    ('native-ws-large-oracle-missing', TESTS, PREFIX + 'large_output_matches_ts', '#749 large output fixture has exactly two required sizes'),
+    ('native-ws-large-oracle-size', TESTS, PREFIX + 'large_output_matches_ts', '#749 large output fixture has exactly two required sizes'),
+    ('native-ws-large-oracle-content', TESTS, PREFIX + 'large_output_matches_ts', '#749 legal large output matches TS'),
+    ('native-ws-full-oracle-before-count', TESTS, PREFIX + 'full_queue_eof_flushes_successfully', '#749 full queue EOF fixture lifecycle'),
+    ('native-ws-full-oracle-before-finished', TESTS, PREFIX + 'full_queue_eof_flushes_successfully', '#749 full queue EOF fixture lifecycle'),
+    ('native-ws-full-oracle-completed', TESTS, PREFIX + 'full_queue_eof_flushes_successfully', '#749 full queue EOF fixture lifecycle'),
+    ('native-ws-full-oracle-finished', TESTS, PREFIX + 'full_queue_eof_flushes_successfully', '#749 full queue EOF fixture lifecycle'),
+    ('native-ws-full-oracle-destroyed', TESTS, PREFIX + 'full_queue_eof_flushes_successfully', '#749 full queue EOF fixture lifecycle'),
     ('native-ws-drop-text', SOURCE, PREFIX + 'handshake_and_auth', '#749 text delivered'),
     ('native-ws-after-close', SOURCE, PREFIX + 'close_discards_following_frames', '#749 close discards following requests'),
     ('native-ws-drop-closed-read', SOURCE, PREFIX + 'close_tail_resumes_on_next_data', '#749 next data resumes buffered tail'),
@@ -45,7 +60,7 @@ switches = [
     ('native-ws-input-close-code', SOURCE, PREFIX + 'oversized_header_closes_before_payload', '#749 input limit close code'),
     ('native-ws-output-bytes', SOURCE, PREFIX + 'output_byte_budget_includes_inflight_and_recovers', '#749 byte limit includes blocked writer'),
     ('native-ws-output-slots', SOURCE, PREFIX + 'output_slot_budget_and_full_close', '#749 full output queue preserves close frame'),
-    ('native-ws-writer-deadline', SOURCE, PREFIX + 'writer_deadline_releases_socket_before_stuck_business', '#749 writer deadline releases socket despite held business'),
+    ('native-ws-writer-deadline', SOURCE, PREFIX + 'stalled_output_is_bounded_and_cancellable', '#749 blocked flush releases resources'),
     ('native-ws-reader-deadline', SOURCE, PREFIX + 'close_deadline_reclaims_peer_without_fin', '#749 reader close deadline reclaims peer without FIN'),
     ('native-ws-pending-limit', SOURCE, PREFIX + 'pending_requests_are_bounded_before_enqueue', '#749 pending cap rejects before host enqueue'),
     ('native-ws-drain-no-deadline', SOURCE, PREFIX + 'bounded_drain', '#749 bounded host exit'),
