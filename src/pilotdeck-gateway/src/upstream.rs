@@ -79,6 +79,7 @@ pub(crate) async fn forward<W: AsyncWrite + Unpin>(
 mod tests {
     use super::*;
     use crate::frame::{client_frame, server_frame};
+    use crate::test_native_ws_sample::RFC6455_SAMPLE_NONCE;
     use tokio::{io::AsyncReadExt, time::timeout};
 
     const ACCEPT: &str = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
@@ -89,7 +90,7 @@ mod tests {
             ("host", "downstream.invalid"),
             ("connection", "Upgrade"),
             ("upgrade", "websocket"),
-            ("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ=="), // RFC 6455 §1.3 公开示例 nonce，非密钥 gitleaks:allow
+            ("sec-websocket-key", RFC6455_SAMPLE_NONCE),
             ("sec-websocket-version", "13"),
             ("x-caller", "unchanged"),
         ] {
@@ -124,7 +125,7 @@ mod tests {
                 let lowercase = request.to_ascii_lowercase();
                 assert!(lowercase.contains("host: fixture.invalid:28790\r\n"));
                 assert!(lowercase.contains("x-caller: unchanged\r\n"));
-                assert!(request.contains("dGhlIHNhbXBsZSBub25jZQ=="));
+                assert!(request.contains(RFC6455_SAMPLE_NONCE));
                 let mut response = format!("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: {ACCEPT}\r\nX-Upstream: retained\r\n\r\n").into_bytes();
                 response.extend_from_slice(&early);
                 server.write_all(&response).await.unwrap();

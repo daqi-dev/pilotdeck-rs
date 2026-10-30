@@ -703,6 +703,42 @@
     "existingAfterStop": true,
     "newAfterStop": "ECONNREFUSED",
     "closedAfterPeers": true,
-    "serverCloseDoesNotAwaitDescription": true
+    "serverCloseDoesNotAwaitDescription": true,
+    "resources": {
+      "104857600": {
+        "messages": 0,
+        "buffered": 14,
+        "writes": 0,
+        "ends": 0
+      },
+      "104857601": {
+        "messages": 0,
+        "buffered": 14,
+        "writes": 0,
+        "ends": 0
+      },
+      "1099511627776": {
+        "messages": 0,
+        "buffered": 14,
+        "writes": 0,
+        "ends": 0
+      },
+      "writeFalse": {
+        "writes": 65,
+        "ends": 1,
+        "closeCode": 1000
+      },
+      "heldRequests": 65,
+      "halfCloseBlocked": {
+        "readEnded": true,
+        "pendingBytes": true,
+        "destroyed": false,
+        "serverClosed": false
+      },
+      "halfCloseCancelled": {
+        "destroyed": true,
+        "serverClosed": true
+      }
+    }
   }
 }

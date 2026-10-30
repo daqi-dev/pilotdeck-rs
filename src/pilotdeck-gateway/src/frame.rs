@@ -23,14 +23,29 @@ pub(crate) struct Decoder {
 
 impl Decoder {
     pub fn next(&mut self) -> Result<Option<Frame>, DecodeError> {
-        self.decode(true)
+        self.decode(true, MAX_SAFE_INTEGER)
+    }
+
+    /// Opt-in native listener bound, checked from the header before payload
+    /// allocation. The transparent proxy retains the baseline's default.
+    pub fn next_limited(&mut self, max_payload: u64) -> Result<Option<Frame>, DecodeError> {
+        let max_payload = if crate::mutants::on("native-ws-input-boundary") {
+            max_payload.saturating_sub(1)
+        } else {
+            max_payload
+        };
+        self.decode(true, max_payload)
     }
 
     pub fn next_server(&mut self) -> Result<Option<Frame>, DecodeError> {
-        self.decode(false)
+        self.decode(false, MAX_SAFE_INTEGER)
     }
 
-    fn decode(&mut self, require_mask: bool) -> Result<Option<Frame>, DecodeError> {
+    fn decode(
+        &mut self,
+        require_mask: bool,
+        max_payload: u64,
+    ) -> Result<Option<Frame>, DecodeError> {
         let buf = &self.buffer;
         if buf.len() < 2 {
             return Ok(None);
@@ -54,6 +69,9 @@ impl Decoder {
             }
             size => (u64::from(size), 2),
         };
+        if size > max_payload {
+            return Err(DecodeError::TooLarge);
+        }
         // TS checks masking after the extended length, before awaiting payload.
         let masked = buf[1] & 0x80 != 0;
         if require_mask && !masked {

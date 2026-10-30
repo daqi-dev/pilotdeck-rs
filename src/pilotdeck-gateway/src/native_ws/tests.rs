@@ -1,14 +1,12 @@
 use super::*;
-#[path = "../../tests/common/native_ws_sample.rs"]
-mod native_ws_sample;
 use crate::{
     negative_assert, negative_assert_eq,
     runtime::{
         connection::{Call, RequestError},
         turn::gateway::{GatewayRequests, tests::native_ws_fixture},
     },
+    test_native_ws_sample::RFC6455_SAMPLE_NONCE,
 };
-use native_ws_sample::RFC6455_SAMPLE_NONCE;
 use pilotdeck_protocol::{JsString, JsValue};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -19,6 +17,7 @@ const ORACLE: &str = include_str!("../../tests/fixtures/native-ws-entry/oracle.j
 struct Requests {
     hold: AtomicBool,
     large: AtomicBool,
+    hold_all: AtomicBool,
     calls: AtomicUsize,
     changed: Notify,
     entered: Notify,
@@ -29,7 +28,7 @@ impl GatewayRequests for Requests {
         Box::pin(async move {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.changed.notify_one();
-            if self.hold.swap(false, Ordering::SeqCst) {
+            if self.hold_all.load(Ordering::SeqCst) || self.hold.swap(false, Ordering::SeqCst) {
                 self.entered.notify_one();
                 self.release.notified().await;
             }
@@ -78,8 +77,10 @@ impl Client {
     async fn frame(&mut self, opcode: u8, payload: &[u8]) {
         let code = if payload.len() < 126 {
             payload.len() as u8
-        } else {
+        } else if payload.len() <= u16::MAX as usize {
             126
+        } else {
+            127
         };
         self.socket
             .write_all(&frame::client_frame(0x80 | opcode, code, payload))
@@ -334,10 +335,11 @@ async fn bounded_drain() {
         .await
         .expect("#749 never completing predecessor entered");
     stop.send(()).expect("#749 stop blocked server");
-    let result = timeout(DEADLINE, task)
-        .await
-        .expect("#749 bounded host exit")
-        .expect("#749 blocked task join");
+    let result = crate::test_negative_receipt::expect_ok(
+        timeout(DEADLINE, task).await,
+        "#749 bounded host exit",
+    )
+    .expect("#749 blocked task join");
     negative_assert!(result.is_err(), "#749 stuck drain is an error");
 }
 #[tokio::test]
@@ -354,11 +356,341 @@ async fn shutdown_cancels_handshake() {
     let mut barrier = Client::connect(address).await;
     barrier.close().await;
     stop.send(()).expect("#749 stop half handshake");
+    let result = crate::test_negative_receipt::expect_ok(
+        timeout(DEADLINE, task).await,
+        "#749 half handshake bounded",
+    )
+    .expect("#749 half handshake join");
+    let mut tail = Vec::new();
+    crate::test_negative_receipt::expect_ok(
+        timeout(DEADLINE, socket.read_to_end(&mut tail)).await,
+        "#749 half handshake reclaimed",
+    )
+    .expect("#749 half handshake EOF");
+    negative_assert!(result.is_err(), "#749 unfinished handshake drain is error");
+}
+
+#[tokio::test]
+async fn idle_socket_drain_reports_deadline() {
+    let (address, stop, task) = start(Arc::default(), Duration::from_millis(50)).await;
+    let mut client = Client::connect(address).await;
+    client.hello().await;
+    client.json().await;
+    stop.send(()).expect("#749 idle drain stop");
+    let result = crate::test_negative_receipt::expect_ok(
+        timeout(DEADLINE, task).await,
+        "#749 idle drain bounded",
+    )
+    .expect("#749 idle drain join");
+    negative_assert_eq!(
+        result.err().map(|e| e.to_string()),
+        Some("native WS drain deadline exceeded".into()),
+        "#749 idle drain cannot claim success"
+    );
+}
+
+#[tokio::test]
+async fn oversized_header_closes_before_payload() {
+    for authenticated in [false, true] {
+        let (address, stop, task) = start(Arc::default(), DEADLINE).await;
+        let mut client = Client::connect(address).await;
+        if authenticated {
+            client.hello().await;
+            client.json().await;
+        }
+        let mut header = vec![0x81, 0xff];
+        header.extend_from_slice(&(MAX_INPUT_PAYLOAD as u64 + 1).to_be_bytes());
+        header.extend_from_slice(&[1, 2, 3, 4]);
+        client
+            .socket
+            .write_all(&header)
+            .await
+            .expect("#749 oversize header send");
+        // No payload is ever supplied: only the header can trigger rejection.
+        let result = crate::test_negative_receipt::expect_ok(
+            timeout(Duration::from_secs(2), client.read()).await,
+            "#749 input limit rejects header before allocation",
+        );
+        negative_assert_eq!(
+            result,
+            (
+                8,
+                [1009u16.to_be_bytes().as_slice(), b"frame too large"].concat()
+            ),
+            "#749 input limit close code"
+        );
+        drop(client);
+        finish(stop, task).await;
+    }
+}
+
+#[test]
+fn input_limit_boundary_preserves_proxy() {
+    let mut decoder = Decoder::default();
+    decoder.buffer.extend_from_slice(&[0x81, 0xff]);
+    decoder
+        .buffer
+        .extend_from_slice(&(MAX_INPUT_PAYLOAD as u64).to_be_bytes());
+    decoder.buffer.extend_from_slice(&[1, 2, 3, 4]);
+    assert!(
+        crate::test_negative_receipt::expect_ok(
+            decoder.next_limited(MAX_INPUT_PAYLOAD as u64),
+            "#749 exact input boundary remains accepted"
+        )
+        .is_none(),
+        "#749 exact input limit waits for payload"
+    );
+    assert!(
+        decoder
+            .next()
+            .expect("#749 proxy boundary decode")
+            .is_none(),
+        "#749 proxy default unchanged"
+    );
+    decoder.buffer.clear();
+    decoder
+        .buffer
+        .extend_from_slice(&frame::client_frame(0x81, 127, b"x"));
+    assert_eq!(
+        decoder
+            .next_limited(MAX_INPUT_PAYLOAD as u64)
+            .expect("#749 nonminimal decode")
+            .expect("#749 nonminimal complete frame")
+            .payload,
+        b"x",
+        "#749 nonminimal lengths preserved"
+    );
+}
+
+#[tokio::test]
+async fn output_byte_budget_includes_inflight_and_recovers() {
+    let (text, mut outgoing, _) = Text::channel();
+    text.send_text("x".repeat(MAX_OUTPUT_BYTES - 10));
+    let held = outgoing
+        .recv()
+        .await
+        .expect("#749 byte limit accepts exact reservation");
+    assert!(
+        text.closing.borrow().is_none(),
+        "#749 byte limit exact accepted"
+    );
+    text.send_text("extra".into());
+    negative_assert!(
+        text.closing.borrow().is_some(),
+        "#749 byte limit includes blocked writer"
+    );
+    drop(held);
+    let (text, mut outgoing, _) = Text::channel();
+    for _ in 0..2 {
+        text.send_text("x".repeat(MAX_OUTPUT_BYTES - 10));
+        let item = outgoing.recv().await.expect("#749 byte permit reused");
+        assert!(
+            text.closing.borrow().is_none(),
+            "#749 released byte permit accepts successor"
+        );
+        drop(item);
+    }
+}
+
+#[tokio::test]
+async fn output_slot_budget_and_full_close() {
+    for close in [false, true] {
+        let (text, _outgoing, _) = Text::channel();
+        for _ in 0..MAX_OUTPUT_FRAMES {
+            text.send_text("x".into());
+        }
+        assert!(
+            text.closing.borrow().is_none(),
+            "#749 exact slot count accepted"
+        );
+        if close {
+            text.close(1000, "");
+        } else {
+            text.send_text("overflow".into());
+        }
+        negative_assert!(
+            text.closing
+                .borrow()
+                .is_some_and(|deadline| deadline <= tokio::time::Instant::now()),
+            "#749 full output queue forces close independently"
+        );
+    }
+}
+
+#[tokio::test]
+async fn writer_deadline_releases_socket_before_stuck_business() {
+    for stall_shutdown in [false, true] {
+        let requests = Arc::new(Requests::default());
+        requests.hold.store(true, Ordering::SeqCst);
+        let host = native_ws_fixture(requests.clone());
+        let (io, mut client) = tokio::io::duplex(256);
+        let (send, dropped) = oneshot::channel();
+        let task = tokio::spawn(transport(
+            DropIo {
+                io,
+                dropped: Some(send),
+                stall_shutdown,
+            },
+            host.clone(),
+            "fixture-token".into(),
+            "probe".into(),
+        ));
+        let message = hello("fixture-token").to_string();
+        client
+            .write_all(&frame::client_frame(
+                0x81,
+                message.len() as u8,
+                message.as_bytes(),
+            ))
+            .await
+            .expect("#749 stuck writer hello");
+        timeout(DEADLINE, requests.entered.notified())
+            .await
+            .expect("#749 stuck business entered");
+        if !stall_shutdown {
+            // A pong larger than the duplex capacity blocks write_all while
+            // the admitted hello is still held on the independent host.
+            client
+                .write_all(&frame::client_frame(0x89, 126, &[b'x'; 4096]))
+                .await
+                .expect("#749 fill writer without reading");
+        }
+        client
+            .shutdown()
+            .await
+            .expect("#749 writer peer half-close");
+        crate::test_negative_receipt::expect_ok(
+            timeout(Duration::from_secs(3), dropped).await,
+            "#749 writer deadline releases socket despite held business",
+        )
+        .expect("#749 writer socket drop signal");
+        assert!(
+            !task.is_finished(),
+            "#749 held business still pending after socket reclaimed"
+        );
+        requests.release.notify_one();
+        let result = timeout(DEADLINE, task)
+            .await
+            .expect("#749 writer deadline task bound")
+            .expect("#749 writer deadline task join");
+        assert!(result.is_err(), "#749 writer expiry remains an error");
+        host.shutdown(DEADLINE)
+            .await
+            .expect("#749 writer deadline host stopped");
+    }
+}
+
+#[tokio::test]
+async fn close_deadline_reclaims_peer_without_fin() {
+    let host = native_ws_fixture(Arc::new(Requests::default()));
+    let (io, mut client) = tokio::io::duplex(256);
+    let (send, dropped) = oneshot::channel();
+    let task = tokio::spawn(transport(
+        DropIo {
+            io,
+            dropped: Some(send),
+            stall_shutdown: false,
+        },
+        host.clone(),
+        "fixture-token".into(),
+        "probe".into(),
+    ));
+    client
+        .write_all(&frame::client_frame(0x88, 0, b""))
+        .await
+        .expect("#749 close without FIN");
+    let mut close = [0; 4];
+    client
+        .read_exact(&mut close)
+        .await
+        .expect("#749 close reply before deadline");
+    assert_eq!(close, [0x88, 2, 3, 232], "#749 close reply matches TS");
+    crate::test_negative_receipt::expect_ok(
+        timeout(Duration::from_secs(3), dropped).await,
+        "#749 reader close deadline reclaims peer without FIN",
+    )
+    .expect("#749 close drop signal");
     let result = timeout(DEADLINE, task)
         .await
-        .expect("#749 half handshake bounded")
-        .expect("#749 half handshake join");
-    negative_assert!(result.is_err(), "#749 unfinished handshake drain is error");
+        .expect("#749 close deadline task bound")
+        .expect("#749 close task join");
+    assert!(result.is_err(), "#749 reader expiry remains error");
+    host.shutdown(DEADLINE)
+        .await
+        .expect("#749 close host stopped");
+}
+
+#[tokio::test]
+async fn pending_requests_are_bounded_before_enqueue() {
+    let requests = Arc::new(Requests::default());
+    let host = native_ws_fixture(requests.clone());
+    let (io, mut client) = tokio::io::duplex(4096);
+    let (send, dropped) = oneshot::channel();
+    let task = tokio::spawn(transport(
+        DropIo {
+            io,
+            dropped: Some(send),
+            stall_shutdown: false,
+        },
+        host.clone(),
+        "fixture-token".into(),
+        "probe".into(),
+    ));
+    let message = hello("fixture-token").to_string();
+    client
+        .write_all(&frame::client_frame(
+            0x81,
+            message.len() as u8,
+            message.as_bytes(),
+        ))
+        .await
+        .expect("#749 pending cap hello");
+    // Consume the complete hello before holding subsequent requests.
+    let mut response = [0; 4096];
+    assert!(
+        client
+            .read(&mut response)
+            .await
+            .expect("#749 pending cap hello reply")
+            > 0,
+        "#749 pending hello bytes"
+    );
+    requests.hold_all.store(true, Ordering::SeqCst);
+    let message = json!({"type":"request","id":"held","method":"describe_server"}).to_string();
+    let wire = frame::client_frame(0x81, message.len() as u8, message.as_bytes());
+    for _ in 0..MAX_PENDING_REQUESTS {
+        client
+            .write_all(&wire)
+            .await
+            .expect("#749 pending cap held request");
+        timeout(DEADLINE, requests.entered.notified())
+            .await
+            .expect("#749 pending cap request entered");
+    }
+    client
+        .write_all(&wire)
+        .await
+        .expect("#749 pending cap overflow request");
+    crate::test_negative_receipt::expect_ok(
+        timeout(Duration::from_secs(3), dropped).await,
+        "#749 pending cap rejects before host enqueue",
+    )
+    .expect("#749 pending socket reclaimed");
+    negative_assert_eq!(
+        requests.calls.load(Ordering::SeqCst),
+        MAX_PENDING_REQUESTS + 1,
+        "#749 pending cap rejects before host enqueue"
+    );
+    requests.hold_all.store(false, Ordering::SeqCst);
+    requests.release.notify_waiters();
+    let result = timeout(DEADLINE, task)
+        .await
+        .expect("#749 pending task bound")
+        .expect("#749 pending task join");
+    assert!(result.is_err(), "#749 pending overload error");
+    host.shutdown(DEADLINE)
+        .await
+        .expect("#749 pending host stopped");
 }
 #[test]
 fn default_mode_unchanged() {
@@ -683,6 +1015,7 @@ async fn cancelled_last_host_keeps_deadline() {
 struct DropIo {
     io: tokio::io::DuplexStream,
     dropped: Option<oneshot::Sender<()>>,
+    stall_shutdown: bool,
 }
 impl Drop for DropIo {
     fn drop(&mut self) {
@@ -718,7 +1051,11 @@ impl tokio::io::AsyncWrite for DropIo {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.io).poll_shutdown(cx)
+        if self.stall_shutdown {
+            std::task::Poll::Pending
+        } else {
+            std::pin::Pin::new(&mut self.io).poll_shutdown(cx)
+        }
     }
 }
 #[tokio::test]
@@ -732,6 +1069,7 @@ async fn socket_drops_before_business_drains() {
         DropIo {
             io,
             dropped: Some(send),
+            stall_shutdown: false,
         },
         host.clone(),
         "fixture-token".into(),
@@ -884,4 +1222,146 @@ async fn host_cleanup_runs_after_session_failure() {
         cleanup.await,
         "#749 cleanup runs after session failure",
     );
+}
+
+#[test]
+fn buffered_input_never_exceeds_frame_budget() {
+    for (buffered, expected) in [
+        (0, 8192),
+        (MAX_INPUT_PAYLOAD + 13, 1),
+        (MAX_INPUT_PAYLOAD + 14, 0),
+        (usize::MAX, 0),
+    ] {
+        negative_assert_eq!(
+            input_capacity(buffered, 8192),
+            expected,
+            "#749 buffered input capped before read allocation"
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn close_deadline_is_not_extended_by_eof() {
+    let (text, _outgoing, _) = Text::channel();
+    text.close(1000, "");
+    let first = *text.closing.borrow();
+    tokio::time::advance(CLOSE_BUDGET / 2).await;
+    text.end();
+    negative_assert_eq!(
+        *text.closing.borrow(),
+        first,
+        "#749 EOF preserves first close deadline"
+    );
+    text.deadline(true);
+    let overloaded = *text.closing.borrow();
+    tokio::time::advance(Duration::from_millis(1)).await;
+    text.deadline(true);
+    negative_assert_eq!(
+        *text.closing.borrow(),
+        overloaded,
+        "#749 EOF preserves first close deadline"
+    );
+}
+
+#[test]
+fn resource_baseline_records_actual_ts_transport() {
+    let expected = oracle()["resources"].clone();
+    for size in [
+        MAX_INPUT_PAYLOAD as u64,
+        MAX_INPUT_PAYLOAD as u64 + 1,
+        1 << 40,
+    ] {
+        assert_eq!(
+            expected[size.to_string()],
+            json!({"messages":0,"buffered":14,"writes":0,"ends":0}),
+            "#749 TS custom decoder waits on large declared lengths"
+        );
+    }
+    assert_eq!(
+        expected["writeFalse"],
+        json!({"writes":65,"ends":1,"closeCode":1000}),
+        "#749 TS ignores socket backpressure"
+    );
+    assert_eq!(
+        expected["halfCloseBlocked"],
+        json!({"readEnded":true,"pendingBytes":true,"destroyed":false,"serverClosed":false}),
+        "#749 TS half close awaits blocked write"
+    );
+    assert_eq!(
+        expected["halfCloseCancelled"],
+        json!({"destroyed":true,"serverClosed":true}),
+        "#749 TS cancellation releases blocked write"
+    );
+    assert_eq!(
+        expected["heldRequests"], 65,
+        "#749 TS admits 65 held requests"
+    );
+}
+
+#[tokio::test]
+async fn completed_writes_and_requests_release_capacity() {
+    let requests = Arc::new(Requests::default());
+    requests.large.store(true, Ordering::SeqCst);
+    let host = native_ws_fixture(requests);
+    let (server, mut client) = tokio::io::duplex(4096);
+    let task = tokio::spawn(transport(
+        server,
+        host.clone(),
+        "fixture-token".into(),
+        "probe".into(),
+    ));
+    let mut decoder = Decoder::default();
+    for index in 0..(MAX_PENDING_REQUESTS + 8) {
+        let message = if index == 0 {
+            hello("fixture-token")
+        } else {
+            json!({"type":"request","id":index.to_string(),"method":"describe_server"})
+        }
+        .to_string();
+        client
+            .write_all(&frame::client_frame(
+                0x81,
+                message.len() as u8,
+                message.as_bytes(),
+            ))
+            .await
+            .expect("#749 capacity successor send");
+        let received = timeout(DEADLINE, async {
+            loop {
+                if let Some(frame) = decoder
+                    .next_server()
+                    .expect("#749 capacity response decode")
+                {
+                    return frame;
+                }
+                let count = client
+                    .read_buf(&mut decoder.buffer)
+                    .await
+                    .expect("#749 capacity response read");
+                negative_assert!(
+                    count > 0,
+                    "#749 completed writes and requests release capacity"
+                );
+            }
+        })
+        .await;
+        let frame = crate::test_negative_receipt::expect_ok(
+            received,
+            "#749 completed writes and requests release capacity",
+        );
+        negative_assert_eq!(
+            frame.opcode,
+            1,
+            "#749 completed writes and requests release capacity"
+        );
+    }
+    client.shutdown().await.expect("#749 capacity peer EOF");
+    timeout(DEADLINE, task)
+        .await
+        .expect("#749 capacity task bound")
+        .expect("#749 capacity task join")
+        .expect("#749 capacity task completed");
+    host.shutdown(DEADLINE)
+        .await
+        .expect("#749 capacity host stopped");
 }

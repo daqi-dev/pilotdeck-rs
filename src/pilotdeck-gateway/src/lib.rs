@@ -46,6 +46,9 @@ mod dream_tail_race;
 #[path = "../tests/common/exact_receipt.rs"]
 mod test_exact_receipt;
 #[cfg(test)]
+#[path = "../tests/common/native_ws_sample.rs"]
+mod test_native_ws_sample;
+#[cfg(test)]
 #[path = "../tests/common/negative_receipt.rs"]
 mod test_negative_receipt;
 #[cfg(test)]

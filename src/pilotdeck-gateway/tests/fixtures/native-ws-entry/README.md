@@ -12,6 +12,10 @@
 
 ## 负控
 
-`negative_controls.py --check` 核单一开关锚点和测试消息；运行参数为 `<独占输出目录> [开关名...]`。必须由调用者设置 `CARGO_TARGET_DIR`，并且受检源码/fixture 与 HEAD 完全一致。脚本复用 `mutating_sources`、`run_owned`、`wait_for_slot` 和 `negative_suite`，不做源码文本替换；每项先 `cargo test --no-run --features pdrs-mutants`，再正控、变异、恢复正控，全部完成后统一汇总。任何 INVALID/SURVIVED 非零退出。
+`negative_controls.py --check` 核单一开关锚点和具名测试消息；运行参数 `<独占输出目录> [开关名...]`，`--compile-only` 逐项编译。必须设置调用方的 `CARGO_TARGET_DIR`。源码不做文本替换，使用共享 tree_lock、工作树 SHA 记录与结束核对（同 `_shared/mutant_switch.py` 合同），不是 HEAD 等价声明。每项先编译，再正控、变异、恢复正控；异常也跑恢复，逐项原子发布汇总、最终核静态分母。nonce 回执只接受绑定测试/消息；编译失败或无关 panic 不算杀。执行形态登记在 `specs/negative-controls/README.md`，不改共享执行器。会话仅跑一个样本，全部 runtime 变异由协调者在宿主运行。
 
-新文件在提交前无法通过 HEAD 守卫；正式负控由协调者提交后在宿主运行，不另建仓库或构建目录。`--compile-only` 也遵守同一守卫。全量可超过会话预算，交付会话只尝试一个样本。具体原始记录及未完成项见交付目录 RESULT.md。
+## 资源保护差异
+
+`resources.mts` 的真实 TS 探针证明该入口用自写 WS，不是 ws WebSocketServer；100MiB+1/1TiB 长度头均等待，无 1009；write(false) 后继续写；实际 GatewayServer 的 cork 写前驱遇客户端 FIN 仍阻塞 close，destroy 后结束。65 个 held requests 同时准入。原始记录见 fix-r1 RESULT。
+
+本单按用户安全要求限制原生入口：payload 100MiB（缓冲另容14字节头）、输出64个等待槽（另最多1帧在写）/1MiB（包括在写帧的保守10字节头预算）、在途请求64项。输出/请求超限强制关闭，不保证发送关闭帧；入站超限1009。首次 close/EOF 后1秒同时限制读写，保护业务前驱挂起时的 socket 回收。差异登记 `A7.2-NATIVE-WS-RESOURCE-001.md`；既有 `regenerates_identically` 同时覆盖新增 observations，无新增 clock/PID mask。

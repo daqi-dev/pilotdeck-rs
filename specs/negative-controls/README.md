@@ -52,6 +52,16 @@
     drift 且执行行为空时补一条套件级 `switch-denominator` INVALID 行（reason
     即差集），使每个入口的最终失败判定与 summary 都带上漂移原因，非零退出。
 
+### #749 原生 WS 的逐项编译及 nonce 回执执行形态
+
+`native-ws-entry/negative_controls.py` 保留薄的逐项执行入口，以支持 `--compile-only`
+（每个选择器分别执行 `cargo test --no-run`）和 `negative_suite.ReceiptRun/judge`
+的专属 nonce 回执。没有源码替换；复用 `tree_lock`、`run_owned`、`wait_for_slot`，
+以及共享 `clean_environment`、`record_sources`、`verify_unchanged`、`enforce_denominator`。
+源记录是工作树 SHA，不声称等于 HEAD。异常后仍执行 restored，每行原子发布汇总；
+全选项执行后任一 SURVIVED/INVALID 非零退出，编译失败不算 kill。
+该脚本仍按 switches 表接受完整 anchor_selfcheck，不申请 UNSUPPORTED 豁免。
+
 ### 检查器威胁模型（2026-10-29 人定，#996）
 
 `anchor_selfcheck.py` 的 switches 表审计承诺的是**防无意漂移**，不是对抗蓄意混淆：
