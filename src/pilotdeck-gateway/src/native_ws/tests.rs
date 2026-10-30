@@ -875,6 +875,8 @@ fn default_mode_unchanged() {
     use sha2::{Digest, Sha256};
     // #1071 explicitly adds this opt-in before the existing A4 entry. Keep
     // hashing every legacy byte; the real executable test checks both paths.
+    // #1131 intentionally replaced the A4 stderr `proxy listening` line with
+    // the TS stdout address lines (actual bound port); re-pinned for that diff.
     const OPT_IN: &str = "    let mut args = std::env::args_os().skip(1);\n    if pilotdeck_gateway::native_process::native_requested(args.next().as_deref()) {\n        return pilotdeck_gateway::native_process::run(\n            pilotdeck_gateway::native_process::Options::parse(args)?,\n        )\n        .await;\n    }\n";
     let source = include_str!("../main.rs");
     negative_assert_eq!(
@@ -884,7 +886,7 @@ fn default_mode_unchanged() {
     );
     negative_assert_eq!(
         format!("{:x}", Sha256::digest(source.replacen(OPT_IN, "", 1))),
-        "398167116815fdca70188a7c8e9230ba87010d6db11a0fae42a82a2bb22f5823",
+        "02613cf4a756f4e9cfdb59c5356961798244feb209bf53a5485491c8b7dd4622",
         "#749 A4 executable remains unchanged"
     );
 }
