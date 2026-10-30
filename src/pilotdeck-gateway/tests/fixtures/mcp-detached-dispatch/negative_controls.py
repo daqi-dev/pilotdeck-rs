@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""#1114 fix-r1 nonce receipt controls; account for every selected mutant.
+"""#1114 fix-r1/fix-r2 nonce receipt controls; account for every mutant.
 
-Five mutations guard the detach contract from both sides: reverting a
+Six mutations guard the detach contract from both sides: reverting a
 detached site to a bare `tokio::spawn` (the pre-#1114 code that let a
 synchronous `close` swallow an undispatched request) and re-widening the
 request POST into `detach` (the fix-r1 scope narrowing, whose timeout
-budget TS includes, probe A). Every selected test passes on HEAD, the
-mutated test must fail its bound `#1114` assertion receipt (not
-compilation), then the same test passes again after guarded restore.
+budget TS includes, probe A). The sixth re-introduces the fix-r2 panic
+hook lock-order inversion in `PanicRecorder::restore`, whose storm test
+runs the interleaving in a re-executed child it bounds and kills. Every
+selected test passes on HEAD, the mutated test must fail its bound `#1114`
+assertion receipt (not compilation), then the same test passes again after
+guarded restore.
 
 --check validates anchors. --compile-only compiles every selected mutant.
 Provide a new output directory and optional mutation names; CARGO_TARGET_DIR
@@ -23,6 +26,7 @@ from negative_suite import matrix_main
 ROOT = Path(__file__).resolve().parents[5]
 HTTP = ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/http.rs'
 WIRE = ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/wire.rs'
+TESTS = ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/http_encoding_tests.rs'
 PREFIX = 'runtime::mcp::http::encoding_tests::dispatch_'
 GET = 'get_before_close'
 GET_CONNECTS = 'get_connects_before_close'
@@ -30,6 +34,7 @@ READY_POLL = 'ready_continuation_is_not_polled_again'
 READY_SEND = 'ready_send_detached_does_not_panic'
 REQUEST = 'request_background_and_cancel_inline'
 REPLY = 'reply_before_resolve'
+HOOK_RESTORE = 'panic_hook_restore_survives_concurrent_panics'
 GET_ASSERTION = '#1114 the SSE GET is dispatched before close aborts it'
 EXCHANGE_ASSERTION = '#1114 the SSE GET enters the network exchange before close aborts it'
 READY_POLL_ASSERTION = '#1114 a Ready continuation is not polled again'
@@ -38,6 +43,8 @@ READY_SEND_ASSERTION = ('#1114 a first-poll-Ready detached continuation '
 REQUEST_ASSERTION = ('#1114 only the timeout cancel is dispatched inline; '
                      'the request POST keeps its background send')
 REPLY_ASSERTION = '#1114 the reply to a server request is dispatched inline'
+HOOK_RESTORE_ASSERTION = ('#1114 restoring the panic hook completes while '
+                          'another thread panics')
 MUTATIONS = [
     # The #1114 flake site itself: the SSE GET after a 202 for the
     # initialized notification goes back to a bare spawn. Both GET tests
@@ -97,13 +104,26 @@ MUTATIONS = [
      '    let _ = continuation.as_mut().poll(&mut context);\n'
      '    tokio::spawn(continuation);',
      [(READY_POLL, READY_POLL_ASSERTION), (READY_SEND, READY_SEND_ASSERTION)]),
+    # The fix-r2 regression: hold the recorder's MutexGuard across the
+    # `set_hook` call again (the pre-fix `if let` scrutinee shape). The
+    # storm child wedges, the parent's bound kills it, and the named
+    # assertion fails — without hanging the whole test binary.
+    ('hook-restore-holds-guard', TESTS,
+     '        let restore = self.previous.lock().expect("#1114 panic hook lock").take();\n'
+     '        if let Some(previous) = restore {\n'
+     '            std::panic::set_hook(previous);\n'
+     '        }',
+     '        if let Some(previous) = self.previous.lock().expect("#1114 panic hook lock").take() {\n'
+     '            std::panic::set_hook(previous);\n'
+     '        }',
+     [(HOOK_RESTORE, HOOK_RESTORE_ASSERTION)]),
 ]
 
 
 def main():
     return matrix_main(ROOT, __file__, PREFIX, MUTATIONS,
-                       passed_count=6, child_count=0,
-                       paths=[HTTP, WIRE])
+                       passed_count=7, child_count=0,
+                       paths=[HTTP, WIRE, TESTS])
 
 
 if __name__ == '__main__':
