@@ -15,7 +15,7 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib r
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --audit
 ```
 
-163 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
+164 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --compile "$OUT_COMPILE"
@@ -71,13 +71,21 @@ pending 仅在错误码为 `SESSION_WRITER_BUSY` 且前驱 `recreation_drained()
 #1020 fix-r2 按评审再增 3 项（总数 161）：`1020-generator-deletes-unrelated-out`（生成器清退变回按 `work-` 前缀扫描 OUT → 删掉既存无关内容，新守卫 `stale_handoff_preserves_unrelated_out_files` 逐字节比对失败；生成器改为只删本次 `mkdtempSync` 自建根，`1020-generator-work-dirs-kept` 锚点随清理行同步改写但语义不变）；`1020-publication-before-setup` 与 `1020-publication-before-setup-completed`（owner 把 `DirtyRecreate` 的 on_evict 发布移到 setup 之前，恰一次 → 两家顺序断言 `ordered("setup.fresh.2","evict.dirty-recreate")` 分别失败，setup 事件自 fix-r2 起带尝试序号）。
 
 
-#1122 fix-r2：`drain-cancelled-candidate-not-disposed` 保留原源码变异，但改绑 `#1122 pending candidate explicit disposal reason`。原测试只检查释放，#1010 的最后句柄 Drop 会以 `agent_handle_dropped` 清理，因而能掩盖显式 dispose 缺失。现在同一被点名测试保留真实取消重建格，再用真实工厂候选 + `PendingSession` + maintenance guard 检查显式 reason。guard/观察句柄阻止最后句柄 Drop；独占 current-thread runtime 直接 block_on，直到 reason 出现或存活任务数为零，不按固定 yield 次数猜调度。观察结果先保存、清理后断言；8 秒装置截止的消息不与判杀消息匹配。新增错误 reason 变异与新金样重生成变异。
+#1122 fix-r2：`drain-cancelled-candidate-not-disposed` 保留原源码变异，但改绑 `#1122 pending candidate explicit disposal reason`。原测试只检查释放，#1010 的最后句柄 Drop 会以 `agent_handle_dropped` 清理，因而能掩盖显式 dispose 缺失。现在同一被点名测试保留真实取消重建格，再用真实工厂候选 + `PendingSession` + maintenance guard 检查显式 reason。guard/观察句柄阻止最后句柄 Drop；current-thread runtime 直接 block_on，直到 reason 出现或本候选清理 future 的完成通道关闭。观察以 1ms sleep 让出 executor，不依赖全局任务数或固定 yield 次数。观察结果先保存、清理后断言；8 秒装置截止的消息不与判杀消息匹配。新增错误 reason 变异与新金样重生成变异。
 
 `cancelledDisposal` 由 Node v22.22.0 的真实 TS Router/Factory/AgentHandle 采集：加载暂停期间 shutdown 的候选 reason 为 `session_router_shutdown`，正常重建候选仍 active、没有 dispose reason；显式传入 `session_create_cancelled` 时 maintenance signal 与 listener 保留此 reason，并等待 held callback 归还后完成 dispose。TS Promise 没有 Rust future 的取消操作，**不声称 TS 自动使用 `session_create_cancelled`**。Rust 新子格只验证 PendingSession 交接与显式 reason，不声称真实未发布候选已经开始 maintenance。`cancelled_disposal_regenerates_identically` 为新增 ignored 守卫；生成器输出仍 recursive mkdir + 独占 wx 写入。
 
-本轮产品代码不变。源码负控的共享守卫检查整个 gateway `src/` 是否等于 HEAD，因此修改 `factory_tests.rs` 后也必须先由协调者提交，再在宿主运行下列三格（沿用上方环境变量、同一 target）：
+fix-r3 仅给 `PendingSession` 添加 `cfg(test)` 完成通知，非测试构建的产品行为不变。源码负控的共享守卫检查整个 gateway `src/` 是否等于 HEAD，因此修改 `factory_tests.rs` 后也必须先由协调者提交，再在宿主运行下列三格（沿用上方环境变量、同一 target）：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --compile "$OUT_COMPILE" drain-cancelled-candidate-not-disposed drain-cancelled-candidate-wrong-reason cancelled-disposal-regeneration
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py "$OUT_NEGATIVE" drain-cancelled-candidate-not-disposed drain-cancelled-candidate-wrong-reason cancelled-disposal-regeneration
+```
+
+#1122 fix-r3：观察 helper 的 8 秒截止必须以 `#1122 candidate observation executor settles` 失败；reason 永不出现且清理前驱永不完成的单测，用 20ms 截止捕获该精确 panic，并检查墙钟上界。另一单测覆盖 producer 完成/取消，保持一个无关 pending task 活跃，证明候选观察不依赖整个 runtime 静默。历史三格绑定不变；更正登记见 `A7.2-SESSION-DRAIN-FILE-STATE-001-R4.md`（未批）。
+
+新增 `r3-candidate-observation-deadline-accepted` 编译期开关负控（`PDRS_1122_ACCEPT_OBSERVATION_DEADLINE`，仅在测试 helper 中生效）：把观察超时错误当 None 返回，必须由 `runtime::session::factory::tests::pending_candidate_observer_missing_reason_fails_by_deadline` 在 `#1122 missing reason must fail by observation deadline` 失败。它复用现有执行器的 tree_lock/no-run/正控/负控/恢复正控流程，不原地改源码，也不放宽源码变异的 HEAD 守卫。单样本命令：
+
+```sh
+python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py "$OUT_DEADLINE" r3-candidate-observation-deadline-accepted
 ```

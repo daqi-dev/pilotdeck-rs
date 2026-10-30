@@ -151,6 +151,7 @@ cases = [
     ('drain-cancelled-candidate-not-disposed', factory, 'let _ = handle.dispose("session_create_cancelled".into()).await;', 'let _ = handle;', None, prefix+'cancelled_recreation_finishes_drain_and_candidate_cleanup', '#1122 pending candidate explicit disposal reason'),
     ('drain-cancelled-candidate-wrong-reason', factory, 'let _ = handle.dispose("session_create_cancelled".into()).await;', 'let _ = handle.dispose("agent_handle_dropped".into()).await;', None, prefix+'cancelled_recreation_finishes_drain_and_candidate_cleanup', '#1122 pending candidate explicit disposal reason'),
     ('cancelled-disposal-regeneration', oracle, '"candidateState": "active"', '"candidateState": "disposed"', None, prefix+'cancelled_disposal_regenerates_identically', '#280 session-factory/oracle.json differs'),
+    ('r3-candidate-observation-deadline-accepted', test_source, 'observed.expect("#1122 candidate observation executor settles")', 'observed.unwrap_or(None)', None, prefix+'pending_candidate_observer_missing_reason_fails_by_deadline', '#1122 missing reason must fail by observation deadline'),
     ('abort-session-cleanup-skipped', handle, 'if let Err(error) = session.dispose().await {', 'if let Err(error) = if failures.is_empty() { session.dispose().await } else { Ok(()) } {', None, prefix+'writer_abort_panic_releases_lease_before_session_dispose', '#1022 abort panic releases project resources with old handle retained'),
     ('followups-regeneration', oracle, '"name": "abort-throw",', '"name": "wrong-abort-throw",', None, prefix+'followups_regenerates_identically', '#280 session-factory/oracle.json differs'),
 
@@ -214,6 +215,7 @@ cases = [
 # Their before/after expressions above also let the ordinary anchor auditor
 # verify the exact source location. No source bytes are mutated for them.
 compile_switches = {
+    'r3-candidate-observation-deadline-accepted': 'PDRS_1122_ACCEPT_OBSERVATION_DEADLINE',
     'r3-owner-replays-drained-busy': 'PDRS_1022_R3_REPLAY_DRAINED_BUSY',
     'r3-idle-sweeps-pending-error': 'PDRS_1022_R3_SWEEP_PENDING_ERROR',
     '1020-stale-mark-removed': 'PDRS_1020_SKIP_STALE_MARK',
