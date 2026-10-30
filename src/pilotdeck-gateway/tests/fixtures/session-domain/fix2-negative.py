@@ -79,8 +79,16 @@ with scratch('fix2') as root:
         inner.recorder_domain = domain;
 '''
     assert section.count(block) == 1
-    section = section.replace(block, '').replace('        Ok(())', block + '        Ok(())')
-    adapter.write_text(original[:start] + section + original[end:])
+    # #1019 added begin_close / retire / check_retired between restore_entries
+    # and the next doc comment, so the section now holds several `Ok(())`
+    # lines; re-install the block before restore_entries' own terminator
+    # (after the hydrate loops), never before every `Ok(())` in the section.
+    without = section.replace(block, '')
+    hydrate = without.index('        // WebHistory reads')
+    terminator = without.index('        Ok(())', hydrate)
+    assert '\n    }\n' not in without[hydrate:terminator]
+    adapter.write_text(original[:start] + without[:terminator] + block
+                       + without[terminator:] + original[end:])
     test('install-state-after-hydrate', ADAPTER_TEST, env,
          'restore-message-assistant_message-content-string: steps', cwd=copied_src)
     # Subsequent positive controls read the original source and immutable goldens.
