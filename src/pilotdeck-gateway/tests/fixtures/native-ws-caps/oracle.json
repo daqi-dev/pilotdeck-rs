@@ -689,6 +689,64 @@
       "upgraded": 66,
       "closedTransports": 1
     },
+    "pendingRequests": {
+      "entered": 4,
+      "completed": 0,
+      "deliveredBytes": 4194304,
+      "buffered": 0,
+      "closed": false
+    },
+    "completedRequest": {
+      "completed": 1,
+      "pending": 3
+    },
+    "closedPendingRequests": {
+      "closed": true,
+      "completed": 1,
+      "pending": 3
+    },
+    "completedAfterClose": {
+      "completed": 4
+    },
+    "lossyText": [
+      {
+        "bytes": [
+          97,
+          255,
+          255,
+          98
+        ],
+        "text": "a��b",
+        "utf8Bytes": 8
+      },
+      {
+        "bytes": [
+          240,
+          159,
+          146
+        ],
+        "text": "�",
+        "utf8Bytes": 3
+      },
+      {
+        "bytes": [
+          226,
+          130,
+          172
+        ],
+        "text": "€",
+        "utf8Bytes": 3
+      },
+      {
+        "bytes": [
+          237,
+          160,
+          128
+        ],
+        "text": "���",
+        "utf8Bytes": 9
+      }
+    ],
     "pendingStop": {
       "closed": false,
       "pendingBuffered": 94371840

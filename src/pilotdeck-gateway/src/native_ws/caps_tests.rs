@@ -10,7 +10,7 @@ use crate::{
 };
 use pilotdeck_protocol::{JsString, JsValue};
 use serde_json::{Value, json};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::{sync::Notify, time::timeout};
 
 const DEADLINE: Duration = Duration::from_secs(5);
@@ -24,13 +24,19 @@ struct Requests {
     hold: AtomicBool,
     entered: Notify,
     release: Notify,
+    active: AtomicUsize,
 }
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
             if self.hold.load(Ordering::SeqCst) {
+                let released = self.release.notified();
+                tokio::pin!(released);
+                released.as_mut().enable();
+                self.active.fetch_add(1, Ordering::SeqCst);
                 self.entered.notify_one();
-                self.release.notified().await;
+                released.await;
+                self.active.fetch_sub(1, Ordering::SeqCst);
             }
             Ok(crate::metadata::object([("name", "caps".into())]))
         })
@@ -162,6 +168,33 @@ fn partial() -> Vec<u8> {
     header.extend_from_slice(&[1, 2, 3, 4]);
     header
 }
+fn hello() -> Value {
+    json!({"type":"hello","protocolVersion":"1.2","clientName":"ui","clientVersion":"p","token":"fixture-token"})
+}
+fn large_text(mut value: Value, length: usize) -> Vec<u8> {
+    value["padding"] = json!("");
+    let overhead = value.to_string().len();
+    assert!(length >= overhead, "#1079 large text has padding room");
+    value["padding"] = json!("x".repeat(length - overhead));
+    let payload = value.to_string();
+    assert_eq!(payload.len(), length, "#1079 exact complete payload length");
+    let mut wire = vec![0x81, 0xff];
+    wire.extend_from_slice(&(length as u64).to_be_bytes());
+    wire.extend_from_slice(&[0; 4]);
+    wire.extend_from_slice(payload.as_bytes());
+    wire
+}
+async fn active(requests: &Requests, count: usize) {
+    expect_ok(
+        timeout(DEADLINE, async {
+            while requests.active.load(Ordering::SeqCst) != count {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await,
+        "#1079 exact business admission barrier",
+    );
+}
 async fn finish(running: Running) {
     let _ = running.stop.send(());
     expect_ok(
@@ -203,6 +236,9 @@ fn baseline_observations() {
     }
     if crate::mutants::on("ws-caps-oracle-cancelled-stop") {
         oracle["observations"]["cancelledStop"] = Value::Null;
+    }
+    if crate::mutants::on("ws-caps-oracle-pending-requests") {
+        oracle["observations"]["pendingRequests"] = Value::Null;
     }
     let observed = &oracle["observations"];
     negative_assert_eq!(oracle["node"], "v22.22.0", "#1079 TS version");
@@ -249,6 +285,20 @@ fn baseline_observations() {
         observed["cancelledStop"],
         json!({"closed":true}),
         "#1079 TS stop after cancellation"
+    );
+    negative_assert_eq!(
+        json!([
+            observed["pendingRequests"],
+            observed["completedRequest"],
+            observed["closedPendingRequests"],
+            observed["completedAfterClose"]
+        ]),
+        json!([
+            {"entered":4,"completed":0,"deliveredBytes":4194304,"buffered":0,"closed":false},
+            {"completed":1,"pending":3}, {"closed":true,"completed":1,"pending":3},
+            {"completed":4}
+        ]),
+        "#1079 TS complete requests survive socket close until business completion"
     );
 }
 
@@ -476,7 +526,8 @@ async fn eof_releases_input_before_pending_business() {
     let running = start(2, 256, requests.clone()).await;
     let mut client = upgrade(running.address).await;
     let hello = json!({"type":"hello","protocolVersion":"1.2","clientName":"ui","clientVersion":"p","token":"fixture-token"});
-    write(&mut client, &small_frame(1, hello.to_string().as_bytes())).await;
+    let hello = hello.to_string();
+    write(&mut client, &small_frame(1, hello.as_bytes())).await;
     expect_ok(
         timeout(DEADLINE, requests.entered.notified()).await,
         "#1079 business predecessor entered",
@@ -484,14 +535,14 @@ async fn eof_releases_input_before_pending_business() {
     write(&mut client, &partial()).await;
     remaining(
         &running.input,
-        240,
+        240 - hello.len(),
         "#1079 pending business still reads input",
     )
     .await;
     drop(client);
     remaining(
         &running.input,
-        256,
+        256 - hello.len(),
         "#1079 EOF frees input before business drain",
     )
     .await;
@@ -508,6 +559,12 @@ async fn eof_releases_input_before_pending_business() {
         "#1079 pending predecessor does not block successor"
     );
     requests.release.notify_one();
+    remaining(
+        &running.input,
+        256,
+        "#1079 completed business returns input",
+    )
+    .await;
     drop(successor);
     remaining(
         &running.connections,
@@ -516,6 +573,233 @@ async fn eof_releases_input_before_pending_business() {
     )
     .await;
     finish(running).await;
+}
+
+#[tokio::test]
+async fn complete_large_requests_share_aggregate_budget() {
+    // Leave room for the contender's old 512 KiB + new 1 MiB decoder
+    // backing, but not for its additional ~1 MiB queued String.
+    const LIMIT: usize = 9 * 512 * 1024;
+    const PAYLOAD: usize = 1024 * 1024 - 14;
+    let requests = Arc::new(Requests::default());
+    requests.hold.store(true, Ordering::SeqCst);
+    let running = start(3, LIMIT, requests.clone()).await;
+    let mut first = upgrade(running.address).await;
+    write(&mut first, &large_text(hello(), PAYLOAD)).await;
+    active(&requests, 1).await;
+    for index in 1..3 {
+        write(
+            &mut first,
+            &large_text(
+                json!({"type":"request","id":index.to_string(),
+            "method":"describe_server","params":{}}),
+                PAYLOAD,
+            ),
+        )
+        .await;
+        active(&requests, index + 1).await;
+    }
+    // Ping is a decode-loop barrier: all three complete frames have left the
+    // decoder, yet their business jobs deliberately never finish before release.
+    write(&mut first, &small_frame(9, b"held")).await;
+    negative_assert_eq!(
+        read_frame(&mut first, "#1079 held requests allow ping").await,
+        (10, b"held".to_vec()),
+        "#1079 business suspension does not stop input"
+    );
+    negative_assert_eq!(
+        running.input.available_permits(),
+        LIMIT - 3 * PAYLOAD,
+        "#1079 complete requests retain aggregate charge"
+    );
+    let mut contender = upgrade(running.address).await;
+    write(&mut contender, &large_text(hello(), PAYLOAD)).await;
+    negative_assert_eq!(
+        read_frame(&mut contender, "#1079 pending aggregate rejects contender").await,
+        (
+            8,
+            [
+                1009u16.to_be_bytes().as_slice(),
+                b"aggregate input limit exceeded"
+            ]
+            .concat()
+        ),
+        "#1079 pending aggregate rejection uses close1009"
+    );
+    negative_assert_eq!(
+        requests.active.load(Ordering::SeqCst),
+        3,
+        "#1079 over-budget request never enters host"
+    );
+    remaining(
+        &running.input,
+        LIMIT - 3 * PAYLOAD,
+        "#1079 request rejection leaves predecessor leases",
+    )
+    .await;
+    requests.hold.store(false, Ordering::SeqCst);
+    requests.release.notify_waiters();
+    active(&requests, 0).await;
+    remaining(
+        &running.input,
+        LIMIT,
+        "#1079 completed requests refund aggregate budget",
+    )
+    .await;
+    drop(first);
+    drop(contender);
+    finish(running).await;
+}
+
+#[tokio::test]
+async fn completed_request_refunds_before_waiter_reap() {
+    let requests = Arc::new(Requests::default());
+    requests.hold.store(true, Ordering::SeqCst);
+    let host = native_ws_fixture(requests.clone());
+    let (text, _outgoing, _closing) = Text::channel();
+    let connection = host.connect(text, "fixture-token".into(), "probe".into());
+    let budget = Arc::new(Semaphore::new(512));
+    let (message, permit) = expect_some(
+        request_text(hello().to_string().as_bytes(), &budget),
+        "#1079 request text admitted",
+    );
+    let length = message.len();
+    let completion = expect_ok(
+        expect_ok(
+            timeout(
+                DEADLINE,
+                connection.enqueue_with_input_permit(message, Some(permit)),
+            )
+            .await,
+            "#1079 completion fixture admission deadline",
+        ),
+        "#1079 completion fixture admission",
+    );
+    active(&requests, 1).await;
+    negative_assert_eq!(
+        budget.available_permits(),
+        512 - length,
+        "#1079 host owns pending request lease"
+    );
+    requests.release.notify_one();
+    // Never poll completion before checking the host itself has refunded.
+    remaining(
+        &budget,
+        512,
+        "#1079 host completion refunds without waiter poll",
+    )
+    .await;
+    expect_ok(
+        expect_ok(
+            timeout(DEADLINE, completion).await,
+            "#1079 completed waiter deadline",
+        ),
+        "#1079 completed waiter succeeds",
+    );
+    expect_ok(
+        expect_ok(
+            timeout(DEADLINE, host.shutdown(DEADLINE)).await,
+            "#1079 completed host shutdown deadline",
+        ),
+        "#1079 completed host shuts down",
+    );
+}
+
+#[tokio::test]
+async fn pending_requests_release_on_shutdown_and_abort() {
+    for abort in [false, true] {
+        let requests = Arc::new(Requests::default());
+        requests.hold.store(true, Ordering::SeqCst);
+        let running = start(1, 512, requests.clone()).await;
+        let mut client = upgrade(running.address).await;
+        let message = hello().to_string();
+        write(&mut client, &small_frame(1, message.as_bytes())).await;
+        active(&requests, 1).await;
+        remaining(
+            &running.input,
+            512 - message.len(),
+            "#1079 cancellation fixture charged",
+        )
+        .await;
+        if abort {
+            running.task.abort();
+        } else {
+            let _ = running.stop.send(());
+        }
+        let result = expect_ok(
+            timeout(DEADLINE, running.task).await,
+            "#1079 pending server shutdown deadline",
+        );
+        if abort {
+            negative_assert!(
+                result.is_err_and(|error| error.is_cancelled()),
+                "#1079 pending run abort reported"
+            );
+        } else {
+            negative_assert!(
+                expect_ok(result, "#1079 pending shutdown join").is_err(),
+                "#1079 never completing business has bounded drain"
+            );
+        }
+        remaining(
+            &running.input,
+            512,
+            "#1079 cancelled host returns request input",
+        )
+        .await;
+        drop(client);
+    }
+}
+
+#[test]
+fn lossy_request_reservation_matches_node_bytes() {
+    let mut oracle: Value = serde_json::from_str(ORACLE).expect("#1079 lossy oracle JSON");
+    if crate::mutants::on("ws-caps-lossy-empty-samples") {
+        oracle["observations"]["lossyText"] = json!([]);
+    }
+    let samples = oracle["observations"]["lossyText"]
+        .as_array()
+        .expect("#1079 lossy samples");
+    negative_assert_eq!(
+        samples
+            .iter()
+            .map(|sample| sample["bytes"].clone())
+            .collect::<Vec<_>>(),
+        vec![
+            json!([97, 255, 255, 98]),
+            json!([240, 159, 146]),
+            json!([226, 130, 172]),
+            json!([237, 160, 128])
+        ],
+        "#1079 lossy oracle covers fixed valid and invalid sequences"
+    );
+    for sample in samples {
+        let payload: Vec<u8> = sample["bytes"]
+            .as_array()
+            .expect("#1079 lossy bytes")
+            .iter()
+            .map(|byte| byte.as_u64().expect("#1079 lossy byte integer") as u8)
+            .collect();
+        let expected = sample["text"].as_str().expect("#1079 lossy text");
+        let length = sample["utf8Bytes"].as_u64().expect("#1079 lossy length") as usize;
+        let budget = Arc::new(Semaphore::new(length));
+        let (text, permit) = expect_some(
+            request_text(&payload, &budget),
+            "#1079 exact lossy reservation admitted",
+        );
+        negative_assert_eq!(text, expected, "#1079 lossy conversion matches Node");
+        negative_assert_eq!(
+            budget.available_permits(),
+            0,
+            "#1079 lossy bytes charged after replacement"
+        );
+        drop(text);
+        drop(permit);
+        negative_assert!(
+            request_text(&payload, &Arc::new(Semaphore::new(length - 1))).is_none(),
+            "#1079 lossy over-budget rejected before allocation"
+        );
+    }
 }
 
 #[tokio::test]

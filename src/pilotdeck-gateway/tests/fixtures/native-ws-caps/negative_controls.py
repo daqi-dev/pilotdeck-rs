@@ -20,8 +20,20 @@ from _shared.mutant_switch import preflight, clean_environment, enforce_denomina
 
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_ws.rs'
 TESTS = ROOT / 'src/pilotdeck-gateway/src/native_ws/caps_tests.rs'
+HOST = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs'
+HOST_TESTS = HOST.with_name('gateway_tests.rs')
 PREFIX = 'native_ws::caps_tests::'
 switches = [
+    ('ws-caps-request-budget', SOURCE, PREFIX + 'complete_large_requests_share_aggregate_budget', '#1079 complete requests retain aggregate charge'),
+    ('ws-caps-request-close-code', SOURCE, PREFIX + 'complete_large_requests_share_aggregate_budget', '#1079 pending aggregate rejection uses close1009'),
+    ('ws-caps-request-lossy-length', SOURCE, PREFIX + 'lossy_request_reservation_matches_node_bytes', '#1079 lossy bytes charged after replacement'),
+    ('ws-caps-request-lossy-replacement', SOURCE, PREFIX + 'lossy_request_reservation_matches_node_bytes', '#1079 lossy conversion matches Node'),
+    ('ws-caps-lossy-empty-samples', TESTS, PREFIX + 'lossy_request_reservation_matches_node_bytes', '#1079 lossy oracle covers fixed valid and invalid sequences'),
+    ('ws-caps-early-request-refund', HOST, PREFIX + 'completed_request_refunds_before_waiter_reap', '#1079 host owns pending request lease'),
+    ('ws-caps-request-permit-leak', HOST, PREFIX + 'completed_request_refunds_before_waiter_reap', '#1079 host completion refunds without waiter poll'),
+    ('ws-caps-admission-request-refund', HOST, 'runtime::turn::gateway::tests::native_ws_queued_input_outlives_cancelled_admission_waiter', '#1079 queued job retains lease after admission waiter cancellation'),
+    ('ws-caps-cancel-request-leak', HOST, PREFIX + 'pending_requests_release_on_shutdown_and_abort', '#1079 cancelled host returns request input'),
+    ('ws-caps-oracle-pending-requests', TESTS, PREFIX + 'baseline_observations', '#1079 TS complete requests survive socket close until business completion'),
     ('ws-caps-default-connections', SOURCE, PREFIX + 'defaults_are_applied_to_bound_server', '#1079 default bind applies both resource limits'),
     ('ws-caps-default-input', SOURCE, PREFIX + 'defaults_are_applied_to_bound_server', '#1079 default bind applies both resource limits'),
     ('ws-caps-split-input-refund', SOURCE, PREFIX + 'split_backing_stays_charged_during_growth', '#1079 split growth includes original backing'),
@@ -55,7 +67,7 @@ def main():
     parser.add_argument('--compile-only', action='store_true')
     args = parser.parse_args()
     preflight([dict(name=n, path=p, test=t, anchor=a) for n, p, t, a in switches])
-    tests = TESTS.read_text()
+    tests = TESTS.read_text() + HOST_TESTS.read_text()
     for _, _, test, assertion in switches:
         if 'fn ' + test.split('::')[-1] + '(' not in tests or '"' + assertion + '"' not in tests:
             raise RuntimeError('#1079 stale test/assertion binding: ' + test)
@@ -74,8 +86,11 @@ def main():
                CARGO_PROFILE_TEST_DEBUG='line-tables-only')
     for key in ('CARGO_TERM_QUIET', ReceiptRun.ENV, ReceiptRun.PARENT_ENV):
         env.pop(key, None)
-    guarded = [SOURCE, TESTS, ROOT / 'src/pilotdeck-gateway/src/frame.rs',
-               ROOT / 'src/pilotdeck-gateway/src/mutants.rs']
+    guarded = [SOURCE, TESTS, HOST, HOST_TESTS, ROOT / 'src/pilotdeck-gateway/src/frame.rs',
+               ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
+               ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
+               FIXTURE.parent / 'negative_process.py', FIXTURE.parent / 'negative_suite.py',
+               FIXTURE.parent / '_shared/mutant_switch.py']
     guarded += [path for path in FIXTURE.iterdir() if path.is_file()]
     rows = []
 
