@@ -149,7 +149,7 @@ fn generator_command(
         .join(fixture);
     let node_flags: &[&str] = match fixture {
         "model-stream-google" => &["--stack-size=8192"],
-        "session-overrides" => &["--expose-gc"],
+        "session-overrides" | "session-drop-release" => &["--expose-gc"],
         _ => &[],
     };
     let extra_args = if fixture == "private-ca" {
