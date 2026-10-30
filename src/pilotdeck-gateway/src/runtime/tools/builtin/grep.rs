@@ -2069,6 +2069,16 @@ mod tests {
         fn start(threads: usize) -> Self {
             let stop = Arc::new(AtomicBool::new(false));
             let (sent, done) = std::sync::mpsc::channel();
+            // The guard value exists before the first thread starts, and
+            // counts the threads started so far: a `spawn` that panics
+            // mid-construction (#1125 fix-r2 review P2) unwinds into this
+            // `Drop`, which stops and reaps exactly the threads that did
+            // start, instead of leaking them past the failed construction.
+            let mut guard = Self {
+                stop: stop.clone(),
+                done,
+                threads: 0,
+            };
             for _ in 0..threads {
                 let stop = stop.clone();
                 let sent = sent.clone();
@@ -2087,12 +2097,9 @@ mod tests {
                     }
                     let _ = sent.send(());
                 });
+                guard.threads += 1;
             }
-            Self {
-                stop,
-                done,
-                threads,
-            }
+            guard
         }
     }
 
@@ -2108,7 +2115,13 @@ mod tests {
                     // A forker that died without reporting is gone with its
                     // sender either way; only a stuck one hits the timeout.
                     Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        // Silent residue was the very failure mode this
+                        // guard exists to prevent; say so and give up on the
+                        // stuck threads rather than hang the test binary.
+                        eprintln!("fork pressure threads did not stop within 30s; leaking them");
+                        return;
+                    }
                 }
             }
         }
