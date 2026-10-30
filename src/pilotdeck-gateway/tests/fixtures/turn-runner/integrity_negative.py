@@ -23,8 +23,12 @@ cases = [
     ('host-not-loop', live,
      'wire && *state == IntegrityState::Initial', '*state == IntegrityState::Initial',
      'observe_source', 'runtime::turn::live::tests::host_lifecycle_cannot_justify_a_sidecar_final', 'host status is not loop evidence'),
+    # #996-pr2 fix-r5: the migrated leak/prompt switches made the closure a
+    # multi-line if/else chain, which the scoped mutate() single-line rule
+    # rejects. Guard the whole any() head instead; a false predicate is the
+    # same mutant as any(|_| false) (host lifecycle kinds never match).
     ('host-lifecycle-leak', live,
-     '.iter().any(|kind| {\n            if crate::mutants::on("gates-sidecar-lifecycle-leak") {\n                false\n            } else if crate::mutants::on("tail-host-prompt-rejection") {\n                *kind != "user_prompt_submitted" && event_type.equals_str(kind)\n            } else {\n                event_type.equals_str(kind)\n            }\n        })', '.iter().any(|_| false)',
+     'if super::runner::host_lifecycle_events().iter().any(|kind| {', 'if false && super::runner::host_lifecycle_events().iter().any(|kind| {',
      'observe_source', 'runtime::turn::live::tests::host_lifecycle_cannot_justify_a_sidecar_final', 'host lifecycle leak must be rejected'),
     ('host-failure-not-loop', live,
      'current == IntegrityState::Failed && *self.wire_events.lock().unwrap() > 0', 'current == IntegrityState::Failed',

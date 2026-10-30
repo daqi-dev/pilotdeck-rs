@@ -23,8 +23,11 @@ mutations = [
     ('history-loop-only', 'accept', [('self.messages.extend(durable);', 'self.messages = durable;')]),
     ('status-required', 'loop_failed', [('if !self.failure_status {', 'if false {')]),
     ('status-dedup', 'loop_failed', [('if !self.failure_status {', 'if true {')]),
-    ('complete-durable', 'complete', [('self.io(move |r, s, t| r.complete_turn(s, t, written))', 'async { let _ = written; Ok::<(), RecorderError>(()) }')]),
-    ('catch-complete', 'fail_inner', [('self.io(move |r, s, t| r.complete_turn(s, t, written))', 'async { let _ = written; Ok::<(), RecorderError>(()) }')]),
+    # #996-pr2 fix-r5: the gates-skip-complete/-failure-complete switches split
+    # the old one-line self.io closure; anchor the durable write call itself.
+    # Dropping its arguments and returning Ok skips the same durable write.
+    ('complete-durable', 'complete', [('r.complete_turn(s, t, written)', '{ let _ = (r, s, t, written); Ok::<(), RecorderError>(()) }')]),
+    ('catch-complete', 'fail_inner', [('r.complete_turn(s, t, written)', '{ let _ = (r, s, t, written); Ok::<(), RecorderError>(()) }')]),
     ('terminal-mark', 'complete', [('self.phase = Phase::Completed;', 'self.phase = Phase::Accepted;')]),
     ('catch-terminal-mark', 'fail_inner', [('self.phase = Phase::Completed;', 'self.phase = Phase::Accepted;')]),
     ('worker-lease', 'io', [('drop(lease);', ''), ('let result = write(&recorder, &session, &turn);', 'drop(lease); let result = write(&recorder, &session, &turn);')]),
