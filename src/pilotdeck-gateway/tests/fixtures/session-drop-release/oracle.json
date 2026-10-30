@@ -680,6 +680,28 @@
         "stateAtExit": "draining",
         "onDisposeRan": false
       }
+    },
+    {
+      "name": "process-exit-release-pending",
+      "node": "v22.22.0",
+      "observations": {
+        "childExit": 7,
+        "stateAtExit": "draining",
+        "onDisposeRan": true,
+        "releaseCalls": 0,
+        "closeCalls": 0
+      }
+    },
+    {
+      "name": "process-exit-close-pending",
+      "node": "v22.22.0",
+      "observations": {
+        "childExit": 7,
+        "stateAtExit": "draining",
+        "onDisposeRan": true,
+        "releaseCalls": 1,
+        "closeCalls": 0
+      }
     }
   ]
 }

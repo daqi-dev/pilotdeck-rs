@@ -143,6 +143,10 @@ pub struct PluginCommandCatalogLease {
     pub(crate) released: bool,
     pub(super) release_receiver: Option<super::DisposalReceiver>,
     pub(crate) waiters: std::sync::Arc<Notify>,
+    /// #1010: leases can outlive the acquiring task and move to a thread
+    /// without an ambient runtime. Capture while acquiring; async Drop
+    /// cleanup runs only while this executor remains alive.
+    pub(super) executor: tokio::runtime::Handle,
 }
 
 impl PluginCommandCatalogLease {
@@ -168,7 +172,7 @@ impl Drop for PluginCommandCatalogLease {
             let state_clone = std::sync::Arc::clone(&self.state);
             let waiters_clone = std::sync::Arc::clone(&self.waiters);
             let plugins_clone = self.plugins.clone();
-            tokio::spawn(async move {
+            self.executor.spawn(async move {
                 let _ = release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;
             });
         }
@@ -184,6 +188,8 @@ pub struct PluginSessionContributionLease {
     pub(crate) released: bool,
     pub(super) release_receiver: Option<super::DisposalReceiver>,
     pub(crate) waiters: std::sync::Arc<Notify>,
+    /// #1010: see PluginCommandCatalogLease.
+    pub(super) executor: tokio::runtime::Handle,
 }
 
 impl PluginSessionContributionLease {
@@ -207,7 +213,7 @@ impl Drop for PluginSessionContributionLease {
             let state_clone = std::sync::Arc::clone(&self.state);
             let waiters_clone = std::sync::Arc::clone(&self.waiters);
             let plugins_clone = self.plugins.clone();
-            tokio::spawn(async move {
+            self.executor.spawn(async move {
                 let _ = release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;
             });
         }
@@ -223,6 +229,8 @@ pub struct PluginContributionLease {
     pub(crate) released: bool,
     pub(super) release_receiver: Option<super::DisposalReceiver>,
     pub(crate) waiters: std::sync::Arc<Notify>,
+    /// #1010: see PluginCommandCatalogLease.
+    pub(super) executor: tokio::runtime::Handle,
 }
 
 impl PluginContributionLease {
@@ -246,7 +254,7 @@ impl Drop for PluginContributionLease {
             let state_clone = std::sync::Arc::clone(&self.state);
             let waiters_clone = std::sync::Arc::clone(&self.waiters);
             let plugins_clone = self.plugins.clone();
-            tokio::spawn(async move {
+            self.executor.spawn(async move {
                 let _ = release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;
             });
         }

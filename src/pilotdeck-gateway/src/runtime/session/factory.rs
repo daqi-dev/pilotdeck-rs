@@ -915,6 +915,9 @@ impl PendingSession {
         }
     }
 }
+// The captured executor may already be shut down. Tokio then drops the
+// unpolled future and its handle; Inner::drop owns the runtime-free writer
+// fallback. #1010 pending_owned_session_* exercises both shutdown orderings.
 impl Drop for PendingSession {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {

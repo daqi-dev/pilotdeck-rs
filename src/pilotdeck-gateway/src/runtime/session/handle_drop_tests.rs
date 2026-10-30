@@ -35,7 +35,7 @@ impl LiveSession for DropProbe {
     fn abort(&self, reason: &JsString) -> RuntimeResult {
         self.aborts
             .lock()
-            .unwrap()
+            .expect("#1010 abort observations lock")
             .push(reason.to_utf8().expect("#1010 abort reason"));
         Ok(())
     }
@@ -65,7 +65,11 @@ async fn dropped_handle_runs_session_dispose_once() {
         "#1010 drop runs session.dispose() exactly once"
     );
     assert!(
-        session.aborts.lock().unwrap().is_empty(),
+        session
+            .aborts
+            .lock()
+            .expect("#1010 abort observations lock")
+            .is_empty(),
         "#1010 no in-flight activity: drop must not abort the session"
     );
     assert_eq!(
@@ -123,7 +127,10 @@ async fn explicit_dispose_from_plain_thread_uses_captured_executor() {
         "#1010 explicit off-runtime dispose runs once"
     );
     assert_eq!(
-        *session.aborts.lock().unwrap(),
+        *session
+            .aborts
+            .lock()
+            .expect("#1010 abort observations lock"),
         vec!["external-dispose"],
         "#1010 the dispose reason reaches session.abort on the off-runtime thread"
     );
@@ -169,7 +176,11 @@ async fn dropped_handle_without_runtime_lands_writer_fallback() {
         "#1010 async dispose hooks need a live runtime (TS process-exit parity)"
     );
     assert!(
-        session.aborts.lock().unwrap().is_empty(),
+        session
+            .aborts
+            .lock()
+            .expect("#1010 abort observations lock")
+            .is_empty(),
         "#1010 no runtime to run the drain abort in"
     );
 }
@@ -225,7 +236,10 @@ async fn drop_during_inflight_dispose_does_not_restart() {
         "#1010 drop during in-flight dispose must not restart it"
     );
     assert_eq!(
-        *session.aborts.lock().unwrap(),
+        *session
+            .aborts
+            .lock()
+            .expect("#1010 abort observations lock"),
         vec!["in-flight-dispose"],
         "#1010 the drop adds no second abort reason"
     );
@@ -304,7 +318,7 @@ fn drop_release_matches_ts() {
     let cases = oracle["cases"]
         .as_array()
         .expect("#1010 drop-release case rows");
-    assert_eq!(cases.len(), 3, "#1010 drop-release denominator");
+    assert_eq!(cases.len(), 5, "#1010 drop-release denominator");
     for row in cases {
         let name = row["name"].as_str().expect("#1010 case name");
         assert_eq!(row["node"], "v22.22.0", "#1010 {name} node oracle");
@@ -332,6 +346,32 @@ fn drop_release_matches_ts() {
         waiter["onDisposeCalls"], 1,
         "#1010 abandoned-waiter cleanup still ran"
     );
+    for (name, release_calls) in [
+        ("process-exit-release-pending", 0),
+        ("process-exit-close-pending", 1),
+    ] {
+        let observation = &case(name)["observations"];
+        assert_eq!(
+            observation["childExit"], 7,
+            "#1010 cleanup stage child exit"
+        );
+        assert_eq!(
+            observation["stateAtExit"], "draining",
+            "#1010 cleanup remains draining at exit"
+        );
+        assert_eq!(
+            observation["onDisposeRan"], true,
+            "#1010 cleanup reached the stage gate"
+        );
+        assert_eq!(
+            observation["releaseCalls"], release_calls,
+            "#1010 TS release completion count"
+        );
+        assert_eq!(
+            observation["closeCalls"], 0,
+            "#1010 TS parked close never completes"
+        );
+    }
     // cells 3/8: process.exit() is the TS equivalent of a vanished runtime;
     // the sync cutoff crossed but the async cleanup did not land.
     let exit = case("process-exit")["observations"].clone();
@@ -341,4 +381,63 @@ fn drop_release_matches_ts() {
         exit["onDisposeRan"], false,
         "#1010 process-exit skipped the pending async cleanup"
     );
+}
+
+#[test]
+#[ignore = "requires the pinned Node v22.22.0 TS baseline"]
+fn drop_release_preserves_unrelated_out_files() {
+    let baseline = std::path::PathBuf::from(
+        std::env::var_os("PDRS_BASELINE").expect("#1010 preservation requires PDRS_BASELINE"),
+    );
+    let output = std::env::temp_dir().join(format!("pdrs-1010-preserve-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(output.join("work-process-exit"))
+        .expect("#1010 preservation seed directory");
+    let keep = output.join("work-process-exit/keep.txt");
+    std::fs::write(&keep, b"#1010 original evidence").expect("#1010 preservation seed file");
+    for oracle_exists in [false, true] {
+        let original_oracle = std::fs::read(output.join("oracle.json")).ok();
+        let mut command = crate::test_baseline::node_command();
+        command
+            .args([
+                "--disable-warning=ExperimentalWarning",
+                "--expose-gc",
+                "--import",
+            ])
+            .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
+            .arg(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/session-drop-release/generate.mts"),
+            )
+            .arg(&output)
+            .env("PDRS_BASELINE", &baseline);
+        let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
+            &mut command,
+            "session-drop-release",
+            Duration::from_secs(90),
+        )
+        .expect("#1010 preservation generator completed within its bound");
+        println!(
+            "#1010 preservation existing_oracle={oracle_exists} status={status}\n{}{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
+        assert_eq!(
+            std::fs::read(&keep).ok().as_deref(),
+            Some(b"#1010 original evidence".as_slice()),
+            "#1010 generator preserves existing work-process-exit bytes"
+        );
+        assert_eq!(
+            status.success(),
+            !oracle_exists,
+            "#1010 generator respects exclusive oracle creation"
+        );
+        if let Some(original) = original_oracle {
+            assert_eq!(
+                std::fs::read(output.join("oracle.json")).expect("#1010 existing oracle readable"),
+                original,
+                "#1010 generator preserves existing oracle bytes"
+            );
+        }
+    }
+    std::fs::remove_dir_all(output).expect("#1010 remove owned preservation scratch");
 }
