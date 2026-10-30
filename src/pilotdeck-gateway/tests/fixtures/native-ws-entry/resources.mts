@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import {EventEmitter, once} from 'node:events';
 import {connect} from 'node:net';
+import {Writable} from 'node:stream';
+import {createHash} from 'node:crypto';
 
-const RFC6455_SAMPLE_NONCE = 'dGhlIHNhbXBsZSBub25jZQ==';
+import {RFC6455_SAMPLE_NONCE} from './sample.mts';
 
-// Real TS transport with deterministic data/write boundaries; no huge payload
-// allocations. The real TCP probe below separately checks half-close behavior.
+// Real TS transport with deterministic data/write boundaries. The real TCP probe below separately checks half-close behavior.
 export async function resourceObservations(websocket:any, startGatewayServer:any, sockets:any[], connection:any) {
   class SocketProbe extends EventEmitter {
     writes: Buffer[] = [];
@@ -25,6 +26,33 @@ export async function resourceObservations(websocket:any, startGatewayServer:any
     socket.emit('data', header);
     observations[String(size)] = {messages, buffered: text.buffer.length, writes: socket.writes.length, ends: socket.ends};
   }
+  observations.largeOutput = [];
+  for (const size of [2 * 1024 * 1024, 100 * 1024 * 1024]) {
+    const socket = new SocketProbe();
+    const transport = new websocket.TextWebSocketConnection(socket);
+    transport.sendText('x'.repeat(size));
+    assert.equal(socket.writes.length, 1, '#749 TS large text emits one frame');
+    const wire = socket.writes[0];
+    observations.largeOutput.push({size, opcode:wire[0] & 15,
+      declared:Number(wire.readBigUInt64BE(2)), wireBytes:wire.length,
+      sha256:createHash('sha256').update(wire.subarray(10)).digest('hex'), ends:socket.ends});
+  }
+  // A real Writable with a held first _write callback gives an exact backlog.
+  // Node's end/finish is the same stream lifecycle used by net.Socket.
+  let release!:()=>void;
+  let completed = 0;
+  const queued = new Writable({write(_chunk, _encoding, callback) {
+    if (completed === 0) {completed++; release=()=>callback();}
+    else {completed++; callback();}
+  }});
+  const queuedText = new websocket.TextWebSocketConnection(queued);
+  for (let i=0;i<64;i++) queuedText.sendText('queued');
+  const finished = once(queued, 'finish');
+  queued.end();
+  const before = {completed, finished:queued.writableFinished};
+  release(); await finished;
+  observations.fullQueueEnd = {before, completed, finished:queued.writableFinished,
+    destroyed:queued.destroyed};
   const slow = new SocketProbe();
   const text = new websocket.TextWebSocketConnection(slow);
   for (let i = 0; i < 64; i++) text.sendText('slow');

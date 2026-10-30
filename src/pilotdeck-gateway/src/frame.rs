@@ -1,6 +1,9 @@
 //! Retain the original wire, including nonminimal lengths, FIN/RSV and mask key.
 use bytes::{Bytes, BytesMut};
 
+pub(crate) const MAX_CLIENT_HEADER_BYTES: usize = 14;
+pub(crate) const MAX_SERVER_HEADER_BYTES: usize = 10;
+
 const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
 #[derive(Debug)]
@@ -114,6 +117,9 @@ pub(crate) fn server_frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
             wire.extend_from_slice(&(payload.len() as u64).to_be_bytes());
         }
     }
+    if crate::mutants::on("native-ws-server-header-budget") {
+        wire.push(0);
+    }
     wire.extend_from_slice(payload);
     wire
 }
@@ -125,6 +131,9 @@ pub(crate) fn client_frame(first: u8, length_code: u8, payload: &[u8]) -> Vec<u8
         126 => wire.extend_from_slice(&(payload.len() as u16).to_be_bytes()),
         127 => wire.extend_from_slice(&(payload.len() as u64).to_be_bytes()),
         _ => assert_eq!(usize::from(length_code), payload.len()),
+    }
+    if crate::mutants::on("native-ws-client-header-budget") {
+        wire.push(0);
     }
     let mask = [1, 2, 3, 4];
     wire.extend_from_slice(&mask);

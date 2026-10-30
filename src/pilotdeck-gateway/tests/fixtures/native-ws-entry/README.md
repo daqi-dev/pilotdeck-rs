@@ -18,4 +18,8 @@
 
 `resources.mts` 的真实 TS 探针证明该入口用自写 WS，不是 ws WebSocketServer；100MiB+1/1TiB 长度头均等待，无 1009；write(false) 后继续写；实际 GatewayServer 的 cork 写前驱遇客户端 FIN 仍阻塞 close，destroy 后结束。65 个 held requests 同时准入。原始记录见 fix-r1 RESULT。
 
-本单按用户安全要求限制原生入口：payload 100MiB（缓冲另容14字节头）、输出64个等待槽（另最多1帧在写）/1MiB（包括在写帧的保守10字节头预算）、在途请求64项。输出/请求超限强制关闭，不保证发送关闭帧；入站超限1009。首次 close/EOF 后1秒同时限制读写，保护业务前驱挂起时的 socket 回收。差异登记 `A7.2-NATIVE-WS-RESOURCE-001.md`；既有 `regenerates_identically` 同时覆盖新增 observations，无新增 clock/PID mask。
+资源数值、范围及未批准状态统一见 `specs/gateway-parity/diffs/A7.2-NATIVE-WS-RESOURCE-001-R1.md`（原条目保留）。fix-r2 的真实 TS 大文本探针覆盖2MiB与100MiB，记录完整文本帧长度和SHA256；`fullQueueEnd` 使用真实TS sendText与Node Writable的确定性回调前驱验证排队后正常end，已有真实TCP探针仍覆盖永不释放/取消两格。
+
+Rust输出预算覆盖上述合法单帧，并独占预留Close/End槽；字节或数据槽耗尽后排入1009，非读对端仍有关闭期限。`read_capacity` 的饱和分支正控是明确的防御状态注入，合法满帧被消费的反例由 `exact_input_frame_is_consumed_before_next_read` 单列。头预算以 `frame.rs` 常量为正本，与真实编码器头长比对并配两项变异。旧字节permit泄漏负控改绑直接检查写后释放，避免预算增大削弱检出。
+
+本轮负控表共39项（新增7项）；逐项编译、仅一个runtime样本在本会话执行，其余由协调者宿主全量。源码不原地变异，故继续使用tree_lock/record_sources，未引入自写快照恢复器。

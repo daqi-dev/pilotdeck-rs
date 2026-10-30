@@ -723,6 +723,33 @@
         "writes": 0,
         "ends": 0
       },
+      "largeOutput": [
+        {
+          "size": 2097152,
+          "opcode": 1,
+          "declared": 2097152,
+          "wireBytes": 2097162,
+          "sha256": "6932fd31e5daf4739b9fa78ff777b2831b0995cc1d0b0093cac80601902013bc",
+          "ends": 0
+        },
+        {
+          "size": 104857600,
+          "opcode": 1,
+          "declared": 104857600,
+          "wireBytes": 104857610,
+          "sha256": "5b05b298e974f3b9e40f0a1a8188f50984a4f18fb329e050324296632d3d9dfc",
+          "ends": 0
+        }
+      ],
+      "fullQueueEnd": {
+        "before": {
+          "completed": 1,
+          "finished": false
+        },
+        "completed": 64,
+        "finished": true,
+        "destroyed": true
+      },
       "writeFalse": {
         "writes": 65,
         "ends": 1,
