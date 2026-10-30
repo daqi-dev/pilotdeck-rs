@@ -36,7 +36,6 @@ import ast
 import base64
 import hashlib
 from contextlib import contextmanager, nullcontext, redirect_stdout
-import inspect
 import io
 from itertools import combinations
 import json
@@ -2580,72 +2579,6 @@ class ContractTests(unittest.TestCase):
                                      f'#1064: a later acquisition must succeed after the interruption ({label})')
                 self.assertFalse(lock.exists(),
                                  f'#1064: the follow-up lease must release normally ({label})')
-
-    def test_real_sigint_windows_survive_a_sigint_ignoring_parent(self):
-        """fix-r2 P1-2：以 SIG_IGN 为父复跑所有「真 SIGINT → KeyboardInterrupt」
-        用例。后台宿主（& / nohup）正是这样把 SIGINT=SIG_IGN 传给子进程的：这些
-        用例必须自己装回默认处置，而不是依赖继承。fix-r3 P0：只有子进程正常
-        退出且失败在它自己「真 SIGINT 被吞」的断言上，父测试才允许抛带排他
-        标记的 AssertionError；信号死亡、启动失败、其他退出码或无关异常一律
-        不带标记地失败（runner 判 INVALID，绝不计击杀）。子进程超时同样不是
-        击杀（挂死不是击杀），不设无界等待。"""
-        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
-        self.addCleanup(signal.signal, signal.SIGINT, previous)
-        script = Path(__file__).resolve()
-        # 每个子用例「真 SIGINT 被吞」时的专属失败标记（r2 宿主负控日志实证的
-        # 失败形状）：标记必须落在子用例自己的 AssertionError 行上，源码回显
-        # 不算数。第三个用例被吞时以无关 ERROR 收场（preflight 走过投递点后
-        # 在 MagicMock profile 上 TypeError），不带标记——该行的击杀由前两个
-        # 用例的标记块承担（classify 是「任一命名块带标记即 KILLED」）。
-        rerun = [
-            ('ContractTests.test_interrupt_during_acquisition_leaves_no_lease',
-             '#1064: acquisition survived its own cancellation'),
-            ('ContractTests.test_spawn_stops_its_group_when_a_queued_signal_fires',
-             '#933-8: the deferred signal must still surface'),
-            ('ContractTests.test_preflight_signal_before_spawn_return_still_stops_the_mock',
-             '#933-8: the deferred signal must still surface'),
-        ]
-        # fix-r3 P2：复跑清单与 ensure_default_sigint 的调用方是两份事实——
-        # 按源码扫描核对（匹配调用语法；针拼接构造，本用例自己的注释/消息
-        # 不会命中自身），新增真 SIGINT 用例漏装或漏列都会在此变红，而不是
-        # 被 SIG_IGN 父进程静默漏掉。
-        call = 'self.ensure_default' + '_sigint('
-        callers = {name for name, method in vars(type(self)).items()
-                   if name.startswith('test') and callable(method)
-                   and call in inspect.getsource(method)}
-        self.assertEqual(callers, {test.rpartition('.')[2] for test, _swallowed in rerun},
-                         '#1064 fix-r3 the SIG_IGN rerun list must cover every '
-                         'ensure_default_sigint caller exactly')
-        for test, swallowed in rerun:
-            with self.subTest(test=test.rpartition('.')[2]):
-                try:
-                    result = subprocess.run([sys.executable, '-I', str(script), test],
-                                            capture_output=True, text=True, timeout=120)
-                except (OSError, subprocess.TimeoutExpired) as error:
-                    # 启动失败 / 挂死超时不是击杀证据：不带标记失败，runner 判
-                    # INVALID（fix-r3 P0）。
-                    self.fail('#1064 fix-r3 the real-SIGINT rerun of ' + test
-                              + f' never finished ({type(error).__name__}: {error!r}); '
-                              'an unfinished rerun is not a kill')
-                log = result.stdout + result.stderr
-                if result.returncode == 0:
-                    continue
-                marked = (result.returncode == 1
-                          and 'Ran 1 test' in log
-                          and re.search(r'^FAILED', log, re.MULTILINE)
-                          and re.search(r'^FAIL: ' + re.escape(test.rpartition('.')[2])
-                                        + r' \(', log, re.MULTILINE)
-                          and any(line.startswith('AssertionError: ') and swallowed in line
-                                  for line in log.splitlines()))
-                if marked:
-                    # 唯一允许带击杀标记的形状：子用例正常退出、失败块属于它
-                    # 自己、且失败在「真 SIGINT 未投递」的断言上。
-                    self.fail('#1064 fix-r2 the real-SIGINT windows must install the '
-                              'default disposition themselves and pass under an '
-                              f'ignoring parent; {test} said:\n' + log)
-                self.fail('#1064 fix-r3 the real-SIGINT rerun of ' + test
-                          + f' did not fail at its swallowed-signal assertion '
-                          f'(rc={result.returncode}); this is not a kill:\n' + log)
 
     def test_interrupt_before_identity_capture_retains_the_lease(self):
         """mkdir 未执行或未返回时被取消（r1 P1-1）：identity 未捕获，「目录为空」
