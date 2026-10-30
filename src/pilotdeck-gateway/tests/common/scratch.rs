@@ -16,12 +16,24 @@
 use std::{
     fs, io,
     path::{Component, Path, PathBuf},
+    process,
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
 };
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-const OWNER_FILE: &str = ".pdrs-scratch-owner";
+pub(crate) const OWNER_FILE: &str = ".pdrs-scratch-owner";
+
+/// How long the helper below may take to drain the body and exit (#1125
+/// fix-r2 review P2): the write end of its stdin pipe can be inherited by a
+/// sibling fork that stalls before its own exec, so EOF may never arrive.
+const HELPER_DEADLINE: Duration = Duration::from_secs(30);
+
+/// Reap the helper at this granularity once its deadline is running.
+const HELPER_POLL: Duration = Duration::from_millis(5);
 
 pub(crate) struct Scratch {
     path: PathBuf,
@@ -69,40 +81,105 @@ impl Drop for Scratch {
 /// pressured iterations). Instead the body is piped to a
 /// `/bin/sh -c 'cat >"$tmp"'` helper child: the write descriptor exists
 /// only inside that helper, no fork of this process can inherit it, and
-/// the `wait` below reaps the helper before `chmod` + `rename` publish
-/// the file, so when this returns no process anywhere still holds it open
-/// for writing (cb8 probe: 0 ETXTBSY in 300 pressured iterations).
+/// the bounded wait below reaps the helper before `chmod` + `rename`
+/// publish the file, so when this returns no process anywhere still holds
+/// it open for writing (cb8 probe: 0 ETXTBSY in 300 pressured iterations).
 ///
 /// `mode` is applied to the temporary name before the rename, so the target
 /// name never exists in a non-executable state, and every error exit after
 /// the helper created the file removes the temporary name again.
+///
+/// Every wait on the helper is bounded by `HELPER_DEADLINE` (#1125 fix-r2
+/// review P2): the write end of its stdin pipe can be inherited by a
+/// sibling fork that stalls before its own exec, so `cat` may never see
+/// EOF. Past the deadline the helper is killed and reaped, the temporary
+/// name is removed, and the failure is returned as `ErrorKind::TimedOut`.
 pub(crate) fn write_executable(path: &Path, body: &str, mode: u32) -> io::Result<()> {
+    write_executable_bounded(path, body, mode, HELPER_DEADLINE, |temporary| {
+        let mut helper = process::Command::new("/bin/sh");
+        helper
+            .arg("-c")
+            .arg("cat >\"$1\"")
+            .arg("write-executable")
+            .arg(temporary)
+            .stdin(process::Stdio::piped());
+        helper
+    })
+}
+
+/// The deadline-parameterized core of [`write_executable`]: `build_helper`
+/// receives the temporary name it must pipe the body into, so a test can
+/// substitute a helper that stalls deterministically (#1125 fix-r2 review
+/// P2 asked for exactly that coverage).
+pub(crate) fn write_executable_bounded(
+    path: &Path,
+    body: &str,
+    mode: u32,
+    deadline: Duration,
+    build_helper: impl FnOnce(&Path) -> process::Command,
+) -> io::Result<()> {
     let name = path
         .file_name()
         .expect("#1125 executable file name")
         .to_string_lossy();
     let temporary = path.with_file_name(format!("{name}.tmp-{}", uuid::Uuid::new_v4()));
-    let mut helper = std::process::Command::new("/bin/sh")
-        .arg("-c")
-        .arg("cat >\"$1\"")
-        .arg("write-executable")
-        .arg(&temporary)
-        .stdin(std::process::Stdio::piped())
-        .spawn()?;
+    let mut helper = build_helper(&temporary).spawn()?;
+    // The body is written from a short-lived thread that owns the pipe's
+    // write end: the parent's copy is closed — and reported — before the
+    // bounded wait below starts, and a helper that never reads cannot
+    // wedge this thread in an unbounded in-process write.
     let mut stdin = helper.stdin.take().expect("#1125 helper stdin is piped");
-    let written = io::Write::write_all(&mut stdin, body.as_bytes());
-    // Close the pipe so `cat` sees EOF and exits; a broken pipe is reported
-    // by `written`, never by hanging on the helper.
-    drop(stdin);
-    let waited = helper.wait().and_then(|status| {
-        if status.success() {
-            Ok(())
-        } else {
-            Err(io::Error::other(format!(
-                "#1125 helper sh exited with {status}"
-            )))
-        }
+    let (sent, done) = mpsc::channel();
+    let payload = body.as_bytes().to_vec();
+    thread::spawn(move || {
+        // Close the pipe so `cat` sees EOF and exits; a broken pipe is
+        // reported by `written`, never by hanging on the helper.
+        let written = io::Write::write_all(&mut stdin, &payload);
+        drop(stdin);
+        let _ = sent.send(written);
     });
+    let expiry = Instant::now() + deadline;
+    let mut exceeded = false;
+    let written = match done.recv_timeout(expiry.saturating_duration_since(Instant::now())) {
+        Ok(written) => written,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            exceeded = true;
+            Err(helper_deadline_error(deadline))
+        }
+        // The writer thread can only end without reporting by panicking,
+        // which still drops the pipe's write end; success is never assumed.
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::other(
+            "#1125 helper writer ended without reporting",
+        )),
+    };
+    let waited = if exceeded {
+        Err(helper_deadline_error(deadline))
+    } else {
+        loop {
+            match helper.try_wait() {
+                Ok(Some(status)) if status.success() => break Ok(()),
+                Ok(Some(status)) => {
+                    break Err(io::Error::other(format!(
+                        "#1125 helper sh for {} exited with {status}",
+                        temporary.display()
+                    )));
+                }
+                Ok(None) if Instant::now() < expiry => thread::sleep(HELPER_POLL),
+                Ok(None) => {
+                    exceeded = true;
+                    break Err(helper_deadline_error(deadline));
+                }
+                Err(error) => break Err(error),
+            }
+        }
+    };
+    if exceeded {
+        // The helper cannot be waited out: terminate and reap it so no
+        // process keeps running in this test's name, then fall through to
+        // the temporary-name cleanup below.
+        let _ = helper.kill();
+        let _ = helper.wait();
+    }
     let published = written.and(waited).and_then(|()| {
         #[cfg(unix)]
         fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))?;
@@ -116,6 +193,13 @@ pub(crate) fn write_executable(path: &Path, body: &str, mode: u32) -> io::Result
         let _ = fs::remove_file(&temporary);
     }
     published
+}
+
+fn helper_deadline_error(deadline: Duration) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::TimedOut,
+        format!("#1125 helper did not finish within its {deadline:?} deadline"),
+    )
 }
 
 /// Lexical ownership check: every delete may only target the per-run tree that
@@ -175,39 +259,4 @@ pub(crate) fn remove_owned(root: &Path, path: &Path, recursive: bool) -> io::Res
             fs::remove_file(path)
         }
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// #1125 fix-r1 review P2: a publication that fails after the helper
-    /// created the temporary name must remove it again, so a failed
-    /// `write_executable` leaves no `.tmp-` residue behind.
-    #[test]
-    fn failed_publication_removes_the_temporary_name() {
-        let scratch = Scratch::new("write-executable");
-        // Renaming a file onto an existing directory fails, so the helper's
-        // write succeeds while the publication does not.
-        let target = scratch.path().join("occupied");
-        fs::create_dir(&target).expect("#1125 create occupied dir");
-        let error = write_executable(&target, "#!/bin/sh\n", 0o755)
-            .expect_err("#1125 publication must fail onto a directory");
-        assert_ne!(
-            error.kind(),
-            io::ErrorKind::NotFound,
-            "#1125 failure must come from the rename, not a missing path: {error}"
-        );
-        let mut names: Vec<_> = fs::read_dir(scratch.path())
-            .expect("#1125 read scratch directory")
-            .map(|entry| entry.expect("#1125 scratch entry").file_name())
-            .collect();
-        names.sort();
-        // Only the owner token and the occupied directory may remain.
-        let expected: Vec<std::ffi::OsString> = vec![OWNER_FILE.into(), "occupied".into()];
-        assert_eq!(
-            names, expected,
-            "#1125 temp residue after failed publication"
-        );
-    }
 }

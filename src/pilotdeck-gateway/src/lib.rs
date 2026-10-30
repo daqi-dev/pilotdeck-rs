@@ -63,6 +63,8 @@ mod test_process;
 #[cfg(test)]
 #[path = "../tests/common/scratch.rs"]
 mod test_scratch;
+#[cfg(test)]
+mod test_scratch_publication;
 #[cfg(all(test, unix))]
 #[path = "../tests/common/write_stage.rs"]
 mod test_write_stage;
