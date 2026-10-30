@@ -22,59 +22,14 @@ pub enum Failure {
     Todo(&'static str),
 }
 
-// Reindent bytes from the JS codec, preserving property order, number spelling,
-// lone surrogates and all whitespace inside strings. Callers own codec errors
-// and the policy for values without a JSON representation.
+// The String form of the reindentation in write_json_pretty_into, its bytes
+// collected in memory. One implementation only (#983 fix-r11): sessions list
+// and settings stream through the writer directly, so a second copy of the
+// indent/escape logic here could drift unmutated past the negative controls.
 fn json_pretty(raw: &str) -> String {
-    let mut chars = raw.chars().peekable();
-    let mut output = String::new();
-    let (mut depth, mut quoted, mut escaped) = (0usize, false, false);
-    let newline = |output: &mut String, depth| {
-        output.push('\n');
-        output.push_str(&"  ".repeat(depth));
-    };
-    while let Some(ch) = chars.next() {
-        if quoted {
-            output.push(ch);
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                quoted = false;
-            }
-            continue;
-        }
-        match ch {
-            '"' => {
-                quoted = true;
-                output.push(ch);
-            }
-            '{' | '[' => {
-                output.push(ch);
-                let close = if ch == '{' { '}' } else { ']' };
-                if chars.peek() == Some(&close) {
-                    output.push(close);
-                    chars.next();
-                } else {
-                    depth += 1;
-                    newline(&mut output, depth);
-                }
-            }
-            '}' | ']' => {
-                depth -= 1;
-                newline(&mut output, depth);
-                output.push(ch);
-            }
-            ',' => {
-                output.push(ch);
-                newline(&mut output, depth);
-            }
-            ':' => output.push_str(": "),
-            _ => output.push(ch),
-        }
-    }
-    output
+    let mut output = Vec::new();
+    write_json_pretty_into(raw, &mut output).expect("#983 in-memory pretty write");
+    String::from_utf8(output).expect("#983 pretty bytes are valid UTF-8")
 }
 
 pub fn stdout_line(text: &str) {
@@ -97,6 +52,9 @@ fn try_write_json_pretty_line(raw: &str) -> std::io::Result<()> {
     out.flush()
 }
 
+// Reindent bytes from the JS codec, preserving property order, number spelling,
+// lone surrogates and all whitespace inside strings. Callers own codec errors
+// and the policy for values without a JSON representation.
 fn write_json_pretty_into(raw: &str, out: &mut impl Write) -> std::io::Result<()> {
     fn char(out: &mut impl Write, value: char) -> std::io::Result<()> {
         let mut encoded = [0_u8; 4];
