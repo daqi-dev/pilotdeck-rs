@@ -50,31 +50,39 @@ const VERIFY_BOUND: Duration = Duration::from_secs(300);
 /// parent bound and were killed mid-verification at load 39-106). The
 /// parent calls this variant instead and then spawns its children with
 /// `PDRS_BASELINE` removed, so the children replay the committed oracle
-/// without re-probing git under the parent's child bound.
+/// without re-probing git under the parent's child bound. The git-free
+/// half of `check` (fixed commit, non-empty well-formed hash table) stays
+/// unconditional, exactly as in `oracle`: a child without a baseline must
+/// still fail a corrupted oracle (#1109 fix-r1, review P0).
 #[allow(dead_code)]
 pub(crate) fn oracle_bounded(json: &str) -> JsValue {
     let oracle = parse_json(json).expect("oracle.json must be valid JSON");
     let baseline = std::env::var_os("PDRS_BASELINE");
-    if let Some(baseline) = baseline.as_deref().map(PathBuf::from) {
-        // The verification phase must fail the calling test, not die
-        // silently in this thread: catch the panic and forward its message.
-        let (done, receipt) = mpsc::channel::<Result<(), String>>();
-        let json = json.to_string();
-        thread::spawn(move || {
-            let outcome = std::panic::catch_unwind(move || {
-                let oracle = parse_json(&json).expect("oracle.json must be valid JSON");
-                check(&oracle, Some(&baseline));
+    match baseline.as_deref().map(PathBuf::from) {
+        // Without a baseline only the git-free checks apply; skipping them
+        // let a bad commit or an empty hash table pass the default run.
+        None => check(&oracle, None),
+        Some(baseline) => {
+            // The verification phase must fail the calling test, not die
+            // silently in this thread: catch the panic and forward its message.
+            let (done, receipt) = mpsc::channel::<Result<(), String>>();
+            let json = json.to_string();
+            thread::spawn(move || {
+                let outcome = std::panic::catch_unwind(move || {
+                    let oracle = parse_json(&json).expect("oracle.json must be valid JSON");
+                    check(&oracle, Some(&baseline));
+                });
+                let _ = done.send(outcome.map_err(panic_message));
             });
-            let _ = done.send(outcome.map_err(panic_message));
-        });
-        match receipt.recv_timeout(VERIFY_BOUND) {
-            Ok(Ok(())) => {}
-            // A hung git leaves the probe thread running; the process exit
-            // after the test run reaps it. No wait below is unbounded.
-            Ok(Err(message)) => panic!("#1109 baseline verification failed: {message}"),
-            Err(_) => panic!(
-                "#1109 baseline verification exceeded the {VERIFY_BOUND:?} bound without finishing"
-            ),
+            match receipt.recv_timeout(VERIFY_BOUND) {
+                Ok(Ok(())) => {}
+                // A hung git leaves the probe thread running; the process exit
+                // after the test run reaps it. No wait below is unbounded.
+                Ok(Err(message)) => panic!("#1109 baseline verification failed: {message}"),
+                Err(_) => panic!(
+                    "#1109 baseline verification exceeded the {VERIFY_BOUND:?} bound without finishing"
+                ),
+            }
         }
     }
     oracle
