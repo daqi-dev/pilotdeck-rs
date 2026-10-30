@@ -193,7 +193,7 @@ class Controls(unittest.TestCase):
             with patch.object(smoke.common, "run_bounded", return_value=result), self.assertRaises(ValueError):
                 relay.forward(native_request())
             saved = smoke.read_json(root / "request-002.json")
-            self.assertEqual(saved["response_text"], "not-json", "#1120 invalid model bytes retained")
+            self.assertTrue(saved["response_text"] == "not-json", "#1120 invalid model bytes retained")
 
     def test_wall_timeout_and_expired_lease_never_pass(self):
         with tempfile.TemporaryDirectory() as temp:
