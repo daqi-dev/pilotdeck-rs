@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    sync::mpsc,
     task::{JoinHandle, JoinSet},
 };
 
@@ -482,9 +483,11 @@ async fn read_request(socket: &mut TcpStream, tag: &'static str) -> Option<Strin
     Some(String::from_utf8_lossy(&request).into_owned())
 }
 
-/// Accepts connections and never answers: a pending request can only end by
-/// its own timeout.
-async fn silent_server(tag: &'static str) -> Server {
+/// Accepts connections, never answers, and reports every complete request:
+/// a pending request can only end by its own timeout, and the sends the
+/// dispatch-order contract promises are observed on the wire, not only in
+/// the `detach` counter.
+async fn recording_silent_server(tag: &'static str) -> (Server, mpsc::Receiver<String>) {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .unwrap_or_else(|error| panic!("{tag}: bind: {error}"));
@@ -493,6 +496,7 @@ async fn silent_server(tag: &'static str) -> Server {
         .unwrap_or_else(|error| panic!("{tag}: address: {error}"));
     let url = Url::parse(&format!("http://{address}/mcp"))
         .unwrap_or_else(|error| panic!("{tag}: URL: {error}"));
+    let (reports, lines) = mpsc::channel(16);
     let task = tokio::spawn(async move {
         let mut connections = JoinSet::new();
         loop {
@@ -500,8 +504,13 @@ async fn silent_server(tag: &'static str) -> Server {
                 accepted = listener.accept() => {
                     let (mut socket, _) =
                         accepted.unwrap_or_else(|error| panic!("{tag}: accept: {error}"));
+                    let reports = reports.clone();
                     connections.spawn(async move {
-                        while read_request(&mut socket, tag).await.is_some() {}
+                        while let Some(request) = read_request(&mut socket, tag).await {
+                            if reports.send(request).await.is_err() {
+                                return;
+                            }
+                        }
                     });
                 }
                 result = connections.join_next(), if !connections.is_empty() => {
@@ -512,17 +521,23 @@ async fn silent_server(tag: &'static str) -> Server {
             }
         }
     });
-    Server {
-        url,
-        task,
-        requested: None,
-    }
+    (
+        Server {
+            url,
+            task,
+            requested: None,
+        },
+        lines,
+    )
 }
 
 /// Answers the first request with `first` (a raw JSON body) and every later
 /// request with 202, so a scripted server-request reply terminates instead
-/// of looping.
-async fn first_then_accepted(first: &'static str, tag: &'static str) -> Server {
+/// of looping, and reports every request it read.
+async fn first_then_accepted(
+    first: &'static str,
+    tag: &'static str,
+) -> (Server, mpsc::Receiver<String>) {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .unwrap_or_else(|error| panic!("{tag}: bind: {error}"));
@@ -532,6 +547,7 @@ async fn first_then_accepted(first: &'static str, tag: &'static str) -> Server {
     let url = Url::parse(&format!("http://{address}/mcp"))
         .unwrap_or_else(|error| panic!("{tag}: URL: {error}"));
     let answered = Arc::new(Mutex::new(false));
+    let (reports, lines) = mpsc::channel(16);
     let task = tokio::spawn(async move {
         let mut connections = JoinSet::new();
         loop {
@@ -540,8 +556,12 @@ async fn first_then_accepted(first: &'static str, tag: &'static str) -> Server {
                     let (mut socket, _) =
                         accepted.unwrap_or_else(|error| panic!("{tag}: accept: {error}"));
                     let answered = answered.clone();
+                    let reports = reports.clone();
                     connections.spawn(async move {
-                        if read_request(&mut socket, tag).await.is_none() {
+                        let Some(request) = read_request(&mut socket, tag).await else {
+                            return;
+                        };
+                        if reports.send(request).await.is_err() {
                             return;
                         }
                         let response = if !std::mem::replace(&mut *lock(&answered), true) {
@@ -569,11 +589,84 @@ async fn first_then_accepted(first: &'static str, tag: &'static str) -> Server {
             }
         }
     });
-    Server {
-        url,
-        task,
-        requested: None,
-    }
+    (
+        Server {
+            url,
+            task,
+            requested: None,
+        },
+        lines,
+    )
+}
+
+/// Answers the first request (the `notifications/initialized` POST) with 202
+/// plus `Connection: close` — the SSE GET must open its own connection — and
+/// reports every later accepted TCP connection: the observable of the GET
+/// having entered the network exchange.
+async fn get_then_connect_server(tag: &'static str) -> (Server, mpsc::Receiver<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap_or_else(|error| panic!("{tag}: bind: {error}"));
+    let address = listener
+        .local_addr()
+        .unwrap_or_else(|error| panic!("{tag}: address: {error}"));
+    let url = Url::parse(&format!("http://{address}/mcp"))
+        .unwrap_or_else(|error| panic!("{tag}: URL: {error}"));
+    let (reports, connections_seen) = mpsc::channel(4);
+    let task = tokio::spawn(async move {
+        let mut connections = JoinSet::new();
+        let mut first = true;
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let (mut socket, _) =
+                        accepted.unwrap_or_else(|error| panic!("{tag}: accept: {error}"));
+                    if !std::mem::replace(&mut first, false) {
+                        // The GET's own connect; the client-side abort closes
+                        // it soon after, but the accept queue keeps it.
+                        if reports.send(()).await.is_err() {
+                            return;
+                        }
+                        continue;
+                    }
+                    connections.spawn(async move {
+                        if read_request(&mut socket, tag).await.is_none() {
+                            return;
+                        }
+                        socket
+                            .write_all(
+                                b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\
+                                 Connection: close\r\n\r\n",
+                            )
+                            .await
+                            .unwrap_or_else(|error| panic!("{tag}: accepted POST: {error}"));
+                    });
+                }
+                result = connections.join_next(), if !connections.is_empty() => {
+                    result
+                        .unwrap_or_else(|| panic!("{tag}: connection task"))
+                        .unwrap_or_else(|error| panic!("{tag}: connection panic: {error}"));
+                }
+            }
+        }
+    });
+    (
+        Server {
+            url,
+            task,
+            requested: None,
+        },
+        connections_seen,
+    )
+}
+
+// Records the panics of the current thread: a spawned remainder that was
+// polled past completion ("`async fn` resumed after completion") must be
+// observable at the assertion, not only as stderr noise.
+#[cfg(test)]
+thread_local! {
+    static DETACHED_PANICS: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// #1114: a 202 for `notifications/initialized` must dispatch the SSE GET
@@ -616,14 +709,170 @@ async fn dispatch_get_before_close() {
     );
 }
 
-/// #1114: `Protocol.request` fires `transport.send()` before returning the
-/// promise, and `Protocol.cancel` fires the `notifications/cancelled` send
-/// when the timeout fires — both dispatch inline, before a later close could
-/// abort an undispatched request.
+/// #1114 fix-r1: the dispatch guarantee itself, observed past the abort gate.
+/// A `close()` that fires after `detach` returns but before the spawned
+/// remainder is ever scheduled must find the GET already inside the network
+/// exchange (the baseline had the fetch called before `send()` resolved), so
+/// the server observes the GET's own TCP connection; a bare spawn leaves the
+/// request undispatched at the gate and the connection never opens. The
+/// bound only turns a missing dispatch into this assertion's failure — on
+/// this code the report arrives in micro-seconds.
 #[tokio::test]
-async fn dispatch_request_and_cancel_before_close() {
-    let tag = "#1114 request and cancel dispatch";
-    let server = silent_server(tag).await;
+async fn dispatch_get_connects_before_close() {
+    let tag = "#1114 GET exchange entry";
+    let (server, mut connections) = get_then_connect_server(tag).await;
+    let wire = Wire::http(HttpLink::new(
+        HttpKind::Streamable,
+        server.url.clone(),
+        vec![],
+        2000.0,
+        2000.0,
+    ));
+    let link = wire
+        .http_link()
+        .unwrap_or_else(|| panic!("{tag}: HTTP link"));
+    super::reset_detached_dispatches();
+    bounded(
+        link.send(
+            &wire,
+            parse_json(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
+                .unwrap_or_else(|error| panic!("{tag}: initialized JSON: {error:?}")),
+        ),
+        tag,
+    )
+    .await
+    .unwrap_or_else(|error| panic!("{tag}: initialized send: {error}"));
+    // Deterministic barrier: the spawned remainder has not been scheduled
+    // yet, so this close is strictly after the inline first poll.
+    link.close();
+    crate::negative_assert_eq!(
+        super::detached_dispatches(),
+        1,
+        "#1114 the SSE GET is dispatched before close aborts it"
+    );
+    let saw_get_connect = tokio::time::timeout(Duration::from_secs(10), connections.recv())
+        .await
+        .is_ok_and(|saw| saw.is_some());
+    crate::negative_assert!(
+        saw_get_connect,
+        "#1114 the SSE GET enters the network exchange before close aborts it"
+    );
+}
+
+/// #1114 fix-r1: a continuation that is already complete on the inline first
+/// poll must not be spawned at all — polling a finished async block panics.
+/// Direct `detach` probe: one poll is all a Ready continuation may ever see.
+#[tokio::test]
+async fn dispatch_ready_continuation_is_not_polled_again() {
+    // A hand-written future (not an async block): a spawned re-poll of an
+    // async block panics before any code runs, so the counter would stay 1
+    // and miss the mutant; this one increments on every poll, legal or not.
+    struct EveryPoll(Arc<std::sync::atomic::AtomicU32>);
+    impl std::future::Future for EveryPoll {
+        type Output = ();
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<()> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            std::task::Poll::Ready(())
+        }
+    }
+    let observed = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    super::reset_detached_dispatches();
+    detach(EveryPoll(observed.clone()));
+    // Enough scheduler turns for an (unwanted) spawned remainder to run.
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+    crate::negative_assert_eq!(
+        observed.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "#1114 a Ready continuation is not polled again"
+    );
+    crate::negative_assert_eq!(
+        super::detached_dispatches(),
+        1,
+        "#1114 the Ready dispatch was counted once"
+    );
+}
+
+/// #1114 fix-r1: the same contract at a real detached site. A legacy
+/// transport with no endpoint rejects the send before its first suspension,
+/// so `send_detached`'s continuation is Ready on the inline poll; spawning
+/// it re-polls the finished async block and panics
+/// ("`async fn` resumed after completion").
+#[tokio::test]
+async fn dispatch_ready_send_detached_does_not_panic() {
+    let tag = "#1114 Ready send_detached";
+    let wire = Wire::http(HttpLink::new(
+        HttpKind::LegacySse,
+        Url::parse("http://127.0.0.1:1/mcp").unwrap_or_else(|error| panic!("{tag}: URL: {error}")),
+        vec![],
+        2000.0,
+        2000.0,
+    ));
+    super::reset_detached_dispatches();
+    let previous = Arc::new(Mutex::new(Some(std::panic::take_hook())));
+    let chained = previous.clone();
+    std::panic::set_hook(Box::new(move |info| {
+        DETACHED_PANICS.with(|panics| panics.borrow_mut().push(format!("{info}")));
+        if let Some(previous) = chained.lock().expect("#1114 panic hook lock").as_ref() {
+            previous(info);
+        }
+    }));
+    wire.send_detached(
+        parse_json(r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{}}"#)
+            .unwrap_or_else(|error| panic!("{tag}: cancel JSON: {error:?}")),
+    );
+    // The pre-aborted branch of the same contract: a close that precedes the
+    // send leaves the abort gate rejecting `network_fetch` synchronously, so
+    // this continuation is also Ready on the inline poll.
+    let closed = Wire::http(HttpLink::new(
+        HttpKind::Streamable,
+        Url::parse("http://127.0.0.1:1/mcp").unwrap_or_else(|error| panic!("{tag}: URL: {error}")),
+        vec![],
+        2000.0,
+        2000.0,
+    ));
+    closed
+        .http_link()
+        .unwrap_or_else(|| panic!("{tag}: HTTP link"))
+        .close();
+    closed.send_detached(
+        parse_json(r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{}}"#)
+            .unwrap_or_else(|error| panic!("{tag}: closed cancel JSON: {error:?}")),
+    );
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+    let panics = DETACHED_PANICS.with(|panics| std::mem::take(&mut *panics.borrow_mut()));
+    if !panics.is_empty() {
+        println!("{tag}: recorded panics: {panics:?}");
+    }
+    if let Some(previous) = previous.lock().expect("#1114 panic hook lock").take() {
+        std::panic::set_hook(previous);
+    }
+    crate::negative_assert!(
+        panics.is_empty(),
+        "#1114 a first-poll-Ready detached continuation is not spawned and polled again"
+    );
+    crate::negative_assert_eq!(
+        super::detached_dispatches(),
+        2,
+        "#1114 both Ready sends were counted"
+    );
+}
+
+/// #1114 fix-r1: `Protocol.request` fires `transport.send()` before
+/// returning the promise, but its timeout is armed even earlier
+/// (`_setupTimeout` precedes `transport.send`), so the request POST keeps
+/// its background send — only `Protocol.cancel`'s `notifications/cancelled`
+/// dispatches inline — and both still reach the wire.
+#[tokio::test]
+async fn dispatch_request_background_and_cancel_inline() {
+    let tag = "#1114 request background and cancel dispatch";
+    let (server, mut lines) = recording_silent_server(tag).await;
     let wire = Wire::http(HttpLink::new(
         HttpKind::Streamable,
         server.url.clone(),
@@ -647,14 +896,40 @@ async fn dispatch_request_and_cancel_before_close() {
     );
     crate::negative_assert_eq!(
         super::detached_dispatches(),
-        2,
-        "#1114 the request POST and the timeout cancel are dispatched inline"
+        1,
+        "#1114 only the timeout cancel is dispatched inline; the request POST keeps its background send"
+    );
+    // The background request POST and the inline cancel both reach the wire:
+    // the narrowing must not swallow either send.
+    let mut saw_request = false;
+    let mut saw_cancel = false;
+    bounded(
+        async {
+            while !(saw_request && saw_cancel) {
+                let line = lines
+                    .recv()
+                    .await
+                    .unwrap_or_else(|| panic!("{tag}: request line stream closed"));
+                saw_request |= line.contains("tools/list");
+                saw_cancel |= line.contains("notifications/cancelled");
+            }
+        },
+        tag,
+    )
+    .await;
+    crate::negative_assert!(
+        saw_request,
+        "#1114 the request POST reaches the wire from its background send"
+    );
+    crate::negative_assert!(
+        saw_cancel,
+        "#1114 the timeout cancel reaches the wire from its inline dispatch"
     );
 }
 
 /// #1114: a server request inside a response body gets its `Method not
 /// found` reply dispatched inside the body-parse continuation, before the
-/// caller's request future resolves.
+/// caller's request future resolves — and the reply reaches the wire.
 #[tokio::test]
 async fn dispatch_reply_before_resolve() {
     let tag = "#1114 reply dispatch";
@@ -662,7 +937,7 @@ async fn dispatch_reply_before_resolve() {
         r#"[{"jsonrpc":"2.0","id":0,"result":{"tools":[]}},"#,
         r#"{"jsonrpc":"2.0","id":1,"method":"sampling/createMessage","params":{}}]"#,
     );
-    let server = first_then_accepted(body, tag).await;
+    let (server, mut lines) = first_then_accepted(body, tag).await;
     let wire = Wire::http(HttpLink::new(
         HttpKind::Streamable,
         server.url.clone(),
@@ -691,7 +966,30 @@ async fn dispatch_reply_before_resolve() {
     assert!(text.contains("tools"), "{tag}: scripted tools/list result");
     crate::negative_assert_eq!(
         super::detached_dispatches(),
-        2,
+        1,
         "#1114 the reply to a server request is dispatched inline"
+    );
+    let reply = bounded(
+        async {
+            loop {
+                let line = lines
+                    .recv()
+                    .await
+                    .unwrap_or_else(|| panic!("{tag}: reply line stream closed"));
+                if line.contains("Method not found") {
+                    return line;
+                }
+            }
+        },
+        tag,
+    )
+    .await;
+    println!(
+        "{tag}: reply line reached the wire: {}",
+        reply.split('\r').next().unwrap_or_default()
+    );
+    crate::negative_assert!(
+        reply.contains("Method not found"),
+        "#1114 the reply to a server request reaches the wire"
     );
 }
