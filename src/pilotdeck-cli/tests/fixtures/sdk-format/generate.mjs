@@ -45,7 +45,7 @@ const cases = inputs.map(input => {
 const supplemental = json('supplemental.json');
 assert.equal(supplemental.nodeVersion,'v22.22.0','#1097 supplemental Node version');
 assert.equal(supplemental.kind,'real-ts-function-probe-in-process-wire','#1097 supplemental scope');
-assert.equal(supplemental.cases.length,66,'#1097 supplemental cells');
+assert.equal(supplemental.cases.length,72,'#1097 supplemental cells');
 for(const item of supplemental.cases) {
   // Rust's serde_json metadata cannot represent lone UTF-16 surrogates. Keep
   // the exact wire JSON in raw; only retain event runId for structural binding.

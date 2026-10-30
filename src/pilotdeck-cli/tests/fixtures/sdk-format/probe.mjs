@@ -70,7 +70,7 @@ if (process.argv[2] === '--child') {
   catch(error) { console.error(error.message); process.exitCode=1; }
   writeFileSync(config.wire,JSON.stringify(wire,null,2)+'\n',{flag:'wx'});
 } else {
-  assert.equal(process.argv.length,3,'#1097 probe OUTPUT');
+  assert.ok(process.argv.length===3 || (process.argv.length===4 && process.argv[3]==='--snapshot-only'),'#1097 probe OUTPUT [--snapshot-only]');
   const output=resolve(process.argv[2]);
   mkdirSync(output,{recursive:true});
   // Terminal state × format matrix. The --json envelope and the --stream-json
@@ -83,6 +83,7 @@ if (process.argv[2] === '--child') {
     {name:'failed',events:[{type:'subagent_text_delta',delta:'partial '},{type:'error',code:'server_error',message:'private message',detail:{b:2,a:1}}]},
     {name:'unknown-empty',events:[],responseEnd:true},
     {name:'unknown-code',events:[{type:'turn_started',runId:'gateway-run-id'},{type:'error',code:'result_unknown'}]},
+    {name:'unknown-snapshot',events:[{type:'turn_started',runId:'snapshot-run-id'},{type:'error',code:'result_unknown'},{type:'turn_started',runId:'too-late'}]},
   ];
   const definitions = [];
   for (const command of ['run','resume']) for (const axis of ['json','jsonl','both']) {
@@ -149,7 +150,8 @@ if (process.argv[2] === '--child') {
     visit(root,'.');return entries;
   };
   const cases=[];
-  for(const d of definitions){
+  const selected = process.argv[3]==='--snapshot-only' ? definitions.filter(d=>d.name.includes('-unknown-snapshot-')) : definitions;
+  for(const d of selected){
     const dir=join(output,d.name);mkdirSync(dir,{recursive:true});
     const runtime=join(dir,'runtime');mkdirSync(runtime,{mode:0o700});
     for(const name of ['home','pilot','project','tmp','bin','xdg-config','xdg-cache','xdg-data','xdg-state'])mkdirSync(join(runtime,name),{mode:0o700});
