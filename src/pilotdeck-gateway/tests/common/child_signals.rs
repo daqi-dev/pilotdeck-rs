@@ -86,6 +86,11 @@ impl ChildSignalProbe {
             }
             if last_output.elapsed() >= silent_bound || start.elapsed() >= total_bound {
                 let kill_result = child.kill();
+                // Diagnostic only, on the captured test stdout: the panic
+                // payload itself stays one stable line, which is the shape
+                // the strict per-test negative-control contract binds to
+                // (#1109 fix-r2).
+                println!("#1109 worker bound exceeded; kill result {kill_result:?}");
                 let reap_deadline = Instant::now() + Duration::from_secs(2);
                 while child
                     .try_wait()
@@ -94,12 +99,20 @@ impl ChildSignalProbe {
                 {
                     assert!(
                         Instant::now() < reap_deadline,
-                        "signal-injected worker {test} silent for {silent_bound:?} (total bound {total_bound:?}); kill result {kill_result:?}; still not reaped after 2 s"
+                        "#1109 signal-injected worker {test} still not reaped 2 s after the bound kill (kill result {kill_result:?})"
                     );
                     std::thread::sleep(Duration::from_millis(10));
                 }
+                // The total bound is checked first: retracting it to 0/30 s
+                // must bind to the total-bound panic even when the silent
+                // bound would also fire on the same poll.
+                if start.elapsed() >= total_bound {
+                    panic!(
+                        "#1109 signal-injected worker {test} exceeded the {total_bound:?} total bound without finishing"
+                    );
+                }
                 panic!(
-                    "signal-injected worker {test} silent for {silent_bound:?} within the {total_bound:?} total bound; kill result {kill_result:?}; reaped within 2 s"
+                    "#1109 signal-injected worker {test} silent for {silent_bound:?} within the {total_bound:?} total bound"
                 );
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -118,7 +131,8 @@ impl ChildSignalProbe {
                 .lines()
                 .filter(|line| *line == "running 1 test")
                 .count(),
-            1
+            1,
+            "#1109 worker printed its libtest header exactly once"
         );
         let summaries: Vec<_> = stdout
             .lines()

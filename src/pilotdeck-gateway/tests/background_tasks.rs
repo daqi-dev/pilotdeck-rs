@@ -637,7 +637,28 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
     let groups = ProcessGroups::new();
     let mut sub_gates: Vec<SubagentGate> = Vec::new();
 
+    // #1109 negative-control hook: an optional per-step delay that stretches
+    // the replay deterministically past a retracted flat 30 s total bound
+    // without any ambient load. Never set in normal runs; an unparsable
+    // value means no delay. The stretch starts at PDRS_SEQUENCE_STEP_DELAY_FROM
+    // (default 0): the golden replay's early steps can carry recorded
+    // real-time windows (exit-statuses step 9's `(sleep 0.3; echo late) &
+    // echo early` is read by step 10 before `late` arrives), so a stretch may
+    // only start at or after the sequence's own await* synchronization, or it
+    // would change the replayed outcomes instead of only their duration. An
+    // unparsable start index applies no delay at all (fail-safe).
+    let step_delay = std::env::var("PDRS_SEQUENCE_STEP_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis);
+    let step_delay_from = match std::env::var("PDRS_SEQUENCE_STEP_DELAY_FROM") {
+        Ok(value) => value.parse::<usize>().unwrap_or(usize::MAX),
+        Err(_) => 0,
+    };
     for (index, step) in array(field(sequence, "steps")).iter().enumerate() {
+        if let Some(delay) = step_delay.filter(|_| index >= step_delay_from) {
+            tokio::time::sleep(delay).await;
+        }
         // #1109: progress receipt. Each step is real replay work; printing
         // it lets the signal-injected worker's parent distinguish a slow
         // but progressing run from a hung one instead of bounding the real
@@ -1377,12 +1398,15 @@ fn exit_statuses_with_inherited_ignored_and_blocked_signals() {
         child_signals::ChildSignalProbe::new().launch("inherited_exit_statuses_worker", false);
     // #1109: the progress receipts the worker's bounds rely on must actually
     // flow; a severed receipt channel would quietly degrade the bounds back
-    // to wall clock alone.
+    // to wall clock alone. The message is one stable line (the strict
+    // per-test negative-control contract binds to it); the worker's own
+    // libtest report must never be reprinted here, it would shadow this
+    // test's report shape.
     assert!(
         stdout
             .lines()
             .any(|line| line.starts_with("BACKGROUND_SEQUENCE_STEP ")),
-        "#1109 worker emitted no sequence progress receipts: {stdout}"
+        "#1109 worker emitted no sequence progress receipts"
     );
 }
 

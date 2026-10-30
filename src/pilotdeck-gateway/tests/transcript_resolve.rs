@@ -67,7 +67,13 @@ fn matrix(name: &str, test: &str) {
             if Instant::now() >= deadline {
                 child.kill().expect("#942 matrix child kill");
                 let output = child.wait_with_output().expect("#942 matrix child reap");
-                panic!("#1109 matrix child timed out (30 s bound): {output:?}");
+                // Diagnostic only, on the captured test stdout: the Debug
+                // dump escapes newlines, so it stays one physical line and
+                // never shadows this test's libtest report shape. The panic
+                // payload itself is the stable single line the strict
+                // per-test negative-control contract binds to (#1109 fix-r2).
+                println!("#1109 matrix child timed out (30 s bound): {output:?}");
+                panic!("#1109 matrix child timed out (30 s bound)");
             }
             std::thread::sleep(Duration::from_millis(10));
         }
