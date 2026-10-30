@@ -54,6 +54,12 @@ const VERIFY_BOUND: Duration = Duration::from_secs(300);
 /// half of `check` (fixed commit, non-empty well-formed hash table) stays
 /// unconditional, exactly as in `oracle`: a child without a baseline must
 /// still fail a corrupted oracle (#1109 fix-r1, review P0).
+///
+/// #1109 fix-r2: the dedicated thread only *reports* its verdict through
+/// the channel; the single panic is raised by the named test thread. The
+/// pre-fix-r2 shape caught the thread's own panic and re-panicked with a
+/// wrapper, which printed a second, `<unnamed>` panic header the strict
+/// per-test negative-control contract refuses to attribute.
 #[allow(dead_code)]
 pub(crate) fn oracle_bounded(json: &str) -> JsValue {
     let oracle = parse_json(json).expect("oracle.json must be valid JSON");
@@ -64,21 +70,20 @@ pub(crate) fn oracle_bounded(json: &str) -> JsValue {
         None => check(&oracle, None),
         Some(baseline) => {
             // The verification phase must fail the calling test, not die
-            // silently in this thread: catch the panic and forward its message.
+            // silently in this thread: the thread reports, the test panics.
             let (done, receipt) = mpsc::channel::<Result<(), String>>();
             let json = json.to_string();
             thread::spawn(move || {
-                let outcome = std::panic::catch_unwind(move || {
-                    let oracle = parse_json(&json).expect("oracle.json must be valid JSON");
-                    check(&oracle, Some(&baseline));
-                });
-                let _ = done.send(outcome.map_err(panic_message));
+                let verdict = parse_json(&json)
+                    .map_err(|error| format!("#1109 oracle.json must be valid JSON: {error:?}"))
+                    .and_then(|oracle| check_impl(&oracle, Some(&baseline)));
+                let _ = done.send(verdict);
             });
             match receipt.recv_timeout(VERIFY_BOUND) {
                 Ok(Ok(())) => {}
                 // A hung git leaves the probe thread running; the process exit
                 // after the test run reaps it. No wait below is unbounded.
-                Ok(Err(message)) => panic!("#1109 baseline verification failed: {message}"),
+                Ok(Err(message)) => panic!("{message}"),
                 Err(_) => panic!(
                     "#1109 baseline verification exceeded the {VERIFY_BOUND:?} bound without finishing"
                 ),
@@ -88,74 +93,99 @@ pub(crate) fn oracle_bounded(json: &str) -> JsValue {
     oracle
 }
 
-/// Best-effort text of a caught panic payload, for re-panicking with the
-/// original assertion message on the test thread.
-fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
-    if let Some(text) = payload.downcast_ref::<&str>() {
-        (*text).to_string()
-    } else if let Some(text) = payload.downcast_ref::<String>() {
-        text.clone()
-    } else {
-        "verification panicked without a message".into()
-    }
+/// #1109 negative-control hook: an optional per-source delay that makes the
+/// git-probe phase deterministically outgrow a retracted 30 s child bound
+/// without any ambient load. Never set in normal runs; an unparsable value
+/// means no delay (the bound then still holds and the control honestly
+/// survives).
+fn verify_probe_delay() -> Option<Duration> {
+    std::env::var("PDRS_VERIFY_DELAY_MS")
+        .ok()?
+        .parse::<u64>()
+        .ok()
+        .map(Duration::from_millis)
 }
 
-pub(crate) fn check(oracle: &JsValue, baseline: Option<&Path>) {
+/// #1109 fix-r2: the verification core reports instead of panicking, so the
+/// optional-baseline thread never prints a second (unnamed) panic header.
+/// Every message is one stable line prefixed with the issue marker: the
+/// named test thread re-panics with it verbatim, which is the shape the
+/// strict per-test negative-control contract binds to.
+fn check_impl(oracle: &JsValue, baseline: Option<&Path>) -> Result<(), String> {
     // Older corpora use commit/baselineCommit and sources. Keep their bytes and
     // schema intact while applying the same checks to every replay.
     let commit = ["sourceCommit", "baselineCommit", "commit"]
         .into_iter()
         .find_map(|key| oracle.get(key))
-        .expect("oracle is missing its baseline commit");
-    assert_eq!(text(commit), BASELINE_COMMIT, "oracle baseline commit");
+        .ok_or_else(|| "#1109 oracle is missing its baseline commit".to_string())?;
+    let recorded = text(commit);
+    if recorded != BASELINE_COMMIT {
+        return Err(format!(
+            "#1109 oracle baseline commit mismatch: recorded {recorded} expected {BASELINE_COMMIT}"
+        ));
+    }
     let hashes = oracle
         .get("sourceSha256")
         .or_else(|| oracle.get("sources"))
-        .expect("oracle is missing sourceSha256/sources")
+        .ok_or_else(|| "#1109 oracle is missing sourceSha256/sources".to_string())?
         .as_object()
-        .expect("oracle source hashes must be an object");
-    assert!(!hashes.is_empty(), "oracle source hashes must not be empty");
+        .ok_or_else(|| "#1109 oracle source hashes must be an object".to_string())?;
+    if hashes.is_empty() {
+        return Err("#1109 oracle source hashes must not be empty".to_string());
+    }
+    let probe_delay = verify_probe_delay();
     if let Some(baseline) = baseline {
         let head = git(baseline, &["rev-parse", "HEAD"]);
-        assert_eq!(
-            String::from_utf8_lossy(&head).trim(),
-            BASELINE_COMMIT,
-            "PDRS_BASELINE must be checked out at the fixed commit"
-        );
+        let head = String::from_utf8_lossy(&head).trim().to_string();
+        if head != BASELINE_COMMIT {
+            return Err(format!(
+                "#1109 PDRS_BASELINE must be checked out at the fixed commit: HEAD is {head}"
+            ));
+        }
         let tracked = git(baseline, &["status", "--porcelain", "--untracked-files=no"]);
-        assert!(
-            tracked.is_empty(),
-            "PDRS_BASELINE has uncommitted changes to tracked files:\n{}",
-            String::from_utf8_lossy(&tracked)
-        );
+        if !tracked.is_empty() {
+            return Err(format!(
+                "#1109 PDRS_BASELINE has uncommitted changes to tracked files: {}",
+                String::from_utf8_lossy(&tracked).replace('\n', "; ")
+            ));
+        }
     }
     for (source, recorded) in hashes.entries() {
         let source = source.to_utf8().expect("UTF-8 source path");
-        assert!(
-            source.starts_with("src/") && source.split('/').all(|p| p != ".." && !p.is_empty()),
-            "expected a baseline-relative source path: {source}"
-        );
+        if !(source.starts_with("src/") && source.split('/').all(|p| p != ".." && !p.is_empty())) {
+            return Err(format!(
+                "#1109 expected a baseline-relative source path: {source}"
+            ));
+        }
         let recorded = text(recorded);
-        assert!(
-            recorded.len() == 64 && recorded.bytes().all(|b| b.is_ascii_hexdigit()),
-            "missing or malformed hash for {source}"
-        );
+        if recorded.len() != 64 || !recorded.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(format!("#1109 missing or malformed hash for {source}"));
+        }
         if let Some(baseline) = baseline {
+            if let Some(delay) = probe_delay {
+                std::thread::sleep(delay);
+            }
             let committed = git(baseline, &["show", &format!("{BASELINE_COMMIT}:{source}")]);
             let expected = format!("{:x}", Sha256::digest(committed));
-            assert_eq!(
-                recorded, expected,
-                "oracle hash for {source} does not match {BASELINE_COMMIT}"
-            );
-            let working =
-                fs::read(baseline.join(&source)).unwrap_or_else(|e| panic!("{source}: {e}"));
-            assert_eq!(
-                format!("{:x}", Sha256::digest(working)),
-                expected,
-                "baseline source {source} differs from {BASELINE_COMMIT}"
-            );
+            if recorded != expected {
+                return Err(format!(
+                    "#1109 oracle hash for {source} does not match {BASELINE_COMMIT}"
+                ));
+            }
+            let working = fs::read(baseline.join(&source))
+                .map_err(|error| format!("#1109 baseline source {source}: {error}"))?;
+            if format!("{:x}", Sha256::digest(working)) != expected {
+                return Err(format!(
+                    "#1109 baseline source {source} differs from {BASELINE_COMMIT}"
+                ));
+            }
         }
     }
+    Ok(())
+}
+
+pub(crate) fn check(oracle: &JsValue, baseline: Option<&Path>) {
+    check_impl(oracle, baseline).unwrap_or_else(|message| panic!("{message}"));
 }
 
 fn git(baseline: &Path, args: &[&str]) -> Vec<u8> {
