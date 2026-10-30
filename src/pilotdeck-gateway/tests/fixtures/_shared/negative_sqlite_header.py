@@ -94,8 +94,13 @@ def main():
     env = dict(os.environ)
     env['PDRS_BASELINE'] = baseline
     results = []
+    # Same three-state exit contract as ``negative_suite.run_cases``
+    # (#1076 fix-r1): a refusal before the guarded window opened keeps the
+    # historical rc=1, only an unverified restore or a cancellation is rc=2.
+    phase = 'enter'
     try:
         with mutating_sources(ROOT, [GENERATOR, STORAGE_OBSERVER]) as originals:
+            phase = 'body'
             original = {path: originals[path].decode() for path in originals}
             for name, path, before, _after, _test, _assertion in MUTANT_ROWS:
                 count = original[path].count(before)
@@ -117,9 +122,11 @@ def main():
                 except Exception as error:
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
+                    phase = 'restore'
                     path.write_bytes(originals[path])
                     if path.read_bytes() != originals[path]:
                         raise RuntimeError(f'#979 byte restoration failed: {path}')
+                    phase = 'body'
                 try:
                     if not passed(run(output, env, f'{name}-restored', test), test):
                         status, reason = 'INVALID', reason + '; restored bound test did not pass'
@@ -129,6 +136,9 @@ def main():
                 results.append({'mutation': name, 'test': test,
                                 'status': status, 'reason': reason})
                 print(f'{name}: {status}: {reason}', flush=True)
+            # Done with the body: a failure from here on comes from the guard's
+            # own restore/re-verify on context exit.
+            phase = 'exit'
     except BaseException as error:
         # The guard exits after restoring and re-verifying every mutated source.
         # A failure there — including a SIGINT or a raw SystemExit — invalidates
@@ -144,7 +154,11 @@ def main():
         write_summary(output, results)
         if isinstance(error, SystemExit):
             raise SystemExit(2) from error
-        return 2
+        # #1076 fix-r1: rc=2 only for an unverified restore or a cancellation;
+        # a guard refusal to run (baseline mismatch, busy lock) stays rc=1.
+        if phase in ('restore', 'exit') or not isinstance(error, Exception):
+            return 2
+        return 1
     write_summary(output, results)
     return int(not results or any(row['status'] != 'KILLED' for row in results))
 

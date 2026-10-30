@@ -8,6 +8,13 @@ published each row directly and caught only ``Exception``; a SIGINT or a raw
 ``SystemExit(256)`` in the guard's restore window therefore left an all-KILLED
 ``summary.json`` behind with an unnormalized exit.
 
+#1076 fix-r1 adds the second half of the contract: the widened handler must
+not turn a guard *refusal to run* (HEAD/baseline mismatch, busy lock, expired
+anchor) into rc=2.  Refusals keep the historical rc=1 that callers already
+assert; only a cancellation or an unverified restore is rc=2.  The four rows
+added below pin both refusal phases (before and after the guard opened) for
+both executors.
+
 Each mutant is syntax-compiled before its positive control runs.  A stale
 anchor aborts the whole selected run as INVALID (never SURVIVED).  All selected
 rows finish before the summary is published; any non-KILLED row is a nonzero
@@ -96,6 +103,58 @@ MUTANT_ROWS = [
         'test_negative_suite.SqliteHeaderCancellationTests.'
         'test_write_summary_publishes_atomically',
         '#1076 an interrupted publish must preserve the previous summary',
+    ),
+    (
+        # fix-r1: the refusal branch must stay rc=1; a reviewer found that the
+        # first delivery returned 2 here and broke a real caller assertion.
+        'runner-refusal-exit-two',
+        SUITE,
+        "        if phase in ('restore', 'exit') or not isinstance(error, Exception):\n"
+        "            return 2\n"
+        "        return 1",
+        "        if phase in ('restore', 'exit') or not isinstance(error, Exception):\n"
+        "            return 2\n"
+        "        return 2",
+        'test_negative_suite.SuiteTests.test_guard_refusal_accounts_for_every_case',
+        '#1076 a HEAD guard refusal must keep exit code 1',
+    ),
+    (
+        'sqlite-refusal-exit-two',
+        SQLITE,
+        "        if phase in ('restore', 'exit') or not isinstance(error, Exception):\n"
+        "            return 2\n"
+        "        return 1",
+        "        if phase in ('restore', 'exit') or not isinstance(error, Exception):\n"
+        "            return 2\n"
+        "        return 2",
+        'test_negative_suite.SqliteHeaderExecutorTests.test_guard_refusal_keeps_exit_one',
+        '#1076 a sqlite HEAD guard refusal must keep exit code 1',
+    ),
+    (
+        # In-window refusals (expired anchor / malformed registration) are
+        # refusals too: rc=1, never the restore/cancel rc=2.
+        'runner-body-refusal-exit-two',
+        SUITE,
+        "        if phase in ('restore', 'exit') or not isinstance(error, Exception):\n"
+        "            return 2\n"
+        "        return 1",
+        "        if phase in ('restore', 'exit', 'body') or not isinstance(error, Exception):\n"
+        "            return 2\n"
+        "        return 1",
+        'test_negative_suite.SuiteTests.test_in_window_refusal_keeps_exit_one',
+        '#1076 an in-window refusal must keep exit code 1',
+    ),
+    (
+        'sqlite-body-refusal-exit-two',
+        SQLITE,
+        "        if phase in ('restore', 'exit') or not isinstance(error, Exception):\n"
+        "            return 2\n"
+        "        return 1",
+        "        if phase in ('restore', 'exit', 'body') or not isinstance(error, Exception):\n"
+        "            return 2\n"
+        "        return 1",
+        'test_negative_suite.SqliteHeaderExecutorTests.test_stale_anchor_refusal_keeps_exit_one',
+        '#1076 a sqlite stale-anchor refusal must keep exit code 1',
     ),
 ]
 
