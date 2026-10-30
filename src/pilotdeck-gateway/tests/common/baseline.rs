@@ -4,8 +4,9 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::Read,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
+    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
@@ -29,6 +30,66 @@ pub(crate) fn oracle(json: &str) -> JsValue {
     let baseline = std::env::var_os("PDRS_BASELINE");
     check(&oracle, baseline.as_deref().map(Path::new));
     oracle
+}
+
+/// Total budget for the once-per-process optional-baseline verification
+/// phase. One pass is ~650-730 `git show` + file-read probes, measured at
+/// ~7 s on an idle host; #978's scan ran the suite under load averages up
+/// to ~145, so the bound keeps generous margin while still failing loudly
+/// instead of hanging a test thread forever.
+#[allow(dead_code)]
+const VERIFY_BOUND: Duration = Duration::from_secs(300);
+
+/// #1109: like [`oracle`], but the optional-baseline verification runs once,
+/// on a dedicated thread, under [`VERIFY_BOUND`].
+///
+/// `oracle`'s git/source verification is a 650+ `git show` probe table per
+/// oracle. A parent test that spawns bounded rerun children used to pay
+/// that table inside every child (#978 scan: the seven transcript-resolve
+/// children and the background signal worker each re-verified under a 30 s
+/// parent bound and were killed mid-verification at load 39-106). The
+/// parent calls this variant instead and then spawns its children with
+/// `PDRS_BASELINE` removed, so the children replay the committed oracle
+/// without re-probing git under the parent's child bound.
+#[allow(dead_code)]
+pub(crate) fn oracle_bounded(json: &str) -> JsValue {
+    let oracle = parse_json(json).expect("oracle.json must be valid JSON");
+    let baseline = std::env::var_os("PDRS_BASELINE");
+    if let Some(baseline) = baseline.as_deref().map(PathBuf::from) {
+        // The verification phase must fail the calling test, not die
+        // silently in this thread: catch the panic and forward its message.
+        let (done, receipt) = mpsc::channel::<Result<(), String>>();
+        let json = json.to_string();
+        thread::spawn(move || {
+            let outcome = std::panic::catch_unwind(move || {
+                let oracle = parse_json(&json).expect("oracle.json must be valid JSON");
+                check(&oracle, Some(&baseline));
+            });
+            let _ = done.send(outcome.map_err(panic_message));
+        });
+        match receipt.recv_timeout(VERIFY_BOUND) {
+            Ok(Ok(())) => {}
+            // A hung git leaves the probe thread running; the process exit
+            // after the test run reaps it. No wait below is unbounded.
+            Ok(Err(message)) => panic!("#1109 baseline verification failed: {message}"),
+            Err(_) => panic!(
+                "#1109 baseline verification exceeded the {VERIFY_BOUND:?} bound without finishing"
+            ),
+        }
+    }
+    oracle
+}
+
+/// Best-effort text of a caught panic payload, for re-panicking with the
+/// original assertion message on the test thread.
+fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(text) = payload.downcast_ref::<&str>() {
+        (*text).to_string()
+    } else if let Some(text) = payload.downcast_ref::<String>() {
+        text.clone()
+    } else {
+        "verification panicked without a message".into()
+    }
 }
 
 pub(crate) fn check(oracle: &JsValue, baseline: Option<&Path>) {

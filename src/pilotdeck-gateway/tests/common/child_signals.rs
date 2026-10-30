@@ -30,47 +30,81 @@ impl ChildSignalProbe {
         Self(scratch)
     }
 
-    pub(crate) fn launch(&self, test: &str, all: bool) {
+    pub(crate) fn launch(&self, test: &str, all: bool) -> String {
         let probe = self.0.path().join("probe");
         // Regular files avoid waiting for EOF from inherited pipe writers in
-        // grandchildren, even when the direct worker has already exited.
+        // grandchildren, even when the direct worker has already exited. They
+        // are also the progress channel: file growth is real worker output.
         let stdout_path = self.0.path().join("worker.stdout");
         let stderr_path = self.0.path().join("worker.stderr");
         let mut child = Command::new(&probe)
             .arg(if all { "launch-all" } else { "launch" })
-            .arg(std::env::current_exe().unwrap())
+            .arg(
+                std::env::current_exe()
+                    .expect("#1109 signal-injected worker needs the test binary path"),
+            )
             .args(["--exact", test, "--ignored", "--nocapture"])
             .env("PDRS_CHILD_SIGNAL_PROBE", &probe)
+            // #1109: the calling parent verified the committed oracle once;
+            // the worker must not re-run the git probe table under the
+            // bounds below (the #978 scan killed it mid-verification at
+            // load 90-106).
+            .env_remove("PDRS_BASELINE")
             .stdin(Stdio::null())
-            .stdout(std::fs::File::create(&stdout_path).unwrap())
-            .stderr(std::fs::File::create(&stderr_path).unwrap())
+            .stdout(std::fs::File::create(&stdout_path).expect("#1109 worker stdout file"))
+            .stderr(std::fs::File::create(&stderr_path).expect("#1109 worker stderr file"))
             .spawn()
-            .unwrap();
+            .expect("#1109 spawn the signal-injected worker");
         // These fixed workers emit at most a few KiB. Bound a broken pre-exec
         // hook or wait path without ever signalling libtest's shared parent.
-        let deadline = Instant::now() + Duration::from_secs(30);
+        // #1109: the bound is now progress-aware. A silent worker gets the
+        // historical 30 s; a worker that keeps producing real output (probe
+        // dispositions, replay step receipts, libtest summary) may run up
+        // to the total bound, because at load 90-106 the replay's real work
+        // alone outgrew a flat 30 s. Neither wait is unbounded.
+        let silent_bound = Duration::from_secs(30);
+        let total_bound = Duration::from_secs(300);
+        let start = Instant::now();
+        let mut last_output = Instant::now();
+        let mut seen = 0_u64;
         let status = loop {
-            if let Some(status) = child.try_wait().unwrap() {
+            if let Some(status) = child
+                .try_wait()
+                .expect("#1109 poll the signal-injected worker")
+            {
                 break status;
             }
-            if Instant::now() >= deadline {
+            let grown = std::fs::metadata(&stdout_path)
+                .map(|meta| meta.len())
+                .unwrap_or(seen);
+            if grown > seen {
+                seen = grown;
+                last_output = Instant::now();
+            }
+            if last_output.elapsed() >= silent_bound || start.elapsed() >= total_bound {
                 let kill_result = child.kill();
                 let reap_deadline = Instant::now() + Duration::from_secs(2);
-                while child.try_wait().unwrap().is_none() {
+                while child
+                    .try_wait()
+                    .expect("#1109 reap the signal-injected worker")
+                    .is_none()
+                {
                     assert!(
                         Instant::now() < reap_deadline,
-                        "signal-injected worker {test} exceeded 30 s; kill result {kill_result:?}; still not reaped after 2 s"
+                        "signal-injected worker {test} silent for {silent_bound:?} (total bound {total_bound:?}); kill result {kill_result:?}; still not reaped after 2 s"
                     );
                     std::thread::sleep(Duration::from_millis(10));
                 }
                 panic!(
-                    "signal-injected worker {test} exceeded 30 s; kill result {kill_result:?}; reaped within 2 s"
+                    "signal-injected worker {test} silent for {silent_bound:?} within the {total_bound:?} total bound; kill result {kill_result:?}; reaped within 2 s"
                 );
             }
             std::thread::sleep(Duration::from_millis(10));
         };
-        let stdout = std::fs::read_to_string(stdout_path).unwrap();
-        let stderr = std::fs::read_to_string(stderr_path).unwrap();
+        let stdout =
+            std::fs::read_to_string(stdout_path).expect("#1109 read worker stdout receipt");
+        let stderr =
+            std::fs::read_to_string(stderr_path).expect("#1109 read worker stderr receipt");
         assert!(stdout.contains("INT_IGN=1 TERM_BLOCKED=1"), "{stdout}");
         assert!(
             status.success(),
@@ -93,6 +127,7 @@ impl ChildSignalProbe {
             "worker did not run: {stdout}"
         );
         print!("{stdout}");
+        stdout
     }
 }
 

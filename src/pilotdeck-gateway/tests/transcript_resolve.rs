@@ -14,9 +14,11 @@ use std::{
     fs,
     path::Path,
     process::{Command, Stdio},
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
+
+const ORACLE_TEXT: &str = include_str!("fixtures/transcript-resolve/oracle.json");
 
 struct UnusedStore;
 impl TranscriptStore for UnusedStore {
@@ -35,12 +37,27 @@ impl TranscriptStore for UnusedStore {
     }
 }
 
+/// #1109: optional-baseline verification once per process, bounded. The
+/// children spawned by `matrix` replay the committed oracle without
+/// `PDRS_BASELINE`, so the 30 s child bound below is spent on the matrix,
+/// not on re-running the 650-source git probe table in each of the seven
+/// children (#978 scan: all seven were killed mid-verification at load
+/// 39-45).
+fn verify_baseline_once() {
+    static VERIFIED: OnceLock<()> = OnceLock::new();
+    VERIFIED.get_or_init(|| drop(baseline::oracle_bounded(ORACLE_TEXT)));
+}
+
 fn matrix(name: &str, test: &str) {
     if std::env::var("PDRS_TRANSCRIPT_RESOLVE_CHILD").as_deref() != Ok(test) {
+        verify_baseline_once();
         let mut child =
             Command::new(std::env::current_exe().expect("#942 matrix test binary path"))
                 .args(["--exact", test, "--nocapture", "--test-threads=2"])
                 .env("PDRS_TRANSCRIPT_RESOLVE_CHILD", test)
+                // #1109: the parent verified the baseline once (above); the
+                // child must not re-verify it under the 30 s bound below.
+                .env_remove("PDRS_BASELINE")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
@@ -50,7 +67,7 @@ fn matrix(name: &str, test: &str) {
             if Instant::now() >= deadline {
                 child.kill().expect("#942 matrix child kill");
                 let output = child.wait_with_output().expect("#942 matrix child reap");
-                panic!("matrix child timed out: {output:?}");
+                panic!("#1109 matrix child timed out (30 s bound): {output:?}");
             }
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -70,15 +87,16 @@ fn matrix(name: &str, test: &str) {
         println!("{stdout}");
         return;
     }
-    let oracle_text = include_str!("fixtures/transcript-resolve/oracle.json");
+    let oracle_text = ORACLE_TEXT;
     baseline::oracle(oracle_text);
-    let oracle: Value = serde_json::from_str(oracle_text).unwrap();
+    let oracle: Value =
+        serde_json::from_str(oracle_text).expect("#1109 transcript-resolve oracle JSON");
     let mut expected = oracle["cases"]
         .as_array()
-        .unwrap()
+        .expect("#1109 transcript-resolve oracle cases")
         .iter()
         .find(|row| row["name"] == name)
-        .unwrap()["outcome"]
+        .unwrap_or_else(|| panic!("#1109 transcript-resolve oracle case {name}"))["outcome"]
         .clone();
     if name == "join-relative-normal" {
         // A6.2-TRANSCRIPT-SUBAGENT-RELATIVE-001 (unapproved, not accepted).
@@ -86,13 +104,13 @@ fn matrix(name: &str, test: &str) {
         // fix; this adjusted expectation does not establish TS parity.
         expected["transcriptPath"] = json!("<root>/cwd/logs/s/subagents/kid.jsonl");
     }
-    let original_cwd = std::env::current_dir().unwrap();
+    let original_cwd = std::env::current_dir().expect("#1109 matrix original cwd");
     let root =
         std::env::temp_dir().join(format!("pdrs-transcript-resolve-{}", uuid::Uuid::new_v4()));
-    fs::create_dir(&root).unwrap();
-    let root = fs::canonicalize(root).unwrap();
+    fs::create_dir(&root).expect("#1109 matrix scratch root");
+    let root = fs::canonicalize(root).expect("#1109 canonical matrix scratch root");
     let cwd = root.join("cwd");
-    fs::create_dir(&cwd).unwrap();
+    fs::create_dir(&cwd).expect("#1109 matrix cwd directory");
     let absolute = name.starts_with("absolute") || name.starts_with("project");
     let home = if absolute {
         root.join("home/../home")
@@ -107,9 +125,9 @@ fn matrix(name: &str, test: &str) {
     } else {
         "/pdrs-fixture/project"
     };
-    std::env::set_current_dir(&cwd).unwrap();
+    std::env::set_current_dir(&cwd).expect("#1109 matrix enter cwd");
     if name.ends_with("deleted") {
-        fs::remove_dir(&cwd).unwrap();
+        fs::remove_dir(&cwd).expect("#1109 matrix delete cwd");
         assert!(
             std::env::current_dir().is_err(),
             "deleted-cwd setup did not take effect"
@@ -126,7 +144,7 @@ fn matrix(name: &str, test: &str) {
             },
         );
         json!({"transcriptPath": recorder.writer().for_subagent(&"kid".into()).transcript_path
-            .to_string_lossy().replace(root.to_str().unwrap(), "<root>")})
+            .to_string_lossy().replace(root.to_str().expect("#1109 matrix root is UTF-8"), "<root>")})
     } else {
         match adapter.create_session_storage(SessionStorageInput {
             project_root: project_root.into(),
@@ -135,10 +153,8 @@ fn matrix(name: &str, test: &str) {
             now: None,
         }) {
             Ok(storage) => {
-                let path = |p: &Path| {
-                    p.to_string_lossy()
-                        .replace(root.to_str().unwrap(), "<root>")
-                };
+                let root = root.to_str().expect("#1109 matrix root is UTF-8");
+                let path = |p: &Path| p.to_string_lossy().replace(root, "<root>");
                 let child = storage.transcript.for_subagent(&"kid".into());
                 json!({
                     "chatDir": path(&storage.chat_dir), "transcriptPath": path(&storage.transcript_path),
@@ -164,7 +180,7 @@ fn matrix(name: &str, test: &str) {
         };
         let error = adapter
             .list_sessions(&project, None, None)
-            .unwrap()
+            .expect("#1109 deleted-cwd list must error")
             .unwrap_err();
         assert_eq!(
             error.to_string(),
@@ -186,17 +202,17 @@ fn matrix(name: &str, test: &str) {
         assert_eq!(
             rewind
                 .get("error")
-                .unwrap()
+                .expect("#1109 rewind error field")
                 .as_string()
-                .unwrap()
+                .expect("#1109 rewind error string")
                 .to_utf8()
-                .unwrap(),
+                .expect("#1109 rewind error UTF-8"),
             expected["error"]["message"].as_str().unwrap(),
             "rewind propagates cwd failure"
         );
     }
-    std::env::set_current_dir(original_cwd).unwrap();
-    fs::remove_dir_all(&root).unwrap();
+    std::env::set_current_dir(original_cwd).expect("#1109 matrix restore cwd");
+    fs::remove_dir_all(&root).expect("#1109 matrix remove scratch");
     println!("TRANSCRIPT_RESOLVE_MATCH {name}: {outcome}");
 }
 

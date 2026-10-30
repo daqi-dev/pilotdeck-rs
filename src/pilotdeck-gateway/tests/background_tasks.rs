@@ -57,7 +57,11 @@ const TOOL_NAMES: [&str; 5] = [
 
 fn oracle() -> &'static JsValue {
     static PARSED: OnceLock<JsValue> = OnceLock::new();
-    PARSED.get_or_init(|| baseline::oracle(ORACLE))
+    // #1109: the optional-baseline git verification runs once per process
+    // on a bounded thread (see baseline::oracle_bounded); the signal worker
+    // spawned below replays without PDRS_BASELINE, so it cannot re-run the
+    // 728-source probe table under its parent's bounds.
+    PARSED.get_or_init(|| baseline::oracle_bounded(ORACLE))
 }
 
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
@@ -634,6 +638,11 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
     let mut sub_gates: Vec<SubagentGate> = Vec::new();
 
     for (index, step) in array(field(sequence, "steps")).iter().enumerate() {
+        // #1109: progress receipt. Each step is real replay work; printing
+        // it lets the signal-injected worker's parent distinguish a slow
+        // but progressing run from a hung one instead of bounding the real
+        // work by wall clock alone.
+        println!("BACKGROUND_SEQUENCE_STEP {name} {index}");
         let op = text(field(step, "op"));
         let label = format!("{name} step {index} {op}");
         let expected = field(step, "result");
@@ -1361,7 +1370,20 @@ const DARWIN_ONLY: [&str; 1] = ["non-string-command"];
 
 #[test]
 fn exit_statuses_with_inherited_ignored_and_blocked_signals() {
-    child_signals::ChildSignalProbe::new().launch("inherited_exit_statuses_worker", false);
+    // #1109: verify the committed oracle here, once for this process,
+    // before launching the worker (which runs without PDRS_BASELINE).
+    let _ = oracle();
+    let stdout =
+        child_signals::ChildSignalProbe::new().launch("inherited_exit_statuses_worker", false);
+    // #1109: the progress receipts the worker's bounds rely on must actually
+    // flow; a severed receipt channel would quietly degrade the bounds back
+    // to wall clock alone.
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.starts_with("BACKGROUND_SEQUENCE_STEP ")),
+        "#1109 worker emitted no sequence progress receipts: {stdout}"
+    );
 }
 
 #[test]
@@ -1371,8 +1393,9 @@ fn inherited_exit_statuses_worker() {
         std::process::Command::new(child_signals::probe_path())
             .arg("inherited")
             .status()
-            .unwrap()
-            .success()
+            .expect("#1109 run the inherited-disposition probe")
+            .success(),
+        "#1109 inherited dispositions must hold inside the signal-injected worker"
     );
     let sequence = section("sequences", 11)
         .iter()
