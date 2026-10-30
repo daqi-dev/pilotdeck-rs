@@ -39,55 +39,46 @@ const server=createServer(async(req,res)=>{
 });
 server.on('connection',s=>{sockets.add(s);s.on('close',()=>sockets.delete(s));});
 await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const port=(server.address() as any).port;
-const A4_BIND_ATTEMPTS=5;
-// The A4 binary prints its requested address, not the port the kernel
-// assigned, so the fixture must hand it a concrete port: reserve one with
-// listen(0) and close it right before spawn. A concurrent process can claim
-// that port in the window between close and the child's bind (TOCTOU); the
-// child then exits with a bind error, which launch() retries with a fresh
-// port a bounded number of times.
-const reserveA4Port=async():Promise<number>=>{const reserve=createServer();await new Promise<void>(r=>reserve.listen(0,'127.0.0.1',r));const reserved:number=(reserve.address() as any).port;await new Promise<void>(r=>reserve.close(()=>r()));return reserved;};
+// Both entry paths publish their kernel-assigned listening address (#1131
+// aligned the A4 proxy with the native process), so every launch asks for
+// port 0 and reads the actual address back; no port is reserved and no
+// bind-collision retry exists anymore.
 async function launch(name:string,extra:string[]=[],native=true){
   const home=join(out,name,'home'),project=join(out,name,'project');await mkdir(home,{recursive:true});await mkdir(project,{recursive:true});
   await writeFile(join(home,'pilotdeck.yaml'),`schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:${port}/v1\n      apiKey: mock-only\n      models:\n        mock: {}\n`,{flag:'wx'});
   const token=join(home,'token');await writeFile(token,'native-process-fixture\n',{flag:'wx'});
   const args=native?['--native','--home',home,'--project',project,'--listen','127.0.0.1:0','--token-file',token,'--sidecar',sidecar,'--drain-ms','1500',...extra]:extra;
-  const start=(legacyPort:number)=>{
-    const child=spawn(binary,args,{cwd:project,env:{PATH:process.env.PATH,HOME:home,PILOT_HOME:home,LANG:'en_US.UTF-8',PILOTDECK_CONFIG_PATH:join(out,'must-not-read.yaml'),PILOTDECK_PROXY_LISTEN:`127.0.0.1:${legacyPort}`,PILOTDECK_PROXY_UPSTREAM:`http://127.0.0.1:${port}`},stdio:['ignore','pipe','pipe']});children.push(child);
-    let stderr=''; const exit=once(child,'exit');child.stderr.on('data',(b:any)=>stderr+=b.toString());
-    // A child's stderr arrives in arbitrarily split chunks (the binary writes
-    // its readiness line through several write calls), so only a complete
-    // "listening host:port" line up to its newline can resolve readiness; a
-    // truncated chunk must keep waiting instead of resolving a port-less
-    // address whose later URL would fall through to http port 80.
+  const start=()=>{
+    const child=spawn(binary,args,{cwd:project,env:{PATH:process.env.PATH,HOME:home,PILOT_HOME:home,LANG:'en_US.UTF-8',PILOTDECK_CONFIG_PATH:join(out,'must-not-read.yaml'),PILOTDECK_PROXY_LISTEN:'127.0.0.1:0',PILOTDECK_PROXY_UPSTREAM:`http://127.0.0.1:${port}`},stdio:['ignore','pipe','pipe']});children.push(child);
+    let stderr='';let stdout=''; const exit=once(child,'exit');child.stderr.on('data',(b:any)=>stderr+=b.toString());child.stdout.on('data',(b:any)=>stdout+=b.toString());
+    // The native process reports "native listening host:port" on stderr;
+    // the A4 proxy reports its actual address on stdout (#1131). A child's
+    // output arrives in arbitrarily split chunks (the binary writes its
+    // readiness line through several write calls), so only a complete line
+    // up to its newline can resolve readiness; a truncated chunk must keep
+    // waiting instead of resolving a port-less address whose later URL
+    // would fall through to http port 80.
+    const readiness=native
+      ?{stream:child.stderr,text:()=>stderr,pattern:/native listening (\S+:\d+)[^\n]*\n/}
+      :{stream:child.stdout,text:()=>stdout,pattern:/PilotDeck server listening: http:\/\/(\S+:\d+)\n/};
     const ready=bounded(new Promise<string>((resolve,reject)=>{
-      child.stderr.on('data',()=>{const match=/(?:native|proxy) listening (\S+:\d+)[^\n]*\n/.exec(stderr);if(match)resolve(match[1]);});
+      readiness.stream.on('data',()=>{const match=readiness.pattern.exec(readiness.text());if(match)resolve(match[1]);});
       child.once('exit',(code:any)=>reject(Error(`#1071 early exit ${code}: ${stderr}`)));child.once('error',reject);
     }),'readiness');
     return {child,exit,ready,stderr:()=>stderr};
   };
-  let started=start(native?0:await reserveA4Port());
-  for(let attempt=1;;attempt++){
-    try{
-      const address=await started.ready;
-      // A resolved readiness value must be a complete host:port. A lax regex
-      // or a truncated chunk can hand back a port-less fragment whose client
-      // URL would silently degrade to the default HTTP port, so reject it
-      // here as a classified assertion instead of relying on connect errors.
-      assert.ok(/^\d+\.\d+\.\d+\.\d+:\d+$/.test(address),'#1071 readiness address carries a port');
-      rows.push({name,pid:started.child.pid,argv:[binary,...args],cwd:project,address});
-      return {child:started.child,exit:started.exit,address,project,home,stderr:started.stderr};
-    }catch(error:any){
-      const collision=/address already in use/i.test(String(error?.message));
-      // A genuine error (timeout, early exit of another cause, native path)
-      // stays unclassified so the oracle keeps treating it as INVALID; only
-      // an exhausted A4 bind-collision chain becomes a target receipt.
-      if(native||!collision)throw error;
-      if(attempt>=A4_BIND_ATTEMPTS)assert.fail('#1071 A4 bind collision exhausted');
-      rows.push({name,a4BindRetry:attempt});
-      started=start(await reserveA4Port());
-    }
-  }
+  const started=start();
+  const address=await started.ready;
+  // A resolved readiness value must be a complete host:port. A lax regex
+  // or a truncated chunk can hand back a port-less fragment whose client
+  // URL would silently degrade to the default HTTP port, so reject it
+  // here as a classified assertion instead of relying on connect errors.
+  assert.ok(/^\d+\.\d+\.\d+\.\d+:\d+$/.test(address),'#1071 readiness address carries a port');
+  // Both entries were asked for port 0, so a zero port means the child
+  // republished the requested address instead of the kernel-assigned one.
+  assert.ok(Number(address.split(':')[1])>0,'#1131 readiness reports the kernel-assigned port');
+  rows.push({name,pid:started.child.pid,argv:[binary,...args],cwd:project,address});
+  return {child:started.child,exit:started.exit,address,project,home,stderr:started.stderr};
 }
 async function client(address:string){
   const ws=new WebSocket(`ws://${address}/ws`);
@@ -166,7 +157,7 @@ try{
   // error, process failure or deadline remains an unclassified INVALID.
   if(error?.code==='ERR_ASSERTION'){
     const first=String(error.message).split('\n')[0];
-    if(['#1071 clean signal exit','#1071 refreshed hooks refused','#1071 A4 bind collision exhausted','#1071 readiness address carries a port'].includes(first)) assertionFailure=first;
+    if(['#1071 clean signal exit','#1071 refreshed hooks refused','#1071 readiness address carries a port','#1131 readiness reports the kernel-assigned port'].includes(first)) assertionFailure=first;
   }
   throw error;
 }finally{

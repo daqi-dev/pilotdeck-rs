@@ -70,16 +70,23 @@ mutations = [
     ('a4-default-bytes', MAIN,
      '"127.0.0.1:28789"', '"127.0.0.1:0"',
      'native_ws::tests::default_mode_unchanged', '#749 A4 executable remains unchanged'),
-    # fix-r2: every reserved A4 port is handed to a listener the fixture
-    # already holds, so the bounded bind-collision retry runs out and the
-    # observer fails loudly instead of falling through to a wrong address.
-    # fix-r3: the kill is the fixture's own classified assertion, not the
-    # generic nonzero-exit oracle; an earlier unrelated failure (readiness
-    # or WS timeout) stays INVALID.
-    ('a4-listen-collision', PROCESS,
-     'const reserved:number=(reserve.address() as any).port;',
-     'const reserved:number=port;',
-     'executable_native_and_a4', '#1071 executable A4 bind collision exhausted'),
+    # #1131: the A4 proxy now prints its kernel-assigned address on stdout
+    # ("PilotDeck server listening: http://host:port"); a readiness regex
+    # whose capture excludes the port resolves a port-less address, which
+    # the dedicated full-address assertion rejects deterministically as
+    # soon as readiness resolves.
+    ('a4-readiness-address-port', PROCESS,
+     r'PilotDeck server listening: http:\/\/(\S+:\d+)\n',
+     r'PilotDeck server listening: http:\/\/(\d+\.\d+\.\d+\.\d+):\d+\n',
+     'executable_native_and_a4', '#1071 executable readiness address carries a port'),
+    # #1131: the fixture asks both entries for port 0 and requires the
+    # published address to carry the kernel-assigned (nonzero) port; a
+    # binary that republishes the requested address instead of reading
+    # local_addr() is killed by that classified assertion.
+    ('a4-requested-address', MAIN,
+     'let address = listener.local_addr()?;',
+     'let address = listen;',
+     'executable_native_and_a4', '#1131 executable readiness reports the kernel-assigned port'),
     # fix-r2: readiness accepts a partial address again ("127.0.0" loses
     # its port), so the observer's first client URL degrades to a default
     # port; the bounded WS open wait must reject fast on that connect error
@@ -87,9 +94,12 @@ mutations = [
     # fix-r3: the dedicated full-address assertion rejects the port-less
     # fragment as soon as readiness resolves, deterministically, without
     # depending on the degraded URL's connect behavior.
+    # fix-r2/r4 anchor was the shared "(?:native|proxy)" stderr regex; #1131
+    # moved the A4 line to stdout, so this control now pins the native
+    # stderr regex (the A4 twin is a4-readiness-address-port above).
     ('readiness-address-port', PROCESS,
-     r'listening (\S+:\d+)[^\n]*\n',
-     r'listening (\d+)[^\n]*\n',
+     r'native listening (\S+:\d+)[^\n]*\n',
+     r'native listening (\d+)[^\n]*\n',
      'executable_native_and_a4', '#1071 executable readiness address carries a port'),
     ('signal-exit-status', SOURCE,
      'server.run(stop, options.drain_budget).await',

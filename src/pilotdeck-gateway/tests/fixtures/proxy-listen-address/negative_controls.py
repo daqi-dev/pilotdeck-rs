@@ -99,7 +99,10 @@ def main():
     results = []
     # The shared executors this script imports must also be pristine, or a
     # killed sibling runner's residue on them would execute as mutated bytes.
-    guarded = [SOURCE, TESTS, Path(__file__).resolve(), ORACLE,
+    # The provenance gate likewise: the default case runs baseline::oracle()
+    # from it, so a locally weakened gate must fail here before any control
+    # (fix-r2 P1: 7/7 KILLED must prove HEAD's full provenance criteria).
+    guarded = [SOURCE, TESTS, Path(__file__).resolve(), ORACLE, GATE,
                FIXTURE.parent / 'negative_process.py',
                FIXTURE.parent / 'negative_suite.py']
     try:
