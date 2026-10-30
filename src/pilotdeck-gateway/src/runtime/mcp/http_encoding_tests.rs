@@ -429,3 +429,269 @@ async fn mcp_legacy_corrupt_gap_is_observed() {
     );
     wire.close().await;
 }
+
+// #1114: the detached-continuation dispatch-order contract. The baseline
+// queues each fire-and-forget send's first step as a microtask before the
+// awaited promise resolves, so the fetch is dispatched before the caller's
+// next operation — a `close()` immediately after a send must never swallow
+// the request line. Each test counts `detach` calls on its own thread (a
+// current_thread runtime keeps the inline poll and the spawned remainder
+// there) and asserts the count at the moment the modeled JS continuation
+// must already have run.
+
+/// Reads one request (headers plus Content-Length body); `None` once the
+/// client went away.
+async fn read_request(socket: &mut TcpStream, tag: &'static str) -> Option<String> {
+    let mut request = Vec::new();
+    let end = loop {
+        let mut buf = [0; 1024];
+        let n = bounded(socket.read(&mut buf), tag)
+            .await
+            .unwrap_or_else(|error| panic!("{tag}: request read: {error}"));
+        if n == 0 {
+            return None;
+        }
+        request.extend_from_slice(&buf[..n]);
+        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+            break end + 4;
+        }
+    };
+    let headers = String::from_utf8_lossy(&request[..end]);
+    let length = headers
+        .lines()
+        .find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            key.eq_ignore_ascii_case("content-length").then(|| {
+                value
+                    .trim()
+                    .parse::<usize>()
+                    .unwrap_or_else(|error| panic!("{tag}: request length: {error}"))
+            })
+        })
+        .unwrap_or(0);
+    while request.len() < end + length {
+        let mut buf = [0; 1024];
+        let n = bounded(socket.read(&mut buf), tag)
+            .await
+            .unwrap_or_else(|error| panic!("{tag}: request payload: {error}"));
+        if n == 0 {
+            return None;
+        }
+        request.extend_from_slice(&buf[..n]);
+    }
+    Some(String::from_utf8_lossy(&request).into_owned())
+}
+
+/// Accepts connections and never answers: a pending request can only end by
+/// its own timeout.
+async fn silent_server(tag: &'static str) -> Server {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap_or_else(|error| panic!("{tag}: bind: {error}"));
+    let address = listener
+        .local_addr()
+        .unwrap_or_else(|error| panic!("{tag}: address: {error}"));
+    let url = Url::parse(&format!("http://{address}/mcp"))
+        .unwrap_or_else(|error| panic!("{tag}: URL: {error}"));
+    let task = tokio::spawn(async move {
+        let mut connections = JoinSet::new();
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let (mut socket, _) =
+                        accepted.unwrap_or_else(|error| panic!("{tag}: accept: {error}"));
+                    connections.spawn(async move {
+                        while read_request(&mut socket, tag).await.is_some() {}
+                    });
+                }
+                result = connections.join_next(), if !connections.is_empty() => {
+                    result
+                        .unwrap_or_else(|| panic!("{tag}: connection task"))
+                        .unwrap_or_else(|error| panic!("{tag}: connection panic: {error}"));
+                }
+            }
+        }
+    });
+    Server {
+        url,
+        task,
+        requested: None,
+    }
+}
+
+/// Answers the first request with `first` (a raw JSON body) and every later
+/// request with 202, so a scripted server-request reply terminates instead
+/// of looping.
+async fn first_then_accepted(first: &'static str, tag: &'static str) -> Server {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap_or_else(|error| panic!("{tag}: bind: {error}"));
+    let address = listener
+        .local_addr()
+        .unwrap_or_else(|error| panic!("{tag}: address: {error}"));
+    let url = Url::parse(&format!("http://{address}/mcp"))
+        .unwrap_or_else(|error| panic!("{tag}: URL: {error}"));
+    let answered = Arc::new(Mutex::new(false));
+    let task = tokio::spawn(async move {
+        let mut connections = JoinSet::new();
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let (mut socket, _) =
+                        accepted.unwrap_or_else(|error| panic!("{tag}: accept: {error}"));
+                    let answered = answered.clone();
+                    connections.spawn(async move {
+                        if read_request(&mut socket, tag).await.is_none() {
+                            return;
+                        }
+                        let response = if !std::mem::replace(&mut *lock(&answered), true) {
+                            format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                                 Content-Length: {}\r\nConnection: close\r\n\r\n{first}",
+                                first.len(),
+                            )
+                        } else {
+                            "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\
+                             Connection: close\r\n\r\n"
+                                .to_owned()
+                        };
+                        socket
+                            .write_all(response.as_bytes())
+                            .await
+                            .unwrap_or_else(|error| panic!("{tag}: scripted response: {error}"));
+                    });
+                }
+                result = connections.join_next(), if !connections.is_empty() => {
+                    result
+                        .unwrap_or_else(|| panic!("{tag}: connection task"))
+                        .unwrap_or_else(|error| panic!("{tag}: connection panic: {error}"));
+                }
+            }
+        }
+    });
+    Server {
+        url,
+        task,
+        requested: None,
+    }
+}
+
+/// #1114: a 202 for `notifications/initialized` must dispatch the SSE GET
+/// before `send()` resolves, so a `close()` that immediately follows cannot
+/// abort an undispatched GET (the CI flake dropped the line from the server
+/// log entirely).
+#[tokio::test]
+async fn dispatch_get_before_close() {
+    let tag = "#1114 GET dispatch";
+    let case = json!({"mode": "get-sse", "wire": "", "encoding": ""});
+    let server = server(&case, tag).await;
+    let wire = Wire::http(HttpLink::new(
+        HttpKind::Streamable,
+        server.url.clone(),
+        vec![],
+        2000.0,
+        2000.0,
+    ));
+    let link = wire
+        .http_link()
+        .unwrap_or_else(|| panic!("{tag}: HTTP link"));
+    super::reset_detached_dispatches();
+    bounded(
+        link.send(
+            &wire,
+            parse_json(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
+                .unwrap_or_else(|error| panic!("{tag}: initialized JSON: {error:?}")),
+        ),
+        tag,
+    )
+    .await
+    .unwrap_or_else(|error| panic!("{tag}: initialized send: {error}"));
+    // `McpClient.close()` awaits nothing between the send settling and the
+    // synchronous abort.
+    link.close();
+    crate::negative_assert_eq!(
+        super::detached_dispatches(),
+        1,
+        "#1114 the SSE GET is dispatched before close aborts it"
+    );
+}
+
+/// #1114: `Protocol.request` fires `transport.send()` before returning the
+/// promise, and `Protocol.cancel` fires the `notifications/cancelled` send
+/// when the timeout fires — both dispatch inline, before a later close could
+/// abort an undispatched request.
+#[tokio::test]
+async fn dispatch_request_and_cancel_before_close() {
+    let tag = "#1114 request and cancel dispatch";
+    let server = silent_server(tag).await;
+    let wire = Wire::http(HttpLink::new(
+        HttpKind::Streamable,
+        server.url.clone(),
+        vec![],
+        2000.0,
+        2000.0,
+    ));
+    super::reset_detached_dispatches();
+    let outcome = bounded(
+        wire.request("tools/list", None, 1.0, ResultSchema::ListTools, None, None),
+        tag,
+    )
+    .await;
+    let error = match outcome {
+        Err(error) => error,
+        Ok(value) => panic!("{tag}: silent server cannot satisfy a request: {value:?}"),
+    };
+    assert!(
+        error.message().contains("Request timed out"),
+        "{tag}: request ends by its own timeout, not by a send failure"
+    );
+    crate::negative_assert_eq!(
+        super::detached_dispatches(),
+        2,
+        "#1114 the request POST and the timeout cancel are dispatched inline"
+    );
+}
+
+/// #1114: a server request inside a response body gets its `Method not
+/// found` reply dispatched inside the body-parse continuation, before the
+/// caller's request future resolves.
+#[tokio::test]
+async fn dispatch_reply_before_resolve() {
+    let tag = "#1114 reply dispatch";
+    let body = concat!(
+        r#"[{"jsonrpc":"2.0","id":0,"result":{"tools":[]}},"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"sampling/createMessage","params":{}}]"#,
+    );
+    let server = first_then_accepted(body, tag).await;
+    let wire = Wire::http(HttpLink::new(
+        HttpKind::Streamable,
+        server.url.clone(),
+        vec![],
+        2000.0,
+        2000.0,
+    ));
+    super::reset_detached_dispatches();
+    let outcome = bounded(
+        wire.request(
+            "tools/list",
+            None,
+            2000.0,
+            ResultSchema::ListTools,
+            None,
+            None,
+        ),
+        tag,
+    )
+    .await;
+    let value = match outcome {
+        Ok(value) => value,
+        Err(error) => panic!("{tag}: scripted request failed: {error:?}"),
+    };
+    let text = frame_text(&value).unwrap_or_else(|error| panic!("{tag}: result JSON: {error:?}"));
+    assert!(text.contains("tools"), "{tag}: scripted tools/list result");
+    crate::negative_assert_eq!(
+        super::detached_dispatches(),
+        2,
+        "#1114 the reply to a server request is dispatched inline"
+    );
+}

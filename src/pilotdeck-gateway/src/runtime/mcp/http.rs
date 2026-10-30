@@ -1350,7 +1350,7 @@ impl HttpLink {
                 .is_some_and(|method| method.equals_str("notifications/initialized"))
                 && message.get("id").is_none();
             if initialized {
-                tokio::spawn(start_sse(Arc::downgrade(wire), None, before_abort));
+                detach(start_sse(Arc::downgrade(wire), None, before_abort));
             }
             return Ok(());
         }
@@ -1442,6 +1442,49 @@ impl HttpLink {
 fn link_of(wire: &Arc<Wire>) -> &HttpLink {
     wire.http_link()
         .expect("HTTP transport task on an HTTP wire")
+}
+
+#[cfg(test)]
+thread_local! {
+    static DETACHED_DISPATCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Dispatched-continuation probe for the `#1114` ordering tests: one count
+/// per `detach` call, on the thread that polled it (a current_thread test
+/// runtime keeps the inline poll and the spawned remainder on one thread).
+#[cfg(test)]
+fn reset_detached_dispatches() {
+    DETACHED_DISPATCHES.with(|count| count.set(0));
+}
+#[cfg(test)]
+fn detached_dispatches() -> usize {
+    DETACHED_DISPATCHES.with(|count| count.get())
+}
+
+/// A fire-and-forget send. The baseline queues the continuation's first step
+/// as a microtask before the awaited promise resolves — a 202 for the
+/// initialized notification fires `_startOrAuthSse` that way, `Protocol`
+/// fires `transport.send()` before returning a request promise — so the
+/// fetch is dispatched, or gated, before the caller's next operation and a
+/// later synchronous `close` cannot swallow the request outright. Poll the
+/// continuation inline to that first suspension (one poll that reaches the
+/// exchange), then run the rest in the background exactly as before.
+///
+/// The inline poll registers the exchange with a no-op waker: every
+/// readiness it can miss is latched (tokio I/O and timer state, oneshot
+/// values), so the spawned remainder's first poll observes the state and
+/// re-registers with its real waker.
+pub(super) fn detach<F>(continuation: F)
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    #[cfg(test)]
+    DETACHED_DISPATCHES.with(|count| count.set(count.get() + 1));
+    let mut continuation = Box::pin(continuation);
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    let _ = continuation.as_mut().poll(&mut context);
+    tokio::spawn(continuation);
 }
 
 /// `_startOrAuthSse({ resumptionToken })`: open the GET event stream; a 405

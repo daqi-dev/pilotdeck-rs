@@ -26,7 +26,7 @@
 //! pipe can never stall the reader).
 
 use super::client::{McpClientError, McpErrorCode};
-use super::http::HttpLink;
+use super::http::{HttpLink, detach};
 use super::protocol::{Inbound, ResultSchema, parse_inbound, parse_result};
 use crate::js_value;
 pub(super) use crate::runtime::cleanup_task::lock;
@@ -389,7 +389,8 @@ impl Wire {
     }
 
     /// Dispatches messages that arrived over HTTP; replies to server
-    /// requests are POSTed in the background, in depth order.
+    /// requests are dispatched inline in depth order (the baseline sends them
+    /// inside the body-parse continuation) and complete in the background.
     pub(super) fn dispatch_http(self: &Arc<Self>, messages: Vec<Inbound>) {
         let mut outbox = Outbox::default();
         for message in messages {
@@ -441,8 +442,10 @@ impl Wire {
         }
     }
 
-    /// A send whose failure only reaches `onerror`. On stdio the frame is
-    /// queued before this returns (a following close cannot overtake it).
+    /// A send whose failure only reaches `onerror`. The frame is dispatched
+    /// before this returns — queued on stdio, polled inline on HTTP (the
+    /// baseline fires the continuation before the caller runs again) — so a
+    /// following close cannot overtake the request outright.
     pub(super) fn send_detached(self: &Arc<Self>, value: JsValue) {
         match &self.link {
             Link::Stdio(link) => {
@@ -450,7 +453,7 @@ impl Wire {
             }
             Link::Http(_) => {
                 let wire = self.clone();
-                tokio::spawn(async move {
+                detach(async move {
                     let _ = wire.send(value).await;
                 });
             }
@@ -523,7 +526,9 @@ impl Wire {
             }
             Link::Http(_) => {
                 let wire = self.clone();
-                tokio::spawn(async move {
+                // `Protocol.request` fires `transport.send()` before returning
+                // the promise, so the POST is dispatched inline here too.
+                detach(async move {
                     if let Err(error) = wire.send(message).await {
                         wire.fail(id, error);
                     }
