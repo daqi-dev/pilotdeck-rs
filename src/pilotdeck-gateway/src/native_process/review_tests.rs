@@ -117,7 +117,14 @@ async fn production_cleanup_matrix() {
         .expect("#1071 actual production assembly starts");
         // Timeout is the product's existing bounded cleanup policy. The outer
         // guard below only diagnoses a stuck test and never emits a receipt.
-        host.request_shutdown(Duration::from_millis(250));
+        // Only `never` exercises the deadline; the other modes get a budget
+        // the test thread cannot miss under scheduler delay.
+        let budget = if mode == "never" {
+            Duration::from_millis(250)
+        } else {
+            Duration::from_secs(5)
+        };
+        host.request_shutdown(budget);
         tokio::time::timeout(Duration::from_secs(5), entered.notified())
             .await
             .expect("#1071 production session disposal entered");
