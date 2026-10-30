@@ -14,6 +14,7 @@ pub mod model_cost;
 #[doc(hidden)]
 pub mod mutants;
 mod native_archive;
+pub mod native_process;
 pub mod native_ws;
 #[cfg(test)]
 extern crate self as pilotdeck_gateway;

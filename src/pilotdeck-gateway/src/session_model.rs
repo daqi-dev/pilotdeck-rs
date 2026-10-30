@@ -90,7 +90,7 @@ pub(crate) fn response<F: Files>(
         .flatten()
         .map(String::into_bytes)
 }
-fn execute<F: Files>(
+pub(crate) fn execute<F: Files>(
     metadata: &Metadata<F>,
     params: &JsValue,
     env: &Env,
