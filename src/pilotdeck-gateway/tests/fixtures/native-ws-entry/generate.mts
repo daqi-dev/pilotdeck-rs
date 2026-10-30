@@ -6,7 +6,7 @@ import {join, resolve} from 'node:path';
 import {connect} from 'node:net';
 import {once, EventEmitter} from 'node:events';
 import {assertBaseline, baselineSourceHashes} from '../_shared/baseline.mts';
-const RFC6455_SAMPLE_NONCE = 'dGhlIHNhbXBsZSBub25jZQ==';
+import {RFC6455_SAMPLE_NONCE} from './sample.mts';
 assert.equal(process.version, 'v22.22.0', '#749 pinned Node');
 const baseline = resolve(process.env.PDRS_BASELINE!);
 const sourceCommit = assertBaseline(baseline);

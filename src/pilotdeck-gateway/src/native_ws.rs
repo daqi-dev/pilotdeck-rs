@@ -161,19 +161,22 @@ impl Drop for StopHost {
 
 // Resource safety differences from TS's unbounded custom WS implementation.
 const MAX_INPUT_PAYLOAD: usize = 100 * 1024 * 1024;
-const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+const MAX_OUTPUT_PAYLOAD: usize = MAX_INPUT_PAYLOAD;
+const MAX_OUTPUT_BYTES: usize = MAX_OUTPUT_PAYLOAD + frame::MAX_SERVER_HEADER_BYTES;
 const MAX_OUTPUT_FRAMES: usize = 64;
 const MAX_PENDING_REQUESTS: usize = 64;
 const CLOSE_BUDGET: Duration = Duration::from_secs(1);
 
 enum Output {
     Frame(Vec<u8>, OwnedSemaphorePermit),
-    Close(Vec<u8>, OwnedSemaphorePermit),
+    Close(Vec<u8>),
     End,
 }
 struct Text {
     output: mpsc::Sender<Output>,
     bytes: Arc<Semaphore>,
+    end_slot: Mutex<Option<mpsc::OwnedPermit<Output>>>,
+    close_slot: Mutex<Option<mpsc::OwnedPermit<Output>>>,
     closing: watch::Sender<Option<tokio::time::Instant>>,
     // Linearize close/send callbacks on the host without blocking that host.
     closed: Mutex<bool>,
@@ -194,10 +197,16 @@ impl Text {
         } else {
             MAX_OUTPUT_BYTES
         };
-        let (output, outgoing) = mpsc::channel(slots);
+        // These permits cannot be consumed by ordinary frames. Keep them until
+        // the one Close and the one End have been enqueued, in FIFO order.
+        let (output, outgoing) = mpsc::channel(slots + 2);
+        let end_slot = output.clone().try_reserve_owned().expect("new End slot");
+        let close_slot = output.clone().try_reserve_owned().expect("new Close slot");
         let (closing, closing_rx) = watch::channel(None);
         let text = Arc::new(Self {
             output,
+            end_slot: Mutex::new(Some(end_slot)),
+            close_slot: Mutex::new(Some(close_slot)),
             bytes: Arc::new(Semaphore::new(bytes)),
             closing,
             closed: Mutex::new(false),
@@ -225,53 +234,66 @@ impl Text {
 
     // Reserve both dimensions before frame encoding. A permit stays attached
     // through write_all, so dequeue does not hide a blocked in-flight frame.
-    fn queue(&self, opcode: u8, payload: &[u8], close: bool) {
+    fn queue(&self, opcode: u8, payload: &[u8]) {
+        let max_payload = if crate::mutants::on("native-ws-small-output-limit") {
+            1024 * 1024
+        } else {
+            MAX_OUTPUT_PAYLOAD
+        };
         let length = payload
             .len()
-            .checked_add(10)
+            .checked_add(frame::MAX_SERVER_HEADER_BYTES)
             .and_then(|n| u32::try_from(n).ok());
         let permit = length.and_then(|n| self.bytes.clone().try_acquire_many_owned(n).ok());
         let slot = self.output.try_reserve();
-        if let (Some(permit), Ok(slot)) = (permit, slot) {
-            let wire = frame::server_frame(opcode, payload);
-            slot.send(if close {
-                Output::Close(wire, permit)
-            } else {
-                Output::Frame(wire, permit)
-            });
+        if let (Some(permit), Ok(slot), true) = (permit, slot, payload.len() <= max_payload) {
+            slot.send(Output::Frame(frame::server_frame(opcode, payload), permit));
         } else {
-            // A full queue must not swallow the shutdown signal. The peer may
-            // not read, so force close without promising a deliverable frame.
-            if !close || !crate::mutants::on("native-ws-full-close-signal") {
-                self.deadline(true);
+            // Sync host callbacks cannot await byte capacity. Reject overload
+            // with a reserved close frame; a non-reading peer still has a deadline.
+            self.queue_close(1009, "output limit exceeded");
+        }
+    }
+    fn queue_close(&self, code: u16, reason: &str) {
+        if self.output.capacity() == 0 && crate::mutants::on("native-ws-full-close-signal") {
+            return;
+        }
+        self.deadline(false);
+        if let Some(slot) = self.close_slot.lock().expect("native close slot").take() {
+            let mut payload = code.to_be_bytes().to_vec();
+            payload.extend_from_slice(reason.as_bytes());
+            let wire = frame::server_frame(8, &payload);
+            if !crate::mutants::on("native-ws-drop-output-close") {
+                slot.send(Output::Close(wire));
             }
         }
     }
     fn ping(&self, payload: &[u8]) {
         // TS replies to ping even after application close within a data batch.
-        self.queue(10, payload, false);
+        self.queue(10, payload);
     }
     fn end(&self) {
         *self.closed.lock().expect("native text state") = true;
         self.deadline(false);
-        let _ = self.output.try_send(Output::End);
+        if crate::mutants::on("native-ws-drop-full-end") {
+            let _ = self.output.try_send(Output::End);
+        } else if let Some(slot) = self.end_slot.lock().expect("native end slot").take() {
+            slot.send(Output::End);
+        }
     }
 }
 impl GatewayTextConnection for Text {
     fn send_text(&self, message: String) {
         let closed = self.closed.lock().expect("native text state");
         if !*closed && self.closing.borrow().is_none() {
-            self.queue(1, message.as_bytes(), false);
+            self.queue(1, message.as_bytes());
         }
     }
     fn close(&self, code: u16, reason: &str) {
         let mut closed = self.closed.lock().expect("native text state");
         if !*closed {
             *closed = true;
-            self.deadline(false);
-            let mut payload = code.to_be_bytes().to_vec();
-            payload.extend_from_slice(reason.as_bytes());
-            self.queue(8, &payload, true);
+            self.queue_close(code, reason);
         }
     }
 }
@@ -360,9 +382,72 @@ fn input_capacity(buffered: usize, available: usize) -> usize {
     let remaining = if crate::mutants::on("native-ws-buffer-limit") {
         usize::MAX
     } else {
-        (MAX_INPUT_PAYLOAD + 14).saturating_sub(buffered)
+        (MAX_INPUT_PAYLOAD + frame::MAX_CLIENT_HEADER_BYTES).saturating_sub(buffered)
     };
     available.min(remaining)
+}
+
+// The saturated state is defensive: an ordinary complete valid frame has
+// already been consumed by the inner decode loop before the next read.
+fn read_capacity(text: &Text, buffered: usize, available: usize) -> usize {
+    let capacity = input_capacity(buffered, available);
+    if capacity == 0 {
+        let code = if crate::mutants::on("native-ws-buffer-close-code") {
+            1000
+        } else {
+            1009
+        };
+        text.close(code, "frame too large");
+    }
+    capacity
+}
+
+async fn finish_write(
+    write: impl Future<Output = std::io::Result<()>>,
+    closing: watch::Receiver<Option<tokio::time::Instant>>,
+) -> std::io::Result<()> {
+    let timed_out = || {
+        std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "native WS writer close deadline exceeded",
+        )
+    };
+    tokio::select! {
+        biased;
+        // Deterministically invert precedence only in the fixture mutant.
+        _ = closing_deadline(closing.clone()), if crate::mutants::on("native-ws-writer-priority") => Err(timed_out()),
+        result = write => result,
+        _ = closing_deadline(closing), if !crate::mutants::on("native-ws-writer-deadline") => Err(timed_out()),
+    }
+}
+
+async fn write_output<W: tokio::io::AsyncWrite + Unpin>(
+    mut writer: W,
+    mut outgoing: mpsc::Receiver<Output>,
+    closing: watch::Receiver<Option<tokio::time::Instant>>,
+) -> std::io::Result<()> {
+    finish_write(
+        async {
+            while let Some(item) = outgoing.recv().await {
+                match item {
+                    Output::Frame(wire, permit) => {
+                        writer.write_all(&wire).await?;
+                        if crate::mutants::on("native-ws-leak-output-permit") {
+                            std::mem::forget(permit);
+                        }
+                    }
+                    Output::Close(wire) => {
+                        writer.write_all(&wire).await?;
+                        break;
+                    }
+                    Output::End => break,
+                }
+            }
+            writer.shutdown().await
+        },
+        closing,
+    )
+    .await
 }
 
 async fn transport<S>(
@@ -374,34 +459,11 @@ async fn transport<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    let (mut reader, mut writer) = tokio::io::split(socket);
-    let (text, mut outgoing, closing_rx) = Text::channel();
+    let (mut reader, writer) = tokio::io::split(socket);
+    let (text, outgoing, closing_rx) = Text::channel();
     let connection = host.connect(text.clone(), token, version);
     let mut writes = JoinSet::new();
-    let writer_closing = closing_rx.clone();
-    writes.spawn(async move {
-        let write = async {
-            while let Some(item) = outgoing.recv().await {
-                match item {
-                    Output::Frame(wire, permit) => {
-                        writer.write_all(&wire).await?;
-                        if crate::mutants::on("native-ws-leak-output-permit") { std::mem::forget(permit); }
-                    },
-                    Output::Close(wire, _permit) => {
-                        writer.write_all(&wire).await?;
-                        break;
-                    }
-                    Output::End => break,
-                }
-            }
-            writer.shutdown().await
-        };
-        tokio::select! {
-            result = write => result,
-            _ = closing_deadline(writer_closing), if !crate::mutants::on("native-ws-writer-deadline") =>
-                Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "native WS writer close deadline exceeded")),
-        }
-    });
+    writes.spawn(write_output(writer, outgoing, closing_rx.clone()));
     let mut requests = Vec::new();
     let mut decoder = Decoder::default();
     let mut input = [0; 8192];
@@ -416,9 +478,8 @@ where
         loop {
             // TS handleData starts on each new data callback. A protocol close
             // ends that batch, but leaves buffered tail bytes for the next one.
-            let capacity = input_capacity(decoder.buffer.len(), input.len());
+            let capacity = read_capacity(&text, decoder.buffer.len(), input.len());
             if capacity == 0 {
-                text.close(1009, "frame too large");
                 break;
             }
             let count = tokio::select! {

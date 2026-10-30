@@ -465,28 +465,43 @@ fn input_limit_boundary_preserves_proxy() {
 #[tokio::test]
 async fn output_byte_budget_includes_inflight_and_recovers() {
     let (text, mut outgoing, _) = Text::channel();
-    text.send_text("x".repeat(MAX_OUTPUT_BYTES - 10));
-    let held = outgoing
-        .recv()
-        .await
-        .expect("#749 byte limit accepts exact reservation");
-    assert!(
+    text.send_text("x".repeat(MAX_OUTPUT_PAYLOAD));
+    let held = crate::test_negative_receipt::expect_ok(
+        outgoing.try_recv(),
+        "#749 byte limit includes blocked writer",
+    );
+    negative_assert!(
+        matches!(held, Output::Frame(..)),
+        "#749 byte limit includes blocked writer"
+    );
+    negative_assert!(
         text.closing.borrow().is_none(),
-        "#749 byte limit exact accepted"
+        "#749 byte limit includes blocked writer"
     );
     text.send_text("extra".into());
     negative_assert!(
         text.closing.borrow().is_some(),
         "#749 byte limit includes blocked writer"
     );
+    negative_assert!(
+        matches!(outgoing.try_recv(), Ok(Output::Close(..))),
+        "#749 byte limit includes blocked writer"
+    );
     drop(held);
     let (text, mut outgoing, _) = Text::channel();
     for _ in 0..2 {
-        text.send_text("x".repeat(MAX_OUTPUT_BYTES - 10));
-        let item = outgoing.recv().await.expect("#749 byte permit reused");
-        assert!(
+        text.send_text("x".repeat(MAX_OUTPUT_PAYLOAD));
+        let item = crate::test_negative_receipt::expect_ok(
+            outgoing.try_recv(),
+            "#749 byte limit includes blocked writer",
+        );
+        negative_assert!(
+            matches!(item, Output::Frame(..)),
+            "#749 byte limit includes blocked writer"
+        );
+        negative_assert!(
             text.closing.borrow().is_none(),
-            "#749 released byte permit accepts successor"
+            "#749 byte limit includes blocked writer"
         );
         drop(item);
     }
@@ -495,13 +510,13 @@ async fn output_byte_budget_includes_inflight_and_recovers() {
 #[tokio::test]
 async fn output_slot_budget_and_full_close() {
     for close in [false, true] {
-        let (text, _outgoing, _) = Text::channel();
+        let (text, mut outgoing, _) = Text::channel();
         for _ in 0..MAX_OUTPUT_FRAMES {
             text.send_text("x".into());
         }
-        assert!(
+        negative_assert!(
             text.closing.borrow().is_none(),
-            "#749 exact slot count accepted"
+            "#749 full output queue preserves close frame"
         );
         if close {
             text.close(1000, "");
@@ -509,10 +524,31 @@ async fn output_slot_budget_and_full_close() {
             text.send_text("overflow".into());
         }
         negative_assert!(
-            text.closing
-                .borrow()
-                .is_some_and(|deadline| deadline <= tokio::time::Instant::now()),
-            "#749 full output queue forces close independently"
+            text.closing.borrow().is_some(),
+            "#749 full output queue preserves close frame"
+        );
+        for _ in 0..MAX_OUTPUT_FRAMES {
+            negative_assert!(
+                matches!(outgoing.try_recv(), Ok(Output::Frame(..))),
+                "#749 full output queue preserves close frame"
+            );
+        }
+        let last = crate::test_negative_receipt::expect_ok(
+            outgoing.try_recv(),
+            "#749 full output queue preserves close frame",
+        );
+        let Output::Close(wire) = last else {
+            negative_assert!(false, "#749 full output queue preserves close frame");
+            return;
+        };
+        negative_assert_eq!(
+            wire.get(2..4),
+            Some(
+                if close { 1000u16 } else { 1009u16 }
+                    .to_be_bytes()
+                    .as_slice()
+            ),
+            "#749 full output queue preserves close frame"
         );
     }
 }
@@ -1228,8 +1264,8 @@ async fn host_cleanup_runs_after_session_failure() {
 fn buffered_input_never_exceeds_frame_budget() {
     for (buffered, expected) in [
         (0, 8192),
-        (MAX_INPUT_PAYLOAD + 13, 1),
-        (MAX_INPUT_PAYLOAD + 14, 0),
+        (MAX_INPUT_PAYLOAD + frame::MAX_CLIENT_HEADER_BYTES - 1, 1),
+        (MAX_INPUT_PAYLOAD + frame::MAX_CLIENT_HEADER_BYTES, 0),
         (usize::MAX, 0),
     ] {
         negative_assert_eq!(
@@ -1364,4 +1400,231 @@ async fn completed_writes_and_requests_release_capacity() {
     host.shutdown(DEADLINE)
         .await
         .expect("#749 capacity host stopped");
+}
+
+#[tokio::test]
+async fn large_output_matches_ts() {
+    use sha2::{Digest, Sha256};
+    for expected in oracle()["resources"]["largeOutput"]
+        .as_array()
+        .expect("#749 large output fixture array")
+    {
+        let size = expected["size"]
+            .as_u64()
+            .expect("#749 large output fixture size") as usize;
+        let (text, mut outgoing, _) = Text::channel();
+        text.send_text("x".repeat(size));
+        let item = crate::test_negative_receipt::expect_ok(
+            outgoing.try_recv(),
+            "#749 legal large output matches TS",
+        );
+        let Output::Frame(wire, _permit) = item else {
+            negative_assert!(false, "#749 legal large output matches TS");
+            return;
+        };
+        let mut decoder = Decoder::default();
+        decoder.buffer.extend_from_slice(&wire);
+        let frame = crate::test_negative_receipt::expect_ok(
+            decoder.next_server(),
+            "#749 legal large output matches TS",
+        );
+        negative_assert!(frame.is_some(), "#749 legal large output matches TS");
+        let frame = frame.expect("#749 legal large output matches TS");
+        negative_assert_eq!(
+            json!({"size":frame.payload.len(),"opcode":frame.opcode,
+            "declared":frame.payload.len(),"wireBytes":wire.len(),
+            "sha256":format!("{:x}", Sha256::digest(&frame.payload)),"ends":0}),
+            *expected,
+            "#749 legal large output matches TS"
+        );
+        negative_assert!(
+            decoder.buffer.is_empty() && text.closing.borrow().is_none(),
+            "#749 legal large output matches TS"
+        );
+    }
+}
+
+#[tokio::test]
+async fn oversized_output_sends_close() {
+    let (text, mut outgoing, _) = Text::channel();
+    text.send_text("x".repeat(MAX_OUTPUT_PAYLOAD + 1));
+    let item = crate::test_negative_receipt::expect_ok(
+        outgoing.try_recv(),
+        "#749 oversized output sends close1009",
+    );
+    let Output::Close(wire) = item else {
+        negative_assert!(false, "#749 oversized output sends close1009");
+        return;
+    };
+    negative_assert_eq!(
+        wire,
+        frame::server_frame(
+            8,
+            &[1009u16.to_be_bytes().as_slice(), b"output limit exceeded"].concat()
+        ),
+        "#749 oversized output sends close1009"
+    );
+    negative_assert!(
+        text.closing.borrow().is_some(),
+        "#749 oversized output sends close1009"
+    );
+    text.send_text("after close".into());
+    negative_assert!(
+        outgoing.try_recv().is_err(),
+        "#749 oversized output sends close1009"
+    );
+}
+
+#[tokio::test]
+async fn full_queue_eof_flushes_successfully() {
+    let expected = &oracle()["resources"]["fullQueueEnd"];
+    negative_assert_eq!(
+        expected["completed"],
+        64,
+        "#749 full queue EOF flushes successfully"
+    );
+    negative_assert_eq!(
+        expected["finished"],
+        true,
+        "#749 full queue EOF flushes successfully"
+    );
+    let (text, outgoing, closing) = Text::channel();
+    for _ in 0..MAX_OUTPUT_FRAMES {
+        text.send_text("queued".into());
+    }
+    text.end(); // Writer has never been polled: the queue is exactly full.
+    let (writer, mut peer) = tokio::io::duplex(16);
+    let writing = write_output(writer, outgoing, closing);
+    let reading = async {
+        let mut bytes = Vec::new();
+        peer.read_to_end(&mut bytes).await.map(|_| bytes)
+    };
+    let result = timeout(DEADLINE, async { tokio::join!(writing, reading) }).await;
+    let (written, received) =
+        crate::test_negative_receipt::expect_ok(result, "#749 full queue EOF flushes successfully");
+    crate::test_negative_receipt::expect_ok(written, "#749 full queue EOF flushes successfully");
+    let received = crate::test_negative_receipt::expect_ok(
+        received,
+        "#749 full queue EOF flushes successfully",
+    );
+    negative_assert_eq!(
+        received,
+        frame::server_frame(1, b"queued").repeat(MAX_OUTPUT_FRAMES),
+        "#749 full queue EOF flushes successfully"
+    );
+    // Retaining Text (and its Sender) must not keep recv() alive after EOF.
+    negative_assert_eq!(
+        text.bytes.available_permits(),
+        MAX_OUTPUT_BYTES,
+        "#749 full queue EOF flushes successfully"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn completed_writer_wins_ready_deadline() {
+    let (text, _outgoing, closing) = Text::channel();
+    text.deadline(false);
+    tokio::time::advance(CLOSE_BUDGET + Duration::from_millis(1)).await;
+    crate::test_negative_receipt::expect_ok(
+        finish_write(std::future::ready(Ok(())), closing).await,
+        "#749 completed writer wins ready deadline",
+    );
+}
+
+#[tokio::test]
+async fn output_permit_released_after_write() {
+    let (text, outgoing, closing) = Text::channel();
+    text.send_text("reserved".into());
+    negative_assert!(
+        text.bytes.available_permits() < MAX_OUTPUT_BYTES,
+        "#749 written frame releases byte permit"
+    );
+    text.end();
+    crate::test_negative_receipt::expect_ok(
+        write_output(tokio::io::sink(), outgoing, closing).await,
+        "#749 written frame releases byte permit",
+    );
+    negative_assert_eq!(
+        text.bytes.available_permits(),
+        MAX_OUTPUT_BYTES,
+        "#749 written frame releases byte permit"
+    );
+}
+
+#[tokio::test]
+async fn buffer_capacity_close_uses_1009() {
+    let (text, mut outgoing, _) = Text::channel();
+    // Deterministic defensive-state injection into the production admission
+    // function; a legal complete frame cannot leave this state after decode.
+    negative_assert_eq!(
+        read_capacity(
+            &text,
+            MAX_INPUT_PAYLOAD + frame::MAX_CLIENT_HEADER_BYTES,
+            8192
+        ),
+        0,
+        "#749 saturated input admission sends close1009"
+    );
+    let item = crate::test_negative_receipt::expect_ok(
+        outgoing.try_recv(),
+        "#749 saturated input admission sends close1009",
+    );
+    let Output::Close(wire) = item else {
+        negative_assert!(false, "#749 saturated input admission sends close1009");
+        return;
+    };
+    negative_assert_eq!(
+        wire,
+        frame::server_frame(
+            8,
+            &[1009u16.to_be_bytes().as_slice(), b"frame too large"].concat()
+        ),
+        "#749 saturated input admission sends close1009"
+    );
+}
+
+#[test]
+fn exact_input_frame_is_consumed_before_next_read() {
+    let wire = frame::client_frame(0x81, 127, &vec![b'x'; MAX_INPUT_PAYLOAD]);
+    let mut decoder = Decoder::default();
+    decoder.buffer.extend_from_slice(&wire);
+    assert_eq!(
+        input_capacity(decoder.buffer.len(), 8192),
+        0,
+        "#749 full frame raw buffer at cap"
+    );
+    let frame = decoder
+        .next_limited(MAX_INPUT_PAYLOAD as u64)
+        .expect("#749 exact frame decode")
+        .expect("#749 exact frame complete");
+    assert_eq!(
+        frame.payload.len(),
+        MAX_INPUT_PAYLOAD,
+        "#749 exact frame payload"
+    );
+    assert!(
+        decoder.buffer.is_empty(),
+        "#749 exact frame consumed before next read"
+    );
+    assert_eq!(
+        input_capacity(decoder.buffer.len(), 8192),
+        8192,
+        "#749 exact frame next read has capacity"
+    );
+    println!("#749 exact MAX frame consumed; buffered=0; next_read_capacity=8192");
+}
+
+#[test]
+fn frame_header_budgets_match_encoding() {
+    let payload = vec![0; 65536];
+    negative_assert_eq!(
+        frame::server_frame(1, &payload).len() - payload.len(),
+        frame::MAX_SERVER_HEADER_BYTES,
+        "#749 header budgets cover actual wire encoding"
+    );
+    negative_assert_eq!(
+        frame::client_frame(0x81, 127, &payload).len() - payload.len(),
+        frame::MAX_CLIENT_HEADER_BYTES,
+        "#749 header budgets cover actual wire encoding"
+    );
 }
