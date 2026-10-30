@@ -145,8 +145,9 @@ class SwitchNegativeTests(unittest.TestCase):
         by_test = {}
         for row in runner.MUTATIONS:
             by_test.setdefault(row[4], []).append(row)
+        checked = 0
         for command, selector in calls:
-            if command[-1] != '--nocapture' or '--no-run' in command:
+            if command[-1] != '--exact' or '--no-run' in command:
                 continue
             test = command[command.index('--') - 1]
             rows = by_test.get(test)
@@ -156,6 +157,8 @@ class SwitchNegativeTests(unittest.TestCase):
                           '#818 each row must run under its own selector')
             self.assertTrue(all(set(row[6]) <= set(command) for row in rows),
                             '#818 each row must carry its declared cargo arguments')
+            checked += 1
+        self.assertGreater(checked, 0, '#818 selector binding must check at least one run command')
         gates = [command for command, _ in calls if '--test' in command]
         self.assertTrue(gates and all('mutants_boundary' in command for command in gates),
                         '#818 the boundary build gate must run')
