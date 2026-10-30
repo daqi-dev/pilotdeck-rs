@@ -911,12 +911,17 @@ impl SessionFactory for ProjectSessionFactory {
 struct PendingSession {
     handle: Option<LiveSessionHandle>,
     executor: tokio::runtime::Handle,
+    // Tests observe this candidate's cleanup future, not the runtime's tasks.
+    #[cfg(test)]
+    drop_finished: Option<tokio::sync::oneshot::Sender<()>>,
 }
 impl PendingSession {
     fn new(handle: LiveSessionHandle) -> Self {
         Self {
             handle: Some(handle),
             executor: tokio::runtime::Handle::current(),
+            #[cfg(test)]
+            drop_finished: None,
         }
     }
 }
@@ -926,7 +931,12 @@ impl PendingSession {
 impl Drop for PendingSession {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
+            #[cfg(test)]
+            let drop_finished = self.drop_finished.take();
             self.executor.spawn(async move {
+                // Closing the channel also covers an unpolled/cancelled future.
+                #[cfg(test)]
+                let _drop_finished = drop_finished;
                 let _ = handle.dispose("session_create_cancelled".into()).await;
             });
         }

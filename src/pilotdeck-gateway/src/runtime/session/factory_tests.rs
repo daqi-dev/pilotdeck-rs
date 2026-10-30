@@ -5091,7 +5091,7 @@ async fn drained_seed_case(
                 || h.observed.mcp.load(Ordering::SeqCst) != 0
                 || !lock(&h.observed.events).iter().any(|v| v == "close.2")
             {
-                tokio::task::yield_now().await;
+                tokio::time::sleep(Duration::from_millis(1)).await;
             }
         })
         .await;
@@ -5166,11 +5166,124 @@ async fn drained_seed_case(
 async fn recreation_uses_file_state_saved_during_drain() {
     drained_seed_case(false, false, None).await;
 }
+
+async fn pending_candidate_reason(
+    reason: impl Fn() -> Option<JsString>,
+    mut finished: tokio::sync::oneshot::Receiver<()>,
+    wait: Duration,
+) -> Option<JsString> {
+    let observed = tokio::time::timeout(wait, async {
+        loop {
+            let current = reason();
+            if current.is_some() {
+                return current;
+            }
+            if !matches!(
+                finished.try_recv(),
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+            ) {
+                // A completed/cancelled producer may have just set the reason.
+                // Its exit alone does not prove that explicit disposal ran.
+                return reason();
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await;
+    // Compile-time negative control: accepting this deadline must be caught by
+    // the bounded-failure test, without mutating uncommitted product sources.
+    if option_env!("PDRS_1122_ACCEPT_OBSERVATION_DEADLINE").is_some() {
+        return observed.unwrap_or(None);
+    }
+    observed.expect("#1122 candidate observation executor settles")
+}
+
+#[tokio::test]
+async fn pending_candidate_observer_missing_reason_fails_by_deadline() {
+    let unrelated = tokio::spawn(std::future::pending::<()>());
+    let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
+    let started = std::time::Instant::now();
+    let observing = tokio::spawn(async move {
+        // Neither reason nor cleanup completion can occur before the deadline.
+        let _never_finishes = sender;
+        pending_candidate_reason(|| None, receiver, Duration::from_millis(20)).await
+    });
+    let observed = tokio::time::timeout(Duration::from_secs(2), observing)
+        .await
+        .expect("#1122 missing reason observer must terminate");
+    unrelated.abort();
+    assert!(
+        unrelated
+            .await
+            .expect_err("#1122 unrelated pending task must be cancelled")
+            .is_cancelled(),
+        "#1122 unrelated pending task cancellation"
+    );
+    let error = observed.expect_err("#1122 missing reason must fail by observation deadline");
+    assert!(error.is_panic(), "#1122 observation deadline must panic");
+    let payload = error.into_panic();
+    let message = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied());
+    assert!(
+        message.is_some_and(|text| text.contains("#1122 candidate observation executor settles")),
+        "#1122 observation deadline must have its own failure message"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "#1122 missing reason failure must respect wall deadline"
+    );
+}
+
+#[tokio::test]
+async fn pending_candidate_observer_ignores_unrelated_tasks() {
+    let unrelated = tokio::spawn(std::future::pending::<()>());
+    for cancelled in [false, true] {
+        let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
+        let producer = tokio::spawn(async move {
+            let _drop_finished = sender;
+            if cancelled {
+                std::future::pending::<()>().await;
+            }
+        });
+        if cancelled {
+            producer.abort();
+            assert!(
+                producer
+                    .await
+                    .expect_err("#1122 candidate observation producer cancelled")
+                    .is_cancelled(),
+                "#1122 candidate observation producer cancellation"
+            );
+        } else {
+            producer
+                .await
+                .expect("#1122 candidate observation producer completed");
+        }
+        assert_eq!(
+            pending_candidate_reason(|| None, receiver, Duration::from_secs(1)).await,
+            None,
+            "#1122 candidate completion preserves missing explicit reason"
+        );
+        assert!(
+            !unrelated.is_finished(),
+            "#1122 observer must settle while unrelated task remains alive"
+        );
+    }
+    unrelated.abort();
+    assert!(
+        unrelated
+            .await
+            .expect_err("#1122 observer unrelated task must be cancelled")
+            .is_cancelled(),
+        "#1122 observer unrelated task cancellation"
+    );
+}
+
 #[test]
 fn cancelled_recreation_finishes_drain_and_candidate_cleanup() {
-    // This runtime belongs only to this test. Its block_on root is not a
-    // spawned task, so zero live tasks proves the candidate's queued Drop
-    // has finished; no scheduler order or fixed yield count is assumed.
+    // Exercise the current-thread executor too; observation is candidate-local.
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -5192,18 +5305,16 @@ fn cancelled_recreation_finishes_drain_and_candidate_cleanup() {
         let activity = candidate
             .begin_maintenance()
             .expect("#1122 candidate maintenance observation starts");
-        drop(PendingSession::new(candidate.clone()));
-        let reason = tokio::time::timeout(Duration::from_secs(8), async {
-            loop {
-                let reason = activity.cancellation_reason();
-                if reason.is_some() || runtime.metrics().num_alive_tasks() == 0 {
-                    break reason;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("#1122 candidate observation executor settles");
+        let (finished, completion) = tokio::sync::oneshot::channel();
+        let mut pending = PendingSession::new(candidate.clone());
+        pending.drop_finished = Some(finished);
+        drop(pending);
+        let reason = pending_candidate_reason(
+            || activity.cancellation_reason(),
+            completion,
+            Duration::from_secs(8),
+        )
+        .await;
         // An observation timeout is an invalid control, never a kill. Save the
         // actual reason, then clean up even when the mutation omitted disposal.
         drop(activity);
