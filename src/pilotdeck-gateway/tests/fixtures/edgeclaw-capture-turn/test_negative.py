@@ -71,25 +71,32 @@ class RestoredPositiveFailure(unittest.TestCase):
 
 
 
-class SharedVerdicts(unittest.TestCase):
-    mutant = dict(test='bound_test', anchor='#778 witness', failure='assertion')
-    # #818: the log must be the shape libtest really prints -- a `running 1
-    # test` header, the named test's own status line, and its `thread '<name>'
-    # panicked at` block -- because the shared classifier reads only the named
-    # test's own panic payload (#938 r14 evidence rules).
-    log = (
+def libtest_panic_log(test, payload, location=':1:1:'):
+    """One real-shaped libtest run whose named test panics with ``payload``.
+
+    #818: the shape libtest really prints -- a `running 1 test` header, the
+    named test's own status line, and its `thread '<name>' panicked at`
+    block -- because the classifiers read only the named test's own panic
+    payload (#938 r14 evidence rules).
+    """
+    return (
         'running 1 test\n'
-        'test bound_test ... FAILED\n'
+        f'test {test} ... FAILED\n'
         '\nfailures:\n'
-        '---- bound_test stdout ----\n'
-        'thread \'bound_test\' panicked at ' + negative.TEST_FILE + ':1:1:\n'
-        'assertion failed: #778 witness\n'
+        f'---- {test} stdout ----\n'
+        f"thread '{test}' panicked at " + negative.TEST_FILE + location + ':\n'
+        f'{payload}\n'
         'note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n'
         '\nfailures:\n'
-        '    bound_test\n'
+        f'    {test}\n'
         '\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; '
         '0 filtered out;\n'
     )
+
+
+class SharedVerdicts(unittest.TestCase):
+    mutant = dict(test='bound_test', anchor='#778 witness', failure='assertion')
+    log = libtest_panic_log('bound_test', 'assertion failed: #778 witness')
 
     def test_shared_invalid_is_preserved(self):
         with patch.object(negative, 'shared_classify', return_value=('INVALID', 'shared reason')) as call:
@@ -125,6 +132,26 @@ class SharedVerdicts(unittest.TestCase):
                                  f'#778 counterexample must stay INVALID: {why}')
         positive = 'test bound_test ... ok\ntest result: ok. 1 passed;\n'
         self.assertEqual(negative.classify_control(self.mutant, 0, positive)[0], 'SURVIVED')
+
+    def test_timeout_payload_is_invalid(self):
+        # #818 fix-r10 P1: merging main's shared-classify wrapper dropped the
+        # pre-rebase strict judge, so the named test's own `#813 timeout:`
+        # panic payload was judged KILLED. A watchdog/timeout hang is never
+        # an assertion kill (negative_panic HANG_PREFIXES, #813 fix-r8) and
+        # must stay INVALID even though the anchor text appears in it.
+        mutant = dict(test='always_on_sessions_are_skipped',
+                      anchor='must not reach the resolver', failure='panic')
+        plain = libtest_panic_log(mutant['test'], mutant['anchor'], ':432:9:')
+        hang = libtest_panic_log(mutant['test'],
+                                 '#813 timeout: ' + mutant['anchor'], ':432:9:')
+        self.assertEqual(negative.classify_control(mutant, 101, plain)[0],
+                         'KILLED',
+                         '#818 fix-r10: the plain anchor payload must stay KILLED')
+        self.assertEqual(negative.classify_control(mutant, 101, hang)[0],
+                         'INVALID',
+                         '#818 fix-r10: a named-test timeout payload is a hang, '
+                         'not an assertion kill')
+
 
 if __name__ == '__main__':
     unittest.main()
