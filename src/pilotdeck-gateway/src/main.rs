@@ -36,7 +36,9 @@ async fn main() -> Result<(), ProxyError> {
         client: Client::builder(TokioExecutor::new()).build_http(),
     });
     let listener = TcpListener::bind(listen).await?;
-    eprintln!("proxy listening {listen} -> {}", proxy.upstream);
+    let address = listener.local_addr()?;
+    println!("PilotDeck server listening: http://{address}");
+    println!("WebSocket: ws://{address}/ws");
     eprintln!("metadata cwd: {}", std::env::current_dir()?.display());
     loop {
         tokio::select! {
