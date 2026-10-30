@@ -14,14 +14,18 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-ga
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck
 timeout 600 python3 src/pilotdeck-gateway/tests/fixtures/run-registry/count-negative.py
-timeout 150 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-gateway/tests/fixtures/run-registry/verify-generation.mts /tmp/fresh-run-registry-output
+timeout 150 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-gateway/tests/fixtures/run-registry/verify-generation.mts /tmp/fresh-run-registry-verify
 ```
+
+`verify-generation.mts` 的输出目录必须尚不存在；上面两个代码块分别使用独立的新目录。再次执行时换一个未使用的路径，不能复用普通生成器已写入的目录。
 
 普通生成器为无参 `new Date()` 提供从固定起点逐毫秒递增的快照时钟（#1129）；种子与之后新写的时间必然不同，避免快机器同一毫秒导致旧值集合误判。`Date.now()`、带参 `new Date(ms)`、`Date()`、锁超时、文件 mtime 和 pid 存活探测均保持真实行为。时钟只在普通生成期间安装，结束时恢复；`--verify-rust` 交接路径使用原生时钟。输出目录递归创建，文件独占写入，已有金样不会被覆盖。
 
 双跑程序在同一个真实 Node 进程中独立执行两次普通生成器，保留相同活 pid；每次生成自动重置快照时钟。两次生成后逐文件逐字节比较并打印 oracle 与文件清单 SHA-256，不在生成后改写期望值。两种方式的输出均由真实 TS registry 产生，消费测试仍按下述既有 pid / 时间归一化规则比较。
 
-`verify-timestamps.mts` 将外层无参 Date 固定到同一毫秒，执行真实生成器，检查 11 条孤儿记录的保留/新写时间以及两个 stale-lock accept；旧生成器确定性漏 mask，修复后新写值为 `<new>`，种子原值保留。`timestamp-negative.py` 撤回生成器时钟安装，用该探针的 `#1129` 断言判杀；先编译变异，再验证负控及恢复正控，最后原子汇总。源码须等于 HEAD，调用方必须提供构建目录。
+`verify-timestamps.mts` 将外层无参 Date 固定到同一毫秒，执行真实生成器，检查 11 条孤儿记录的保留/新写时间以及两个 stale-lock accept；旧生成器确定性漏 mask，修复后新写值为 `<new>`，种子原值保留。探针还捕获生成期间实际使用的 Date 构造器，验证其带参构造与 `Date.now()`，并检查生成结束后恢复调用方时钟。三个独占写探针各预置一个文件哨兵，分别要求 initial 拷贝、after 拷贝、oracle 发布以 EEXIST 拒绝且保留原字节。
+
+`timestamp-negative.py` 的六项变异分别撤回时钟安装、删除时钟恢复、去掉带参分支、允许上述三处覆盖。每项绑定具名探针与唯一的单行 `#1129` 断言；其他异常、超时、编译失败均为 INVALID。每项运行正控、应用变异、`cargo test --no-run`、负控、恢复正控，全部处理后原子汇总，任一非 KILLED 即非零退出。cargo 编译只证明 Rust 树可构建；`.mts` 的变异由真实 Node/tsx 执行验证。源码、探针与脚本须等于 HEAD，调用方必须提供构建目录；完整套件由协调者提交后在宿主运行。
 
 ```sh
 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-gateway/tests/fixtures/run-registry/verify-timestamps.mts /tmp/fresh-run-registry-collision
