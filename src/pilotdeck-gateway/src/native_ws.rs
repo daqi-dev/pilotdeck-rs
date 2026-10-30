@@ -27,6 +27,7 @@ pub struct NativeWsServer {
     host: TurnGateway,
     token: String,
     version: String,
+    resources: Resources,
 }
 impl NativeWsServer {
     pub async fn bind(
@@ -49,6 +50,18 @@ impl NativeWsServer {
             host,
             token,
             version,
+            resources: Resources::new(
+                if crate::mutants::on("ws-caps-default-connections") {
+                    1
+                } else {
+                    MAX_CONNECTIONS
+                },
+                if crate::mutants::on("ws-caps-default-input") {
+                    1
+                } else {
+                    MAX_TOTAL_INPUT_BYTES
+                },
+            ),
         })
     }
 
@@ -82,6 +95,7 @@ impl NativeWsServer {
                 host,
                 token,
                 version,
+                resources,
             } = self;
             let mut connections = JoinSet::new();
             tokio::pin!(stop);
@@ -89,16 +103,36 @@ impl NativeWsServer {
                 tokio::select! {
                     biased;
                     _ = &mut stop => break None,
+                    // Reap before accept: a permanently ready listener must not
+                    // accumulate completed task records outside the live cap.
+                    _ = connections.join_next(), if !connections.is_empty() && !crate::mutants::on("ws-caps-unreaped-records") => {},
                     accepted = listener.accept() => match accepted {
                         Ok((socket, _)) => {
+                            let Ok(permit) = resources.connections.clone().try_acquire_owned() else {
+                                // No task/HTTP parser is created for an excess peer.
+                                drop(socket);
+                                continue;
+                            };
                             let host = host.clone();
                             let token = token.clone();
                             let version = version.clone();
+                            let input = resources.input.clone();
                             connections.spawn(async move {
-                                if let Err(error) = serve_socket(socket, host, token, version).await {
+                                let _permit = if crate::mutants::on("ws-caps-early-connection-release") {
+                                    drop(permit);
+                                    None
+                                } else {
+                                    Some(permit)
+                                };
+                                if let Err(error) = serve_socket(socket, host, token, version, input).await {
                                     eprintln!("native WS connection: {error}");
                                 }
+                                if crate::mutants::on("ws-caps-connection-leak") {
+                                    std::mem::forget(_permit);
+                                }
                             });
+                            #[cfg(test)]
+                            resources.task_high_watermark.fetch_max(connections.len(), std::sync::atomic::Ordering::SeqCst);
                         }
                         Err(error) if matches!(error.kind(), std::io::ErrorKind::InvalidInput | std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported) => break Some(error),
                         Err(error) => {
@@ -109,7 +143,6 @@ impl NativeWsServer {
                             }
                         }
                     },
-                    _ = connections.join_next(), if !connections.is_empty() => {}
                 }
             };
             drop(listener);
@@ -161,6 +194,103 @@ impl Drop for StopHost {
 
 // Resource safety differences from TS's unbounded custom WS implementation.
 const MAX_INPUT_PAYLOAD: usize = 100 * 1024 * 1024;
+const MAX_CONNECTIONS: usize = 64;
+const MAX_TOTAL_INPUT_BYTES: usize = 256 * 1024 * 1024;
+
+struct Resources {
+    connections: Arc<Semaphore>,
+    input: Arc<Semaphore>,
+    #[cfg(test)]
+    task_high_watermark: Arc<std::sync::atomic::AtomicUsize>,
+}
+impl Resources {
+    fn new(connections: usize, input: usize) -> Self {
+        Self {
+            connections: Arc::new(Semaphore::new(
+                if crate::mutants::on("ws-caps-connections") {
+                    connections + 1
+                } else {
+                    connections
+                },
+            )),
+            input: Arc::new(Semaphore::new(input)),
+            #[cfg(test)]
+            task_high_watermark: Arc::default(),
+        }
+    }
+}
+
+/// Charge backing storage, not just unread length: Decoder::split_to may
+/// retain the original allocation after a frame is consumed. Declaration order
+/// drops the decoder before its lease, including task cancellation and errors.
+struct InputBuffer {
+    decoder: Decoder,
+    allocation: Option<OwnedSemaphorePermit>,
+    budget: Arc<Semaphore>,
+}
+impl InputBuffer {
+    fn new(budget: Arc<Semaphore>) -> Self {
+        Self {
+            decoder: Decoder::default(),
+            allocation: None,
+            budget,
+        }
+    }
+
+    fn append(&mut self, bytes: &[u8]) -> bool {
+        let needed = self.decoder.buffer.len() + bytes.len();
+        if needed > self.decoder.buffer.capacity() {
+            let capacity = needed
+                .next_power_of_two()
+                .min(MAX_INPUT_PAYLOAD + frame::MAX_CLIENT_HEADER_BYTES);
+            // Keep the old allocation charged until the replacement is built
+            // and installed. A slow peer never waits for another peer's lease.
+            if crate::mutants::on("ws-caps-early-input-refund") {
+                self.allocation = None;
+            }
+            if crate::mutants::on("ws-caps-split-input-refund")
+                && self
+                    .allocation
+                    .as_ref()
+                    .is_some_and(|permit| permit.num_permits() > self.decoder.buffer.capacity())
+            {
+                self.allocation = None;
+            }
+            let charged = if crate::mutants::on("ws-caps-input-budget") {
+                0
+            } else {
+                capacity
+            };
+            let Ok(permit) = self.budget.clone().try_acquire_many_owned(charged as u32) else {
+                return false;
+            };
+            let mut buffer = bytes::BytesMut::with_capacity(capacity);
+            buffer.extend_from_slice(&self.decoder.buffer);
+            self.decoder.buffer = buffer;
+            self.allocation = Some(permit);
+        }
+        self.decoder.buffer.extend_from_slice(bytes);
+        true
+    }
+
+    fn reclaim_empty(&mut self) {
+        if !self.decoder.buffer.is_empty() && crate::mutants::on("ws-caps-refund-tail") {
+            self.allocation = None;
+        }
+        if self.decoder.buffer.is_empty() && !crate::mutants::on("ws-caps-retain-empty") {
+            // Called only after the decoded Frame (including its wire) drops.
+            self.decoder = Decoder::default();
+            self.allocation = None;
+        }
+    }
+}
+impl Drop for InputBuffer {
+    fn drop(&mut self) {
+        if crate::mutants::on("ws-caps-input-drop-leak") {
+            std::mem::forget(self.allocation.take());
+        }
+    }
+}
 const MAX_OUTPUT_PAYLOAD: usize = MAX_INPUT_PAYLOAD;
 const MAX_OUTPUT_BYTES: usize = MAX_OUTPUT_PAYLOAD + frame::MAX_SERVER_HEADER_BYTES;
 const MAX_OUTPUT_FRAMES: usize = 64;
@@ -333,6 +463,7 @@ async fn serve_socket(
     host: TurnGateway,
     token: String,
     version: String,
+    input: Arc<Semaphore>,
 ) -> Result<(), ProxyError> {
     let (upgrade, upgraded) = oneshot::channel();
     let upgrade = Mutex::new(Some(upgrade));
@@ -368,7 +499,7 @@ async fn serve_socket(
     };
     let socket = http_proxy::upgraded_stream::<TcpStream>(upgraded.await?)?;
     drop(lease);
-    transport(socket, host, token, version).await
+    transport_with_budget(socket, host, token, version, input).await
 }
 
 // Poll the host completion futures directly: a finished host job must not
@@ -471,11 +602,32 @@ async fn write_output<W: tokio::io::AsyncWrite + Unpin>(
     .await
 }
 
+#[cfg(test)]
 async fn transport<S>(
     socket: S,
     host: TurnGateway,
     token: String,
     version: String,
+) -> Result<(), ProxyError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    transport_with_budget(
+        socket,
+        host,
+        token,
+        version,
+        Arc::new(Semaphore::new(MAX_TOTAL_INPUT_BYTES)),
+    )
+    .await
+}
+
+async fn transport_with_budget<S>(
+    socket: S,
+    host: TurnGateway,
+    token: String,
+    version: String,
+    input_budget: Arc<Semaphore>,
 ) -> Result<(), ProxyError>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -486,7 +638,7 @@ where
     let mut writes = JoinSet::new();
     writes.spawn(write_output(writer, outgoing, closing_rx.clone()));
     let mut requests = Vec::new();
-    let mut decoder = Decoder::default();
+    let mut buffered = InputBuffer::new(input_budget);
     let mut input = [0; 8192];
     let mut writer_done = false;
     let reap_completed = !crate::mutants::on("native-ws-retain-completed-requests");
@@ -499,7 +651,7 @@ where
         loop {
             // TS handleData starts on each new data callback. A protocol close
             // ends that batch, but leaves buffered tail bytes for the next one.
-            let capacity = read_capacity(&text, decoder.buffer.len(), input.len());
+            let capacity = read_capacity(&text, buffered.decoder.buffer.len(), input.len());
             if capacity == 0 {
                 break;
             }
@@ -518,9 +670,13 @@ where
             if count == 0 {
                 break;
             }
-            decoder.buffer.extend_from_slice(&input[..count]);
+            if !buffered.append(&input[..count]) {
+                let code = if crate::mutants::on("ws-caps-input-close-code") { 1000 } else { 1009 };
+                text.close(code, "aggregate input limit exceeded");
+                break;
+            }
             loop {
-                let frame = match decoder.next_limited(max_payload) {
+                let frame = match buffered.decoder.next_limited(max_payload) {
                     Ok(Some(frame)) => frame,
                     Ok(None) => break,
                     Err(frame::DecodeError::TooLarge) => {
@@ -560,6 +716,7 @@ where
                     acceptor::Action::Ignore => {}
                 }
             }
+            buffered.reclaim_empty();
             if crate::mutants::on("native-ws-drop-closed-read")
                 && *text.closed.lock().expect("native text state")
             {
@@ -575,7 +732,12 @@ where
         Ok(())
     }
     .await;
-    drop(decoder);
+    let retained_input = if crate::mutants::on("ws-caps-retain-input-during-drain") {
+        Some(buffered)
+    } else {
+        drop(buffered);
+        None
+    };
     // Release the socket reader independently of uncompleted business jobs.
     let retained_reader = if crate::mutants::on("native-ws-retain-reader") {
         Some(reader)
@@ -598,6 +760,7 @@ where
         written??;
     }
     result?;
+    drop(retained_input);
     drop(retained_reader);
     closed.map_err(request_error)?;
     Ok(())
@@ -608,3 +771,6 @@ fn request_error(error: crate::runtime::connection::RequestError) -> std::io::Er
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod caps_tests;
