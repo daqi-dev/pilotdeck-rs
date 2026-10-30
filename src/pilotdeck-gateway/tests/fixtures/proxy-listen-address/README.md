@@ -27,6 +27,6 @@ python3 -B src/pilotdeck-gateway/tests/fixtures/proxy-listen-address/negative_co
 python3 -B src/pilotdeck-gateway/tests/fixtures/proxy-listen-address/negative_controls.py /new/evidence/directory
 ```
 
-六个变异分别退回请求地址、破坏 HTTP 前缀、破坏 WS 路径、将 LF 改为 CRLF、破坏固定端口地址、发布旧端口后换绑其他监听器。每项先正控，再应用变异并 `cargo test --no-run`，随后运行精确绑定测试、恢复并重跑；使用共享 `negative_suite` 判杀，全部逐项汇总，任一 SURVIVED / INVALID 非零退出。锚点失配直接报错；源码守卫拒绝和编译失败均不能计 KILLED。
+七个变异分别退回请求地址、破坏 HTTP 前缀、破坏 WS 路径、将 LF 改为 CRLF、破坏固定端口地址、发布旧端口后换绑其他监听器、篡改 oracle 的基线 commit（该变异在共享 `common/baseline.rs` 溯源 gate 的 panic 上判杀）。每项先正控，再应用变异并 `cargo test --no-run`，随后运行精确绑定测试、恢复并重跑；使用共享 `negative_suite` 判杀，全部逐项汇总，任一 SURVIVED / INVALID 非零退出。锚点失配直接报错；源码守卫拒绝和编译失败均不能计 KILLED。守卫范围含产品源码、本测试、oracle、共享执行器与溯源 gate（`common/baseline.rs`），任一偏离 HEAD 即整轮拒跑。
 
 启动等待每行最多 15 秒，TCP 连接最多 3 秒；Rust 子进程在测试成功或 panic 时 kill + reap。TS 启动最多 15 秒、health 最多 3 秒，并在 finally 中 kill + reap。本单不修改产品会话或取消生命周期。

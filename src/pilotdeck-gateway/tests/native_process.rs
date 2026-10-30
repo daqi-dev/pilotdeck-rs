@@ -25,7 +25,16 @@ fn executable_native_and_a4() {
     let output = std::env::var_os("PDRS_1071_PROCESS_OUTPUT")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            std::env::temp_dir().join(format!("pdrs-1071-process-{}", uuid::Uuid::new_v4()))
+            // The native child canonicalizes --project/--home, but the
+            // observer echoes the configured project path back as the
+            // projectKey. On macOS the default temp dir sits behind the
+            // /var -> /private/var symlink, so a raw temp_dir() root would
+            // stop equaling its canonical self; hand the observer a
+            // canonical root (the scratch-root precedent in
+            // background_tasks.rs).
+            std::fs::canonicalize(std::env::temp_dir())
+                .expect("#1071 canonical temp evidence root")
+                .join(format!("pdrs-1071-process-{}", uuid::Uuid::new_v4()))
         });
     assert!(!output.exists(), "#1071 fresh process evidence directory");
     let result = Command::new("node")
@@ -65,8 +74,8 @@ fn executable_native_and_a4() {
         "#1071 executable refreshed hooks refused"
     );
     negative_assert!(
-        assertion != Some("#1071 A4 bind collision exhausted"),
-        "#1071 executable A4 bind collision exhausted"
+        assertion != Some("#1131 readiness reports the kernel-assigned port"),
+        "#1131 executable readiness reports the kernel-assigned port"
     );
     negative_assert!(
         assertion != Some("#1071 readiness address carries a port"),
