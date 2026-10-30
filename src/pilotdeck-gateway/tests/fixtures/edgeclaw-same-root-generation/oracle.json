@@ -843,6 +843,34 @@
       "value": "legacy"
     }
   },
+  "closeCallbacks": {
+    "normal": {
+      "entered": 1,
+      "threw": false,
+      "rows": [
+        "next",
+        "seed"
+      ],
+      "after": "ok"
+    },
+    "panic": {
+      "entered": 1,
+      "threw": true,
+      "rows": [
+        "seed"
+      ],
+      "after": "ok"
+    },
+    "other-root": {
+      "entered": 1,
+      "threw": false,
+      "rows": [
+        "next",
+        "seed"
+      ],
+      "after": "ok"
+    }
+  },
   "lifecycle": {
     "staged-flush-stage": {
       "leasedBefore": 1,

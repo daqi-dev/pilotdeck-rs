@@ -105,6 +105,40 @@ async function hold(path:string,legacy:boolean,init:string){
   }};
 }
 
+// #1082 fix-r2: use the real repository's synchronous clock boundary.
+// No SQL method is mocked. The hook runs inside insertL0Session before its SQL
+// statement; closing a peer or throwing cannot strand a process-wide lock.
+function closeCases(Repository:any, base:string){
+  const results:any={};
+  for(const mode of ['normal','panic','other-root']){
+    const path=join(base,mode,'memory.sqlite');
+    const a=new Repository(path);
+    const b=new Repository(mode==='other-root'?join(base,mode,'peer','memory.sqlite'):path);
+    const row=(id:string)=>({l0IndexId:id,sessionKey:'callback',timestamp:'2026-10-22T00:00:00.000Z',messages:[],source:'openclaw',indexed:false,createdAt:'2026-10-22T00:00:00.000Z'});
+    a.insertL0Session(row('seed'));
+    let entered=0;
+    let threw=false;
+    const original=Date.prototype.toISOString;
+    try{
+        Date.prototype.toISOString=function(){
+          Date.prototype.toISOString=original;
+          entered++; b.close();
+          if(mode==='panic')throw new Error('#1082 intentional callback unwind');
+          return original.call(this);
+        };
+        a.insertL0Session({...row('next'),createdAt:''});
+    }catch(error){
+      if(!(error instanceof Error)||error.message!=='#1082 intentional callback unwind')throw error;
+      threw=true;
+    }finally{Date.prototype.toISOString=original;}
+    const c=new Repository(path);
+    c.setPipelineState('after-callback','ok');
+    results[mode]={entered,threw,rows:c.listRecentL0(10).map((r:any)=>r.l0IndexId).sort(),after:c.getPipelineState('after-callback')};
+    c.close();a.close();
+  }
+  return results;
+}
+
 export async function matrix(baseline:string,created:string){
   const {MemoryRepository}=await import(pathToFileURL(join(baseline,CORE)).href);
   const {Service}=await load(baseline);
@@ -162,5 +196,5 @@ export async function matrix(baseline:string,created:string){
 
   const sourceCommit=assertBaseline(baseline);
   const sourceSha256=await baselineSourceHashes(baseline,[CORE,'src/cli/ProjectRuntimeRegistry.ts','src/cli/ProjectMemoryBundle.ts','src/context/memory/createEdgeClawMemoryProviderFromConfig.ts','src/context/memory/edgeclaw-memory-core/src/service.ts']);
-  return {node:process.version,sourceCommit,sourceSha256,serial,threaded,lifecycle:await lifecycle(baseline,join(base,'lifecycle'))};
+  return {node:process.version,sourceCommit,sourceSha256,serial,threaded,closeCallbacks:closeCases(MemoryRepository,join(base,'close-callbacks')),lifecycle:await lifecycle(baseline,join(base,'lifecycle'))};
 }

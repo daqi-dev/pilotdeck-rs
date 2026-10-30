@@ -16,4 +16,16 @@ PDRS_BASELINE=/abs/PilotDeck node --disable-warning=ExperimentalWarning \
 
 TS Promise 不可取消，取消格用 race 放弃观察者；Rust 取消等待任务，内部 continuation/cleanup 继续。前驱 gate 在新代完成前始终不释放，随后释放用于清理。gate 10 秒上限；SQL 竞争用真实 try_lock 的 WouldBlock 事件，不用 sleep 推断已交叠，5 秒未握手是 INVALID。
 
-Rust 测试与精确层次见 `specs/gateway-parity/diffs/A6.9-MEMORY-NATIVE-PROVIDER-001-R5.md`。ignored `same_root_generates_identically` 逐字节重生成。negative.py 复用 `_shared/mutant_switch.py` 与 negative_suite，13 开关编译一次，逐项正控→变异→恢复后汇总。调用方必须设置 CARGO_TARGET_DIR；源码不改写。所有完整用例名/断言见脚本 switches 表。
+Rust 测试与精确层次见 `specs/gateway-parity/diffs/A6.9-MEMORY-NATIVE-PROVIDER-001-R6.md`。ignored `same_root_generates_identically` 逐字节重生成。negative.py 复用 `_shared/mutant_switch.py` 与 negative_suite，17 开关编译一次，逐项正控→变异→恢复后汇总。调用方必须设置 CARGO_TARGET_DIR；源码不改写。所有完整用例名/断言见脚本 switches 表。
+
+`closeCallbacks`（fix-r2）在真实 repository 的 `Date.prototype.toISOString`
+时钟边界同步关闭 peer，记录正常插入、抛错及不同数据库的可见结果。
+TS 无 Rust `insert_l0_session_if_new` 公开 predicate；early 格只作为 Rust
+提前返回的 guard 清理回归，不生成伪 TS callback 金样。Rust 回调分别覆盖 normal / early /
+panic / other-root / explicit-close，连续释放两个 peer，且比较真实行与后继写入。
+
+进程锁按当前线程识别重入；只有最外层 ProcessGuard 持有真实 mutex 并清理标记。
+不同代连接仍各有 connection mutex；同一连接自身的递归调用不在本单修复范围。
+`CloseContended` / `DropContended` 均由相应路径真实 try_lock 的 WouldBlock 产生；
+Drop 还检查 close 完成事件及 repository Weak 失效。所有 worker join 有 5 秒上限，
+超时记 INVALID；重入负控收到明确自竞争事件后立即专属断言失败，不靠超时判杀。
