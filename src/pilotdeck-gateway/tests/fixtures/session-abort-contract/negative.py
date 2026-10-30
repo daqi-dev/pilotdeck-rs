@@ -41,23 +41,23 @@ def main():
         # in-test 3-second bound, not by any external timeout.
         ('reverted-cleanup-order', handle,
          'let mut disposal_failures = Vec::new();\n'
-         '            if let Some(mut lease) = guard.lease.take()\n'
-         '                && let Err(error) = lease.release().await\n'
-         '            {\n'
-         '                disposal_failures.push(error);\n'
-         '            }\n'
-         '            if let Err(error) = handle.0.session.dispose().await {\n'
-         '                disposal_failures.push(error);\n'
-         '            }',
+         '                if let Some(mut lease) = guard.lease.take()\n'
+         '                    && let Err(error) = lease.release().await\n'
+         '                {\n'
+         '                    disposal_failures.push(error);\n'
+         '                }\n'
+         '                if let Err(error) = session.dispose().await {\n'
+         '                    disposal_failures.push(error);\n'
+         '                }',
          'let mut disposal_failures = Vec::new();\n'
-         '            if let Err(error) = handle.0.session.dispose().await {\n'
-         '                disposal_failures.push(error);\n'
-         '            }\n'
-         '            if let Some(mut lease) = guard.lease.take()\n'
-         '                && let Err(error) = lease.release().await\n'
-         '            {\n'
-         '                disposal_failures.push(error);\n'
-         '            }', 'controlled dispose/lease interleaving hung'),
+         '                if let Err(error) = session.dispose().await {\n'
+         '                    disposal_failures.push(error);\n'
+         '                }\n'
+         '                if let Some(mut lease) = guard.lease.take()\n'
+         '                    && let Err(error) = lease.release().await\n'
+         '                {\n'
+         '                    disposal_failures.push(error);\n'
+         '                }', 'controlled dispose/lease interleaving hung'),
     ]
     originals = {name: (rust / name).read_text() for name in {m[1] for m in mutants} | {fixture}}
     oracle = json.loads(originals[fixture])
