@@ -123,6 +123,11 @@ fn check_address(listen: SocketAddr, expected: &[serde_json::Value]) -> SocketAd
 
 #[test]
 fn reports_reachable_actual_address() {
+    // Provenance first: pin sourceCommit/sourceSha256 to the fixed TS baseline
+    // before any oracle byte is consumed, like every other replay in this
+    // crate (hooks_output.rs, provider_http_boundaries.rs). The address lines
+    // alone cannot detect an oracle generated from a drifted source.
+    baseline::oracle(include_str!("fixtures/proxy-listen-address/oracle.json"));
     let oracle: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/proxy-listen-address/oracle.json"))
             .expect("#1131 parse TS oracle");

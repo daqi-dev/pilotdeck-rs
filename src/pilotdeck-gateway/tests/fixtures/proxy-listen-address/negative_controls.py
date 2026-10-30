@@ -3,6 +3,7 @@
 import argparse
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -13,6 +14,8 @@ from negative_suite import Case, classify, passed, invalidate_completed, publish
 
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/main.rs'
 TESTS = ROOT / 'src/pilotdeck-gateway/tests/proxy_listen_address.rs'
+ORACLE = FIXTURE / 'oracle.json'
+GATE = ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs'
 TEST = 'reports_reachable_actual_address'
 mutations = [
     ('requested-address', SOURCE,
@@ -38,6 +41,12 @@ mutations = [
      'let address = listener.local_addr()?;',
      'let address = listener.local_addr()?;\n    let replacement = TcpListener::bind("127.0.0.1:0").await?;\n    drop(listener);\n    let listener = replacement;',
      TEST, '#1131 reported address must accept TCP connections'),
+    # The provenance gate is the only guard against a hand-edited or wrong-source
+    # oracle; a drifted sourceCommit must fail the default (non-ignore) case.
+    ('oracle-commit', ORACLE,
+     '"sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"',
+     '"sourceCommit": "0000000000000000000000000000000000000000"',
+     TEST, 'oracle baseline commit'),
 ]
 
 
@@ -47,10 +56,15 @@ def main():
     parser.add_argument('--check', action='store_true')
     args = parser.parse_args()
     tests = TESTS.read_text()
+    gate = GATE.read_text()
     for name, path, old, new, test, assertion in mutations:
         if path.read_text().count(old) != 1 or old == new:
             raise RuntimeError(f'#1131 {name}: stale or invalid anchor')
-        if f'fn {test}(' not in tests or assertion not in tests:
+        # The oracle-provenance mutant dies inside the shared baseline gate, so
+        # its marker is bound against the gate's own source (the background-panic
+        # provenance precedent); every other marker stays bound to the test file.
+        markers = gate if path == ORACLE else tests
+        if f'fn {test}(' not in tests or assertion not in markers:
             raise RuntimeError(f'#1131 {name}: stale test/assertion binding')
     if args.check:
         print(f'#1131 {len(mutations)} anchors and test bindings valid')
@@ -69,12 +83,25 @@ def main():
         slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=900)
         (out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
         tail = ['--no-run'] if compile_only else [TEST, '--', '--exact']
-        result = run_owned(command + tail, cwd=ROOT, env=env, timeout=900)
+        try:
+            result = run_owned(command + tail, cwd=ROOT, env=env, timeout=900)
+        except subprocess.TimeoutExpired as error:
+            # A timed-out run still owns partial output; keep it as {label}.log
+            # evidence instead of letting the exception discard it (#1131 fix-r1).
+            raw = ''.join(value.decode(errors='replace') if isinstance(value, bytes) else value or ''
+                          for value in (error.stdout, error.stderr))
+            with (out / f'{label}.log').open('a') as log:
+                log.write(raw + f'\n{type(error).__name__}: {error}\n')
+            raise
         (out / f'{label}.log').write_text(result.stdout + result.stderr)
         return result
 
     results = []
-    guarded = [SOURCE, TESTS, Path(__file__).resolve(), FIXTURE / 'oracle.json']
+    # The shared executors this script imports must also be pristine, or a
+    # killed sibling runner's residue on them would execute as mutated bytes.
+    guarded = [SOURCE, TESTS, Path(__file__).resolve(), ORACLE,
+               FIXTURE.parent / 'negative_process.py',
+               FIXTURE.parent / 'negative_suite.py']
     try:
         with mutating_sources(ROOT, guarded) as originals:
             for definition in mutations:
@@ -116,7 +143,7 @@ def main():
     publish_summary(out, results)
     print('summary: ' + ', '.join(f'{status}={sum(row["status"] == status for row in results)}'
                                 for status in ('KILLED', 'SURVIVED', 'INVALID')))
-    return int(any(row['status'] != 'KILLED' for row in results))
+    return int(not results or any(row['status'] != 'KILLED' for row in results))
 
 
 if __name__ == '__main__':
