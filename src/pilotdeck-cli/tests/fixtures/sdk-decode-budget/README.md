@@ -20,3 +20,5 @@ python3 src/pilotdeck-cli/tests/fixtures/sdk-decode-budget/measure.py _tmp/20261
 单格 120 s 截止；采样超过 6 GiB 即杀本次自有客户端，记录停止原因；监测权限失败同样停止。触发任一停止条件后不继续更大的格。退出码非零或 `serverJoined=false` 的诊断须调查，不把受限环境错误当产品行为。无绕过隔离的降级开关。
 
 2026-10-30 宿主（wt-983）执行记录：32/64 MiB 两格 × Rust/TS 均完成（修前 Rust 64 MiB 触发 >6 GiB 停止条件，按上述规则不再跑 128 MiB 格），原始结果与本轮定级/修复结论见 `_tmp/20261026-issue-983/`（RESULT.md）。此前 2026-10-29 worker 环境曾因 `sandbox_apply: Operation not permitted` 无法前置网络隔离，故该轮未执行大输入。
+
+2026-10-31 fix-r1（同树）执行记录：修后首次 128 MiB 格 Rust 触发 `RSS >6 GiB` 停止（`_tmp/20261026-issue-983/fix-r1/rust-128/`），TS 同格完成 3.68 GiB；据此继续修复（`JsValue` 内联 96→56 字节）后，32/64/128 MiB 三格 Rust/TS 全部完成，峰值 RSS 逐格 0.86×/0.96×/1.02× TS，stdout sha256 与 TS 逐格相同（`_tmp/20261026-issue-983/fix-r1/`）。
