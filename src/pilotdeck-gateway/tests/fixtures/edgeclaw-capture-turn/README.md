@@ -16,7 +16,8 @@ Real-TS goldens for `DefaultContextRuntime.captureTurn`,
   `rust-observations.json` to match both the oracle and the fresh TS run.
 - `negative.py` mutates `runtime/context/prepare.rs` and
   `host/modules/manifest.rs` in place (fork-carryover filter, always-on skip,
-  error swallowing, `supports(CaptureTurn)`, manifest method) and requires each
+  sessionId rejection and its TS error text, `errored` forwarding, error
+  swallowing, `supports(CaptureTurn)`, manifest method) and requires each
   targeted Rust test to fail before restoring.
 
 Run the generator with Node 22 and the baseline's `tsx`:

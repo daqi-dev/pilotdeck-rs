@@ -5,7 +5,11 @@ Run from the repository root after the work is committed (mutating_sources
 refuses to mutate a product tree that differs from HEAD):
 
     python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-capture-turn/negative.py \
-        _tmp/20261026-issue-759/negative-capture-turn
+        _tmp/20261026-issue-759/negative-capture-turn [mutant ...]
+
+Optional mutant names select a sample run; the positive and restored controls
+always execute, and every selected mutant is still classified before the
+summary.
 
 Each mutant names the exact test that must fail and the failure shape that
 proves the test really executed: an `assertion` diagnostic, or a panic at this
@@ -53,6 +57,24 @@ def classify_control(mutant, code, raw):
     if not named_test_killed(raw, mutant['test'], mutant['anchor']):
         return 'INVALID', 'hang/timeout or unscoped payload is not a kill'
     return status, reason
+
+
+def selected_names(mutants, names):
+    """Validate an optional sample selection; empty means run every mutant.
+
+    Sample runs (#747/#786) still bracket the selection with the positive and
+    restored controls. Unknown or duplicate names refuse to start rather than
+    silently skipping rows.
+    """
+    if not names:
+        return set()
+    known = {mutant['name'] for mutant in mutants}
+    unknown = sorted(set(names) - known)
+    if unknown:
+        raise SystemExit(f'unknown mutants: {", ".join(unknown)}')
+    if len(set(names)) != len(names):
+        raise SystemExit('duplicate mutant names')
+    return set(names)
 
 
 def restore_positive(run):
@@ -159,10 +181,11 @@ def main():
             '            Some(JsValue::Null) => String::new(),',
             'malformed_session_id_matches_ts_startswith_failure',
             'panic',
-            # Rejection-only control: the product error text has its own
-            # mutant below, so this anchor must not borrow the test's
-            # `expected` wording (#786 / #774 P2-2).
-            '#786 non-string sessionId must reject like isAlwaysOnSession',
+            # Bind both halves: the named test's own rejection wording and the
+            # TS product text it is supposed to match (#786). A mutant that
+            # only kills the rejection cannot satisfy the anchor with the
+            # test's wording alone.
+            "#786 non-string sessionId must reject like isAlwaysOnSession (TS: reading 'startsWith')",
         ),
         mutate(
             'malformed-session-wrong-error-text',
@@ -183,8 +206,9 @@ def main():
 ''',
             'malformed_session_id_matches_ts_startswith_failure',
             'panic',
-            # Exclusive message of the product-error-text assertion at
-            # edgeclaw_capture_turn.rs:413-416: still Err, but wrong text.
+            # Exclusive message of the product-error-text assertion in
+            # malformed_session_id_matches_ts_startswith_failure: still Err,
+            # but wrong text.
             '#786 product error must contain the TS text',
         ),
         mutate(
@@ -236,7 +260,22 @@ def main():
             'assertion',
             'captureTurn scenarios',
         ),
+        mutate(
+            # Only the missing-key arm changes: an absent `errored` becomes a
+            # phantom `false` key, which the key-set comparison must catch
+            # even though JSON serialization would hide the difference (#786).
+            'errored-missing-injected-false',
+            prepare,
+            '            errored: fields.get("errored").cloned().unwrap_or(JsValue::Undefined),\n',
+            '            errored: fields.get("errored").cloned().unwrap_or(JsValue::Bool(false)),\n',
+            'recorded_call_key_sets_match_ts',
+            'panic',
+            'recorded call key set',
+        ),
     ]
+    # Optional sample mode (#747/#786): naming mutants runs only those rows;
+    # the positive and restored controls still bracket them.
+    selected = selected_names(mutants, sys.argv[2:])
     results = []
 
     # The source guard must use HEAD; uncommitted trees are not mutation inputs.
@@ -270,6 +309,8 @@ def main():
         failures = []
         try:
             for mutant in mutants:
+                if selected and mutant['name'] not in selected:
+                    continue
                 name, path = mutant['name'], mutant['path']
                 original = originals[path]
                 assert path.read_text() == original, 'another writer changed the product source'
