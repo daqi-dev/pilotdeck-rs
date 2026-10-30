@@ -173,32 +173,32 @@
 > 冻结后改任何一份都要另开 issue、两家评审同意、写明理由（`CLAUDE.md` §五「尺子不许自己改」）。A3 的 schema 产物与脚本另见 `schema-FROZEN.md`，不在本表。
 > 校验：`python3 -I scripts/gateway-parity/check_frozen.py`（下面每行「sha256 两空格 相对本目录的路径」）。
 
-886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
-122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-3e641ee353effae94c3751b198cb08f1728bf225bc9963356befea1d722df49b  accepted-diffs.md
+8ebd5ebaf0a189f9bf6727eb51765858abfe0afc94698b09ee53d6b707b7ec64  ../../scripts/a5-19/append-observer.mjs
+c2f69c000b4dd6e5f2912b05dbc846641d5cb7bac82976a6b1a1cf0e16fdee84  ../../scripts/a5-19/cleanup-observer.mjs
+8ea02eadd41cc6bbf75c1e67c22152f37f6b729007ad1e3a34a190c9ab60188c  ../../scripts/a5-19/observation_rules.mjs
+0248507e617648bd8e81e1a54ae8b448cd7b7a2f14f1542424adc3a83b398c84  ../../scripts/a5-19/run.py
+b7373b5838370c43f5b35217f95ce688a0183b5494eb276a25d868a0c18517dd  ../../scripts/a5-19/six_cells.mts
 b8c6ac2f4c6de47274091184cadc3dbbd559db22587bb74328b18f0ea122c5f4  ../../scripts/gateway-parity/_guard.py
 96926219b68168ab7b926c5c52c8f4d8ecec7c83de324787479c1aa53410a3ac  ../../scripts/gateway-parity/build_proxy.py
-37e7c86d4c7e191f6202c39a6c223f4e9f5bd8d0e2f7f5fea84cb978eec45f9a  ../../scripts/gateway-parity/check_frozen.py
+14b05e9cd8b3e560558da3310dc65238a087bc220047b68364e87ba788ccea72  ../../scripts/gateway-parity/check_frozen.py
 c48c7e6818314b7a23a0660ab121edb2f95e97b2fea48d32c76779a3ee1c4830  ../../scripts/gateway-parity/check_ruler.py
 eb48c34dbc6c245fa10421bf5a4015acc95a341df0d96b6f336dbafbded0ec5c  ../../scripts/gateway-parity/common.py
 4ec51ff7fe79669cd062665cb414991b4411d684c4356eef98f28c573a85fcf7  ../../scripts/gateway-parity/compare.py
 9379b9e401e8a47537e933b2cdbfcff44aa16d6cef8138d7857349d87de2240a  ../../scripts/gateway-parity/controls/prerequisites.py
 51afd466698771350ea40cb3fee86a5c42aed699445f3cc3047cc0bbafd29294  ../../scripts/gateway-parity/controls/run_all.py
+d214b691ad77efa6c642577587f12865be046f9b99297c85caae566f9bfd2320  ../../scripts/gateway-parity/controls/session_domain.py
 5f8e906fa532a58b994dff4f5e6438b07e31f14195b8142b75b398b6778e9e63  ../../scripts/gateway-parity/driver.mts
+41b1313fc047e8334a1655b69e277c4bcc451edaf15b79efd37e403e7005dab2  ../../scripts/gateway-parity/fixtures/session-calibration.json
 95fe265a7b7512f1969f19b7ee2d14133ce56916fb25c0953a84b5ec05568f74  ../../scripts/gateway-parity/mock.mjs
 11d6c766f22c2ab221b0ef857b7e863309df1009717a5c08f423546c78f49a95  ../../scripts/gateway-parity/observer.py
 6158b25ba9105f17759ff1e2543ade8ab70724f59eef81bc6b551020831b5967  ../../scripts/gateway-parity/run_round.py
-83ba6dd1772bba0888c6530c38fe5f3cb9c6c0531c1c3b158bd5048a1dcd10ad  ../../scripts/gateway-parity/test_safety.py
-e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
 c74ebe7d3041b3b07185498230f59cfc1f810b5d33c6c55bd4f542e2975cd41b  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
-d214b691ad77efa6c642577587f12865be046f9b99297c85caae566f9bfd2320  ../../scripts/gateway-parity/controls/session_domain.py
-41b1313fc047e8334a1655b69e277c4bcc451edaf15b79efd37e403e7005dab2  ../../scripts/gateway-parity/fixtures/session-calibration.json
-8ea02eadd41cc6bbf75c1e67c22152f37f6b729007ad1e3a34a190c9ab60188c  ../../scripts/a5-19/observation_rules.mjs
-0248507e617648bd8e81e1a54ae8b448cd7b7a2f14f1542424adc3a83b398c84  ../../scripts/a5-19/run.py
-b7373b5838370c43f5b35217f95ce688a0183b5494eb276a25d868a0c18517dd  ../../scripts/a5-19/six_cells.mts
-8ebd5ebaf0a189f9bf6727eb51765858abfe0afc94698b09ee53d6b707b7ec64  ../../scripts/a5-19/append-observer.mjs
-c2f69c000b4dd6e5f2912b05dbc846641d5cb7bac82976a6b1a1cf0e16fdee84  ../../scripts/a5-19/cleanup-observer.mjs
+83ba6dd1772bba0888c6530c38fe5f3cb9c6c0531c1c3b158bd5048a1dcd10ad  ../../scripts/gateway-parity/test_safety.py
+e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
+886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
+3e641ee353effae94c3751b198cb08f1728bf225bc9963356befea1d722df49b  accepted-diffs.md
+122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
 > **2026-10-22 修复轮 8 重登记（PR #406，透明披露补齐）**：按本轮明确授权，accepted-diffs.md 的「已知未对齐（未接受，待 pr9c）」表格只追加第三条（240 层格式化元素 + 宽 P 子树在真实 TS 抛 `Invalid array length`、Rust 成功返回 Markdown），保留原有条目原文，并追加适用范围说明；本条属 V8 数组上限运行时行为，与深度批准无关。真实 TS 重测 2 / 4 MiB 并二分至 256 KiB 区间，Rust 2 / 4 / 8 MiB 原值与输出 SHA256 见 `_tmp/20261021-a65-pr9b/RESULT.md`「修复轮 8」。状态为「未批准，非已接受差异」，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
 
 > **2026-10-22 修复轮 9 重登记（PR #406，select 家族透明披露补齐）**：按本轮明确授权，在「已知未对齐（未接受，待 pr9c）」表只追加 select 内标签家族一行，保留已有条目原文；真实 TS（默认 Turndown + domino）与正式 Rust 实测 11 例，其中 9 例不一致录入 `parserGaps`，2 例一致仅记 RESULT。追加说明当前为 3 类解析器差异、1 类宽子树运行时差异，共 4 条已知未对齐；select 家族未穷举。第三条补入 2 MiB 完整真实 TS 金样与 Rust 逐字节回放、4 MiB Rust 成功断言。两侧原值、负控与验证见 `_tmp/20261021-a65-pr9b/RESULT.md`「修复轮 9」。状态仍为「未批准，非已接受差异」，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。

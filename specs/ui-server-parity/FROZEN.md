@@ -28,6 +28,7 @@ Approval-Basis: specs/ui-server-parity/approval/calibration-summary.json; specs/
 Calibration-Evidence: specs/ui-server-parity/approval/calibration-summary.json; specs/ui-server-parity/approval/driver.log; _tmp/archive/b2-calibration-2026-10-18-a025aa97/final-ruler-333fbde2-b5d9-4b01-b29b-c2952ac87357.json; _tmp/archive/b2-calibration-2026-10-18-a025aa97/ts-ruler-55036e36-ee90-4304-a5ca-60ef5aeead02.json
 Independent-Reviews: specs/ui-server-parity/approval/review-glm.md; specs/ui-server-parity/approval/review-deepseek.md
 
+a1cf65d93b72351eaf5fce8c5356bfaa3b40f56f401d41151123b78582412fc4  ../../rust-toolchain.toml
 f6d385e8da46ed612ba5207dcdf588c8331cfe025a866bdb59bb7e02ff32a7cc  ../../scripts/exp008/compare.py
 3b8bec2dbcd28b3e99ee11017e4e37c3e59d873d2800331decf0f90a1fd25b24  ../../scripts/exp008/controls.py
 803783f412eaff275249d0af1750d054b637f83dc8c4137ece5384241e099e02  ../../scripts/exp008/driver.mjs
@@ -47,7 +48,7 @@ c8a21ce64dfa798a64667f82777704175b520115263f1917f56e0010c4b1754b  ../../scripts/
 e8724af2dd0c7536dc514c136ed8b4ae099257aeae461ff8b303fd22111c8f7a  ../../scripts/ui-server-parity/calibrate.sh
 206000021604a6f45890b1a3f8bc919117843452ca08648267de9c851b03ecd6  ../../scripts/ui-server-parity/chat_driver.mjs
 1c25f6b3013f28bfffea29becc0c52a4e452749a1487b6e6fbe8b988ad687879  ../../scripts/ui-server-parity/check_coverage.py
-28d86c7395d5923e436a49d0a11339bd8c49325881ff21dbcbb72842b36c5dd0  ../../scripts/ui-server-parity/check_frozen.py
+c2fc65bf4c281efe59bdb5f9aad146d50041a530ab7fe2d5810e91647e62e2f4  ../../scripts/ui-server-parity/check_frozen.py
 2da03a3ce2f10676faec30dec9bb9bb51e57f2830ba22417f8ff3e8b476c54f8  ../../scripts/ui-server-parity/check_ruler.py
 621c35912de50a7c4496a8db589e28d09cbb18ecc42714eca9cb03ad6cc87ba9  ../../scripts/ui-server-parity/common.py
 d67728d6c560ccacfcc87da7a10bc7f68a0369d98eac63e5d9c2f85760e0ed83  ../../scripts/ui-server-parity/compare.py
@@ -76,11 +77,10 @@ d796d56ee40603bd9f9c0ef9c735eb118867b722ec57cc0e57b8cf1245bd36b6  ../../scripts/
 9ccf2a7fef528fdfecea33b8c9dc0c9cbd2982f09631b6fe2f3e377dca122d5e  ../../scripts/ui-server-parity/verify_auth.mjs
 1dd44329badbd0b0676a4176b4adea998cc03ccfd9ec7ad4664d3e0899f780c3  ../../specs/ui-server-parity/acceptance.md
 ea5ea81bbfc77c78ad607bc9a29864bad866d8eb5a9dc9bb246f64b0cb5cd32c  ../../specs/ui-server-parity/accepted-diffs.md
+0365b045f3ec15853726a26ccd7b4b6f54993c3d52d6c667f9b6e81341121a65  ../../specs/ui-server-parity/human-approvers.txt
 b2004ddf95e02c24b307a9c20905d76437c3eae1a251cff189dd6836e3be85bf  ../../specs/ui-server-parity/multimodal.md
 37cd7d5f8358cdac36cf0d2bd5d5c09a73fa0d429d5225583d61abe261441b02  ../../specs/ui-server-parity/normalization.md
-a1cf65d93b72351eaf5fce8c5356bfaa3b40f56f401d41151123b78582412fc4  ../../rust-toolchain.toml
 7670c4a531150c7886d224ecdebb9eca3fa7724ac91ac8632cc98446d501964f  ../../specs/ui-server-parity/rust-routes.json
-0365b045f3ec15853726a26ccd7b4b6f54993c3d52d6c667f9b6e81341121a65  ../../specs/ui-server-parity/human-approvers.txt
 
 ## 批准依据可移植化（#113，2026-10-16）
 
