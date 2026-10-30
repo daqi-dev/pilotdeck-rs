@@ -253,7 +253,7 @@ fn grep_spawn_resets_inherited_signal_dispositions_worker() {
         ),
         0o755,
     )
-    .expect("#1125 publish wrapper by rename");
+    .expect("#1125 publish wrapper by helper");
 
     let context = env_context(
         &[

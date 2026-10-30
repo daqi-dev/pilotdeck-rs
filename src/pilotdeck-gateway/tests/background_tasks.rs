@@ -512,7 +512,7 @@ impl CreateGate {
             include_str!("fixtures/background-create-gate/shell.sh"),
             0o700,
         )
-        .expect("#956 #957 publish gated shell by rename");
+        .expect("#956 #957 publish gated shell by helper");
         Self {
             fifo,
             shell,
@@ -1240,7 +1240,7 @@ fn creation_watchdog_case(mode: &str) {
             ),
             0o700,
         )
-        .expect("#960 publish admission shell by rename");
+        .expect("#960 publish admission shell by helper");
         let mut env = object([("PATH", JsValue::from("/usr/bin:/bin"))]);
         gate.configure(&mut env);
         let fields = object([
