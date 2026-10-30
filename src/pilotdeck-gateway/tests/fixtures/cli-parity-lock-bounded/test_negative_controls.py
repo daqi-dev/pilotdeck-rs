@@ -1,5 +1,5 @@
 # anchor-selfcheck: unsupported kill-judge and runner-publication unit tests; no product mutation table
-"""Unit tests of the #1064 r1 negative-control apparatus, on synthetic logs only.
+"""Unit tests of the #1064 r1/r2 negative-control apparatus, on synthetic logs only.
 
 The judge is the piece a forged log could otherwise fool, so every forgery
 class the sibling fixtures demonstrated gets its own case here: a marker
@@ -10,8 +10,12 @@ cancellation during the final restore verification must void the recorded
 rows and publish INVALID (never an all-KILLED summary whose sources were not
 verifiably restored), a SystemExit must be normalized to exit 2, a SIGINT
 inside the void publish must leave no readable KILLED summary, and the runner
-itself must sit in the guarded set. No real source is mutated; nothing here
-runs cargo, node, or the cli-parity scripts.
+itself must sit in the guarded set. The fix-r2 cases pin the normal-path exit
+contract the same way: a plain INVALID row (a failed positive control) must
+exit 2, an emptied mutation table must exit nonzero (a zero denominator is
+never a pass), and an unknown ``--selection`` must fail closed before any
+mutation starts. No real source is mutated; nothing here runs cargo, node, or
+the cli-parity scripts.
 """
 from contextlib import contextmanager
 import hashlib
@@ -278,7 +282,8 @@ class RunnerInvalidationControls(unittest.TestCase):
             return result(1, KILLED_LOG)
         return run_test
 
-    def _drive(self, *, guard_error=None):
+    def _drive(self, *, guard_error=None, run_test=None, rows=None, tests=None,
+               fragments=None, selection=('one',)):
         """Run the real ``main`` with only the guard and the bound runs mocked."""
         out = Path(tempfile.mkdtemp(prefix='out-', dir=self.root))
         source = self.source
@@ -298,15 +303,17 @@ class RunnerInvalidationControls(unittest.TestCase):
             captured['paths'] = list(paths)
             return Guard()
 
+        if rows is None:
+            rows = [('one', source, 'x = 0', 'x = 1')]
         with patch.multiple(self.runner,
-                            mutations=[('one', source, 'x = 0', 'x = 1')],
-                            tests={'one': TEST},
-                            failure_fragments={'one': MARKER},
+                            mutations=rows,
+                            tests={'one': TEST} if tests is None else tests,
+                            failure_fragments={'one': MARKER} if fragments is None else fragments,
                             mutating_sources=mutating,
-                            run_test=self._run_test(),
+                            run_test=run_test or self._run_test(),
                             compile_check=lambda path: None), \
                 patch.object(sys, 'argv',
-                             ['negative_controls.py', str(out), 'one']):
+                             ['negative_controls.py', str(out), *selection]):
             try:
                 code = self.runner.main()
             except BaseException as error:
@@ -331,6 +338,8 @@ class RunnerInvalidationControls(unittest.TestCase):
                          '#1064 r1 the counts block must match the rows')
         self.assertIn(self.runner.RUNNER, captured['paths'],
                       '#1064 r1 P1-3 the delivered runner must sit in the guarded set')
+        self.assertIn(self.runner.test_script, captured['paths'],
+                      '#1064 fix-r2 the bound test script must sit in the guarded set')
         self.assertEqual(captured['mutating_calls'], 1,
                           '#1064 r1 the guard must wrap the whole run exactly once')
 
@@ -370,6 +379,76 @@ class RunnerInvalidationControls(unittest.TestCase):
                                  '#1064 r1 P1-3 a cancellation after the last row must not keep KILLED')
                 self.assertIn('source guard', summary['controls'][0]['reason'],
                               '#1064 r1 P1-3 the invalidation reason must be recorded')
+
+    def test_normal_invalid_row_exits_two(self):
+        """fix-r2 P1-1: a normal-path INVALID row must exit 2, never 1.
+
+        The guard itself exits cleanly here: only the positive control fails
+        (the r2 Codex P1-1 shape — previously this shared SURVIVED's exit 1,
+        so a broken run read as "the apparatus held", unlike the guard-failure
+        path's 2 and the #1038/#1063 runners). This is the bound test of
+        runner-invalid-exit-shared.
+        """
+        def run_test(_out, label, _test):
+            if label.endswith('-positive'):
+                return result(1, 'F\nRan 1 test\n\nFAILED (failures=1)\n')
+            return result(0, 'Ran 1 test\n\nOK\n')
+
+        message = "#1064 fix-r2 an INVALID row must exit 2, never share SURVIVED's 1"
+        code, summary, _ = self._drive(run_test=run_test)
+        self.assertEqual(code, 2, message)
+        self.assertIsNotNone(summary, message + ': the INVALID summary must still be published')
+        self.assertEqual([row['status'] for row in summary['controls']], ['INVALID'],
+                         message + ': the row must be INVALID, never KILLED')
+        self.assertIn('positive control', summary['controls'][0]['reason'],
+                      message + ': the reason must name the failed positive control')
+
+    def test_empty_mutation_table_is_not_a_pass(self):
+        """fix-r2 P1: an emptied table is a zero denominator, never a pass.
+
+        The r2 boundary-P1/simplify-P2 shape: ``0 == 0`` made an empty row set
+        exit 0 while not a single mutant ran. This is the bound test of
+        runner-empty-summary-pass (the fully filtered selection is pinned
+        separately below — the selection gate refuses unknown names first).
+        """
+        message = '#1064 fix-r2 an empty row set must exit nonzero, never pass'
+        code, summary, captured = self._drive(rows=[], tests={}, fragments={},
+                                               selection=())
+        self.assertEqual(code, 1, message)
+        self.assertIsNotNone(summary, message + ': the empty summary must still be published')
+        self.assertEqual(summary['controls'], [],
+                         message + ': no row may be invented for an empty table')
+        self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 0},
+                         message + ': the counts must stay at zero')
+        self.assertEqual(captured['mutating_calls'], 1,
+                         message + ': the guard must still wrap the (empty) run')
+
+    def test_fully_filtered_selection_fails_closed(self):
+        """fix-r2 P1: an unknown --selection must fail closed, never run empty.
+
+        A typo'd selection filters the table to nothing; the gate must refuse
+        it before any output directory or mutation starts, so a fully filtered
+        run can never reach the exit tail as a silent zero-row pass. This is
+        the bound test of runner-selection-assert-removed.
+        """
+        message = ('#1064 fix-r2 an unknown selection must fail closed, '
+                   'never run an empty table')
+
+        def refuse(*_args, **_kwargs):
+            raise RuntimeError('#1064 fix-r2 no mutation may start')
+
+        out = Path(tempfile.mkdtemp(prefix='filtered-', dir=self.root))
+        with patch.multiple(self.runner,
+                            mutations=[('one', self.source, 'x = 0', 'x = 1')],
+                            tests={'one': TEST},
+                            failure_fragments={'one': MARKER},
+                            mutating_sources=refuse), \
+                patch.object(sys, 'argv',
+                             ['negative_controls.py', str(out), 'ghost']):
+            with self.assertRaises(AssertionError, msg=message):
+                self.runner.main()
+        self.assertEqual(list(out.iterdir()), [],
+                         message + ': the refused selection must leave no evidence behind')
 
     def test_final_guard_systemexit_is_normalized_to_two(self):
         """r1 P1-3: a SystemExit from the guard must exit 2, never the raw code.

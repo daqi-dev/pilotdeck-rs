@@ -1595,11 +1595,25 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn(procs[0].pid, LIVE_GROUPS,
                          '#933-8: the stopped mock must leave the live-group registry')
 
+    def ensure_default_sigint(self):
+        """以「真 SIGINT → KeyboardInterrupt」为前提的用例统一入口（#1064 fix-r2 P1-2）。
+
+        后台启动的宿主（& / nohup / 批处理）把 SIGINT=SIG_IGN 传给本进程，
+        CPython 对已是 SIG_IGN 的信号不装 default_int_handler：真 SIGINT 被
+        静默吞掉，正确实现也会在「应投递未投递」的断言处误红（实测见
+        fix-r2 证据目录探针）。本用例期间显式装回默认处置，结束恢复原样；
+        前台继承 default 的环境里等价安装，行为不变。"""
+        previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+        self.addCleanup(signal.signal, signal.SIGINT, previous)
+
     def test_spawn_stops_its_group_when_a_queued_signal_fires(self):
         # #933-8 (fix-r3 P1-1, layer A): a SIGINT arriving while Popen runs is
         # queued, and is delivered the instant deferred_signals lifts the
         # block — before spawn() returns. The group is already registered but
         # the caller holds no handle, so spawn must stop it itself.
+        # 排队的信号在解除屏蔽时按当时处置投递：继承 SIG_IGN 时被丢弃，先装回默认。
+        self.ensure_default_sigint()
+
         def deliver_then_return(*_args, **_kwargs):
             os.kill(os.getpid(), signal.SIGINT)  # queued: DEFERRED is blocked
             return SimpleNamespace(pid=999_000_002)
@@ -1629,6 +1643,9 @@ class ContractTests(unittest.TestCase):
         # returning and the handle being stored. The review showed the
         # preflight then skipping stop_group with proc still None, leaving a
         # registered-but-unowned mock behind.
+        # 同 layer A：真 SIGINT 依赖默认处置，继承 SIG_IGN 时先装回。
+        self.ensure_default_sigint()
+
         def deliver_then_return(*_args, **_kwargs):
             os.kill(os.getpid(), signal.SIGINT)
             return SimpleNamespace(pid=999_000_001)
@@ -2300,6 +2317,9 @@ class ContractTests(unittest.TestCase):
         acquisition must not be blocked. The windows where ownership cannot be
         proven are pinned by test_interrupt_before_identity_capture_retains_the_lease
         and test_interrupt_retains_unproven_owner_bytes instead."""
+        # fix-r2 P1-2：owner-written-real-sigint 子窗发真 SIGINT，继承 SIG_IGN 的
+        # 后台宿主会吞掉信号、误红正确实现；先装回默认处置。
+        self.ensure_default_sigint()
         real_open, real_write, real_close = os.open, os.write, os.close
         fired = []
 
@@ -2347,6 +2367,26 @@ class ContractTests(unittest.TestCase):
                                      f'#1064: a later acquisition must succeed after the interruption ({label})')
                 self.assertFalse(lock.exists(),
                                  f'#1064: the follow-up lease must release normally ({label})')
+
+    def test_real_sigint_windows_survive_a_sigint_ignoring_parent(self):
+        """fix-r2 P1-2：以 SIG_IGN 为父复跑所有「真 SIGINT → KeyboardInterrupt」
+        用例。后台宿主（& / nohup）正是这样把 SIGINT=SIG_IGN 传给子进程的：这些
+        用例必须自己装回默认处置，而不是依赖继承。子进程超时按装置语义判
+        INVALID（挂死不是击杀），不设无界等待。"""
+        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        self.addCleanup(signal.signal, signal.SIGINT, previous)
+        script = Path(__file__).resolve()
+        for test in ('ContractTests.test_interrupt_during_acquisition_leaves_no_lease',
+                     'ContractTests.test_spawn_stops_its_group_when_a_queued_signal_fires',
+                     'ContractTests.test_preflight_signal_before_spawn_return_still_stops_the_mock'):
+            with self.subTest(test=test.rpartition('.')[2]):
+                result = subprocess.run([sys.executable, '-I', str(script), test],
+                                        capture_output=True, text=True, timeout=120)
+                self.assertEqual(
+                    result.returncode, 0,
+                    '#1064 fix-r2 the real-SIGINT windows must install the default '
+                    'disposition themselves and pass under an ignoring parent; '
+                    f'{test} said:\n' + result.stdout + result.stderr)
 
     def test_interrupt_before_identity_capture_retains_the_lease(self):
         """mkdir 未执行或未返回时被取消（r1 P1-1）：identity 未捕获，「目录为空」
