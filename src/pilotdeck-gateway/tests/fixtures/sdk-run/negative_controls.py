@@ -25,6 +25,12 @@ fixture = root / 'src/pilotdeck-cli/tests/fixtures/sdk-run'
 oracle = fixture / 'oracle.json'
 source = fixture / 'source.json'
 mutations = [
+    ('fixture-stdin-broken-pipe', tests, 'Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}', 'Err(error) if false && error.kind() == io::ErrorKind::BrokenPipe => {}', 'fixture_stdin_broken_pipe_preserves_output', '#1058 broken pipe must not panic'),
+    ('fixture-stdin-other-error', tests, 'Err(error) => panic!("#1058 fixture stdin: {error:?}"),', 'Err(_error) => {},', 'fixture_stdin_other_errors_still_fail', '#1058 other stdin errors must fail'),
+    ('fixture-stdin-skip-write', tests, 'match stdin.write_all(data) {', 'match { let _ = (stdin, data); Ok::<(), io::Error>(()) } {', 'fixture_stdin_writes_all_bytes', '#1058 complete stdin write'),
+    ('fixture-stdin-exit-code', tests, 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.status = std::process::ExitStatus::from_raw(0); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1058 preserve exit code'),
+    ('fixture-stdin-stdout', tests, 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stdout.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1058 preserve stdout'),
+    ('fixture-stdin-stderr', tests, 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stderr.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1058 preserve stderr'),
     ('model-oracle-empty', validation / 'oracle.json', '  "models": [', '  "models": [],\n  "discardedModels": [', 'sdk::turn::tests::model_resolution_matches_ts_boundaries', '#1058 registered model validation rows'),
     ('sequence-oracle-empty', validation / 'oracle.json', '  "sequences": [', '  "sequences": [],\n  "discardedSequences": [', 'sdk::transport::tests::stream_sequence_matches_ts_boundaries', '#1058 registered sequence validation rows'),
     ('sequence-received-format', transport, 'number_to_string(sequence)', 'sequence.to_string()', 'sdk::transport::tests::stream_sequence_matches_ts_boundaries', '#1058 stream sequence validation'),
