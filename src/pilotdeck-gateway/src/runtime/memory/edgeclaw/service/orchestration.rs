@@ -67,7 +67,7 @@ pub fn default_math_random() -> f64 {
 /// `flush(options)` (`service.ts:776-797`).
 #[derive(Default)]
 pub struct FlushOptions {
-    pub batch_size: Option<usize>,
+    pub batch_size: Option<f64>,
     pub session_keys: Option<Vec<String>>,
     pub reason: Option<JsString>,
 }

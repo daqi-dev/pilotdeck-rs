@@ -213,16 +213,16 @@ pub struct MemoryModelConfig {
 pub struct ProjectMemoryBundleOptions {
     pub project_root: PathBuf,
     pub config: Option<MemoryConfig>,
-    /// Normalized `snapshot.config.model` subset. Retained and forwarded even
-    /// though the native provider port has no consumer yet.
+    /// Normalized `snapshot.config.model` subset consumed by the native
+    /// factory's memory LLM resolver and forwarded to injected factories.
     pub model_config: Option<MemoryModelConfig>,
     pub agent_model: Option<String>,
     /// TS `options.now` (`() => Date`); Rust carries the clock itself so a
     /// deterministic test clock reaches the provider factory.
     pub now: Option<Now>,
-    /// TS `options.telemetry` (`TelemetryClient`). The native runtime has no
-    /// telemetry port, so this is an opaque pass-through: no method is called
-    /// and no event shape is invented.
+    /// Opaque TS `options.telemetry`, forwarded unchanged to injected factories.
+    /// The default factory calls a `MemoryTelemetry` wrapper when supplied;
+    /// other host objects are accepted with native telemetry disabled.
     pub telemetry: Option<TelemetryClient>,
     /// Application-selected provider factory (`providerFactory`).
     pub provider_factory: Option<MemoryProviderFactoryFn>,

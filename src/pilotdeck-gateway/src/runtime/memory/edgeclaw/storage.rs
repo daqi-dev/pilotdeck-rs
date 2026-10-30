@@ -112,6 +112,18 @@ impl fmt::Display for StorageError {
     }
 }
 impl std::error::Error for StorageError {}
+impl StorageError {
+    /// JavaScript's SQLite error.message has no Rust diagnostic prefix.
+    pub(crate) fn js_message(&self) -> JsString {
+        if crate::mutants::on("native-storage-error-prefix") {
+            return self.to_string().into();
+        }
+        match self {
+            Self::Sqlite(error) => error.to_string().into(),
+            _ => self.to_string().into(),
+        }
+    }
+}
 impl From<rusqlite::Error> for StorageError {
     fn from(error: rusqlite::Error) -> Self {
         Self::Sqlite(error)
@@ -209,12 +221,20 @@ impl EdgeClawStorage {
         path: impl AsRef<Path>,
         clock: FileMemoryClock,
     ) -> Result<Self, StorageError> {
+        let path = path.as_ref();
+        let path = if crate::mutants::on("native-storage-directory-accepted") && path.is_dir() {
+            Path::new(":memory:")
+        } else {
+            path
+        };
         let storage = Self::connect(path, clock)?;
-        storage.initialize()?;
+        if !crate::mutants::on("native-storage-skip-initialize") {
+            storage.initialize()?;
+        }
         Ok(storage)
     }
 
-    /// Node opens and validates DatabaseSync before file-store construction;
+    /// Node opens DatabaseSync before file-store construction;
     /// schema initialization follows it. Keep those phases separate (#778).
     pub(super) fn connect(
         path: impl AsRef<Path>,
@@ -236,10 +256,13 @@ impl EdgeClawStorage {
             }
             other => other,
         })?;
-        // Node DatabaseSync uses no busy wait. A corrupt file is rejected at
-        // construction (native-default sqlite-corrupt), before memory files.
+        // Node DatabaseSync uses no busy wait. Corruption is first detected
+        // by initialize(), after FileMemoryStore creates its directories;
+        // CANTOPEN is detected here, before those stores (#778 TS probe).
         conn.busy_timeout(Duration::ZERO)?;
-        conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))?;
+        if crate::mutants::on("native-database-validate-early") {
+            conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))?;
+        }
         Ok(Self {
             path,
             conn: Mutex::new(Some(conn)),
@@ -489,10 +512,15 @@ impl EdgeClawStorage {
     /// applies the limit after fetching, exactly like the TS `.slice`.
     pub fn list_pending_session_keys(
         &self,
-        limit: usize,
+        limit: f64,
         preferred_session_keys: Option<&[String]>,
     ) -> Result<Vec<String>, StorageError> {
-        let limit = limit.max(1);
+        let limit = pilotdeck_protocol::js_math::max(1.0, limit);
+        let limit = if crate::mutants::on("native-pending-limit-truncated") {
+            (limit as usize) as f64
+        } else {
+            limit
+        };
         let preferred = preferred_keys(preferred_session_keys);
         if preferred.is_empty() {
             let conn = self.conn()?;
@@ -504,8 +532,8 @@ impl EdgeClawStorage {
                  ORDER BY first_timestamp ASC
                  LIMIT ?1",
             )?;
-            let rows = statement
-                .query_map([limit as i64], |row| row.get::<_, String>(0).map(node_text))?;
+            let rows =
+                statement.query_map([limit], |row| row.get::<_, String>(0).map(node_text))?;
             return Ok(rows.collect::<Result<Vec<_>, _>>()?);
         }
         let placeholders = placeholders(preferred.len());
@@ -522,7 +550,15 @@ impl EdgeClawStorage {
             row.get::<_, String>(0).map(node_text)
         })?;
         let mut keys = rows.collect::<Result<Vec<_>, _>>()?;
-        keys.truncate(limit);
+        // Math.max has already ruled out negative endpoints. Rust's
+        // saturating float cast gives JS slice's NaN=0, +Infinity=len and
+        // positive fraction truncation without changing the SQL branch.
+        let end = if crate::mutants::on("native-pending-preferred-round-up") {
+            limit.ceil() as usize
+        } else {
+            limit as usize
+        };
+        keys.truncate(end);
         Ok(keys)
     }
 

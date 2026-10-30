@@ -3549,6 +3549,14 @@
         "message": "file is not a database",
         "code": "ERR_SQLITE_ERROR"
       },
+      "directories": [
+        "memory",
+        "memory/Feedback",
+        "memory/Project",
+        "global",
+        "global/UserIdentity",
+        "global/UserIdentityNotes"
+      ],
       "files": []
     },
     {
@@ -3568,6 +3576,10 @@
         "message": "unable to open database file",
         "code": "ERR_SQLITE_ERROR"
       },
+      "directories": [
+        "memory",
+        "global"
+      ],
       "files": []
     },
     {
@@ -4361,6 +4373,1155 @@
         "retrievalMode": {
           "$undefined": true
         }
+      }
+    },
+    {
+      "name": "host-telemetry",
+      "input": {
+        "name": "host-telemetry",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw"
+        },
+        "telemetry": "host"
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/host-telemetry/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": 6000,
+        "heartbeatBatchSize": 30,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      }
+    },
+    {
+      "name": "root-empty",
+      "input": {
+        "name": "root-empty",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "rootDir": ""
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/root-empty/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": 6000,
+        "heartbeatBatchSize": 30,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      }
+    },
+    {
+      "name": "batch-edge-0",
+      "input": {
+        "name": "batch-edge-0",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "heartbeatBatchSize": 0
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/batch-edge-0/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": 6000,
+        "heartbeatBatchSize": 0,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      },
+      "flushResult": {
+        "ok": true
+      },
+      "batchSelection": {
+        "sql": {
+          "keys": [
+            "s0"
+          ]
+        },
+        "preferred": {
+          "keys": [
+            "s0"
+          ]
+        }
+      }
+    },
+    {
+      "name": "chars-edge-0",
+      "input": {
+        "name": "chars-edge-0",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "maxMessageChars": 0
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/chars-edge-0/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": 0,
+        "heartbeatBatchSize": 30,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      }
+    },
+    {
+      "name": "batch-edge-1",
+      "input": {
+        "name": "batch-edge-1",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "heartbeatBatchSize": -1
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/batch-edge-1/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": 6000,
+        "heartbeatBatchSize": -1,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      },
+      "flushResult": {
+        "ok": true
+      },
+      "batchSelection": {
+        "sql": {
+          "keys": [
+            "s0"
+          ]
+        },
+        "preferred": {
+          "keys": [
+            "s0"
+          ]
+        }
+      }
+    },
+    {
+      "name": "chars-edge-1",
+      "input": {
+        "name": "chars-edge-1",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "maxMessageChars": -1
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/chars-edge-1/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": -1,
+        "heartbeatBatchSize": 30,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      }
+    },
+    {
+      "name": "batch-edge-2",
+      "input": {
+        "name": "batch-edge-2",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "heartbeatBatchSize": 2.5
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/batch-edge-2/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": 6000,
+        "heartbeatBatchSize": 2.5,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      },
+      "flushResult": {
+        "error": {
+          "name": "Error",
+          "message": "datatype mismatch",
+          "code": "ERR_SQLITE_ERROR"
+        }
+      },
+      "batchSelection": {
+        "sql": {
+          "error": {
+            "name": "Error",
+            "message": "datatype mismatch",
+            "code": "ERR_SQLITE_ERROR"
+          }
+        },
+        "preferred": {
+          "keys": [
+            "s0",
+            "s1"
+          ]
+        }
+      }
+    },
+    {
+      "name": "chars-edge-2",
+      "input": {
+        "name": "chars-edge-2",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "maxMessageChars": 2.5
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/chars-edge-2/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": 2.5,
+        "heartbeatBatchSize": 30,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      }
+    },
+    {
+      "name": "batch-edge-3",
+      "input": {
+        "name": "batch-edge-3",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "heartbeatBatchSize": 1e+21
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/batch-edge-3/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": 6000,
+        "heartbeatBatchSize": 1e+21,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      },
+      "flushResult": {
+        "error": {
+          "name": "Error",
+          "message": "datatype mismatch",
+          "code": "ERR_SQLITE_ERROR"
+        }
+      },
+      "batchSelection": {
+        "sql": {
+          "error": {
+            "name": "Error",
+            "message": "datatype mismatch",
+            "code": "ERR_SQLITE_ERROR"
+          }
+        },
+        "preferred": {
+          "keys": [
+            "s0",
+            "s1",
+            "s2",
+            "s3"
+          ]
+        }
+      }
+    },
+    {
+      "name": "chars-edge-3",
+      "input": {
+        "name": "chars-edge-3",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "maxMessageChars": 1e+21
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/chars-edge-3/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": 1e+21,
+        "heartbeatBatchSize": 30,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      }
+    },
+    {
+      "name": "batch-edge-4",
+      "input": {
+        "name": "batch-edge-4",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "heartbeatBatchSize": {
+            "$number": "NaN"
+          }
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/batch-edge-4/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": 6000,
+        "heartbeatBatchSize": {
+          "$number": "NaN"
+        },
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      },
+      "flushResult": {
+        "error": {
+          "name": "Error",
+          "message": "datatype mismatch",
+          "code": "ERR_SQLITE_ERROR"
+        }
+      },
+      "batchSelection": {
+        "sql": {
+          "error": {
+            "name": "Error",
+            "message": "datatype mismatch",
+            "code": "ERR_SQLITE_ERROR"
+          }
+        },
+        "preferred": {
+          "keys": []
+        }
+      }
+    },
+    {
+      "name": "chars-edge-4",
+      "input": {
+        "name": "chars-edge-4",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "maxMessageChars": {
+            "$number": "NaN"
+          }
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/chars-edge-4/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": {
+          "$number": "NaN"
+        },
+        "heartbeatBatchSize": 30,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      }
+    },
+    {
+      "name": "batch-edge-5",
+      "input": {
+        "name": "batch-edge-5",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "heartbeatBatchSize": {
+            "$number": "Infinity"
+          }
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/batch-edge-5/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": 6000,
+        "heartbeatBatchSize": {
+          "$number": "Infinity"
+        },
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      },
+      "flushResult": {
+        "error": {
+          "name": "Error",
+          "message": "datatype mismatch",
+          "code": "ERR_SQLITE_ERROR"
+        }
+      },
+      "batchSelection": {
+        "sql": {
+          "error": {
+            "name": "Error",
+            "message": "datatype mismatch",
+            "code": "ERR_SQLITE_ERROR"
+          }
+        },
+        "preferred": {
+          "keys": [
+            "s0",
+            "s1",
+            "s2",
+            "s3"
+          ]
+        }
+      }
+    },
+    {
+      "name": "chars-edge-5",
+      "input": {
+        "name": "chars-edge-5",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "maxMessageChars": {
+            "$number": "Infinity"
+          }
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/chars-edge-5/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": {
+          "$number": "Infinity"
+        },
+        "heartbeatBatchSize": 30,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      }
+    },
+    {
+      "name": "batch-edge-6",
+      "input": {
+        "name": "batch-edge-6",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "heartbeatBatchSize": {
+            "$number": "-Infinity"
+          }
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/batch-edge-6/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": 6000,
+        "heartbeatBatchSize": {
+          "$number": "-Infinity"
+        },
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      },
+      "flushResult": {
+        "ok": true
+      },
+      "batchSelection": {
+        "sql": {
+          "keys": [
+            "s0"
+          ]
+        },
+        "preferred": {
+          "keys": [
+            "s0"
+          ]
+        }
+      }
+    },
+    {
+      "name": "chars-edge-6",
+      "input": {
+        "name": "chars-edge-6",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "maxMessageChars": {
+            "$number": "-Infinity"
+          }
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/chars-edge-6/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": {
+          "$number": "-Infinity"
+        },
+        "heartbeatBatchSize": 30,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      }
+    },
+    {
+      "name": "batch-override-fraction",
+      "input": {
+        "name": "batch-override-fraction",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "heartbeatBatchSize": 30
+        },
+        "flushBatchSize": 2.5
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/batch-override-fraction/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": 6000,
+        "heartbeatBatchSize": 30,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      },
+      "flushResult": {
+        "error": {
+          "name": "Error",
+          "message": "datatype mismatch",
+          "code": "ERR_SQLITE_ERROR"
+        }
+      }
+    },
+    {
+      "name": "batch-override-nan",
+      "input": {
+        "name": "batch-override-nan",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "heartbeatBatchSize": 30
+        },
+        "flushBatchSize": {
+          "$number": "NaN"
+        }
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/batch-override-nan/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": 6000,
+        "heartbeatBatchSize": 30,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      },
+      "flushResult": {
+        "error": {
+          "name": "Error",
+          "message": "datatype mismatch",
+          "code": "ERR_SQLITE_ERROR"
+        }
+      }
+    },
+    {
+      "name": "batch-override-one",
+      "input": {
+        "name": "batch-override-one",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "heartbeatBatchSize": 2.5
+        },
+        "flushBatchSize": 1
+      },
+      "created": true,
+      "service": {
+        "workspaceDir": "$ROOT/config/batch-override-one/workspace",
+        "dataDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH",
+        "dbPath": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/home/.edgeclaw/memory/workspaces/$HASH/memory",
+        "source": "pilotdeck",
+        "captureStrategy": "last_turn",
+        "includeAssistant": true,
+        "maxMessageChars": 6000,
+        "heartbeatBatchSize": 2.5,
+        "defaultIndexingSettings": {
+          "reasoningMode": "answer_first",
+          "autoIndexIntervalMinutes": 30,
+          "autoDreamIntervalMinutes": 60
+        },
+        "extractorConfig": {
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": ""
+              }
+            }
+          },
+          "models": {
+            "providers": {
+              "edgeclaw_memory": {
+                "api": "openai-responses",
+                "models": []
+              }
+            }
+          }
+        }
+      },
+      "provider": {
+        "source": "pilotdeck",
+        "retrievalMode": {
+          "$undefined": true
+        }
+      },
+      "flushResult": {
+        "ok": true
       }
     },
     {

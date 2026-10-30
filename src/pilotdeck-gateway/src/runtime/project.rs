@@ -20,10 +20,9 @@ pub type DisposeFuture<'a> = Pin<Box<dyn Future<Output = RuntimeResult> + Send +
 
 /// Opaque pass-through for the TS `TelemetryClient`.
 ///
-/// The native runtime has no telemetry port yet, so no method is called and no
-/// event shape is invented. The exact host object is retained (and can be
-/// downcast by the future provider port) instead of being dropped at the
-/// staging boundary.
+/// The exact host object is retained across staging. Native memory can call
+/// the optional `memory::edgeclaw::factory::MemoryTelemetry` adapter; other
+/// opaque clients remain valid inputs and are left to their host consumers.
 pub type TelemetryClient = Arc<dyn Any + Send + Sync>;
 
 /// The exact JS error shape when a failure crossed a JS boundary.

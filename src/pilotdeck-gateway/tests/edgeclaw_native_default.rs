@@ -17,7 +17,8 @@ use pilotdeck_gateway::{
             edgeclaw::{
                 factory::{CreatedMemoryProvider, MemoryTelemetry, create_with_dependencies},
                 llm::config::build_llm_config_with,
-                service::{EdgeClawMemoryService, ServiceDependencies},
+                service::{EdgeClawMemoryService, FlushOptions, ServiceDependencies, ServiceError},
+                storage::{EdgeClawStorage, L0SessionRecord},
                 text::hash_text,
             },
             maintenance::{
@@ -50,6 +51,9 @@ fn enc(v: &JsValue) -> Value {
         JsValue::Undefined => json!({"$undefined":true}),
         JsValue::Null => Value::Null,
         JsValue::Bool(v) => json!(v),
+        JsValue::Number(n) if !n.is_finite() => json!({"$number": if n.is_nan() {
+            "NaN"
+        } else if n.is_sign_positive() { "Infinity" } else { "-Infinity" }}),
         JsValue::Number(_) => serde_json::from_str(
             &pilotdeck_protocol::stringify_json(v)
                 .expect("#778 number encoding")
@@ -171,6 +175,15 @@ fn clean(v: Value, root: &Path, workspaces: &[PathBuf], origin: &str) -> Value {
         v => v,
     }
 }
+fn number(value: &Value) -> Option<f64> {
+    match value.get("$number").and_then(Value::as_str) {
+        Some("NaN") => Some(f64::NAN),
+        Some("Infinity") => Some(f64::INFINITY),
+        Some("-Infinity") => Some(f64::NEG_INFINITY),
+        Some(other) => panic!("#778 unknown fixture number {other}"),
+        None => value.as_f64(),
+    }
+}
 fn input(root: &Path, spec: &Value) -> NativeMemoryProviderOptions {
     let config = spec.get("config").map(|c| {
         let mut out = MemoryConfig::new(
@@ -188,8 +201,8 @@ fn input(root: &Path, spec: &Value) -> NativeMemoryProviderOptions {
             MemoryCaptureStrategy::LastTurn
         };
         out.include_assistant = c["includeAssistant"].as_bool().unwrap_or(true);
-        out.max_message_chars = c["maxMessageChars"].as_f64();
-        out.heartbeat_batch_size = c["heartbeatBatchSize"].as_f64();
+        out.max_message_chars = number(&c["maxMessageChars"]);
+        out.heartbeat_batch_size = number(&c["heartbeatBatchSize"]);
         out.model = string(&c["model"]);
         out.api_type = string(&c["apiType"]);
         out.schedule = c.get("schedule").map(|s| MemoryScheduleConfig {
@@ -222,9 +235,12 @@ fn input(root: &Path, spec: &Value) -> NativeMemoryProviderOptions {
         model_config,
         agent_model: spec["agentModel"].as_str().map(str::to_owned),
         now: Some(Arc::new(|| UNIX_EPOCH + Duration::from_millis(MS))),
-        telemetry: None,
+        telemetry: (spec["telemetry"] == "host").then(|| Arc::new(HostTelemetry) as _),
     }
 }
+// A host client is an opaque value at the project boundary, with no native
+// MaintenanceTelemetry vtable. Its presence must not reject staging.
+struct HostTelemetry;
 #[derive(Default)]
 struct Random {
     next: usize,
@@ -270,8 +286,11 @@ async fn memory_native_default() {
     let mut cfg = MemoryConfig::new(true, "edgeclaw");
     cfg.root_dir = root.0.join("store").to_string_lossy().as_ref().into();
     options.config = Some(cfg);
+    options.telemetry = Some(Arc::new(HostTelemetry));
     let bundle = ProjectMemoryBundle::new(options);
-    let resources = bundle.stage().expect("#778 native default stage");
+    let resources = bundle
+        .stage()
+        .expect("#778 host telemetry native default stage");
     assert!(
         resources.memory.is_some()
             && resources.maintenance.is_some()
@@ -340,6 +359,29 @@ async fn factory_config_matrix() {
         if let Some(expected_error) = cell.get("error") {
             let e = created.err().expect("#778 invalid root must fail");
             let e = e.factory_error().expect("#778 factory error shape");
+            if let Some(expected_directories) = cell.get("directories") {
+                let mut actual = directory_tree(&data.join("memory"), "memory");
+                actual.extend(directory_tree(&dir.join("store/global"), "global"));
+                let expected_paths = expected_directories
+                    .as_array()
+                    .expect("#778 directory oracle");
+                for path in actual.iter().map(String::as_str).chain(
+                    expected_paths
+                        .iter()
+                        .map(|v| v.as_str().expect("#778 directory path")),
+                ) {
+                    assert_eq!(
+                        actual.iter().any(|p| p == path),
+                        expected_paths.iter().any(|p| p == path),
+                        "#778 database failure directory layout {name}: {path}"
+                    );
+                }
+                assert_eq!(
+                    json!(actual),
+                    *expected_directories,
+                    "#778 database failure directory layout {name}"
+                );
+            }
             if let Some(expected_files) = cell.get("files") {
                 let mut files = tree(&data.join("memory"), "memory");
                 files.extend(tree(&dir.join("store/global"), "global"));
@@ -364,6 +406,11 @@ async fn factory_config_matrix() {
         );
         if let Some(created) = created {
             assert_eq!(
+                enc(&created.provider.factory_configuration()),
+                cell["provider"],
+                "#778 factory provider configuration {name}"
+            );
+            assert_eq!(
                 clean(
                     enc(&created.service.factory_configuration()),
                     &root.0,
@@ -377,6 +424,143 @@ async fn factory_config_matrix() {
         }
     }
 }
+fn directory_tree(root: &Path, label: &str) -> Vec<String> {
+    if !root.exists() {
+        return vec![];
+    }
+    let mut entries = fs::read_dir(root)
+        .expect("#778 directory tree read")
+        .map(|e| e.expect("#778 directory tree entry"))
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|e| e.file_name());
+    let mut result = vec![label.to_owned()];
+    for entry in entries {
+        if entry
+            .file_type()
+            .expect("#778 directory entry type")
+            .is_dir()
+        {
+            result.extend(directory_tree(
+                &entry.path(),
+                &format!("{label}/{}", entry.file_name().to_string_lossy()),
+            ));
+        }
+    }
+    result
+}
+
+#[tokio::test]
+async fn heartbeat_batch_numeric_edges() {
+    let root = Root::new();
+    let expected = oracle();
+    let cells = expected["configurations"]
+        .as_array()
+        .expect("#778 batch configurations");
+    let mut seen = 0;
+    for cell in cells.iter().filter(|c| c.get("flushResult").is_some()) {
+        seen += 1;
+        let name = cell["name"].as_str().expect("#778 batch name");
+        let input = input(&root.0.join(name), &cell["input"]);
+        let limit = input
+            .config
+            .as_ref()
+            .expect("#778 batch config")
+            .heartbeat_batch_size
+            .expect("#778 batch value");
+        let created = create_with_dependencies(
+            &input,
+            dependencies(&root.0.join("home"), Arc::default(), None),
+        )
+        .expect("#778 batch constructor preserves JS number")
+        .expect("#778 batch enabled");
+        let flushed = match created
+            .service
+            .flush(FlushOptions {
+                batch_size: number(&cell["input"]["flushBatchSize"]),
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(_) => json!({"ok":true}),
+            Err(e) => json!({"error":error(&MemoryProviderError::from(e))}),
+        };
+        assert_eq!(
+            flushed, cell["flushResult"],
+            "#778 heartbeat numeric flush {name}"
+        );
+        if cell.get("batchSelection").is_none() {
+            created.service.close().expect("#778 override close");
+            continue;
+        }
+        let storage = &created.service.repository.storage;
+        for i in 0..4 {
+            storage
+                .insert_l0_session(&L0SessionRecord {
+                    l0_index_id: format!("batch-{i}"),
+                    session_key: format!("s{i}"),
+                    timestamp: format!("{NOW}{i}"),
+                    messages: JsValue::Array(vec![]),
+                    source: "pilotdeck".into(),
+                    indexed: false,
+                    created_at: NOW.into(),
+                })
+                .expect("#778 seed batch pending sessions");
+        }
+        let preferred = (0..4).map(|i| format!("s{i}")).collect::<Vec<_>>();
+        for (kind, keys) in [("sql", None), ("preferred", Some(preferred.as_slice()))] {
+            let observed = match storage.list_pending_session_keys(limit, keys) {
+                Ok(keys) => json!({"keys":keys}),
+                Err(e) => {
+                    json!({"error":error(&MemoryProviderError::from(ServiceError::Storage(e)))})
+                }
+            };
+            assert_eq!(
+                observed, cell["batchSelection"][kind],
+                "#778 heartbeat numeric selection {name} {kind}"
+            );
+        }
+        created.service.close().expect("#778 batch close");
+    }
+    assert_eq!(seen, 10, "#778 all numeric batch boundary cells replayed");
+}
+
+#[test]
+fn storage_invalid_paths() {
+    let root = Root::new();
+    let expected = oracle();
+    for fault in ["corrupt", "directory"] {
+        let path = root.0.join(fault).join("control.sqlite");
+        fs::create_dir_all(path.parent().expect("#778 direct storage parent"))
+            .expect("#778 direct storage mkdir");
+        let bytes = "not a database".repeat(256).into_bytes();
+        if fault == "directory" {
+            fs::create_dir(&path).expect("#778 direct storage directory fixture");
+        } else {
+            fs::write(&path, &bytes).expect("#778 direct storage corrupt fixture");
+        }
+        let e = EdgeClawStorage::with_clock(&path, Arc::new(|| NOW.into()))
+            .err()
+            .unwrap_or_else(|| panic!("#778 direct storage rejects {fault}"));
+        let e = error(&MemoryProviderError::from(ServiceError::Storage(e)));
+        let cell = expected["configurations"]
+            .as_array()
+            .expect("#778 storage oracle")
+            .iter()
+            .find(|c| c["name"] == format!("sqlite-{fault}"))
+            .expect("#778 storage oracle cell");
+        assert_eq!(e, cell["error"], "#778 direct storage error {fault}");
+        if fault == "corrupt" {
+            assert_eq!(
+                fs::read(&path).expect("#778 read corrupt original"),
+                bytes,
+                "#778 corrupt database bytes unchanged"
+            );
+        } else {
+            assert!(path.is_dir(), "#778 database directory remains a directory");
+        }
+    }
+}
+
 struct Events {
     items: Mutex<Vec<Value>>,
     done: Semaphore,

@@ -15,17 +15,31 @@ FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/factory.rs'
 BUNDLE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/mod.rs'
 SERVICE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/service/mod.rs'
+INDEXER = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/heartbeat/indexer.rs'
+STORAGE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage.rs'
 FILES = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/file_memory.rs'
 TESTS = ROOT / 'src/pilotdeck-gateway/tests/edgeclaw_native_default.rs'
 PREFIX = 'runtime::memory::edgeclaw::factory::'
 switches = [
-    ('native-database-open-late', FILES, 'tests::factory_config_matrix', '#778 database failure must precede memory-file creation'),
+    ('native-storage-error-prefix', STORAGE, 'tests::heartbeat_batch_numeric_edges', '#778 heartbeat numeric flush batch-edge-2'),
+    ('native-indexer-batch-truncated', INDEXER, 'tests::heartbeat_batch_numeric_edges', '#778 heartbeat numeric flush batch-edge-2'),
+    ('native-indexer-override-ignored', INDEXER, 'tests::heartbeat_batch_numeric_edges', '#778 heartbeat numeric flush batch-override-fraction'),
+    ('native-database-validate-early', STORAGE, 'tests::factory_config_matrix', '#778 database failure directory layout sqlite-corrupt'),
+    ('native-opaque-telemetry-rejected', SOURCE, 'tests::memory_native_default', '#778 host telemetry native default stage'),
+    ('native-provider-retrieval-mode', SOURCE, 'tests::factory_config_matrix', '#778 factory provider configuration'),
+    ('native-heartbeat-fraction-truncated', SOURCE, 'tests::factory_config_matrix', '#778 factory configuration batch-edge-2'),
+    ('native-max-message-chars-drop', SOURCE, 'tests::factory_config_matrix', '#778 factory configuration chars-edge-0'),
+    ('native-pending-limit-truncated', STORAGE, 'tests::heartbeat_batch_numeric_edges', '#778 heartbeat numeric flush batch-edge-2'),
+    ('native-pending-preferred-round-up', STORAGE, 'tests::heartbeat_batch_numeric_edges', '#778 heartbeat numeric selection batch-edge-2 preferred'),
+    ('native-storage-skip-initialize', STORAGE, 'tests::storage_invalid_paths', '#778 direct storage rejects corrupt'),
+    ('native-storage-directory-accepted', STORAGE, 'tests::storage_invalid_paths', '#778 direct storage rejects directory'),
+    ('native-database-open-late', FILES, 'tests::factory_config_matrix', '#778 database failure directory layout sqlite-directory'),
     ('native-missing-m21-cell', TESTS, 'tests::m21_denominator', '#778 Rust M21 registrations exactly match oracle'),
     ('native-default-empty', BUNDLE, 'tests::memory_native_default', '#778 native default must publish real three handles'),
     ('native-root-ignored', SOURCE, 'tests::factory_config_matrix', '#778 factory configuration'),
     ('native-factory-ignore-llm', SOURCE, 'tests::factory_config_matrix', '#778 factory configuration'),
     ('native-heartbeat-batch', SOURCE, 'tests::factory_config_matrix', '#778 factory configuration'),
-    ('native-provider-source', SOURCE, 'tests::memory_native_end_to_end', '#778 E2E'),
+    ('native-provider-source', SOURCE, 'tests::factory_config_matrix', '#778 factory provider configuration'),
     ('native-maintenance-noop', SOURCE, 'tests::memory_native_end_to_end', '#778 E2E recall hits captured content'),
     ('native-close-noop', SOURCE, 'tests::memory_native_default', '#778 real database closes'),
     ('native-error-code-drop', SERVICE, 'tests::disposed_maintenance', '#778 M21 disposed-maintenance'),
@@ -33,7 +47,7 @@ switches = [
     ('native-get-undefined-maxlines', SERVICE, 'tests::service_get_maxlines_defaults_1052', '#778 #1052 maxLines defaults'),
     ('get-null-maxlines', SERVICE, 'tests::service_get_maxlines_defaults_1052', '#778 #1052 maxLines defaults'),
 ]
-GUARDED = [SOURCE, BUNDLE, SERVICE, TESTS,
+GUARDED = [SOURCE, BUNDLE, SERVICE, TESTS, STORAGE,
     ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/provider.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/file_memory.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/heartbeat/indexer.rs',

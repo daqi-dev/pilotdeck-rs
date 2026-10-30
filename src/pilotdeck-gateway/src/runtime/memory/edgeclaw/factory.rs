@@ -19,8 +19,9 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{path::PathBuf, sync::Arc, time::UNIX_EPOCH};
 
 /// Callable memory telemetry carried by the project's opaque telemetry slot.
-/// Applications using native memory install this wrapper; injected provider
-/// factories continue to receive the original opaque object unchanged.
+/// Hosts may opt in to callable native telemetry with this wrapper. Other
+/// opaque host clients remain valid factory inputs and run without native
+/// telemetry; injected factories still receive the original object unchanged.
 pub struct MemoryTelemetry(pub Arc<dyn MaintenanceTelemetry>);
 struct RuntimeTelemetry(Arc<dyn MaintenanceTelemetry>);
 impl LlmRuntime for RuntimeTelemetry {
@@ -71,16 +72,19 @@ pub fn create_with_dependencies(
             "Native memory requires a Tokio runtime.",
         ))
     })?;
-    let telemetry = options
-        .telemetry
-        .as_ref()
-        .map(|value| {
-            value
-                .downcast_ref::<MemoryTelemetry>()
-                .map(|value| value.0.clone())
-                .ok_or_else(|| MemoryBundleError::Factory(MemoryProviderError::host_required()))
-        })
-        .transpose()?;
+    let telemetry = options.telemetry.as_ref().and_then(|value| {
+        value
+            .downcast_ref::<MemoryTelemetry>()
+            .map(|value| value.0.clone())
+    });
+    if crate::mutants::on("native-opaque-telemetry-rejected")
+        && options.telemetry.is_some()
+        && telemetry.is_none()
+    {
+        return Err(MemoryBundleError::Factory(MemoryProviderError::new(
+            "Native memory telemetry adapter is unavailable.",
+        )));
+    }
     if let Some(telemetry) = &telemetry {
         dependencies.runtime = Some(Arc::new(RuntimeTelemetry(telemetry.clone())));
     }
@@ -97,19 +101,17 @@ pub fn create_with_dependencies(
         MemoryCaptureStrategy::FullSession => CaptureStrategy::FullSession,
     };
     service_options.include_assistant = Some(config.include_assistant);
-    service_options.max_message_chars = config.max_message_chars;
-    service_options.heartbeat_batch_size = config
-        .heartbeat_batch_size
-        .map(|n| {
-            if !n.is_finite() || n < 0.0 || n.fract() != 0.0 || n >= usize::MAX as f64 {
-                Err(MemoryBundleError::Factory(
-                    MemoryProviderError::host_required(),
-                ))
-            } else {
-                Ok(n as usize)
-            }
-        })
-        .transpose()?;
+    service_options.max_message_chars = if crate::mutants::on("native-max-message-chars-drop") {
+        None
+    } else {
+        config.max_message_chars
+    };
+    // Preserve the JS number through construction. SQL LIMIT and preferred-key
+    // slice apply different number semantics when heartbeat actually runs.
+    service_options.heartbeat_batch_size = config.heartbeat_batch_size;
+    if crate::mutants::on("native-heartbeat-fraction-truncated") {
+        service_options.heartbeat_batch_size = config.heartbeat_batch_size.map(f64::trunc);
+    }
     if crate::mutants::on("native-heartbeat-batch") {
         service_options.heartbeat_batch_size = None;
     }
@@ -149,6 +151,9 @@ pub fn create_with_dependencies(
         }
         .into(),
     );
+    if crate::mutants::on("native-provider-retrieval-mode") {
+        provider_options.retrieval_mode = Some("simple".into());
+    }
     provider_options.telemetry = telemetry;
     // TS passes options.now only to the provider, never to the service clock.
     provider_options.now = options.now.clone().map(|now| {

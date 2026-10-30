@@ -101,7 +101,7 @@ impl HeartbeatStats {
 /// `HeartbeatRunOptions` (`heartbeat.ts:26-30`).
 #[derive(Clone, Debug, Default)]
 pub struct HeartbeatRunOptions {
-    pub batch_size: Option<usize>,
+    pub batch_size: Option<f64>,
     pub session_keys: Option<Vec<String>>,
     pub reason: Option<JsString>,
 }
@@ -133,7 +133,7 @@ pub type HeartbeatHook = Arc<dyn Fn(HeartbeatStage, &str) + Send + Sync>;
 
 /// `HeartbeatOptions` (`heartbeat.ts:16-23`).
 pub struct HeartbeatOptions {
-    pub batch_size: Option<usize>,
+    pub batch_size: Option<f64>,
     pub source: Option<String>,
     pub settings: IndexingSettings,
     pub logger: Option<Arc<dyn HeartbeatLogger>>,
@@ -158,7 +158,7 @@ impl HeartbeatOptions {
 pub struct HeartbeatIndexer {
     repository: Arc<EdgeClawFileStores>,
     extractor: Arc<LlmMemoryExtractor>,
-    batch_size: usize,
+    batch_size: f64,
     source: String,
     settings: IndexingSettings,
     logger: Option<Arc<dyn HeartbeatLogger>>,
@@ -167,7 +167,7 @@ pub struct HeartbeatIndexer {
 }
 
 impl HeartbeatIndexer {
-    pub(crate) fn configured_batch_size(&self) -> usize {
+    pub(crate) fn configured_batch_size(&self) -> f64 {
         self.batch_size
     }
 
@@ -179,7 +179,7 @@ impl HeartbeatIndexer {
         Self {
             repository,
             extractor,
-            batch_size: options.batch_size.unwrap_or(30),
+            batch_size: options.batch_size.unwrap_or(30.0),
             source: options.source.unwrap_or_else(|| "openclaw".into()),
             settings: options.settings,
             logger: options.logger,
@@ -280,7 +280,14 @@ impl HeartbeatIndexer {
     ) -> Result<HeartbeatStats, HeartbeatError> {
         let mut stats = HeartbeatStats::default();
         let session_keys = self.repository.storage.list_pending_session_keys(
-            (options.batch_size.unwrap_or(self.batch_size)).max(1),
+            if crate::mutants::on("native-indexer-batch-truncated") {
+                pilotdeck_protocol::js_math::max(1.0, options.batch_size.unwrap_or(self.batch_size))
+                    .trunc()
+            } else if crate::mutants::on("native-indexer-override-ignored") {
+                pilotdeck_protocol::js_math::max(1.0, self.batch_size)
+            } else {
+                pilotdeck_protocol::js_math::max(1.0, options.batch_size.unwrap_or(self.batch_size))
+            },
             options.session_keys.as_deref(),
         )?;
         if session_keys.is_empty() {
@@ -1834,8 +1841,7 @@ impl HeartbeatError {
     /// new variant cannot drift from the indexer's own mapping.
     pub(crate) fn message(&self) -> JsString {
         match self {
-            Self::Storage(StorageError::Closed) => JsString::from("database is not open"),
-            Self::Storage(error) => JsString::from(error.to_string()),
+            Self::Storage(error) => error.js_message(),
             Self::File(error) => error.js_message(),
             Self::Index(error) => error.message(),
             Self::Json(error) => JsString::from(error.as_str()),

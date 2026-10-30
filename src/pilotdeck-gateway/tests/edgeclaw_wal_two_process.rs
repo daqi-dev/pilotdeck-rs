@@ -184,7 +184,7 @@ fn cross_process_wal_writer_blocks_service_writes_like_ts() {
         let result = reader
             .repository
             .storage
-            .list_pending_session_keys(30, None)
+            .list_pending_session_keys(30.0, None)
             .map_err(|error| error.to_string());
         let _ = pending_tx.send(result);
     });
