@@ -4,6 +4,22 @@ import sys
 if not (sys.flags.isolated and sys.flags.ignore_environment and sys.flags.no_user_site
         and sys.pycache_prefix is None):
     raise SystemExit('Python isolation required: use python3 -I')
+if sys.version_info < (3, 11) or 'os' not in sys.modules:
+    raise SystemExit('os must be preloaded from CPython 3.11+ frozen modules')
+import os
+
+_boot_dir = os.path.dirname(os.path.realpath(__file__))
+# Identity, not spelling: a case-insensitive alias, a symlinked spelling or a
+# mixed ``//`` form names this very directory while the string differs
+# (#1033). Nonexistent sys.path entries skip; an empty entry means cwd.
+if any(
+        os.path.isdir(entry or os.curdir)
+        and any(os.path.isdir(root)
+                and os.path.samefile(entry or os.curdir, root)
+                for root in (_boot_dir,))
+        for entry in sys.path):
+    raise SystemExit('apparatus directory on sys.path; run the entry file directly with -I')
+
 sys.dont_write_bytecode = True
 
 import hashlib

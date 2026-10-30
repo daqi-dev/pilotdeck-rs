@@ -7,14 +7,29 @@ Source sha256: 7f32dea3ad31046742b63479cad3d99ea5998b1d7890d10d3a2a238013a4a7f4
 The channel split and E predicates below are retained from that source.
 Native/sidecar declared extensions do not apply to sidecar/sidecar pairs.
 """
-from __future__ import annotations
-
 import sys
 
 # -I keeps PYTHONPATH, user site and the script directory out of module
 # resolution; without it, exit before loading any apparatus module.
 if not sys.flags.isolated:
     raise SystemExit(f'run with -I: python3 -I {__file__}')
+
+if sys.version_info < (3, 11) or 'os' not in sys.modules:
+    raise SystemExit('os must be preloaded from CPython 3.11+ frozen modules')
+import os
+
+_boot_dir = os.path.dirname(os.path.realpath(__file__))
+_boot_dir = os.path.dirname(_boot_dir) if os.path.basename(_boot_dir) == 'controls' else _boot_dir
+# Identity, not spelling: a case-insensitive alias, a symlinked spelling or a
+# mixed ``//`` form names this very directory while the string differs
+# (#1033). Nonexistent sys.path entries skip; an empty entry means cwd.
+if any(
+        os.path.isdir(entry or os.curdir)
+        and any(os.path.isdir(root)
+                and os.path.samefile(entry or os.curdir, root)
+                for root in (_boot_dir, os.path.join(_boot_dir, 'controls')))
+        for entry in sys.path):
+    raise SystemExit('apparatus directory on sys.path; run the entry file directly with -I')
 
 import tempfile
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-parity-pyc-')
@@ -33,7 +48,7 @@ from typing import Any
 WORKTREE = Path(__file__).resolve().parents[2]
 
 
-def baseline_path() -> Path:
+def baseline_path() -> 'Path':
     # 显式 PDRS_BASELINE 优先（PR #13 第 2 轮评审 P3）；其次本 worktree 的 resources/；再次主仓的 resources/。
     configured = os.environ.get("PDRS_BASELINE")
     if configured:
@@ -68,22 +83,22 @@ def load_original_trace():
 T = load_original_trace()
 
 
-def sha256(path: Path) -> str:
+def sha256(path: 'Path') -> 'str':
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def canon(value: Any) -> str:
+def canon(value: 'Any') -> 'str':
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
-def projected(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def projected(records: 'list[dict[str, Any]]') -> 'list[dict[str, Any]]':
     out = T.project_semantic_trace(records)
     for r in out:
         r.pop("requestEvidence", None)
     return out
 
 
-def identity_key(r: dict[str, Any]) -> str:
+def identity_key(r: 'dict[str, Any]') -> 'str':
     """Phase B event identity: kind, agentScope, event|statusKind, attempt, compactionId, itemId, toolCallId."""
     tcid = r.get("toolCallId")
     if tcid is None and isinstance(r.get("result"), dict):
@@ -104,7 +119,7 @@ def identity_key(r: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------- identity multiplicity (E11)
-def identity_multiplicity_diffs(left_raw, right_raw) -> list[dict[str, Any]]:
+def identity_multiplicity_diffs(left_raw, right_raw) -> 'list[dict[str, Any]]':
     left = Counter(identity_key(r) for r in projected(left_raw))
     right = Counter(identity_key(r) for r in projected(right_raw))
     return [{"key": json.loads(key), "left_count": left[key], "right_count": right[key]}
@@ -121,7 +136,7 @@ GATEWAY_KINDS = {"agent.status", "context.budget", "user.output", "steer.applied
 HARNESS_CONTROL_KINDS = {"steer.request", "cancel.requested", "cancel.acknowledged", "cancel.error", "session.lifecycle"}  # harness timers/control client
 
 
-def channel_of(raw: dict[str, Any], finish_channel_by_call: dict[Any, str] | None = None) -> str:
+def channel_of(raw: 'dict[str, Any]', finish_channel_by_call: 'dict[Any, str] | None' = None) -> 'str':
     """Producer channel of a RAW (canonicalized, un-projected) record. Mechanical, from gateway_impl.mjs push sites.
     Built-in tool.result records carry no tool name (gateway_impl.mjs:890-895, :723-740); they are pushed synchronously
     right after their tool.finish, so they inherit the channel of the nearest preceding tool.finish with the same toolCallId."""
@@ -146,7 +161,7 @@ def channel_of(raw: dict[str, Any], finish_channel_by_call: dict[Any, str] | Non
     return "A"  # port invocations (model.*, fault.injected, parity tool.*, policy.*, permission.*, compaction.budget) + post-run projections
 
 
-def channel_streams(raw_records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+def channel_streams(raw_records: 'list[dict[str, Any]]') -> 'dict[str, list[dict[str, Any]]]':
     generated: dict[tuple[str, str], str] = {}
     streams: dict[str, list[dict[str, Any]]] = defaultdict(list)
     finish_channel_by_call: dict[Any, str] = {}
@@ -165,7 +180,7 @@ def channel_streams(raw_records: list[dict[str, Any]]) -> dict[str, list[dict[st
     return streams
 
 
-def rule_verdict(sid: str, left_raw, right_raw) -> dict[str, Any]:
+def rule_verdict(sid: 'str', left_raw, right_raw) -> 'dict[str, Any]':
     """RULE (channel-split comparator):
        1. Original _partial_order_differences on both sides (trace.py:1129-1270: E3 compaction, durable-before-visible, durable-steer-before-applied, E9 settlement).
        2. Records are partitioned per actor (parent/child) and per producer channel A (port invocation), B (persistence completion),
@@ -202,7 +217,7 @@ def has_tool_call_id(value, tcid):
     return False
 
 
-def e_rules(records: list[dict[str, Any]], side: str, sid: str) -> dict[str, Any]:
+def e_rules(records: 'list[dict[str, Any]]', side: 'str', sid: 'str') -> 'dict[str, Any]':
     recs = records  # canonicalized raw order incl. harness.proof/operation.terminal
     res: dict[str, Any] = {}
     kind = lambda r: r.get("kind")
@@ -355,12 +370,12 @@ def e_rules(records: list[dict[str, Any]], side: str, sid: str) -> dict[str, Any
 
 
 
-def scenario_catalog() -> dict[str, dict[str, Any]]:
+def scenario_catalog() -> 'dict[str, dict[str, Any]]':
     scenarios = json.loads((TOOLS / "scenarios.json").read_text())["scenarios"]
     return {s["scenarioId"]: s for s in scenarios if "pilotdeck" in s.get("pairs", [])}
 
 
-def load_aligned(path: Path, path_align=()) -> list[dict[str, Any]]:
+def load_aligned(path: 'Path', path_align=()) -> 'list[dict[str, Any]]':
     # Align string values before the Original's canonicalization; never rewrite keys.
     generated = {}
     records = []
