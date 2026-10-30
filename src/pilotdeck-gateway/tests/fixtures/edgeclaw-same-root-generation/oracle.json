@@ -1,0 +1,93 @@
+{
+  "node": "v22.22.0",
+  "serial": {
+    "old-stage": {
+      "ok": true,
+      "value": true
+    },
+    "two-generations-open": {
+      "ok": true,
+      "value": true
+    },
+    "new-reads-old-write": {
+      "ok": true,
+      "value": {
+        "from": "old"
+      }
+    },
+    "old-reads-new-write": {
+      "ok": true,
+      "value": {
+        "from": "new"
+      }
+    },
+    "old-close": {
+      "ok": true,
+      "value": true
+    },
+    "new-write-after-old-close": {
+      "ok": true,
+      "value": true
+    },
+    "new-close": {
+      "ok": true,
+      "value": true
+    },
+    "reopen-reads-all": {
+      "ok": true,
+      "value": [
+        {
+          "from": "old"
+        },
+        {
+          "from": "new"
+        },
+        {
+          "ok": true
+        }
+      ]
+    }
+  },
+  "threaded": {
+    "stage-while-write": {
+      "ok": true,
+      "value": true
+    },
+    "write-while-worker-holds-lock": {
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "message": "database is locked",
+        "code": "ERR_SQLITE_ERROR"
+      }
+    },
+    "read-while-worker-holds-lock": {
+      "ok": true,
+      "value": {
+        "$undefined": true
+      }
+    },
+    "write-after-worker-release": {
+      "ok": true,
+      "value": true
+    },
+    "read-persisted": {
+      "ok": true,
+      "value": {
+        "m": 2
+      }
+    },
+    "stage-legacy-while-write": {
+      "ok": false,
+      "error": {
+        "name": "Error",
+        "message": "database is locked",
+        "code": "ERR_SQLITE_ERROR"
+      }
+    },
+    "stage-legacy-after-release": {
+      "ok": true,
+      "value": "legacy"
+    }
+  }
+}
