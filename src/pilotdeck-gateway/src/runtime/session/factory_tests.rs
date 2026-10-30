@@ -187,6 +187,7 @@ impl Harness {
                 let mut resources = PreparedResources::default();
                 let lease = registry.acquire(None)?;
                 let release_obs = obs.clone();
+                let release_gate = drain.clone();
                 resources.push(move || {
                     Box::pin(async move {
                         if name == "dispose-final-write" {
@@ -201,6 +202,9 @@ impl Harness {
                                 .expect("#745 release hook final write");
                         }
                         let mut lease = lease;
+                        if name == "drop-release-stage" && id == 1 {
+                            release_gate.wait().await;
+                        }
                         let result = lease.release().await;
                         release_obs.event(format!("release.{id}"));
                         if name == "resume-release-reject" {
@@ -5896,4 +5900,266 @@ async fn dropped_owned_session_disposes_storage_and_releases_lease() {
         "#1010 dropped owned session releases the project lease"
     );
     h.finish("handle-drop-e2e").await;
+}
+
+// #1010: the only executor for the real handle is returned idle by a plain
+// thread. Driving it is explicit; merely queuing Drop cannot poll the drain.
+fn drop_plain<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    let (send, receive) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        let _ = send.send(outcome);
+    });
+    receive
+        .recv_timeout(Duration::from_secs(12))
+        .expect("#1010 plain thread completed within its bound")
+        .expect("#1010 plain thread did not panic")
+}
+fn drop_owned_runtime(h: &Harness) -> (LiveSessionHandle, tokio::runtime::Runtime) {
+    let factory = h.factory.clone();
+    let context = h.context();
+    drop_plain(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("#1010 dedicated runtime built");
+        let handle = runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(8), factory.create(context, None))
+                .await
+                .expect("#1010 dedicated create completed within its bound")
+                .expect("#1010 dedicated create succeeded")
+        });
+        (handle, runtime)
+    })
+}
+fn drop_drive_to_gate(
+    runtime: tokio::runtime::Runtime,
+    gate: Arc<Gate>,
+) -> tokio::runtime::Runtime {
+    drop_plain(move || {
+        runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(8), gate.entered())
+                .await
+                .expect("#1010 drain reached the requested cleanup gate");
+        });
+        runtime
+    })
+}
+fn drop_shutdown(runtime: tokio::runtime::Runtime) {
+    drop_plain(move || runtime.shutdown_timeout(Duration::from_secs(2)));
+}
+async fn drop_bounded<T>(future: impl Future<Output = T>) -> T {
+    tokio::time::timeout(Duration::from_secs(8), future)
+        .await
+        .expect("#1010 product observation completed within its bound")
+}
+
+// Each call is a separate libtest case below. No owner retains a handle clone.
+// The release/close predecessor never finishes: shutdown must cancel it.
+async fn drop_shutdown_matrix(stage: &str, pending: bool) {
+    let h = Harness::with_fence_timeout(
+        if stage == "release" {
+            "drop-release-stage"
+        } else {
+            "dispose-close-stage"
+        },
+        Duration::from_secs(3),
+    );
+    let (handle, mut runtime) = drop_owned_runtime(&h);
+    let writer = lock(&h.observed.bindings)
+        .first()
+        .expect("#1010 real factory published a binding")
+        .recorder
+        .writer()
+        .clone();
+    writer
+        .record_session_metadata(
+            &"session-745".into(),
+            &"seed".into(),
+            JsValue::Object(Default::default()),
+        )
+        .expect("#1010 old writer seeds the transcript");
+    let path = writer.path().to_owned();
+    let canonical =
+        crate::storage::canonical_transcript_path(&path).expect("#1010 canonical transcript path");
+    let mutex = writer_mutex(&canonical);
+    let observation = writer_wait_observation(&mutex);
+    let close_gate = install_close_thread_gate(&path);
+    if stage == "dead" {
+        let candidate = if pending {
+            let _entered = runtime.enter();
+            Some(PendingSession::new(handle.clone()))
+        } else {
+            None
+        };
+        drop_shutdown(runtime);
+        drop_plain(move || {
+            assert!(
+                tokio::runtime::Handle::try_current().is_err(),
+                "#1010 final drop has no ambient runtime"
+            );
+            drop(handle);
+            drop(candidate);
+        });
+    } else {
+        // Construct PendingSession while its captured executor is entered.
+        let candidate = if pending {
+            let _entered = runtime.enter();
+            Some(PendingSession::new(handle.clone()))
+        } else {
+            None
+        };
+        drop_plain(move || {
+            assert!(
+                tokio::runtime::Handle::try_current().is_err(),
+                "#1010 queued drop has no ambient runtime"
+            );
+            drop(handle);
+            drop(candidate);
+        });
+        if stage == "release" {
+            runtime = drop_drive_to_gate(runtime, h.drain.clone());
+        } else if stage == "close" {
+            runtime = drop_drive_to_gate(runtime, h.gate.clone());
+        }
+        drop_shutdown(runtime);
+    }
+    let expected_release = usize::from(stage == "close");
+    assert_eq!(
+        h.leases(),
+        0,
+        "#1010 shutdown releases the project lease synchronously"
+    );
+    assert_eq!(
+        lock(&h.observed.events)
+            .iter()
+            .filter(|e| *e == "release.1")
+            .count(),
+        expected_release,
+        "#1010 shutdown release hook completes exactly the expected number of times"
+    );
+    assert_eq!(
+        lock(&h.observed.events)
+            .iter()
+            .filter(|e| *e == "close.1")
+            .count(),
+        0,
+        "#1010 shutdown never completes the parked storage close"
+    );
+    let before = std::fs::read(&path).expect("#1010 seeded transcript readable");
+    assert!(!before.is_empty(), "#1010 seeded transcript has bytes");
+    writer
+        .record_session_metadata(
+            &"session-745".into(),
+            &"retired".into(),
+            JsValue::Object(Default::default()),
+        )
+        .expect("#1010 retired writer silently rejects the append");
+    assert_eq!(
+        std::fs::read(&path).expect("#1010 retired transcript readable"),
+        before,
+        "#1010 shutdown writer rejects further bytes before fence release"
+    );
+    assert!(
+        mutex.clone().try_lock_owned().is_err(),
+        "#1010 pinned close retains the process fence"
+    );
+    assert!(
+        matches!(crate::storage::LedgerLock::acquire(&path),
+        Err(crate::storage::LedgerError::Io(e)) if e.kind() == std::io::ErrorKind::WouldBlock),
+        "#1010 pinned close retains the file fence"
+    );
+
+    // Cancellation of one create waiter must not unlock the predecessor. The
+    // factory construct survives its caller; poll the waiter
+    // through the actual lock attempt, then abort and reap it.
+    observation.store(0, Ordering::SeqCst);
+    let cancelled = tokio::spawn(h.factory.create(h.context(), None));
+    drop_bounded(async {
+        while observation.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(
+        !cancelled.is_finished(),
+        "#1010 cancelled successor waits for the pinned fence"
+    );
+    cancelled.abort();
+    assert!(
+        drop_bounded(cancelled)
+            .await
+            .is_err_and(|e| e.is_cancelled()),
+        "#1010 successor cancellation is reaped"
+    );
+    assert!(
+        mutex.clone().try_lock_owned().is_err(),
+        "#1010 cancelled successor preserves predecessor fence"
+    );
+
+    // A never-finishing predecessor must return the product's bounded BUSY
+    // error, not an executor/test timeout. This path avoids wall-clock sleeps.
+    let busy = acquire_process_writer(mutex.clone(), tokio::time::Instant::now()).await;
+    assert!(
+        busy.is_err_and(
+            |e| e.js_error().and_then(|e| e.code.as_deref()) == Some("SESSION_WRITER_BUSY")
+        ),
+        "#1010 never-finished predecessor returns bounded writer busy"
+    );
+    observation.store(0, Ordering::SeqCst);
+    let successor = tokio::spawn(h.factory.create(h.context(), None));
+    drop_bounded(async {
+        while observation.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(
+        !successor.is_finished(),
+        "#1010 successor cannot acquire a pinned writer"
+    );
+    drop(close_gate);
+    let successor = drop_bounded(successor)
+        .await
+        .expect("#1010 successor task completes")
+        .expect("#1010 successor acquires writer after fence release");
+    drop_bounded(successor.dispose("#1010 successor cleanup".into()))
+        .await
+        .expect("#1010 successor disposal succeeds");
+    assert_eq!(
+        lock(&h.observed.events)
+            .iter()
+            .filter(|e| *e == "release.1")
+            .count(),
+        expected_release,
+        "#1010 shutdown never restarts the old release hook"
+    );
+    // The real factory's MCP registry owns shutdown of registrations whose
+    // async resources were cancelled; close it explicitly after the checks.
+    h.finish("#1010 shutdown matrix").await;
+}
+
+#[tokio::test]
+async fn dropped_owned_session_shutdown_before_first_poll() {
+    drop_shutdown_matrix("queued", false).await;
+}
+#[tokio::test]
+async fn dropped_owned_session_shutdown_during_release() {
+    drop_shutdown_matrix("release", false).await;
+}
+#[tokio::test]
+async fn dropped_owned_session_shutdown_during_close() {
+    drop_shutdown_matrix("close", false).await;
+}
+#[tokio::test]
+async fn dropped_owned_session_after_executor_shutdown_without_runtime() {
+    drop_shutdown_matrix("dead", false).await;
+}
+#[tokio::test]
+async fn pending_owned_session_shutdown_before_first_poll() {
+    drop_shutdown_matrix("queued", true).await;
+}
+#[tokio::test]
+async fn pending_owned_session_after_executor_shutdown_without_runtime() {
+    drop_shutdown_matrix("dead", true).await;
 }

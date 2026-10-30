@@ -475,7 +475,9 @@ impl Drop for Inner {
         // #1010: dropping the last clone without an explicit dispose must not
         // skip the custom async release/close. TS has no counterpart (an
         // AgentHandle only runs onDispose through an explicit dispose(); GC
-        // is nondeterministic — tests/fixtures/session-drop-release). The
+        // is nondeterministic — tests/fixtures/session-drop-release); the
+        // intentional difference is registered as
+        // specs/gateway-parity/diffs/A7.2-SESSION-HANDLE-DROP-001.md. The
         // drain starts here on the captured executor and stays idempotent
         // with any concurrent or completed explicit disposal.
         #[cfg(test)]

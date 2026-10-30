@@ -345,3 +345,88 @@ async fn catalog_before_acquire_failures() {
         );
     }
 }
+
+// All three public leases can leave the task that acquired them. Test each
+// flavor separately so its Drop implementation has its own negative binding.
+async fn lease_drop_off_runtime(flavor: &str) {
+    const MSG: &str = "#1010 plugin lease off-runtime";
+    let temp = Temp::new();
+    let plugin = Arc::new(LoadedPlugin {
+        name: "off-runtime".into(),
+        path: temp.0.join("missing"),
+        source: PluginSource::Builtin,
+        commands: vec![],
+        skills: vec![],
+        output_styles: vec![],
+        hooks_config: None,
+        mcp_servers: None,
+        lsp_servers: None,
+        dispose: None,
+    });
+    let runtime = Arc::new(PluginRuntime::new(PluginRuntimeOptions {
+        project_root: temp.0.join("project"),
+        pilot_home: temp.0.join("home"),
+        builtin_skills_root: None,
+        builtin_plugins: vec![plugin],
+        builtin_plugins_enabled: Default::default(),
+    }));
+    runtime.refresh().await.expect(MSG);
+    let lease: Box<dyn Send> = match flavor {
+        "command" => Box::new(runtime.acquire_command_catalog().await.expect(MSG)),
+        "session" => Box::new(
+            runtime
+                .acquire_session_contributions(Vec::new())
+                .await
+                .expect(MSG),
+        ),
+        "legacy" => Box::new(runtime.acquire_contribution_snapshot().await.expect(MSG)),
+        _ => panic!("#1010 invalid plugin lease test flavor"),
+    };
+    let count = || async {
+        runtime
+            .state
+            .lock()
+            .await
+            .registry
+            .lease_counts
+            .values()
+            .sum::<usize>()
+    };
+    assert_eq!(count().await, 1, "#1010 plugin lease acquired once");
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert!(
+                tokio::runtime::Handle::try_current().is_err(),
+                "#1010 plugin drop has no ambient runtime"
+            );
+            drop(lease);
+        }));
+        let _ = send.send(result);
+    });
+    receive
+        .recv_timeout(Duration::from_secs(2))
+        .expect("#1010 plugin drop thread completes within its bound")
+        .expect("#1010 plugin lease drop without a runtime does not panic");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while count().await != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("#1010 captured executor releases the plugin lease");
+    runtime.dispose().await.expect(MSG);
+    assert_eq!(count().await, 0, "#1010 plugin lease remains released");
+}
+#[tokio::test]
+async fn command_lease_drop_without_runtime() {
+    lease_drop_off_runtime("command").await;
+}
+#[tokio::test]
+async fn session_lease_drop_without_runtime() {
+    lease_drop_off_runtime("session").await;
+}
+#[tokio::test]
+async fn legacy_lease_drop_without_runtime() {
+    lease_drop_off_runtime("legacy").await;
+}

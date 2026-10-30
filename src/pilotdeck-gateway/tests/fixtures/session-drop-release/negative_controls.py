@@ -23,6 +23,9 @@ oracle = Path(__file__).with_name('oracle.json')
 generator = Path(__file__).with_name('generate.mts')
 drop_tests = root / 'src/pilotdeck-gateway/src/runtime/session/handle_drop_tests.rs'
 factory_tests = root / 'src/pilotdeck-gateway/src/runtime/session/factory_tests.rs'
+contributions = root / 'src/pilotdeck-gateway/src/runtime/plugins/contributions.rs'
+lease_tests = root / 'src/pilotdeck-gateway/src/runtime/plugins/catalog_lease_tests.rs'
+lease_prefix = 'runtime::plugins::catalog::lease_tests::'
 drop_prefix = 'runtime::session::handle::drop_contract_tests::'
 factory_prefix = 'runtime::session::factory::tests::'
 cases = [
@@ -90,12 +93,84 @@ cases = [
     # the exact source location. No source bytes are mutated for them.
     ('drop-dispose-switch', handle,
      'option_env!("PDRS_1010_SKIP_DROP_DISPOSE").is_some()', 'true',
-     None, drop_prefix+'dropped_handle_runs_session_dispose_once',
-     '#1010 dropped handle started the drain'),
+     None, factory_prefix+'dropped_owned_session_after_executor_shutdown_without_runtime',
+     '#1010 shutdown writer rejects further bytes before fence release'),
     ('prepared-ambient-switch', factory,
      'option_env!("PDRS_1010_DROP_AMBIENT_ONLY").is_some()', 'true',
      None, factory_prefix+'prepared_resources_released_when_dropped_off_runtime',
      '#1010 off-runtime release ran bounded wait'),
+    ('generator-release-gate-bypassed', generator,
+     "if(mode==='--child-process-exit-release-pending'){entered();await never;}",
+     "if(mode==='--child-process-exit-release-pending'){entered();}",
+     None, drop_prefix+'drop_release_regenerates_identically',
+     '#280 session-drop-release/oracle.json differs'),
+    ('generator-close-gate-bypassed', generator,
+     "if(mode==='--child-process-exit-close-pending'){entered();await never;}",
+     "if(mode==='--child-process-exit-close-pending'){entered();}",
+     None, drop_prefix+'drop_release_regenerates_identically',
+     '#280 session-drop-release/oracle.json differs'),
+    # P0: replay the original deletion target, not an unrelated work-* path.
+    ('generator-deletes-existing-work-root', generator,
+     'const workRoots:string[]=[];',
+     "const workRoots:string[]=[path.join(output,'work-process-exit')];",
+     None, drop_prefix+'drop_release_preserves_unrelated_out_files',
+     '#1010 generator preserves existing work-process-exit bytes'),
+    # Atomic/exclusive oracle contract: the preservation test runs twice.
+    ('generator-overwrites-existing-oracle', generator,
+     "+'\\n',{flag:'wx'});", "+'\\n',{flag:'w'});",
+     None, drop_prefix+'drop_release_preserves_unrelated_out_files',
+     '#1010 generator respects exclusive oracle creation'),
+    ('owned-queued-fallback-removed', handle,
+     'session: Some(session.clone()),', 'session: None,',
+     None, factory_prefix+'dropped_owned_session_shutdown_before_first_poll',
+     '#1010 shutdown writer rejects further bytes before fence release'),
+    ('owned-dead-fallback-removed', handle,
+     'session: Some(session.clone()),', 'session: None,',
+     None, factory_prefix+'dropped_owned_session_after_executor_shutdown_without_runtime',
+     '#1010 shutdown writer rejects further bytes before fence release'),
+    ('pending-queued-fallback-removed', handle,
+     'session: Some(session.clone()),', 'session: None,',
+     None, factory_prefix+'pending_owned_session_shutdown_before_first_poll',
+     '#1010 shutdown writer rejects further bytes before fence release'),
+    ('pending-dead-fallback-removed', handle,
+     'session: Some(session.clone()),', 'session: None,',
+     None, factory_prefix+'pending_owned_session_after_executor_shutdown_without_runtime',
+     '#1010 shutdown writer rejects further bytes before fence release'),
+    # Value mutation: keeping the lease in storage leaks the real fence.
+    # Product BUSY (3s) arrives before the observation deadline (8s).
+    ('owned-release-fence-not-taken', factory,
+     '_lease: lock(&self.writer_lease).take(),', '_lease: None,',
+     None, factory_prefix+'dropped_owned_session_shutdown_during_release',
+     '#1010 successor acquires writer after fence release'),
+    ('owned-close-fence-not-taken', factory,
+     '_lease: lock(&self.writer_lease).take(),', '_lease: None,',
+     None, factory_prefix+'dropped_owned_session_shutdown_during_close',
+     '#1010 successor acquires writer after fence release'),
+    ('owned-process-fence-released-early', factory,
+     'let lease = self._lease.take();',
+     'let lease = self._lease.take();\n        drop(lease);\n        let lease: Option<WriterLease> = None;',
+     None, factory_prefix+'dropped_owned_session_shutdown_before_first_poll',
+     '#1010 pinned close retains the process fence'),
+    ('owned-file-fence-released-early', factory,
+     'let lease = self._lease.take();',
+     'let lease = self._lease.take().map(|lease| { let WriterLease { _file, _process } = lease; drop(_file); _process });',
+     None, factory_prefix+'dropped_owned_session_shutdown_before_first_poll',
+     '#1010 pinned close retains the file fence'),
+    ('command-lease-ambient-spawn', contributions,
+     'impl Drop for PluginCommandCatalogLease {\n    fn drop(&mut self) {\n        if !self.released {\n            self.released = true;\n            // Best-effort synchronous decrement; disposal callbacks are async\n            // and will run when the waiters are notified at the next poll point.\n            let state_clone = std::sync::Arc::clone(&self.state);\n            let waiters_clone = std::sync::Arc::clone(&self.waiters);\n            let plugins_clone = self.plugins.clone();\n            self.executor.spawn(async move {\n                let _ = release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;\n            });\n        }\n    }\n}',
+     'impl Drop for PluginCommandCatalogLease {\n    fn drop(&mut self) {\n        if !self.released {\n            self.released = true;\n            // Best-effort synchronous decrement; disposal callbacks are async\n            // and will run when the waiters are notified at the next poll point.\n            let state_clone = std::sync::Arc::clone(&self.state);\n            let waiters_clone = std::sync::Arc::clone(&self.waiters);\n            let plugins_clone = self.plugins.clone();\n            tokio::spawn(async move {\n                let _ = release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;\n            });\n        }\n    }\n}',
+     None, lease_prefix+'command_lease_drop_without_runtime',
+     '#1010 plugin lease drop without a runtime does not panic'),
+    ('session-lease-ambient-spawn', contributions,
+     'impl Drop for PluginSessionContributionLease {\n    fn drop(&mut self) {\n        if !self.released {\n            self.released = true;\n            let state_clone = std::sync::Arc::clone(&self.state);\n            let waiters_clone = std::sync::Arc::clone(&self.waiters);\n            let plugins_clone = self.plugins.clone();\n            self.executor.spawn(async move {\n                let _ = release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;\n            });\n        }\n    }\n}',
+     'impl Drop for PluginSessionContributionLease {\n    fn drop(&mut self) {\n        if !self.released {\n            self.released = true;\n            let state_clone = std::sync::Arc::clone(&self.state);\n            let waiters_clone = std::sync::Arc::clone(&self.waiters);\n            let plugins_clone = self.plugins.clone();\n            tokio::spawn(async move {\n                let _ = release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;\n            });\n        }\n    }\n}',
+     None, lease_prefix+'session_lease_drop_without_runtime',
+     '#1010 plugin lease drop without a runtime does not panic'),
+    ('legacy-lease-ambient-spawn', contributions,
+     'impl Drop for PluginContributionLease {\n    fn drop(&mut self) {\n        if !self.released {\n            self.released = true;\n            let state_clone = std::sync::Arc::clone(&self.state);\n            let waiters_clone = std::sync::Arc::clone(&self.waiters);\n            let plugins_clone = self.plugins.clone();\n            self.executor.spawn(async move {\n                let _ = release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;\n            });\n        }\n    }\n}',
+     'impl Drop for PluginContributionLease {\n    fn drop(&mut self) {\n        if !self.released {\n            self.released = true;\n            let state_clone = std::sync::Arc::clone(&self.state);\n            let waiters_clone = std::sync::Arc::clone(&self.waiters);\n            let plugins_clone = self.plugins.clone();\n            tokio::spawn(async move {\n                let _ = release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;\n            });\n        }\n    }\n}',
+     None, lease_prefix+'legacy_lease_drop_without_runtime',
+     '#1010 plugin lease drop without a runtime does not panic'),
 ]
 
 compile_switches = {
@@ -106,7 +181,7 @@ compile_switches = {
 
 def audit():
     rows = []
-    bodies = {drop_tests, factory_tests}
+    bodies = {drop_tests, factory_tests, lease_tests}
     sources = {path.read_text() for path in bodies}
     for name, path, old, new, scope, test, assertion in cases:
         try:
