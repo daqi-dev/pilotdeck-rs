@@ -19,10 +19,10 @@ Real-TS goldens for `DefaultContextRuntime.captureTurn`,
   (fork-carryover filter, always-on skip, sessionId rejection and its TS error
   text, `errored` forwarding, error swallowing, `supports(CaptureTurn)`,
   manifest method, oracle scenario/call truncation) and requires each targeted
-  Rust test to fail before restoring. Naming mutants on the command line runs a
-  sample: the summary records `mode`/`selected`/`total`/`skipped` and a clean
-  sample still exits the dedicated sample code (2), never the full-run pass
-  code (0) (#786).
+  Rust test to fail before restoring. The runner takes only the output
+  directory: per-mutant sample selections were removed after their verdict
+  scaffolding kept failing review, and the full table is the only accepted
+  evidence (#786 fix-r2).
 - `recorded_call_key_sets_match_ts` compares each recorded resolver call's own
   key set against the TS recorder's, which JSON comparison cannot see; the
   oracle-truncation mutants above guard that comparison against a silently
