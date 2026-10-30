@@ -1,5 +1,5 @@
-//! P05: a newly created session and its normal text turn. Resume, structured or
-//! exceptional results, JSON output, and query cancellation remain #123 P06–P08.
+//! Shared run/resume control and query lifecycle. JSON output and query
+//! cancellation remain #123 P07–P08.
 use super::{Connection, output::TextOutput, positional, read_value, transport};
 use crate::{Failure, paths};
 use pilotdeck_protocol::JsValue;
@@ -8,7 +8,11 @@ use serde_json::json;
 use std::io::{IsTerminal, Read};
 use transport::{Transport, string_field};
 
-pub(super) fn run(argv: &[String], connection: &Connection) -> Result<u8, Failure> {
+pub(super) fn run(
+    argv: &[String],
+    connection: &Connection,
+    resume: Option<&str>,
+) -> Result<u8, Failure> {
     if argv
         .iter()
         .any(|arg| arg == "--json" || arg == "--stream-json")
@@ -26,25 +30,38 @@ pub(super) fn run(argv: &[String], connection: &Connection) -> Result<u8, Failur
         .enable_all()
         .build()
         .map_err(|e| Failure::Error(e.to_string()))?;
-    runtime.block_on(run_connected(argv, connection))
+    runtime.block_on(run_connected(argv, connection, resume))
 }
 
-async fn run_connected(argv: &[String], connection: &Connection) -> Result<u8, Failure> {
+async fn run_connected(
+    argv: &[String],
+    connection: &Connection,
+    resume: Option<&str>,
+) -> Result<u8, Failure> {
     let project = read_value(argv, "--project");
     let mut control = Transport::connect(connection, "pilotdeck-cli", true).await?;
     let result = async {
-        let created = control
-            .request(
-                "new_session",
-                CreateSession {
-                    project_key: project,
-                    channel_key: read_value(argv, "--channel").unwrap_or("cli"),
-                },
-            )
-            .await?;
-        let session = string_field(&created, "sessionKey")
-            .ok_or_else(|| Failure::Error("Gateway returned no sessionKey.".into()))?;
-        let prompt = read_prompt(argv)?;
+        let session = if let Some(session) = resume {
+            // runSdkCli keeps the argv ID, even if sessions.resume returns a
+            // different key. The query resumes this same ID a second time.
+            control
+                .request("resume_session", json!({"sessionKey": session}))
+                .await?;
+            session.to_owned()
+        } else {
+            let created = control
+                .request(
+                    "new_session",
+                    CreateSession {
+                        project_key: project,
+                        channel_key: read_value(argv, "--channel").unwrap_or("cli"),
+                    },
+                )
+                .await?;
+            string_field(&created, "sessionKey")
+                .ok_or_else(|| Failure::Error("Gateway returned no sessionKey.".into()))?
+        };
+        let prompt = read_prompt(argv, usize::from(resume.is_some()))?;
         if prompt.is_empty() {
             return Err(Failure::Error(
                 "A prompt is required, or provide it through stdin.".into(),
@@ -60,8 +77,8 @@ async fn run_connected(argv: &[String], connection: &Connection) -> Result<u8, F
     result
 }
 
-fn read_prompt(argv: &[String]) -> Result<String, Failure> {
-    let joined = positional(argv).join(" ");
+fn read_prompt(argv: &[String], offset: usize) -> Result<String, Failure> {
+    let joined = positional(argv)[offset..].join(" ");
     let prompt = paths::js_trim(&joined);
     if !prompt.is_empty() {
         return Ok(prompt.to_owned());
@@ -109,6 +126,7 @@ async fn query_turn(
     } else {
         None
     };
+    let run_id = uuid::Uuid::new_v4().to_string();
     let request_id = query
         .start_stream(
             "submit_turn",
@@ -136,11 +154,11 @@ async fn query_turn(
                 sdk_permission_mode: sdk_permission,
                 sdk_session_config: config,
                 model_override: model,
-                run_id: uuid::Uuid::new_v4().to_string(),
+                run_id: run_id.clone(),
             },
         )
         .await?;
-    let mut output = TextOutput::default();
+    let mut output = TextOutput::new(session, &run_id);
     loop {
         let Some((event, final_frame)) = query.stream_event(&request_id).await? else {
             return output.finish();

@@ -17,7 +17,7 @@
 - 真实 Rust CLI 连接测试只绑定 127.0.0.1:28999；直接沿用 P02/P04 的同一个 `/tmp/pdrs-parity.lock` lease 算法，不抢锁、不回收前驱。180 秒取锁上限、15 秒单格上限；所有子进程 RAII 清理。
 - wire 原始 UUID 保存在金样。回放仅绑定实际请求 envelope.id、params.runId 与响应引用；不替换 prompt/输出正文。不改变对象键顺序，逐字节检查 hello/request。外来 stream id 原样保留以验证过滤。
 - 孤 UTF-16 surrogate 保留在 `row.raw` 中；只删去 serde_json 无法承载的辅助 `frame.event` 投影，保留 runId。完整事件仍在 source；Rust 的 JS JSON codec 解析真正原始帧。assistant 文本单元先合并，再编码输出。
-- control 与 query 分别闭合，完成 payload 不等同流结束；final event 或成功 response 结束流。未实现 JSON/JSONL 输出、异常/structured/unknown 终态与取消仍为 #123 P06–P08 缺口。
+- control 与 query 分别闭合，完成 payload 不等同流结束；final event 或成功 response 结束流。P06 的 resume 与 plain 异常/structured/unknown 终态已扩展，证据见 [sdk-terminal](../sdk-terminal/README.md)。JSON/JSONL 输出与 query 取消仍归 #123 P07–P08。
 
 ## 重现
 

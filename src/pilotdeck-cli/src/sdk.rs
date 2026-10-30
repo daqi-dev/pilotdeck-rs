@@ -46,7 +46,7 @@ pub fn run_sdk_cli(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure
         Some("run") => {
             let connection = read_connection(&argv[1..], env, cwd)?;
             create_client(&connection)?;
-            turn::run(&argv[1..], &connection)
+            turn::run(&argv[1..], &connection, None)
         }
         Some("resume") => run_resume(&argv[1..], env, cwd),
         Some("sessions") => sessions::run(&argv[1..], env, cwd),
@@ -60,13 +60,16 @@ pub fn run_sdk_cli(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure
 /// runTurn("resume") (sdkCli.ts:43-56): only a missing session id fails before the
 /// Gateway; the prompt check (:58-59) runs after sessions.resume.
 fn run_resume(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
-    create_client(&read_connection(argv, env, cwd)?)?;
-    if positional(argv).first().is_none_or(|id| id.is_empty()) {
+    let connection = read_connection(argv, env, cwd)?;
+    create_client(&connection)?;
+    let positional = positional(argv);
+    let session = positional.first().copied().unwrap_or("");
+    if session.is_empty() {
         return Err(Failure::Error(
             "Usage: pilotdeck resume <session-id> <prompt>".into(),
         ));
     }
-    Err(Failure::Todo("pilotdeck resume (SDK sessions.resume)"))
+    turn::run(argv, &connection, Some(session))
 }
 
 fn run_settings(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
@@ -291,7 +294,7 @@ mod tests {
         assert_eq!(run(&["resume", "--model", "m", "--json"]), resume_usage);
         assert_eq!(run(&["resume", ""]), resume_usage);
         // The prompt is checked only after sessions.resume reaches the Gateway.
-        assert!(run(&["resume", "s1"]).starts_with("TODO pilotdeck resume"));
+        // The network/prompt ordering is replayed by sdk_resume_exit.
         // The run network branch is covered by sdk_run_exit.
     }
 
