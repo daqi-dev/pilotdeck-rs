@@ -39,7 +39,6 @@ updated: 2026-10-31 06:30 · by Claude Code 协调者
 - mbp2 | coord | doing | 新宿主接入：子代理建链 + 判定一致性自检；通过后承接 macOS 专属套件 + 短链溢出
 - #1123 | review | doing | PR #1124 ready 入队（两家 0/0，cb8 负控 53 + 5 KILLED）
 - #1122 | review | doing | PR #1127（叠 #1010）r1 opus + GLM + cb8
-- #1131 | impl | doing | PR #1133 A4 实际端口：rebase 到 #1071 后 + 重钉 #749 哈希；GLM 块 0/0、macmini 全绿 → 补跑 sdk-sessions-list 后入队
 - #1129 | impl | doing | run-registry 金样生成器同毫秒不 mask（快机器假 INVALID，P1）→ Codex
 <!-- READY:END -->
 
