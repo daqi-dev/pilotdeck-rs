@@ -22,6 +22,7 @@ struct Requests {
     changed: Notify,
     entered: Notify,
     release: Notify,
+    after_entered: Option<Arc<Semaphore>>,
 }
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
@@ -29,8 +30,19 @@ impl GatewayRequests for Requests {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.changed.notify_one();
             if self.hold_all.load(Ordering::SeqCst) || self.hold.swap(false, Ordering::SeqCst) {
+                // Register before publishing entered: notify_waiters keeps no
+                // permit for a Notified created after the release broadcast.
+                let released = self.release.notified();
+                tokio::pin!(released);
+                released.as_mut().enable();
                 self.entered.notify_one();
-                self.release.notified().await;
+                if let Some(gate) = &self.after_entered {
+                    gate.acquire()
+                        .await
+                        .expect("#1123 after-entered gate stays open")
+                        .forget();
+                }
+                released.await;
             }
             Ok(crate::metadata::object([
                 (
@@ -49,6 +61,94 @@ impl GatewayRequests for Requests {
         Box::pin(async { Err(RequestError::new("#749 unexpected method")) })
     }
 }
+
+// Poll only at explicit events, so the release-before-await window does not
+// depend on scheduling, wall-clock delays, or a timeout to detect a lost wakeup.
+fn poll_request<F: Future + ?Sized>(request: std::pin::Pin<&mut F>) -> std::task::Poll<F::Output> {
+    request.poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+}
+
+#[test]
+fn requests_release_before_await_reaches_all_waiters() {
+    let gate = Arc::new(Semaphore::new(0));
+    let requests = Requests {
+        hold_all: AtomicBool::new(true),
+        after_entered: Some(gate.clone()),
+        ..Requests::default()
+    };
+    let mut first = requests.describe_server();
+    let mut second = requests.describe_server();
+    negative_assert!(
+        poll_request(first.as_mut()).is_pending() && poll_request(second.as_mut()).is_pending(),
+        "#1123 both requests stop at after-entered gate"
+    );
+    requests.release.notify_waiters(); // #1123 broadcast before either release await
+    gate.add_permits(2);
+    negative_assert_eq!(
+        gate.available_permits(),
+        0,
+        "#1123 both requests registered at after-entered gate"
+    );
+    negative_assert!(
+        matches!(poll_request(first.as_mut()), std::task::Poll::Ready(Ok(_)))
+            && matches!(poll_request(second.as_mut()), std::task::Poll::Ready(Ok(_))),
+        "#1123 release before await reaches every entered request"
+    );
+}
+
+#[test]
+fn requests_release_after_await_reaches_all_waiters() {
+    let requests = Requests {
+        hold_all: AtomicBool::new(true),
+        ..Requests::default()
+    };
+    let mut first = requests.describe_server();
+    let mut second = requests.describe_server();
+    negative_assert!(
+        poll_request(first.as_mut()).is_pending() && poll_request(second.as_mut()).is_pending(),
+        "#1123 both requests await release"
+    );
+    requests.release.notify_waiters();
+    negative_assert!(
+        matches!(poll_request(first.as_mut()), std::task::Poll::Ready(Ok(_)))
+            && matches!(poll_request(second.as_mut()), std::task::Poll::Ready(Ok(_))),
+        "#1123 release after await reaches every entered request"
+    );
+}
+
+#[test]
+fn requests_unreleased_or_cancelled_predecessor_does_not_block() {
+    let requests = Requests {
+        hold: AtomicBool::new(true),
+        ..Requests::default()
+    };
+    let mut predecessor = requests.describe_server();
+    negative_assert!(
+        poll_request(predecessor.as_mut()).is_pending(),
+        "#1123 predecessor remains held without release"
+    );
+    let mut unheld = requests.describe_server();
+    negative_assert!(
+        matches!(poll_request(unheld.as_mut()), std::task::Poll::Ready(Ok(_))),
+        "#1123 unheld successor bypasses unreleased predecessor"
+    );
+    drop(predecessor);
+    requests.hold.store(true, Ordering::SeqCst);
+    let mut successor = requests.describe_server();
+    negative_assert!(
+        poll_request(successor.as_mut()).is_pending(),
+        "#1123 held successor waits after predecessor cancellation"
+    );
+    requests.release.notify_waiters();
+    negative_assert!(
+        matches!(
+            poll_request(successor.as_mut()),
+            std::task::Poll::Ready(Ok(_))
+        ),
+        "#1123 cancelled predecessor leaves successor releasable"
+    );
+}
+
 struct Client {
     socket: TcpStream,
     decoder: Decoder,
@@ -695,7 +795,11 @@ async fn close_deadline_reclaims_peer_without_fin() {
 
 #[tokio::test]
 async fn pending_requests_are_bounded_before_enqueue() {
-    let requests = Arc::new(Requests::default());
+    let gate = Arc::new(Semaphore::new(0));
+    let requests = Arc::new(Requests {
+        after_entered: Some(gate.clone()),
+        ..Requests::default()
+    });
     let host = native_ws_fixture(requests.clone());
     let (io, mut client) = tokio::io::duplex(4096);
     let (send, dropped) = oneshot::channel();
@@ -717,16 +821,16 @@ async fn pending_requests_are_bounded_before_enqueue() {
             message.as_bytes(),
         ))
         .await
-        .expect("#749 pending cap hello");
+        .expect("#1123 pending cap hello");
     // Consume the complete hello before holding subsequent requests.
     let mut response = [0; 4096];
     assert!(
         client
             .read(&mut response)
             .await
-            .expect("#749 pending cap hello reply")
+            .expect("#1123 pending cap hello reply")
             > 0,
-        "#749 pending hello bytes"
+        "#1123 pending hello bytes"
     );
     requests.hold_all.store(true, Ordering::SeqCst);
     let message = json!({"type":"request","id":"held","method":"describe_server"}).to_string();
@@ -735,35 +839,36 @@ async fn pending_requests_are_bounded_before_enqueue() {
         client
             .write_all(&wire)
             .await
-            .expect("#749 pending cap held request");
+            .expect("#1123 pending cap held request");
         timeout(DEADLINE, requests.entered.notified())
             .await
-            .expect("#749 pending cap request entered");
+            .expect("#1123 pending cap request entered");
     }
     client
         .write_all(&wire)
         .await
-        .expect("#749 pending cap overflow request");
+        .expect("#1123 pending cap overflow request");
     crate::test_negative_receipt::expect_ok(
         timeout(Duration::from_secs(3), dropped).await,
-        "#749 pending cap rejects before host enqueue",
+        "#1123 pending cap rejects before host enqueue",
     )
-    .expect("#749 pending socket reclaimed");
+    .expect("#1123 pending socket reclaimed");
     negative_assert_eq!(
         requests.calls.load(Ordering::SeqCst),
         MAX_PENDING_REQUESTS + 1,
-        "#749 pending cap rejects before host enqueue"
+        "#1123 pending cap rejects before host enqueue"
     );
     requests.hold_all.store(false, Ordering::SeqCst);
     requests.release.notify_waiters();
+    gate.add_permits(MAX_PENDING_REQUESTS);
     let result = timeout(DEADLINE, task)
         .await
-        .expect("#749 pending task bound")
-        .expect("#749 pending task join");
-    assert!(result.is_err(), "#749 pending overload error");
+        .expect("#1123 pending task bound")
+        .expect("#1123 pending task join");
+    assert!(result.is_err(), "#1123 pending overload error");
     host.shutdown(DEADLINE)
         .await
-        .expect("#749 pending host stopped");
+        .expect("#1123 pending host stopped");
 }
 #[test]
 fn default_mode_unchanged() {
