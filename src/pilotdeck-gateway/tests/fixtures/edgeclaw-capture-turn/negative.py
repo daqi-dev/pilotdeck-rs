@@ -9,7 +9,10 @@ refuses to mutate a product tree that differs from HEAD):
 
 Optional mutant names select a sample run; the positive and restored controls
 always execute, and every selected mutant is still classified before the
-summary.
+summary. A sample is never full-table evidence: its summary records
+``mode: "sample"`` with the ``selected``/``total``/``skipped`` tables, and even
+a clean sample (every selected mutant KILLED) exits the dedicated
+``SAMPLE_EXIT`` code instead of the full-run pass code (#786).
 
 Each mutant names the exact test that must fail and the failure shape that
 proves the test really executed: an `assertion` diagnostic, or a panic at this
@@ -33,6 +36,27 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import classify as shared_classify
 
 TEST_FILE = 'pilotdeck-gateway/tests/edgeclaw_capture_turn.rs'
+# A clean sample run's completion code (#786): never the full-run pass code,
+# and kept apart from the failure code so a sample cannot pose as either.
+SAMPLE_EXIT = 2
+# The no-error mutant's combined anchor (#786): the named test's own rejection
+# wording *and* the TS product text it must match. Shared with test_negative.py;
+# the Rust panic text in edgeclaw_capture_turn.rs must still be synced by hand.
+REJECT_ANCHOR = ("#786 non-string sessionId must reject like isAlwaysOnSession "
+                 "(TS: reading 'startsWith')")
+
+
+def verdict(*, mode, failures, restored_ok):
+    """Map a finished run onto its exit code (#786).
+
+    Zero is reserved for a full run whose mutants were all KILLED and whose
+    restored positive passed. A clean sample run exits ``SAMPLE_EXIT`` so no
+    caller can read it as full-table evidence; any failure or restore problem
+    still exits 1 regardless of mode.
+    """
+    if failures or not restored_ok:
+        return 1
+    return SAMPLE_EXIT if mode == 'sample' else 0
 
 
 def classify_control(mutant, code, raw):
@@ -93,7 +117,8 @@ def restore_positive(run):
 
 
 def summary_payload(*, results, failures, restored, restored_ok,
-                    restored_error, before_sha256, after_sha256):
+                    restored_error, before_sha256, after_sha256,
+                    mode, selected, total, skipped):
     counts = {
         state: sum(row['status'] == state for row in results)
         for state in ('KILLED', 'SURVIVED', 'INVALID')
@@ -102,6 +127,13 @@ def summary_payload(*, results, failures, restored, restored_ok,
         results=results,
         failures=failures,
         counts=counts,
+        # #786: a sample summary must never be readable as a full one. `mode`
+        # distinguishes the run shape; `selected`/`total`/`skipped` expose what
+        # was and was not classified.
+        mode=mode,
+        selected=selected,
+        total=total,
+        skipped=skipped,
         restored=restored,
         restoredPass=restored_ok,
         beforeSha256=before_sha256,
@@ -124,6 +156,8 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     prepare = root / 'src/pilotdeck-gateway/src/runtime/context/prepare.rs'
     manifest = root / 'src/pilotdeck-gateway/src/host/modules/manifest.rs'
+    oracle = root / ('src/pilotdeck-gateway/tests/fixtures/'
+                     'edgeclaw-capture-turn/oracle.json')
     env = dict(os.environ)
     if not env.get('CARGO_TARGET_DIR'):
         raise SystemExit('CARGO_TARGET_DIR must be provided by the caller')
@@ -185,7 +219,7 @@ def main():
             # TS product text it is supposed to match (#786). A mutant that
             # only kills the rejection cannot satisfy the anchor with the
             # test's wording alone.
-            "#786 non-string sessionId must reject like isAlwaysOnSession (TS: reading 'startsWith')",
+            REJECT_ANCHOR,
         ),
         mutate(
             'malformed-session-wrong-error-text',
@@ -263,7 +297,8 @@ def main():
         mutate(
             # Only the missing-key arm changes: an absent `errored` becomes a
             # phantom `false` key, which the key-set comparison must catch
-            # even though JSON serialization would hide the difference (#786).
+            # (#786). JSON serialization would hide an `Undefined`-valued
+            # phantom key, but a `false` one survives it.
             'errored-missing-injected-false',
             prepare,
             '            errored: fields.get("errored").cloned().unwrap_or(JsValue::Undefined),\n',
@@ -272,14 +307,94 @@ def main():
             'panic',
             'recorded call key set',
         ),
+        mutate(
+            # Drop the last oracle scenario: 20 expected rows against 21 specs
+            # must fail the pre-zip alignment assertion instead of silently
+            # comparing a truncated table (#786 fix-r1).
+            'oracle-scenarios-truncated',
+            oracle,
+            '''    {
+      "name": "throwing-resolver",
+      "supportsCaptureTurn": true,
+      "invoked": true,
+      "calls": [],
+      "throws": "capture boom",
+      "rejects": null,
+      "runnerThrew": null
+    },
+    {
+      "name": "rejecting-resolver",
+      "supportsCaptureTurn": true,
+      "invoked": true,
+      "calls": [],
+      "throws": null,
+      "rejects": "capture reject",
+      "runnerThrew": null
+    }
+  ],
+''',
+            '''    {
+      "name": "throwing-resolver",
+      "supportsCaptureTurn": true,
+      "invoked": true,
+      "calls": [],
+      "throws": "capture boom",
+      "rejects": null,
+      "runnerThrew": null
+    }
+  ],
+''',
+            'recorded_call_key_sets_match_ts',
+            'assertion',
+            '#786 scenarioSpecs and scenarios must align before zipping',
+        ),
+        mutate(
+            # Empty one scenario's expected calls: a one-sided empty `calls`
+            # array must fail the per-scenario count assertion instead of
+            # comparing no key set at all (#786 fix-r1).
+            'oracle-normal-turn-calls-emptied',
+            oracle,
+            '''      "calls": [
+        {
+          "sessionId": "session",
+          "projectRoot": "/pdrs-fixture/project",
+          "errored": false,
+          "messages": [
+            {
+              "msgId": "message-0",
+              "role": "user",
+              "content": "u1"
+            },
+            {
+              "msgId": "message-1",
+              "role": "assistant",
+              "content": "a1"
+            },
+            {
+              "msgId": "message-2",
+              "role": "tool",
+              "content": "out"
+            }
+          ]
+        }
+      ],
+''',
+            '''      "calls": [],
+''',
+            'recorded_call_key_sets_match_ts',
+            'assertion',
+            '#786 normal-turn recorded call count',
+        ),
     ]
     # Optional sample mode (#747/#786): naming mutants runs only those rows;
-    # the positive and restored controls still bracket them.
+    # the positive and restored controls still bracket them. The mode rides
+    # into the summary and the exit code: only a full run can pass.
     selected = selected_names(mutants, sys.argv[2:])
+    mode = 'sample' if selected else 'full'
     results = []
 
     # The source guard must use HEAD; uncommitted trees are not mutation inputs.
-    files = [prepare, manifest]
+    files = [prepare, manifest, oracle]
     with mutating_sources(root, files) as snapshots:
         originals = {path: snapshots[path].decode() for path in files}
         for mutant in mutants:
@@ -353,6 +468,11 @@ def main():
         payload = summary_payload(
             results=results,
             failures=failures,
+            mode=mode,
+            selected=sorted(selected),
+            total=len(mutants),
+            skipped=sorted(mutant['name'] for mutant in mutants
+                           if mutant['name'] not in selected),
             restored=restored,
             restored_ok=restored_ok,
             restored_error=restored_error,
@@ -365,14 +485,22 @@ def main():
         counts = payload['counts']
         print('summary: ' + ', '.join(
             f'{state}={count}' for state, count in counts.items()), flush=True)
-        if failures or not restored_ok:
-            detail = f'; restored_error={restored_error}' if restored_error else ''
-            print(
-                f'NOT KILLED: {", ".join(failures) or "<none>"}; '
-                f'restored_passed={restored_ok}{detail}',
-                file=sys.stderr,
-            )
-            sys.exit(1)
+        exit_code = verdict(mode=mode, failures=failures, restored_ok=restored_ok)
+        if exit_code:
+            if failures or not restored_ok:
+                detail = f'; restored_error={restored_error}' if restored_error else ''
+                print(
+                    f'NOT KILLED: {", ".join(failures) or "<none>"}; '
+                    f'restored_passed={restored_ok}{detail}',
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f'SAMPLE RUN ONLY: {len(selected)} of {len(mutants)} mutants '
+                    'selected; a sample is not full-table evidence',
+                    file=sys.stderr,
+                )
+            sys.exit(exit_code)
 
 
 if __name__ == '__main__':

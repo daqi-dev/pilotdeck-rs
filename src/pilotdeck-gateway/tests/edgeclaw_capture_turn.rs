@@ -133,8 +133,10 @@ fn obj(items: impl IntoIterator<Item = (&'static str, JsValue)>) -> JsValue {
     }
     JsValue::Object(object)
 }
-/// Own keys in `Object.keys` order, including keys whose value is
-/// `Undefined` — exactly what JSON serialization hides (#786).
+/// The sorted set of a recorded call's own keys, including keys whose value
+/// is `Undefined` — key membership only, insertion order is deliberately not
+/// compared, exactly like the JSON-serialized oracle it is checked against
+/// (#786).
 fn call_keys(call: &JsValue) -> Vec<String> {
     let object = call
         .as_object()
@@ -345,11 +347,21 @@ async fn ts_capture_turn_scenarios_match() {
 #[tokio::test]
 async fn recorded_call_key_sets_match_ts() {
     let oracle = baseline::oracle(ORACLE);
+    let specs = array(field(&oracle, "scenarioSpecs"));
     let expected_scenarios = array(field(&oracle, "scenarios"));
-    for (spec, expected) in array(field(&oracle, "scenarioSpecs"))
-        .iter()
-        .zip(expected_scenarios)
-    {
+    // A zip compares only the shorter side, and an empty table compares
+    // nothing at all; neither may pass as a key-set match (#786).
+    assert_eq!(
+        specs.len(),
+        expected_scenarios.len(),
+        "#786 scenarioSpecs and scenarios must align before zipping"
+    );
+    assert!(
+        !specs.is_empty(),
+        "#786 scenarioSpecs must not be empty (the zip would compare nothing)"
+    );
+    let mut compared_call_key_sets = 0;
+    for (spec, expected) in specs.iter().zip(expected_scenarios) {
         let (actual, _) = run_scenario(spec).await;
         let name = text(field(spec, "name"));
         let actual_calls = array(field(&actual, "calls"));
@@ -361,16 +373,22 @@ async fn recorded_call_key_sets_match_ts() {
         );
         for (call, expected_call) in actual_calls.iter().zip(expected_calls) {
             // The oracle stores the TS recorder's calls serialized, so its
-            // parsed keys are exactly the keys TS recorded. A phantom Rust-side
-            // `errored: Undefined` key fails here even though `same()` cannot
-            // see it through JSON (#786).
+            // parsed keys are exactly the keys TS recorded. A phantom
+            // Rust-side `errored` key with a non-Undefined value (e.g. an
+            // injected `false`) fails here even though `same()` cannot see an
+            // `Undefined`-valued one through JSON (#786).
             assert_eq!(
                 call_keys(call),
                 call_keys(expected_call),
                 "#786 {name} recorded call key set"
             );
+            compared_call_key_sets += 1;
         }
     }
+    assert!(
+        compared_call_key_sets > 0,
+        "#786 at least one recorded call key set must be compared"
+    );
 }
 #[tokio::test]
 async fn ts_capture_turn_conversions_match() {

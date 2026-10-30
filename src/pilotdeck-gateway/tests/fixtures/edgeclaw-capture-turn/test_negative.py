@@ -1,10 +1,10 @@
-# anchor-selfcheck: unsupported unit tests of the restore-positive summary path and the in-memory sample-selection / combined-anchor contracts, no product source replacement table
+# anchor-selfcheck: unsupported unit tests of the restore-positive summary path and the in-memory sample-selection / sample-verdict / combined-anchor contracts, no product source replacement table
 """#774 P2-1 / #786: runner contracts proven without touching product sources.
 
 The restored-positive failure path (#774 P2-1), the optional sample selection
-(#786) and the combined rejection anchor (#786) are in-memory stubs: they
-never start cargo, mutate a product source or touch the real evidence
-directory.
+(#786), the sample/full verdict split (#786 fix-r1) and the combined rejection
+anchor (#786) are in-memory stubs: they never start cargo, mutate a product
+source or touch the real evidence directory.
 """
 import importlib.util
 import json
@@ -40,6 +40,10 @@ class RestoredPositiveFailure(unittest.TestCase):
             restored_error=restored_error,
             before_sha256={'prepare.rs': 'before'},
             after_sha256={'prepare.rs': 'after'},
+            mode='full',
+            selected=[],
+            total=1,
+            skipped=[],
         )
         with tempfile.TemporaryDirectory(prefix='pdrs-774-negative-') as tmp:
             negative.write_summary(Path(tmp), payload)
@@ -172,12 +176,103 @@ class MutantSelection(unittest.TestCase):
             negative.selected_names(self.rows, ['alpha', 'alpha'])
 
 
+class SampleModeVerdict(unittest.TestCase):
+    """#786 fix-r1: a sample run must never be readable as a full pass.
+
+    The regression named by the review: one selected mutant, KILLED, restored
+    positive passed — that run still may not exit with the full-table pass
+    code, and its summary must say which shape it was.
+    """
+
+    def test_clean_sample_is_not_full_pass(self):
+        code = negative.verdict(mode='sample', failures=[], restored_ok=True)
+        self.assertNotEqual(
+            code, 0,
+            '#786 a clean sample run must not exit with the full-pass code')
+        self.assertEqual(
+            code, negative.SAMPLE_EXIT,
+            '#786 a clean sample run must use the dedicated sample exit code')
+
+    def test_clean_full_run_passes(self):
+        self.assertEqual(
+            negative.verdict(mode='full', failures=[], restored_ok=True), 0,
+            '#786 a clean full run must keep the full-pass exit code')
+
+    def test_sample_failure_is_not_the_sample_code(self):
+        self.assertEqual(
+            negative.verdict(mode='sample', failures=['survivor'],
+                             restored_ok=True), 1,
+            '#786 a sample run with failures must exit the failure code')
+
+    def test_restored_failure_fails_in_both_modes(self):
+        for mode in ('sample', 'full'):
+            with self.subTest(mode=mode):
+                self.assertEqual(
+                    negative.verdict(mode=mode, failures=[],
+                                     restored_ok=False), 1,
+                    '#786 a failed restored positive must exit the failure '
+                    'code in every mode')
+
+    def test_summary_marks_sample(self):
+        payload = negative.summary_payload(
+            results=[dict(name='errored-missing-injected-false',
+                          status='KILLED')],
+            failures=[],
+            restored={'prepare.rs': True},
+            restored_ok=True,
+            restored_error=None,
+            before_sha256={'prepare.rs': 'before'},
+            after_sha256={'prepare.rs': 'after'},
+            mode='sample',
+            selected=['errored-missing-injected-false'],
+            total=2,
+            skipped=['malformed-session-no-error'],
+        )
+        self.assertEqual(
+            payload['mode'], 'sample',
+            '#786 the sample summary must record mode=sample')
+        self.assertEqual(
+            payload['selected'], ['errored-missing-injected-false'],
+            '#786 the sample summary must name the selected mutants')
+        self.assertEqual(
+            payload['total'], 2,
+            '#786 the sample summary must record the full-table size')
+        self.assertEqual(
+            payload['skipped'], ['malformed-session-no-error'],
+            '#786 the sample summary must name the skipped mutants')
+
+    def test_summary_marks_full(self):
+        payload = negative.summary_payload(
+            results=[dict(name='alpha', status='KILLED'),
+                     dict(name='beta', status='KILLED')],
+            failures=[],
+            restored={'prepare.rs': True},
+            restored_ok=True,
+            restored_error=None,
+            before_sha256={'prepare.rs': 'before'},
+            after_sha256={'prepare.rs': 'after'},
+            mode='full',
+            selected=[],
+            total=2,
+            skipped=[],
+        )
+        self.assertEqual(
+            payload['mode'], 'full',
+            '#786 the full-run summary must record mode=full')
+        self.assertEqual(
+            payload['selected'], [],
+            '#786 the full-run summary must record an empty selection')
+        self.assertEqual(
+            payload['total'], len(payload['results']),
+            '#786 the full-run summary must classify the whole table')
+
+
 class CombinedRejectionAnchor(unittest.TestCase):
     """#786-2: the no-error anchor must bind the test wording *and* the TS text."""
 
     mutant = dict(
         test='malformed_session_id_matches_ts_startswith_failure',
-        anchor="#786 non-string sessionId must reject like isAlwaysOnSession (TS: reading 'startsWith')",
+        anchor=negative.REJECT_ANCHOR,
         failure='panic',
     )
 
@@ -187,8 +282,7 @@ class CombinedRejectionAnchor(unittest.TestCase):
         return libtest_panic_log(self.mutant['test'], message)
 
     def test_both_halves_kill(self):
-        raw = self.log(
-            "#786 non-string sessionId must reject like isAlwaysOnSession (TS: reading 'startsWith')")
+        raw = self.log(negative.REJECT_ANCHOR)
         self.assertEqual(negative.classify_control(self.mutant, 101, raw)[0], 'KILLED')
 
     def test_rejection_wording_alone_is_invalid(self):
