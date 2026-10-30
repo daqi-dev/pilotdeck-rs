@@ -275,10 +275,14 @@ impl fmt::Debug for JsValue {
 }
 impl Drop for JsValue {
     fn drop(&mut self) {
-        // Empty containers before each ordinary Drop. Children are destroyed iteratively.
-        fn detach(value: &mut JsValue, pending: &mut Vec<JsValue>) {
+        // Empty containers before each ordinary Drop. Children are destroyed
+        // iteratively. Arrays drain one element at a time through `arrays`
+        // instead of being appended into `pending`: appending needed a second
+        // full-size buffer to drop one wide value (#983 sessions projection),
+        // while draining keeps the scratch bounded by depth.
+        fn detach(value: &mut JsValue, pending: &mut Vec<JsValue>, arrays: &mut Vec<Vec<JsValue>>) {
             match value {
-                JsValue::Array(children) => pending.append(children),
+                JsValue::Array(children) => arrays.push(std::mem::take(children)),
                 JsValue::Object(object) => {
                     pending.extend(object.entries.drain(..).map(|(_, value)| value));
                     object.indices.clear();
@@ -289,10 +293,23 @@ impl Drop for JsValue {
                 _ => (),
             }
         }
-        let mut pending = Vec::new();
-        detach(self, &mut pending);
-        while let Some(mut child) = pending.pop() {
-            detach(&mut child, &mut pending);
+        let (mut pending, mut arrays) = (Vec::new(), Vec::new());
+        detach(self, &mut pending, &mut arrays);
+        loop {
+            let Some(mut value) = pending.pop().or_else(|| {
+                while let Some(rest) = arrays.last_mut() {
+                    // A fully drained array is dropped here, releasing its
+                    // buffer before the next sibling is taken.
+                    if let Some(value) = rest.pop() {
+                        return Some(value);
+                    }
+                    arrays.pop();
+                }
+                None
+            }) else {
+                break;
+            };
+            detach(&mut value, &mut pending, &mut arrays);
         }
     }
 }

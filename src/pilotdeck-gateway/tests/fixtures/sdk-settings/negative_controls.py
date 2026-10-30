@@ -52,7 +52,7 @@ mutations = [
     ('empty-url-gate', sdk, '        "get" => {\n            create_client(&connection)?;', '        "get" => {\n            if false { create_client(&connection)?; }', LOCAL, '#1029 TS output and exit settings-default--gateway-empty'),
     ('full-result', settings, 'stringify_json(&result)', 'stringify_json(result.get("settings").unwrap_or(&JsValue::Null))', MATRIX, '#1029 TS output and exit settings-default--argv'),
     ('undefined-output', settings, 'unwrap_or_else(|| "undefined".into())', 'unwrap_or_else(|| "null".into())', MATRIX, '#1029 TS output and exit settings-extra--get-missing'),
-    ('pretty-output', settings, 'stdout_line(&json_pretty(&raw));', 'stdout_line(&if false { json_pretty(&raw) } else { raw.clone() });', MATRIX, '#1029 TS output and exit settings-default--argv'),
+    ('pretty-output', settings, 'write_json_pretty_line(&raw);', 'stdout_line(&raw);', MATRIX, '#1029 TS output and exit settings-default--argv'),
     ('fixed-ack', settings, 'stdout_line("{\\"updated\\":true}");', 'stdout_line("{\\"updated\\":false}");', MATRIX, '#1029 TS output and exit settings-set--argv'),
     ('no-local-write', settings, 'stdout_line("{\\"updated\\":true}");', 'std::fs::write(std::path::Path::new(&std::env::var("PILOT_HOME").unwrap_or_default()).join("settings.json"), b"{}").map_err(|e| Failure::Error(e.to_string()))?; stdout_line("{\\"updated\\":true}");', MATRIX, '#1029 complete disk unchanged settings-set--argv'),
     ('settings-client-version', settings, 'connection, method, params, "0.1.0",', 'connection, method, params, "pilotdeck-cli",', MATRIX, '#1029 hello and request wire settings-default--argv'),

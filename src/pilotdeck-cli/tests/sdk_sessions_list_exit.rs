@@ -1219,6 +1219,14 @@ async fn sessions_list_transport_boundaries() {
             "Cannot read properties of null (reading 'sessions')\n",
             1,
         ),
+        (
+            // A response without `result`: the missing-key fallback must stay
+            // Undefined, not Null (#983 take_field).
+            "undefined-result",
+            "",
+            "Cannot read properties of undefined (reading 'sessions')\n",
+            1,
+        ),
         ("wrong-id-and-ping", "[]\n", "", 0),
         ("hello-never", "", "Gateway hello timed out.\n", 1),
         (
@@ -1342,17 +1350,21 @@ async fn sessions_list_transport_boundaries() {
                             socket.feed(Message::Text(json!({"type":"response","id":"unrelated","ok":true,"result":{"sessions":["wrong"]}}).to_string().into())).await.expect("#983 boundary unrelated response");
                         }
                         let result = match mode {
-                            "null-sessions" => "{\"sessions\":null}",
-                            "false-sessions" => "{\"sessions\":false}",
-                            "null-result" => "null",
-                            "nested-projection" => {
-                                r#"{"sessions":[{"z":[{},[],"中\"[,]"],"a":-0,"b":1e21,"s":"\ud800"}]}"#
-                            }
-                            _ => "{}",
+                            "null-sessions" => Some("{\"sessions\":null}"),
+                            "false-sessions" => Some("{\"sessions\":false}"),
+                            "null-result" => Some("null"),
+                            "undefined-result" => None,
+                            "nested-projection" => Some(
+                                r#"{"sessions":[{"z":[{},[],"中\"[,]"],"a":-0,"b":1e21,"s":"\ud800"}]}"#,
+                            ),
+                            _ => Some("{}"),
                         };
-                        let frame = format!(
-                            "{{\"type\":\"response\",\"id\":{id},\"ok\":true,\"result\":{result}}}"
-                        );
+                        let frame = match result {
+                            Some(result) => format!(
+                                "{{\"type\":\"response\",\"id\":{id},\"ok\":true,\"result\":{result}}}"
+                            ),
+                            None => format!("{{\"type\":\"response\",\"id\":{id},\"ok\":true}}"),
+                        };
                         socket
                             .send(Message::Text(frame.into()))
                             .await

@@ -41,7 +41,7 @@ mutations = [
     ('null-result-kind', sessions, 'JsValue::Null => Some("null"),', 'JsValue::Null => Some("undefined"),', MATRIX, '#1028 TS output and exit sessions-messages--result-null'),
     ('missing-result-kind', sessions, 'JsValue::Undefined => Some("undefined"),', 'JsValue::Undefined => Some("null"),', MATRIX, '#1028 TS output and exit sessions-messages--result-missing'),
     ('result-error-property', sessions, "(reading 'messages')", "(reading 'sessions')", MATRIX, '#1028 TS output and exit sessions-messages--result-null'),
-    ('messages-success-exit', sessions, 'stdout_line(&pretty_json(messages)?);\n            Ok(0)', 'stdout_line(&pretty_json(messages)?);\n            Ok(1)', MATRIX, '#1028 TS output and exit sessions-messages--argv'),
+    ('messages-success-exit', sessions, 'print_projection(messages)?;\n            Ok(0)', 'print_projection(messages)?;\n            Ok(1)', MATRIX, '#1028 TS output and exit sessions-messages--argv'),
     ('original-extraction', oracle, '"nodeVersion": "v22.22.0"', '"nodeVersion": "v0.0.0"', 'sessions_messages_oracle_regenerates_identically', '#1028 identical TS fixture sdk-sessions-messages'),
     ('source-extraction', source, '"raw/host-b10/cases/sessions-messages--argv/stdout.bin": "[', '"raw/host-b10/cases/sessions-messages--argv/stdout.bin": "Z', 'sessions_messages_oracle_regenerates_identically', '#1028 identical TS fixture sdk-sessions-messages'),
     ('provenance-entry', generator, "  'dist/src/cli/pilotdeck.js',", '', INTEGRITY, '#1028 extraction rejects missing provenance dist/src/cli/pilotdeck.js'),
