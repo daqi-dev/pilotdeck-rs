@@ -30,11 +30,28 @@ if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):
 import hashlib as _boot_hashlib
 import subprocess as _boot_subprocess
 _boot_root = _boot_os.path.dirname(_boot_os.path.dirname(_boot_dir))
+_boot_write = __name__ == '__main__' and '--write' in _boot_sys.argv[1:]
+# Regeneration cannot use stale manifest pins. It admits only committed source,
+# including the executing code object, before loading the HEAD-verified scanner.
+# A dirty checker is rejected, never treated as a registration exemption.
+if _boot_write:
+    _boot_head = _boot_subprocess.check_output(
+        ['git', '-C', _boot_root, 'rev-parse', '--verify', 'HEAD']).decode().strip()
+    _boot_checker = _boot_subprocess.check_output(
+        ['git', '-C', _boot_root, 'show', f'{_boot_head}:scripts/ui-server-parity/check_frozen.py'])
+    if _boot_sys._getframe().f_code != compile(
+            _boot_checker, __file__, 'exec', dont_inherit=True, optimize=_boot_sys.flags.optimize):
+        raise SystemExit('#1089 --write executing checker differs from HEAD')
 _boot_manifest = _boot_os.path.join(_boot_root, 'specs/ui-server-parity/FROZEN.md')
 with open(_boot_source, 'rb') as _boot_file:
     _boot_bytes = _boot_file.read()
 try:
-    if _boot_os.path.isfile(_boot_manifest):
+    if _boot_write:
+        _boot_trusted = _boot_subprocess.check_output(
+            ['git', '-C', _boot_root, 'show', f'{_boot_head}:scripts/ui-server-parity/apparatus.py'])
+        if _boot_bytes != _boot_trusted:
+            raise ValueError('--write apparatus source differs from HEAD')
+    elif _boot_os.path.isfile(_boot_manifest):
         with open(_boot_manifest) as _boot_file:
             _boot_pins = [line.split()[0] for line in _boot_file
                           if line.rstrip().endswith('  ../../scripts/ui-server-parity/apparatus.py')]
@@ -51,7 +68,15 @@ except (OSError, ValueError, _boot_subprocess.CalledProcessError) as _boot_error
     raise SystemExit(1)
 _boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
 exec(compile(_boot_bytes, _boot_source, 'exec'), _boot_namespace)
-_boot_namespace['preflight'](_boot_dir)
+if _boot_write:
+    # Only this source-only module is needed by the writer. Do not install the
+    # normal FROZEN loader while its hash list is intentionally out of date.
+    import types as _boot_types
+    _boot_module = _boot_types.ModuleType('apparatus')
+    _boot_module.__dict__.update(_boot_namespace)
+    _boot_sys.modules['apparatus'] = _boot_module
+else:
+    _boot_namespace['preflight'](_boot_dir)
 import argparse
 import hashlib
 import json
@@ -258,6 +283,8 @@ def check(folder=SPEC, *, root=ROOT, base=None):
         errors.extend(check_diffs(folder, root))
     except (OSError, UnicodeError) as error:
         errors.append(f'cannot read ledger: {error}')
+    errors.extend(check_manifest(root))
+    errors.extend(check_registration(root, base))
     notes = []
     if base is not None:
         errors.extend(check_append_only(root, base, notes))
@@ -362,12 +389,267 @@ def self_test():
         return {'verdict': 'PASS' if all(c['passed'] for c in cases) else 'FAIL', 'controls': cases}
 
 
+APPARATUS_KIND = 'ui-server-parity'
+
+def manifest_row(line):
+    match = re.fullmatch(rb'([0-9a-f]{64})  ([\w./-]+)\r?\n?', line)
+    return (match[2].decode(), match[1].decode(), b'') if match else None
+
+
+def manifest_path(name):
+    if not name.startswith('../../'):
+        raise ValueError('noncanonical manifest path: ' + name)
+    name = name[6:]
+    if Path(name).is_absolute() or '..' in Path(name).parts or Path(name).as_posix() != name:
+        raise ValueError('noncanonical manifest path: ' + name)
+    return name
+
+
+def manifest_inventory(root):
+    return {'../../' + path.relative_to(root).as_posix(): path.relative_to(root).as_posix()
+            for path in required_files(root, root / 'specs/ui-server-parity')}
+
+
+def render_row(name, digest, tail):
+    return f'{digest}  {name}\n'.encode()
+
+
+# Registration is deliberately local to each frozen apparatus (#1089).
+EVENT_FIELDS = ('Calibration-Evidence', 'Independent-Reviews', 'Approved-By', 'Approval-Basis')
+EVENT_NAME = re.compile(r'[0-9]{8}-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\.md')
+CHANGE = re.compile(r'Change: ([0-9a-f]{64}|-) ([0-9a-f]{64}|-) ([\w./-]+)')
+
+
+def manifest_parts(raw):
+    """Keep every non-list byte, including historical prose and table headings."""
+    lines = raw.splitlines(keepends=True)
+    indices = [i for i, line in enumerate(lines) if manifest_row(line) is not None]
+    if not indices:
+        raise ValueError('missing hash list')
+    start, end = indices[0], indices[-1] + 1
+    # Conflict markers immediately outside the first/last row belong to the list.
+    while start and lines[start - 1].startswith((b'<<<<<<< ', b'||||||| ', b'=======', b'>>>>>>> ')):
+        start -= 1
+    while end < len(lines) and lines[end].startswith((b'<<<<<<< ', b'||||||| ', b'=======', b'>>>>>>> ')):
+        end += 1
+    for line in lines[start:end]:
+        if manifest_row(line) is None and not line.startswith((b'<<<<<<< ', b'||||||| ', b'=======', b'>>>>>>> ')):
+            raise ValueError('malformed or noncontiguous hash list')
+    prefix, suffix = b''.join(lines[:start]), b''.join(lines[end:])
+    if any(line.startswith((b'<<<<<<< ', b'||||||| ', b'=======', b'>>>>>>> '))
+           for line in (prefix + suffix).splitlines()):
+        raise ValueError('conflict outside hash list')
+    return prefix, lines[start:end], suffix
+
+
+def manifest_entries(raw):
+    _, lines, _ = manifest_parts(raw)
+    entries = {}
+    for line in lines:
+        row = manifest_row(line)
+        if row is None:
+            raise ValueError('unresolved hash list conflict')
+        name, digest, _ = row
+        if name in entries:
+            raise ValueError('duplicate hash entry: ' + name)
+        entries[name] = digest
+    return entries
+
+
+def regular_file(root, path):
+    """No aliases, links, directories or escapes may be hashed as source files."""
+    path = Path(path)
+    relative = path.relative_to(root)
+    if any((root / Path(*relative.parts[:i])).is_symlink()
+           for i in range(1, len(relative.parts) + 1)) or not path.is_file():
+        raise ValueError('nonregular frozen file: ' + str(relative))
+    return path
+
+
+def generated_manifest(root, raw, *, head=None):
+    prefix, lines, suffix = manifest_parts(raw)
+    metadata = {}
+    for line in lines:
+        row = manifest_row(line)
+        if row is not None:
+            name, _, tail = row
+            if name in metadata and metadata[name] != tail:
+                raise ValueError('conflicting historical row metadata: ' + name)
+            metadata[name] = tail
+    rows = []
+    for name, relative in sorted(manifest_inventory(root).items()):
+        path = regular_file(root, root / relative)
+        data = path.read_bytes()
+        if head is not None and data != git(root, 'show', f'{head}:{relative}'):
+            raise ValueError('--write source differs from HEAD: ' + relative)
+        digest = hashlib.sha256(data).hexdigest()
+        rows.append(render_row(name, digest, metadata.get(name)))
+    return prefix + b''.join(rows) + suffix
+
+
+def write_manifest(root=ROOT, *, head=None):
+    """Only publish a fully generated list; no event or approval is synthesized."""
+    manifest = root / f'specs/{APPARATUS_KIND}/FROZEN.md'
+    regular_file(root, manifest)
+    raw = manifest.read_bytes()
+    generated = generated_manifest(root, raw, head=head)
+    if generated != raw:
+        # Same-directory replace prevents readers observing a partial hash list.
+        import os
+        with tempfile.NamedTemporaryFile(dir=manifest.parent, prefix='.FROZEN-', delete=False) as stream:
+            temporary = Path(stream.name)
+            try:
+                stream.write(generated)
+                stream.flush()
+                os.fchmod(stream.fileno(), manifest.stat().st_mode & 0o777)
+            except BaseException:
+                temporary.unlink()
+                raise
+        try:
+            temporary.replace(manifest)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def check_manifest(root):
+    manifest = root / f'specs/{APPARATUS_KIND}/FROZEN.md'
+    try:
+        raw = regular_file(root, manifest).read_bytes()
+        manifest_entries(raw)
+        if generated_manifest(root, raw) != raw:
+            return ['hash list differs from generated inventory; run check_frozen.py --write']
+    except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
+        return ['cannot verify generated hash list: ' + str(error)]
+    return []
+
+
+def read_events(root):
+    folder = root / f'specs/{APPARATUS_KIND}/frozen'
+    events, failures = {}, []
+    if folder.is_symlink():
+        return {}, ['frozen directory is a symlink']
+    for path in sorted(folder.iterdir()) if folder.exists() else []:
+        try:
+            regular_file(root, path)
+            if path.stat().st_mode & 0o111:
+                raise ValueError('executable event file')
+            if path.name == 'README.md':
+                continue
+            if not EVENT_NAME.fullmatch(path.name):
+                raise ValueError('invalid event filename')
+            text = path.read_text(encoding='utf-8')
+            for field in EVENT_FIELDS:
+                values = re.findall(r'^' + field + r':([^\n]*)$', text, re.M)
+                if len(values) != 1 or not values[0].strip():
+                    raise ValueError('missing/duplicate/empty ' + field)
+            reviews = re.findall(r'^Independent-Reviews:([^\n]*)$', text, re.M)[0]
+            references = [re.fullmatch(r'([A-Za-z][A-Za-z0-9.-]*): (\S+)', part.strip())
+                          for part in reviews.split(';')]
+            if (len(references) != 2 or not all(references)
+                    or len({ref[1].casefold() for ref in references}) != 2
+                    or len({ref[2] for ref in references}) != 2):
+                raise ValueError('Independent-Reviews requires two distinct families and references separated by ;')
+            changes = []
+            for line in text.splitlines():
+                if not line.startswith('Change:'):
+                    continue
+                match = CHANGE.fullmatch(line)
+                if not match:
+                    raise ValueError('invalid Change row')
+                old, new, name = match.groups()
+                if (Path(name).is_absolute() or Path(name).as_posix() != name
+                        or '..' in Path(name).parts or old == new):
+                    raise ValueError('invalid Change path or equal hashes')
+                changes.append((name, old, new))
+            if not changes or len(changes) != len(set(changes)):
+                raise ValueError('missing/duplicate Change rows')
+            events[path.name] = changes
+        except (OSError, UnicodeError, ValueError) as error:
+            failures.append(f'frozen/{path.name}: {error}')
+    return events, failures
+
+
+def check_registration(root, base):
+    events, failures = read_events(root)
+    if base is None:
+        return failures
+    try:
+        commit = git(root, 'merge-base', 'HEAD', base).decode().strip()
+        spec = f'specs/{APPARATUS_KIND}'
+        before = git(root, 'show', f'{commit}:{spec}/FROZEN.md')
+        after = (root / spec / 'FROZEN.md').read_bytes()
+        bp, _, bs = manifest_parts(before)
+        ap, _, ass = manifest_parts(after)
+        if (bp, bs) != (ap, ass):
+            failures.append('FROZEN historical prose changed (byte-frozen)')
+        before_tails = {row[0]: row[2] for line in manifest_parts(before)[1]
+                        if (row := manifest_row(line)) is not None}
+        after_tails = {row[0]: row[2] for line in manifest_parts(after)[1]
+                       if (row := manifest_row(line)) is not None}
+        if any(after_tails.get(name) != tail for name, tail in before_tails.items()
+               if name in after_tails):
+            failures.append('FROZEN historical row metadata changed (byte-frozen)')
+        old_entries = manifest_entries(before)
+        new_entries = manifest_entries(after)
+        old_hashes = {}
+        for name, pin in old_entries.items():
+            relative = manifest_path(name)
+            actual = hashlib.sha256(git(root, 'show', f'{commit}:{relative}')).hexdigest()
+            if not actual.startswith(pin):
+                raise ValueError('base manifest does not match base blob: ' + name)
+            old_hashes[relative] = actual
+        new_hashes = {manifest_path(name): hashlib.sha256(
+            regular_file(root, root / manifest_path(name)).read_bytes()).hexdigest()
+                      for name in new_entries}
+        existing = set()
+        for entry in filter(None, git(root, 'ls-tree', '-rz', commit, '--', spec + '/frozen/').split(b'\0')):
+            meta, raw_path = entry.split(b'\t', 1)
+            mode, kind, oid = meta.split()
+            name = raw_path.decode()
+            path = root / name
+            existing.add(path.name)
+            if (mode != b'100644' or kind != b'blob' or path.is_symlink() or not path.is_file()
+                    or path.stat().st_mode & 0o111 or path.read_bytes() != git(root, 'cat-file', 'blob', oid.decode())):
+                failures.append(name + ': base event changed/deleted/renamed (append-only)')
+        edges = {}
+        for event, changes in events.items():
+            if event in existing:
+                continue
+            for name, old, new in changes:
+                edges.setdefault(name, []).append((old, new))
+        changed = {name for name in old_hashes.keys() | new_hashes.keys()
+                   if old_hashes.get(name, '-') != new_hashes.get(name, '-')}
+        for name in sorted(changed | edges.keys()):
+            current, target = old_hashes.get(name, '-'), new_hashes.get(name, '-')
+            remaining = list(edges.get(name, []))
+            visited = set()
+            while current != target and current not in visited:
+                visited.add(current)
+                matches = [edge for edge in remaining if edge[0] == current]
+                if len(matches) != 1:
+                    break
+                edge = matches[0]
+                remaining.remove(edge)
+                current = edge[1]
+            if name not in changed or current != target or remaining:
+                failures.append(name + ': hash change lacks exact new event chain (or has stale/duplicate event)')
+    except (OSError, UnicodeError, ValueError, subprocess.SubprocessError) as error:
+        failures.append(f'cannot verify registration base {base}: {error}')
+    return failures
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--self-test', action='store_true')
     parser.add_argument('--base', help='check append-only against merge-base(HEAD, ref)')
+    parser.add_argument('--write', action='store_true', help='regenerate only the hash list; does not approve registration')
     parser.add_argument('--print-ledger', action='store_true', help='emit validated combined ledger bytes')
     args = parser.parse_args(argv)
+    if args.write and (args.print_ledger or args.base is not None or args.self_test):
+        parser.error('--write cannot be combined with --base, --print-ledger or --self-test')
+    if args.write:
+        write_manifest(head=_boot_head)
+        return 0
     if args.self_test and (args.base is not None or args.print_ledger):
         parser.error('--self-test cannot be combined with --base or --print-ledger')
     result = self_test() if args.self_test else check(base=args.base)

@@ -114,6 +114,9 @@ jobs:
           python3 -I scripts/test-gateway-ledger.py -v
           python3 -I src/pilotdeck-gateway/tests/fixtures/ledger-diffs/test_ledger.py parity -v
           python3 -I src/pilotdeck-gateway/tests/fixtures/ledger-diffs/test_ledger.py ui-server-parity -v
+          for apparatus in parity gateway-parity ui-server-parity; do
+            python3 -I src/pilotdeck-gateway/tests/fixtures/frozen-manifest/test_manifest.py "$apparatus" -v
+          done
           if [ "${{ github.event_name }}" != "push" ] && [ "$LEDGER_BASE" = "$(git rev-parse HEAD)" ]; then
             echo "ledger base 等于 HEAD（${{ github.event_name }}），只追加对照无效，拒绝" >&2; exit 1
           fi

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -34,10 +35,17 @@ class Ledger(unittest.TestCase):
         self.folder = self.root / SPEC
         self.diffs = self.folder / 'diffs'
         self.diffs.mkdir(parents=True)
-        registered = ['acceptance.md', 'normalization.md', 'accepted-diffs.md',
-                      '../../scripts/gateway-parity/_guard.py',
-                      '../../scripts/gateway-parity/check_frozen.py',
-                      '../../scripts/gateway-parity/common.py']
+        # Do not turn these disposable history fixtures into a way to execute
+        # a dirty candidate under a fabricated HEAD (#1089).
+        for relative in (CHECKER, Path('scripts/gateway-parity/_guard.py'),
+                         Path('scripts/gateway-parity/common.py')):
+            committed = subprocess.check_output(['git', '-C', str(ROOT), 'show', f'HEAD:{relative}'])
+            self.assertEqual((ROOT / relative).read_bytes(), committed,
+                             '#1089 source differs from HEAD; run this fixture after commit')
+        # The new canonical-list check requires the full registered apparatus,
+        # including session-calibration and a5-19, not a six-file approximation.
+        registered = sorted(re.findall(r'^[0-9a-f]{64}  ([\w./-]+)$',
+                                       (ROOT / SPEC / 'FROZEN.md').read_text(), re.M))
         lines = []
         for name in registered:
             data = (ROOT / SPEC / name).read_bytes()
@@ -45,7 +53,7 @@ class Ledger(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
             lines.append(f'{hashlib.sha256(data).hexdigest()}  {name}\n')
-        (self.folder / 'FROZEN.md').write_text(''.join(lines))
+        (self.folder / 'FROZEN.md').write_text('# 冻结登记\n' + ''.join(lines))
         self.git('init', '-b', 'main')
         self.commit('base with real historical ledger')
         self.base = self.git('rev-parse', 'HEAD').stdout.decode().strip()
@@ -232,7 +240,8 @@ class Ledger(unittest.TestCase):
 
     def test_utf8_input_independent_of_locale(self):
         manifest = self.folder / 'FROZEN.md'
-        manifest.write_bytes('# 冻结登记\n'.encode('utf-8') + manifest.read_bytes())
+        self.assertTrue(manifest.read_bytes().startswith('# 冻结登记\n'.encode('utf-8')),
+                        '#1089 UTF-8 header is frozen in the fixture base')
         env = {**os.environ, 'LC_ALL': 'C', 'PYTHONUTF8': '0', 'PYTHONCOERCECLOCALE': '0',
                'PYTHONIOENCODING': 'utf-8'}
         # The checker now refuses to run without -I (A5.4 pkg2 fix-r7): under
@@ -343,18 +352,25 @@ class Ledger(unittest.TestCase):
         path = self.folder / 'FROZEN.md'
         path.write_bytes(path.read_bytes().replace(b'  accepted-diffs.md\n',
                                                    b'\taccepted-diffs.md\n'))
-        self.check()  # The digest and historical bytes still match.
+        self.check(ok=False, reason='hash list')  # #1089 canonical spacing is now enforced.
         self.check('--base', self.base, ok=False, reason='accepted-diffs.md hash line changed')
 
     def test_unchanged_legacy_allows_other_frozen_registration(self):
         checker = self.root / CHECKER
+        old = hashlib.sha256(checker.read_bytes()).hexdigest()
         checker.write_bytes(checker.read_bytes() + b'\n# approved registration test\n')
-        manifest = self.folder / 'FROZEN.md'
-        rows = manifest.read_text().splitlines(keepends=True)
-        name = '../../scripts/gateway-parity/check_frozen.py'
-        manifest.write_text('new registration note\n' + ''.join(
-            f'{hashlib.sha256(checker.read_bytes()).hexdigest()}  {name}\n'
-            if row.split()[-1] == name else row for row in rows))
+        new = hashlib.sha256(checker.read_bytes()).hexdigest()
+        self.commit('commit candidate apparatus before regeneration')
+        self.check('--write')
+        self.check('--base', self.base, ok=False, reason='lacks exact new event chain')
+        events = self.folder / 'frozen'
+        events.mkdir()
+        (events / '20261030-1089.md').write_text(
+            'Calibration-Evidence: synthetic evidence\n'
+            'Independent-Reviews: DeepSeek: ds.md; GLM: glm.md\n'
+            'Approved-By: synthetic fixture, not approval\n'
+            'Approval-Basis: registration protocol test\n'
+            f'Change: {old} {new} {CHECKER}\n')
         self.check('--base', self.base)
 
     def test_only_new_diff_preserves_legacy_and_hash_row(self):
