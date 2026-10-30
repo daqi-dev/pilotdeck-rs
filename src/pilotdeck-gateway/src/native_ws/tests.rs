@@ -173,7 +173,44 @@ async fn finish(stop: oneshot::Sender<()>, task: tokio::task::JoinHandle<Result<
 }
 fn oracle() -> Value {
     crate::test_baseline::oracle(ORACLE);
-    serde_json::from_str::<Value>(ORACLE).expect("#749 oracle JSON")["observations"].clone()
+    let mut observed =
+        serde_json::from_str::<Value>(ORACLE).expect("#749 oracle JSON")["observations"].clone();
+    // Mutate the parsed real fixture, before the named test inspects it. These
+    // switches prove that missing rows/fields and wrong content cannot pass.
+    if crate::mutants::on("native-ws-large-oracle-empty") {
+        observed["resources"]["largeOutput"] = json!([]);
+    }
+    if crate::mutants::on("native-ws-large-oracle-missing") {
+        observed["resources"]["largeOutput"]
+            .as_array_mut()
+            .expect("#749 large oracle array")
+            .pop();
+    }
+    if crate::mutants::on("native-ws-large-oracle-size") {
+        observed["resources"]["largeOutput"][0]["size"] = json!(1);
+    }
+    if crate::mutants::on("native-ws-large-oracle-content") {
+        observed["resources"]["largeOutput"][1]["sha256"] = json!("wrong-content");
+    }
+    if crate::mutants::on("native-ws-full-oracle-before-count") {
+        observed["resources"]["fullQueueEnd"]["before"]["completed"] = json!(0);
+    }
+    if crate::mutants::on("native-ws-full-oracle-before-finished") {
+        observed["resources"]["fullQueueEnd"]["before"]["finished"] = json!(true);
+    }
+    if crate::mutants::on("native-ws-full-oracle-completed") {
+        observed["resources"]["fullQueueEnd"]["completed"] = json!(32);
+    }
+    if crate::mutants::on("native-ws-full-oracle-finished") {
+        observed["resources"]["fullQueueEnd"]["finished"] = json!(false);
+    }
+    if crate::mutants::on("native-ws-full-oracle-destroyed") {
+        observed["resources"]["fullQueueEnd"]["destroyed"] = json!(false);
+    }
+    if crate::mutants::on("native-ws-close-oracle-missing") {
+        observed["resources"]["closeFlush"] = json!([]);
+    }
+    observed
 }
 #[tokio::test]
 async fn handshake_and_auth() {
@@ -553,7 +590,7 @@ async fn output_slot_budget_and_full_close() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn writer_deadline_releases_socket_before_stuck_business() {
     for stall_shutdown in [false, true] {
         let requests = Arc::new(Requests::default());
@@ -580,7 +617,7 @@ async fn writer_deadline_releases_socket_before_stuck_business() {
             ))
             .await
             .expect("#749 stuck writer hello");
-        timeout(DEADLINE, requests.entered.notified())
+        manual_clock(timeout(DEADLINE, requests.entered.notified()))
             .await
             .expect("#749 stuck business entered");
         if !stall_shutdown {
@@ -596,7 +633,7 @@ async fn writer_deadline_releases_socket_before_stuck_business() {
             .await
             .expect("#749 writer peer half-close");
         crate::test_negative_receipt::expect_ok(
-            timeout(Duration::from_secs(3), dropped).await,
+            timeout(CLOSE_BUDGET + Duration::from_secs(105), dropped).await,
             "#749 writer deadline releases socket despite held business",
         )
         .expect("#749 writer socket drop signal");
@@ -605,18 +642,18 @@ async fn writer_deadline_releases_socket_before_stuck_business() {
             "#749 held business still pending after socket reclaimed"
         );
         requests.release.notify_one();
-        let result = timeout(DEADLINE, task)
+        let result = manual_clock(timeout(DEADLINE, task))
             .await
             .expect("#749 writer deadline task bound")
             .expect("#749 writer deadline task join");
         assert!(result.is_err(), "#749 writer expiry remains an error");
-        host.shutdown(DEADLINE)
+        manual_clock(host.shutdown(DEADLINE))
             .await
             .expect("#749 writer deadline host stopped");
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn close_deadline_reclaims_peer_without_fin() {
     let host = native_ws_fixture(Arc::new(Requests::default()));
     let (io, mut client) = tokio::io::duplex(256);
@@ -642,16 +679,16 @@ async fn close_deadline_reclaims_peer_without_fin() {
         .expect("#749 close reply before deadline");
     assert_eq!(close, [0x88, 2, 3, 232], "#749 close reply matches TS");
     crate::test_negative_receipt::expect_ok(
-        timeout(Duration::from_secs(3), dropped).await,
+        timeout(CLOSE_BUDGET + Duration::from_secs(105), dropped).await,
         "#749 reader close deadline reclaims peer without FIN",
     )
     .expect("#749 close drop signal");
-    let result = timeout(DEADLINE, task)
+    let result = manual_clock(timeout(DEADLINE, task))
         .await
         .expect("#749 close deadline task bound")
         .expect("#749 close task join");
     assert!(result.is_err(), "#749 reader expiry remains error");
-    host.shutdown(DEADLINE)
+    manual_clock(host.shutdown(DEADLINE))
         .await
         .expect("#749 close host stopped");
 }
@@ -737,74 +774,98 @@ fn default_mode_unchanged() {
         "#749 A4 executable remains unchanged"
     );
 }
-#[tokio::test]
+// Keep the paused runtime runnable while an independent host thread reaches
+// an event barrier. Virtual time moves only through explicit advance(). The
+// wall guard diagnoses a stuck test; it is never a negative-control receipt.
+async fn manual_clock<F: Future>(future: F) -> F::Output {
+    tokio::pin!(future);
+    let wall = std::time::Instant::now();
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut future => return result,
+            _ = tokio::task::yield_now() => {}
+        }
+        assert!(
+            wall.elapsed() < Duration::from_secs(60),
+            "#749 manual-clock harness stalled"
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn close_tail_resumes_on_next_data() {
-    let requests = Arc::new(Requests::default());
-    let host = native_ws_fixture(requests.clone());
-    let (server, mut client) = tokio::io::duplex(4096);
-    let task = tokio::spawn(transport(
-        server,
-        host.clone(),
-        "fixture-token".into(),
-        "probe".into(),
-    ));
-    let hello = hello("fixture-token").to_string();
-    client
-        .write_all(&frame::client_frame(
-            0x81,
-            hello.len() as u8,
-            hello.as_bytes(),
-        ))
-        .await
-        .expect("#749 next-data hello");
-    timeout(DEADLINE, requests.changed.notified())
-        .await
-        .expect("#749 next-data hello entered");
-    let request = json!({"type":"request","id":"tail","method":"describe_server"}).to_string();
-    let wire = [
-        frame::client_frame(0x88, 0, b""),
-        frame::client_frame(0x81, request.len() as u8, request.as_bytes()),
-    ]
-    .concat();
-    client.write_all(&wire).await.expect("#749 next-data batch");
-    // The entire batch fits in the duplex read buffer. Writer EOF is the
-    // deterministic barrier proving its close frame has been processed.
-    let mut replies = vec![];
-    timeout(DEADLINE, client.read_to_end(&mut replies))
-        .await
-        .expect("#749 next-data close deadline")
-        .expect("#749 next-data close read");
-    negative_assert_eq!(
-        requests.calls.load(Ordering::SeqCst),
-        1 + oracle()["opcodeCloseTailCalls"]
-            .as_u64()
-            .expect("#749 first-data oracle") as usize,
-        "#749 tail waits for next data"
-    );
-    crate::test_negative_receipt::expect_ok(
-        client.write_all(&frame::client_frame(0x88, 0, b"")).await,
-        "#749 next data resumes buffered tail",
-    );
-    crate::test_negative_receipt::expect_ok(
-        timeout(DEADLINE, requests.changed.notified()).await,
-        "#749 next data resumes buffered tail",
-    );
-    client.shutdown().await.expect("#749 next-data FIN");
-    timeout(DEADLINE, task)
-        .await
-        .expect("#749 next-data task deadline")
-        .expect("#749 next-data task join")
-        .expect("#749 next-data transport finish");
-    negative_assert_eq!(
-        requests.calls.load(Ordering::SeqCst),
-        1 + oracle()["opcodeCloseNextDataTailCalls"]
-            .as_u64()
-            .expect("#749 next-data oracle") as usize,
-        "#749 next data resumes buffered tail"
-    );
-    host.shutdown(DEADLINE)
-        .await
-        .expect("#749 next-data host stop");
+    manual_clock(async {
+        let requests = Arc::new(Requests::default());
+        let host = native_ws_fixture(requests.clone());
+        let (server, mut client) = tokio::io::duplex(4096);
+        let task = tokio::spawn(transport(
+            server,
+            host.clone(),
+            "fixture-token".into(),
+            "probe".into(),
+        ));
+        let hello = hello("fixture-token").to_string();
+        client
+            .write_all(&frame::client_frame(
+                0x81,
+                hello.len() as u8,
+                hello.as_bytes(),
+            ))
+            .await
+            .expect("#749 next-data hello");
+        timeout(DEADLINE, requests.changed.notified())
+            .await
+            .expect("#749 next-data hello entered");
+        let request = json!({"type":"request","id":"tail","method":"describe_server"}).to_string();
+        let wire = [
+            frame::client_frame(0x88, 0, b""),
+            frame::client_frame(0x81, request.len() as u8, request.as_bytes()),
+        ]
+        .concat();
+        client.write_all(&wire).await.expect("#749 next-data batch");
+        // The entire batch fits in the duplex read buffer. Writer EOF is the
+        // deterministic barrier proving its close frame has been processed.
+        let mut replies = vec![];
+        timeout(DEADLINE, client.read_to_end(&mut replies))
+            .await
+            .expect("#749 next-data close deadline")
+            .expect("#749 next-data close read");
+        negative_assert_eq!(
+            requests.calls.load(Ordering::SeqCst),
+            1 + oracle()["opcodeCloseTailCalls"]
+                .as_u64()
+                .expect("#749 first-data oracle") as usize,
+            "#749 tail waits for next data"
+        );
+        // A real second of CPU scheduling must not expire this paused clock.
+        tokio::time::advance(Duration::from_secs(2)).await;
+        crate::test_negative_receipt::expect_ok(
+            client.write_all(&frame::client_frame(0x88, 0, b"")).await,
+            "#749 next data resumes buffered tail",
+        );
+        crate::test_negative_receipt::expect_ok(
+            timeout(DEADLINE, requests.changed.notified()).await,
+            "#749 next data resumes buffered tail",
+        );
+        client.shutdown().await.expect("#749 next-data FIN");
+        timeout(DEADLINE, task)
+            .await
+            .expect("#749 next-data task deadline")
+            .expect("#749 next-data task join")
+            .expect("#749 next-data transport finish");
+        negative_assert_eq!(
+            requests.calls.load(Ordering::SeqCst),
+            1 + oracle()["opcodeCloseNextDataTailCalls"]
+                .as_u64()
+                .expect("#749 next-data oracle") as usize,
+            "#749 next data resumes buffered tail"
+        );
+        host.shutdown(DEADLINE)
+            .await
+            .expect("#749 next-data host stop");
+    })
+    .await;
 }
 #[test]
 #[ignore = "requires fixed PDRS_BASELINE and Node v22.22.0"]
@@ -1405,13 +1466,22 @@ async fn completed_writes_and_requests_release_capacity() {
 #[tokio::test]
 async fn large_output_matches_ts() {
     use sha2::{Digest, Sha256};
-    for expected in oracle()["resources"]["largeOutput"]
-        .as_array()
-        .expect("#749 large output fixture array")
-    {
-        let size = expected["size"]
-            .as_u64()
-            .expect("#749 large output fixture size") as usize;
+    let observed = oracle();
+    let cases = crate::test_negative_receipt::expect_some(
+        observed["resources"]["largeOutput"].as_array(),
+        "#749 large output fixture has exactly two required sizes",
+    );
+    negative_assert_eq!(
+        cases.len(),
+        2,
+        "#749 large output fixture has exactly two required sizes"
+    );
+    for (expected, size) in cases.iter().zip([2 * 1024 * 1024, MAX_OUTPUT_PAYLOAD]) {
+        negative_assert_eq!(
+            expected["size"],
+            json!(size),
+            "#749 large output fixture has exactly two required sizes"
+        );
         let (text, mut outgoing, _) = Text::channel();
         text.send_text("x".repeat(size));
         let item = crate::test_negative_receipt::expect_ok(
@@ -1475,18 +1545,14 @@ async fn oversized_output_sends_close() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn full_queue_eof_flushes_successfully() {
     let expected = &oracle()["resources"]["fullQueueEnd"];
     negative_assert_eq!(
-        expected["completed"],
-        64,
-        "#749 full queue EOF flushes successfully"
-    );
-    negative_assert_eq!(
-        expected["finished"],
-        true,
-        "#749 full queue EOF flushes successfully"
+        expected,
+        &json!({"before":{"completed":1,"finished":false},
+            "completed":MAX_OUTPUT_FRAMES,"finished":true,"destroyed":true}),
+        "#749 full queue EOF fixture lifecycle"
     );
     let (text, outgoing, closing) = Text::channel();
     for _ in 0..MAX_OUTPUT_FRAMES {
@@ -1499,7 +1565,10 @@ async fn full_queue_eof_flushes_successfully() {
         let mut bytes = Vec::new();
         peer.read_to_end(&mut bytes).await.map(|_| bytes)
     };
-    let result = timeout(DEADLINE, async { tokio::join!(writing, reading) }).await;
+    let result = timeout(CLOSE_BUDGET + Duration::from_secs(2), async {
+        tokio::join!(writing, reading)
+    })
+    .await;
     let (written, received) =
         crate::test_negative_receipt::expect_ok(result, "#749 full queue EOF flushes successfully");
     crate::test_negative_receipt::expect_ok(written, "#749 full queue EOF flushes successfully");
@@ -1627,4 +1696,173 @@ fn frame_header_budgets_match_encoding() {
         frame::MAX_CLIENT_HEADER_BYTES,
         "#749 header budgets cover actual wire encoding"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn close_budget_covers_accepted_bytes() {
+    for (size, seconds) in [(0, 30), (2 * 1024 * 1024, 33), (MAX_OUTPUT_PAYLOAD, 131)] {
+        let (text, mut outgoing, _) = Text::channel();
+        let held = if size == 0 {
+            None
+        } else {
+            text.send_text("x".repeat(size));
+            Some(crate::test_negative_receipt::expect_ok(
+                outgoing.try_recv(),
+                "#749 close budget covers accepted bytes",
+            ))
+        };
+        let start = tokio::time::Instant::now();
+        text.close(1000, "");
+        negative_assert_eq!(
+            *text.closing.borrow(),
+            Some(start + Duration::from_secs(seconds)),
+            "#749 close budget covers accepted bytes"
+        );
+        drop(held);
+        tokio::time::advance(Duration::from_secs(2)).await;
+        text.end();
+        negative_assert_eq!(
+            *text.closing.borrow(),
+            Some(start + Duration::from_secs(seconds)),
+            "#749 close budget covers accepted bytes"
+        );
+    }
+}
+
+// A single explicit poll establishes the write predecessor, independent of
+// scheduler wake order. This helper never spins or advances the clock.
+async fn is_pending<F: Future>(future: std::pin::Pin<&mut F>) -> bool {
+    let mut future = future;
+    std::future::poll_fn(|cx| std::task::Poll::Ready(future.as_mut().poll(cx).is_pending())).await
+}
+
+#[test]
+fn close_flush_fixture_records_ts_lifecycle() {
+    use sha2::{Digest, Sha256};
+    let mut expected = Vec::new();
+    let size = 2 * 1024 * 1024;
+    let hash = format!("{:x}", Sha256::digest(vec![b'x'; size]));
+    for event in ["close", "eof"] {
+        for outcome in ["release", "cancel"] {
+            let after = if outcome == "release" {
+                json!({"size":size,"opcode":1,"wireBytes":size+10+if event=="close"{4}else{0},
+                    "sha256":hash,"tail":if event=="close"{"880203e8"}else{""},"finished":event=="close"})
+            } else {
+                json!({"destroyed":true,"serverClosed":true})
+            };
+            expected.push(
+                json!({"event":event,"outcome":outcome,"advancedMs":3_600_000,
+                "before":{"pendingBytes":true,"finished":false,"destroyed":false,
+                    "serverClosed":false,"socketTimeout":0},"after":after}),
+            );
+        }
+    }
+    negative_assert_eq!(
+        oracle()["resources"]["closeFlush"],
+        json!(expected),
+        "#749 TS close flush matrix is complete"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn accepted_output_flushes_after_close_or_eof() {
+    for close in [true, false] {
+        let (text, outgoing, closing) = Text::channel();
+        let payload = vec![b'x'; 2 * 1024 * 1024];
+        text.send_text(String::from_utf8(payload.clone()).expect("#749 flush ASCII payload"));
+        if close {
+            text.close(1000, "");
+        } else {
+            text.end();
+        }
+        let (writer, mut peer) = tokio::io::duplex(16);
+        let writing = write_output(writer, outgoing, closing);
+        tokio::pin!(writing);
+        negative_assert!(
+            is_pending(writing.as_mut()).await,
+            "#749 accepted output survives delayed flush"
+        );
+        tokio::time::advance(Duration::from_secs(2)).await;
+        negative_assert!(
+            is_pending(writing.as_mut()).await,
+            "#749 accepted output survives delayed flush"
+        );
+        let reading = async {
+            let mut bytes = Vec::new();
+            peer.read_to_end(&mut bytes).await.map(|_| bytes)
+        };
+        let (written, read) = tokio::join!(writing, reading);
+        crate::test_negative_receipt::expect_ok(
+            written,
+            "#749 accepted output survives delayed flush",
+        );
+        let bytes = crate::test_negative_receipt::expect_ok(
+            read,
+            "#749 accepted output survives delayed flush",
+        );
+        let mut expected = frame::server_frame(1, &payload);
+        if close {
+            expected.extend(frame::server_frame(8, &1000u16.to_be_bytes()));
+        }
+        negative_assert_eq!(
+            bytes,
+            expected,
+            "#749 accepted output survives delayed flush"
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn stalled_output_is_bounded_and_cancellable() {
+    for close in [true, false] {
+        for cancel in [true, false] {
+            let (text, outgoing, closing) = Text::channel();
+            text.send_text("held".repeat(16));
+            if close {
+                text.close(1000, "");
+            } else {
+                text.end();
+            }
+            let (io, _peer) = tokio::io::duplex(16);
+            let (send, mut dropped) = oneshot::channel();
+            let writer = DropIo {
+                io,
+                dropped: Some(send),
+                stall_shutdown: false,
+            };
+            let mut writing = Box::pin(write_output(writer, outgoing, closing));
+            negative_assert!(
+                is_pending(writing.as_mut()).await,
+                "#749 blocked flush releases resources"
+            );
+            tokio::time::advance(Duration::from_secs(2)).await;
+            negative_assert!(
+                is_pending(writing.as_mut()).await,
+                "#749 blocked flush releases resources"
+            );
+            if !cancel {
+                tokio::time::advance(Duration::from_secs(130)).await;
+                // Poll once: a missing deadline is an assertion failure, never
+                // an executor timeout or an unbounded await.
+                let result =
+                    std::future::poll_fn(|cx| std::task::Poll::Ready(writing.as_mut().poll(cx)))
+                        .await;
+                negative_assert!(
+                    matches!(result, std::task::Poll::Ready(Err(ref e))
+                    if e.kind()==std::io::ErrorKind::TimedOut),
+                    "#749 blocked flush releases resources"
+                );
+            }
+            drop(writing);
+            crate::test_negative_receipt::expect_ok(
+                dropped.try_recv(),
+                "#749 blocked flush releases resources",
+            );
+            negative_assert_eq!(
+                text.bytes.available_permits(),
+                MAX_OUTPUT_BYTES,
+                "#749 blocked flush releases resources"
+            );
+        }
+    }
 }

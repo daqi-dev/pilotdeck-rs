@@ -31,7 +31,12 @@ const websocket=await load('src/gateway/server/websocket.ts');
 const serverSockets:any[]=[];
 const http=req('node:http');
 const observedHttp={...http,createServer(...args:any[]){const server=http.createServer(...args);server.on('connection',(socket:any)=>serverSockets.push(socket));return server;}};
-const {startGatewayServer}=await load('src/gateway/server/GatewayServer.ts',{'node:http':observedHttp,'./websocket.js':websocket,'./GatewayWsConnection.js':connection});
+// Capture the actual transport constructed by GatewayServer; all methods are
+// inherited unchanged from the fixed baseline, including close/data handling.
+const observedWebsocket={...websocket,TextWebSocketConnection:class extends websocket.TextWebSocketConnection {
+  constructor(socket:any){super(socket);socket.fixtureTransport=this;}
+}};
+const {startGatewayServer}=await load('src/gateway/server/GatewayServer.ts',{'node:http':observedHttp,'./websocket.js':observedWebsocket,'./GatewayWsConnection.js':connection});
 const {WebSocket}=req('ws');
 const deferred = () => {let resolve!: (v?: any)=>void;const promise = new Promise<any>(r=>resolve=r);return {promise,resolve};};
 const hello = (token='fixture-token') => ({type:'hello',protocolVersion:'1.2',clientName:'ui',clientVersion:'probe',token});

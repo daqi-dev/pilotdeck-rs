@@ -165,7 +165,11 @@ const MAX_OUTPUT_PAYLOAD: usize = MAX_INPUT_PAYLOAD;
 const MAX_OUTPUT_BYTES: usize = MAX_OUTPUT_PAYLOAD + frame::MAX_SERVER_HEADER_BYTES;
 const MAX_OUTPUT_FRAMES: usize = 64;
 const MAX_PENDING_REQUESTS: usize = 64;
-const CLOSE_BUDGET: Duration = Duration::from_secs(1);
+// TS has no flush timer. Bound our resource-safety difference with scheduling
+// slack plus one second per remaining MiB, including the in-flight frame.
+// A full 100 MiB frame + header receives 131s, not a fixed 1s deadline.
+const CLOSE_BUDGET: Duration = Duration::from_secs(30);
+const CLOSE_BYTES_PER_SECOND: usize = 1024 * 1024;
 
 enum Output {
     Frame(Vec<u8>, OwnedSemaphorePermit),
@@ -213,16 +217,28 @@ impl Text {
         });
         (text, outgoing, closing_rx)
     }
+    fn close_budget(&self) -> Duration {
+        if crate::mutants::on("native-ws-short-close-budget") {
+            return Duration::from_secs(1);
+        }
+        if crate::mutants::on("native-ws-ignore-flush-bytes") {
+            return CLOSE_BUDGET;
+        }
+        let accepted = MAX_OUTPUT_BYTES.saturating_sub(self.bytes.available_permits());
+        CLOSE_BUDGET + Duration::from_secs(accepted.div_ceil(CLOSE_BYTES_PER_SECOND) as u64)
+    }
     fn deadline(&self, immediate: bool) {
         let candidate = tokio::time::Instant::now()
             + if immediate {
                 Duration::ZERO
             } else {
-                CLOSE_BUDGET
+                self.close_budget()
             };
         self.closing.send_if_modified(|current| {
-            if current.is_none_or(|old| candidate < old)
-                || crate::mutants::on("native-ws-reset-close-deadline")
+            if current.is_none_or(|old| {
+                (immediate || crate::mutants::on("native-ws-shorten-eof-deadline"))
+                    && candidate < old
+            }) || crate::mutants::on("native-ws-reset-close-deadline")
             {
                 *current = Some(candidate);
                 true
@@ -431,9 +447,14 @@ async fn write_output<W: tokio::io::AsyncWrite + Unpin>(
             while let Some(item) = outgoing.recv().await {
                 match item {
                     Output::Frame(wire, permit) => {
-                        writer.write_all(&wire).await?;
-                        if crate::mutants::on("native-ws-leak-output-permit") {
+                        if crate::mutants::on("native-ws-cancel-leaks-permit") {
                             std::mem::forget(permit);
+                            writer.write_all(&wire).await?;
+                        } else {
+                            writer.write_all(&wire).await?;
+                            if crate::mutants::on("native-ws-leak-output-permit") {
+                                std::mem::forget(permit);
+                            }
                         }
                     }
                     Output::Close(wire) => {
