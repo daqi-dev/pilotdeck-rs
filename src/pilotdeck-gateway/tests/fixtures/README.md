@@ -16,6 +16,18 @@ file-history-cwd/negative_controls.py · processor-message-unscoped · #1234 · 
 
 登记脚本必须已接入上述共享跳过入口并列入 `pending_reanchor.TEXT_HOSTS`（本单核验 20 个现有调用方）。尚自管执行或有先行编译/变异、名称展开的脚本，登记会报 `requires a shared skip entry`，须先在对应产品 PR 接通这些路径；本单不批量迁移。`mutant_switch` 编译期开关不适用。普通 CLI 以 `sys.argv[0]` 定位 fixture；导入调用 `run_cases` / `mutation_suite` 时可显式传 `script=__file__`；`matrix_main` 已有显式 script 参数。
 
+## 退出码契约（#1076 fix-r1）
+
+`negative_suite.run_cases` 与 `_shared/negative_sqlite_header.py` 的退出码三分，调用方按此处理，不得把 2 当成 1 的替代：
+
+| rc | 含义 |
+|---|---|
+| 0 | 全部选中项 KILLED（`--compile-only` 时全部 COMPILED） |
+| 1 | 有 SURVIVED / INVALID / SKIPPED，或守卫**拒跑**（HEAD/baseline 不一致、锁忙、参数错误、锚点过期）；这是既有契约，调用方对 rc=1 的断言保持不变 |
+| 2 | 取消（SIGINT/`SystemExit`，`SystemExit(256)` 归一化为 2）或恢复核验失败（守卫退出/逐行恢复无法复核字节）导致作废 |
+
+`summary.json` 只在守卫成功退出后原子发布一次；取消或恢复失败时发布的是全 INVALID 总结，第二次中断允许没有总结——**缺失即失败关闭**，不得把“没有 summary”读成通过。
+
 ## 自测与负控
 
 ```sh

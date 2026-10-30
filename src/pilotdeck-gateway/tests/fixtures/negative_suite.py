@@ -104,12 +104,19 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
                         'assertion': case.assertion, 'status': status, 'reason': reason})
         print(f'{case.mutation}: {status}: {reason}', flush=True)
 
+    # Where the guarded window raised, for the three-state exit contract:
+    # 'enter' is a refusal to run (HEAD/baseline mismatch, busy lock, bad
+    # arguments) and keeps the historical rc=1; 'restore'/'exit' are
+    # unverified restores and must exit 2; 'body' is an in-window
+    # precondition such as an expired anchor, also a refusal (#1076 fix-r1).
+    phase = 'enter'
     try:
         registrations = pending.for_script(root, script)
         paths = list(dict.fromkeys(c.path for c in cases))
         if registrations:
             paths.append(root / pending.FIXTURES / pending.REGISTRY)
         with mutating_sources(root, paths, baseline=baseline) as originals:
+            phase = 'body'
             for case in cases:
                 entry = pending.match(registrations, case.mutation)
                 if entry is not None:
@@ -131,15 +138,20 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
                 finally:
                     # Restore before every successor, also on timeout or bad anchors.
                     # The enclosing guard independently restores and verifies on exit.
+                    phase = 'restore'
                     case.path.write_bytes(originals[case.path])
                     if case.path.read_bytes() != originals[case.path]:
                         raise RuntimeError(f'byte restoration failed: {case.path}')
+                    phase = 'body'
                 try:
                     if not passed(run(case.mutation + '-restored', case.test), case.test):
                         status, reason = 'INVALID', reason + '; restored bound test did not pass'
                 except Exception as error:
                     status, reason = 'INVALID', reason + f'; restored: {type(error).__name__}: {error}'
                 record(case, status, reason)
+            # The body is done; an exception from here on comes from the
+            # guard's own restore/re-verify on context exit.
+            phase = 'exit'
     except BaseException as error:
         # A baseline/lock/restoration failure — or a cancellation delivered by
         # the guard's restore/re-verify window — makes every recorded row
@@ -157,7 +169,14 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
         # normalized code; a KeyboardInterrupt returns 2 from run_cases.
         if isinstance(error, SystemExit):
             raise SystemExit(2) from error
-        return 2
+        # #1076 fix-r1 exit contract: only an unverified restore or a
+        # cancellation-invalidated run may use rc=2. A refusal to run before
+        # the guard opened (HEAD/baseline mismatch, busy lock, bad argument)
+        # keeps the historical rc=1 that callers already assert
+        # (``pending-reanchor/test_controls.py`` HEAD-failure exit).
+        if phase in ('restore', 'exit') or not isinstance(error, Exception):
+            return 2
+        return 1
     # Reaching here means mutating_sources restored every source and verified
     # it against the baseline. Only now may a final summary exist.
     publish_summary(out, results)
