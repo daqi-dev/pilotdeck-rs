@@ -286,7 +286,8 @@ class Ledger(unittest.TestCase):
     def test_full_file_hash(self):
         if KIND == 'parity':
             self.manifest.write_bytes(checker.LEGACY_FULL_ROW)
-            self.assertTrue(checker.check(self.root)['ok'], '#1088 full-file hash positive')
+            # #1089 full-inventory checks have separate fixtures; this case binds only the ledger digest.
+            self.assertTrue(checker.check(self.root)['checked']['accepted-diffs.md']['ok'], '#1088 full-file hash positive')
             self.legacy.write_bytes(self.before + b'!')
             self.assertFalse(checker.check(self.root)['checked']['accepted-diffs.md']['ok'],
                              '#1088 full ledger hash must fail')
@@ -294,7 +295,7 @@ class Ledger(unittest.TestCase):
             # Data-only inventory fixture; the real module bootstrap already ran.
             # No checkout, fake git, or loaded-source guard is replaced.
             digest = hashlib.sha256(self.before).hexdigest()
-            self.manifest.write_text('# B2（待定标）\n' + digest + '  accepted-diffs.md\n')
+            self.manifest.write_text('# B2（待定标）\n' + digest + '  ../../specs/ui-server-parity/accepted-diffs.md\n')
             with patch.object(checker, 'required_files', return_value={self.legacy}):
                 self.assertTrue(checker.check(self.folder, root=self.root)['hashes_consistent'],
                                 '#1088 full-file hash positive')
