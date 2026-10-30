@@ -132,6 +132,9 @@ def run_controls(source):
     reordered = resequence([deepcopy(good[1]), deepcopy(good[0]), deepcopy(good[2])])
     cases['cross_channel_positive'] = {'ok': G.compare_records('pure_text', good, reordered)['verdict'] == 'PASS'}
     source = G.artifact_dir(source)
+    # _tmp/ is gitignored, so a fresh checkout has no such directory yet;
+    # TemporaryDirectory(dir=...) refuses to create the parent itself.
+    (G.WORKTREE / '_tmp').mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='pdrs-controls-', dir=G.WORKTREE / '_tmp') as tmp:
         left, right = Path(tmp) / 'left', Path(tmp) / 'right'
         left.mkdir(); right.mkdir()

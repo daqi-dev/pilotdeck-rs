@@ -48,6 +48,9 @@ def run_controls(source):
     originals = {sid: [json.loads(line) for line in (source / f'{sid}.pilotdeck-current-sidecar.jsonl').read_text().splitlines()]
                  for sid in catalog}
     cases = {}
+    # _tmp/ is gitignored, so a fresh checkout has no such directory yet;
+    # TemporaryDirectory(dir=...) refuses to create the parent itself.
+    (G.WORKTREE / '_tmp').mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='pdrs-multimodal-', dir=G.WORKTREE / '_tmp') as tmp:
         root = Path(tmp)
         output = '/offline/multimodal-control/artifacts'
