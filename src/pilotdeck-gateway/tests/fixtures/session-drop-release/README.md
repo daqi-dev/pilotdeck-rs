@@ -13,13 +13,23 @@
 
 TS 进程退出后无法继续执行 JS；它没有 Rust 的 Drop、writer guard 或 file/process
 fence。这里仅对齐异步 cleanup 的截止状态，额外的同步释放保障登记于
-`specs/gateway-parity/diffs/A7.2-SESSION-HANDLE-DROP-001.md`（待复核，非评分豁免）。
+`specs/gateway-parity/diffs/A7.2-SESSION-HANDLE-DROP-001-R1.md`（待复核，非评分豁免）。
 
 `oracle.json` 记录源闭包哈希。ignored 守卫 `drop_release_regenerates_identically`
-逐字节复算；`drop_release_preserves_unrelated_out_files` 实跑两次，核已有
-`work-process-exit/keep.txt` 保留、已有 oracle 拒绝覆盖。
-输出目录递归创建；oracle 使用 `flag:'wx'`；工作目录只清理本次 `mkdtempSync`
-独占创建的路径；子进程 marker 先写独占临时文件再原子 rename。
+逐字节复算；`drop_release_preserves_unrelated_out_files` 验证已存在的空目录、
+含工作文件目录、含 oracle 目录都在准入时 EEXIST，目录项与文件字节不变。
+输出目录由 `mkdirSync(output)` 独占认领（仅父目录递归创建），且先于 baseline
+加载与任何子任务；oracle 保持 `flag:'wx'`。`drop_release_preserves_late_oracle`
+用 preload 在真实最终写入前制造竞争文件，验证 wx 拒绝覆盖，并清理自有 work 根。
+工作目录在 finally 中只清理本次 `mkdtempSync` 创建的路径；marker 仍先写独占
+临时文件再原子 rename。子进程仍验证完整 pinned source tree，650 项闭包记录仅
+父进程计算一次（子进程不使用该记录），避免耗尽 15s 子进程启动预算。
+
+handle 的未 poll fallback 现在发布 Disposed 和 executor-stopped 错误；已 poll
+任务的 shutdown 取消与真正 panic 分开报告，均不冒充 hook 完成。Drop 路径恢复
+poisoned progress/lease。new / 首次 push 的 runtime 前提见公共 API 的 # Panics。
+三个 plugin lease 的 dead-executor 计数回收尚未解决，详见追加差异 -R1；已有
+off-runtime 测试只证明捕获的 executor 存活时可跨线程 drop。
 
 Rust `factory_tests.rs` 的六个 `*_owned_session_*shutdown*` 用例使用真实
 ProjectSessionFactory/OwnedSession。current-thread runtime 仅显式驱动到门闩；

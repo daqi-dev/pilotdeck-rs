@@ -383,61 +383,475 @@ fn drop_release_matches_ts() {
     );
 }
 
-#[test]
-#[ignore = "requires the pinned Node v22.22.0 TS baseline"]
-fn drop_release_preserves_unrelated_out_files() {
+struct GeneratorScratch(std::path::PathBuf);
+impl GeneratorScratch {
+    fn new() -> Self {
+        let path =
+            std::env::temp_dir().join(format!("pdrs-1010-preserve-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&path).expect("#1010 claim generator test scratch");
+        Self(path)
+    }
+}
+impl Drop for GeneratorScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn run_drop_generator(
+    output: &Path,
+    preload: Option<&Path>,
+) -> (std::process::ExitStatus, Vec<u8>, Vec<u8>) {
     let baseline = std::path::PathBuf::from(
         std::env::var_os("PDRS_BASELINE").expect("#1010 preservation requires PDRS_BASELINE"),
     );
-    let output = std::env::temp_dir().join(format!("pdrs-1010-preserve-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(output.join("work-process-exit"))
-        .expect("#1010 preservation seed directory");
-    let keep = output.join("work-process-exit/keep.txt");
-    std::fs::write(&keep, b"#1010 original evidence").expect("#1010 preservation seed file");
-    for oracle_exists in [false, true] {
-        let original_oracle = std::fs::read(output.join("oracle.json")).ok();
-        let mut command = crate::test_baseline::node_command();
-        command
-            .args([
-                "--disable-warning=ExperimentalWarning",
-                "--expose-gc",
-                "--import",
-            ])
-            .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
-            .arg(
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("tests/fixtures/session-drop-release/generate.mts"),
-            )
-            .arg(&output)
-            .env("PDRS_BASELINE", &baseline);
-        let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
-            &mut command,
-            "session-drop-release",
-            Duration::from_secs(90),
+    let mut command = crate::test_baseline::node_command();
+    command
+        .args([
+            "--disable-warning=ExperimentalWarning",
+            "--expose-gc",
+            "--import",
+        ])
+        .arg(baseline.join("node_modules/tsx/dist/loader.mjs"));
+    if let Some(preload) = preload {
+        command.arg("--import").arg(preload);
+    }
+    command
+        .arg(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/session-drop-release/generate.mts"),
         )
-        .expect("#1010 preservation generator completed within its bound");
+        .arg(output)
+        .env("PDRS_BASELINE", &baseline);
+    crate::test_baseline::run_generator_with_deadline(
+        &mut command,
+        "session-drop-release",
+        Duration::from_secs(90),
+    )
+    .expect("#1010 preservation generator completed within its bound")
+}
+
+#[test]
+#[ignore = "requires the pinned Node v22.22.0 TS baseline"]
+fn drop_release_preserves_unrelated_out_files() {
+    let scratch = GeneratorScratch::new();
+    // Empty, pre-existing work root, and pre-existing oracle all reject at
+    // admission. A directory's existence is never permission to modify it.
+    for seed in ["work", "oracle", "empty"] {
+        let output = scratch.0.join(seed);
+        std::fs::create_dir(&output).expect("#1010 pre-existing output");
+        let keep = output.join("work-process-exit/keep.txt");
+        if seed != "empty" {
+            std::fs::create_dir(output.join("work-process-exit"))
+                .expect("#1010 preservation seed directory");
+            std::fs::write(&keep, b"#1010 original evidence")
+                .expect("#1010 preservation seed file");
+        }
+        if seed == "oracle" {
+            std::fs::write(output.join("oracle.json"), b"#1010 original oracle")
+                .expect("#1010 seed existing oracle");
+        }
+        let entries = || {
+            let mut names: Vec<_> = std::fs::read_dir(&output)
+                .expect("#1010 read output entries")
+                .map(|entry| entry.expect("#1010 read output entry").file_name())
+                .collect();
+            names.sort();
+            names
+        };
+        let before = entries();
+        let (status, stdout, stderr) = run_drop_generator(&output, None);
         println!(
-            "#1010 preservation existing_oracle={oracle_exists} status={status}\n{}{}",
+            "#1010 preservation seed={seed} status={status}\n{}{}",
             String::from_utf8_lossy(&stdout),
             String::from_utf8_lossy(&stderr)
         );
-        assert_eq!(
-            std::fs::read(&keep).ok().as_deref(),
-            Some(b"#1010 original evidence".as_slice()),
-            "#1010 generator preserves existing work-process-exit bytes"
-        );
-        assert_eq!(
-            status.success(),
-            !oracle_exists,
-            "#1010 generator respects exclusive oracle creation"
-        );
-        if let Some(original) = original_oracle {
+        if seed != "empty" {
+            assert_eq!(
+                std::fs::read(&keep).ok().as_deref(),
+                Some(b"#1010 original evidence".as_slice()),
+                "#1010 generator preserves existing work-process-exit bytes"
+            );
+        }
+        if seed == "oracle" {
             assert_eq!(
                 std::fs::read(output.join("oracle.json")).expect("#1010 existing oracle readable"),
-                original,
+                b"#1010 original oracle",
                 "#1010 generator preserves existing oracle bytes"
             );
         }
+        assert!(
+            !status.success(),
+            "#1010 generator rejects existing output at admission"
+        );
+        let error = String::from_utf8_lossy(&stderr);
+        assert!(
+            error.contains("EEXIST") && error.contains(output.to_string_lossy().as_ref()),
+            "#1010 rejection identifies existing output"
+        );
+        assert_eq!(
+            entries(),
+            before,
+            "#1010 admission refusal leaves directory entries unchanged"
+        );
     }
-    std::fs::remove_dir_all(output).expect("#1010 remove owned preservation scratch");
+}
+
+#[test]
+#[ignore = "requires the pinned Node v22.22.0 TS baseline"]
+fn drop_release_preserves_late_oracle() {
+    let scratch = GeneratorScratch::new();
+    let output = scratch.0.join("out");
+    let preload = scratch.0.join("late-oracle.mjs");
+    // Intercept only the actual final write. This deterministic competitor
+    // arrives after exclusive directory admission, so wx is tested directly.
+    std::fs::write(
+        &preload,
+        r#"import fs from 'node:fs';
+const write = fs.writeFileSync;
+fs.writeFileSync = function(file, ...args) {
+ if (String(file).endsWith('/oracle.json')) {
+  fs.writeFileSync = write;
+  write(file, '#1010 competing oracle', {flag:'wx'});
+ }
+ return write(file, ...args);
+};
+"#,
+    )
+    .expect("#1010 write late oracle hook");
+    let (status, stdout, stderr) = run_drop_generator(&output, Some(&preload));
+    println!(
+        "#1010 late oracle status={status}\n{}{}",
+        String::from_utf8_lossy(&stdout),
+        String::from_utf8_lossy(&stderr)
+    );
+    assert_eq!(
+        std::fs::read(output.join("oracle.json")).expect("#1010 late oracle exists"),
+        b"#1010 competing oracle",
+        "#1010 generator preserves late oracle bytes"
+    );
+    assert!(!status.success(), "#1010 late oracle write is refused");
+    let error = String::from_utf8_lossy(&stderr);
+    assert!(
+        error.contains("EEXIST") && error.contains("oracle.json"),
+        "#1010 late oracle rejection identifies file: {error}"
+    );
+    assert_eq!(
+        std::fs::read_dir(&output)
+            .expect("#1010 late oracle output entries")
+            .count(),
+        1,
+        "#1010 generator cleans owned work roots on failure"
+    );
+}
+
+async fn assert_shutdown_result(handle: &LiveSessionHandle, waiter: DisposeFuture<'static>) {
+    let error = tokio::time::timeout(Duration::from_secs(3), waiter)
+        .await
+        .expect("#1010 shutdown disposal returns within its bound")
+        .expect_err("#1010 shutdown disposal cannot claim success");
+    assert_eq!(
+        error.message, "Session lifecycle executor stopped.",
+        "#1010 unpolled drain reports stopped executor"
+    );
+    assert_eq!(
+        handle.state(),
+        HandleState::Disposed,
+        "#1010 unpolled drain publishes Disposed"
+    );
+    assert!(
+        !handle
+            .0
+            .progress
+            .lock()
+            .expect("#1010 shutdown progress")
+            .disposal_completed,
+        "#1010 unpolled drain does not claim completed hooks"
+    );
+    assert!(
+        handle
+            .0
+            .progress
+            .lock()
+            .expect("#1010 shutdown completion lock")
+            .disposal
+            .as_ref()
+            .expect("#1010 shutdown completion receiver")
+            .borrow()
+            .is_some(),
+        "#1010 fallback explicitly publishes completion"
+    );
+    let repeated = tokio::time::timeout(Duration::from_secs(3), handle.dispose("again".into()))
+        .await
+        .expect("#1010 repeated shutdown disposal returns")
+        .expect_err("#1010 repeated shutdown disposal cannot succeed");
+    assert_eq!(
+        repeated.message, error.message,
+        "#1010 shutdown result remains stable"
+    );
+}
+
+#[tokio::test]
+async fn explicit_dispose_on_dead_executor_finishes() {
+    let session = DropProbe::new();
+    let handle = handle_on_dead_runtime(&session, None);
+    let waiter = handle.dispose("dead".into());
+    assert_shutdown_result(&handle, waiter).await;
+    assert_eq!(
+        session.guards.load(Ordering::SeqCst),
+        1,
+        "#1010 dead explicit disposal takes writer fallback once"
+    );
+}
+
+#[tokio::test]
+async fn queued_dispose_shutdown_finishes() {
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("#1010 queued executor");
+    let session = DropProbe::new();
+    let handle = {
+        let _entered = executor.enter();
+        LiveSessionHandle::new(session.clone(), None)
+    };
+    let waiter = handle.dispose("queued".into());
+    assert_eq!(
+        session.guards.load(Ordering::SeqCst),
+        0,
+        "#1010 queued drain has never been polled"
+    );
+    std::thread::spawn(move || drop(executor))
+        .join()
+        .expect("#1010 queued shutdown");
+    assert_shutdown_result(&handle, waiter).await;
+    assert_eq!(
+        session.guards.load(Ordering::SeqCst),
+        1,
+        "#1010 queued disposal takes writer fallback once"
+    );
+}
+
+/// A closed completion sender already returns an error: the review's
+/// hypothetical infinite wait was not present, independently of fallback.
+#[tokio::test]
+async fn closed_lifecycle_channel_returns_error() {
+    let (sender, receiver) = watch::channel(None::<RuntimeResult>);
+    drop(sender);
+    let error = tokio::time::timeout(Duration::from_secs(3), wait_result(receiver))
+        .await
+        .expect("#1010 closed completion channel returns boundedly")
+        .expect_err("#1010 closed completion channel returns error");
+    assert_eq!(
+        error.message, "Session lifecycle executor stopped.",
+        "#1010 closed completion channel error"
+    );
+}
+
+struct ParkedDispose {
+    entered: watch::Sender<bool>,
+    panic: bool,
+}
+impl LiveSession for ParkedDispose {
+    fn snapshot(&self) -> JsValue {
+        JsValue::Null
+    }
+    fn abort(&self, _: &JsString) -> RuntimeResult {
+        Ok(())
+    }
+    fn dispose(&self) -> DisposeFuture<'_> {
+        Box::pin(async {
+            self.entered.send_replace(true);
+            assert!(!self.panic, "#1010 intentional dispose panic");
+            std::future::pending::<RuntimeResult>().await
+        })
+    }
+}
+
+fn poison<T: Send>(mutex: &Mutex<T>) {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let _guard = mutex
+                    .lock()
+                    .expect("#1010 poison starts from healthy mutex");
+                panic!("#1010 intentional mutex poison");
+            })
+            .join()
+            .expect_err("#1010 poison worker panicked as intended");
+    });
+}
+
+async fn polled_shutdown(poison_progress: bool) {
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("#1010 polled executor");
+    let (entered, mut entered_rx) = watch::channel(false);
+    let handle = {
+        let _enter = executor.enter();
+        LiveSessionHandle::new(
+            Arc::new(ParkedDispose {
+                entered,
+                panic: false,
+            }),
+            None,
+        )
+    };
+    let waiter = handle.dispose("polled".into());
+    // Drive the owning executor only until the real disposer reaches its
+    // never-completing hook. No wall-clock sleep decides the cancellation point.
+    let executor = std::thread::spawn(move || {
+        executor.block_on(async {
+            tokio::time::timeout(Duration::from_secs(3), entered_rx.wait_for(|v| *v))
+                .await
+                .expect("#1010 disposer reached permanent gate")
+                .expect("#1010 disposer gate sender alive");
+        });
+        executor
+    })
+    .join()
+    .expect("#1010 drive disposer thread");
+    if poison_progress {
+        poison(&handle.0.progress);
+    }
+    std::thread::spawn(move || drop(executor))
+        .join()
+        .expect("#1010 polled shutdown");
+    let error = tokio::time::timeout(Duration::from_secs(3), waiter)
+        .await
+        .expect("#1010 cancelled disposal completes boundedly")
+        .expect_err("#1010 cancelled disposal cannot claim success");
+    assert_eq!(
+        error.message, "Agent session dispose task cancelled.",
+        "#1010 shutdown cancellation is not a panic"
+    );
+    let progress = handle
+        .0
+        .progress
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert_eq!(
+        progress.state,
+        HandleState::Disposed,
+        "#1010 cancelled drain publishes Disposed"
+    );
+    assert!(
+        !progress.disposal_completed,
+        "#1010 cancelled hooks remain incomplete"
+    );
+}
+
+#[tokio::test]
+async fn polled_dispose_shutdown_reports_cancellation() {
+    polled_shutdown(false).await;
+}
+
+#[tokio::test]
+async fn poisoned_dispose_guard_still_completes() {
+    polled_shutdown(true).await;
+}
+
+#[tokio::test]
+async fn dispose_panic_is_distinct_from_cancellation() {
+    let handle = LiveSessionHandle::new(
+        Arc::new(ParkedDispose {
+            entered: watch::channel(false).0,
+            panic: true,
+        }),
+        None,
+    );
+    let error = tokio::time::timeout(Duration::from_secs(3), handle.dispose("panic".into()))
+        .await
+        .expect("#1010 panicked disposal completes boundedly")
+        .expect_err("#1010 panicked disposal cannot claim success");
+    assert_eq!(
+        error.message, "Agent session dispose task panicked.",
+        "#1010 actual panic remains distinguishable"
+    );
+    assert_eq!(
+        handle.state(),
+        HandleState::Disposed,
+        "#1010 panicked drain publishes Disposed"
+    );
+}
+
+#[tokio::test]
+async fn poisoned_handle_drop_still_drains() {
+    for progress in [true, false] {
+        let session = DropProbe::new();
+        let handle = LiveSessionHandle::new(session.clone(), None);
+        if progress {
+            poison(&handle.0.progress);
+        } else {
+            poison(&handle.0.lease);
+        }
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(handle)));
+        assert!(result.is_ok(), "#1010 poisoned handle Drop does not panic");
+        tokio::time::timeout(Duration::from_secs(3), session.disposed.notified())
+            .await
+            .expect("#1010 poisoned handle drain still reaches dispose");
+        assert_eq!(
+            session.guards.load(Ordering::SeqCst),
+            1,
+            "#1010 poisoned handle acquires writer guard once"
+        );
+    }
+}
+
+#[tokio::test]
+async fn poisoned_activity_drop_still_drains() {
+    let session = DropProbe::new();
+    let handle = LiveSessionHandle::new(session.clone(), None);
+    let activity = handle
+        .begin_activity()
+        .expect("#1010 activity before poisoning");
+    poison(&handle.0.progress);
+    drop(handle);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(activity)));
+    assert!(
+        result.is_ok(),
+        "#1010 poisoned activity Drop does not panic"
+    );
+    tokio::time::timeout(Duration::from_secs(3), session.disposed.notified())
+        .await
+        .expect("#1010 poisoned activity releases its drain");
+    assert_eq!(
+        session.guards.load(Ordering::SeqCst),
+        1,
+        "#1010 poisoned activity acquires writer guard once"
+    );
+}
+
+#[tokio::test]
+async fn poisoned_unpolled_fallback_still_completes() {
+    let session = DropProbe::new();
+    let handle = handle_on_dead_runtime(&session, None);
+    poison(&handle.0.progress);
+    let waiter = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        handle.dispose("poison".into())
+    }))
+    .expect("#1010 poisoned fallback starts without panic");
+    let error = tokio::time::timeout(Duration::from_secs(3), waiter)
+        .await
+        .expect("#1010 poisoned fallback completes boundedly")
+        .expect_err("#1010 poisoned fallback cannot claim success");
+    assert_eq!(
+        error.message, "Session lifecycle executor stopped.",
+        "#1010 poisoned fallback error"
+    );
+    let progress = handle
+        .0
+        .progress
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert_eq!(
+        progress.state,
+        HandleState::Disposed,
+        "#1010 poisoned fallback publishes Disposed"
+    );
+    assert_eq!(
+        session.guards.load(Ordering::SeqCst),
+        1,
+        "#1010 poisoned fallback takes writer guard"
+    );
 }
