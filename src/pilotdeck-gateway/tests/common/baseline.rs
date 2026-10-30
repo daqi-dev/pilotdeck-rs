@@ -138,6 +138,11 @@ pub(crate) fn regenerates_identically(fixture: &str) {
     fs::create_dir_all(&scratch).expect("#280 create regeneration scratch");
     let generator_output = if fixture == "interaction-permission" {
         scratch.join("output")
+    } else if fixture == "session-stale-handoff" {
+        // #1020 fix-r1: the fixture README documents a direct invocation
+        // whose OUT does not exist yet, so the guard must exercise that entry
+        // instead of a pre-created scratch directory.
+        scratch.join("out")
     } else {
         scratch.clone()
     };
@@ -185,6 +190,21 @@ pub(crate) fn regenerates_identically(fixture: &str) {
         String::from_utf8_lossy(&stdout),
         String::from_utf8_lossy(&stderr)
     );
+    if fixture == "session-stale-handoff" {
+        // #1020 fix-r1: the generator removes its work-* scratch directories
+        // before writing the oracle; leftovers would silently change what a
+        // direct invocation leaves behind in OUT.
+        let leftovers: Vec<String> = fs::read_dir(&generator_output)
+            .expect("#1020 read generated output")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name() != "oracle.json")
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "#1020 {fixture}: generator left files behind in OUT: {leftovers:?}"
+        );
+    }
     let generated = generated_oracle_bytes(fixture, &scratch, &stdout)
         .unwrap_or_else(|error| panic!("#280 {fixture}: {error}"));
     let committed = fs::read(fixtures.join("oracle.json")).expect("#280 read committed oracle");

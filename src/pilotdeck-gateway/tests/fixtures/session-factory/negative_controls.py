@@ -186,6 +186,19 @@ cases = [
     ('1020-stale-retry-removed', owner, 'option_env!("PDRS_1020_SKIP_STALE_RETRY").is_none()', 'false', None, prefix+'recreate_retries_stale_disposed_handoff', '#1020 stale handoff retried'),
     ('1020-stale-retry-unlimited', owner, 'option_env!("PDRS_1020_UNLIMITED_STALE_RETRY").is_some()', 'true', None, prefix+'stale_handoff_retry_is_limited_to_one', '#1020 stale handoff retry is limited to one'),
     ('1020-stale-fixture-regeneration', Path(__file__).parents[1] / 'session-stale-handoff/oracle.json', '"name": "router-prepare-disposal",', '"name": "wrong-router-prepare-disposal",', None, prefix+'stale_handoff_regenerates_identically', '#280 session-stale-handoff/oracle.json differs'),
+    # fix-r1 (Codex P1): the documented direct invocation passes an OUT that
+    # does not exist yet; removing the early mkdir makes the generator ENOENT.
+    # The regeneration guard passes a fresh non-existent out/ subdirectory.
+    ('1020-generator-missing-out', Path(__file__).parents[1] / 'session-stale-handoff/generate.mts', 'fs.mkdirSync(output,{recursive:true});\n', '', None, prefix+'stale_handoff_regenerates_identically', '#280 session-stale-handoff: generator failed'),
+    # fix-r1 (sibling P2): the pre-fix cleanup removed the literal 'work-'
+    # instead of the work-* scratch directories and silently left them behind.
+    ('1020-generator-work-dirs-kept', Path(__file__).parents[1] / 'session-stale-handoff/generate.mts', "for(const entry of fs.readdirSync(output))if(entry.startsWith('work-'))fs.rmSync(path.join(output,entry),{recursive:true,force:true,maxRetries:5});", "fs.rmSync(path.join(output,'work-'),{recursive:true,force:true,maxRetries:5});", None, prefix+'stale_handoff_regenerates_identically', '#1020 session-stale-handoff: generator left files behind in OUT'),
+    # fix-r1 (Codex P2): handing the disposed cached handle to setup on the
+    # successful retry must fail the setup(previous) contract assertions.
+    ('1020-setup-passes-stale-previous', owner, '.setup(context.clone(), handle.clone(), previous)', '.setup(context.clone(), handle.clone(), previous.or_else(|| cached.as_ref().map(|record| record.handle.clone())))', 'create_active', prefix+'recreate_retries_stale_disposed_handoff', '#1020 stale retry sets up a fresh replacement'),
+    # fix-r1 (Codex P2): flattening the surfaced error drops the second
+    # rejection's code/causes; the limit test pins the full second error.
+    ('1020-second-error-flattened', owner, 'return Err(error);', 'return Err(RuntimeError::new(error.message.clone()));', 'create_active', prefix+'stale_handoff_retry_is_limited_to_one', '#1020 stale limit surfaces the second factory error'),
 ]
 
 # These cfg(test) branches are selected at compile time by option_env!.
