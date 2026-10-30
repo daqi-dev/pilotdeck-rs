@@ -73,9 +73,23 @@ class RestoredPositiveFailure(unittest.TestCase):
 
 class SharedVerdicts(unittest.TestCase):
     mutant = dict(test='bound_test', anchor='#778 witness', failure='assertion')
-    log = ('test bound_test ... FAILED\nthread panicked at '
-           + negative.TEST_FILE + ':1:1:\nassertion failed: #778 witness\n'
-           + 'test result: FAILED\n')
+    # #818: the log must be the shape libtest really prints -- a `running 1
+    # test` header, the named test's own status line, and its `thread '<name>'
+    # panicked at` block -- because the shared classifier reads only the named
+    # test's own panic payload (#938 r14 evidence rules).
+    log = (
+        'running 1 test\n'
+        'test bound_test ... FAILED\n'
+        '\nfailures:\n'
+        '---- bound_test stdout ----\n'
+        'thread \'bound_test\' panicked at ' + negative.TEST_FILE + ':1:1:\n'
+        'assertion failed: #778 witness\n'
+        'note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n'
+        '\nfailures:\n'
+        '    bound_test\n'
+        '\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; '
+        '0 filtered out;\n'
+    )
 
     def test_shared_invalid_is_preserved(self):
         with patch.object(negative, 'shared_classify', return_value=('INVALID', 'shared reason')) as call:
@@ -85,13 +99,30 @@ class SharedVerdicts(unittest.TestCase):
                              (101, self.log, 'bound_test', '#778 witness'))
 
     def test_bound_failure_and_invalid_counterexamples(self):
-        self.assertEqual(negative.classify_control(self.mutant, 101, self.log)[0], 'KILLED')
-        for raw in [self.log.replace(negative.TEST_FILE, 'unrelated.rs'),
-                    self.log + 'could not compile',
-                    self.log.replace('#778 witness', 'other assertion'),
-                    self.log.replace('bound_test', 'other_test')]:
-            with self.subTest(raw=raw):
-                self.assertEqual(negative.classify_control(self.mutant, 101, raw)[0], 'INVALID')
+        self.assertEqual(negative.classify_control(self.mutant, 101, self.log)[0], 'KILLED',
+                         '#778 a real-shaped bound failure must stay KILLED')
+        counterexamples = [
+            (self.log.replace(negative.TEST_FILE, 'unrelated.rs'), 'panic outside this fixture'),
+            (self.log + 'could not compile', 'compile error'),
+            (self.log.replace('#778 witness', 'other assertion'), 'unbound assertion text'),
+            (self.log.replace('bound_test', 'other_test'), 'another test failed'),
+            # #818 negative control: the marker on a bare panic line with no
+            # named thread header is not the test's own payload, so the shared
+            # classifier must reject it even though the marker text matches.
+            (self.log.replace("thread 'bound_test' panicked", 'thread panicked'),
+             'panic without the named test thread header'),
+            # #818 negative control: a sibling test's panic block carrying the
+            # same marker while the bound test passed is not evidence either.
+            (self.log.replace('test bound_test ... FAILED', 'test bound_test ... ok')
+                    .replace("thread 'bound_test' panicked", "thread 'other_test' panicked")
+                    .replace('test result: FAILED. 0 passed; 1 failed',
+                             'test result: FAILED. 1 passed; 1 failed'),
+             'marker in a sibling test panic'),
+        ]
+        for raw, why in counterexamples:
+            with self.subTest(why=why):
+                self.assertEqual(negative.classify_control(self.mutant, 101, raw)[0], 'INVALID',
+                                 f'#778 counterexample must stay INVALID: {why}')
         positive = 'test bound_test ... ok\ntest result: ok. 1 passed;\n'
         self.assertEqual(negative.classify_control(self.mutant, 0, positive)[0], 'SURVIVED')
 

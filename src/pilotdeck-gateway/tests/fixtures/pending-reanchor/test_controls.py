@@ -23,10 +23,20 @@ TEST = 'bound_test'
 
 
 def output(killed=False):
-    text = (f'test {TEST} ... FAILED\ntest result: FAILED\n' if killed else
+    # #818: the killed shape must be the libtest output the shared classifier
+    # reads: a `running 1 test` header, the named test's own FAILED line, and
+    # its `thread '<name>' panicked at` block carrying the assertion message.
+    text = (f'running 1 test\ntest {TEST} ... FAILED\n\nfailures:\n'
+            f'---- {TEST} stdout ----\n'
+            f"thread '{TEST}' panicked at source.rs:1:1:\n"
+            '#1048 bound assertion\n'
+            'note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n'
+            '\nfailures:\n'
+            f'    {TEST}\n'
+            '\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured;\n'
+            if killed else
             f'test {TEST} ... ok\ntest result: ok. 1 passed; 0 failed;\n')
-    return subprocess.CompletedProcess([], 101 if killed else 0, text,
-        'panicked at source.rs:1: #1048 bound assertion' if killed else '')
+    return subprocess.CompletedProcess([], 101 if killed else 0, text, '')
 
 
 class Controls(unittest.TestCase):
