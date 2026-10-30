@@ -1,6 +1,6 @@
 // #1010 TS goldens: the drop side of the AgentHandle lifecycle, using the
 // real AgentHandle class with a deterministic session seam (only lifecycle
-// paths are touched). The five cases pin the TS side of the state x event x
+// paths are touched). The cases pin the TS side of the state x event x
 // timing matrix in _tmp/20261026-issue-1010/plan.md:
 //   handle-drop-gc  cells 1/10  dropping every reference (GC forced through
 //                              --expose-gc) runs no onDispose — AgentHandle
@@ -27,6 +27,7 @@ if(!process.argv[3]?.startsWith('--child-process-exit')){
 }
 const sourceCommit=assertBaseline(base);
 const {AgentHandle}=await import(`${base}/src/agent/scope/AgentHandle.ts`);
+const {PluginRegistry}=await import(`${base}/src/extension/plugins/runtime/PluginRegistry.ts`);
 async function bounded<T>(promise:Promise<T>,label:string):Promise<T>{
  let timer:any;
  try{return await Promise.race([promise,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('#1010 TS gate timeout: '+label)),5000)})]);}
@@ -62,7 +63,7 @@ if(process.argv[3]?.startsWith('--child-process-exit')){
 
 // Children still verify the entire pinned source tree via assertBaseline;
 // only the parent needs to compute the recorded closure (650 git reads).
-const sourceSha256=await baselineSourceHashes(base,['src/agent/scope/AgentHandle.ts']);
+const sourceSha256=await baselineSourceHashes(base,['src/agent/scope/AgentHandle.ts','src/extension/plugins/runtime/PluginRegistry.ts']);
 const workRoots:string[]=[];
 const cases:any[]=[];
 function record(name:string,observations:any){cases.push({name,node:process.version,observations});}
@@ -102,6 +103,64 @@ try{
  void handle.dispose('#1010 abandoned-waiter probe');
  await bounded(new Promise(resolve=>setTimeout(resolve,20)),'abandoned-waiter settle');
  record('abandoned-waiter',{stateBefore,stateAfter:handle.state,onDisposeCalls});
+}
+
+// fix-r3: real TS registry waits for the last lease; cancelling a caller's
+// interest does not cancel its memoized release. The peer stays held while
+// retirement enters its actual waitForLeaseChange seam.
+{
+ const registry=new PluginRegistry();
+ let calls=0,atWait!:()=>void,atHook!:()=>void,finish!:()=>void;
+ const waiting=new Promise<void>(resolve=>{atWait=resolve;});
+ const hook=new Promise<void>(resolve=>{atHook=resolve;});
+ const gate=new Promise<void>(resolve=>{finish=resolve;});
+ const plugin={name:'lease-1010',source:'builtin',dispose:async()=>{calls++;atHook();await gate;}} as any;
+ registry.replaceAll([plugin]);
+ const first=registry.acquire(),last=registry.acquire();
+ const original=(registry as any).waitForLeaseChange.bind(registry);
+ (registry as any).waitForLeaseChange=()=>{const result=original();atWait();return result;};
+ let settled=false;
+ const disposal=registry.dispose().then(()=>{settled=true;});
+ await bounded(waiting,'registry lease wait');
+ const firstRelease=first.release();
+ assert.equal(first.release(),firstRelease,'#1010 TS release promise memoized');
+ assert.equal((registry as any).pluginLeaseCounts.get(plugin),1,'#1010 TS last peer remains held');
+ const held={state:registry.state,settled,disposeCalls:calls};
+ assert.deepEqual(held,{state:'draining',settled:false,disposeCalls:0});
+ // Abandon the first waiter. Only the last release can reach the hook.
+ const lastRelease=last.release();
+ await bounded(hook,'last lease callback');
+ const pending={settled,disposeCalls:calls};
+ assert.deepEqual(pending,{settled:false,disposeCalls:1});
+ finish();
+ await bounded(Promise.all([disposal,firstRelease,lastRelease]),'registry released');
+ assert.equal(first.release(),firstRelease,'#1010 TS completed release promise memoized');
+ record('plugin-lease-last-release',{held,pending,stateAfter:registry.state,disposeCalls:calls});
+}
+
+// fix-r3: hook the real waitForNoActiveRun, then enter its ordinary waiter.
+// A permanently held run keeps onDispose pending; releasing it completes once.
+{
+ let atWait!:()=>void,atRun!:()=>void,finishRun!:()=>void,onDisposeCalls=0;
+ const waiting=new Promise<void>(resolve=>{atWait=resolve;});
+ const running=new Promise<void>(resolve=>{atRun=resolve;});
+ const runGate=new Promise<void>(resolve=>{finishRun=resolve;});
+ const session={...sessionStub(),abort:()=>{},async *submit(){atRun();await runGate;}};
+ const handle=new AgentHandle(session,{onDispose:()=>{onDisposeCalls++;}});
+ const stream=handle.submit({} as any);
+ const next=stream.next();
+ await bounded(running,'session submit entered');
+ const original=(handle as any).waitForNoActiveRun.bind(handle);
+ (handle as any).waitForNoActiveRun=()=>{const result=original();atWait();return result;};
+ const disposal=handle.dispose('#1010 activity gate');
+ await bounded(waiting,'handle activity wait');
+ assert.equal(handle.inFlight,1,'#1010 TS activity remains held at wait');
+ const pending={state:handle.state,onDisposeCalls};
+ assert.deepEqual(pending,{state:'draining',onDisposeCalls:0});
+ finishRun();
+ await bounded(next,'session submit finished');
+ await bounded(disposal,'handle activity released');
+ record('handle-activity-wait',{pending,stateAfter:handle.state,onDisposeCalls});
 }
 
 // A process cannot execute JS after exit; these are async cutoff probes,
