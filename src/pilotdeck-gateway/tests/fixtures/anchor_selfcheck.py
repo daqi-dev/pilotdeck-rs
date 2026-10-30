@@ -146,6 +146,9 @@ UNSUPPORTED_SIGNALS = {
     '_negkit/test_contract.py': {'table:cases'},
     '_negkit/negative_contract.py': set(),
     '_negkit/toy_runner.py': set(),
+    '_negkit/submit.py': set(),
+    '_negkit/test_submit_migration.py': set(),
+    '_negkit/negative_submit_migration.py': set(),
     # #994: meta-controls mutate disposable Python modules or in-memory loaders;
     # their import/bootstrap machinery is outside the product-anchor grammar.
     'negative-adaptive/negative_controls.py': {'table:cases'},
@@ -1472,6 +1475,53 @@ def check_submit_anchor(static, name, fields, path, before, after, line, local, 
 
 def derived_submit_location(static, name, path, before, local):
     """Recognize the existing location helper and its source-bound consumer."""
+    migrated = [node for node in ast.walk(static.tree) if isinstance(node, ast.Call)
+                and ast.unparse(node.func) == 'adapter.unwrap_site']
+    if migrated:
+        expected_call = ast.parse('adapter.unwrap_site(rust, target, before, after, target.read_bytes())', mode='eval').body
+        if len(migrated) != 1 or ast.dump(migrated[0], include_attributes=False) != ast.dump(expected_call, include_attributes=False):
+            raise Unsupported(f'{name}: unsupported M6 location source binding')
+        # Like switches, verify the executed build(), not merely a call name.
+        # The child imports with __name__ != __main__, so cargo never starts.
+        nonce = secrets.token_hex(16)
+        bootstrap = '''import importlib.util,json,sys
+nonce=sys.argv.pop()
+spec=importlib.util.spec_from_file_location('m6_anchor_audit',sys.argv[1])
+module=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+entries,_=module.build()
+print(json.dumps({'nonce':nonce,'rows':[[e.binding.mutation,str(e.path),e.before,e.after,e.binding.kind,e.binding.assertion] for e in entries if e.path is not None]}))
+'''
+        result = subprocess.run([sys.executable, '-I', '-B', '-c', bootstrap, str(static.script), nonce],
+                                capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            raise Unsupported(f'{name}: M6 runtime anchor audit failed: {result.stderr[-600:]}')
+        try:
+            document = json.loads(result.stdout)
+            rows = document['rows']
+            if document['nonce'] != nonce:
+                raise ValueError('nonce mismatch')
+        except (ValueError, KeyError, TypeError) as error:
+            raise Unsupported(f'{name}: invalid M6 runtime audit: {error}') from error
+        declared = static.named('mutants', 10**9, local)
+        if len(rows) != len(declared) or [row[0] for row in rows] != [row[0] for row in declared]:
+            raise Unsupported(f'{name}: M6 runtime case inventory drift')
+        routing = submit_mapping(static, 'mutant_source')
+        for actual, declaration in zip(rows, declared):
+            target = routing.get(declaration[0], static.named('source', 10**9, local))
+            if actual[1:4] != [str(target), declaration[1], declaration[2]]:
+                raise Unsupported(f'{name}: M6 runtime mutation drift')
+        text = path.read_bytes().decode()
+        if text.count(before) != 1:
+            raise Unsupported(f'{name}: location span expected=1 actual={text.count(before)}')
+        head = text[:text.index(before)]
+        workspace = (static.root / 'src').resolve()
+        derived = f'{path.relative_to(workspace)}:{head.count(chr(10)) + 1}:{len(head.rsplit(chr(10), 1)[-1]) + 1}'
+        row = next(row for row in rows if row[0] == name)
+        if row[4:] != ['location', derived]:
+            raise Unsupported(f'{name}: M6 runtime location binding drift')
+        return derived
+
     def shape(node):
         return ast.dump(node, include_attributes=False)
 
