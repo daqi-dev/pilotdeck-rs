@@ -48,6 +48,28 @@ use std::{
 pub type Recorders = Arc<Mutex<HashMap<JsString, Weak<Recorder>>>>;
 
 pub async fn start(options: Options, env: Env) -> Result<TurnGateway, ProxyError> {
+    start_observed(
+        options,
+        env,
+        Arc::new(|_, result| Box::pin(async move { result })),
+        Arc::new(|error| eprintln!("native project cleanup: {error}")),
+    )
+    .await
+}
+
+type CleanupResult =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>;
+pub(super) type CleanupObserver =
+    Arc<dyn Fn(&'static str, Result<(), String>) -> CleanupResult + Send + Sync>;
+
+// An observer runs only after the actual production disposal. Tests can inject
+// a failure or a deterministic completion gate without substituting resources.
+pub(super) async fn start_observed(
+    options: Options,
+    env: Env,
+    cleanup_observer: CleanupObserver,
+    cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
+) -> Result<TurnGateway, ProxyError> {
     validate_profile(&options, &env).await?;
     register_project(&options)?;
     let project = Arc::new(ProjectRuntimeRegistry::new(
@@ -223,7 +245,7 @@ pub async fn start(options: Options, env: Env) -> Result<TurnGateway, ProxyError
                             },
                             Some("pilotdeck-agent-loop".into()),
                             move |identity, recorder, signal| {
-                                ports.turn(identity, recorder, signal)
+                                turn_ports(&ports, identity, recorder, signal)
                             },
                         )
                         .with_agent_config(config))
@@ -341,8 +363,19 @@ pub async fn start(options: Options, env: Env) -> Result<TurnGateway, ProxyError
             })
         },
         async move {
-            let sessions = cleanup_factory.dispose().await.map_err(|e| e.to_string());
-            let project = cleanup_project.dispose().await.map_err(|e| e.to_string());
+            let sessions = cleanup_observer(
+                "session",
+                cleanup_factory.dispose().await.map_err(|e| e.to_string()),
+            )
+            .await;
+            let project = cleanup_observer(
+                "project",
+                cleanup_project.dispose().await.map_err(|e| e.to_string()),
+            )
+            .await;
+            if let Err(error) = &project {
+                cleanup_diagnostic(error);
+            }
             sessions.and(project)
         },
     );
@@ -447,6 +480,22 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
         None,
     )
     .load(&options.project)?;
+    // The fixed config loader drops unknown top-level fields from config,
+    // so inspecting config.hooks alone silently misses the supplied YAML.
+    // Plugin hooks are refused above; SDK hooks are refused by workspace_id.
+    if snapshot
+        .get("diagnostics")
+        .and_then(|value| match value {
+            JsValue::Array(rows) => Some(rows),
+            _ => None,
+        })
+        .is_some_and(|rows| {
+            rows.iter()
+                .any(|row| row.get("path") == Some(&"hooks".into()))
+        })
+    {
+        return Err("Native isolated profile does not yet support configured hooks.".into());
+    }
     if snapshot
         .get("config")
         .and_then(|v| v.get("modules"))
@@ -479,4 +528,13 @@ pub fn value<const N: usize>(entries: [(&'static str, JsValue); N]) -> JsObject 
         .as_object()
         .expect("object constructor")
         .clone()
+}
+
+pub(super) fn turn_ports(
+    ports: &super::tools::SessionTools,
+    identity: &pilotdeck_protocol::admission::ExecutionIdentity,
+    recorder: Arc<Recorder>,
+    signal: crate::runtime::hooks::Cancellation,
+) -> crate::runtime::turn::host_factory::SessionPorts {
+    ports.turn(identity, recorder, signal)
 }

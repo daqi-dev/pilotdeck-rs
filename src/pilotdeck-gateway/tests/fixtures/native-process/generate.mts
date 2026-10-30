@@ -15,7 +15,7 @@ const root = resolve(process.env.PDRS_BASELINE!);
 const sources = ['src/cli/shutdownCoordinator.ts', 'src/cli/PilotDeckServerShutdownBundle.ts',
   'src/cli/PilotDeckServerBootstrapBundle.ts', 'src/cli/pilotdeck.ts',
   'src/lsp/runtime/LspService.ts', 'src/session/title/SessionTitleGenerator.ts',
-  'src/agent/modules/transport/sidecarTurnComposition.ts'];
+  'src/agent/modules/transport/sidecarTurnComposition.ts', 'src/cli/LocalGatewayLifecycleBundle.ts'];
 const sourceCommit = assertBaseline(root);
 const sourceSha256 = await baselineSourceHashes(root, sources);
 const load = (path:string) => import(pathToFileURL(join(root,path)).href);
@@ -110,6 +110,31 @@ for(const first of ['SIGINT','SIGTERM'] as const){
   assert.ok(Object.values(before).every(v=>v.same&&!v.aborted),'#1071 shared turn signal');assert.ok(Object.values(after).every(Boolean),'#1071 all ports aborted');
   observations.sharedSignal={before,after};
 }
+const {LocalGatewayLifecycleBundle} = await load(sources[7]);
+observations.productionCleanup=[];
+for (const mode of ['ok','session-error','project-error','both-errors','release','cancel','never']) {
+  const gate=deferred(), entered=deferred(); const calls:string[]=[], warnings:any[]=[];
+  const bundle=new LocalGatewayLifecycleBundle({
+    gateway:{},subagentManager:{async dispose(){}},subagentProviders:{async dispose(){}},
+    registry:{
+      async disposeSessionMcpRuntimes(){calls.push('session'); entered.release();
+        if (['release','cancel','never'].includes(mode)) await gate.promise;
+        if (mode==='cancel') throw Error('cancelled');
+        if (['session-error','both-errors'].includes(mode)) throw Error('session failed');
+      },
+      async disposeProjectRuntimes(){calls.push('project'); if (['project-error','both-errors'].includes(mode)) throw Error('project failed');},
+    },
+    telemetry:{async dispose(){}},stopConfigWatching(){},stopExtensionWatching(){},
+    warn(message:string,error:any){warnings.push({message,error:error.message});},
+  });
+  let settled=false; const wait=bundle.dispose().then(()=>{settled=true;});
+  await entered.promise; await Promise.resolve();
+  const before={calls:[...calls],settled};
+  if (['release','cancel','never'].includes(mode)) assert.deepEqual(before,{calls:['session'],settled:false},'#1071 cleanup predecessor gate');
+  if (mode==='never') {observations.productionCleanup.push({mode,before});continue;}
+  gate.release(); await wait; observations.productionCleanup.push({mode,before,calls,warnings,settled});
+}
+
 const output={sourceCommit,sourceSha256,node:process.version,observations};
 await mkdir(process.argv[2],{recursive:true});
 await writeFile(join(process.argv[2],'oracle.json'),JSON.stringify(output,null,2)+'\n',{flag:'wx'});
