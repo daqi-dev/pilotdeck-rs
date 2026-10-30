@@ -73,18 +73,24 @@ mutations = [
     # fix-r2: every reserved A4 port is handed to a listener the fixture
     # already holds, so the bounded bind-collision retry runs out and the
     # observer fails loudly instead of falling through to a wrong address.
+    # fix-r3: the kill is the fixture's own classified assertion, not the
+    # generic nonzero-exit oracle; an earlier unrelated failure (readiness
+    # or WS timeout) stays INVALID.
     ('a4-listen-collision', PROCESS,
      'const reserved:number=(reserve.address() as any).port;',
      'const reserved:number=port;',
-     'executable_native_and_a4', '#1071 executable native and A4 oracle'),
+     'executable_native_and_a4', '#1071 executable A4 bind collision exhausted'),
     # fix-r2: readiness accepts a partial address again ("127.0.0" loses
     # its port), so the observer's first client URL degrades to a default
     # port; the bounded WS open wait must reject fast on that connect error
     # instead of resolving a wrong address or timing out.
+    # fix-r3: the dedicated full-address assertion rejects the port-less
+    # fragment as soon as readiness resolves, deterministically, without
+    # depending on the degraded URL's connect behavior.
     ('readiness-address-port', PROCESS,
      r'listening (\S+:\d+)[^\n]*\n',
      r'listening (\d+)[^\n]*\n',
-     'executable_native_and_a4', '#1071 executable native and A4 oracle'),
+     'executable_native_and_a4', '#1071 executable readiness address carries a port'),
     ('signal-exit-status', SOURCE,
      'server.run(stop, options.drain_budget).await',
      '{ server.run(stop, options.drain_budget).await?; Err("#1071 incorrect clean signal status".into()) }',

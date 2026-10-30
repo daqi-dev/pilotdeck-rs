@@ -52,6 +52,10 @@ fn executable_native_and_a4() {
     )
     .expect("#1071 process observer JSON");
     let assertion = record["assertionFailure"].as_str();
+    // The dedicated classified assertions must run before the generic nonzero
+    // exit oracle: a mutation bound to one of them records its receipt and
+    // panics here, while an unrelated earlier failure (timeout, another
+    // scenario) only trips the unbound generic oracle and stays INVALID.
     negative_assert!(
         assertion != Some("#1071 clean signal exit"),
         "#1071 executable clean signal exit"
@@ -59,6 +63,14 @@ fn executable_native_and_a4() {
     negative_assert!(
         assertion != Some("#1071 refreshed hooks refused"),
         "#1071 executable refreshed hooks refused"
+    );
+    negative_assert!(
+        assertion != Some("#1071 A4 bind collision exhausted"),
+        "#1071 executable A4 bind collision exhausted"
+    );
+    negative_assert!(
+        assertion != Some("#1071 readiness address carries a port"),
+        "#1071 executable readiness address carries a port"
     );
     negative_assert!(
         result.status.success(),
