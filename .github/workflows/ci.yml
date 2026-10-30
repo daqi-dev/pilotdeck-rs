@@ -106,19 +106,25 @@ jobs:
       - name: gateway 协议 schema 静态断言（A3）
         working-directory: .
         run: python3 -I scripts/gateway-parity/check_schema.py
-      - name: gateway 冻结账本（静态规则与只追加）
+      - name: 三套冻结账本（静态规则与只追加）
         working-directory: .
         env:
           LEDGER_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: |
           python3 -I scripts/test-gateway-ledger.py -v
+          python3 -I src/pilotdeck-gateway/tests/fixtures/ledger-diffs/test_ledger.py parity -v
+          python3 -I src/pilotdeck-gateway/tests/fixtures/ledger-diffs/test_ledger.py ui-server-parity -v
           if [ "${{ github.event_name }}" != "push" ] && [ "$LEDGER_BASE" = "$(git rev-parse HEAD)" ]; then
             echo "ledger base 等于 HEAD（${{ github.event_name }}），只追加对照无效，拒绝" >&2; exit 1
           fi
           if [ -n "$LEDGER_BASE" ] && [ "$LEDGER_BASE" != "0000000000000000000000000000000000000000" ]; then
-            python3 -I scripts/gateway-parity/check_frozen.py --base "$LEDGER_BASE"
+            for apparatus in parity gateway-parity ui-server-parity; do
+              python3 -I "scripts/$apparatus/check_frozen.py" --base "$LEDGER_BASE"
+            done
           else
-            python3 -I scripts/gateway-parity/check_frozen.py
+            for apparatus in parity gateway-parity ui-server-parity; do
+              python3 -I "scripts/$apparatus/check_frozen.py"
+            done
           fi
       - uses: actions/setup-node@v4
         with:
