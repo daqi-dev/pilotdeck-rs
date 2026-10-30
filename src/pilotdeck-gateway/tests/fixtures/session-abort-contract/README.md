@@ -51,14 +51,14 @@ cargo test --offline -p pilotdeck-gateway --lib \
   runtime::session::handle::abort_contract_tests:: -- --nocapture
 ```
 
-`negative.py <evidence-directory>` 需要 CARGO_HOME、PDRS_BASELINE。它在独占 /tmp
-源码副本和独立 CARGO_TARGET_DIR 内先跑原实现，再编译四项产品变异：Draining 时
-不转发 abort、lease release 前提前标 Disposed、Disposed 后仍转发 abort、把清理
-顺序改回 session dispose 先于 lease release 的旧顺序；外加把 oracle 的
-sourceSha256（AgentHandle.ts）置 `0`*64 的溯源变异，要求 `test_baseline::check`
-以 `oracle hash for … does not match` 失败。每项必须成功编译、目标测试实际运行
-并在金样 trace、测试自带的 3 秒有界（reverted-cleanup-order：旧顺序下 lease 窗
-口永不打开，被回放自身的有界等待抓住，非外部超时）或溯源断言失败；编译错误、
-外部超时或无测试执行不能算抓住。原始输出、具体替换表达式与退出码保存在证据
-目录；每轮先把全部被改文件恢复原文再注入当轮唯一变异，结束清理副本，不修改
-真实检出树、基线、冻结判据或 state。
+`negative.py [--compile-only] <new-evidence-directory> [mutation ...]` 需要调用方设置
+CARGO_TARGET_DIR、PDRS_BASELINE。它通过共享 `mutating_sources` 锁定本树并核对 HEAD，
+复用调用方构建目录；不建源码或构建副本。每项先跑原实现、单独编译变异、再跑唯一绑定
+测试，恢复后重跑正控。`--compile-only` 只编译所选变异并逐项恢复。
+
+五项变异保留原判据：Draining 时不转发 abort、lease release 前提前标 Disposed、
+Disposed 后仍转发 abort、session dispose 先于 lease release，以及 oracle 的
+AgentHandle.ts sourceSha256 置零。行为失败必须来自绑定完整测试名的专属 panic 消息；
+编译错误、无关 panic、外部超时或无测试执行均记 INVALID。所有所选变异跑完才汇总
+KILLED / SURVIVED / INVALID；任一非 KILLED 即非零退出。编译模式要求全部 COMPILED。
+证据目录独占创建，最终 summary.json 在源码恢复核验后原子发布。

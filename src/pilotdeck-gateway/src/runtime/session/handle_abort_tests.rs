@@ -27,10 +27,18 @@ impl Gate {
     }
     async fn wait(&self) {
         self.entered.add_permits(1);
-        self.release.acquire().await.unwrap().forget();
+        self.release
+            .acquire()
+            .await
+            .expect("#1010 abort-contract setup/observation must succeed")
+            .forget();
     }
     async fn entered(&self) {
-        self.entered.acquire().await.unwrap().forget();
+        self.entered
+            .acquire()
+            .await
+            .expect("#1010 abort-contract setup/observation must succeed")
+            .forget();
     }
     fn open(&self) {
         self.release.add_permits(1);
@@ -46,27 +54,36 @@ impl LiveSession for Session {
         JsValue::Null
     }
     fn abort(&self, reason: &JsString) -> RuntimeResult {
-        let mut trace = self.trace.lock().unwrap();
+        let mut trace = self
+            .trace
+            .lock()
+            .expect("#1010 abort-contract setup/observation must succeed");
         trace.abort_calls += 1;
         let state = if trace.session_disposed {
             "disposed"
         } else {
             "live"
         };
-        trace
-            .events
-            .push(format!("abort:{}:{state}", reason.to_utf8().unwrap()));
+        trace.events.push(format!(
+            "abort:{}:{state}",
+            reason
+                .to_utf8()
+                .expect("#1010 abort-contract setup/observation must succeed")
+        ));
         Ok(())
     }
     fn dispose(&self) -> DisposeFuture<'_> {
         Box::pin(async {
             self.trace
                 .lock()
-                .unwrap()
+                .expect("#1010 abort-contract setup/observation must succeed")
                 .events
                 .push("session_dispose_start".into());
             self.gate.wait().await;
-            let mut trace = self.trace.lock().unwrap();
+            let mut trace = self
+                .trace
+                .lock()
+                .expect("#1010 abort-contract setup/observation must succeed");
             trace.session_disposed = true;
             trace.events.push("session_dispose_done".into());
             Ok(())
@@ -83,13 +100,13 @@ impl RuntimeResources for LeaseResource {
         Box::pin(async {
             self.trace
                 .lock()
-                .unwrap()
+                .expect("#1010 abort-contract setup/observation must succeed")
                 .events
                 .push("lease_release_start".into());
             self.gate.wait().await;
             self.trace
                 .lock()
-                .unwrap()
+                .expect("#1010 abort-contract setup/observation must succeed")
                 .events
                 .push("lease_release_done".into());
             Ok(())
@@ -104,7 +121,9 @@ fn checkpoint(
     trace: &Mutex<Trace>,
     done: bool,
 ) -> Value {
-    let trace = trace.lock().unwrap();
+    let trace = trace
+        .lock()
+        .expect("#1010 abort-contract setup/observation must succeed");
     json!({
         "phase": phase,
         "state": match handle.state() {
@@ -136,7 +155,9 @@ async fn record(active: bool) -> Value {
             Ok(())
         })
     });
-    let lease = registry.acquire(None).unwrap();
+    let lease = registry
+        .acquire(None)
+        .expect("#1010 abort-contract setup/observation must succeed");
     let runtime = lease.runtime().clone();
     registry.invalidate(None); // The final lease release must await cleanup.
     let session = Arc::new(Session {
@@ -144,7 +165,11 @@ async fn record(active: bool) -> Value {
         gate: dispose_gate.clone(),
     });
     let handle = LiveSessionHandle::new(session, Some(lease));
-    let activity = active.then(|| handle.begin_activity().unwrap());
+    let activity = active.then(|| {
+        handle
+            .begin_activity()
+            .expect("#1010 abort-contract setup/observation must succeed")
+    });
     let mut disposal = handle.dispose("dispose".into());
     drop(activity);
     // Production order: the project lease is released before the session's own
@@ -159,7 +184,7 @@ async fn record(active: bool) -> Value {
                 std::task::Poll::Ready(match disposal.as_mut().poll(cx) {
                     std::task::Poll::Pending => false,
                     std::task::Poll::Ready(result) => {
-                        result.unwrap();
+                        result.expect("#1010 abort-contract setup/observation must succeed");
                         true
                     }
                 })
@@ -169,21 +194,36 @@ async fn record(active: bool) -> Value {
         }};
     }
     capture!("lease_pending");
-    handle.abort(&"during-lease".into()).unwrap();
-    handle.abort(&"during-lease".into()).unwrap();
+    handle
+        .abort(&"during-lease".into())
+        .expect("#1010 abort-contract setup/observation must succeed");
+    handle
+        .abort(&"during-lease".into())
+        .expect("#1010 abort-contract setup/observation must succeed");
     capture!("lease_aborts");
     lease_gate.open();
     dispose_gate.entered().await;
     capture!("session_pending");
-    handle.abort(&"during-session".into()).unwrap();
-    handle.abort(&"during-session".into()).unwrap();
+    handle
+        .abort(&"during-session".into())
+        .expect("#1010 abort-contract setup/observation must succeed");
+    handle
+        .abort(&"during-session".into())
+        .expect("#1010 abort-contract setup/observation must succeed");
     capture!("session_aborts");
     dispose_gate.open();
-    disposal.await.unwrap();
+    disposal
+        .await
+        .expect("#1010 abort-contract setup/observation must succeed");
     checkpoints.push(checkpoint("disposed", &handle, &runtime, &trace, true));
-    handle.abort(&"after-disposed".into()).unwrap();
+    handle
+        .abort(&"after-disposed".into())
+        .expect("#1010 abort-contract setup/observation must succeed");
     checkpoints.push(checkpoint("late_abort", &handle, &runtime, &trace, true));
-    registry.dispose().await.unwrap();
+    registry
+        .dispose()
+        .await
+        .expect("#1010 abort-contract setup/observation must succeed");
     json!({"active": active, "checkpoints": checkpoints})
 }
 
@@ -191,7 +231,8 @@ async fn record(active: bool) -> Value {
 async fn abort_at_lease_and_dispose_windows_matches_ts() {
     const ORACLE: &str = include_str!("../../../tests/fixtures/session-abort-contract/oracle.json");
     crate::test_baseline::oracle(ORACLE);
-    let oracle: Value = serde_json::from_str(ORACLE).unwrap();
+    let oracle: Value =
+        serde_json::from_str(ORACLE).expect("#1010 abort-contract setup/observation must succeed");
     // Fail closed on an empty or truncated corpus (same shape as owner_tests):
     // the generator enumerates exactly `for (const active of [false, true])`
     // (generate.mts:71), so pin the whole scenario family, not just
@@ -208,37 +249,47 @@ async fn abort_at_lease_and_dispose_windows_matches_ts() {
         "disposed",
         "late_abort",
     ];
-    let cases = oracle["cases"].as_array().unwrap();
+    let cases = oracle["cases"]
+        .as_array()
+        .expect("#1010 abort-contract setup/observation must succeed");
     assert_eq!(
         cases
             .iter()
-            .map(|case| case["active"].as_bool().unwrap())
+            .map(|case| case["active"]
+                .as_bool()
+                .expect("#1010 abort-contract setup/observation must succeed"))
             .collect::<Vec<_>>(),
         [false, true],
-        "oracle case scenarios; the generator records exactly [false, true]"
+        "#1010 oracle case scenarios; the generator records exactly [false, true]"
     );
     for expected in cases {
-        let active = expected["active"].as_bool().unwrap();
-        let checkpoints = expected["checkpoints"].as_array().unwrap();
+        let active = expected["active"]
+            .as_bool()
+            .expect("#1010 abort-contract setup/observation must succeed");
+        let checkpoints = expected["checkpoints"]
+            .as_array()
+            .expect("#1010 abort-contract setup/observation must succeed");
         assert_eq!(
             checkpoints.len(),
             PHASES.len(),
-            "oracle checkpoint count; active={active}"
+            "#1010 oracle checkpoint count; active={active}"
         );
         assert_eq!(
             checkpoints
                 .iter()
-                .map(|checkpoint| checkpoint["phase"].as_str().unwrap())
+                .map(|checkpoint| checkpoint["phase"]
+                    .as_str()
+                    .expect("#1010 abort-contract setup/observation must succeed"))
                 .collect::<Vec<_>>(),
             PHASES,
-            "oracle checkpoint phases; active={active}"
+            "#1010 oracle checkpoint phases; active={active}"
         );
         let actual = tokio::time::timeout(std::time::Duration::from_secs(3), record(active))
             .await
-            .expect("controlled dispose/lease interleaving hung");
+            .expect("#1010 controlled dispose/lease interleaving hung");
         assert_eq!(
             actual, *expected,
-            "lease/dispose abort trace; active={active}"
+            "#1010 lease/dispose abort trace; active={active}"
         );
     }
 }

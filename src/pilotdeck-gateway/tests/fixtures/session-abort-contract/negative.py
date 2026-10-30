@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-"""Compile product mutations in an owned /tmp workspace; retain failure evidence."""
+"""HEAD-guarded serial controls: [--compile-only] NEW_OUTPUT [mutation ...]."""
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
-import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, new_output_directory
+from negative_panic import named_test_killed
+from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
 
 
 def main():
     rust = Path(__file__).resolve().parents[4]
-    output = Path(sys.argv[1]).resolve()
-    output.mkdir(parents=True, exist_ok=True)
-    assert os.environ.get('CARGO_HOME'), 'set CARGO_HOME'
+    args = sys.argv[1:]
+    compile_only = '--compile-only' in args
+    args = [arg for arg in args if arg != '--compile-only']
+    if not args or not os.environ.get('CARGO_TARGET_DIR'):
+        raise SystemExit('set CARGO_TARGET_DIR; usage: [--compile-only] NEW_OUTPUT [mutation ...]')
+    output = new_output_directory(args[0])
     assert os.environ.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
     handle = 'pilotdeck-gateway/src/runtime/session/handle.rs'
     fixture = 'pilotdeck-gateway/tests/fixtures/session-abort-contract/oracle.json'
@@ -28,7 +31,7 @@ def main():
          'if progress.state != HandleState::Active {', trace),
         ('disposed-before-lease-release', handle,
          'if let Some(mut lease) = guard.lease.take()',
-         'handle.0.progress.lock().unwrap().state = HandleState::Disposed;\n'
+         'progress.lock().unwrap_or_else(std::sync::PoisonError::into_inner).state = HandleState::Disposed;\n'
          '            if let Some(mut lease) = guard.lease.take()', trace),
         ('forward-abort-after-disposed', handle,
          'if progress.state == HandleState::Disposed {', 'if false {', trace),
@@ -63,40 +66,76 @@ def main():
     mutants.append(('tampered-source-hash', fixture,
                     oracle['sourceSha256'][source], '0' * 64,
                     f'oracle hash for {source} does not match'))
-    for name, file, before, _after, _marker in mutants:
-        assert originals[file].count(before) == 1, (name, originals[file].count(before))
+    names = args[1:]
+    if len(set(names)) != len(names) or set(names) - {m[0] for m in mutants}:
+        raise SystemExit('unknown or duplicate mutation')
+    selected = [m for m in mutants if not names or m[0] in names]
+    env = dict(os.environ, CARGO_NET_OFFLINE='true', CARGO_TERM_QUIET='false')
+    command = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib']
+
+    def run(label, compile=False):
+        gate = wait_for_slot(rust.parent / 'scripts/cargo-slots.sh', timeout=900)
+        (output / f'{label}.slots.log').write_text(gate.stdout + gate.stderr)
+        command_args = ['--no-run'] if compile else [test, '--', '--exact', '--nocapture']
+        try:
+            result = run_owned(command + command_args, cwd=rust, env=env, timeout=900)
+        except subprocess.TimeoutExpired as error:
+            (output / f'{label}.log').write_text(
+                (error.stdout or '') + (error.stderr or '') + '\nTIMEOUT\n')
+            raise
+        (output / f'{label}.log').write_text(result.stdout + result.stderr)
+        return result
+
     results = []
-    with tempfile.TemporaryDirectory(prefix='pdrs-abort-contract-negative-', dir='/tmp') as directory:
-        scratch = Path(directory) / 'src'
-        shutil.copytree(rust, scratch, ignore=shutil.ignore_patterns(
-            'target', '.git', 'node_modules', '.env*'))
-        shutil.copytree(rust.parent / 'specs', Path(directory) / 'specs')
-        env = dict(os.environ, CARGO_NET_OFFLINE='true', CARGO_TARGET_DIR=str(scratch / 'target'))
-        # Restore every mutated file each round, then inject only the current
-        # mutation; a mutation must never ride along into a later round.
-        for name, file, before, after, marker in [('baseline', None, None, None, None)] + mutants:
-            for path, original in originals.items():
-                content = original
-                if path == file:
-                    content = content.replace(before, after, 1)
-                (scratch / path).write_text(content)
-            gate = wait_for_slot(rust.parent / 'scripts/cargo-slots.sh')
-            command = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway',
-                       '--lib', test, '--', '--exact', '--nocapture']
-            result = run_owned(command, cwd=scratch, env=env, timeout=600)
-            raw = result.stdout + result.stderr
-            (output / f'negative-{name}.log').write_text(gate.stdout + gate.stderr + raw + f'\nexit={result.returncode}\n')
-            valid = ('1 passed; 0 failed' in raw and result.returncode == 0) if name == 'baseline' else (
-                result.returncode == 101 and marker in raw
-                and '0 passed; 1 failed' in raw and 'could not compile' not in raw)
-            results.append(dict(name=name, file=file, before=before, after=after,
-                                command=command, exit=result.returncode, valid=valid))
-            (output / 'negative-summary.json').write_text(json.dumps(results, indent=2) + '\n')
-            print(f'{name}: {"PASS" if valid else "INVALID"} exit={result.returncode}', flush=True)
-            if not valid:
-                raise SystemExit(1)
-    print('all mutations detected; scratch workspace restored and removed', flush=True)
+    try:
+        with mutating_sources(rust.parent, [rust / m[1] for m in selected]) as snapshots:
+            for name, file, before, after, marker in selected:
+                path = rust / file
+                row = dict(mutation=name, test=test, assertion=marker, compiled=False,
+                           status='INVALID', reason='')
+                try:
+                    original = snapshots[path].decode()
+                    if original.count(before) != 1 or before == after:
+                        raise ValueError(f'{name}: expected one changing anchor')
+                    if not compile_only and not passed(run(name + '-positive'), test):
+                        raise RuntimeError('bound positive test failed')
+                    path.write_text(original.replace(before, after, 1))
+                    if run(name + '-compile', compile=True).returncode:
+                        raise RuntimeError('mutant compilation failed')
+                    row['compiled'] = True
+                    if compile_only:
+                        row.update(status='COMPILED', reason='mutant no-run passed')
+                    else:
+                        result = run(name + '-negative')
+                        status, reason = classify(result, Case(name, path, before, after, test, marker))
+                        if status == 'KILLED' and not named_test_killed(
+                                result.stdout + result.stderr, test, marker):
+                            status, reason = 'INVALID', 'missing bound assertion in named panic'
+                        row.update(status=status, reason=reason)
+                except Exception as error:
+                    row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+                finally:
+                    path.write_bytes(snapshots[path])
+                if not compile_only:
+                    try:
+                        if not passed(run(name + '-restored'), test):
+                            raise RuntimeError('restored bound test failed')
+                    except Exception as error:
+                        row.update(status='INVALID', reason=row['reason'] + f'; restored: {error}')
+                results.append(row)
+                print(f'{name}: {row["status"]}: {row["reason"]}', flush=True)
+    except BaseException as error:
+        invalidate_completed(results, f'source guard: {error}')
+        recorded = {row['mutation'] for row in results}
+        for name, file, before, after, marker in selected:
+            if name not in recorded:
+                results.append(dict(mutation=name, test=test, assertion=marker, compiled=False,
+                                    status='INVALID', reason=f'source guard: {error}'))
+        publish_summary(output, results)
+        raise
+    publish_summary(output, results)
+    return int(any(row['status'] != ('COMPILED' if compile_only else 'KILLED') for row in results))
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
