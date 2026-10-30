@@ -1,0 +1,79 @@
+{
+  "controls": [
+    {
+      "mutation": "no-decode",
+      "test": "runtime::mcp::http::encoding_tests::mcp_json_decodes",
+      "assertion": "#886 JSON decoding",
+      "status": "KILLED",
+      "reason": "bound test failed at its assertion"
+    },
+    {
+      "mutation": "no-layer-limit",
+      "test": "runtime::mcp::http::encoding_tests::mcp_encoding_limit",
+      "assertion": "#886 encoding layer cap",
+      "status": "KILLED",
+      "reason": "bound test failed at its assertion"
+    },
+    {
+      "mutation": "sse-no-decode",
+      "test": "runtime::mcp::http::encoding_tests::mcp_sse_decodes",
+      "assertion": "#886 SSE decoding",
+      "status": "KILLED",
+      "reason": "bound test failed at its assertion"
+    },
+    {
+      "mutation": "get-sse-no-decode",
+      "test": "runtime::mcp::http::encoding_tests::mcp_get_sse_decodes",
+      "assertion": "#886 GET SSE decoding",
+      "status": "KILLED",
+      "reason": "bound test failed at its assertion"
+    },
+    {
+      "mutation": "json-body-error-projection",
+      "test": "runtime::mcp::http::encoding_tests::mcp_json_decodes",
+      "assertion": "#886 JSON decoding",
+      "status": "KILLED",
+      "reason": "bound test failed at its assertion"
+    },
+    {
+      "mutation": "legacy-sse-no-decode",
+      "test": "runtime::mcp::http::encoding_tests::mcp_legacy_sse_decodes",
+      "assertion": "#886 legacy SSE decoding",
+      "status": "KILLED",
+      "reason": "bound test failed at its assertion"
+    },
+    {
+      "mutation": "streamable-error-no-decode",
+      "test": "runtime::mcp::http::encoding_tests::mcp_streamable_error_decodes",
+      "assertion": "#886 streamable error decoding",
+      "status": "KILLED",
+      "reason": "bound test failed at its assertion"
+    },
+    {
+      "mutation": "legacy-error-no-decode",
+      "test": "runtime::mcp::http::encoding_tests::mcp_legacy_error_decodes",
+      "assertion": "#886 legacy error decoding",
+      "status": "KILLED",
+      "reason": "bound test failed at its assertion"
+    },
+    {
+      "mutation": "decode-intermediate-redirect",
+      "test": "runtime::mcp::http::encoding_tests::mcp_redirect_decodes",
+      "assertion": "#886 redirect decoding",
+      "status": "KILLED",
+      "reason": "bound test failed at its assertion"
+    },
+    {
+      "mutation": "legacy-layer-cause",
+      "test": "runtime::mcp::http::encoding_tests::mcp_legacy_sse_decodes",
+      "assertion": "#886 legacy SSE decoding",
+      "status": "KILLED",
+      "reason": "bound test failed at its assertion"
+    }
+  ],
+  "counts": {
+    "KILLED": 10,
+    "SURVIVED": 0,
+    "INVALID": 0
+  }
+}

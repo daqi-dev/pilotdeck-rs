@@ -1,0 +1,353 @@
+{
+  "controls": [
+    {
+      "name": "fixture-stdin-broken-pipe",
+      "test": "fixture_stdin_broken_pipe_preserves_output",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "fixture-stdin-other-error",
+      "test": "fixture_stdin_other_errors_still_fail",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "fixture-stdin-skip-write",
+      "test": "fixture_stdin_writes_all_bytes",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "fixture-stdin-exit-code",
+      "test": "fixture_stdin_broken_pipe_preserves_output",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "fixture-stdin-stdout",
+      "test": "fixture_stdin_broken_pipe_preserves_output",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "fixture-stdin-stderr",
+      "test": "fixture_stdin_broken_pipe_preserves_output",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "model-oracle-empty",
+      "test": "sdk::turn::tests::model_resolution_matches_ts_boundaries",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "sequence-oracle-empty",
+      "test": "sdk::transport::tests::stream_sequence_matches_ts_boundaries",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "sequence-received-format",
+      "test": "sdk::transport::tests::stream_sequence_matches_ts_boundaries",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "sequence-expected-format",
+      "test": "sdk::transport::tests::stream_sequence_matches_ts_boundaries",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "stream-correlation",
+      "test": "run_matches_ts_matrix",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "model-availability",
+      "test": "sdk::turn::tests::model_resolution_matches_ts_boundaries",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "model-unique",
+      "test": "sdk::turn::tests::model_resolution_matches_ts_boundaries",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "model-fields",
+      "test": "sdk::turn::tests::model_resolution_matches_ts_boundaries",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "model-empty-fields",
+      "test": "sdk::turn::tests::model_resolution_matches_ts_boundaries",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "model-pair-format",
+      "test": "sdk::turn::tests::model_resolution_matches_ts_boundaries",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "model-undefined-pair",
+      "test": "sdk::turn::tests::model_resolution_matches_ts_boundaries",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "sequence-gap",
+      "test": "sdk::transport::tests::stream_sequence_matches_ts_boundaries",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "sequence-negative",
+      "test": "sdk::transport::tests::stream_sequence_matches_ts_boundaries",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "sequence-fractional",
+      "test": "sdk::transport::tests::stream_sequence_matches_ts_boundaries",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "can-prompt",
+      "test": "run_channel_and_two_connections",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "can-elicit",
+      "test": "run_channel_and_two_connections",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "run-placeholder",
+      "test": "run_token_file_reaches_gateway",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "validation-oracle-drift",
+      "test": "run_validation_oracle_regenerates_identically",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "split-surrogate",
+      "test": "run_matches_ts_matrix",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "model-override",
+      "test": "run_matches_ts_matrix",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "permission-mode",
+      "test": "run_matches_ts_matrix",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "permission-base",
+      "test": "run_matches_ts_matrix",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "sdk-permission",
+      "test": "run_channel_and_two_connections",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "sdk-session-config",
+      "test": "run_matches_ts_matrix",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "query-resume",
+      "test": "run_channel_and_two_connections",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "model-catalog",
+      "test": "run_matches_ts_matrix",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "drop-stdin",
+      "test": "run_stdin_contract",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "skip-second-connection",
+      "test": "run_channel_and_two_connections",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "overwrite-submit-channel",
+      "test": "run_channel_and_two_connections",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "argv-priority",
+      "test": "run_channel_and_two_connections",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "empty-prompt",
+      "test": "run_empty_prompt_contract",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "stdin-trim",
+      "test": "run_stdin_contract",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "create-channel",
+      "test": "run_channel_and_two_connections",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "create-project",
+      "test": "run_channel_and_two_connections",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "assistant-filter",
+      "test": "run_matches_ts_matrix",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "empty-chunk",
+      "test": "run_text_contract",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "stream-newline",
+      "test": "run_matches_ts_matrix",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "text-before-delta",
+      "test": "run_text_contract",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "terminal-before-final",
+      "test": "run_waits_for_stream_final",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "duplicate-sequence",
+      "test": "run_duplicate_event_is_not_printed",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "success-response-end",
+      "test": "run_success_response_ends_stream",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "format-refusal",
+      "test": "run_unimplemented_options_are_explicit",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    },
+    {
+      "name": "oracle-drift",
+      "test": "run_oracle_regenerates_identically",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true
+    }
+  ],
+  "counts": {
+    "KILLED": 49,
+    "SURVIVED": 0,
+    "INVALID": 0,
+    "COMPILED": 0
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "controls": [
+    {
+      "mutation": "missing-claim",
+      "test": "OutputDirectoryClaim.test_mkdir_pause_has_exactly_one_winner",
+      "assertion": "#1060 mkdir loser must be rejected before work",
+      "status": "KILLED",
+      "reason": "bound Python assertion failed after successful compilation",
+      "compiled": true
+    },
+    {
+      "mutation": "nonexclusive-claim",
+      "test": "OutputDirectoryClaim.test_empty_snapshot_has_exactly_one_winner",
+      "assertion": "#1060 iterdir loser must be rejected before work",
+      "status": "KILLED",
+      "reason": "bound Python assertion failed after successful compilation",
+      "compiled": true
+    },
+    {
+      "mutation": "missing-pid",
+      "test": "OutputDirectoryClaim.test_missing_and_empty_paths_have_persistent_metadata",
+      "assertion": "#1060 claim identifies owner pid",
+      "status": "KILLED",
+      "reason": "bound Python assertion failed after successful compilation",
+      "compiled": true
+    },
+    {
+      "mutation": "missing-start-time",
+      "test": "OutputDirectoryClaim.test_missing_and_empty_paths_have_persistent_metadata",
+      "assertion": "#1060 claim records start time",
+      "status": "KILLED",
+      "reason": "bound Python assertion failed after successful compilation",
+      "compiled": true
+    },
+    {
+      "mutation": "missing-argv",
+      "test": "OutputDirectoryClaim.test_missing_and_empty_paths_have_persistent_metadata",
+      "assertion": "#1060 claim records invocation",
+      "status": "KILLED",
+      "reason": "bound Python assertion failed after successful compilation",
+      "compiled": true
+    }
+  ],
+  "counts": {
+    "KILLED": 5,
+    "SURVIVED": 0,
+    "INVALID": 0
+  }
+}
