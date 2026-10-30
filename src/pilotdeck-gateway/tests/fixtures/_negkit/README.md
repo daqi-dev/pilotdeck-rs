@@ -78,3 +78,28 @@ reason 提取规则依据 `gateway-entry-guard/negative_controls.py` 的 `classi
 - `unbound_markers`：未能取得断言标记的 side/case/test，仅提示能力边界，不声称这些行的断言相同。
 - `table`：逐 case 的 `old/new` 规范行数组与 `equal`，保留重复行。
 - `errors`：不可读/格式错误的 side、path、reason；有错误时退出 2，`totals/differences` 为 null、`same` 为 0、`table` 为空，避免把未读取的表误报成空表。
+
+## 统一 runner 契约（#1107 / M6-pr2）
+
+本轮新增 `contract.py`，不迁移旧脚本，也不依赖 `negative_suite` / `negative_process` / `negative_panic` / `_shared`。调用方提供完整 `Case(mutation, test, assertion)` 表、非空 `oracle` 行集合、可选 case 名选择、`guard()` 和 `execute(case, env)`。
+
+- `guard()` 是恢复并核验的上下文管理器；只有 `__enter__` 成功才标记已进入。产品源码调用方必须传 `negative_process.mutating_sources(root, paths)`，保留源码等于 HEAD 的守卫；不能换成快照任意工作区字节。`execute` 由适配器负责每个变异先编译、正控、变异测试及恢复正控；cargo 使用 `wait_for_slot` / `run_owned` 和调用方 target。本契约不替代这些产品源码与子进程所有权工具。
+- `execute` 返回文本模式 `subprocess.CompletedProcess`，一次进程只能精确运行一个完整命名 libtest（不用 quiet；建议 `--exact --show-output`）。启动失败和超时须抛异常，不得伪造返回 101。普通 case 异常记 INVALID 后继续跑剩余项；取消及守卫/发布的任意 `BaseException` 使所有已完成和未运行项 INVALID，并清空 hits。
+- 判杀要求返回码 101、恰一个命名 FAILED、恰一个同名 panic 和首行专属断言；支持独立消息或 `assertion … failed: #N …`。不接受 stdout、另一测试、源码位置、回溯、断言续行的标记。panic 正文的保留诊断前缀 `#813 timeout:` / `#813 gateway watchdog:` 不算杀死；未知 watchdog 也不能用非绑定断言判杀。左右值或正常断言消息里含 timeout/watchdog 词语不是诊断；回溯和 libtest 报告不属于正文。返回 0 且命名测试通过才是 SURVIVED。此窄形态没有 unnamed thread / 多测试 / 任一命中模式；迁移遇到这些形式必须显式增加判据、自测与等价证据。
+- `CARGO_HOME`、`CARGO_TARGET_DIR`、`PDRS_BASELINE` 均须显式绝对路径，CARGO_HOME 与 PDRS_BASELINE 要求目录存在，target 可以待创建；保留调用方值。dev/test debug 默认 `line-tables-only`。运行与发布期间临时使用 Python `default_int_handler`，包括原先继承 SIG_IGN 的情况；退出还原旧 handler。不可捕获的 SIGKILL/断电不属于 Python BaseException 保证，不能将缺失 summary 解释为成功。
+- 准入先校验 case / oracle / 环境，再按 #1060 语义接受不存在或空目录，独占创建 `.claim`。claim 永久保留；竞争败方立即拒跑，不探测 PID、不等待、不回收、不改名旧文件。
+- 所有行先留在内存，守卫恢复与核验成功后才通过 `summary.json.tmp` → `summary.json` 一次原子发布。守卫/取消/发布错误不留下本次 summary；发布后、返回前取消也按 inode 撤销本次文件，返回对象保留整表 INVALID 诊断。只删除本次 inode，不删除并发外来文件。返回对象为 `RunResult(code, document, error)`。
+- 最外层 finally 只根据成功结果和 entered 标志计算退出码：全选中项 KILLED 且发布成功为 0；进入守卫前拒跑为 1；进入后任何未通过（含 SURVIVED、INVALID、取消、恢复/核验/发布失败）为 2。异常类型与 `SystemExit.code` 不决定退出码。抽样退出 0 只代表选中项通过。
+
+summary 顶层包括 `mode: full|sample`、按声明次序的 `selected` 名单、完整表的 `total`、`controls` 与 `counts`。每行**恰为** `mutation / test / assertion / status / reason / hits`，可直接交给本目录比对器。没有失败时缺省放行、空 case/oracle、重复 case、未知/重复/空选择或多行断言的兼容模式。比对器忽略顶层 metadata，因此等价依然不等于全量通过。
+
+```sh
+python3 -I -B src/pilotdeck-gateway/tests/fixtures/_negkit/test_contract.py
+python3 -I -B src/pilotdeck-gateway/tests/fixtures/_negkit/negative_contract.py /tmp/new-contract-evidence
+python3 -I -B src/pilotdeck-gateway/tests/fixtures/_negkit/toy_runner.py /tmp/new-toy-evidence
+# --scenario refuse / restore-fail / cancel 分别演示 1 / 2 / 2；默认 pass 演示 0。
+```
+
+`toy_runner.py` 只修改自己的临时文本文件，使用有 5 秒上限的子进程观察变异，打印恢复时 summary 尚不存在的事实；没有 TS 或产品源码变异。自测将 toy 的全部模式跑在 10 秒子进程上限内，并比较两次正常 summary 为 EQUIVALENT。
+
+`negative_contract.py` 只将本模块变异编译为内存模块（每个先 `compile()`），逐个跑命名 unittest 的正控→变异→恢复正控；结构化 AssertionError 的完整测试名和最后一段专属消息必须同时匹配。所有变异跑完才汇总，过期锚点、编译失败、无关错误一律 INVALID/非零，不把编译失败冒充判杀；无需提交新文件后绕 HEAD 运行。无参数模式在临时目录运行，供 `negative_anchor_selfcheck.rs` 与 comparator 自测一起进入 CI。每个显式 UNSUPPORTED 登记同时受到现有 anchor checker 的逐项移除、额外信号和过期登记负控覆盖。
