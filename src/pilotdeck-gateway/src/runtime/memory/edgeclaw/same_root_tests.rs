@@ -19,21 +19,21 @@ use std::{
     fs,
     panic::AssertUnwindSafe,
     path::{Path, PathBuf},
-    sync::{Arc, Barrier},
+    sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
 
 const NOW: &str = "2026-10-22T00:00:00.000Z";
 const MS: u64 = 1792627200000;
-const SAME_ROOT_ORACLE: &str = include_str!(concat!(
+pub(super) const SAME_ROOT_ORACLE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/edgeclaw-same-root-generation/oracle.json"
 ));
 
-struct Root(PathBuf);
+pub(super) struct Root(pub(super) PathBuf);
 
 impl Root {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self(std::env::temp_dir().join(format!("pdrs-1082-{}", uuid::Uuid::new_v4())))
     }
 }
@@ -44,11 +44,11 @@ impl Drop for Root {
     }
 }
 
-fn js(value: &Value) -> JsValue {
+pub(super) fn js(value: &Value) -> JsValue {
     parse_json(&value.to_string()).expect("#1082 parse expected JSON")
 }
 
-fn options(root: &Path) -> NativeMemoryProviderOptions {
+pub(super) fn options(root: &Path) -> NativeMemoryProviderOptions {
     let mut config = MemoryConfig::new(true, "edgeclaw");
     config.root_dir = root.join("store").to_string_lossy().into_owned().into();
     config.model = Some("fixture/model".into());
@@ -62,7 +62,7 @@ fn options(root: &Path) -> NativeMemoryProviderOptions {
     }
 }
 
-fn dependencies(root: &Path) -> ServiceDependencies {
+pub(super) fn dependencies(root: &Path) -> ServiceDependencies {
     ServiceDependencies {
         home: Some(root.join("home")),
         clock: Some(Arc::new(|| NOW.into())),
@@ -87,112 +87,125 @@ fn service(root: &Path, handle: &tokio::runtime::Handle) -> Arc<EdgeClawMemorySe
     stage(root, handle).expect("#1082 same-root generation stage")
 }
 
-/// Matrix cell 2/3: the new generation's stage and first write must run after
-/// the old generation's in-flight write commits, never `database is locked`.
+// Per-thread observation cannot leak into parallel tests or other storages.
+thread_local! {
+    static LOCK_OBSERVER: std::cell::RefCell<Option<mpsc::Sender<LockEvent>>> = const { std::cell::RefCell::new(None) };
+}
+pub(super) enum LockEvent {
+    Contended,
+    Completed,
+}
+pub(super) fn lock_observer() -> Option<mpsc::Sender<LockEvent>> {
+    LOCK_OBSERVER.with(|observer| observer.borrow().clone())
+}
+struct Writer {
+    release: Option<mpsc::Sender<()>>,
+    task: Option<std::thread::JoinHandle<Result<(), super::StorageError>>>,
+}
+impl Writer {
+    fn start(old: Arc<EdgeClawMemoryService>, key: &'static str) -> Self {
+        let (entered, ready) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        let task = std::thread::spawn(move || {
+            old.repository
+                .storage
+                .test_in_flight_write(key, &entered, &wait, false)
+        });
+        let writer = Self {
+            release: Some(release),
+            task: Some(task),
+        };
+        ready
+            .recv_timeout(Duration::from_secs(5))
+            .expect("#1082 INVALID writer never entered");
+        writer
+    }
+    fn finish(mut self) {
+        self.release
+            .take()
+            .expect("#1082 INVALID release owner")
+            .send(())
+            .expect("#1082 INVALID writer gone");
+        self.task
+            .take()
+            .expect("#1082 INVALID writer owner")
+            .join()
+            .expect("#1082 INVALID writer panic")
+            .expect("#1082 INVALID writer commit");
+    }
+}
+impl Drop for Writer {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+        if let Some(task) = self.task.take() {
+            let _ = task.join();
+        }
+    }
+}
+fn competing<T: Send + 'static>(
+    writer: Writer,
+    action: impl FnOnce() -> T + Send + 'static,
+) -> (bool, T) {
+    let (sender, events) = mpsc::channel();
+    let task = std::thread::spawn(move || {
+        LOCK_OBSERVER.with(|observer| *observer.borrow_mut() = Some(sender.clone()));
+        let result = action();
+        LOCK_OBSERVER.with(|observer| *observer.borrow_mut() = None);
+        let _ = sender.send(LockEvent::Completed);
+        result
+    });
+    let event = events.recv_timeout(Duration::from_secs(5));
+    writer.finish();
+    let result = task.join().expect("#1082 INVALID competing thread panic");
+    let contended = matches!(
+        event.expect("#1082 INVALID no acquisition/completion evidence"),
+        LockEvent::Contended
+    );
+    (contended, result)
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn same_root_stage_serializes_with_in_flight_write() {
     let root = Root::new();
     let handle = tokio::runtime::Handle::current();
     let old = service(&root.0, &handle);
-    let entered = Arc::new(Barrier::new(2));
-    let release = Arc::new(Barrier::new(2));
-    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let writer = {
-        let old = Arc::clone(&old);
-        let (entered, release) = (Arc::clone(&entered), Arc::clone(&release));
-        std::thread::spawn(move || {
-            old.repository
-                .storage
-                .test_in_flight_write("blocked-key", &entered, &release, false)
-        })
-    };
-    entered.wait();
-    let staged = {
-        let root = root.0.clone();
-        let handle = handle.clone();
-        let done = Arc::clone(&done);
-        std::thread::spawn(move || {
-            let staged = stage(&root, &handle);
-            done.store(true, std::sync::atomic::Ordering::SeqCst);
-            staged
-        })
-    };
-    std::thread::sleep(Duration::from_millis(300));
-    let finished_early = done.load(std::sync::atomic::Ordering::SeqCst);
-    release.wait();
-    writer
-        .join()
-        .expect("#1082 in-flight writer thread")
-        .expect("#1082 in-flight write commits");
-    let new = staged
-        .join()
-        .expect("#1082 stage thread")
-        .unwrap_or_else(|error| {
-            panic!("#1082 new stage must not fail while the old generation writes: {error}")
-        });
+    let writer = Writer::start(old, "blocked-key");
+    let path = root.0.clone();
+    let (contended, result) = competing(writer, move || stage(&path, &handle));
+    let new = result.expect("#1082 new stage must serialize with old writer");
     assert!(
-        !finished_early,
-        "#1082 new stage must wait for the in-flight old-generation write, not interleave"
+        contended,
+        "#1082 new stage must observe actual lock contention"
     );
-    assert!(
+    assert_eq!(
         new.repository
             .storage
             .get_pipeline_state("blocked-key")
-            .expect("#1082 new generation read")
-            .is_some(),
-        "#1082 new generation reads the old generation's committed write"
+            .expect("#1082 read staged old row"),
+        Some(js(&json!({"in_flight":true}))),
+        "#1082 new stage sees committed old row"
     );
 }
 
-/// Matrix cell 3: the new generation's first write and the old generation's
-/// in-flight write are serialized, never `database is locked`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn same_root_first_write_serializes_with_old_generation_write() {
     let root = Root::new();
     let handle = tokio::runtime::Handle::current();
     let old = service(&root.0, &handle);
     let new = service(&root.0, &handle);
-    let entered = Arc::new(Barrier::new(2));
-    let release = Arc::new(Barrier::new(2));
-    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let writer = {
-        let old = Arc::clone(&old);
-        let (entered, release) = (Arc::clone(&entered), Arc::clone(&release));
-        std::thread::spawn(move || {
-            old.repository
-                .storage
-                .test_in_flight_write("old-key", &entered, &release, false)
-        })
-    };
-    entered.wait();
-    let first = {
-        let new = Arc::clone(&new);
-        let done = Arc::clone(&done);
-        std::thread::spawn(move || {
-            let result = new
-                .repository
-                .storage
-                .set_pipeline_state("new-key", &JsValue::from("new"));
-            done.store(true, std::sync::atomic::Ordering::SeqCst);
-            result
-        })
-    };
-    std::thread::sleep(Duration::from_millis(300));
-    let finished_early = done.load(std::sync::atomic::Ordering::SeqCst);
-    release.wait();
-    writer
-        .join()
-        .expect("#1082 in-flight writer thread")
-        .expect("#1082 in-flight write commits");
-    first
-        .join()
-        .expect("#1082 first-write thread")
-        .unwrap_or_else(|error| {
-            panic!("#1082 new first write must not fail while the old generation writes: {error}")
-        });
+    let writer = Writer::start(old.clone(), "old-key");
+    let next = new.clone();
+    let (contended, result) = competing(writer, move || {
+        next.repository
+            .storage
+            .set_pipeline_state("new-key", &JsValue::from("new"))
+    });
+    result.expect("#1082 new first write must serialize with old writer");
     assert!(
-        !finished_early,
-        "#1082 new first write must wait for the in-flight old-generation write"
+        contended,
+        "#1082 new first write must observe actual lock contention"
     );
     assert_eq!(
         new.repository
@@ -200,7 +213,7 @@ async fn same_root_first_write_serializes_with_old_generation_write() {
             .get_pipeline_state("new-key")
             .expect("#1082 read new key"),
         Some(JsValue::from("new")),
-        "#1082 new generation's first write is persisted"
+        "#1082 new first write persisted"
     );
     assert_eq!(
         old.repository
@@ -208,60 +221,52 @@ async fn same_root_first_write_serializes_with_old_generation_write() {
             .get_pipeline_state("old-key")
             .expect("#1082 read old key"),
         Some(js(&json!({"in_flight":true}))),
-        "#1082 old generation reads its committed in-flight row"
+        "#1082 old row persisted"
     );
 }
 
-/// Matrix cell 4: a WAL read either runs before the writer commits (sees no
-/// row) or after it (sees the row), but never fails with a lock error.
+/// In-process reads serialize too: they must see the committed row, not the
+/// uncommitted WAL snapshot from the separate worker-thread TS control.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn same_root_read_during_in_flight_write_does_not_error() {
     let root = Root::new();
     let handle = tokio::runtime::Handle::current();
     let old = service(&root.0, &handle);
     let new = service(&root.0, &handle);
-    new.repository
-        .storage
-        .set_pipeline_state("visible-key", &JsValue::from("visible"))
-        .expect("#1082 seed visible row");
-    let entered = Arc::new(Barrier::new(2));
-    let release = Arc::new(Barrier::new(2));
-    let writer = {
-        let old = Arc::clone(&old);
-        let (entered, release) = (Arc::clone(&entered), Arc::clone(&release));
-        std::thread::spawn(move || {
-            old.repository
-                .storage
-                .test_in_flight_write("blocked-key", &entered, &release, false)
-        })
-    };
-    entered.wait();
-    let reader = {
-        let new = Arc::clone(&new);
-        std::thread::spawn(move || new.repository.storage.get_pipeline_state("blocked-key"))
-    };
-    std::thread::sleep(Duration::from_millis(100));
-    release.wait();
-    writer
-        .join()
-        .expect("#1082 in-flight writer thread")
-        .expect("#1082 in-flight write commits");
-    let read = reader
-        .join()
-        .expect("#1082 reader thread")
-        .unwrap_or_else(|error| panic!("#1082 read must not fail with a lock error: {error}"));
-    assert!(
-        read.is_none() || read == Some(js(&json!({"in_flight":true}))),
-        "#1082 WAL read sees a committed value or no row, got {read:?}"
-    );
+    let writer = Writer::start(old, "blocked-key");
+    let (contended, read) = competing(writer, move || {
+        new.repository.storage.get_pipeline_state("blocked-key")
+    });
+    let read = read.expect("#1082 serialized read succeeds");
     assert_eq!(
-        new.repository
-            .storage
-            .get_pipeline_state("visible-key")
-            .expect("#1082 read visible key"),
-        Some(JsValue::from("visible")),
-        "#1082 reads keep returning committed data while another generation writes"
+        read,
+        Some(js(&json!({"in_flight":true}))),
+        "#1082 serialized read must see committed row"
     );
+    assert!(
+        contended,
+        "#1082 serialized read must observe actual lock contention"
+    );
+}
+
+#[test]
+fn same_root_registry_reclaims_dead_paths_and_preserves_live_locks() {
+    let root = Root::new();
+    let live_key = root.0.join("live");
+    let live = super::shared_process_lock(&live_key);
+    for n in 0..32 {
+        drop(super::shared_process_lock(
+            &root.0.join(format!("stage-{n}")),
+        ));
+    }
+    let again = super::shared_process_lock(&live_key);
+    assert!(
+        Arc::ptr_eq(&live, &again),
+        "#1082 registry must preserve live lock identity"
+    );
+    let table = super::process_locks().lock().expect("#1082 registry table");
+    let owned = table.keys().filter(|key| key.starts_with(&root.0)).count();
+    assert_eq!(owned, 1, "#1082 registry must reclaim dead stage paths");
 }
 
 /// Matrix cell 9: a writer that panics while holding the in-process lock
@@ -273,24 +278,25 @@ async fn same_root_lock_survives_writer_panic() {
     let handle = tokio::runtime::Handle::current();
     let old = service(&root.0, &handle);
     let new = service(&root.0, &handle);
-    let entered = Arc::new(Barrier::new(2));
-    let release = Arc::new(Barrier::new(2));
+    let (entered, ready) = mpsc::channel();
+    let (release, wait) = mpsc::channel();
     let writer = {
         let old = Arc::clone(&old);
-        let (entered, release) = (Arc::clone(&entered), Arc::clone(&release));
         std::thread::spawn(move || {
             std::panic::catch_unwind(AssertUnwindSafe(|| {
-                let _ = old.repository.storage.test_in_flight_write(
-                    "panic-key",
-                    &entered,
-                    &release,
-                    true,
-                );
+                let _ =
+                    old.repository
+                        .storage
+                        .test_in_flight_write("panic-key", &entered, &wait, true);
             }))
         })
     };
-    entered.wait();
-    release.wait();
+    ready
+        .recv_timeout(Duration::from_secs(5))
+        .expect("#1082 INVALID panic writer entry");
+    release
+        .send(())
+        .expect("#1082 INVALID panic writer release");
     assert!(
         writer.join().expect("#1082 panic thread").is_err(),
         "#1082 in-flight writer panics after taking the lock"
@@ -383,5 +389,81 @@ fn same_root_stage_needing_migration_fails_immediately_against_external_writer()
             .expect("#1082 migrated row"),
         Some(JsValue::from("legacy")),
         "#1082 the migration still runs after the lock is released"
+    );
+}
+
+/// Execute the serial cells; oracle-only shape checks cannot prove Rust parity.
+#[test]
+fn same_root_generation_matches_ts_matrix() {
+    fn cell(value: Value) -> Value {
+        json!({"ok":true,"value":value})
+    }
+    fn value(storage: &EdgeClawStorage, key: &str) -> Value {
+        let value = storage
+            .get_pipeline_state(key)
+            .expect("#1082 serial read")
+            .expect("#1082 serial row exists");
+        let text = pilotdeck_protocol::stringify_json(&value)
+            .expect("#1082 serial JSON")
+            .expect("#1082 serial defined");
+        serde_json::from_str(&text).expect("#1082 serial JSON parse")
+    }
+    let root = Root::new();
+    let path = root.0.join("memory.sqlite");
+    let mut serial = json!({});
+    let initial = EdgeClawStorage::open(&path).expect("#1082 serial initial open");
+    initial.close().expect("#1082 serial initial close");
+    serial["old-stage"] = cell(json!(true));
+    let a = EdgeClawStorage::open(&path).expect("#1082 serial old open");
+    let b = EdgeClawStorage::open(&path).expect("#1082 serial new open");
+    serial["two-generations-open"] = cell(json!(true));
+    a.set_pipeline_state("old-key", &js(&json!({"from":"old"})))
+        .expect("#1082 serial old write");
+    serial["new-reads-old-write"] = cell(value(&b, "old-key"));
+    b.set_pipeline_state("new-key", &js(&json!({"from":"new"})))
+        .expect("#1082 serial new write");
+    serial["old-reads-new-write"] = cell(value(&a, "new-key"));
+    a.close().expect("#1082 serial old close");
+    serial["old-close"] = cell(json!(true));
+    b.set_pipeline_state("after-close", &js(&json!({"ok":true})))
+        .expect("#1082 serial write after close");
+    serial["new-write-after-old-close"] = cell(json!(true));
+    b.close().expect("#1082 serial new close");
+    serial["new-close"] = cell(json!(true));
+    let c = EdgeClawStorage::open(&path).expect("#1082 serial reopen");
+    serial["reopen-reads-all"] = cell(json!([
+        value(&c, "old-key"),
+        value(&c, "new-key"),
+        value(&c, "after-close")
+    ]));
+    c.close().expect("#1082 serial reopened close");
+    let oracle: Value = serde_json::from_str(SAME_ROOT_ORACLE).expect("#1082 serial oracle");
+    assert_eq!(
+        serial, oracle["serial"],
+        "#1082 serial Rust outputs match TS cells"
+    );
+}
+
+/// The final owner can disappear without an explicit service.close(). Its
+/// SQLite close/checkpoint must participate in the same serialization.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn same_root_drop_serializes_with_in_flight_write() {
+    let root = Root::new();
+    let handle = tokio::runtime::Handle::current();
+    let old = service(&root.0, &handle);
+    let new = service(&root.0, &handle);
+    let writer = Writer::start(old.clone(), "drop-key");
+    let (contended, ()) = competing(writer, move || drop(new));
+    assert!(
+        contended,
+        "#1082 implicit close must observe actual lock contention"
+    );
+    assert!(
+        old.repository
+            .storage
+            .get_pipeline_state("drop-key")
+            .expect("#1082 read after implicit close")
+            .is_some(),
+        "#1082 implicit close preserves writer row"
     );
 }

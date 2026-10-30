@@ -3,6 +3,7 @@ import {mkdirSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {matrix} from './observe.mts';
 
+if(process.version!=='v22.22.0')throw new Error('#1082 Node v22.22.0 is required');
 const baseline=process.env.PDRS_BASELINE;
 if(!baseline)throw new Error('#1082 PDRS_BASELINE is required');
 const out=process.argv[2];

@@ -202,10 +202,23 @@ impl IndexingSettings {
 /// fail with `database is locked`. This map gives all `EdgeClawStorage`
 /// handles in one process the same per-file lock, reproducing the event-loop
 /// serialization without changing the cross-process `busy_timeout` contract.
+type ProcessLocks = Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>;
+
+fn process_locks() -> &'static ProcessLocks {
+    static LOCKS: OnceLock<ProcessLocks> = OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 fn shared_process_lock(key: &Path) -> Arc<Mutex<()>> {
-    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
-    let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut table = locks.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut table = process_locks()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if !crate::mutants::on("native-same-root-dead-locks-retained") {
+        table.retain(|_, lock| lock.strong_count() > 0);
+    }
+    if crate::mutants::on("native-same-root-live-locks-pruned") {
+        table.clear();
+    }
     if let Some(existing) = table.get(key).and_then(Weak::upgrade) {
         return existing;
     }
@@ -250,6 +263,24 @@ pub struct EdgeClawStorage {
     /// `created_at` fallback (`sqlite.ts:941`); injected so replays observe
     /// the same clock reads as TS.
     clock: FileMemoryClock,
+}
+
+// Dropping the last service/storage owner closes SQLite too. Serialize that
+// implicit close (and its WAL checkpoint) just like explicit close().
+impl Drop for EdgeClawStorage {
+    fn drop(&mut self) {
+        let _process = if crate::mutants::on("native-same-root-drop-unserialized") {
+            None
+        } else {
+            Some(self.serialized_guard())
+        };
+        let connection = self
+            .conn
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        drop(connection);
+    }
 }
 
 struct ConnectionGuard<'a> {
@@ -372,7 +403,9 @@ impl EdgeClawStorage {
     /// Acquire the per-file in-process lock. Lock order is always
     /// process -> connection; see [`ConnectionGuard`].
     fn process_guard(&self) -> Option<MutexGuard<'_, ()>> {
-        if crate::mutants::on("native-same-root-lock-bypassed") {
+        if crate::mutants::on("native-same-root-lock-bypassed")
+            || crate::mutants::on("native-same-root-stage-unserialized")
+        {
             return None;
         }
         if crate::mutants::on("native-same-root-lock-poison-fatal") {
@@ -382,7 +415,25 @@ impl EdgeClawStorage {
                     .expect("#1082 shared write lock poisoned"),
             );
         }
-        Some(self.process.lock().unwrap_or_else(PoisonError::into_inner))
+        Some(self.serialized_guard())
+    }
+
+    fn serialized_guard(&self) -> MutexGuard<'_, ()> {
+        #[cfg(test)]
+        if let Some(sender) = same_root_tests::lock_observer() {
+            // Observe the real acquisition result, not thread startup. A
+            // WouldBlock event proves overlap before the writer is released.
+            match self.process.try_lock() {
+                Ok(guard) => return guard,
+                Err(std::sync::TryLockError::Poisoned(error)) => {
+                    return error.into_inner();
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    let _ = sender.send(same_root_tests::LockEvent::Contended);
+                }
+            }
+        }
+        self.process.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn conn(&self) -> Result<ConnectionGuard<'_>, StorageError> {
@@ -408,8 +459,8 @@ impl EdgeClawStorage {
     pub(crate) fn test_in_flight_write(
         &self,
         key: &str,
-        entered: &std::sync::Barrier,
-        release: &std::sync::Barrier,
+        entered: &std::sync::mpsc::Sender<()>,
+        release: &std::sync::mpsc::Receiver<()>,
         panic_after_release: bool,
     ) -> Result<(), StorageError> {
         let conn = self.conn()?;
@@ -419,8 +470,12 @@ impl EdgeClawStorage {
              VALUES (?1, ?2, ?3)",
             params![key, "{\"in_flight\":true}", "2026-10-22T00:00:00.000Z"],
         )?;
-        entered.wait();
-        release.wait();
+        entered
+            .send(())
+            .expect("#1082 INVALID writer entered receiver");
+        release
+            .recv_timeout(Duration::from_secs(5))
+            .expect("#1082 INVALID writer release timeout");
         if panic_after_release {
             // Release SQLite's own write lock first: the case under test is a
             // panic in the surrounding call block, not a leaked transaction.
@@ -510,6 +565,9 @@ impl EdgeClawStorage {
 
     /// `sqlite.ts:923-928`.
     pub fn set_pipeline_state(&self, key: &str, value: &JsValue) -> Result<(), StorageError> {
+        if crate::mutants::on("native-same-root-peer-write-lost") && key == "new-key" {
+            return Ok(());
+        }
         let now = (self.clock)();
         let conn = self.conn()?;
         Self::write_pipeline_state(&conn, key, value, &now)
@@ -772,6 +830,9 @@ impl EdgeClawStorage {
     /// `sqlite.ts:1047-1053`: filter blank ids, dedupe keeping first
     /// occurrence, then one `IN (...)` update.
     pub fn mark_l0_indexed(&self, ids: &[String]) -> Result<(), StorageError> {
+        if crate::mutants::on("native-same-root-flush-not-indexed") {
+            return Ok(());
+        }
         let ids = unique_non_blank_ids(ids);
         if ids.is_empty() {
             return Ok(());
@@ -1843,3 +1904,7 @@ pub(crate) mod overview;
 #[cfg(test)]
 #[path = "same_root_tests.rs"]
 mod same_root_tests;
+
+#[cfg(test)]
+#[path = "same_root_lifecycle_tests.rs"]
+mod same_root_lifecycle_tests;
