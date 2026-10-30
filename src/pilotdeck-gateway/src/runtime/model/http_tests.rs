@@ -1,3 +1,4 @@
+use super::complete::retry_decide_request;
 use super::*;
 use std::{future::Future, pin::Pin};
 
@@ -2460,10 +2461,10 @@ fn sigxfsz_registration_degrades_without_a_runtime() {
     );
 }
 
-const RETRY_WORDS_ORACLE: &str =
+pub(super) const RETRY_WORDS_ORACLE: &str =
     include_str!("../../../tests/fixtures/model-stream-retry-words/oracle.json");
 
-fn oracle_text(value: &JsValue) -> String {
+pub(super) fn oracle_text(value: &JsValue) -> String {
     value
         .as_string()
         .expect("oracle string")
@@ -2518,43 +2519,6 @@ fn real_ts_stream_retry_message_words() {
     }
     assert_eq!(words, 8, "one golden per TS retry word");
     assert!(positives >= 10, "positive retry goldens");
-}
-
-/// The complete()/`isRetryableRequestError` sibling list differs deliberately
-/// from the stream list (etimedout in, aborted out). The fixture records the
-/// baseline source list; the Rust classifier must match it. The raw branch is
-/// not reachable through `complete()` because `sendProviderRequest` wraps every
-/// transport error in `ModelProviderError` first, so this is source-derived
-/// rather than a runtime golden (see README).
-#[test]
-fn complete_retry_message_list_matches_the_ts_request_classifier_source() {
-    let oracle = crate::test_baseline::oracle(RETRY_WORDS_ORACLE);
-    let words = super::super::count_body::array(field(
-        field(&oracle, "sourceLists"),
-        "isRetryableRequestError",
-    ));
-    assert_eq!(words.len(), 8, "request-list word count");
-    for word in words {
-        let message = oracle_text(word);
-        let error = ModelStreamError::Thrown {
-            name: "Error".into(),
-            message: message.clone().into(),
-        };
-        assert!(
-            is_retryable_request_error(&error),
-            "request retry word {message:?}"
-        );
-    }
-    for message in ["dns", "timed out", "connection reset by peer", "aborted"] {
-        let error = ModelStreamError::Thrown {
-            name: "Error".into(),
-            message: message.into(),
-        };
-        assert!(
-            !is_retryable_request_error(&error),
-            "request non-word {message:?}"
-        );
-    }
 }
 
 /// Real TS `RouterRuntime` goldens for the canonical Thrown classification
