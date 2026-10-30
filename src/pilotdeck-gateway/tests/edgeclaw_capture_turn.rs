@@ -133,6 +133,20 @@ fn obj(items: impl IntoIterator<Item = (&'static str, JsValue)>) -> JsValue {
     }
     JsValue::Object(object)
 }
+/// Own keys in `Object.keys` order, including keys whose value is
+/// `Undefined` — exactly what JSON serialization hides (#786).
+fn call_keys(call: &JsValue) -> Vec<String> {
+    let object = call
+        .as_object()
+        .unwrap_or_else(|| panic!("#786 recorded call must be an object: {call:?}"));
+    let mut keys: Vec<String> = object
+        .own_entries()
+        .iter()
+        .map(|(key, _)| key.to_utf8().expect("#786 recorded call key must be UTF-8"))
+        .collect();
+    keys.sort();
+    keys
+}
 fn same(actual: &JsValue, expected: &JsValue, name: &str) {
     let actual = stringify_json(actual)
         .unwrap_or_else(|error| panic!("#786 {name} actual must stringify: {error}"))
@@ -329,6 +343,36 @@ async fn ts_capture_turn_scenarios_match() {
     );
 }
 #[tokio::test]
+async fn recorded_call_key_sets_match_ts() {
+    let oracle = baseline::oracle(ORACLE);
+    let expected_scenarios = array(field(&oracle, "scenarios"));
+    for (spec, expected) in array(field(&oracle, "scenarioSpecs"))
+        .iter()
+        .zip(expected_scenarios)
+    {
+        let (actual, _) = run_scenario(spec).await;
+        let name = text(field(spec, "name"));
+        let actual_calls = array(field(&actual, "calls"));
+        let expected_calls = array(field(expected, "calls"));
+        assert_eq!(
+            actual_calls.len(),
+            expected_calls.len(),
+            "#786 {name} recorded call count"
+        );
+        for (call, expected_call) in actual_calls.iter().zip(expected_calls) {
+            // The oracle stores the TS recorder's calls serialized, so its
+            // parsed keys are exactly the keys TS recorded. A phantom Rust-side
+            // `errored: Undefined` key fails here even though `same()` cannot
+            // see it through JSON (#786).
+            assert_eq!(
+                call_keys(call),
+                call_keys(expected_call),
+                "#786 {name} recorded call key set"
+            );
+        }
+    }
+}
+#[tokio::test]
 async fn ts_capture_turn_conversions_match() {
     let oracle = baseline::oracle(ORACLE);
     let mut actual = Vec::new();
@@ -401,13 +445,16 @@ async fn malformed_session_id_matches_ts_startswith_failure() {
             })
             .await;
         let error = match result {
-            // Rejection-only panic: the negative control binds this message
-            // without the test's `expected` wording. Product error text is
-            // proven separately by the assertion below, so neither anchor
-            // can be satisfied by the other branch (#786 / #774 P2-2).
-            // Keep this message free of `expected`: that text belongs to the
-            // product-error assertion below, not to the rejection branch.
-            Ok(_) => panic!("#786 non-string sessionId must reject like isAlwaysOnSession"),
+            // Keep the TS product text in the panic itself: the negative
+            // control binds `#786 ... (TS: reading 'startsWith')`, so the
+            // no-error mutant's kill evidence carries both the test's own
+            // wording and the TS text it is supposed to match (#786). The
+            // wrong-text mutant still binds the product-error assertion's
+            // exclusive message below, so neither anchor is satisfiable by
+            // the other branch.
+            Ok(_) => panic!(
+                "#786 non-string sessionId must reject like isAlwaysOnSession (TS: {expected})"
+            ),
             Err(error) => error.to_string(),
         };
         assert!(

@@ -1,8 +1,10 @@
-# anchor-selfcheck: unsupported unit tests of the restore-positive summary path using in-memory timeout/start failures, no product source replacement table
-"""#774 P2-1: a restored-positive failure must not drop ``summary.json``.
+# anchor-selfcheck: unsupported unit tests of the restore-positive summary path and the in-memory sample-selection / combined-anchor contracts, no product source replacement table
+"""#774 P2-1 / #786: runner contracts proven without touching product sources.
 
-These are in-memory stubs: they never start cargo, mutate a product source or
-touch the real evidence directory.
+The restored-positive failure path (#774 P2-1), the optional sample selection
+(#786) and the combined rejection anchor (#786) are in-memory stubs: they
+never start cargo, mutate a product source or touch the real evidence
+directory.
 """
 import importlib.util
 import json
@@ -151,6 +153,55 @@ class SharedVerdicts(unittest.TestCase):
                          'INVALID',
                          '#818 fix-r10: a named-test timeout payload is a hang, '
                          'not an assertion kill')
+
+
+class MutantSelection(unittest.TestCase):
+    # Not named `mutants`: that is a mutation-table signal name for the
+    # anchor selfcheck, and this in-memory stub owns no table.
+    rows = [dict(name='alpha'), dict(name='beta')]
+
+    def test_no_names_selects_everything(self):
+        self.assertEqual(negative.selected_names(self.rows, []), set())
+
+    def test_unknown_name_refuses(self):
+        with self.assertRaises(SystemExit):
+            negative.selected_names(self.rows, ['gamma'])
+
+    def test_duplicate_name_refuses(self):
+        with self.assertRaises(SystemExit):
+            negative.selected_names(self.rows, ['alpha', 'alpha'])
+
+
+class CombinedRejectionAnchor(unittest.TestCase):
+    """#786-2: the no-error anchor must bind the test wording *and* the TS text."""
+
+    mutant = dict(
+        test='malformed_session_id_matches_ts_startswith_failure',
+        anchor="#786 non-string sessionId must reject like isAlwaysOnSession (TS: reading 'startsWith')",
+        failure='panic',
+    )
+
+    def log(self, message):
+        # #818 fix-r8 (rebase onto a8f55e769): synthetic logs carry the real
+        # libtest shape, which the shared classifier now requires.
+        return libtest_panic_log(self.mutant['test'], message)
+
+    def test_both_halves_kill(self):
+        raw = self.log(
+            "#786 non-string sessionId must reject like isAlwaysOnSession (TS: reading 'startsWith')")
+        self.assertEqual(negative.classify_control(self.mutant, 101, raw)[0], 'KILLED')
+
+    def test_rejection_wording_alone_is_invalid(self):
+        raw = self.log('#786 non-string sessionId must reject like isAlwaysOnSession')
+        self.assertEqual(negative.classify_control(self.mutant, 101, raw)[0], 'INVALID')
+
+    def test_product_text_without_the_bound_panic_is_invalid(self):
+        # The wrong-text mutant's failure carries the TS phrase, but not this
+        # panic line; the combined anchor must not be satisfiable by it.
+        raw = self.log(
+            "#786 product error must contain the TS text reading 'startsWith': "
+            '#774 wrong product error text')
+        self.assertEqual(negative.classify_control(self.mutant, 101, raw)[0], 'INVALID')
 
 
 if __name__ == '__main__':
