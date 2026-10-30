@@ -197,6 +197,39 @@ const MAX_INPUT_PAYLOAD: usize = 100 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 64;
 const MAX_TOTAL_INPUT_BYTES: usize = 256 * 1024 * 1024;
 
+// Reserve the actual UTF-8 replacement size before allocating a queued String.
+// A malformed payload can expand to three bytes per input byte; charging the
+// wire length or refunding on decoder consumption would undercount it.
+fn request_text(payload: &[u8], budget: &Arc<Semaphore>) -> Option<(String, OwnedSemaphorePermit)> {
+    let length: usize = payload
+        .utf8_chunks()
+        .map(|chunk| chunk.valid().len() + usize::from(!chunk.invalid().is_empty()) * 3)
+        .sum();
+    let charged = if crate::mutants::on("ws-caps-request-budget") {
+        0
+    } else if crate::mutants::on("ws-caps-request-lossy-length") {
+        payload.len()
+    } else {
+        length
+    };
+    let permit = budget
+        .clone()
+        .try_acquire_many_owned(u32::try_from(charged).ok()?)
+        .ok()?;
+    let mut text = String::with_capacity(length);
+    for chunk in payload.utf8_chunks() {
+        text.push_str(chunk.valid());
+        if !chunk.invalid().is_empty() {
+            text.push(if crate::mutants::on("ws-caps-request-lossy-replacement") {
+                '?'
+            } else {
+                '\u{fffd}'
+            });
+        }
+    }
+    Some((text, permit))
+}
+
 struct Resources {
     connections: Arc<Semaphore>,
     input: Arc<Semaphore>,
@@ -648,7 +681,7 @@ where
         MAX_INPUT_PAYLOAD as u64
     };
     let result: Result<(), ProxyError> = async {
-        loop {
+        'read: loop {
             // TS handleData starts on each new data callback. A protocol close
             // ends that batch, but leaves buffered tail bytes for the next one.
             let capacity = read_capacity(&text, buffered.decoder.buffer.len(), input.len());
@@ -693,10 +726,14 @@ where
                             text.deadline(true);
                             return Err("native WS pending request limit exceeded".into());
                         }
-                        let message = String::from_utf8_lossy(&frame.payload).into_owned();
+                        let Some((message, permit)) = request_text(&frame.payload, &buffered.budget) else {
+                            let code = if crate::mutants::on("ws-caps-request-close-code") { 1000 } else { 1009 };
+                            text.close(code, "aggregate input limit exceeded");
+                            break 'read;
+                        };
                         if !crate::mutants::on("native-ws-drop-text") {
                             requests
-                                .push(connection.enqueue(message).await.map_err(request_error)?);
+                                .push(connection.enqueue_with_input_permit(message, Some(permit)).await.map_err(request_error)?);
                         }
                         if crate::mutants::on("native-ws-drop-application-tail")
                             && *text.closed.lock().expect("native text state")

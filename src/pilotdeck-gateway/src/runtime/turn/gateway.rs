@@ -483,15 +483,53 @@ impl HostedConnection {
         &self,
         text: String,
     ) -> Result<Call<'static, Result<(), RequestError>>, RequestError> {
+        self.enqueue_with_input_permit(text, None).await
+    }
+    /// Keep admitted input charged on the owning host job, including time in
+    /// the job queue and business drain after the socket/waiter has gone away.
+    pub(crate) async fn enqueue_with_input_permit(
+        &self,
+        text: String,
+        input_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    ) -> Result<Call<'static, Result<(), RequestError>>, RequestError> {
+        // Field order also frees text before the lease on host-job cancellation.
+        struct Input {
+            text: String,
+            permit: Option<tokio::sync::OwnedSemaphorePermit>,
+        }
+        impl Drop for Input {
+            fn drop(&mut self) {
+                if crate::mutants::on("ws-caps-cancel-request-leak") {
+                    std::mem::forget(self.permit.take());
+                }
+            }
+        }
+        let mut input = Input {
+            text,
+            permit: input_permit,
+        };
+        if crate::mutants::on("ws-caps-admission-request-refund") {
+            input.permit = None;
+        }
         let connection = self.connection.clone();
         let (admit, admitted) = oneshot::channel();
         let (done, result) = oneshot::channel();
         self.host
             .jobs
             .send(Box::pin(async move {
-                let operation = connection.receive(&text);
+                if crate::mutants::on("ws-caps-early-request-refund") {
+                    input.permit = None;
+                }
+                let operation = connection.receive(&input.text);
                 let _ = admit.send(());
-                let _ = done.send(operation.await);
+                let outcome = operation.await;
+                // Free the input before returning its capacity, even if the
+                // completion receiver has been cancelled or is never polled.
+                if crate::mutants::on("ws-caps-request-permit-leak") {
+                    std::mem::forget(input.permit.take());
+                }
+                drop(input);
+                let _ = done.send(outcome);
             }))
             .map_err(|_| RequestError::new("Gateway host stopped."))?;
         admitted

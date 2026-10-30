@@ -60,8 +60,23 @@ const {startGatewayServer} = await load('src/gateway/server/GatewayServer.ts', {
   './GatewayWsConnection.js': connection,
 });
 const deadline = setTimeout(() => {console.error('#1079 TS probe deadline'); process.exit(1);}, 30000);
+let holdBusiness = false;
+let completedBusiness = 0;
+const held: Array<{release: () => void, done: Promise<void>}> = [];
 const server = await startGatewayServer({host: '127.0.0.1', port: 0,
-  token: 'fixture-token', gateway: {async describeServer() {return {};}}});
+  token: 'fixture-token', gateway: {async describeServer() {
+    if (holdBusiness) {
+      let release!: () => void;
+      let complete!: () => void;
+      const gate = new Promise<void>(resolve => {release = resolve;});
+      const done = new Promise<void>(resolve => {complete = resolve;});
+      held.push({release, done});
+      await gate;
+      completedBusiness++;
+      complete();
+    }
+    return {};
+  }}});
 const peers: any[] = [];
 const port = Number(new URL(server.url).port);
 async function peer(upgrade: boolean) {
@@ -116,6 +131,49 @@ try {
   await peer(true);
   observations.replacement = {upgraded: transports.length, closedTransports};
 
+  // Real transport + real GatewayWsConnection; exact callback and service gates.
+  // Four complete 1 MiB frames are consumed while every describeServer is held.
+  const pendingSocket = sockets.filter(socket => socket.fixtureTransport)[3];
+  const pendingTransport = pendingSocket.fixtureTransport;
+  let deliveredBytes = 0;
+  pendingTransport.onMessage((text: string) => {deliveredBytes += Buffer.byteLength(text);});
+  function largeText(value: any) {
+    value.padding = '';
+    value.padding = 'x'.repeat(1024 * 1024 - Buffer.byteLength(JSON.stringify(value)));
+    const text = Buffer.from(JSON.stringify(value));
+    const wire = Buffer.alloc(14 + text.length);
+    wire[0] = 0x81; wire[1] = 0xff;
+    wire.writeBigUInt64BE(BigInt(text.length), 2); // zero mask; real decoder still runs
+    text.copy(wire, 14);
+    return wire;
+  }
+  holdBusiness = true;
+  pendingSocket.emit('data', largeText({type: 'hello', protocolVersion: '1.2',
+    clientName: 'ui', clientVersion: 'p', token: 'fixture-token'}));
+  for (let i = 0; i < 3; i++) pendingSocket.emit('data', largeText({type: 'request',
+    id: String(i), method: 'describe_server', params: {}}));
+  observations.pendingRequests = {entered: held.length, completed: completedBusiness,
+    deliveredBytes, buffered: pendingTransport.buffer.length, closed: pendingTransport.closed};
+  assert.deepEqual(observations.pendingRequests,
+    {entered: 4, completed: 0, deliveredBytes: 4194304, buffered: 0, closed: false},
+    '#1079 complete frames remain pending beyond decoder');
+  held[0].release(); await held[0].done;
+  observations.completedRequest = {completed: completedBusiness, pending: held.length - completedBusiness};
+  const pendingClosed = once(pendingSocket, 'close');
+  pendingSocket.destroy(); await pendingClosed;
+  observations.closedPendingRequests = {closed: pendingTransport.closeNotified,
+    completed: completedBusiness, pending: held.length - completedBusiness};
+  assert.equal(completedBusiness, 1, '#1079 socket close does not cancel business');
+  for (const item of held) item.release();
+  await Promise.all(held.map(item => item.done));
+  observations.completedAfterClose = {completed: completedBusiness};
+  holdBusiness = false;
+  observations.lossyText = [[0x61, 0xff, 0xff, 0x62], [0xf0, 0x9f, 0x92],
+    [0xe2, 0x82, 0xac], [0xed, 0xa0, 0x80]].map(bytes => {
+      const text = Buffer.from(bytes).toString('utf8');
+      return {bytes, text, utf8Bytes: Buffer.byteLength(text)};
+    });
+
   let done = false;
   const closing = server.close().then(() => {done = true;});
   await new Promise(resolve => setImmediate(resolve));
@@ -129,6 +187,7 @@ try {
   await writeFile(join(process.argv[2], 'oracle.json'), JSON.stringify(output, null, 2) + '\n', {flag: 'wx'});
   console.log(JSON.stringify(output, null, 2));
 } finally {
+  for (const item of held) item.release();
   for (const socket of peers) socket.destroy();
   for (const socket of sockets) socket.destroy();
   await server.close().catch(() => {});

@@ -17,11 +17,19 @@ GatewayServer、GatewayWsConnection、TextWebSocketConnection；未触发的依�
 | B3 | cancelled | protocol_error_releases_input / eof_releases_input_before_pending_business | 取消可观察；EOF/协议错误为 Rust 回收断言 |
 | B4 | 不观测 GC/瞬时分配 | growth_charges_old_and_new_backing | Rust 内部约束，不适用 TS 字节对拍 |
 | S1 | pendingStop / cancelledStop | shutdown_and_abort_release_resources | TS 无期限；Rust 沿用有界 drain 差异 |
+| Q1 | pendingRequests | complete_large_requests_share_aggregate_budget | 完整文本帧也计入聚合预算，超额 close1009 差异 |
+| Q2 | completedRequest | completed_request_refunds_before_waiter_reap | 业务完成；Rust 宿主退费不等待 caller 回收 |
+| Q3 | closedPendingRequests / completedAfterClose | eof_releases_input_before_pending_business | EOF 不取消业务；decoder 退费而 pending 文本继续计账 |
+| Q4 | 无 TS host abort | pending_requests_release_on_shutdown_and_abort | Rust 宿主取消释放文本和许可，不适用 TS 生命周期等同 |
+| Q5 | 无 TS admission 队列 | gateway::tests::native_ws_queued_input_outlives_cancelled_admission_waiter | Rust 队列、丢 waiter、入队失败的所有权约束 |
+| Q6 | lossyText | lossy_request_reservation_matches_node_bytes | 精确对拍 UTF8 replacement 字节与预算预留 |
 
-预算计 decoder **backing 容量**，新旧扩容同时计账、非空 tail 保留整个 backing 的收费。
+预算同时计 decoder **backing 容量**和待处理文本的 UTF8 字节；新旧扩容同时计账、非空 tail 保留整个 backing 的收费。
 只有 decoded Frame 已丢弃且 buffer 为空才释放存储与收费；退出读取时先于业务 drain 释放。
-每连接另有固定 8 KiB 栈上读取块；本预算不涵盖已解码 payload、业务请求或输出队列，
-这些继续受既有单帧、pending request 和输出上限约束。
+请求 String 分配前预留实际 replacement 后字节，许可跟随 host job（包括队列与业务 await），
+完成回执前退费，实际 job 取消也退费；物理 EOF / 丢弃 caller waiter 不提前退仍存在的业务输入。
+每连接另有固定 8 KiB 栈上读取块；瞬时解码副本、解析后对象与输出不是 RSS 计量对象，
+pending 业务始终占其输入文本字节预算。范围更正见 `A7.2-NATIVE-WS-AGGREGATE-001-R1`。
 
 ```sh
 PDRS_BASELINE=/path/to/PilotDeck node --disable-warning=ExperimentalWarning \

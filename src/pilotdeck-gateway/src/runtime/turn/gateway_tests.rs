@@ -1249,6 +1249,93 @@ async fn replay_abort_fences(only: Option<&str>) {
 pub(crate) fn native_ws_fixture(requests: Arc<dyn GatewayRequests>) -> TurnGateway {
     native_ws_fixture_with_cleanup(requests, async { Ok(()) })
 }
+
+#[tokio::test]
+async fn native_ws_queued_input_outlives_cancelled_admission_waiter() {
+    use crate::{negative_assert, negative_assert_eq, test_negative_receipt::expect_ok};
+    use tokio::{sync::Semaphore, time::timeout};
+    const BOUND: Duration = Duration::from_secs(5);
+    struct Sink;
+    impl GatewayTextConnection for Sink {
+        fn send_text(&self, _: String) {}
+        fn close(&self, _: u16, _: &str) {}
+    }
+    let host = native_ws_fixture(Arc::new(Requests));
+    let connection = host.connect(Arc::new(Sink), "fixture-token".into(), "probe".into());
+    let (entered, entry) = oneshot::channel();
+    let (release, gate) = std::sync::mpsc::channel();
+    // Deliberately suspend the dedicated host thread, not the caller runtime.
+    // recv_timeout bounds the predecessor even if this test panics.
+    assert!(
+        host.jobs
+            .send(Box::pin(async move {
+                let _ = entered.send(());
+                let _ = gate.recv_timeout(BOUND);
+            }))
+            .is_ok(),
+        "#1079 host gate submitted"
+    );
+    expect_ok(
+        expect_ok(
+            timeout(BOUND, entry).await,
+            "#1079 host gate entry deadline",
+        ),
+        "#1079 host gate entered",
+    );
+    let budget = Arc::new(Semaphore::new(128));
+    let message = json!({"type":"hello","protocolVersion":"1.2","clientName":"ui",
+        "clientVersion":"p","token":"fixture-token"})
+    .to_string();
+    let length = message.len();
+    let permit = expect_ok(
+        budget.clone().try_acquire_many_owned(length as u32),
+        "#1079 queued input reservation",
+    );
+    let mut admission = Box::pin(connection.enqueue_with_input_permit(message, Some(permit)));
+    let pending =
+        std::future::poll_fn(|cx| std::task::Poll::Ready(admission.as_mut().poll(cx).is_pending()))
+            .await;
+    negative_assert!(pending, "#1079 suspended host leaves admission pending");
+    drop(admission);
+    negative_assert_eq!(
+        budget.available_permits(),
+        128 - length,
+        "#1079 queued job retains lease after admission waiter cancellation"
+    );
+    expect_ok(release.send(()), "#1079 release host admission gate");
+    expect_ok(
+        timeout(BOUND, async {
+            while budget.available_permits() != 128 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await,
+        "#1079 queued job completion refunds lease",
+    );
+    expect_ok(
+        expect_ok(
+            timeout(BOUND, host.shutdown(BOUND)).await,
+            "#1079 queued host shutdown deadline",
+        ),
+        "#1079 queued host shutdown",
+    );
+    let permit = expect_ok(
+        budget.clone().try_acquire_many_owned(8),
+        "#1079 stopped host reservation",
+    );
+    negative_assert!(
+        connection
+            .enqueue_with_input_permit("rejected".into(), Some(permit))
+            .await
+            .is_err(),
+        "#1079 stopped host rejects input"
+    );
+    negative_assert_eq!(
+        budget.available_permits(),
+        128,
+        "#1079 failed admission refunds lease"
+    );
+}
 pub(crate) fn native_ws_fixture_with_cleanup(
     requests: Arc<dyn GatewayRequests>,
     cleanup: impl std::future::Future<Output = Result<(), String>> + Send + 'static,
