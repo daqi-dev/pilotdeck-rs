@@ -39,24 +39,52 @@ const server=createServer(async(req,res)=>{
 });
 server.on('connection',s=>{sockets.add(s);s.on('close',()=>sockets.delete(s));});
 await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const port=(server.address() as any).port;
+const A4_BIND_ATTEMPTS=5;
+// The A4 binary prints its requested address, not the port the kernel
+// assigned, so the fixture must hand it a concrete port: reserve one with
+// listen(0) and close it right before spawn. A concurrent process can claim
+// that port in the window between close and the child's bind (TOCTOU); the
+// child then exits with a bind error, which launch() retries with a fresh
+// port a bounded number of times.
+const reserveA4Port=async():Promise<number>=>{const reserve=createServer();await new Promise<void>(r=>reserve.listen(0,'127.0.0.1',r));const reserved:number=(reserve.address() as any).port;await new Promise<void>(r=>reserve.close(()=>r()));return reserved;};
 async function launch(name:string,extra:string[]=[],native=true){
   const home=join(out,name,'home'),project=join(out,name,'project');await mkdir(home,{recursive:true});await mkdir(project,{recursive:true});
   await writeFile(join(home,'pilotdeck.yaml'),`schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:${port}/v1\n      apiKey: mock-only\n      models:\n        mock: {}\n`,{flag:'wx'});
   const token=join(home,'token');await writeFile(token,'native-process-fixture\n',{flag:'wx'});
   const args=native?['--native','--home',home,'--project',project,'--listen','127.0.0.1:0','--token-file',token,'--sidecar',sidecar,'--drain-ms','1500',...extra]:extra;
-  let legacyPort=0;if(!native){const reserve=createServer();await new Promise<void>(r=>reserve.listen(0,'127.0.0.1',r));legacyPort=(reserve.address() as any).port;await new Promise<void>(r=>reserve.close(()=>r()));}
-  const child=spawn(binary,args,{cwd:project,env:{PATH:process.env.PATH,HOME:home,PILOT_HOME:home,LANG:'en_US.UTF-8',PILOTDECK_CONFIG_PATH:join(out,'must-not-read.yaml'),PILOTDECK_PROXY_LISTEN:`127.0.0.1:${legacyPort}`,PILOTDECK_PROXY_UPSTREAM:`http://127.0.0.1:${port}`},stdio:['ignore','pipe','pipe']});children.push(child);
-  let stderr=''; const exit=once(child,'exit');child.stderr.on('data',(b:any)=>stderr+=b.toString());
-  const address=await bounded(new Promise<string>((resolve,reject)=>{
-    child.stderr.on('data',()=>{const match=/(?:native|proxy) listening ([^\s]+)/.exec(stderr);if(match)resolve(match[1]);});
-    child.once('exit',(code:any)=>reject(Error(`#1071 early exit ${code}: ${stderr}`)));child.once('error',reject);
-  }),'readiness');
-  rows.push({name,pid:child.pid,argv:[binary,...args],cwd:project,address});
-  return {child,exit,address,project,home,stderr:()=>stderr};
+  const start=(legacyPort:number)=>{
+    const child=spawn(binary,args,{cwd:project,env:{PATH:process.env.PATH,HOME:home,PILOT_HOME:home,LANG:'en_US.UTF-8',PILOTDECK_CONFIG_PATH:join(out,'must-not-read.yaml'),PILOTDECK_PROXY_LISTEN:`127.0.0.1:${legacyPort}`,PILOTDECK_PROXY_UPSTREAM:`http://127.0.0.1:${port}`},stdio:['ignore','pipe','pipe']});children.push(child);
+    let stderr=''; const exit=once(child,'exit');child.stderr.on('data',(b:any)=>stderr+=b.toString());
+    // A child's stderr arrives in arbitrarily split chunks (the binary writes
+    // its readiness line through several write calls), so only a complete
+    // "listening host:port" line up to its newline can resolve readiness; a
+    // truncated chunk must keep waiting instead of resolving a port-less
+    // address whose later URL would fall through to http port 80.
+    const ready=bounded(new Promise<string>((resolve,reject)=>{
+      child.stderr.on('data',()=>{const match=/(?:native|proxy) listening (\S+:\d+)[^\n]*\n/.exec(stderr);if(match)resolve(match[1]);});
+      child.once('exit',(code:any)=>reject(Error(`#1071 early exit ${code}: ${stderr}`)));child.once('error',reject);
+    }),'readiness');
+    return {child,exit,ready,stderr:()=>stderr};
+  };
+  let started=start(native?0:await reserveA4Port());
+  for(let attempt=1;;attempt++){
+    try{
+      const address=await started.ready;
+      rows.push({name,pid:started.child.pid,argv:[binary,...args],cwd:project,address});
+      return {child:started.child,exit:started.exit,address,project,home,stderr:started.stderr};
+    }catch(error:any){
+      if(native||attempt>=A4_BIND_ATTEMPTS||!/address already in use/i.test(String(error?.message)))throw error;
+      rows.push({name,a4BindRetry:attempt});
+      started=start(await reserveA4Port());
+    }
+  }
 }
 async function client(address:string){
-  const ws=new WebSocket(`ws://${address}/ws`);await bounded(once(ws,'open'),'WS open');
+  const ws=new WebSocket(`ws://${address}/ws`);
   clients.push(ws);let failure:Error|undefined;const queue:any[]=[];let wake:(()=>void)|undefined;ws.on('error',(e:Error)=>{failure=e;wake?.();});ws.on('close',()=>{failure??=Error('#1071 WS closed');wake?.();});ws.on('message',(b:any)=>{queue.push(JSON.parse(b));wake?.();wake=undefined;});
+  // A refused or reset connection must reject the bounded open wait instead
+  // of crashing the observer with an 'error' event that has no listener yet.
+  await bounded(new Promise<void>((resolve,reject)=>{ws.once('open',()=>resolve());ws.once('error',reject);}),'WS open');
   const next=()=>bounded((async()=>{while(!queue.length){if(failure)throw failure;await new Promise<void>(r=>wake=r);}const value=queue.shift();rows.push({frame:value});return value;})(),'WS response');
   ws.send(JSON.stringify({type:'hello',protocolVersion:'1.2',clientName:'ui',clientVersion:'native-probe',token:'native-process-fixture'}));assert.equal((await next()).type,'hello_ok','#1071 real authentication');
   return {ws,next};
