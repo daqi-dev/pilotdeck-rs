@@ -32,7 +32,7 @@ python3 src/pilotdeck-gateway/tests/fixtures/plugin-runtime/negative-controls.py
 
 脚本依次临时修改产品实现，要求指定测试出现对应行为断言失败，并在 `finally` 恢复原始字节；编译错误不算负控成功。总期限少于 10 分钟，每次只跑一个测试进程、`--test-threads=1`，复用启动器的本树 `src/target`。已有 `runtime-replay-generation` 负控仍位于 plugin-loader 的负控脚本。
 
-`restore-old-order` 固定读取修复前提交 `dbaa207c549eb42dd3dd01a78828085c8ee48f98` 的实现，不依赖当前 HEAD 或远端分支；需本地 Git 对象库保留该提交。启动测试前逐条断言变异字节与当前源码不同，结果记录各变异 SHA-256，避免提交或合入后出现空变异。
+原 `restore-old-order`（整文件恢复修复前提交 `dbaa207c…` 的实现）已于 #1010 删除：#1010 给 lease 结构新增字段与参数后，旧实现整体不能再编译；其「旧等待者排在新等待者之前」的顺序语义由 `old-waiters-before-new` 覆盖（同一锚点同一替换，不再保留重复行）。启动测试前逐条断言变异字节与当前源码不同，结果记录各变异 SHA-256，避免提交或合入后出现空变异。
 
 修复轮 3 增加真实非 async dispose 同步抛错场景；TS 将抛错变为 promise 拒绝，继续同批其余清理并聚合错误。Rust 的 DisposeFn 构造、首 poll 与后续 poll 的 unwind 都走这一错误路径。锁内只预留实例，锁外按批次启动屏障依次首 poll，同批前奏全部执行后才恢复 Pending 回调；回调可访问 runtime state。
 
