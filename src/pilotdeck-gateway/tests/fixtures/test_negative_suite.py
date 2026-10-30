@@ -168,10 +168,8 @@ class SuiteTests(unittest.TestCase):
         self.assertIn('injected restoration failure', summary['controls'][0]['reason'],
                       '#1076 the restoration failure must be attached to the row')
 
-    def test_in_window_refusal_keeps_exit_one(self):
-        # #1076 fix-r1: a refusal after the guard opened but before any row
-        # (expired anchor / malformed registration) is still a refusal -> rc=1;
-        # only a restore that cannot be verified or a cancellation is rc=2.
+    def drive_body_fault(self, label, body_error, guard_exit=None):
+        """Drive one body-phase fault; return (exit code, published summary)."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / 'fixture.txt'
@@ -182,24 +180,63 @@ class SuiteTests(unittest.TestCase):
 
             @contextlib.contextmanager
             def guard(_root, _paths, **_kwargs):
-                yield {source: b'original'}
+                try:
+                    yield {source: b'original'}
+                finally:
+                    if guard_exit is not None:
+                        raise guard_exit
 
             with patch.object(suite, 'mutating_sources', new=guard), \
-                    patch.object(suite.pending, 'match',
-                                 side_effect=ValueError('expired anchor')), \
+                    patch.object(suite.pending, 'match', side_effect=body_error), \
                     patch.object(suite, 'wait_for_slot') as slot, \
                     patch.object(suite, 'run_owned') as cargo, \
                     contextlib.redirect_stdout(io.StringIO()):
                 code = suite.run_cases(root, [case], out, {}, lambda *args: 'unused')
             summary = json.loads((out / 'summary.json').read_text())
             restored = source.read_bytes()
+        self.assertFalse(slot.called or cargo.called,
+                         f'{label} must not run cargo')
+        self.assertEqual(restored, b'original',
+                         f'{label} must leave the source untouched')
+        return code, summary
+
+    def test_in_window_refusal_keeps_exit_one(self):
+        # #1076 fix-r1: a refusal after the guard opened but before any row
+        # (expired anchor / malformed registration) is still a refusal -> rc=1;
+        # only a restore that cannot be verified or a cancellation is rc=2.
+        code, summary = self.drive_body_fault(
+            '#1076 an in-window refusal', ValueError('expired anchor'))
         self.assertEqual(code, 1, '#1076 an in-window refusal must keep exit code 1')
         self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
                          '#1076 an in-window refusal must account for every selected case')
-        self.assertFalse(slot.called or cargo.called,
-                         '#1076 an in-window refusal must not run cargo')
-        self.assertEqual(restored, b'original',
-                         '#1076 an in-window refusal must leave the source untouched')
+
+    def test_body_refusal_with_guard_restore_failure_exits_two(self):
+        # #1076 fix-r2 / Codex P1: the body already raised, then the guard's
+        # own restore/re-verify fails while unwinding. ``phase`` still says
+        # 'body', so the refusal branch must not win: this run is void -> rc=2.
+        code, summary = self.drive_body_fault(
+            '#1076 a body refusal plus an unverified guard exit',
+            ValueError('expired anchor'),
+            guard_exit=RuntimeError('restore verification failed'))
+        self.assertEqual(code, 2,
+                         '#1076 a body refusal plus an unverified guard exit must return 2')
+        self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                         '#1076 a body refusal plus an unverified guard exit must void every row')
+        self.assertIn('restore verification failed', summary['controls'][0]['reason'],
+                      '#1076 the guard restore failure must be recorded on the voided row')
+
+    def test_body_cancellation_keeps_exit_two(self):
+        # #1076 fix-r2: a cancellation delivered inside the body is void even
+        # when the guard restores cleanly; deleting ``not isinstance`` must
+        # turn this case into rc=1.
+        code, summary = self.drive_body_fault(
+            '#1076 a body cancellation', KeyboardInterrupt('SIGINT in body'))
+        self.assertEqual(code, 2,
+                         '#1076 a body cancellation with a clean guard exit must return 2')
+        self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                         '#1076 a body cancellation must publish an all-INVALID summary')
+        self.assertIn('KeyboardInterrupt', summary['controls'][0]['reason'],
+                      '#1076 a body cancellation must be recorded as INVALID')
 
     def test_each_failure_marker_is_required(self):
         case = suite.Case('test', None, '', '', TEST, ANCHOR)
@@ -412,6 +449,124 @@ class SqliteHeaderExecutorTests(unittest.TestCase):
                          '#1076 a sqlite stale-anchor refusal must void every row')
         self.assertIn('anchor expired', report['controls'][0]['reason'],
                       '#1076 the stale-anchor refusal reason must be recorded')
+
+    def test_stale_anchor_with_guard_restore_failure_exits_two(self):
+        """#1076 fix-r2 / Codex P1: a body refusal plus a failed guard exit is void."""
+        @contextlib.contextmanager
+        def guard(_root, _paths):
+            try:
+                yield {sqlite_header.GENERATOR: b'',
+                       sqlite_header.STORAGE_OBSERVER: b''}
+            finally:
+                raise RuntimeError('restore verification failed')
+
+        rows = [(name, path, '#1076 no such anchor', after, test, assertion)
+                for name, path, _before, after, test, assertion in sqlite_header.MUTANT_ROWS]
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / 'evidence'
+            with patch.object(sqlite_header, 'MUTANT_ROWS', rows), \
+                    patch.object(sqlite_header, 'mutating_sources', new=guard), \
+                    patch.object(sys, 'argv', ['negative_sqlite_header.py', str(out)]), \
+                    patch.dict('os.environ', {
+                        'PDRS_BASELINE': str(Path(directory)),
+                        'CARGO_TARGET_DIR': str(Path(directory) / 'target')}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                code = sqlite_header.main()
+            report = json.loads((out / 'summary.json').read_text())
+        self.assertEqual(
+            code, 2,
+            '#1076 a sqlite stale anchor plus an unverified guard exit must return 2')
+        self.assertEqual(
+            report['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 2},
+            '#1076 a sqlite stale anchor plus an unverified guard exit must void every row')
+        self.assertIn('restore verification failed', report['controls'][0]['reason'],
+                      '#1076 the sqlite guard restore failure must be recorded')
+
+    def test_body_cancellation_keeps_exit_two(self):
+        """#1076 fix-r2: a cancellation inside the body is void on a clean exit."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'generator.mts'
+            source.write_text('original')
+            out = root / 'evidence'
+            saved = (sqlite_header.GENERATOR, sqlite_header.STORAGE_OBSERVER,
+                     sqlite_header.MUTANT_ROWS)
+
+            @contextlib.contextmanager
+            def guard(_root, _paths):
+                yield {source: b'original'}
+
+            sqlite_header.GENERATOR = sqlite_header.STORAGE_OBSERVER = source
+            sqlite_header.MUTANT_ROWS = [('one', source, 'original', 'mutant', TEST, ANCHOR)]
+            try:
+                with patch.object(sqlite_header, 'mutating_sources', new=guard), \
+                        patch.object(sqlite_header, 'wait_for_slot',
+                                     return_value=subprocess.CompletedProcess([], 0, '', '')), \
+                        patch.object(sqlite_header, 'run_owned',
+                                     side_effect=KeyboardInterrupt('SIGINT in body')), \
+                        patch.object(sys, 'argv', ['negative_sqlite_header.py', str(out)]), \
+                        patch.dict('os.environ', {
+                            'PDRS_BASELINE': str(root),
+                            'CARGO_TARGET_DIR': str(root / 'target')}), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    code = sqlite_header.main()
+            finally:
+                (sqlite_header.GENERATOR, sqlite_header.STORAGE_OBSERVER,
+                 sqlite_header.MUTANT_ROWS) = saved
+            report = json.loads((out / 'summary.json').read_text())
+            restored = source.read_bytes()
+        self.assertEqual(code, 2, '#1076 a sqlite body cancellation must return 2')
+        self.assertEqual(report['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                         '#1076 a sqlite body cancellation must publish an all-INVALID summary')
+        self.assertIn('KeyboardInterrupt', report['controls'][0]['reason'],
+                      '#1076 the sqlite body cancellation must be recorded as INVALID')
+        self.assertEqual(restored, b'original',
+                         '#1076 the sqlite body cancellation must restore its bytes')
+
+    def test_row_restore_failure_returns_two(self):
+        """#1076 fix-r2: an unverified per-row restore must be rc=2."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'generator.mts'
+            source.write_text('original')
+            out = root / 'evidence'
+            saved = (sqlite_header.GENERATOR, sqlite_header.STORAGE_OBSERVER,
+                     sqlite_header.MUTANT_ROWS)
+            real_write_bytes = Path.write_bytes
+
+            def reject_restore(path, data):
+                if path == source and data == b'original':
+                    raise OSError('#1076 injected row restore failure')
+                return real_write_bytes(path, data)
+
+            @contextlib.contextmanager
+            def guard(_root, _paths):
+                yield {source: b'original'}
+
+            sqlite_header.GENERATOR = sqlite_header.STORAGE_OBSERVER = source
+            sqlite_header.MUTANT_ROWS = [('one', source, 'original', 'mutant', TEST, ANCHOR)]
+            try:
+                with patch.object(sqlite_header, 'mutating_sources', new=guard), \
+                        patch.object(sqlite_header, 'wait_for_slot',
+                                     return_value=subprocess.CompletedProcess([], 0, '', '')), \
+                        patch.object(sqlite_header, 'run_owned',
+                                     return_value=output('pass')), \
+                        patch.object(Path, 'write_bytes', new=reject_restore), \
+                        patch.object(sys, 'argv', ['negative_sqlite_header.py', str(out)]), \
+                        patch.dict('os.environ', {
+                            'PDRS_BASELINE': str(root),
+                            'CARGO_TARGET_DIR': str(root / 'target')}), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    code = sqlite_header.main()
+            finally:
+                (sqlite_header.GENERATOR, sqlite_header.STORAGE_OBSERVER,
+                 sqlite_header.MUTANT_ROWS) = saved
+            report = json.loads((out / 'summary.json').read_text())
+        self.assertEqual(code, 2, '#1076 an unverified sqlite row restore must return 2')
+        self.assertEqual(report['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                         '#1076 an unverified sqlite row restore must void every row')
+        self.assertIn('#1076 injected row restore failure', report['controls'][0]['reason'],
+                      '#1076 the sqlite row restore failure must be recorded')
 
     def test_guard_restore_failure_invalidates_all_completed_kills(self):
         generator = sqlite_header.GENERATOR

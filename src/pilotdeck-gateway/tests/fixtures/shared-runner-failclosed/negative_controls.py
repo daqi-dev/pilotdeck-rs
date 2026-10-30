@@ -15,6 +15,13 @@ assert; only a cancellation or an unverified restore is rc=2.  The four rows
 added below pin both refusal phases (before and after the guard opened) for
 both executors.
 
+#1076 fix-r2 closes the unwinding hole: a body refusal followed by a *different*
+exception from the guard's ``__exit__`` restore/re-verify is void -> rc=2, and
+a cancellation raised inside the body (not only at guard exit) is rc=2 too.
+The rows below pin the exception-identity check, the ``not
+isinstance(error, Exception)`` cancellation branch, both phase transitions and
+both halves of the ``('restore', 'exit')`` tuple for each executor.
+
 Each mutant is syntax-compiled before its positive control runs.  A stale
 anchor aborts the whole selected run as INVALID (never SURVIVED).  All selected
 rows finish before the summary is published; any non-KILLED row is a nonzero
@@ -43,8 +50,8 @@ MUTANT_ROWS = [
     (
         'runner-baseexception-narrowed',
         SUITE,
-        '    except BaseException as error:',
-        '    except Exception as error:',
+        '\n    except BaseException as error:',
+        '\n    except Exception as error:',
         'test_negative_suite.CancellationTests.test_guard_sigint_voids_last_kill_and_exits_2',
         '#1076 a SIGINT in the guard exit must return 2',
     ),
@@ -76,8 +83,8 @@ MUTANT_ROWS = [
     (
         'sqlite-baseexception-narrowed',
         SQLITE,
-        '    except BaseException as error:',
-        '    except Exception as error:',
+        '\n    except BaseException as error:',
+        '\n    except Exception as error:',
         'test_negative_suite.SqliteHeaderCancellationTests.'
         'test_sqlite_guard_sigint_voids_last_kill_and_exits_2',
         '#1076 a sqlite SIGINT in the guard exit must return 2',
@@ -109,24 +116,16 @@ MUTANT_ROWS = [
         # first delivery returned 2 here and broke a real caller assertion.
         'runner-refusal-exit-two',
         SUITE,
-        "        if phase in ('restore', 'exit') or not isinstance(error, Exception):\n"
-        "            return 2\n"
-        "        return 1",
-        "        if phase in ('restore', 'exit') or not isinstance(error, Exception):\n"
-        "            return 2\n"
-        "        return 2",
+        "            return 2\n        return 1",
+        "            return 2\n        return 2",
         'test_negative_suite.SuiteTests.test_guard_refusal_accounts_for_every_case',
         '#1076 a HEAD guard refusal must keep exit code 1',
     ),
     (
         'sqlite-refusal-exit-two',
         SQLITE,
-        "        if phase in ('restore', 'exit') or not isinstance(error, Exception):\n"
-        "            return 2\n"
-        "        return 1",
-        "        if phase in ('restore', 'exit') or not isinstance(error, Exception):\n"
-        "            return 2\n"
-        "        return 2",
+        "            return 2\n        return 1",
+        "            return 2\n        return 2",
         'test_negative_suite.SqliteHeaderExecutorTests.test_guard_refusal_keeps_exit_one',
         '#1076 a sqlite HEAD guard refusal must keep exit code 1',
     ),
@@ -135,26 +134,111 @@ MUTANT_ROWS = [
         # refusals too: rc=1, never the restore/cancel rc=2.
         'runner-body-refusal-exit-two',
         SUITE,
-        "        if phase in ('restore', 'exit') or not isinstance(error, Exception):\n"
-        "            return 2\n"
-        "        return 1",
-        "        if phase in ('restore', 'exit', 'body') or not isinstance(error, Exception):\n"
-        "            return 2\n"
-        "        return 1",
+        "        if (phase in ('restore', 'exit') or not isinstance(error, Exception)",
+        "        if (phase in ('restore', 'exit', 'body') or not isinstance(error, Exception)",
         'test_negative_suite.SuiteTests.test_in_window_refusal_keeps_exit_one',
         '#1076 an in-window refusal must keep exit code 1',
     ),
     (
         'sqlite-body-refusal-exit-two',
         SQLITE,
-        "        if phase in ('restore', 'exit') or not isinstance(error, Exception):\n"
-        "            return 2\n"
-        "        return 1",
-        "        if phase in ('restore', 'exit', 'body') or not isinstance(error, Exception):\n"
-        "            return 2\n"
-        "        return 1",
+        "        if (phase in ('restore', 'exit') or not isinstance(error, Exception)",
+        "        if (phase in ('restore', 'exit', 'body') or not isinstance(error, Exception)",
         'test_negative_suite.SqliteHeaderExecutorTests.test_stale_anchor_refusal_keeps_exit_one',
         '#1076 a sqlite stale-anchor refusal must keep exit code 1',
+    ),
+    (
+        # fix-r2 / Codex P1: the body already raised and the guard's own
+        # restore/re-verify raises a *different* object while unwinding. The
+        # identity check must keep that void -> rc=2 even though phase is 'body'.
+        'runner-body-error-overwritten-exit-one',
+        SUITE,
+        "                or (body_error is not None and error is not body_error)):",
+        "                or (False)):",
+        'test_negative_suite.SuiteTests.'
+        'test_body_refusal_with_guard_restore_failure_exits_two',
+        '#1076 a body refusal plus an unverified guard exit must return 2',
+    ),
+    (
+        'sqlite-body-error-overwritten-exit-one',
+        SQLITE,
+        "                or (body_error is not None and error is not body_error)):",
+        "                or (False)):",
+        'test_negative_suite.SqliteHeaderExecutorTests.'
+        'test_stale_anchor_with_guard_restore_failure_exits_two',
+        '#1076 a sqlite stale anchor plus an unverified guard exit must return 2',
+    ),
+    (
+        # fix-r2: cancellation inside the body must stay rc=2 on its own, not
+        # only while the guard is exiting.
+        'runner-body-cancellation-exit-one',
+        SUITE,
+        "        if (phase in ('restore', 'exit') or not isinstance(error, Exception)",
+        "        if (phase in ('restore', 'exit') or False",
+        'test_negative_suite.SuiteTests.test_body_cancellation_keeps_exit_two',
+        '#1076 a body cancellation with a clean guard exit must return 2',
+    ),
+    (
+        'sqlite-body-cancellation-exit-one',
+        SQLITE,
+        "        if (phase in ('restore', 'exit') or not isinstance(error, Exception)",
+        "        if (phase in ('restore', 'exit') or False",
+        'test_negative_suite.SqliteHeaderExecutorTests.test_body_cancellation_keeps_exit_two',
+        '#1076 a sqlite body cancellation must return 2',
+    ),
+    (
+        # fix-r2: the per-row restore phase is what makes an unverified byte
+        # restore rc=2; folding it back into 'body' must be killed.
+        'runner-restore-phase-body',
+        SUITE,
+        "                        phase = 'restore'",
+        "                        phase = 'body'",
+        'test_negative_suite.SuiteTests.test_byte_restore_failure_stops_unsafe_mutation',
+        '#1076 an unverified byte restore must exit 2',
+    ),
+    (
+        'sqlite-restore-phase-body',
+        SQLITE,
+        "                        phase = 'restore'",
+        "                        phase = 'body'",
+        'test_negative_suite.SqliteHeaderExecutorTests.test_row_restore_failure_returns_two',
+        '#1076 an unverified sqlite row restore must return 2',
+    ),
+    (
+        # Both halves of the phase tuple are load-bearing: dropping 'exit'
+        # hides a guard-exit restore failure, dropping 'restore' hides a
+        # per-row restore failure.
+        'runner-exit-branch-one',
+        SUITE,
+        "phase in ('restore', 'exit')",
+        "phase in ('restore',)",
+        'test_negative_suite.SuiteTests.test_guard_exit_invalidates_previous_kills',
+        '#1076 guard restoration failure must exit 2',
+    ),
+    (
+        'sqlite-exit-branch-one',
+        SQLITE,
+        "phase in ('restore', 'exit')",
+        "phase in ('restore',)",
+        'test_negative_suite.SqliteHeaderExecutorTests.'
+        'test_guard_restore_failure_invalidates_all_completed_kills',
+        '#1076 a failed guard exit must return exit code 2',
+    ),
+    (
+        'runner-restore-branch-one',
+        SUITE,
+        "phase in ('restore', 'exit')",
+        "phase in ('exit',)",
+        'test_negative_suite.SuiteTests.test_byte_restore_failure_stops_unsafe_mutation',
+        '#1076 an unverified byte restore must exit 2',
+    ),
+    (
+        'sqlite-restore-branch-one',
+        SQLITE,
+        "phase in ('restore', 'exit')",
+        "phase in ('exit',)",
+        'test_negative_suite.SqliteHeaderExecutorTests.test_row_restore_failure_returns_two',
+        '#1076 an unverified sqlite row restore must return 2',
     ),
 ]
 
