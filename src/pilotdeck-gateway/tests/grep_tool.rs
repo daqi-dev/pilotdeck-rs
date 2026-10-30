@@ -30,7 +30,6 @@ use pilotdeck_gateway::{
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -133,7 +132,15 @@ fn executable_file(path: &Path) -> bool {
     let Ok(metadata) = fs::metadata(path) else {
         return false;
     };
-    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        metadata.is_file()
+    }
 }
 
 /// Test-only engine lookup. The product resolver is bundled-only (the TS
@@ -237,16 +244,16 @@ fn grep_spawn_resets_inherited_signal_dispositions_worker() {
     let scratch = scratch::Scratch::new("grep-signal-reset");
     let report = scratch.path().join("report.txt");
     let wrapper = scratch.path().join("rg-report");
-    fs::write(
+    scratch::write_executable(
         &wrapper,
-        format!(
+        &format!(
             "#!/bin/sh\nexec '{}' report-file '{}'\n",
             probe.display(),
             report.display()
         ),
+        0o755,
     )
-    .unwrap();
-    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+    .expect("#1125 publish wrapper by rename");
 
     let context = env_context(
         &[

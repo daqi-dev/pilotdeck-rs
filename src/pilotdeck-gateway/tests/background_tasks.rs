@@ -507,13 +507,12 @@ impl CreateGate {
                 .success(),
             "#956 #957 create FIFO"
         );
-        fs::write(
+        scratch::write_executable(
             &shell,
             include_str!("fixtures/background-create-gate/shell.sh"),
+            0o700,
         )
-        .expect("#956 #957 write gated shell");
-        fs::set_permissions(&shell, fs::Permissions::from_mode(0o700))
-            .expect("#956 #957 executable gated shell");
+        .expect("#956 #957 publish gated shell by rename");
         Self {
             fifo,
             shell,
@@ -1233,14 +1232,15 @@ fn creation_watchdog_case(mode: &str) {
         } else {
             fs::read_to_string(&gate.shell).expect("#960 read original shell")
         };
-        fs::write(
+        scratch::write_executable(
             &gate.shell,
-            format!(
+            &format!(
                 "#!/bin/bash\nIFS= read -r token < '{}' || exit 96\n{body}",
                 admission.fifo.display()
             ),
+            0o700,
         )
-        .expect("#960 write admission shell");
+        .expect("#960 publish admission shell by rename");
         let mut env = object([("PATH", JsValue::from("/usr/bin:/bin"))]);
         gate.configure(&mut env);
         let fields = object([

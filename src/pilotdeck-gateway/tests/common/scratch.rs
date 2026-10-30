@@ -18,6 +18,9 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 const OWNER_FILE: &str = ".pdrs-scratch-owner";
 
 pub(crate) struct Scratch {
@@ -51,6 +54,38 @@ impl Drop for Scratch {
             let _ = std::fs::remove_dir_all(&self.path);
         }
     }
+}
+
+/// Publish an executable file the way #1125 requires: never by writing the
+/// path a test will exec.
+///
+/// A direct `fs::write` on the final path leaves this thread holding the file
+/// open for writing between `open` and `close`. Under libtest's thread pool a
+/// sibling test that forks inside that window hands the write descriptor to
+/// its child (O_CLOEXEC only closes at the child's own exec), and exec'ing
+/// the script before that child execs fails with ETXTBSY on Linux. Writing a
+/// unique temporary name in the same directory, fsyncing it, chmod'ing it,
+/// closing it, and only then renaming it into place publishes an inode no
+/// process has ever held open for writing, so `Command::new(script)` can
+/// never observe ETXTBSY. `mode` is applied before the rename, so the target
+/// name never exists in a non-executable state.
+pub(crate) fn write_executable(path: &Path, body: &str, mode: u32) -> io::Result<()> {
+    let name = path
+        .file_name()
+        .expect("executable file name")
+        .to_string_lossy();
+    let temporary = path.with_file_name(format!("{name}.tmp-{}", uuid::Uuid::new_v4()));
+    let mut file = fs::File::create(&temporary)?;
+    io::Write::write_all(&mut file, body.as_bytes())?;
+    file.sync_all()?;
+    #[cfg(unix)]
+    file.set_permissions(fs::Permissions::from_mode(mode))?;
+    drop(file);
+    let published = fs::rename(&temporary, path);
+    if published.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    published
 }
 
 /// Lexical ownership check: every delete may only target the per-run tree that
