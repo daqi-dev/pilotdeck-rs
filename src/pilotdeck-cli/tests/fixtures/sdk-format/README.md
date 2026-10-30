@@ -1,6 +1,6 @@
 # #1097 D1-P07 JSON / JSONL 输出金样
 
-`source.json` 保留 18 个 D0 宿主原件与 Node v22.22.0 真 `runSdkCli` / SDK 函数探针的 66 个补充格；`generate.mjs` 只从这些原件机械提取 `oracle.json`（84 格）。`probe.mjs` 的 WebSocket double 只接受隔离用的 28999 URL，不代表真实网络或 OS 隔离验收；每格的 stdout/stderr bytes、退出状态、wire 顺序和初末磁盘快照均保留。TS 源文件及 dist 的 SHA-256 随补充原件保存。
+`source.json` 保留 18 个 D0 宿主原件与 Node v22.22.0 真 `runSdkCli` / SDK 函数探针的 72 个补充格；`generate.mjs` 只从这些原件机械提取 `oracle.json`（90 格）。`probe.mjs` 的 WebSocket double 只接受隔离用的 28999 URL，不代表真实网络或 OS 隔离验收；每格的 stdout/stderr bytes、退出状态、wire 顺序和初末磁盘快照均保留。TS 源文件及 dist 的 SHA-256 随补充原件保存。
 
 覆盖 run/resume × json/jsonl/both × completed（有文本/无文本/结构化/结构化 null）/failed/result_unknown（空流/明确错误码），以及完整事件映射、24 个 context 字段、首终态、partial 过滤、原型名称、UTF-16、sequence 覆盖、重复 wire 帧、usage 类型、错误字段和换行。help 与 sessions 错误入口的格式组合复用 D0 原件。aborted/信号取消和 model-without-project 的未实现行为仍属于 P06/P08；不据此声明 D1 全部完成。
 
@@ -15,6 +15,8 @@
 ```sh
 cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli --test sdk_format_exit -- --include-ignored --show-output --test-threads=1
 node src/pilotdeck-cli/tests/fixtures/sdk-format/probe.mjs <全新原始记录目录>
+# 仅重采 fix-r1 的 6 个快照格（不覆盖已有原件）：
+node src/pilotdeck-cli/tests/fixtures/sdk-format/probe.mjs <全新快照目录> --snapshot-only
 node src/pilotdeck-cli/tests/fixtures/sdk-format/generate.mjs <全新重生成目录>
 ```
 
@@ -22,7 +24,7 @@ node src/pilotdeck-cli/tests/fixtures/sdk-format/generate.mjs <全新重生成�
 
 ## 负控
 
-`src/pilotdeck-gateway/tests/fixtures/sdk-format/negative_controls.py` 登记 99 项；使用共享 `mutating_sources`、`run_owned`、`wait_for_slot`，编译每个变异后才按完整测试名与专属 nonce receipt 判杀。每项正控、变异 no-run、负控、恢复正控都有日志，遍历全部项目后原子发布汇总；编译失败、无关 panic、超时、守卫拒绝均为 INVALID。
+`src/pilotdeck-gateway/tests/fixtures/sdk-format/negative_controls.py` 登记 107 项；使用共享 `mutating_sources`、`run_owned`、`wait_for_slot`，编译每个变异后才按完整测试名与专属 nonce receipt 判杀。97 项输出变异各自登记 `format_cases::<格名>` 与 `#1097 output bytes and exit: <case-id>`；仅运行被点名的格，其他格无法代为判杀。完整 90 格的 `format_matches_ts_matrix` 正控仍保留。每项正控、变异 no-run、负控、恢复正控都有日志，遍历全部项目后原子发布汇总；编译失败、无关 panic、超时、守卫拒绝均为 INVALID。
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/sdk-format/negative_controls.py --check
@@ -31,3 +33,5 @@ python3 src/pilotdeck-gateway/tests/fixtures/sdk-format/negative_controls.py <�
 ```
 
 只读 `--check` 可在补丁树执行。新文件或任一受保护源码不等于 HEAD 时拒绝变异，不允许影子仓库或替代基线。提交后由协调者宿主执行逐变异编译及全量。P05 的格式拒绝变异已由 P07 格式开关正反控替代；其余 P05/P06 旧负控只同步被输出重构改变的锚点。
+
+fix-r1 补充 run/resume × json/jsonl/both 的 unknown 快照 6 格：`turn_started(snapshot-run-id)` → `error(result_unknown)` → `turn_started(too-late)`，恢复信息必须仍使用首终态时的 runId。每格均有独立 Rust 用例与对应快照负控；JSON failed/unknown 误报 completed 另各一项。原 18 个 D0 宿主原件与 66 个补充格保持原样，只追加 6 个 Node v22.22.0 实测原件。

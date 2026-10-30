@@ -1004,7 +1004,13 @@ async fn run_case(case: &Value) {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    verify(matches, "#1097 output bytes and exit");
+    verify(
+        matches,
+        &format!(
+            "#1097 output bytes and exit: {}",
+            case["input"]["id"].as_str().expect("#1097 case id")
+        ),
+    );
     verify(
         snapshot(&runtime.0) == before,
         "#1097 complete disk unchanged",
@@ -1014,7 +1020,7 @@ async fn run_case(case: &Value) {
 fn cases() -> Vec<Value> {
     let oracle: Value = serde_json::from_str(ORACLE).expect("#1097 TS oracle JSON");
     let cases = oracle["cases"].as_array().expect("#1097 oracle cells");
-    verify(cases.len() == 84, "#1097 registered 84 cells");
+    verify(cases.len() == 90, "#1097 registered 90 cells");
     cases.clone()
 }
 
@@ -1053,4 +1059,118 @@ async fn format_preflight_no_late_connection() {
         .find(|case| case["input"]["id"] == "help--format-json")
         .expect("#1097 format preflight fixture");
     run_case(&case).await;
+}
+
+// Each negative control invokes one exact libtest identity. Keep the full
+// matrix above as the unfiltered positive control, independent of this list.
+mod format_cases {
+    use super::*;
+
+    macro_rules! cell {
+        ($test:ident, $id:literal) => {
+            #[tokio::test(flavor = "current_thread")]
+            async fn $test() {
+                let _port = PORT.lock().await;
+                let _lease = ParityLock::acquire().await;
+                let mut matched = cases()
+                    .into_iter()
+                    .filter(|case| case["input"]["id"] == $id);
+                let case = matched
+                    .next()
+                    .expect(concat!("#1097 registered format cell: ", $id));
+                assert!(
+                    matched.next().is_none(),
+                    concat!("#1097 unique format cell: ", $id)
+                );
+                run_case(&case).await;
+            }
+        };
+    }
+    cell!(
+        resume_unknown_snapshot_both,
+        "format-probe--resume-unknown-snapshot-both"
+    );
+    cell!(
+        resume_unknown_snapshot_json,
+        "format-probe--resume-unknown-snapshot-json"
+    );
+    cell!(
+        resume_unknown_snapshot_jsonl,
+        "format-probe--resume-unknown-snapshot-jsonl"
+    );
+    cell!(
+        run_completed_structured_json,
+        "format-probe--run-completed-structured-json"
+    );
+    cell!(
+        run_completed_structured_null_json,
+        "format-probe--run-completed-structured-null-json"
+    );
+    cell!(run_failed_json, "format-probe--run-failed-json");
+    cell!(
+        run_json_finish_reason,
+        "format-probe--run-json-finish-reason"
+    );
+    cell!(run_json_usage_array, "format-probe--run-json-usage-array");
+    cell!(run_json_usage_scalar, "format-probe--run-json-usage-scalar");
+    cell!(
+        run_jsonl_all_context_keys,
+        "format-probe--run-jsonl-all-context-keys"
+    );
+    cell!(run_jsonl_all_types, "format-probe--run-jsonl-all-types");
+    cell!(
+        run_jsonl_duplicate_frame,
+        "format-probe--run-jsonl-duplicate-frame"
+    );
+    cell!(
+        run_jsonl_error_fields,
+        "format-probe--run-jsonl-error-fields"
+    );
+    cell!(
+        run_jsonl_sequence_only,
+        "format-probe--run-jsonl-sequence-only"
+    );
+    cell!(
+        run_jsonl_spread_array,
+        "format-probe--run-jsonl-spread-array"
+    );
+    cell!(
+        run_jsonl_spread_string,
+        "format-probe--run-jsonl-spread-string"
+    );
+    cell!(
+        run_jsonl_type_null_missing,
+        "format-probe--run-jsonl-type-null-missing"
+    );
+    cell!(run_jsonl_type_number, "format-probe--run-jsonl-type-number");
+    cell!(
+        run_prototype_proto_jsonl,
+        "format-probe--run-prototype-__proto__-jsonl"
+    );
+    cell!(
+        run_prototype_to_string_json,
+        "format-probe--run-prototype-toString-json"
+    );
+    cell!(
+        run_prototype_to_string_jsonl,
+        "format-probe--run-prototype-toString-jsonl"
+    );
+    cell!(
+        run_unknown_empty_json,
+        "format-probe--run-unknown-empty-json"
+    );
+    cell!(
+        run_unknown_snapshot_both,
+        "format-probe--run-unknown-snapshot-both"
+    );
+    cell!(
+        run_unknown_snapshot_json,
+        "format-probe--run-unknown-snapshot-json"
+    );
+    cell!(
+        run_unknown_snapshot_jsonl,
+        "format-probe--run-unknown-snapshot-jsonl"
+    );
+    cell!(run_format_json, "run--format-json");
+    cell!(run_format_jsonl, "run--format-jsonl");
 }
