@@ -94,7 +94,12 @@ impl fmt::Debug for JsString {
 #[derive(Clone, Default, Debug)]
 pub struct JsObject {
     entries: Vec<(JsString, JsValue)>,
-    indices: HashMap<JsString, usize>,
+    // The key index lives behind a pointer on purpose: inline it was 48 bytes,
+    // making `JsValue` a 96-byte enum. A decoded sessions projection pays the
+    // enum size once per element (#983), so the boxed map keeps an element at
+    // 56 bytes; object counts stay far below array counts on the wire.
+    #[allow(clippy::box_collection)]
+    indices: Box<HashMap<JsString, usize>>,
     prototype: Option<Box<JsValue>>,
     native_tag: Option<&'static str>,
 }

@@ -161,6 +161,62 @@ fn deeply_nested_valid_malformed_clone_debug_eq_drop_on_small_stack() {
 }
 
 #[test]
+fn empty_containers_stringify_exact_bytes() {
+    // #983: direct byte goldens for the array continuation frame — an empty
+    // array emits no separator, and an empty element contributes only "[]".
+    for (raw, expected) in [
+        ("[]", "[]"),
+        ("[[]]", "[[]]"),
+        ("[[[]]]", "[[[]]]"),
+        ("[[],[]]", "[[],[]]"),
+        ("[0,[]]", "[0,[]]"),
+        ("{\"a\":[[]]}", "{\"a\":[[]]}"),
+    ] {
+        let value = parse_json(raw).expect("#983 empty container parse");
+        let encoded = stringify_json(&value)
+            .expect("#983 empty container stringify")
+            .expect("#983 empty container is not undefined");
+        assert_eq!(encoded, expected, "#983 empty container bytes {raw}");
+    }
+}
+
+#[test]
+fn wide_projections_stay_at_fifty_six_bytes_per_element() {
+    // #983: a decoded sessions projection materializes one JsValue per wire
+    // element, so the enum's inline size is the decode budget. The boxed key
+    // index keeps an element at 56 bytes; an inline index map made it 96.
+    assert!(
+        std::mem::size_of::<JsValue>() <= 56,
+        "#983 JsValue inline size {} exceeds the 56-byte element bound",
+        std::mem::size_of::<JsValue>()
+    );
+}
+
+#[test]
+fn hundred_thousand_deep_parse_stringify_unwind_on_small_stack() {
+    std::thread::Builder::new()
+        .stack_size(128 * 1024)
+        .spawn(|| {
+            let depth = 100_000;
+            let array = format!("{}0{}", "[".repeat(depth), "]".repeat(depth));
+            let value = parse_json(&array).expect("#983 deep parse");
+            assert_eq!(encoded(&value), array, "#983 deep stringify");
+            assert_eq!(value.clone(), value, "#983 deep clone");
+            // An explicit panic unwinds through a deep tree; dropping it
+            // during unwind must stay iterative instead of overflowing.
+            let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let deep = parse_json(&array).expect("#983 deep unwind parse");
+                assert_eq!(encoded(&deep), array, "#983 deep unwind stringify");
+                panic!("#983 deep unwind drop");
+            }));
+            assert!(unwind.is_err(), "#983 deep unwind must panic");
+        })
+        .expect("#983 deep thread")
+        .join()
+        .expect("#983 deep thread join");
+}
+
+#[test]
 fn large_inputs_have_no_unannounced_eight_mib_limit_or_quadratic_lookup() {
     let large = format!("\"{}\"", "x".repeat(9 * 1024 * 1024));
     assert_eq!(encoded(&parse_json(&large).unwrap()), large);
