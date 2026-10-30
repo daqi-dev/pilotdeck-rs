@@ -3,7 +3,7 @@
 <!-- READY:BEGIN -->
 updated: 2026-10-30 17:50 · by Claude Code 协调者
 - #749 | impl | blocked | **关键路径** pr6c-1 已合（8ebb4054f）；关单待 #1071 pr6c-2（前置 #589、#1079）
-- #1071 | review | doing | **关键路径** PR #1105 r2（fix-r1 2a81ee727）opus + GLM + cb8 39 套
+- #1071 | impl | doing | **关键路径** PR #1105 r4 Codex P0（两个新负控绑通用退出码断言、无关故障可判 KILLED）→ GLM fix-r3（上限轮）；A4 端口打印差异另开 #1131
 - #123 | impl | doing | D1-P06 已合（017a5b306，#1086 关）；P07 #1097 → PR #1106 r2（P2 轮）opus + GLM + cb8；P08、P09 串行其后
 - #1010 | impl | doing | PR #1094 r5：cb8 证实两处变异体失配（尺子 P1）→ Codex fix-r3c
 - #1011 | impl | blocked | #745 FactoryStorage projection cache；同模块串行，等 #1010
@@ -12,11 +12,10 @@ updated: 2026-10-30 17:50 · by Claude Code 协调者
 - #996 | impl | blocked | pr2 已合（64ab7cbf5）；后续批次按 #988 推广计划，待在审回落后派
 - p2-batch-4b | impl | doing | 归 M6：#935-1/2/4 #782 #835 在 #1110；#935-3 #902 #786-3 待后续 M6 PR
 - #1061 | impl | blocked | gateway-batch 负控取消路径（P0 类）——归 M6 #1099
-- #1066 | review | doing | PR #1118 r1 opus + GLM + macmini（冻结入口重插入守卫）
 - 749-diffs | coord | human | **待人复核**：A7.2-NATIVE-WS-DRAIN-001、A7.2-NATIVE-WS-RESOURCE-001（+R1 / R2）、A7.2-NATIVE-WS-AGGREGATE-001（#1079）原生隔离入口与 TS 的有界差异（未批准）
-- D-4 | coord | human | **待人工验收**：EdgeClaw 真实模型抽取 / 召回质量（#778 合入后可验；AI 不代填）
+- D-4 | coord | human | **AI 已实测，待人签字**：#1120 EdgeClaw 真实模型抽取 / 召回（_tmp/20261031-edgeclaw-smoke/RESULT.md：17/18 格，Rust 与 TS 全命中零误写）；装置 PR #1126 评审中
 - #953 | impl | blocked | item 3 余项等 #996 迁移
-- #983 | impl | doing | 解码内存先实测定级（32/64/128 MiB，Rust vs TS；本机，18789 绝不碰）→ GLM
+- #983 | review | doing | PR #1121 r2：解码内存 P0 已修（128 MiB 1.02× TS，JsValue 96→56 B，stdout 与 TS 同）→ opus + Codex + macmini
 - #892 | coord | blocked | 修 3 轮仍假 PASS，挂起；决策卡 decisions-20261028-892-suspend
 - #727 | impl | blocked | 前置 A7 Rust 宿主接线
 - #19 | impl | blocked | 修复归 #727
@@ -38,6 +37,10 @@ updated: 2026-10-30 17:50 · by Claude Code 协调者
 - #1111 | review | doing | M2-pr2 r1 opus + Codex + cb8（机械比对通过）
 - #1114 | impl | doing | PR #1117 r1 P0（detach 二次 poll panic）+ P1×2 → GLM fix-r1
 - mbp2 | coord | doing | 新宿主接入：子代理建链 + 判定一致性自检；通过后承接 macOS 专属套件 + 短链溢出
+- #1123 | review | doing | PR #1124 ready 入队（两家 0/0，cb8 负控 53 + 5 KILLED）
+- #1122 | review | doing | PR #1127（叠 #1010）r1 opus + GLM + cb8
+- #1125 | impl | doing | Linux 偶发 ETXTBSY（测试写脚本后立即 exec，main CI ubuntu 同险）→ GLM
+- #1131 | impl | doing | A4 监听 :0 打印请求地址而非实际端口（与 TS 不一致，P1 产品）→ Codex
 <!-- READY:END -->
 
 > ## 2026-10-25 03:57 · #589/#590 fix-r4 ACK 收据与安全红探针配方（GLM glm-5.3-mb，wt=issue-589-live-integrity）
@@ -2472,3 +2475,24 @@ updated: 2026-10-30 17:50 · by Claude Code 协调者
 - 23:59 **人批**：mbp2 的 fnm 预编译 Node 算红线例外（仅此机此份）；全量对拍改为**每台主机各 1 个**（各持本机 /tmp/pdrs-parity.lock）；运行中问题由协调者修。记 decisions-20261030-m6-resources「人批 … 每主机各 1 个全量对拍」。
 - 00:02 **M7 图纸落稿**（`_tmp/20261031-m7-blueprint.md`）：file_memory.rs 3,250 行按 git 史修复轮次定位的六轴拆——fs_ops（#596/597 安全轴，369）/ read（225）/ meta（pr10g 轴，353）/ manifest（pr10c 轴，125）/ api（pr10f 轴，696，execute 484 行整体搬、不拆 handler）/ 门面留守 ~475（锁机制段 130–217 原样保走）；内嵌变异测试 1,031 行 PR-1 先外迁即安全网。6 小 PR + 收尾全量对拍 ×1，每 PR 机械 0 差异证据 + 变异测试全绿。实测窗口干净：8 在审 PR 零触碰 memory、ledger.json 零锚、外部 scripts 零符号锚；TS 基线 core/{file-memory,general-projects,retrieval,review,skills} 包几何与拆分轴收敛，未来 retrieval/extraction/heartbeat 落 edgeclaw/ 平级新文件。协调者可按图纸生成任务书派 PR-1。
 - 00:04 **#1115（#1111 M2-pr2）合入 9fbefc895** → 收尾，wt-1111 回收。**#1118 CI 红**：#1066 往 ci.yml B2 步骤加了两条命令，#918 守卫测试钉死该步骤命令清单未同步 → 我同步清单 8baba46e6（CI 同命令 36 OK）→ Codex 增量复核 + GLM 结果块。#1109 fix-r3 收货 3a63b840c。
+- 00:1x **两小时交接** `_tmp/20261031-handoff-0010.md`。人要求重读 CLAUDE.md / skills 后纠偏：state 入库 PR #1119；D-4 改 AI 先实测（#1120）；#1071 不再等旧 head 宿主，修复已推、补跑受影响套件；board 改每轮一段人话。下一步：#1110 写正文入队、#1066 复核后入队、#1109 r4。
+- 00:18 本轮：#1113（M6 迁移首批）等价证据齐、两家 0/0，转 ready 入队；#1118（冻结入口守卫）CI 清单修好、两家复核 0/0，重新入队；#1109 最后一轮修复已推，进 r4 复核；#1071 Codex 复核 0/0，等 GLM 块与宿主补跑。下一步：收合并、#1071 入队、#1109 r4 结果。
+- 00:32 #983 GLM 实测判 P0（32 MiB Rust 峰值 4.90× TS、64 MiB 超 6 GiB 被杀）并修好（修后 1.43× / 1.60×，stdout 与 TS 逐字节同）→ PR #1121 r1 opus + Codex + macmini 16 套；改了共享 pilotdeck-protocol（codec stringify / JsValue::Drop），评审重点逐字节不变。#1114 fix-r1（P0 二次 poll 已修）→ r2；#1109 r4 Codex 0/0。
+- 00:36 #1071 macmini 新 head：live-e2e 28 KILLED；native-process 28 KILLED / 2 INVALID——两个都是未变异正控里 executable_native_and_a4 偶发（A4 预留端口 listen(0)→close→交子进程的 TOCTOU、一处 ECONNREFUSED 127.0.0.1:80）→ GLM fix-r2（只修测试装置，不加 sleep / 重试）。#1010 GLM r6 P1（restore-old-order 与 old-waiters-before-new 变异重复、README 矛盾）→ 我删重复行 619e260d9 → Codex r7 复核。
+- 00:45 合入 #1113（M6 迁移首批）→ 关 #1110、#782、#835（#935 余第 3 项）。#1118 被 main 偶发踢出：native_ws 测试桩先 notify entered 再建 release.notified()，notify_waiters 不留 permit → 丢唤醒；开 #1123 派 Codex，#1118 重新入队。#1010 r7 Codex 0/0/P2（场景失负控）→ 开 #1122 跟进。#983 修复轮派 GLM。
+- 01:07 合入 #1118（冻结入口重插入守卫）→ 关 #1066，树回收。#1123 交付 → PR #1124 r1。D-4 实测进行中。
+- 01:19 #1124（#1123 native_ws 丢唤醒）两家 0/0、cb8 负控全 KILLED → ready 入队；cb8 lib 唯一失败是 grep 测试 ETXTBSY（Linux 写脚本即 exec 竞态，与本 PR 无关，main CI ubuntu 同险）→ 开 #1125 派 GLM。#1122 派 Codex。D-4 run-002 进行中。
+- 01:26 **D-4 AI 已实测，待人签字**：本机真实模型 run-002 17/18 格有效，中文项目事实 / 英文偏好两组 Rust 与 TS 抽取召回全中、零误写，纯闲聊零写入；1 格 provider 超时（请求体 Rust == TS）。汇总 _tmp/20261031-edgeclaw-smoke/RESULT.md，装置 PR #1126 评审中（gitleaks 拦一处测试合成值字面量，改为运行时拼接）。
+- 01:29 #1126（#1120）cb8 首跑 host FAILED = 新负控只收本树 _tmp 输出、宿主传树外证据目录 → 我放宽为「树外新目录可、树内只 _tmp」d2e8a2ed0（树内源码旁路径仍拒）→ cb8 重跑 r1b；评审 r1 继续。
+- 01:34 #1126 cb8 r1b：负控 8 个中 7 KILLED，drop-raw-response INVALID = assertEqual(str) 多行 diff 把标记挤到续行（判杀要求同行）→ 改 assertTrue(x == y, msg) 777cf86b7，cb8 r1c 重跑；规则写进 negctl-rules（每份任务书自动附）。
+- 01:46 #983 fix-r1 收货：负控目标绑定修好；128 MiB 修前 Rust 超 6 GiB 被停 → 装箱 JsObject.indices（JsValue 96→56 B），修后 32 / 64 / 128 MiB = 0.86× / 0.96× / 1.02× TS、stdout sha256 逐格同 → r2 opus + Codex（重点全仓共用类型布局变化）+ macmini。#1122 交付 → PR #1127（叠 #1010）r1。
+- 01:49 #1126（D-4 装置）cb8 r1c 8/8 KILLED、lib rc=0；两家 r1 0/0（覆盖 c32c0a3a5）。我后续两处装置修正的增量经 DeepSeek（llm-center）复核 0/0/P2×3：P2-1（已存在目录抛 FileExistsError 而非 #1120 SystemExit）当轮修 f4453ffde，P2-2（root 未 resolve）不成立，P2-3 可读性 → GLM 当前 head 结果块重跑后入队。
+- 01:51 #983 r2 Codex：P1（新 protocol 负控的绑定测试 codec.rs 不受 HEAD 守卫）→ 我加入 guarded 15f45bad4 → Codex r3 增量复核；P2（对象密集负载性能未测）→ 开 #1128 跟进（前置于 A8 全量对拍）。#1124 checks 绿、在队。
+- 01:57 #983 r3 Codex：r2 P1 已闭合；同类残留 P1（workspace manifest src/Cargo.toml 未守卫）→ 补 2c103e667 → r4 复核（要求一次列全剩余输入）。
+- 02:06 **mbp2 接入通过**（子代理）：3 单 20 套 373 case 与 macmini 372 一致；唯一不一致 registry-unmasked-byte = run-registry 金样生成器同毫秒时间戳不 mask（快机器偶发，产品测试问题）→ 开 #1129。mbp2 承接 macOS 专属套件 + 短链溢出 + 全量对拍车道（parity-full-mbp2.sh，冒烟 G03 53/53）。子代理发现 judge 不认 `scp neg script failed` / `disk low` 会永远等 → 新 host-judge2.sh / host-judge-cb8-2.sh（原子替换入口，不改运行中的旧文件）。**cb8 残留对拍锁（pid 早死）让 #1097 sdk-format 4.8 h 94 变异全 INVALID** → 我 mv 走锁，交 cb8 子代理做成起链前自动判陈旧。#983 r4 P1（剩余 7 个输入未守卫，一次列全）→ 补齐 6fee1a4b3。#1124 合入 → 关 #1123。#1112（#1109）ready 入队。#1114 GLM fix-r2 exit=1、无输出 → 待查。
+- 02:07 #1071 / #1114 GLM fix-r2 同时 exit=1、无输出，task.md→exit 恰 90 min = 修复轮 5400 s 时限被杀（非通道故障；GLM 探针 OK）→ dispatch-resume 在原树接续；dispatch-fix 时限 5400 → 7200（与 dispatch-issue 一致）。
+- 02:10 cb8 子代理：对拍锁陈旧回收按仓内租约协议做进 cb8 链与新 chain17（pid 已死可回收；cleanupPending / owner.json 损坏拒跑 rc=3；9 例自测）。我把 macmini 入口（host-only4 / review-phase3 / review-phase5）原子切到 chain17；mbp2 的 lease-reap 偏离协议（120 s 挪损坏 owner、忽略 cleanupPending）→ 改转调共享 reaper。
+- 02:13 #1071 fix-r2（接续后）收货 130be8d1b：两次正控 INVALID 同根因 = 就绪正则吃 Rust stderr 半行地址（无端口→落 80）；改为必须 host:port 且读到行尾 + client 先挂 error；A4 预留端口 EADDRINUSE 限 5 次换端口 → macmini native-process 补跑 + Codex r4（重点：A4 打印请求地址而非 local_addr 是否产品差异）。
+- 02:18 #1125（Linux ETXTBSY）GLM 交付 → PR #1130 r1 opus + Codex + cb8（Linux 判读 grep-etxtbsy 负控）；清单含 macOS 专属 exact-rerun-receipt → 同时 macmini 单跑该套（cb8 上它必因平台金样失败，按已知平台差异处理）。
+- 02:20 #1071 r4 Codex：P0（fix-r2 两个新负控绑定通用「Node 非零退出」断言，前序场景超时也会判 KILLED）→ GLM fix-r3（上限轮，要求专属断言）；P1（A4 监听 :0 打印请求地址、TS 打印实际端口，既存产品差异）→ 开 #1131 派 Codex。macmini r4m 宿主停（旧 head）。
+- 02:22 **两小时交接** `_tmp/20261031-handoff-0222.md`，board 与新决策卡同步入库（PR）。
