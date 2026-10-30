@@ -19,10 +19,13 @@ use crate::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value as SqlValue};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt, fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -190,10 +193,58 @@ impl IndexingSettings {
     }
 }
 
+/// #1082: one in-process serialization point per canonical database file.
+///
+/// Node's single-threaded event loop makes every `DatabaseSync` call of every
+/// generation atomic with respect to every other call in the process. Rust
+/// workers can run two generations' SQLite calls at the same time, which the
+/// TS baseline never does; with `busy_timeout = 0` the second writer would
+/// fail with `database is locked`. This map gives all `EdgeClawStorage`
+/// handles in one process the same per-file lock, reproducing the event-loop
+/// serialization without changing the cross-process `busy_timeout` contract.
+fn shared_process_lock(key: &Path) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+    let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut table = locks.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(existing) = table.get(key).and_then(Weak::upgrade) {
+        return existing;
+    }
+    let lock = Arc::new(Mutex::new(()));
+    table.insert(key.to_path_buf(), Arc::downgrade(&lock));
+    lock
+}
+
+/// Canonical identity of the SQLite file. The path is opened before this is
+/// called, so `canonicalize` normally succeeds; the absolute fallback covers a
+/// host that opened through a now-removed directory entry.
+fn process_lock_key(path: &Path) -> PathBuf {
+    let key = fs::canonicalize(path).unwrap_or_else(|_| {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(path))
+                .unwrap_or_else(|_| path.to_path_buf())
+        }
+    });
+    if crate::mutants::on("native-same-root-lock-not-shared") {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        return key.join(format!(
+            ".per-storage-{}",
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+    }
+    key
+}
+
 /// A `MemoryRepository` opened on one SQLite file (`sqlite.ts:490-600`).
 pub struct EdgeClawStorage {
     path: PathBuf,
     conn: Mutex<Option<Connection>>,
+    /// #1082: shared with every other storage opened on the same canonical
+    /// file in this process. Acquired before `conn` and released with the
+    /// connection guard, so one SQLite call block runs at a time.
+    process: Arc<Mutex<()>>,
     /// The repository's `nowIso()`, used for `pipeline_state.updated_at`
     /// (`sqlite.ts:921`, read once per `setPipelineState` call) and the L0
     /// `created_at` fallback (`sqlite.ts:941`); injected so replays observe
@@ -201,11 +252,17 @@ pub struct EdgeClawStorage {
     clock: FileMemoryClock,
 }
 
-struct ConnectionGuard<'a>(std::sync::MutexGuard<'a, Option<Connection>>);
+struct ConnectionGuard<'a> {
+    conn: MutexGuard<'a, Option<Connection>>,
+    /// Held for as long as the SQLite call block, like one synchronous
+    /// `DatabaseSync` call on the JS event loop. Lock order is always
+    /// process -> connection; there is no reverse acquisition.
+    _process: Option<MutexGuard<'a, ()>>,
+}
 impl std::ops::Deref for ConnectionGuard<'_> {
     type Target = Connection;
     fn deref(&self) -> &Connection {
-        self.0.as_ref().expect("checked open under lock")
+        self.conn.as_ref().expect("checked open under lock")
     }
 }
 
@@ -263,14 +320,22 @@ impl EdgeClawStorage {
         if crate::mutants::on("native-database-validate-early") {
             conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))?;
         }
+        let process = shared_process_lock(&process_lock_key(&path));
         Ok(Self {
             path,
             conn: Mutex::new(Some(conn)),
+            process,
             clock,
         })
     }
 
     pub(super) fn initialize(&self) -> Result<(), StorageError> {
+        // #1082 control: the rejected "short busy_timeout" fix. It must make a
+        // cross-process lock wait instead of failing immediately, which the
+        // bound test detects; production keeps Node's timeout at zero.
+        if crate::mutants::on("native-same-root-busy-wait") {
+            self.conn()?.busy_timeout(Duration::from_secs(2))?;
+        }
         {
             let conn = self.conn()?;
             conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -287,6 +352,7 @@ impl EdgeClawStorage {
     /// checkpoints the WAL only when this is the last connection. Node's
     /// DatabaseSync.close() and later SQL operations report an already closed handle.
     pub fn close(&self) -> Result<(), StorageError> {
+        let _process = self.process_guard();
         let mut guard = self
             .conn
             .lock()
@@ -303,7 +369,24 @@ impl EdgeClawStorage {
         Ok(())
     }
 
+    /// Acquire the per-file in-process lock. Lock order is always
+    /// process -> connection; see [`ConnectionGuard`].
+    fn process_guard(&self) -> Option<MutexGuard<'_, ()>> {
+        if crate::mutants::on("native-same-root-lock-bypassed") {
+            return None;
+        }
+        if crate::mutants::on("native-same-root-lock-poison-fatal") {
+            return Some(
+                self.process
+                    .lock()
+                    .expect("#1082 shared write lock poisoned"),
+            );
+        }
+        Some(self.process.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
     fn conn(&self) -> Result<ConnectionGuard<'_>, StorageError> {
+        let process = self.process_guard();
         let guard = self
             .conn
             .lock()
@@ -311,7 +394,41 @@ impl EdgeClawStorage {
         if guard.is_none() {
             return Err(StorageError::Closed);
         }
-        Ok(ConnectionGuard(guard))
+        Ok(ConnectionGuard {
+            conn: guard,
+            _process: process,
+        })
+    }
+
+    /// #1082 test seam: an in-flight, uncommitted write held on this
+    /// connection so a second generation's stage/write can be interleaved
+    /// deterministically. `entered` fires once the write lock is held and the
+    /// row is written; `release` lets the test commit (or panic).
+    #[cfg(test)]
+    pub(crate) fn test_in_flight_write(
+        &self,
+        key: &str,
+        entered: &std::sync::Barrier,
+        release: &std::sync::Barrier,
+        panic_after_release: bool,
+    ) -> Result<(), StorageError> {
+        let conn = self.conn()?;
+        conn.execute_batch("BEGIN IMMEDIATE;")?;
+        conn.execute(
+            "INSERT INTO pipeline_state (state_key, state_json, updated_at)
+             VALUES (?1, ?2, ?3)",
+            params![key, "{\"in_flight\":true}", "2026-10-22T00:00:00.000Z"],
+        )?;
+        entered.wait();
+        release.wait();
+        if panic_after_release {
+            // Release SQLite's own write lock first: the case under test is a
+            // panic in the surrounding call block, not a leaked transaction.
+            conn.execute_batch("ROLLBACK;")?;
+            panic!("#1082 in-flight writer panic");
+        }
+        conn.execute_batch("COMMIT;")?;
+        Ok(())
     }
 
     /// `sqlite.ts:567-590`: migrate only when `pipeline_state` still carries a
@@ -1719,3 +1836,10 @@ pub(crate) mod bundle;
 // Dashboard overview, UI snapshot and repository-level list/count
 // (sqlite.ts:1660-1775).
 pub(crate) mod overview;
+
+// #1082 same-rootDir two-generation SQLite matrix; library-only because the
+// deterministic in-flight writer seam is `cfg(test)` and is not part of the
+// public integration-test surface.
+#[cfg(test)]
+#[path = "same_root_tests.rs"]
+mod same_root_tests;
