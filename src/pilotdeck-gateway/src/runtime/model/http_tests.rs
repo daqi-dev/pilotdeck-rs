@@ -442,101 +442,6 @@ fn google_protocol_dispatch_matches_the_recorded_sdk_request() {
     );
 }
 
-/// Reuse the original TS error cases without needing a listening socket.
-/// This supplements (and does not replace) the real HTTP oracle replay.
-#[tokio::test]
-async fn google_sdk_errors_match_the_recorded_status_text_and_content_type() {
-    let oracle = crate::test_baseline::oracle(include_str!(
-        "../../../tests/fixtures/model-stream-google/oracle.json"
-    ));
-    let mut checked = 0;
-    for case in super::super::count_body::array(field(&oracle, "cases")) {
-        if ![
-            "error-json-401",
-            "error-custom-status-text",
-            "error-content-type-case",
-        ]
-        .contains(&header_text(field(case, "name")).as_str())
-        {
-            continue;
-        }
-        let reply = &super::super::count_body::array(field(case, "replies"))[0];
-        let mut response =
-            Response::builder().status(field(reply, "status").as_number().unwrap() as u16);
-        for (name, value) in field(reply, "headers").as_object().unwrap().entries() {
-            response = response.header(name.to_utf8().unwrap(), header_text(value));
-        }
-        if let Some(reason) = field(reply, "statusText").as_string() {
-            response = response
-                .extension(hyper::ext::ReasonPhrase::try_from(reason.to_utf8().unwrap()).unwrap());
-        }
-        let bytes: Vec<u8> = super::super::count_body::array(field(reply, "chunks"))
-            .iter()
-            .flat_map(|chunk| header_text(field(chunk, "text")).into_bytes())
-            .collect();
-        let body = Full::new(Bytes::from(bytes))
-            .map_err(|never| match never {})
-            .boxed();
-        let error = google_response_error(
-            response.body((body, false)).unwrap(),
-            &StreamOptions::default(),
-            field(&oracle, "provider"),
-        )
-        .await
-        .unwrap();
-        let ModelStreamError::Provider(actual) = error else {
-            panic!("expected canonical SDK error");
-        };
-        let timeline = super::super::count_body::array(field(case, "timeline"));
-        let mut expected = field(field(timeline.last().unwrap(), "event"), "error")
-            .as_object()
-            .unwrap()
-            .clone();
-        // The outer retry loop adds this checkpoint after SDK normalization.
-        // Its full shape remains covered by the loopback timeline replay.
-        expected.insert("streamInterruption".into(), JsValue::Undefined);
-        assert_eq!(
-            crate::js_value::json_stringify(&JsValue::Object(actual)).unwrap(),
-            crate::js_value::json_stringify(&JsValue::Object(expected)).unwrap(),
-            "{}: SDK error",
-            header_text(field(case, "name"))
-        );
-        checked += 1;
-    }
-    assert_eq!(checked, 3);
-}
-
-/// The non-2xx Google path shares the `response_text` reader, so an
-/// over-limit error body is drained to EOF and then rejects with V8's plain
-/// `Error` — the SDK error-body promise never normalizes a string that could
-/// not be created.
-#[tokio::test(start_paused = true)]
-async fn google_non_2xx_overlong_body_throws_the_v8_error() {
-    let _limit = LimitGuard::set(32);
-    let provider = JsValue::Object(JsObject::new());
-    let eof = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let body = SequenceBody {
-        frames: vec![
-            TestFrame::After(Duration::from_millis(40), TEST_OVERLONG_CHOICES),
-            TestFrame::After(Duration::from_millis(40), b" "),
-        ]
-        .into(),
-        timer: None,
-        eof: eof.clone(),
-    }
-    .boxed();
-    let response = Response::builder().status(500).body((body, false)).unwrap();
-    let error = google_response_error(response, &StreamOptions::default(), &provider)
-        .await
-        .expect_err("an over-long error body must fail the text conversion");
-    assert!(error.name().equals_str("Error"), "{error:?}");
-    assert_eq!(error.message_text(), crate::fetch_redirect::STRING_TOO_LONG);
-    assert!(
-        eof.load(std::sync::atomic::Ordering::Relaxed),
-        "the error was raised before the error body reached EOF"
-    );
-}
-
 /// Scripted transport: one response per call, body frames served in order;
 /// a frame of `None` stalls forever.
 /// Status and body frames (`None` stalls) of one scripted response.
@@ -1635,10 +1540,11 @@ fn complete_single_endpoint_config() -> (JsValue, JsValue) {
 
 const TEST_TINY_CHOICES: &[u8] = br#"{"choices":[]}"#;
 /// 53 UTF-16 units, valid OpenAI shape, over every small test limit below.
-const TEST_OVERLONG_CHOICES: &[u8] = br#"{"choices":[],"pad":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}"#;
+pub(super) const TEST_OVERLONG_CHOICES: &[u8] =
+    br#"{"choices":[],"pad":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}"#;
 
 #[derive(Clone, Copy)]
-enum TestFrame {
+pub(super) enum TestFrame {
     Data(&'static [u8]),
     /// Sleep before yielding this frame; the timer starts on its first poll.
     After(Duration, &'static [u8]),
@@ -1646,12 +1552,12 @@ enum TestFrame {
     Error,
 }
 
-struct SequenceBody {
-    frames: std::collections::VecDeque<TestFrame>,
-    timer: Option<Pin<Box<tokio::time::Sleep>>>,
+pub(super) struct SequenceBody {
+    pub(super) frames: std::collections::VecDeque<TestFrame>,
+    pub(super) timer: Option<Pin<Box<tokio::time::Sleep>>>,
     /// Set once the frame stream reached EOF, so tests can assert the reader
     /// drained the body instead of timing the frames.
-    eof: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub(super) eof: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 impl hyper::body::Body for SequenceBody {
     type Data = Bytes;
@@ -2551,46 +2457,6 @@ fn sigxfsz_registration_degrades_without_a_runtime() {
         attempt.is_err(),
         "no-runtime registration must degrade, got: {:?}",
         attempt.map(|_| ())
-    );
-}
-
-// The canonical Google error event for a failed dump write: `raw` is the fs
-// Error's own enumerable fields (`normalize_model_error` keeps the `raw` it is
-// handed), `code` falls through the classifiers to the fs `code`, and
-// `retryable` is false — TS `isRetryable(undefined, "ENOENT")` is false for
-// every errno code (probe: ENOENT/EACCES/ENOTDIR/EFBIG all false).
-#[test]
-fn dump_failure_error_projects_the_node_fs_error() {
-    let provider = parse_json(r#"{"id":"dump-provider","protocol":"google"}"#).unwrap();
-    let failure = DumpFailure::from_io(
-        &std::io::Error::from_raw_os_error(libc::ENOENT),
-        "open",
-        Some(std::path::Path::new("/tmp/pilotdeck_request_1.json")),
-    );
-    let ModelStreamError::Provider(canonical) = dump_failure_error(&provider, &failure) else {
-        panic!("a dump write failure is a provider error");
-    };
-    assert_eq!(
-        canonical.get("code").and_then(JsValue::as_string),
-        Some(&JsString::from("ENOENT"))
-    );
-    assert_eq!(canonical.get("retryable"), Some(&JsValue::Bool(false)));
-    let raw = canonical.get("raw").expect("raw survives normalization");
-    assert_eq!(
-        raw.get("errno"),
-        Some(&JsValue::Number(f64::from(-libc::ENOENT)))
-    );
-    assert_eq!(
-        raw.get("code").and_then(JsValue::as_string),
-        Some(&JsString::from("ENOENT"))
-    );
-    assert_eq!(
-        raw.get("syscall").and_then(JsValue::as_string),
-        Some(&JsString::from("open"))
-    );
-    assert_eq!(
-        raw.get("path").and_then(JsValue::as_string),
-        Some(&JsString::from("/tmp/pilotdeck_request_1.json"))
     );
 }
 

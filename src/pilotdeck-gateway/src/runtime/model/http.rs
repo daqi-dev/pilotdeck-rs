@@ -62,8 +62,6 @@ pub(crate) fn retry_after_header_ms(value: Option<&str>) -> Option<f64> {
 }
 use errors::{ErrorInput, is_premature_stream_close, normalize_model_error};
 use google::stream_google_model;
-#[cfg(test)]
-use google::{dump_failure_error, google_response_error};
 
 /// `Math.round`.
 pub(crate) fn js_round(value: f64) -> f64 {
