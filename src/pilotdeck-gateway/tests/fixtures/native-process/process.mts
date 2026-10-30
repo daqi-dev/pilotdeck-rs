@@ -70,10 +70,20 @@ async function launch(name:string,extra:string[]=[],native=true){
   for(let attempt=1;;attempt++){
     try{
       const address=await started.ready;
+      // A resolved readiness value must be a complete host:port. A lax regex
+      // or a truncated chunk can hand back a port-less fragment whose client
+      // URL would silently degrade to the default HTTP port, so reject it
+      // here as a classified assertion instead of relying on connect errors.
+      assert.ok(/^\d+\.\d+\.\d+\.\d+:\d+$/.test(address),'#1071 readiness address carries a port');
       rows.push({name,pid:started.child.pid,argv:[binary,...args],cwd:project,address});
       return {child:started.child,exit:started.exit,address,project,home,stderr:started.stderr};
     }catch(error:any){
-      if(native||attempt>=A4_BIND_ATTEMPTS||!/address already in use/i.test(String(error?.message)))throw error;
+      const collision=/address already in use/i.test(String(error?.message));
+      // A genuine error (timeout, early exit of another cause, native path)
+      // stays unclassified so the oracle keeps treating it as INVALID; only
+      // an exhausted A4 bind-collision chain becomes a target receipt.
+      if(native||!collision)throw error;
+      if(attempt>=A4_BIND_ATTEMPTS)assert.fail('#1071 A4 bind collision exhausted');
       rows.push({name,a4BindRetry:attempt});
       started=start(await reserveA4Port());
     }
@@ -156,7 +166,7 @@ try{
   // error, process failure or deadline remains an unclassified INVALID.
   if(error?.code==='ERR_ASSERTION'){
     const first=String(error.message).split('\n')[0];
-    if(['#1071 clean signal exit','#1071 refreshed hooks refused'].includes(first)) assertionFailure=first;
+    if(['#1071 clean signal exit','#1071 refreshed hooks refused','#1071 A4 bind collision exhausted','#1071 readiness address carries a port'].includes(first)) assertionFailure=first;
   }
   throw error;
 }finally{

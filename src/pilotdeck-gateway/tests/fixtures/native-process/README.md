@@ -15,7 +15,7 @@ pilotdeck-gateway --native \
 
 `generate.mts` 仅以 Node v22.22.0 执行固定 TS 基线的真实 shutdown coordinator/bundles、默认 LSP、title 和 sidecar turn composition。信号子进程 `signal.mts` 接入真实 coordinator，未启动完整 TS CLI。`oracle.json` 包含基线 commit、传递源码 SHA 与原始观测；Rust 忽略测试 `native_process::tests::regenerates_identically` 可逐字节重生成核验。
 
-`process.mts` 用真实 gateway/sidecar 二进制和仅本机临时 HTTP provider：WS 登录、文本轮次、落盘、run 查询、挂起流取消、SIGINT/SIGTERM、关停期间重复信号、启动失败、A4 非 UTF-8 字节透传。所有监听使用 OS 分配端口，每次新建 home/project。子进程就绪只在 stderr 出现完整到行尾的 `listening host:port` 行时 resolve（子进程 stderr 会按任意边界分块，半行地址不再被采纳，避免无端口 URL 落到 http 80）；A4 入口回报的是请求地址而非内核分配端口，因此 fixture 以 listen(0) 预留端口并在 bind 冲突（TOCTOU 被并发进程抢占）时有界重试（至多 5 次，仅限 `address already in use`），native 子进程自行 bind `:0` 回报真实地址、不重试。WS 连接在 open 前即挂 error 监听，连接失败走有界拒绝而非未捕获异常。进程 argv、PID、二进制前后 SHA、消息及落盘 SHA 写入独占输出目录。此记录没有覆盖短命后代的 exec/网络见证，不能替代 `session_domain.py` 的 native 审计。
+`process.mts` 用真实 gateway/sidecar 二进制和仅本机临时 HTTP provider：WS 登录、文本轮次、落盘、run 查询、挂起流取消、SIGINT/SIGTERM、关停期间重复信号、启动失败、A4 非 UTF-8 字节透传。所有监听使用 OS 分配端口，每次新建 home/project。子进程就绪只在 stderr 出现完整到行尾的 `listening host:port` 行时 resolve（子进程 stderr 会按任意边界分块，半行地址不再被采纳，避免无端口 URL 落到 http 80），resolve 值必须是完整 `IPv4:port`，否则以专属断言 `#1071 readiness address carries a port` 失败；A4 入口回报的是请求地址而非内核分配端口（已登记产品差异，见 `specs/gateway-parity/diffs/A4-LISTEN-PORT-LOG-001.md`，产品修复单 #1131），因此 fixture 以 listen(0) 预留端口并在 bind 冲突（TOCTOU 被并发进程抢占）时有界重试（至多 5 次，仅限 `address already in use`），重试用尽以专属断言 `#1071 A4 bind collision exhausted` 失败，native 子进程自行 bind `:0` 回报真实地址、不重试。除已登记的具名断言外，其余失败（超时、别的场景错误）保持未分类。WS 连接在 open 前即挂 error 监听，连接失败走有界拒绝而非未捕获异常。进程 argv、PID、二进制前后 SHA、消息及落盘 SHA 写入独占输出目录。此记录没有覆盖短命后代的 exec/网络见证，不能替代 `session_domain.py` 的 native 审计。
 
 YAML 顶层 `hooks` 在固定 TS 配置层是未知字段，会被投影丢弃；本入口按该诊断明确拒绝该字段（包括空值），不把它当作已装配的 hooks。实际 hooks 来源是插件贡献和 SDK session hooks：磁盘 plugins/skills 非空被拒绝，内置插件为空，`sdkConfig` 请求被拒绝。每轮既有 `prepare_attachment_turn` 会重新校验 profile，进程测试另验证启动后加入 hooks 被拒绝。
 
@@ -35,7 +35,7 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway --test native_pro
 
 负控仅在提交后的干净 HEAD 上运行；不得为运行它创建影子仓库或替换守卫。脚本要求调用方提供 `CARGO_TARGET_DIR`，逐个记录编译、正控、带 nonce 的目标断言失败、恢复正控，跑完所选变异后统一汇总；任何 INVALID/SURVIVED 均失败。`--check` 不改源码，锚点过期报错；`--compile-only` 是协调者的编译预检，不能视为 KILLED。完整变异可能超过 20 分钟，由宿主协调者运行。
 
-`--check` 将断言限定在对应文件的目标测试函数体内，并有兄弟函数移动断言的内存负例。守卫覆盖 process/signal/generate/oracle 与共享重生成依赖，summary 记录 `guardedSha256`。运行进程用例前显式构建当前源码的 sidecar，记录构建命令、日志和 `sidecarSha256`。取消断连由生产 `turn_ports` 的确定性信号状态用例判杀；信号退出码由 Node 的具体断言判杀，进程超时不算杀。Node 仅在二进制完整性检查通过后发布断言记录。重生成负控修改 oracle 字节，只承认对应字节比较失败。
+`--check` 将断言限定在对应文件的目标测试函数体内，并有兄弟函数移动断言的内存负例。守卫覆盖 process/signal/generate/oracle 与共享重生成依赖，summary 记录 `guardedSha256`。运行进程用例前显式构建当前源码的 sidecar，记录构建命令、日志和 `sidecarSha256`。取消断连由生产 `turn_ports` 的确定性信号状态用例判杀；信号退出码由 Node 的具体断言判杀，进程超时不算杀。`a4-listen-collision` 与 `readiness-address-port` 各绑定观察者自己的具名断言（`#1071 executable A4 bind collision exhausted` / `#1071 executable readiness address carries a port`）；非零退出本身不是判杀依据，别的场景失败或超时只能 INVALID。Node 仅在二进制完整性检查通过后发布断言记录。重生成负控修改 oracle 字节，只承认对应字节比较失败。
 
 ```sh
 python3 -B src/pilotdeck-gateway/tests/fixtures/native-process/negative_controls.py --check
