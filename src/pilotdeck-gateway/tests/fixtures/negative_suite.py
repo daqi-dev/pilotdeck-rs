@@ -2,6 +2,7 @@
 """Run every selected control without treating harness failures as kills."""
 from dataclasses import dataclass
 import json
+from pathlib import Path
 import subprocess
 
 import pending_reanchor as pending
@@ -55,6 +56,25 @@ def invalidate_completed(results, reason):
             row['compiled'] = False
 
 
+def publish_summary(out, results):
+    """Publish the one final summary, atomically, after restore verification.
+
+    ``record`` keeps every row in memory while the guarded window is open. An
+    earlier KILLED row must never be readable from disk before
+    ``mutating_sources`` restored and re-verified every source: a cancellation
+    in that window would otherwise pair a stale all-green file with a nonzero
+    exit. The payload shape is unchanged; the temp-and-rename write keeps a
+    reader from observing a half-written JSON document (#166 r8).
+    """
+    target = Path(out) / 'summary.json'
+    temporary = target.with_name(target.name + '.tmp')
+    temporary.write_text(json.dumps({
+        'controls': results,
+        'counts': pending.counts(results),
+    }, indent=2) + '\n')
+    temporary.replace(target)
+
+
 def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', script=None):
     """Return an exit code; each case must pass before and after mutation."""
     results = []
@@ -80,11 +100,10 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
             raise
 
     def record(case, status, reason):
+        # Memory only: the final summary is published after the guarded
+        # restore/re-verify window has closed successfully (#1076).
         results.append({'mutation': case.mutation, 'test': case.test,
                         'assertion': case.assertion, 'status': status, 'reason': reason})
-        counts = pending.counts(results)
-        (out / 'summary.json').write_text(json.dumps(
-            {'controls': results, 'counts': counts}, indent=2) + '\n')
         print(f'{case.mutation}: {status}: {reason}', flush=True)
 
     try:
@@ -123,18 +142,27 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
                 except Exception as error:
                     status, reason = 'INVALID', reason + f'; restored: {type(error).__name__}: {error}'
                 record(case, status, reason)
-    except Exception as error:
-        # A baseline/lock/restoration failure makes further mutation unsafe.
-        # Still account for every selected case and never leave an all-green summary.
+    except BaseException as error:
+        # A baseline/lock/restoration failure — or a cancellation delivered by
+        # the guard's restore/re-verify window — makes every recorded row
+        # untrustworthy. Void them in memory, account for unrun cases, publish
+        # the INVALID summary, and exit 2. No final summary existed before this
+        # point, so an interrupt during this publish leaves no summary at all
+        # (missing is fail-closed), never the stale all-KILLED file (#1076).
         reason = f'source guard: {type(error).__name__}: {error}'
         invalidate_completed(results, reason)
         for case in cases[len(results):]:
             record(case, 'INVALID', reason)
-        if len(results) == len(cases):
-            (out / 'summary.json').write_text(json.dumps({
-                'controls': results,
-                'counts': {'KILLED': 0, 'SURVIVED': 0, 'INVALID': len(results)},
-            }, indent=2) + '\n')
+        publish_summary(out, results)
+        # A raw SystemExit code must not decide the process status: 256/-256
+        # truncate to zero on POSIX and a string code exits 1. Re-raise the
+        # normalized code; a KeyboardInterrupt returns 2 from run_cases.
+        if isinstance(error, SystemExit):
+            raise SystemExit(2) from error
+        return 2
+    # Reaching here means mutating_sources restored every source and verified
+    # it against the baseline. Only now may a final summary exist.
+    publish_summary(out, results)
     counts = pending.counts(results)
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
     return int(not results or any(row['status'] != 'KILLED' for row in results))
