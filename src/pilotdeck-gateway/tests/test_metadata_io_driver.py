@@ -567,6 +567,8 @@ class EnvironmentControls(unittest.TestCase):
         commands = {job: [self.ci_run_commands(step, issue='#918') for step in items]
                     for job, items in steps.items()}
         b2 = [
+            'python3 -I src/pilotdeck-gateway/tests/fixtures/frozen-reinsert-guard/test_entry_guard.py',
+            'python3 -I src/pilotdeck-gateway/tests/fixtures/frozen-reinsert-guard/test_negative_controls.py',
             'python3 -I scripts/test-approval-provenance.py',
             'python3 -I scripts/test-review-deepseek.py',
             'python3 -I scripts/test-review-roles.py',
