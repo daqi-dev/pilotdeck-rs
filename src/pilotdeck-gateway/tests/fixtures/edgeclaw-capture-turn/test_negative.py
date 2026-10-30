@@ -1,10 +1,10 @@
-# anchor-selfcheck: unsupported unit tests of the restore-positive summary path and the in-memory sample-selection / sample-verdict / combined-anchor contracts, no product source replacement table
+# anchor-selfcheck: unsupported unit tests of the restore-positive summary path, the full-table-only argument contract and the combined rejection anchor, no product source replacement table
 """#774 P2-1 / #786: runner contracts proven without touching product sources.
 
-The restored-positive failure path (#774 P2-1), the optional sample selection
-(#786), the sample/full verdict split (#786 fix-r1) and the combined rejection
-anchor (#786) are in-memory stubs: they never start cargo, mutate a product
-source or touch the real evidence directory.
+The restored-positive failure path (#774 P2-1), the full-table-only argument
+contract (#786 fix-r2: the removed sample mode may not sneak back in) and the
+combined rejection anchor (#786) are in-memory stubs: they never start cargo,
+mutate a product source or touch the real evidence directory.
 """
 import importlib.util
 import json
@@ -40,10 +40,6 @@ class RestoredPositiveFailure(unittest.TestCase):
             restored_error=restored_error,
             before_sha256={'prepare.rs': 'before'},
             after_sha256={'prepare.rs': 'after'},
-            mode='full',
-            selected=[],
-            total=1,
-            skipped=[],
         )
         with tempfile.TemporaryDirectory(prefix='pdrs-774-negative-') as tmp:
             negative.write_summary(Path(tmp), payload)
@@ -159,112 +155,34 @@ class SharedVerdicts(unittest.TestCase):
                          'not an assertion kill')
 
 
-class MutantSelection(unittest.TestCase):
-    # Not named `mutants`: that is a mutation-table signal name for the
-    # anchor selfcheck, and this in-memory stub owns no table.
-    rows = [dict(name='alpha'), dict(name='beta')]
+class FullTableOnly(unittest.TestCase):
+    """#786 fix-r2: the runner refuses per-mutant selections outright.
 
-    def test_no_names_selects_everything(self):
-        self.assertEqual(negative.selected_names(self.rows, []), set())
-
-    def test_unknown_name_refuses(self):
-        with self.assertRaises(SystemExit):
-            negative.selected_names(self.rows, ['gamma'])
-
-    def test_duplicate_name_refuses(self):
-        with self.assertRaises(SystemExit):
-            negative.selected_names(self.rows, ['alpha', 'alpha'])
-
-
-class SampleModeVerdict(unittest.TestCase):
-    """#786 fix-r1: a sample run must never be readable as a full pass.
-
-    The regression named by the review: one selected mutant, KILLED, restored
-    positive passed — that run still may not exit with the full-table pass
-    code, and its summary must say which shape it was.
+    The sample mode was removed because its verdict scaffolding kept producing
+    false-pass/false-fail exit codes across two review rounds; a selection
+    argument must therefore refuse to start instead of silently running a
+    subset that could pose as full-table evidence.
     """
 
-    def test_clean_sample_is_not_full_pass(self):
-        code = negative.verdict(mode='sample', failures=[], restored_ok=True)
-        self.assertNotEqual(
-            code, 0,
-            '#786 a clean sample run must not exit with the full-pass code')
-        self.assertEqual(
-            code, negative.SAMPLE_EXIT,
-            '#786 a clean sample run must use the dedicated sample exit code')
+    def test_selection_argument_refuses_to_start(self):
+        with patch.object(negative.sys, 'argv',
+                          ['negative.py', 'out-dir', 'fork-carryover-filter-removed']):
+            with self.assertRaises(SystemExit) as caught:
+                negative.main()
+        self.assertIn(
+            'only executes the full table',
+            str(caught.exception),
+            '#786 fix-r2 a mutant-name argument must refuse to start the '
+            'runner instead of selecting a sample')
 
-    def test_clean_full_run_passes(self):
-        self.assertEqual(
-            negative.verdict(mode='full', failures=[], restored_ok=True), 0,
-            '#786 a clean full run must keep the full-pass exit code')
-
-    def test_sample_failure_is_not_the_sample_code(self):
-        self.assertEqual(
-            negative.verdict(mode='sample', failures=['survivor'],
-                             restored_ok=True), 1,
-            '#786 a sample run with failures must exit the failure code')
-
-    def test_restored_failure_fails_in_both_modes(self):
-        for mode in ('sample', 'full'):
-            with self.subTest(mode=mode):
-                self.assertEqual(
-                    negative.verdict(mode=mode, failures=[],
-                                     restored_ok=False), 1,
-                    '#786 a failed restored positive must exit the failure '
-                    'code in every mode')
-
-    def test_summary_marks_sample(self):
-        payload = negative.summary_payload(
-            results=[dict(name='errored-missing-injected-false',
-                          status='KILLED')],
-            failures=[],
-            restored={'prepare.rs': True},
-            restored_ok=True,
-            restored_error=None,
-            before_sha256={'prepare.rs': 'before'},
-            after_sha256={'prepare.rs': 'after'},
-            mode='sample',
-            selected=['errored-missing-injected-false'],
-            total=2,
-            skipped=['malformed-session-no-error'],
-        )
-        self.assertEqual(
-            payload['mode'], 'sample',
-            '#786 the sample summary must record mode=sample')
-        self.assertEqual(
-            payload['selected'], ['errored-missing-injected-false'],
-            '#786 the sample summary must name the selected mutants')
-        self.assertEqual(
-            payload['total'], 2,
-            '#786 the sample summary must record the full-table size')
-        self.assertEqual(
-            payload['skipped'], ['malformed-session-no-error'],
-            '#786 the sample summary must name the skipped mutants')
-
-    def test_summary_marks_full(self):
-        payload = negative.summary_payload(
-            results=[dict(name='alpha', status='KILLED'),
-                     dict(name='beta', status='KILLED')],
-            failures=[],
-            restored={'prepare.rs': True},
-            restored_ok=True,
-            restored_error=None,
-            before_sha256={'prepare.rs': 'before'},
-            after_sha256={'prepare.rs': 'after'},
-            mode='full',
-            selected=[],
-            total=2,
-            skipped=[],
-        )
-        self.assertEqual(
-            payload['mode'], 'full',
-            '#786 the full-run summary must record mode=full')
-        self.assertEqual(
-            payload['selected'], [],
-            '#786 the full-run summary must record an empty selection')
-        self.assertEqual(
-            payload['total'], len(payload['results']),
-            '#786 the full-run summary must classify the whole table')
+    def test_missing_argument_refuses_to_start(self):
+        with patch.object(negative.sys, 'argv', ['negative.py']):
+            with self.assertRaises(SystemExit) as caught:
+                negative.main()
+        self.assertIn(
+            'only executes the full table',
+            str(caught.exception),
+            '#786 fix-r2 a missing output directory must refuse to start')
 
 
 class CombinedRejectionAnchor(unittest.TestCase):

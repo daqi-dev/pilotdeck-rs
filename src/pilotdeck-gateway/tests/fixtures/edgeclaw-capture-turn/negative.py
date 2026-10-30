@@ -5,14 +5,11 @@ Run from the repository root after the work is committed (mutating_sources
 refuses to mutate a product tree that differs from HEAD):
 
     python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-capture-turn/negative.py \
-        _tmp/20261026-issue-759/negative-capture-turn [mutant ...]
+        _tmp/20261026-issue-759/negative-capture-turn
 
-Optional mutant names select a sample run; the positive and restored controls
-always execute, and every selected mutant is still classified before the
-summary. A sample is never full-table evidence: its summary records
-``mode: "sample"`` with the ``selected``/``total``/``skipped`` tables, and even
-a clean sample (every selected mutant KILLED) exits the dedicated
-``SAMPLE_EXIT`` code instead of the full-run pass code (#786).
+The runner takes exactly one argument, the output directory; naming mutants
+for a sample run was removed (#786 fix-r2) because it kept producing
+false-verdict scaffolding, and the full table is the only accepted evidence.
 
 Each mutant names the exact test that must fail and the failure shape that
 proves the test really executed: an `assertion` diagnostic, or a panic at this
@@ -36,27 +33,11 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import classify as shared_classify
 
 TEST_FILE = 'pilotdeck-gateway/tests/edgeclaw_capture_turn.rs'
-# A clean sample run's completion code (#786): never the full-run pass code,
-# and kept apart from the failure code so a sample cannot pose as either.
-SAMPLE_EXIT = 2
 # The no-error mutant's combined anchor (#786): the named test's own rejection
 # wording *and* the TS product text it must match. Shared with test_negative.py;
 # the Rust panic text in edgeclaw_capture_turn.rs must still be synced by hand.
 REJECT_ANCHOR = ("#786 non-string sessionId must reject like isAlwaysOnSession "
                  "(TS: reading 'startsWith')")
-
-
-def verdict(*, mode, failures, restored_ok):
-    """Map a finished run onto its exit code (#786).
-
-    Zero is reserved for a full run whose mutants were all KILLED and whose
-    restored positive passed. A clean sample run exits ``SAMPLE_EXIT`` so no
-    caller can read it as full-table evidence; any failure or restore problem
-    still exits 1 regardless of mode.
-    """
-    if failures or not restored_ok:
-        return 1
-    return SAMPLE_EXIT if mode == 'sample' else 0
 
 
 def classify_control(mutant, code, raw):
@@ -83,24 +64,6 @@ def classify_control(mutant, code, raw):
     return status, reason
 
 
-def selected_names(mutants, names):
-    """Validate an optional sample selection; empty means run every mutant.
-
-    Sample runs (#747/#786) still bracket the selection with the positive and
-    restored controls. Unknown or duplicate names refuse to start rather than
-    silently skipping rows.
-    """
-    if not names:
-        return set()
-    known = {mutant['name'] for mutant in mutants}
-    unknown = sorted(set(names) - known)
-    if unknown:
-        raise SystemExit(f'unknown mutants: {", ".join(unknown)}')
-    if len(set(names)) != len(names):
-        raise SystemExit('duplicate mutant names')
-    return set(names)
-
-
 def restore_positive(run):
     """Run the restored positive control without discarding the summary.
 
@@ -117,8 +80,7 @@ def restore_positive(run):
 
 
 def summary_payload(*, results, failures, restored, restored_ok,
-                    restored_error, before_sha256, after_sha256,
-                    mode, selected, total, skipped):
+                    restored_error, before_sha256, after_sha256):
     counts = {
         state: sum(row['status'] == state for row in results)
         for state in ('KILLED', 'SURVIVED', 'INVALID')
@@ -127,13 +89,6 @@ def summary_payload(*, results, failures, restored, restored_ok,
         results=results,
         failures=failures,
         counts=counts,
-        # #786: a sample summary must never be readable as a full one. `mode`
-        # distinguishes the run shape; `selected`/`total`/`skipped` expose what
-        # was and was not classified.
-        mode=mode,
-        selected=selected,
-        total=total,
-        skipped=skipped,
         restored=restored,
         restoredPass=restored_ok,
         beforeSha256=before_sha256,
@@ -151,6 +106,10 @@ def write_summary(output, payload):
 
 
 def main():
+    if len(sys.argv) != 2:
+        raise SystemExit(
+            'usage: negative.py <output-dir> — the removed sample mode means '
+            'this runner only executes the full table (#786 fix-r2)')
     root = Path(__file__).resolve().parents[5]
     output = Path(sys.argv[1]).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -386,11 +345,6 @@ def main():
             '#786 normal-turn recorded call count',
         ),
     ]
-    # Optional sample mode (#747/#786): naming mutants runs only those rows;
-    # the positive and restored controls still bracket them. The mode rides
-    # into the summary and the exit code: only a full run can pass.
-    selected = selected_names(mutants, sys.argv[2:])
-    mode = 'sample' if selected else 'full'
     results = []
 
     # The source guard must use HEAD; uncommitted trees are not mutation inputs.
@@ -424,8 +378,6 @@ def main():
         failures = []
         try:
             for mutant in mutants:
-                if selected and mutant['name'] not in selected:
-                    continue
                 name, path = mutant['name'], mutant['path']
                 original = originals[path]
                 assert path.read_text() == original, 'another writer changed the product source'
@@ -468,11 +420,6 @@ def main():
         payload = summary_payload(
             results=results,
             failures=failures,
-            mode=mode,
-            selected=sorted(selected),
-            total=len(mutants),
-            skipped=sorted(mutant['name'] for mutant in mutants
-                           if mutant['name'] not in selected),
             restored=restored,
             restored_ok=restored_ok,
             restored_error=restored_error,
@@ -485,22 +432,14 @@ def main():
         counts = payload['counts']
         print('summary: ' + ', '.join(
             f'{state}={count}' for state, count in counts.items()), flush=True)
-        exit_code = verdict(mode=mode, failures=failures, restored_ok=restored_ok)
-        if exit_code:
-            if failures or not restored_ok:
-                detail = f'; restored_error={restored_error}' if restored_error else ''
-                print(
-                    f'NOT KILLED: {", ".join(failures) or "<none>"}; '
-                    f'restored_passed={restored_ok}{detail}',
-                    file=sys.stderr,
-                )
-            else:
-                print(
-                    f'SAMPLE RUN ONLY: {len(selected)} of {len(mutants)} mutants '
-                    'selected; a sample is not full-table evidence',
-                    file=sys.stderr,
-                )
-            sys.exit(exit_code)
+        if failures or not restored_ok:
+            detail = f'; restored_error={restored_error}' if restored_error else ''
+            print(
+                f'NOT KILLED: {", ".join(failures) or "<none>"}; '
+                f'restored_passed={restored_ok}{detail}',
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
 
 if __name__ == '__main__':
