@@ -673,6 +673,35 @@
       }
     },
     {
+      "name": "plugin-lease-last-release",
+      "node": "v22.22.0",
+      "observations": {
+        "held": {
+          "state": "draining",
+          "settled": false,
+          "disposeCalls": 0
+        },
+        "pending": {
+          "settled": false,
+          "disposeCalls": 1
+        },
+        "stateAfter": "disposed",
+        "disposeCalls": 1
+      }
+    },
+    {
+      "name": "handle-activity-wait",
+      "node": "v22.22.0",
+      "observations": {
+        "pending": {
+          "state": "draining",
+          "onDisposeCalls": 0
+        },
+        "stateAfter": "disposed",
+        "onDisposeCalls": 1
+      }
+    },
+    {
       "name": "process-exit",
       "node": "v22.22.0",
       "observations": {

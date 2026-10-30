@@ -112,26 +112,75 @@ pub struct PluginContributionSnapshot {
 use super::{PluginRuntimeError, PluginRuntimeState, release_lease_plugins};
 use tokio::sync::{Mutex as TokioMutex, Notify};
 
+// A stopped executor cannot acquire the async registry lock to decrement a
+// lease. Publish that loss synchronously instead: every disposal/release waiter
+// observes an explicit error, including one already waiting on a retired peer.
+// No runtime, registry lock or callback is needed by this guard's Drop.
+pub(super) struct LeaseReleaseGuard {
+    pub(super) failure: tokio::sync::watch::Sender<Option<Result<(), PluginRuntimeError>>>,
+    armed: bool,
+}
+impl LeaseReleaseGuard {
+    pub(super) fn new(
+        failure: tokio::sync::watch::Sender<Option<Result<(), PluginRuntimeError>>>,
+        has_references: bool,
+    ) -> Self {
+        Self {
+            failure,
+            armed: has_references,
+        }
+    }
+    pub(super) fn counts_released(&mut self) {
+        self.armed = false;
+    }
+}
+impl Drop for LeaseReleaseGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.failure.send_replace(Some(Err(PluginRuntimeError::new(
+                "Plugin lease release stopped before releasing its references.",
+            ))));
+        }
+    }
+}
+
 // Own the decrement/disposal wait independently of a caller's cancellation,
 // and memoize the result so repeated release observes the same TS promise.
 fn start_lease_release(
     plugins: &[Arc<LoadedPlugin>],
     state: &Arc<TokioMutex<PluginRuntimeState>>,
     waiters: &Arc<Notify>,
+    failure: &tokio::sync::watch::Sender<Option<Result<(), PluginRuntimeError>>>,
+    executor: &tokio::runtime::Handle,
 ) -> super::DisposalReceiver {
     let (tx, rx) = tokio::sync::watch::channel(None);
     let plugins = plugins.to_vec();
     let state = Arc::clone(state);
     let waiters = Arc::clone(waiters);
+    // Construct before spawn, so even a rejected/unpolled future publishes loss.
+    let guard = LeaseReleaseGuard::new(failure.clone(), !plugins.is_empty());
     super::super::cleanup_task::spawn_with_error(
-        &tokio::runtime::Handle::current(),
+        executor,
         tx,
         super::PluginRuntimeError::new(
             "Plugin lease release task was dropped or panicked before completion.",
         ),
-        async move { release_lease_plugins(&plugins, &state, &waiters).await },
+        async move { release_lease_plugins(&plugins, &state, &waiters, guard).await },
     );
     rx
+}
+
+// A completed lease owns its original promise result. A later, unrelated
+// lease failure may terminate only pending waiters, never rewrite that result.
+async fn wait_lease_release(
+    release: super::DisposalReceiver,
+    failure: super::DisposalReceiver,
+) -> Result<(), PluginRuntimeError> {
+    tokio::select! {
+        biased;
+        result = super::wait_watch(release) => result,
+        failed = super::wait_watch(failure) => failed,
+    }
 }
 
 /// A held lease on one plugin generation (command-catalog flavor).
@@ -142,24 +191,37 @@ pub struct PluginCommandCatalogLease {
     pub(crate) plugins: Vec<Arc<LoadedPlugin>>,
     pub(crate) released: bool,
     pub(super) release_receiver: Option<super::DisposalReceiver>,
+    pub(super) release_result: Option<Result<(), PluginRuntimeError>>,
     pub(crate) waiters: std::sync::Arc<Notify>,
     /// #1010: leases can outlive the acquiring task and move to a thread
     /// without an ambient runtime. Capture while acquiring; async Drop
-    /// cleanup runs only while this executor remains alive.
+    /// cleanup runs while this executor lives; otherwise disposal reports loss.
     pub(super) executor: tokio::runtime::Handle,
+    pub(super) failure: tokio::sync::watch::Sender<Option<Result<(), PluginRuntimeError>>>,
 }
 
 impl PluginCommandCatalogLease {
     pub async fn release(&mut self) -> Result<(), PluginRuntimeError> {
+        if let Some(result) = &self.release_result {
+            return result.clone();
+        }
         let rx = if let Some(rx) = &self.release_receiver {
             rx.clone()
         } else {
             self.released = true;
-            let rx = start_lease_release(&self.plugins, &self.state, &self.waiters);
+            let rx = start_lease_release(
+                &self.plugins,
+                &self.state,
+                &self.waiters,
+                &self.failure,
+                &tokio::runtime::Handle::current(),
+            );
             self.release_receiver = Some(rx.clone());
             rx
         };
-        super::wait_watch(rx).await
+        let result = wait_lease_release(rx, self.failure.subscribe()).await;
+        self.release_result = Some(result.clone());
+        result
     }
 }
 
@@ -167,14 +229,13 @@ impl Drop for PluginCommandCatalogLease {
     fn drop(&mut self) {
         if !self.released {
             self.released = true;
-            // Best-effort synchronous decrement; disposal callbacks are async
-            // and will run when the waiters are notified at the next poll point.
-            let state_clone = std::sync::Arc::clone(&self.state);
-            let waiters_clone = std::sync::Arc::clone(&self.waiters);
-            let plugins_clone = self.plugins.clone();
-            self.executor.spawn(async move {
-                let _ = release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;
-            });
+            let _ = start_lease_release(
+                &self.plugins,
+                &self.state,
+                &self.waiters,
+                &self.failure,
+                &self.executor,
+            );
         }
     }
 }
@@ -187,22 +248,35 @@ pub struct PluginSessionContributionLease {
     pub(crate) plugins: Vec<Arc<LoadedPlugin>>,
     pub(crate) released: bool,
     pub(super) release_receiver: Option<super::DisposalReceiver>,
+    pub(super) release_result: Option<Result<(), PluginRuntimeError>>,
     pub(crate) waiters: std::sync::Arc<Notify>,
     /// #1010: see PluginCommandCatalogLease.
     pub(super) executor: tokio::runtime::Handle,
+    pub(super) failure: tokio::sync::watch::Sender<Option<Result<(), PluginRuntimeError>>>,
 }
 
 impl PluginSessionContributionLease {
     pub async fn release(&mut self) -> Result<(), PluginRuntimeError> {
+        if let Some(result) = &self.release_result {
+            return result.clone();
+        }
         let rx = if let Some(rx) = &self.release_receiver {
             rx.clone()
         } else {
             self.released = true;
-            let rx = start_lease_release(&self.plugins, &self.state, &self.waiters);
+            let rx = start_lease_release(
+                &self.plugins,
+                &self.state,
+                &self.waiters,
+                &self.failure,
+                &tokio::runtime::Handle::current(),
+            );
             self.release_receiver = Some(rx.clone());
             rx
         };
-        super::wait_watch(rx).await
+        let result = wait_lease_release(rx, self.failure.subscribe()).await;
+        self.release_result = Some(result.clone());
+        result
     }
 }
 
@@ -210,12 +284,13 @@ impl Drop for PluginSessionContributionLease {
     fn drop(&mut self) {
         if !self.released {
             self.released = true;
-            let state_clone = std::sync::Arc::clone(&self.state);
-            let waiters_clone = std::sync::Arc::clone(&self.waiters);
-            let plugins_clone = self.plugins.clone();
-            self.executor.spawn(async move {
-                let _ = release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;
-            });
+            let _ = start_lease_release(
+                &self.plugins,
+                &self.state,
+                &self.waiters,
+                &self.failure,
+                &self.executor,
+            );
         }
     }
 }
@@ -228,22 +303,35 @@ pub struct PluginContributionLease {
     pub(crate) plugins: Vec<Arc<LoadedPlugin>>,
     pub(crate) released: bool,
     pub(super) release_receiver: Option<super::DisposalReceiver>,
+    pub(super) release_result: Option<Result<(), PluginRuntimeError>>,
     pub(crate) waiters: std::sync::Arc<Notify>,
     /// #1010: see PluginCommandCatalogLease.
     pub(super) executor: tokio::runtime::Handle,
+    pub(super) failure: tokio::sync::watch::Sender<Option<Result<(), PluginRuntimeError>>>,
 }
 
 impl PluginContributionLease {
     pub async fn release(&mut self) -> Result<(), PluginRuntimeError> {
+        if let Some(result) = &self.release_result {
+            return result.clone();
+        }
         let rx = if let Some(rx) = &self.release_receiver {
             rx.clone()
         } else {
             self.released = true;
-            let rx = start_lease_release(&self.plugins, &self.state, &self.waiters);
+            let rx = start_lease_release(
+                &self.plugins,
+                &self.state,
+                &self.waiters,
+                &self.failure,
+                &tokio::runtime::Handle::current(),
+            );
             self.release_receiver = Some(rx.clone());
             rx
         };
-        super::wait_watch(rx).await
+        let result = wait_lease_release(rx, self.failure.subscribe()).await;
+        self.release_result = Some(result.clone());
+        result
     }
 }
 
@@ -251,12 +339,13 @@ impl Drop for PluginContributionLease {
     fn drop(&mut self) {
         if !self.released {
             self.released = true;
-            let state_clone = std::sync::Arc::clone(&self.state);
-            let waiters_clone = std::sync::Arc::clone(&self.waiters);
-            let plugins_clone = self.plugins.clone();
-            self.executor.spawn(async move {
-                let _ = release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;
-            });
+            let _ = start_lease_release(
+                &self.plugins,
+                &self.state,
+                &self.waiters,
+                &self.failure,
+                &self.executor,
+            );
         }
     }
 }

@@ -131,6 +131,7 @@ pub(super) struct PluginRegistry {
     #[cfg(test)]
     after_disposal_first_poll: Option<Box<dyn FnOnce(bool) + Send>>,
     lease_counts: HashMap<usize, usize>,
+    lease_failure: watch::Sender<Option<Result<(), PluginRuntimeError>>>,
     waiters: Arc<Notify>,
     state: RegistryState,
     generation: u64,
@@ -170,6 +171,7 @@ impl PluginRegistry {
             #[cfg(test)]
             after_disposal_first_poll: None,
             lease_counts: HashMap::new(),
+            lease_failure: watch::channel(None).0,
             waiters: Arc::new(Notify::new()),
             state: RegistryState::Active,
             generation: 0,
@@ -188,6 +190,9 @@ impl PluginRegistry {
     }
 
     fn assert_active(&self, action: &str) -> Result<(), PluginRuntimeError> {
+        if let Some(Err(error)) = &*self.lease_failure.borrow() {
+            return Err(error.clone());
+        }
         if self.state != RegistryState::Active {
             Err(PluginRuntimeError::new(format!(
                 "Cannot {action} plugins; plugin registry is {}.",
@@ -323,20 +328,24 @@ pub(super) struct PluginRuntimeState {
 pub struct PluginRuntime {
     options: Arc<PluginRuntimeOptions>,
     state: Arc<TokioMutex<PluginRuntimeState>>,
+    lease_failure: watch::Sender<Option<Result<(), PluginRuntimeError>>>,
 }
 
 impl PluginRuntime {
     pub fn new(options: PluginRuntimeOptions) -> Self {
+        let registry = PluginRegistry::new();
+        let lease_failure = registry.lease_failure.clone();
         Self {
             options: Arc::new(options),
             state: Arc::new(TokioMutex::new(PluginRuntimeState {
-                registry: PluginRegistry::new(),
+                registry,
                 refresh_sender: None,
                 refresh_receiver: None,
                 disposal_requested: false,
                 dispose_sender: None,
                 dispose_receiver: None,
             })),
+            lease_failure,
         }
     }
 
@@ -346,8 +355,15 @@ impl PluginRuntime {
 
     /// Single-flight: concurrent callers share one pending refresh result.
     pub async fn refresh_with_report(&self) -> Result<PluginRefreshResult, PluginRuntimeError> {
+        if let Some(Err(error)) = &*self.lease_failure.borrow() {
+            return Err(error.clone());
+        }
         let rx = {
             let mut st = self.state.lock().await;
+            // A release can be lost while this caller is queued on state.
+            if let Some(Err(error)) = &*st.registry.lease_failure.borrow() {
+                return Err(error.clone());
+            }
             if st.disposal_requested || st.registry.state != RegistryState::Active {
                 return Err(PluginRuntimeError::new(format!(
                     "Cannot refresh plugins; plugin runtime is {}.",
@@ -423,8 +439,10 @@ impl PluginRuntime {
             plugins: lease.plugins,
             released: false,
             release_receiver: None,
+            release_result: None,
             waiters,
             executor: tokio::runtime::Handle::current(),
+            failure: self.lease_failure.clone(),
         })
     }
 
@@ -446,8 +464,10 @@ impl PluginRuntime {
             plugins: lease.plugins,
             released: false,
             release_receiver: None,
+            release_result: None,
             waiters,
             executor: tokio::runtime::Handle::current(),
+            failure: self.lease_failure.clone(),
         })
     }
 
@@ -466,12 +486,20 @@ impl PluginRuntime {
             plugins: lease.plugins,
             released: false,
             release_receiver: None,
+            release_result: None,
             waiters,
             executor: tokio::runtime::Handle::current(),
+            failure: self.lease_failure.clone(),
         })
     }
 
     pub async fn dispose(&self) -> Result<(), PluginRuntimeError> {
+        // Failure must bypass even a contended state lock. The sticky channel
+        // also closes registry admission without acquiring that lock in Drop.
+        with_lease_failure(self.lease_failure.subscribe(), self.start_dispose()).await
+    }
+
+    async fn start_dispose(&self) -> Result<(), PluginRuntimeError> {
         let rx = {
             let mut st = self.state.lock().await;
             if let Some(rx) = &st.dispose_receiver {
@@ -485,13 +513,14 @@ impl PluginRuntime {
                 st.dispose_receiver = Some(rx.clone());
                 let pending_refresh_rx = st.refresh_receiver.clone();
                 let state_clone = Arc::clone(&self.state);
+                let failure = self.lease_failure.subscribe();
                 super::cleanup_task::spawn_with_error(
                     &tokio::runtime::Handle::current(),
                     tx,
                     PluginRuntimeError::new(
                         "Plugin disposal task was dropped or panicked before completion.",
                     ),
-                    async move {
+                    with_lease_failure(failure, async move {
                         if let Some(prx) = pending_refresh_rx {
                             let _ = wait_watch(prx).await;
                         }
@@ -528,7 +557,7 @@ impl PluginRuntime {
                         }
                         state_clone.lock().await.registry.state = RegistryState::Disposed;
                         PluginRuntimeError::aggregate("Failed to dispose plugins.", errors)
-                    },
+                    }),
                 );
                 rx
             }
@@ -811,13 +840,29 @@ async fn wait_watch<T: Clone + Send + 'static>(mut rx: watch::Receiver<Option<T>
     }
 }
 
+// Observe the current value before sleeping (wait_watch does both), including
+// failure before subscription. The owned disposal task uses the same race so
+// it cannot outlive its caller while waiting forever on a lost lease/refresh.
+async fn with_lease_failure(
+    failure: DisposalReceiver,
+    cleanup: impl std::future::Future<Output = Result<(), PluginRuntimeError>>,
+) -> Result<(), PluginRuntimeError> {
+    tokio::select! {
+        biased;
+        failed = wait_watch(failure) => failed,
+        result = cleanup => result,
+    }
+}
+
 // ─────────────────────────────────────────────────────────── lease release helper
 
-pub(super) async fn release_lease_plugins(
+async fn release_lease_plugins(
     plugins: &[Arc<LoadedPlugin>],
     state_mutex: &Arc<TokioMutex<PluginRuntimeState>>,
     waiters: &Arc<Notify>,
+    mut guard: contributions::LeaseReleaseGuard,
 ) -> Result<(), PluginRuntimeError> {
+    let failure = guard.failure.subscribe();
     let pending = {
         let mut st = state_mutex.lock().await;
         for plugin in plugins {
@@ -830,6 +875,9 @@ pub(super) async fn release_lease_plugins(
                 }
             }
         }
+        // No await between decrement and disarm: cancellation after this point
+        // belongs to callback completion, not to a lost reference count.
+        guard.counts_released();
         start_ready_disposals(&mut st.registry, state_mutex);
         plugins
             .iter()
@@ -843,8 +891,11 @@ pub(super) async fn release_lease_plugins(
             .collect()
     };
     waiters.notify_waiters();
-    let errors = settle_disposals(pending).await;
-    PluginRuntimeError::aggregate("Failed to dispose released plugins.", errors)
+    with_lease_failure(failure, async {
+        let errors = settle_disposals(pending).await;
+        PluginRuntimeError::aggregate("Failed to dispose released plugins.", errors)
+    })
+    .await
 }
 
 // ─────────────────────────────────────────────────────────── CommandsListInput/Result
