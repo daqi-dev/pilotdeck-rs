@@ -51,6 +51,24 @@ try:
         def stop_mutation():
             return replace('                started.push((plugin, completion, callback, first));',
                        '                let stop = matches!(&first, std::task::Poll::Ready(Err(_)));\n                started.push((plugin, completion, callback, first));\n                if stop { break; }')
+
+        def mixed_lease_order_mutation():
+            # #1122: only corrupt a draining release that holds both retired
+            # and formerly active instances. Unlike reverse-retired-waiters,
+            # ordinary retired-only releases retain their original order.
+            return replace(
+                '        guard.counts_released();\n        start_ready_disposals(&mut st.registry, state_mutex);',
+                '''        guard.counts_released();
+        let retired_count = plugins.iter().filter(|plugin| {
+            st.registry.retired_plugins.iter().any(|old| Arc::ptr_eq(old, plugin))
+        }).count();
+        if st.registry.state == RegistryState::Draining
+            && retired_count > 0 && retired_count < plugins.len()
+        {
+            st.registry.disposal_waiters.reverse();
+        }
+        start_ready_disposals(&mut st.registry, state_mutex);''')
+
         CASES = [
             ('serial-instead-of-parallel', serial_mutation, 'runtime_dispose_active_order_and_parallel', '"dispose-active-order-and-parallel" step 3'),
             ('reverse-active-order', lambda: replace('    let pending = plugins\n        .into_iter()', '    let pending = plugins\n        .into_iter().rev()'),
@@ -58,6 +76,8 @@ try:
             ('reverse-retired-waiters', lambda: replace('        start_ready_disposals(&mut st.registry, state_mutex);',
                                              '        st.registry.disposal_waiters.reverse();\n        start_ready_disposals(&mut st.registry, state_mutex);'),
              'runtime_dispose_retired_generations', '"dispose-retired-generations" step 15'),
+            ('reverse-mixed-lease-release', mixed_lease_order_mutation,
+             'runtime_dispose_retired_and_active_together', '#1122 "dispose-retired-and-active-together" calls'),
             ('old-waiters-before-new', lambda: replace('    registry.disposal_waiters.extend(woken);',
                                              '    registry.disposal_waiters.splice(0..0, woken);'),
              'runtime_dispose_reactivated_retiree', '"dispose-reactivated-retiree" calls'),

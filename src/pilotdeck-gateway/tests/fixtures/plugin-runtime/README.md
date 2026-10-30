@@ -23,14 +23,14 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway --test plugin_run
 
 TS 按 retired Set 插入顺序再按 active Map 插入顺序登记清理，实际调用取决于引用是否已清零。新登记的无引用回调同步执行到首个 await；既有等待者收到通知后按等待队列继续，仍被引用的重新排队。各回调并行，`Promise.allSettled` 等全部结束；错误按 promise 登记顺序而非完成顺序汇总。详见基线 `PluginRuntime.ts:263`、`PluginRegistry.ts:96`、`:138`、`:169`。
 
-本轮行为负控（含恢复旧实现、改为串行、逆序、跳过等待、忽略租约及错误汇总篡改）：
+行为负控覆盖改为串行、逆序、跳过等待、忽略租约及错误汇总篡改。#1122 的 `reverse-mixed-lease-release` 只在 draining 且同一 lease 持有 retired 与原 active 实例时反转释放队列，绑定 `runtime_dispose_retired_and_active_together` 及其 `#1122 "dispose-retired-and-active-together" calls` 专属断言，要求金样的 `keep → old` 顺序：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/plugin-runtime/negative-controls.py \
   _tmp/20261023-issue-543-dispose-order/negative
 ```
 
-脚本依次临时修改产品实现，要求指定测试出现对应行为断言失败，并在 `finally` 恢复原始字节；编译错误不算负控成功。总期限少于 10 分钟，每次只跑一个测试进程、`--test-threads=1`，复用启动器的本树 `src/target`。已有 `runtime-replay-generation` 负控仍位于 plugin-loader 的负控脚本。
+脚本通过 `mutating_sources` 验证产品源码等于 HEAD，并在退出时恢复、复核原始字节。每个变异依次跑正控、变异编译、绑定负控与恢复正控；编译错误及过期锚点均为 INVALID，不算判杀。逐项跑完后汇总，任一非 KILLED 即非零退出。每次 cargo 调用与名额等待各有 900 秒上限，只跑一个测试进程、`--test-threads=1`；必须由调用方设置本树的 `CARGO_TARGET_DIR`，脚本不创建第二份构建目录。可在输出目录后追加 `reverse-mixed-lease-release` 单跑本单变异，或加 `--compile-only` 只核变异编译。已有 `runtime-replay-generation` 负控仍位于 plugin-loader 的负控脚本。
 
 原 `restore-old-order`（整文件恢复修复前提交 `dbaa207c…` 的实现）已于 #1010 删除：#1010 给 lease 结构新增字段与参数后，旧实现整体不能再编译；其「旧等待者排在新等待者之前」的顺序语义由 `old-waiters-before-new` 覆盖（同一锚点同一替换，不再保留重复行）。启动测试前逐条断言变异字节与当前源码不同，结果记录各变异 SHA-256，避免提交或合入后出现空变异。
 

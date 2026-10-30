@@ -300,7 +300,7 @@ EXPECTED_FAILURES = {'builtin-disable': ['assertion `left == right` failed: buil
  'release-error': ['called `Result::unwrap_err()` on an `Ok` value: ()'],
  'retired-cleanup': ['assertion failed: '
                      'runtime.state.lock().await.registry.retired_plugins.is_empty()'],
- 'runtime-replay-generation': ['assertion `left == right` failed: "empty-directories" step 1: '
+ 'runtime-replay-generation': ['#1122 "empty-directories" step 1: '
                                '{"op":"refresh"}'],
  'server-depth': ['assertion `left == right` failed',
                   '  left: "null"',
