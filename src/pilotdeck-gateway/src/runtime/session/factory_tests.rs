@@ -136,19 +136,21 @@ impl SessionFactory for PublishGate {
         Box::pin(async move {
             // #1020 fix-r1: record the setup(previous) contract — how many
             // attempts reached setup and whether a previous handle was handed
-            // over — so the stale-retry tests can pin it.
-            observed.setups.fetch_add(1, Ordering::SeqCst);
-            if previous.is_some() {
+            // over — so the stale-retry tests can pin it. fix-r2 (review P2):
+            // the event carries the attempt ordinal, so an ordering assertion
+            // can target one attempt's setup instead of whichever was recorded
+            // first (the initial create also records a setup.fresh).
+            let ordinal = observed.setups.fetch_add(1, Ordering::SeqCst) + 1;
+            let with_previous = previous.is_some();
+            if with_previous {
                 observed.setups_with_previous.fetch_add(1, Ordering::SeqCst);
             }
-            observed.event(if previous.is_some() {
-                "setup.previous"
+            observed.event(if with_previous {
+                format!("setup.previous.{ordinal}")
             } else {
-                "setup.fresh"
+                format!("setup.fresh.{ordinal}")
             });
-            if previous.is_some()
-                && let Some(gate) = gate
-            {
+            if with_previous && let Some(gate) = gate {
                 gate.wait().await;
             }
             Ok(())
@@ -3380,6 +3382,22 @@ fn stale_handoff_regenerates_identically() {
 }
 
 #[test]
+#[ignore = "requires the pinned Node v22.22.0 TS baseline"]
+fn stale_handoff_preserves_unrelated_out_files() {
+    // #1020 fix-r2 (review P0): the generator must never delete pre-existing
+    // OUT content. The helper seeds OUT (including a work-notes/ directory,
+    // which the fix-r1 prefix cleanup deleted), runs the real generator and
+    // returns every seeded path that is missing or whose bytes changed.
+    let changed =
+        crate::test_baseline::unrelated_out_changes_after_regeneration("session-stale-handoff");
+    assert_eq!(
+        changed,
+        Vec::<String>::new(),
+        "#1020 session-stale-handoff: generator modified unrelated OUT content"
+    );
+}
+
+#[test]
 fn stale_handoff_matches_ts() {
     let oracle: serde_json::Value = serde_json::from_str(include_str!(
         "../../../tests/fixtures/session-stale-handoff/oracle.json"
@@ -3547,12 +3565,12 @@ async fn recreate_retries_stale_disposed_handoff() {
     {
         let events = lock(&h.observed.events);
         assert!(
-            !events.iter().any(|e| e == "setup.previous"),
+            !events.iter().any(|e| e.starts_with("setup.previous")),
             "#1020 failed attempt never reaches setup"
         );
         assert!(
-            ordered(&events, "setup.fresh", "evict.dirty-recreate"),
-            "#1020 publication follows the successful setup"
+            ordered(&events, "setup.fresh.2", "evict.dirty-recreate"),
+            "#1020 publication follows the successful retry's setup"
         );
     }
     // dirty was cleared by the single publication; the record now caches the
@@ -3617,6 +3635,16 @@ async fn recreate_after_completed_disposal_resumes_without_previous() {
         0,
         "#1020 completed disposal sets up a fresh replacement"
     );
+    // #1020 fix-r2 (review P2): the replacement's setup is the second
+    // recorded fresh setup; it must complete before the dirty-recreate
+    // publication, not merely before some earlier attempt's setup.
+    {
+        let events = lock(&h.observed.events);
+        assert!(
+            ordered(&events, "setup.fresh.2", "evict.dirty-recreate"),
+            "#1020 completed disposal publishes after the replacement setup"
+        );
+    }
     let cached = bounded(
         "completed disposal cached",
         h.owner.get_or_create(h.context()),
