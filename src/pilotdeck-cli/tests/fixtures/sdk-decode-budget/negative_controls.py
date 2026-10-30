@@ -130,7 +130,7 @@ def main():
     guarded = [transport, main_rs, codec, protocol_lib, sessions_list, sessions_run,
                Path(__file__).resolve(), root / 'src/pilotdeck-cli/Cargo.toml',
                root / 'src/pilotdeck-protocol/tests/codec.rs',
-               root / 'src/pilotdeck-protocol/Cargo.toml',
+               root / 'src/pilotdeck-protocol/Cargo.toml', root / 'src/Cargo.toml',
                root / 'src/Cargo.lock', shared / 'negative_process.py',
                shared / 'negative_suite.py']
     results = []
