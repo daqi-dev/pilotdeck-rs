@@ -12,6 +12,7 @@ import difflib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True
@@ -87,6 +88,15 @@ def check(row):
             f'{row.name}: bound test {row.test} not declared in {target.relative_to(root)}')
 
 
+def crate_files(rel):
+    out = subprocess.run(['git', '-C', str(root), 'ls-files', '-z', '--', rel],
+                         check=True, capture_output=True).stdout
+    files = [root / name for name in out.decode().split('\0') if name]
+    if not files:
+        raise SystemExit(f'#983 no tracked files under {rel}')
+    return files
+
+
 def main():
     args = sys.argv[1:]
     if args == ['--check']:
@@ -138,6 +148,9 @@ def main():
                root / 'src/pilotdeck-cli/tests/fixtures/sdk-transport-limits/oracle.json',
                shared / 'negative_panic.py', shared / 'pending_reanchor.py',
                root / 'scripts/cargo-slots.sh',
+               # r5: close the class instead of one file per round — every tracked
+               # file of the two crates the bound tests compile (CLI + protocol).
+               *crate_files('src/pilotdeck-cli'), *crate_files('src/pilotdeck-protocol'),
                root / 'src/Cargo.lock', shared / 'negative_process.py',
                shared / 'negative_suite.py']
     results = []
