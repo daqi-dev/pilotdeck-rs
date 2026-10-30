@@ -15,7 +15,7 @@ pilotdeck-gateway --native \
 
 `generate.mts` 仅以 Node v22.22.0 执行固定 TS 基线的真实 shutdown coordinator/bundles、默认 LSP、title 和 sidecar turn composition。信号子进程 `signal.mts` 接入真实 coordinator，未启动完整 TS CLI。`oracle.json` 包含基线 commit、传递源码 SHA 与原始观测；Rust 忽略测试 `native_process::tests::regenerates_identically` 可逐字节重生成核验。
 
-`process.mts` 用真实 gateway/sidecar 二进制和仅本机临时 HTTP provider：WS 登录、文本轮次、落盘、run 查询、挂起流取消、SIGINT/SIGTERM、关停期间重复信号、启动失败、A4 非 UTF-8 字节透传。所有监听使用 OS 分配端口，每次新建 home/project。进程 argv、PID、二进制前后 SHA、消息及落盘 SHA 写入独占输出目录。此记录没有覆盖短命后代的 exec/网络见证，不能替代 `session_domain.py` 的 native 审计。
+`process.mts` 用真实 gateway/sidecar 二进制和仅本机临时 HTTP provider：WS 登录、文本轮次、落盘、run 查询、挂起流取消、SIGINT/SIGTERM、关停期间重复信号、启动失败、A4 非 UTF-8 字节透传。所有监听使用 OS 分配端口，每次新建 home/project。子进程就绪只在 stderr 出现完整到行尾的 `listening host:port` 行时 resolve（子进程 stderr 会按任意边界分块，半行地址不再被采纳，避免无端口 URL 落到 http 80）；A4 入口回报的是请求地址而非内核分配端口，因此 fixture 以 listen(0) 预留端口并在 bind 冲突（TOCTOU 被并发进程抢占）时有界重试（至多 5 次，仅限 `address already in use`），native 子进程自行 bind `:0` 回报真实地址、不重试。WS 连接在 open 前即挂 error 监听，连接失败走有界拒绝而非未捕获异常。进程 argv、PID、二进制前后 SHA、消息及落盘 SHA 写入独占输出目录。此记录没有覆盖短命后代的 exec/网络见证，不能替代 `session_domain.py` 的 native 审计。
 
 YAML 顶层 `hooks` 在固定 TS 配置层是未知字段，会被投影丢弃；本入口按该诊断明确拒绝该字段（包括空值），不把它当作已装配的 hooks。实际 hooks 来源是插件贡献和 SDK session hooks：磁盘 plugins/skills 非空被拒绝，内置插件为空，`sdkConfig` 请求被拒绝。每轮既有 `prepare_attachment_turn` 会重新校验 profile，进程测试另验证启动后加入 hooks 被拒绝。
 
