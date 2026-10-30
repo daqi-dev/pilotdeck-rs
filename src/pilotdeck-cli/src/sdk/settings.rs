@@ -1,6 +1,6 @@
 //! Settings are resolved and updated on the Gateway host, never on the CLI host.
 use super::{Connection, transport};
-use crate::{Failure, json_pretty, stdout_line};
+use crate::{Failure, stdout_line, write_json_pretty_line};
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 use serde_json::value::RawValue;
 
@@ -28,7 +28,9 @@ pub(super) fn get(connection: &Connection) -> Result<u8, Failure> {
     let raw = stringify_json(&result)
         .map_err(|e| Failure::Error(e.to_string()))?
         .unwrap_or_else(|| "undefined".into());
-    stdout_line(&json_pretty(&raw));
+    // Streamed for the same reason as the sessions projection (#983); the
+    // printed bytes stay json_pretty's.
+    write_json_pretty_line(&raw);
     Ok(0)
 }
 

@@ -254,6 +254,10 @@ pub(crate) fn quoted(value: &JsString, output: &mut String) {
 
 enum Emit<'a> {
     Value(&'a JsValue),
+    /// An array resumed at `index`: frames carry one element at a time instead
+    /// of stacking the whole breadth, so a wide projection serializes with
+    /// scratch bounded by depth (#983).
+    Array(&'a [JsValue], usize),
     String(&'a JsString),
     Character(char),
 }
@@ -269,6 +273,17 @@ pub(super) fn stringify(value: &JsValue) -> Result<Option<String>, CodecError> {
         match task {
             Emit::Character(character) => output.push(character),
             Emit::String(string) => quoted(string, &mut output),
+            Emit::Array(items, index) => {
+                if index == items.len() {
+                    output.push(']');
+                } else {
+                    if index > 0 {
+                        output.push(',');
+                    }
+                    pending.push(Emit::Array(items, index + 1));
+                    pending.push(Emit::Value(&items[index]));
+                }
+            }
             Emit::Value(value) => match value {
                 JsValue::Undefined | JsValue::Null => output.push_str("null"),
                 JsValue::Bool(true) => output.push_str("true"),
@@ -285,13 +300,7 @@ pub(super) fn stringify(value: &JsValue) -> Result<Option<String>, CodecError> {
                 JsValue::String(string) => quoted(string, &mut output),
                 JsValue::Array(items) => {
                     output.push('[');
-                    pending.push(Emit::Character(']'));
-                    for (index, item) in items.iter().enumerate().rev() {
-                        pending.push(Emit::Value(item));
-                        if index > 0 {
-                            pending.push(Emit::Character(','));
-                        }
-                    }
+                    pending.push(Emit::Array(items, 0));
                 }
                 JsValue::Object(object) => {
                     let ordered = object

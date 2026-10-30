@@ -29,6 +29,19 @@ fn error(message: &str) -> Failure {
     Failure::Error(message.into())
 }
 
+/// Move an own property out of a frame that is being dropped anyway. The old
+/// deep clone held the original tree and a full copy (plus the clone stack)
+/// in memory while `response.result` carries a whole sessions projection
+/// (#983); a missing key stays `Undefined`, like `frame.get(name)` would.
+fn take_field(mut frame: JsValue, name: &str) -> JsValue {
+    match &mut frame {
+        JsValue::Object(object) => object
+            .insert(name.into(), JsValue::Null)
+            .unwrap_or(JsValue::Undefined),
+        _ => JsValue::Undefined,
+    }
+}
+
 pub(super) async fn request(
     connection: &Connection,
     method: &str,
@@ -133,10 +146,7 @@ impl Transport {
                 socket,
                 settings_order,
                 stream_sequence: -1.0,
-                server_info: frame
-                    .get("serverInfo")
-                    .cloned()
-                    .unwrap_or(JsValue::Undefined),
+                server_info: take_field(frame, "serverInfo"),
             }),
             Err(error) => {
                 close_socket(&mut socket).await;
@@ -162,7 +172,7 @@ impl Transport {
                     continue;
                 }
                 if frame.get("ok").and_then(JsValue::as_bool) == Some(true) {
-                    return Ok(frame.get("result").cloned().unwrap_or(JsValue::Undefined));
+                    return Ok(take_field(frame, "result"));
                 }
                 let message = frame
                     .get("error")
@@ -243,10 +253,8 @@ impl Transport {
                         continue;
                     };
                     self.stream_sequence = sequence;
-                    return Ok(Some((
-                        frame.get("event").cloned().unwrap_or(JsValue::Undefined),
-                        matches!(frame.get("final"), Some(JsValue::Bool(true))),
-                    )));
+                    let final_frame = matches!(frame.get("final"), Some(JsValue::Bool(true)));
+                    return Ok(Some((take_field(frame, "event"), final_frame)));
                 }
                 Some("response") if matches!(frame.get("ok"), Some(JsValue::Bool(true))) => {
                     return Ok(None);

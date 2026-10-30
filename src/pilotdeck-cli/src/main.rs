@@ -81,6 +81,82 @@ pub fn stdout_line(text: &str) {
     let _ = writeln!(std::io::stdout().lock(), "{text}");
 }
 
+// json_pretty's reindentation written straight to stdout in bounded chunks: a
+// sessions projection can be the whole response frame, and building the full
+// pretty String first would hold a second copy of it in memory (#983). The
+// bytes and the ignored-write-error policy match `stdout_line(&json_pretty(raw))`.
+pub fn write_json_pretty_line(raw: &str) {
+    let _ = try_write_json_pretty_line(raw);
+}
+
+fn try_write_json_pretty_line(raw: &str) -> std::io::Result<()> {
+    let stdout = std::io::stdout();
+    let mut out = std::io::BufWriter::with_capacity(64 * 1024, stdout.lock());
+    write_json_pretty_into(raw, &mut out)?;
+    out.write_all(b"\n")?;
+    out.flush()
+}
+
+fn write_json_pretty_into(raw: &str, out: &mut impl Write) -> std::io::Result<()> {
+    fn char(out: &mut impl Write, value: char) -> std::io::Result<()> {
+        let mut encoded = [0_u8; 4];
+        out.write_all(value.encode_utf8(&mut encoded).as_bytes())
+    }
+
+    fn newline(out: &mut impl Write, depth: usize) -> std::io::Result<()> {
+        out.write_all(b"\n")?;
+        for _ in 0..depth {
+            out.write_all(b"  ")?;
+        }
+        Ok(())
+    }
+
+    let mut chars = raw.chars().peekable();
+    let (mut depth, mut quoted, mut escaped) = (0usize, false, false);
+    while let Some(value) = chars.next() {
+        if quoted {
+            char(out, value)?;
+            if escaped {
+                escaped = false;
+            } else if value == '\\' {
+                escaped = true;
+            } else if value == '"' {
+                quoted = false;
+            }
+            continue;
+        }
+        match value {
+            '"' => {
+                quoted = true;
+                char(out, value)?;
+            }
+            '{' | '[' => {
+                char(out, value)?;
+                let close = if value == '{' { '}' } else { ']' };
+                if chars.peek() == Some(&close) {
+                    char(out, close)?;
+                    chars.next();
+                } else {
+                    depth += 1;
+                    newline(out, depth)?;
+                }
+            }
+            '}' | ']' => {
+                depth -= 1;
+                newline(out, depth)?;
+                char(out, value)?;
+            }
+            ',' => {
+                char(out, value)?;
+                newline(out, depth)?;
+            }
+            ':' => out.write_all(b": ")?,
+            _ => char(out, value)?,
+        }
+    }
+    Ok(())
+}
+
 pub fn stderr_line(text: &str) {
     let _ = writeln!(std::io::stderr().lock(), "{text}");
 }
@@ -162,4 +238,34 @@ fn run_local_cli_channel(env: &Env, cwd: &Path) -> Result<u8, Failure> {
     Err(Failure::Todo(
         "local Gateway and CliChannel for a valid config",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_negative_receipt::verify;
+
+    /// #983: the streamed pretty printer must be byte-identical to the
+    /// two-String form it replaces, including escapes, lone surrogates,
+    /// non-ASCII text, empty containers and deep nesting.
+    #[test]
+    fn streamed_pretty_matches_json_pretty_bytes() {
+        for raw in [
+            "[]",
+            "{}",
+            "0",
+            "[[[[1]]]]",
+            r#"[{"z":[{},[],"中\"[,]"],"a":-0,"b":1e+21,"s":"\ud800"}]"#,
+            r#"{"a":{"b":[1,2]},"c":"}\"\"","d":"中"}"#,
+            r#"[true,false,null,"\n\t\r\b\f/"]"#,
+            r#"{"nested":{"empty":{},"list":[[],{},"x"]}}"#,
+        ] {
+            let mut streamed = Vec::new();
+            write_json_pretty_into(raw, &mut streamed).expect("#983 streamed pretty write");
+            verify(
+                streamed == json_pretty(raw).as_bytes(),
+                "#983 streamed pretty bytes",
+            );
+        }
+    }
 }

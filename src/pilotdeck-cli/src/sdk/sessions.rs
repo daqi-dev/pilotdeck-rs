@@ -1,6 +1,6 @@
 //! sessions default/list and complete message history through ordinary SDK RPCs.
 use super::{create_client, positional, read_connection, read_value, transport};
-use crate::{Failure, paths::Env, stdout_line};
+use crate::{Failure, paths::Env, write_json_pretty_line};
 use pilotdeck_protocol::{JsValue, stringify_json};
 use serde_json::json;
 use std::path::Path;
@@ -35,7 +35,7 @@ pub(super) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
                 .get("sessions")
                 .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
                 .unwrap_or(&empty);
-            stdout_line(&pretty_json(sessions)?);
+            print_projection(sessions)?;
             Ok(0)
         }
         "messages" => {
@@ -73,7 +73,7 @@ pub(super) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
                 None | Some(JsValue::Null | JsValue::Undefined) => &empty_messages,
                 Some(messages) => messages,
             };
-            stdout_line(&pretty_json(messages)?);
+            print_projection(messages)?;
             Ok(0)
         }
         _ => Err(Failure::Error(
@@ -84,9 +84,12 @@ pub(super) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
 
 // First use the existing JS codec (key order, f64 spelling, lone surrogates).
 // Add only whitespace outside strings, preserving every encoded scalar byte.
-fn pretty_json(value: &JsValue) -> Result<String, Failure> {
+// The reindentation streams to stdout: the projection can be a whole response
+// frame, and a second full-size pretty String would double its peak (#983).
+fn print_projection(value: &JsValue) -> Result<(), Failure> {
     let raw = stringify_json(value)
         .map_err(|e| Failure::Error(e.to_string()))?
         .unwrap_or_else(|| "null".into());
-    Ok(crate::json_pretty(&raw))
+    write_json_pretty_line(&raw);
+    Ok(())
 }
