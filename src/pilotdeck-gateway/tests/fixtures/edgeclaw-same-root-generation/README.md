@@ -1,11 +1,6 @@
-# #1082 同 rootDir 两代代际并发矩阵（TS 金样）
+# #1082 同 rootDir 两代矩阵
 
-Node 必须是 v22.22.0，`PDRS_BASELINE` 指向 cc7c4e6 的只读 checkout。
-`observe.mts` 直接 import 基线
-`src/context/memory/edgeclaw-memory-core/src/core/storage/sqlite.ts` 的
-`MemoryRepository`（与生产同一条 `node:sqlite` `DatabaseSync` 路径）。
-
-生成器参数是调用方新建的输出目录：
+Node 必须是 v22.22.0，`PDRS_BASELINE` 指向 cc7c4e6 只读 checkout。
 
 ```sh
 PDRS_BASELINE=/abs/PilotDeck node --disable-warning=ExperimentalWarning \
@@ -13,24 +8,12 @@ PDRS_BASELINE=/abs/PilotDeck node --disable-warning=ExperimentalWarning \
   src/pilotdeck-gateway/tests/fixtures/edgeclaw-same-root-generation/generate.mts NEW_OUTPUT
 ```
 
-输出 `oracle.json` 使用 `wx`；`work/` 是本轮临时 SQLite/文件树，不进入比较。
+输出目录递归建立，oracle.json 用 `wx`，work/ 为隔离 SQLite/文件树。
 
-## oracle 的两组格
+- `serial`：真实 repository 同根双连接互读、关闭与重开。Rust 执行相同操作，比较整组输出。
+- `threaded`：真实 worker 写事务控制。当前 schema 的 repository 构造可成功；service 构造另写 workspaceDir，立即 locked。外部锁行为不被进程内串行化更改。
+- `lifecycle`：12 格真实 registry lease + memory bundle/factory/service。staged/disposing × flush/retrieve × stage/first-write 8 格，以及 never predecessor、取消 retrieve/release 观察者。两代 workspace 和 rootDir 都相同。disposing 的确定性 gate 位于 registry resource owner，不冒称 native bundle 自带等待；实际 bundle.dispose 在 gate 释放后调用。LLM 使用内存离线响应，不发网络请求。
 
-- `serial`：TS 生产语义。一个 Node 事件循环，`DatabaseSync` 调用是同步块，
-  同根两代之间不可能交叠；两代都成功打开、互相读到对方提交的写、旧代 close
-  不影响新代写。Rust 用例必须对齐这些格。
-- `threaded`：确定性对照，不是生产 TS。worker 线程用同一个 `node:sqlite`
-  `DatabaseSync` 持 `BEGIN IMMEDIATE` 写锁，主线程执行操作；这展示
-  `busy_timeout = 0` 在**真实交叠**下的行为：已初始化库上的构造/读仍成功，
-  首个写立即 `database is locked`（`ERR_SQLITE_ERROR`）；legacy schema 需要
-  migration 时，构造本身立即 `database is locked`。Rust 多线程能制造 Node
-  不能制造的交叠，所以进程内必须按文件串行化以保持 `serial` 语义，跨进程仍
-  保持这里的立即失败契约。
+TS Promise 不可取消，取消格用 race 放弃观察者；Rust 取消等待任务，内部 continuation/cleanup 继续。前驱 gate 在新代完成前始终不释放，随后释放用于清理。gate 10 秒上限；SQL 竞争用真实 try_lock 的 WouldBlock 事件，不用 sleep 推断已交叠，5 秒未握手是 INVALID。
 
-`edgeclaw-native-default` 的 M21 `generation-*` 格使用相同 projectRoot 但
-**不同** `rootDir`；本 fixture 补的是相同 `rootDir` 的 SQLite 写竞争。
-
-Rust 回归：`same_root_generation_matches_ts_matrix`（比较本 oracle 语义）、
-`same_root_*` 矩阵用例（含 #1082 专属断言消息）、ignored
-`same_root_generates_identically`（重生成守卫）。
+Rust 测试与精确层次见 `specs/gateway-parity/diffs/A6.9-MEMORY-NATIVE-PROVIDER-001-R5.md`。ignored `same_root_generates_identically` 逐字节重生成。negative.py 复用 `_shared/mutant_switch.py` 与 negative_suite，13 开关编译一次，逐项正控→变异→恢复后汇总。调用方必须设置 CARGO_TARGET_DIR；源码不改写。所有完整用例名/断言见脚本 switches 表。

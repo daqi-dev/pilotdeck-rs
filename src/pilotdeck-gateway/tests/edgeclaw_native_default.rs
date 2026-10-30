@@ -34,14 +34,13 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        Arc, Barrier, Mutex,
+        Arc, Mutex,
         atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, UNIX_EPOCH},
 };
 use tokio::sync::Semaphore;
 const ORACLE: &str = include_str!("fixtures/edgeclaw-native-default/oracle.json");
-const SAME_ROOT_ORACLE: &str = include_str!("fixtures/edgeclaw-same-root-generation/oracle.json");
 const NOW: &str = "2026-10-22T00:00:00.000Z";
 const MS: u64 = 1792627200000;
 fn js(v: &Value) -> JsValue {
@@ -563,151 +562,6 @@ fn storage_invalid_paths() {
 }
 
 // -- #1082 same-rootDir two-generation matrix ------------------------------
-
-fn same_root_options(root: &Path) -> NativeMemoryProviderOptions {
-    input(
-        root,
-        &json!({"config":{"enabled":true,"provider":"edgeclaw","model":"fixture/model","rootDir":"$ROOT/store"}}),
-    )
-}
-
-fn same_root_stage(
-    root: &Path,
-    handle: &tokio::runtime::Handle,
-) -> Result<Arc<EdgeClawMemoryService>, String> {
-    let _entered = handle.enter();
-    match create_with_dependencies(
-        &same_root_options(root),
-        dependencies(
-            &root.join("home"),
-            Arc::new(Mutex::new(Random::default())),
-            None,
-        ),
-    ) {
-        Ok(Some(created)) => Ok(created.service),
-        Ok(None) => Err("#1082 same-root factory unexpectedly disabled".into()),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-fn same_root_service(root: &Path, handle: &tokio::runtime::Handle) -> Arc<EdgeClawMemoryService> {
-    same_root_stage(root, handle).expect("#1082 same-root generation stage")
-}
-
-/// Matrix cells 5/6: an old generation disposing (close) does not break a new
-/// generation staging and writing the same file.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn same_root_stage_after_old_generation_close() {
-    let root = Root::new();
-    let handle = tokio::runtime::Handle::current();
-    let old = same_root_service(&root.0, &handle);
-    old.repository
-        .storage
-        .set_pipeline_state("before-close", &JsValue::from("old"))
-        .expect("#1082 old write");
-    let entered = Arc::new(Barrier::new(2));
-    let closer = {
-        let old = Arc::clone(&old);
-        let entered = Arc::clone(&entered);
-        std::thread::spawn(move || {
-            let result = old.close();
-            entered.wait();
-            result
-        })
-    };
-    entered.wait();
-    let new = same_root_service(&root.0, &handle);
-    closer
-        .join()
-        .expect("#1082 closer thread")
-        .expect("#1082 old generation close");
-    new.repository
-        .storage
-        .set_pipeline_state("after-close", &JsValue::from("new"))
-        .expect("#1082 new write after old close");
-    let fresh = EdgeClawStorage::open(new.repository.storage.path())
-        .expect("#1082 fresh generation stage after close");
-    assert_eq!(
-        fresh
-            .get_pipeline_state("before-close")
-            .expect("#1082 old row"),
-        Some(JsValue::from("old")),
-        "#1082 old generation's data survives its close"
-    );
-    assert_eq!(
-        fresh
-            .get_pipeline_state("after-close")
-            .expect("#1082 new row"),
-        Some(JsValue::from("new")),
-        "#1082 new generation can write the same root after the old close"
-    );
-}
-
-/// #1082 oracle contract: the committed TS probe really is Node v22.22.0 on
-/// cc7c4e6, serial same-root generations all succeed, and true threaded
-/// overlap with `busy_timeout = 0` yields the immediate lock error the Rust
-/// cross-process test asserts. Rust's own per-generation cases above must
-/// produce the `serial` outcomes, never the `threaded` ones.
-#[test]
-fn same_root_generation_matches_ts_matrix() {
-    let oracle: Value = serde_json::from_str(SAME_ROOT_ORACLE).expect("#1082 same-root TS oracle");
-    assert_eq!(
-        oracle["node"], "v22.22.0",
-        "#1082 TS probe must run on Node v22.22.0"
-    );
-    let serial = oracle["serial"]
-        .as_object()
-        .expect("#1082 serial matrix object");
-    for (name, cell) in serial {
-        assert_eq!(
-            cell["ok"], true,
-            "#1082 TS serial same-root cell {name} must succeed"
-        );
-    }
-    assert_eq!(
-        oracle["serial"]["new-reads-old-write"]["value"]["from"], "old",
-        "#1082 new generation reads the old generation's commit"
-    );
-    assert_eq!(
-        oracle["serial"]["old-reads-new-write"]["value"]["from"], "new",
-        "#1082 old generation reads the new generation's commit"
-    );
-    assert_eq!(
-        oracle["serial"]["reopen-reads-all"]["value"][2]["ok"], true,
-        "#1082 data survives both generations closing"
-    );
-    let threaded = oracle["threaded"]
-        .as_object()
-        .expect("#1082 threaded matrix object");
-    assert_eq!(
-        threaded["stage-while-write"]["ok"], true,
-        "#1082 an already-current DB stage does not need the write lock"
-    );
-    assert_eq!(
-        threaded["write-while-worker-holds-lock"]["error"]["message"], "database is locked",
-        "#1082 real overlap under busy_timeout=0 fails the write immediately"
-    );
-    assert_eq!(
-        threaded["write-while-worker-holds-lock"]["error"]["code"], "ERR_SQLITE_ERROR",
-        "#1082 TS SQLite error code"
-    );
-    assert_eq!(
-        threaded["read-while-worker-holds-lock"]["ok"], true,
-        "#1082 a WAL read still succeeds under a held write lock"
-    );
-    assert_eq!(
-        threaded["stage-legacy-while-write"]["error"]["message"], "database is locked",
-        "#1082 a legacy schema stage needs the write lock and fails immediately"
-    );
-    assert_eq!(
-        threaded["stage-legacy-after-release"]["ok"], true,
-        "#1082 the legacy stage succeeds once the external writer releases"
-    );
-    assert_eq!(
-        threaded["stage-legacy-after-release"]["value"], "legacy",
-        "#1082 the legacy migration preserves its row"
-    );
-}
 
 /// #1082 regeneration guard: re-runs the real cc7c4e6 probe and requires the
 /// committed oracle bytes. Run with `PDRS_BASELINE` on Node v22.22.0.

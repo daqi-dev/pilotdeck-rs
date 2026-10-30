@@ -12,6 +12,9 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {Worker} from 'node:worker_threads';
+import {lifecycle} from './lifecycle.mts';
+import {load} from '../edgeclaw-native-default/observe.mts';
+import {assertBaseline,baselineSourceHashes} from '../_shared/baseline.mts';
 
 const CORE='src/context/memory/edgeclaw-memory-core/src/core/storage/sqlite.ts';
 
@@ -104,6 +107,7 @@ async function hold(path:string,legacy:boolean,init:string){
 
 export async function matrix(baseline:string,created:string){
   const {MemoryRepository}=await import(pathToFileURL(join(baseline,CORE)).href);
+  const {Service}=await load(baseline);
   const base=created;
   const dbPath=join(base,'store','memory.sqlite');
   const workspace=join(base,'workspace');
@@ -115,8 +119,8 @@ export async function matrix(baseline:string,created:string){
   const serial:any={};
   serial['old-stage']=ok(()=>{const a=open();a.close();return true});
   const a=open();
-  const b=open();
-  serial['two-generations-open']={ok:true,value:true};
+  let b:any;
+  serial['two-generations-open']=ok(()=>{b=open();return true});
   a.setPipelineState('old-key',{from:'old'});
   serial['new-reads-old-write']=ok(()=>b.getPipelineState('old-key'));
   b.setPipelineState('new-key',{from:'new'});
@@ -133,8 +137,9 @@ export async function matrix(baseline:string,created:string){
   // write gets Node's immediate busy error; the WAL read still succeeds.
   const threaded:any={};
   const normal=await hold(dbPath,false,INIT);
-  const d=open();
-  threaded['stage-while-write']={ok:true,value:true};
+  let d:any;
+  threaded['repository-open-while-write']=ok(()=>{d=open();return true});
+  threaded['service-stage-while-write']=ok(()=>{const service=new Service({workspaceDir:workspace,rootDir:join(base,'service'),dbPath});service.close();return true});
   threaded['write-while-worker-holds-lock']=ok(()=>{d.setPipelineState('main',{m:1});return true});
   threaded['read-while-worker-holds-lock']=ok(()=>d.getPipelineState('worker'));
   await normal.release();
@@ -155,5 +160,7 @@ export async function matrix(baseline:string,created:string){
   await legacy.release();
   threaded['stage-legacy-after-release']=ok(()=>{const e=open(legacyPath);const value=e.getPipelineState('workspaceDir');e.close();return value});
 
-  return {node:process.version,serial,threaded};
+  const sourceCommit=assertBaseline(baseline);
+  const sourceSha256=await baselineSourceHashes(baseline,[CORE,'src/cli/ProjectRuntimeRegistry.ts','src/cli/ProjectMemoryBundle.ts','src/context/memory/createEdgeClawMemoryProviderFromConfig.ts','src/context/memory/edgeclaw-memory-core/src/service.ts']);
+  return {node:process.version,sourceCommit,sourceSha256,serial,threaded,lifecycle:await lifecycle(baseline,join(base,'lifecycle'))};
 }
