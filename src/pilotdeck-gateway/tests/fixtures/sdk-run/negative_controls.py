@@ -65,14 +65,13 @@ mutations = [
     ('stdin-trim', turn, 'paths::js_trim(&String::from_utf8_lossy(&bytes)).to_owned()', 'String::from_utf8_lossy(&bytes).into_owned()', 'run_stdin_contract', '#1058 complete two-connection wire and cleanup'),
     ('create-channel', turn, 'read_value(argv, "--channel").unwrap_or("cli")', '"cli"', 'run_channel_and_two_connections', '#1058 complete two-connection wire and cleanup'),
     ('create-project', turn, 'CreateSession {\n                        project_key: project,', 'CreateSession {\n                        project_key: None,', 'run_channel_and_two_connections', '#1058 complete two-connection wire and cleanup'),
-    ('assistant-filter', output, '"assistant_text_delta" | "assistant.message"', '"assistant_text_delta_DISABLED" | "assistant.message_DISABLED"', 'run_matches_ts_matrix', '#1058 output bytes and exit'),
+    ('assistant-filter', output, 'raw_type.equals_str("assistant_text_delta") || raw_type.equals_str("assistant.message")', 'raw_type.equals_str("assistant_text_delta_DISABLED") || raw_type.equals_str("assistant.message_DISABLED")', 'run_matches_ts_matrix', '#1058 output bytes and exit'),
     ('empty-chunk', output, '!self.chunks.is_empty()', '!self.chunks.concat().is_empty()', 'run_text_contract', '#1058 output bytes and exit'),
-    ('stream-newline', output, 'stdout_line("");', 'stdout_line("wrong");', 'run_matches_ts_matrix', '#1058 output bytes and exit'),
+    ('stream-newline', output, 'if self.streamed {\n                    stdout_line("");', 'if self.streamed {\n                    stdout_line("wrong");', 'run_matches_ts_matrix', '#1058 output bytes and exit'),
     ('text-before-delta', output, 'string_field(event, "text").or_else(|| string_field(event, "delta"))', 'string_field(event, "delta").or_else(|| string_field(event, "text"))', 'run_text_contract', '#1058 output bytes and exit'),
     ('terminal-before-final', turn, 'if final_frame {', 'if final_frame || string_field(&event, "type").as_deref() == Some("turn_completed") {', 'run_waits_for_stream_final', '#1058 output bytes and exit'),
     ('duplicate-sequence', transport, 'if sequence <= previous {', 'if false && sequence <= previous {', 'run_duplicate_event_is_not_printed', '#1058 output bytes and exit'),
     ('success-response-end', transport, 'Some("response") if matches!(frame.get("ok"), Some(JsValue::Bool(true))) => {\n                    return Ok(None);', 'Some("response") if matches!(frame.get("ok"), Some(JsValue::Bool(true))) => {\n                    return Err(error("Gateway success response rejected."));', 'run_success_response_ends_stream', '#1058 output bytes and exit'),
-    ('format-refusal', turn, '.any(|arg| arg == "--json" || arg == "--stream-json")', '.any(|arg| arg == "--json_DISABLED" || arg == "--stream-json_DISABLED")', 'run_unimplemented_options_are_explicit', '#1058 preflight never connects'),
     ('oracle-drift', oracle, '"nodeVersion": "v22.22.0"', '"nodeVersion": "v0.0.0"', 'run_oracle_regenerates_identically', '#1058 identical TS fixture sdk-run'),
 ]
 

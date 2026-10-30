@@ -1,6 +1,6 @@
 //! #1086: real CLI resume and terminal replay of Node v22.22.0 captures.
 //! Runtime and bounded parity lease follow the P02 test helper contract.
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{FutureExt, SinkExt, StreamExt};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -136,12 +136,26 @@ impl Drop for Runtime {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
-struct OwnedChild(Option<Child>);
+type Writers = std::sync::Arc<std::sync::Mutex<Vec<StdinWriter>>>;
+struct OwnedChild(Option<Child>, Writers);
 impl Drop for OwnedChild {
     fn drop(&mut self) {
         if let Some(child) = &mut self.0 {
             let _ = child.kill();
             let _ = child.wait();
+        }
+        // The child owns every early/delayed writer. Kill/reap happens first,
+        // including when collect or the mock future is cancelled or panics.
+        for writer in self.1.lock().expect("#1097 owned stdin writers").drain(..) {
+            let finished =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| writer.finish()));
+            if let Err(payload) = finished {
+                if std::thread::panicking() {
+                    eprintln!("#1097 stdin cleanup failed during unwinding");
+                } else {
+                    std::panic::resume_unwind(payload);
+                }
+            }
         }
     }
 }
@@ -154,8 +168,41 @@ fn write_fixture_stdin(stdin: &mut impl Write, data: &[u8]) {
     }
 }
 
+// Writers run independently of the current-thread Tokio mock. Completion is
+// bounded and owned by OwnedChild, which closes the reader before joining.
+struct StdinWriter {
+    handle: std::thread::JoinHandle<()>,
+    done: std::sync::mpsc::Receiver<std::thread::Result<()>>,
+}
+impl StdinWriter {
+    fn start(mut stdin: std::process::ChildStdin, data: Vec<u8>) -> Self {
+        let (finished, done) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                write_fixture_stdin(&mut stdin, &data)
+            }));
+            drop(stdin);
+            let _ = finished.send(result);
+        });
+        Self { handle, done }
+    }
+    fn finish(self) {
+        let result = self
+            .done
+            .recv_timeout(BOUND)
+            .expect("#1097 bounded stdin cleanup");
+        self.handle.join().expect("#1097 owned stdin thread");
+        if let Err(payload) = result {
+            std::panic::resume_unwind(payload);
+        }
+    }
+}
+
 fn spawn(command: &mut Command, input: &Value) -> OwnedChild {
-    let mut owned = OwnedChild(Some(command.spawn().expect("#1086 spawn CLI")));
+    let mut owned = OwnedChild(
+        Some(command.spawn().expect("#1086 spawn CLI")),
+        Writers::default(),
+    );
     let child = owned.0.as_mut().expect("#1086 immediately owned child");
     let hex = input["stdinHex"].as_str().unwrap_or("");
     let data: Vec<u8> = (0..hex.len())
@@ -163,9 +210,14 @@ fn spawn(command: &mut Command, input: &Value) -> OwnedChild {
         .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("#1086 stdin hex"))
         .collect();
     if input["holdStdin"] != true && input["stdinAfterCreate"] != true {
-        let mut stdin = child.stdin.take().expect("#1086 stdin pipe");
-        write_fixture_stdin(&mut stdin, &data);
-        drop(stdin);
+        owned
+            .1
+            .lock()
+            .expect("#1097 register early stdin")
+            .push(StdinWriter::start(
+                child.stdin.take().expect("#1086 stdin pipe"),
+                data,
+            ));
     }
     owned
 }
@@ -199,21 +251,90 @@ async fn fixture_stdin_broken_pipe_preserves_output() {
     // Larger than the pipe capacity: a child that never reads must close the
     // reader before write_all can finish, independently of scheduler order.
     let input = json!({"stdinHex": "61".repeat(2 * 1024 * 1024)});
-    let child =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| spawn(&mut command, &input)));
-    let child = child.unwrap_or_else(|error| {
-        // Only a write-side EPIPE is this regression. Setup/collection failures
-        // must not publish the negative control's assertion receipt.
-        let broken_pipe = error.downcast_ref::<String>().is_some_and(|message| {
-            message.starts_with("#1086 fixture stdin:") && message.contains("kind: BrokenPipe")
+    let child = spawn(&mut command, &input);
+    let output = std::panic::AssertUnwindSafe(collect(child))
+        .catch_unwind()
+        .await
+        .unwrap_or_else(|error| {
+            // Only a write-side EPIPE is this regression. Setup/collection failures
+            // must not publish the negative control's assertion receipt.
+            let broken_pipe = error.downcast_ref::<String>().is_some_and(|message| {
+                message.starts_with("#1086 fixture stdin:") && message.contains("kind: BrokenPipe")
+            });
+            verify(!broken_pipe, "#1086 broken pipe must not panic");
+            std::panic::resume_unwind(error)
         });
-        verify(!broken_pipe, "#1086 broken pipe must not panic");
-        std::panic::resume_unwind(error)
-    });
-    let output = collect(child).await;
     verify(output.status.code() == Some(23), "#1086 preserve exit code");
     verify(output.stdout == b"fixture-out", "#1086 preserve stdout");
     verify(output.stderr == b"fixture-err", "#1086 preserve stderr");
+}
+
+#[tokio::test]
+async fn fixture_stdin_writer_yields_before_child_reads() {
+    let runtime = Runtime::new();
+    let release = runtime.0.join("release");
+    let mut command = Command::new("/bin/sh");
+    command
+        .env_clear()
+        .args([
+            "-c",
+            "while [ ! -f \"$1\" ]; do /bin/sleep 0.01; done; exit 23",
+            "fixture",
+        ])
+        .arg(&release)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let input = json!({"stdinHex": "61".repeat(2 * 1024 * 1024)});
+    let (ready, observed) = std::sync::mpsc::channel();
+    let starter = std::thread::spawn(move || {
+        ready
+            .send(spawn(&mut command, &input))
+            .unwrap_or_else(|_| panic!("#1097 publish owned child"));
+    });
+    // Always release the child before checking: a synchronous-writer mutant
+    // fails this assertion without leaking a blocked writer or timing out.
+    let early = observed.recv_timeout(Duration::from_secs(3));
+    let yielded = early.is_ok();
+    let temporary = release.with_extension("tmp");
+    fs::write(&temporary, b"release").expect("#1097 release bytes");
+    fs::rename(temporary, &release).expect("#1097 atomic child release");
+    let child =
+        early.unwrap_or_else(|_| observed.recv_timeout(BOUND).expect("#1097 released child"));
+    starter.join().expect("#1097 starter joined");
+    let output = collect(child).await;
+    verify(yielded, "#1097 stdin writer yields before child reads");
+    verify(
+        output.status.code() == Some(23),
+        "#1097 blocked reader exit preserved",
+    );
+}
+
+#[test]
+fn fixture_stdin_cancel_reaps_writer() {
+    let mut command = Command::new("/bin/sleep");
+    command
+        .env_clear()
+        .arg("30")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = spawn(
+        &mut command,
+        &json!({"stdinHex": "61".repeat(2 * 1024 * 1024)}),
+    );
+    let writers = child.1.clone();
+    verify(
+        writers.lock().expect("#1097 writer ownership").len() == 1,
+        "#1097 writer registered",
+    );
+    // This child never consumes stdin. Cancelling its owner must close the
+    // read end, finish the blocked write, and join the registered thread.
+    drop(child);
+    verify(
+        writers.lock().expect("#1097 joined writers").is_empty(),
+        "#1097 cancellation joins stdin writer",
+    );
 }
 
 async fn collect(child: OwnedChild) -> std::process::Output {
@@ -459,10 +580,11 @@ fn regenerates_identically(fixture: &str) {
 }
 
 async fn replay(
-    listener: TcpListener,
+    listener: &TcpListener,
     case: &Value,
     mut stdin: Option<std::process::ChildStdin>,
     pid: u32,
+    writers: Writers,
     pending: Option<(
         tokio::sync::oneshot::Sender<()>,
         tokio::sync::oneshot::Receiver<()>,
@@ -597,7 +719,7 @@ async fn replay(
                     row["frame"]["method"].as_str(),
                     Some("new_session" | "resume_session")
                 )
-                && let Some(mut stdin) = stdin.take()
+                && let Some(stdin) = stdin.take()
             {
                 let hex = case["input"]["stdinHex"]
                     .as_str()
@@ -608,7 +730,10 @@ async fn replay(
                         u8::from_str_radix(&hex[i..i + 2], 16).expect("#1086 delayed hex byte")
                     })
                     .collect();
-                write_fixture_stdin(&mut stdin, &bytes);
+                writers
+                    .lock()
+                    .expect("#1097 register delayed stdin")
+                    .push(StdinWriter::start(stdin, bytes));
             }
         } else {
             bind_ids(&mut expected, row, &ids, &run_ids);
@@ -632,12 +757,6 @@ async fn replay(
         }
         verify(matched, "#1086 complete two-connection wire and cleanup");
     }
-    verify(
-        timeout(Duration::from_millis(20), listener.accept())
-            .await
-            .is_err(),
-        "#1086 no third connection",
-    );
     if let Some((ready, release)) = pending {
         ready.send(()).expect("#1086 publish predecessor barrier");
         release
@@ -645,6 +764,23 @@ async fn replay(
             .expect("#1086 observation cleanup acknowledgment");
     }
     run_ids
+}
+
+// The 20 ms accept sampling inside replay could miss a socket opened between
+// wire-replay end and child exit. After the child has exited, every connection
+// the mock never accepted is still parked in the listener backlog, so drain
+// and fail on the first one instead of sampling a single window.
+async fn verify_no_pending_connections(listener: &TcpListener, reason: &'static str) {
+    loop {
+        match timeout(Duration::from_millis(20), listener.accept()).await {
+            Err(_) => break,
+            Ok(accepted) => {
+                let (_, peer) = accepted.expect("#1086 owned extra accept");
+                eprintln!("#1086 extra connection from {peer} after the captured wire");
+                verify(false, reason);
+            }
+        }
+    }
 }
 
 fn bind_ids(
@@ -692,6 +828,7 @@ async fn run_case(case: &Value) {
         None
     };
     let mut child = spawn(&mut command, &case["input"]);
+    let writers = child.1.clone();
     let stdin = if case["input"]["stdinAfterCreate"] == true {
         child
             .0
@@ -709,11 +846,11 @@ async fn run_case(case: &Value) {
         > 0
     {
         let pid = child.0.as_ref().expect("#1086 owned child pid").id();
-        let listener = listener.expect("#1086 observed mock");
+        let listener = listener.as_ref().expect("#1086 observed mock");
         if case["observation"] == "OBSERVED_TIMEOUT" {
             let (ready, observed) = tokio::sync::oneshot::channel();
             let (release, released) = tokio::sync::oneshot::channel();
-            let mock = replay(listener, case, stdin, pid, Some((ready, released)));
+            let mock = replay(listener, case, stdin, pid, writers, Some((ready, released)));
             let observe = async {
                 timeout(BOUND, observed)
                     .await
@@ -751,7 +888,7 @@ async fn run_case(case: &Value) {
             run_ids = ids;
             output
         } else {
-            let mock = replay(listener, case, stdin, pid, None);
+            let mock = replay(listener, case, stdin, pid, writers, None);
             let (ids, output) = tokio::join!(
                 async {
                     timeout(BOUND, mock)
@@ -764,17 +901,19 @@ async fn run_case(case: &Value) {
             output
         }
     } else {
-        let output = collect(child).await;
-        if let Some(listener) = listener {
-            verify(
-                timeout(Duration::from_millis(20), listener.accept())
-                    .await
-                    .is_err(),
-                "#1086 preflight never connects",
-            );
-        }
-        output
+        collect(child).await
     };
+    if let Some(listener) = listener.as_ref() {
+        if case["connections"]
+            .as_u64()
+            .expect("#1086 connection count")
+            > 0
+        {
+            verify_no_pending_connections(listener, "#1086 no third connection").await;
+        } else {
+            verify_no_pending_connections(listener, "#1086 preflight never connects").await;
+        }
+    }
     let mut expected = case["stdout"].as_str().expect("#1086 TS stdout").to_owned();
     // Instantiate only the recovery.runId in the expected final JSON suffix.
     // Actual stdout and all text prefixes stay byte-for-byte unchanged.
@@ -876,5 +1015,27 @@ async fn resume_token_reaches_gateway() {
         .await
         .expect("#1086 refusal port unoccupied");
     drop(listener);
+    run_case(&case).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn resume_no_late_connection() {
+    let _port = PORT.lock().await;
+    let _lease = ParityLock::acquire().await;
+    let case = cases()
+        .into_iter()
+        .find(|case| case["input"]["id"] == "resume--argv")
+        .expect("#1097 resume late-connection fixture");
+    run_case(&case).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn resume_preflight_no_late_connection() {
+    let _port = PORT.lock().await;
+    let _lease = ParityLock::acquire().await;
+    let case = cases()
+        .into_iter()
+        .find(|case| case["input"]["id"] == "resume--missing-session")
+        .expect("#1097 resume preflight fixture");
     run_case(&case).await;
 }
