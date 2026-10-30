@@ -26,6 +26,8 @@ SECTIONS = {
     'status_changes': 'STATUS CHANGES',
     'test_changes': 'TEST BINDING CHANGES',
     'assertion_changes': 'ASSERTION CHANGES',
+    'schema_changes': 'SCHEMA CHANGES (格式漂移)',
+    'hit_changes': 'HIT CHANGES',
     'duplicate_keys': 'DUPLICATE CASE KEYS',
     'empty_tables': 'EMPTY TABLES',
 }
@@ -41,6 +43,9 @@ def summary():
 
 
 class CompareVerdictsTests(unittest.TestCase):
+    # The mutation runner verifies the explicit msg suffix, not actual values.
+    longMessage = True
+
     def test_negative_runner_requires_the_declared_assertion_message(self):
         judge = runpy.run_path(str(SCRIPT.with_name('negative_compare_verdicts.py')))[
             'bound_failure_matches']
@@ -113,10 +118,141 @@ class CompareVerdictsTests(unittest.TestCase):
                 marked['controls'][0]['assertion'] = '#1100 present marker'
                 for old, new in ((document, marked), (marked, document)):
                     self.different(old, new, 'assertion_changes')
-                other = {'controls': [{'name' if identity == 'mutation' else 'mutation': 'alpha',
-                                       'status': 'KILLED', 'test': 'suite::alpha'}]}
-                result, _ = self.invoke(document, other)
-                self.assertEqual(result.returncode, 0, '#1100 missing marker forms normalize equally')
+
+    def test_schema_drift_without_assertions(self):
+        old = {'controls': [{'mutation': 'alpha', 'status': 'KILLED', 'test': 'suite::alpha'}]}
+        new = {'controls': [{'name': 'alpha', 'status': 'KILLED', 'test': 'suite::alpha'}]}
+        for before, after in ((old, new), (new, old)):
+            self.different(before, after, 'schema_changes')
+
+    def test_real_reason_marker_changes(self):
+        old = json.loads((TESTDATA / 'gateway-entry-guard.json').read_text())
+        new = copy.deepcopy(old)
+        new['controls'][0]['reason'] += ' changed binding'
+        report = self.different(old, new, 'assertion_changes')
+        self.assertEqual(report['differences']['assertion_changes'][0]['old'],
+                         [old['controls'][0]['reason']], '#1100 real reason is the bound marker')
+
+    def test_reason_diagnostics_do_not_change_binding(self):
+        # Use an actual marker containing a semicolon; only producer-defined
+        # diagnostic suffixes are volatile, never the marker's own punctuation.
+        document = json.loads((TESTDATA / 'gateway-entry-guard.json').read_text())
+        row = next(row for row in document['controls'] if '; evidence stays' in row['reason'])
+        old = {'controls': [{**row, 'status': 'INVALID'}]}
+        for suffix in ('; restored positive failed',
+                       '; restored: OSError: /tmp/host-a after 1.2s',
+                       '; source guard: OSError: /tmp/host-a after 1.2s',
+                       '; restored positive failed; source guard: OSError: /tmp/host-a'):
+            with self.subTest(suffix=suffix):
+                new = copy.deepcopy(old)
+                new['controls'][0]['reason'] += suffix
+                result, report = self.invoke(old, new)
+                self.assertEqual(result.returncode, 0,
+                                 '#1100 producer diagnostics are not assertion bindings')
+                self.assertEqual(report['table'][0]['new'][0]['bindings'][0]['assertion'],
+                                 row['reason'], '#1100 semicolon inside the real marker is preserved')
+
+    def test_unrecognized_reason_is_reported_unbound(self):
+        real = json.loads((TESTDATA / 'sdk-run.json').read_text())['controls'][0]
+        for reason in (real['reason'], 'host /tmp/a after 1.2s', None, 123,
+                       '#1100 ', 'prefix #1100 marker', '#word marker'):
+            with self.subTest(reason=reason):
+                old = {'controls': [{**real, 'reason': reason}]}
+                new = {'controls': [{**real, 'reason': 'host /tmp/b after 2.3s'}]}
+                result, report = self.invoke(old, new)
+                self.assertEqual(result.returncode, 0,
+                                 '#1100 free reason text must not affect equivalence')
+                self.assertEqual(report['table'][0]['old'][0]['bindings'][0]['assertion'], '',
+                                 '#1100 unknown reason cannot invent a marker')
+                self.assertEqual(report['unbound_markers'], [
+                    {'side': side, 'case': real['name'], 'test': real['test']}
+                    for side in ('old', 'new')], '#1100 missing binding is explicit in JSON report')
+                _, text = self.invoke(old, new, json_output=False)
+                section = text.split('UNBOUND MARKERS (无绑定标记)\n', 1)[1]
+                self.assertIn(json.dumps(real['test']), section,
+                              '#1100 missing binding is explicit in human report')
+
+    def test_reason_marker_rules_apply_to_both_scalar_schemas(self):
+        for identity in ('mutation', 'name'):
+            with self.subTest(identity=identity):
+                old = {'controls': [{identity: 'alpha', 'status': 'KILLED',
+                                      'test': 'suite::alpha', 'reason': '#1100 first marker'}]}
+                new = copy.deepcopy(old)
+                new['controls'][0]['reason'] = '#1100 second marker'
+                self.different(old, new, 'assertion_changes')
+
+    def test_explicit_assertion_takes_priority_over_reason(self):
+        old, new = summary(), summary()
+        new['controls'][0]['reason'] = '#1100 unrelated diagnostic'
+        result, report = self.invoke(old, new)
+        self.assertEqual(result.returncode, 0, '#1100 explicit assertion takes priority over reason')
+        self.assertEqual(report['unbound_markers'], [], '#1100 explicit bindings are not unbound')
+
+    def test_invalid_explicit_assertion_cannot_fall_back_to_reason(self):
+        for marker in (None, '', [], {}):
+            with self.subTest(marker=marker):
+                document = summary()
+                document['controls'][0].update(assertion=marker, reason='#1100 valid reason marker')
+                self.invalid(document, document, '.assertion')
+
+    def test_schema_drift_is_visible(self):
+        rows = [
+            {'mutation': 'alpha', 'test': 'suite::alpha'},
+            {'name': 'alpha', 'test': 'suite::alpha'},
+            {'name': 'alpha', 'targets': [['suite::alpha', '#1100 alpha']]},
+        ]
+        schemas = ('mutation/test', 'name/test', 'name/targets')
+        for pair in ((0, 1), (0, 2), (1, 2)):
+            for left, right in (pair, tuple(reversed(pair))):
+                with self.subTest(left=left, right=right):
+                    documents = []
+                    for index in (left, right):
+                        row = {**rows[index], 'status': 'KILLED'}
+                        if 'test' in row:
+                            row['assertion'] = '#1100 alpha'
+                        documents.append({'controls': [row]})
+                    report = self.different(*documents, 'schema_changes')
+                    self.assertEqual(report['differences']['schema_changes'], [
+                        {'case': 'alpha', 'old': schemas[left], 'new': schemas[right]}],
+                        '#1100 format drift preserves both exact schemas')
+
+    def test_real_hits_are_compared(self):
+        old = json.loads((TESTDATA / 'matrix-main.json').read_text())
+        hits = old['controls'][0]['hits']
+        for changed in (hits[:-1], [], list(reversed(hits)), hits + hits[:1], ['wrong-test']):
+            with self.subTest(changed=changed):
+                new = copy.deepcopy(old)
+                new['controls'][0]['hits'] = changed
+                report = self.different(old, new, 'hit_changes')
+                self.assertEqual(report['differences']['test_changes'], [],
+                                 '#1100 changed hits do not require changed targets')
+                self.assertEqual(report['differences']['hit_changes'][0]['old'], hits,
+                                 '#1100 report preserves real hits')
+
+    def test_hits_absence_and_empty_are_distinct(self):
+        for identity in ('mutation', 'name'):
+            with self.subTest(identity=identity):
+                old = {'controls': [{identity: 'alpha', 'status': 'INVALID', 'test': 'suite::alpha'}]}
+                new = copy.deepcopy(old)
+                new['controls'][0]['hits'] = []
+                for before, after in ((old, new), (new, old)):
+                    self.different(before, after, 'hit_changes')
+
+    def test_hits_types_are_strict(self):
+        for hits in (None, '', 'suite::alpha', {}, 1, [''], [' '], [1], [[]]):
+            with self.subTest(hits=hits):
+                document = summary()
+                document['controls'][0]['hits'] = hits
+                self.invalid(document, document, '.hits')
+
+    def test_partial_hits_are_valid_evidence(self):
+        document = json.loads((TESTDATA / 'matrix-main.json').read_text())
+        document['controls'][0]['hits'].pop()
+        result, report = self.invoke(document, document)
+        self.assertEqual(result.returncode, 0, '#1100 any-cell runner permits partial hits')
+        observed = {row['case']: row['old'][0]['hits'] for row in report['table']}
+        self.assertEqual(observed[document['controls'][0]['name']], document['controls'][0]['hits'],
+                         '#1100 normalized table keeps actual hits')
 
     def test_missing_assertion_does_not_hide_unknown_bindings(self):
         for schema in ('mutation', 'name', 'mutation-marker', 'name-marker', 'targets'):
@@ -326,9 +462,8 @@ class CompareVerdictsTests(unittest.TestCase):
             {'name': row['mutation'], 'status': row['status'],
              'targets': [[row['test'], row['assertion']]], 'compiled': True,
              'restoredPass': True} for row in old['controls']]}
-        result, report = self.invoke(old, new)
-        self.assertEqual(result.returncode, 0, '#1100 known runner schemas normalize equally')
-        self.assertEqual(report['same'], 2)
+        report = self.different(old, new, 'schema_changes')
+        self.assertEqual(report['same'], 0, '#1100 format drift cannot count as same')
         new['controls'][1]['targets'][0][1] = '#1100 changed matrix assertion'
         self.different(old, new, 'assertion_changes')
 

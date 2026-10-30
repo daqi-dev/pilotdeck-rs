@@ -8,6 +8,7 @@ tables, 2: unreadable or unrecognized input. No input or source file is written.
 import argparse
 import json
 from pathlib import Path
+import re
 import sys
 
 
@@ -53,10 +54,31 @@ def binding(test, assertion, field):
 def single_binding(row, field):
     if 'assertion' in row:
         return binding(row.get('test'), row['assertion'], field)
-    # Some independent negative_process consumers omit the assertion marker.
-    # Absence is explicit; present null/empty/wrongly typed markers still fail.
+    # gateway-entry-guard publishes its marker as reason, with optional known
+    # restoration/source-guard diagnostics. Other free text is not a binding.
     test = required_string(row.get('test'), field + '.test')
-    return {'test': test, 'assertion': ''}
+    return {'test': test, 'assertion': reason_marker(row.get('reason'))}
+
+
+def reason_marker(reason):
+    if not isinstance(reason, str) or not re.match(r'#[0-9]+ \S', reason):
+        return ''
+    # Do not split arbitrary semicolons: real markers include "; evidence ...".
+    return re.split(r'; (?:restored positive failed(?=; |$)|restored: |source guard: )',
+                    reason, maxsplit=1)[0]
+
+
+def observed_hits(row, field):
+    if 'hits' not in row:
+        return None
+    hits = row['hits']
+    if not isinstance(hits, list):
+        raise InputError(f'{field}.hits: expected a list')
+    for hit in hits:
+        required_string(hit, field + '.hits[]')
+    # Preserve absence, emptiness, order and multiplicity; any_cell runners may
+    # legitimately kill a mutant with only a subset of the declared targets.
+    return hits
 
 
 def normalize(row, index):
@@ -76,11 +98,13 @@ def normalize(row, index):
         if 'name' in row or 'targets' in row:
             raise InputError(f'{field}: mixed mutation and name/targets schemas')
         key = required_string(row['mutation'], field + '.mutation')
+        schema = 'mutation/test'
         bindings = [single_binding(row, field)]
     elif 'name' in row and 'targets' in row:
         if 'test' in row or 'assertion' in row:
             raise InputError(f'{field}: mixed test/assertion and targets schemas')
         key = required_string(row['name'], field + '.name')
+        schema = 'name/targets'
         targets = row['targets']
         if not isinstance(targets, list) or not targets:
             raise InputError(f'{field}.targets: expected a nonempty list')
@@ -91,10 +115,12 @@ def normalize(row, index):
             bindings.append(binding(*target, f'{field}.targets[{offset}]'))
     elif 'name' in row and 'test' in row:
         key = required_string(row['name'], field + '.name')
+        schema = 'name/test'
         bindings = [single_binding(row, field)]
     else:
         raise InputError(f'{field}: expected mutation/test, name/test or name/targets')
-    return {'case': key, 'status': status, 'bindings': bindings}
+    return {'case': key, 'status': status, 'bindings': bindings,
+            'schema': schema, 'hits': observed_hits(row, field)}
 
 
 def load_table(path):
@@ -122,7 +148,8 @@ def compare(old, new):
                                    'rows': [number for number, _ in entries]})
     differences = {
         'missing_cases': [], 'status_changes': [], 'test_changes': [],
-        'assertion_changes': [], 'duplicate_keys': duplicates,
+        'assertion_changes': [], 'schema_changes': [], 'hit_changes': [],
+        'duplicate_keys': duplicates,
         'empty_tables': [side for side, table in (('old', old), ('new', new)) if not table],
     }
     table_diff = []
@@ -143,6 +170,8 @@ def compare(old, new):
         left, right = before[0], after[0]
         for category, first, second in (
             ('status_changes', left['status'], right['status']),
+            ('schema_changes', left['schema'], right['schema']),
+            ('hit_changes', left['hits'], right['hits']),
             ('test_changes', [b['test'] for b in left['bindings']],
              [b['test'] for b in right['bindings']]),
             ('assertion_changes', [b['assertion'] for b in left['bindings']],
@@ -150,7 +179,10 @@ def compare(old, new):
         ):
             if first != second:
                 differences[category].append({'case': key, 'old': first, 'new': second})
-    return {'equivalent': not any(differences.values()),
+    unbound = [{'side': side, 'case': row['case'], 'test': bound['test']}
+               for side, table in (('old', old), ('new', new)) for row in table
+               for bound in row['bindings'] if bound['assertion'] == '']
+    return {'equivalent': not any(differences.values()), 'unbound_markers': unbound,
             'totals': {'old': len(old), 'new': len(new), 'union': len(keys)},
             'same': same, 'differences': differences, 'table': table_diff, 'errors': []}
 
@@ -169,7 +201,8 @@ def render(report):
     totals = report['totals']
     lines = [('EQUIVALENT' if report['equivalent'] else 'NOT EQUIVALENT')
              + f" old={totals['old']} new={totals['new']} union={totals['union']} same={report['same']}",
-             '', 'CASE TABLE (case / status / bindings)', 'case\told\tnew\tequal']
+             '', 'CASE TABLE (case / schema / status / bindings / hits)',
+             'case\told\tnew\tequal']
     for row in report['table']:
         lines.append('\t'.join((cell(row['case']), cell(row['old']), cell(row['new']),
                                 'yes' if row['equal'] else 'no')))
@@ -178,11 +211,15 @@ def render(report):
         ('status_changes', 'STATUS CHANGES'),
         ('test_changes', 'TEST BINDING CHANGES'),
         ('assertion_changes', 'ASSERTION CHANGES'),
+        ('schema_changes', 'SCHEMA CHANGES (格式漂移)'),
+        ('hit_changes', 'HIT CHANGES'),
         ('duplicate_keys', 'DUPLICATE CASE KEYS'),
         ('empty_tables', 'EMPTY TABLES'),
     ):
         lines += ['', title]
         lines += [cell(item) for item in report['differences'][key]] or ['(none)']
+    lines += ['', 'UNBOUND MARKERS (无绑定标记)']
+    lines += [cell(item) for item in report['unbound_markers']] or ['(none)']
     return '\n'.join(lines)
 
 
@@ -200,7 +237,7 @@ def main(argv=None):
             errors.append({'side': side, 'path': str(path), 'reason': str(error)})
     if errors:
         report = {'equivalent': False, 'totals': None, 'same': 0,
-                  'differences': None, 'table': [], 'errors': errors}
+                  'differences': None, 'table': [], 'errors': errors, 'unbound_markers': []}
         code = 2
     else:
         report = compare(tables['old'], tables['new'])
