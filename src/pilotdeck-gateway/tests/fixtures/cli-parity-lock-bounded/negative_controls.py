@@ -10,7 +10,11 @@ other writers in this worktree, after the apparatus change is committed
 (``mutating_sources`` refuses files that differ from HEAD by design). Evidence
 goes in a new output folder. No cargo is involved, so no CARGO_TARGET_DIR is
 required. Run all mutants to completion; any non-KILLED row is a nonzero exit (a
-stale anchor or a broken run is INVALID, never SURVIVED).
+stale anchor or a broken run is INVALID, never SURVIVED): an INVALID row exits 2
+(fix-r2 P1-1, the #1038/#1063 semantics — a broken run must not share SURVIVED's
+"the apparatus held" exit 1), an empty row set exits 1 (fix-r2 P1 — an emptied or
+fully filtered table is a zero denominator, never a pass; the selection gate
+asserts unknown names before anything starts), and only all-KILLED is 0.
 
 Kill criterion (the shared negative_panic standard, applied to unittest
 output): the *named* test must have failed at its own assertion — its FAIL
@@ -53,8 +57,10 @@ from negative_suite import invalidate_completed
 
 root = Path(__file__).resolve().parents[5]
 common = root / 'scripts/cli-parity/common.py'
-# One row mutates this delivered runner itself; the self-check bound tests live
-# beside it (#1064 r1 P1-3, the #1059 runner-row shape).
+test_script = root / 'scripts/cli-parity/test_cli_parity.py'
+# Rows mutate this delivered runner and the bound test script itself; the
+# runner self-checks live beside it (#1064 r1 P1-3, the #1059 runner-row shape;
+# fix-r2 adds the test script for the real-SIGINT disposition rows).
 RUNNER = Path(__file__).resolve()
 SELF_TEST = RUNNER.with_name('test_negative_controls.py')
 
@@ -210,6 +216,37 @@ mutations = [
      "        if not isinstance(error, Exception):\n"
      "            raise\n"
      "        return 2"),
+    # fix-r2 P1-1: a normal-path INVALID row (a failed positive control) shares
+    # SURVIVED's exit 1 instead of the broken-run exit 2.
+    ('runner-invalid-exit-shared',
+     RUNNER,
+     "    if counts['INVALID']:\n"
+     "        return 2\n",
+     "    if counts['INVALID']:\n"
+     "        return 1\n"),
+    # fix-r2 P1: an empty row set (an emptied table) is judged a pass again —
+    # the zero-denominator shape the old ``0 == 0`` comparison returned 0 for.
+    ('runner-empty-summary-pass',
+     RUNNER,
+     "    if not summary:\n"
+     "        return 1\n"
+     "    return 0 if counts['KILLED'] == len(summary) else 1",
+     "    return 0 if counts['KILLED'] == len(summary) else 1"),
+    # fix-r2 P1: the selection gate no longer fails closed on an unknown name,
+    # so a fully filtered selection silently runs an empty table.
+    ('runner-selection-assert-removed',
+     RUNNER,
+     "        assert len(rows) == len(args.selection), (\n"
+     "            f'#1064 unknown mutation name(s): {sorted(set(args.selection) - {m[0] for m in mutations})}')",
+     "        pass  # mutant #1064 fix-r2: a fully filtered selection runs nothing"),
+    # fix-r2 P1-2: the real-SIGINT windows stop installing the default SIGINT
+    # disposition, so a background parent's inherited SIG_IGN swallows the
+    # signal and the bound tests misjudge a correct implementation.
+    ('real-sigint-handler-removed',
+     test_script,
+     "        previous = signal.signal(signal.SIGINT, signal.default_int_handler)\n"
+     "        self.addCleanup(signal.signal, signal.SIGINT, previous)\n",
+     "        pass  # mutant #1064 fix-r2: keep whatever disposition was inherited\n"),
 ]
 tests = {
     'guard-blocking': 'ContractTests.test_guard_wait_is_bounded_when_a_sibling_holds_it',
@@ -228,6 +265,10 @@ tests = {
     'runner-baseexception-narrowed': 'RunnerInvalidationControls.test_final_guard_interrupt_voids_and_reraises',
     'runner-publish-before-verify': 'RunnerInvalidationControls.test_interrupt_during_void_publish_leaves_no_killed_summary',
     'runner-exit-normalization-removed': 'RunnerInvalidationControls.test_final_guard_systemexit_is_normalized_to_two',
+    'runner-invalid-exit-shared': 'RunnerInvalidationControls.test_normal_invalid_row_exits_two',
+    'runner-empty-summary-pass': 'RunnerInvalidationControls.test_empty_mutation_table_is_not_a_pass',
+    'runner-selection-assert-removed': 'RunnerInvalidationControls.test_fully_filtered_selection_fails_closed',
+    'real-sigint-handler-removed': 'ContractTests.test_real_sigint_windows_survive_a_sigint_ignoring_parent',
 }
 # The exclusive assertion message each mutant must turn red.
 failure_fragments = {
@@ -247,6 +288,10 @@ failure_fragments = {
     'runner-baseexception-narrowed': '#1064 r1 P1-3 a cancellation after the last row must not keep KILLED',
     'runner-publish-before-verify': '#1064 r1 P1-3 an interrupt during the void publish must not leave a readable KILLED summary',
     'runner-exit-normalization-removed': '#1064 r1 P1-3 a SystemExit from the guard must exit 2, never the raw code',
+    'runner-invalid-exit-shared': "#1064 fix-r2 an INVALID row must exit 2, never share SURVIVED's 1",
+    'runner-empty-summary-pass': '#1064 fix-r2 an empty row set must exit nonzero, never pass',
+    'runner-selection-assert-removed': '#1064 fix-r2 an unknown selection must fail closed, never run an empty table',
+    'real-sigint-handler-removed': '#1064 fix-r2 the real-SIGINT windows must install the default disposition themselves',
 }
 
 SEPARATOR = '-' * 70
@@ -336,7 +381,7 @@ def script_for(test):
     runner; every apparatus test runs from scripts/cli-parity/."""
     if test.startswith('RunnerInvalidationControls.'):
         return SELF_TEST
-    return root / 'scripts/cli-parity/test_cli_parity.py'
+    return test_script
 
 
 def run_test(out, label, test):
@@ -415,9 +460,12 @@ def main():
     out = new_output_directory(args.output)
     summary = []
     try:
-        # RUNNER is guarded too: three rows mutate this delivered runner to
-        # prove the P1-3 publication rules bite (#1064 r1).
-        with mutating_sources(root, [RUNNER, common], baseline=args.baseline) as snapshots:
+        # RUNNER and the bound test script are guarded too: six rows mutate
+        # this delivered runner (the r1 P1-3 publication rules and the fix-r2
+        # exit-code/selection gates) and one mutates the test script's
+        # real-SIGINT disposition install (fix-r2 P1-2).
+        with mutating_sources(root, [RUNNER, common, test_script],
+                              baseline=args.baseline) as snapshots:
             for name, path, old, new in rows:
                 status, reason, stage, before = 'INVALID', '', 'anchor', None
                 try:
@@ -482,6 +530,15 @@ def main():
     write_summary(out, summary)
     counts = _counts(summary)
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
+    # fix-r2 P1-1: an INVALID row means the run itself is broken (a stale
+    # anchor, a crashed bound test, an unproven restore): it must not share
+    # SURVIVED's exit 1, which reads as "the apparatus held" (#1038/#1063).
+    if counts['INVALID']:
+        return 2
+    # fix-r2 P1: an empty row set is a zero denominator, never a pass — an
+    # emptied or fully filtered table fails closed like a missing summary.
+    if not summary:
+        return 1
     return 0 if counts['KILLED'] == len(summary) else 1
 
 
