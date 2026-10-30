@@ -5,57 +5,168 @@ import copy
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '_shared'))
-from negative_control import environment, run, scratch
+from negative_control import environment, scratch
+from negative_process import run_owned, wait_for_slot
+from negative_suite import Case, classify, passed
 
 FIXTURES = Path(__file__).resolve().parent
+REPO = FIXTURES.parents[4]
+TEST_NAME = 'storage::run_registry_tests::real_ts_scenarios_match_outcomes_and_snapshot_bytes'
 TEST = ['cargo', 'test', '-p', 'pilotdeck-gateway', '--lib',
-        'storage::run_registry_tests::real_ts_scenarios_match_outcomes_and_snapshot_bytes',
+        TEST_NAME,
         '--', '--exact', '--nocapture', '--test-threads=4']
 
-with scratch('run-registry-count') as root:
-    env = environment(root)
-    baseline = os.environ['PDRS_BASELINE']
-    oracle_path = root / 'oracle.json'
-    original = (FIXTURES / 'oracle.json').read_bytes()
-    oracle_path.write_bytes(original)
-    env['PDRS_RUN_REGISTRY_ORACLE'] = str(oracle_path)
-    run('baseline-run-registry', TEST, env)
-    for name, change in [('drop', -1), ('add', 1)]:
-        oracle = json.loads(original)
-        assert len(oracle['scenarios']) == 25
-        if change < 0:
-            oracle['scenarios'].pop()
-        else:
-            oracle['scenarios'].append(copy.deepcopy(oracle['scenarios'][-1]))
-        oracle_path.write_text(json.dumps(oracle) + '\n')
-        run(f'{name}-run-registry-scenario', TEST, env,
-            diagnostic='run-registry oracle scenario count')
-    oracle_path.write_bytes(original)
 
-    # Keep the relative provenance import valid without touching the source tree.
-    shared = root / '_shared'
-    shared.mkdir()
-    shutil.copyfile(FIXTURES.parent / '_shared/baseline.mts', shared / 'baseline.mts')
-    generator_path = root / 'run-registry/generate.mts'
-    generator_path.parent.mkdir()
-    source = (FIXTURES / 'generate.mts').read_text()
-    guard = "  assert.equal(scenarios.length, 25, 'run-registry oracle scenario count');"
-    assert source.count(guard) == 1
-    for name, mutation, actual in [
-        ('drop', '  scenarios.pop();', 24),
-        ('add', '  scenarios.push(structuredClone(scenarios.at(-1)));', 26),
-    ]:
-        generator_path.write_text(source.replace(guard, mutation + '\n' + guard))
-        output = root / f'{name}-generated'
-        run(f'{name}-generated-run-registry-scenario', ['node', '--import',
-            f'{baseline}/node_modules/tsx/dist/loader.mjs', str(generator_path), str(output)],
-            env, diagnostic=f'{actual} !== 25')
-        assert not (output / 'oracle.json').exists(), 'failed generator published an oracle'
-    generator_path.write_text(source)
-    run('restored-run-registry', TEST, env)
+def copy_local_import_closure(entry, source_root, destination_root):
+    """Mirror literal relative ESM imports, retaining their repository layout.
+
+    Like baseline_source_guard.mjs, scan from/import string specifiers (including
+    re-exports, side-effect imports and literal dynamic imports). This fixture
+    closure uses exact filenames; missing files are errors, never skipped.
+    """
+    source_root = source_root.resolve()
+    pending = [entry]
+    seen = set()
+    while pending:
+        path = pending.pop().resolve()
+        if not path.is_relative_to(source_root):
+            raise ValueError(f'#1129 local import escapes source root: {path}')
+        if path in seen:
+            continue
+        if not path.is_file():
+            raise FileNotFoundError(f'#1129 missing local import: {path}')
+        seen.add(path)
+        text = path.read_text()
+        for match in re.finditer(r'''(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])([^'"]+)\1''', text):
+            specifier = match[2]
+            if specifier.startswith(('./', '../')):
+                pending.append(path.parent / specifier)
+        target = destination_root / path.relative_to(source_root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
+    return destination_root / entry.resolve().relative_to(source_root)
+
+
+def execute(name, command, env):
+    if command[0] == 'cargo':
+        slot = wait_for_slot(REPO / 'scripts/cargo-slots.sh', timeout=600, interval=15)
+        print(slot.stdout + slot.stderr, end='', flush=True)
+    print(f'--- {name} ---', flush=True)
+    result = run_owned(command, cwd=REPO / 'src', env=env,
+                       timeout=900 if '--no-run' in command else 240)
+    print(result.stdout + result.stderr, end='', flush=True)
+    print(f'{name}: exit={result.returncode}', flush=True)
+    return result
+
+
+def compile_mutant(name, env):
+    result = execute(name + '-compile',
+                     ['cargo', 'test', '-p', 'pilotdeck-gateway', '--lib', '--no-run'], env)
+    if result.returncode != 0:
+        raise RuntimeError('#1129 mutant did not compile; never a kill')
+
+
+def generator_status(result, actual):
+    lines = result.stderr.splitlines()
+    if result.returncode == 0:
+        return 'SURVIVED', 'generator accepted the wrong scenario count'
+    if (result.returncode == 1
+            and 'AssertionError [ERR_ASSERTION]: run-registry oracle scenario count' in lines
+            and f'{actual} !== 25' in lines):
+        return 'KILLED', f'bound generator count assertion: {actual} !== 25'
+    return 'INVALID', 'missing bound generator count assertion; never a kill'
+
+
+def main():
+    results = []
+    with scratch('run-registry-count') as root:
+        env = environment(root)
+        baseline = os.environ['PDRS_BASELINE']
+        oracle_path = root / 'oracle.json'
+        original = (FIXTURES / 'oracle.json').read_bytes()
+        env['PDRS_RUN_REGISTRY_ORACLE'] = str(oracle_path)
+        for name, change in [('drop', -1), ('add', 1)]:
+            label = f'{name}-run-registry-scenario'
+            row = dict(mutation=label, test=TEST_NAME,
+                       assertion='run-registry oracle scenario count',
+                       status='INVALID', reason='not run', compiled=False)
+            try:
+                oracle_path.write_bytes(original)
+                if not passed(execute(label + '-positive', TEST, env), TEST_NAME):
+                    raise RuntimeError('#1129 positive Rust replay failed')
+                oracle = json.loads(original)
+                assert len(oracle['scenarios']) == 25, '#1129 positive oracle scenario count'
+                if change < 0:
+                    oracle['scenarios'].pop()
+                else:
+                    oracle['scenarios'].append(copy.deepcopy(oracle['scenarios'][-1]))
+                oracle_path.write_text(json.dumps(oracle) + '\n')
+                compile_mutant(label, env)
+                row['compiled'] = True
+                case = Case(label, oracle_path, '', '', TEST_NAME, row['assertion'])
+                row['status'], row['reason'] = classify(execute(label, TEST, env), case)
+            except Exception as error:
+                row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+            finally:
+                oracle_path.write_bytes(original)
+            try:
+                if not passed(execute(label + '-restored', TEST, env), TEST_NAME):
+                    raise RuntimeError('#1129 restored Rust replay failed')
+            except Exception as error:
+                row.update(status='INVALID', reason=row['reason'] + f'; restored: {error}')
+            results.append(row)
+
+        source = (FIXTURES / 'generate.mts').read_text()
+        guard = "  assert.equal(scenarios.length, 25, 'run-registry oracle scenario count');"
+        for name, mutation, actual in [
+            ('drop', '  scenarios.pop();', 24),
+            ('add', '  scenarios.push(structuredClone(scenarios.at(-1)));', 26),
+        ]:
+            label = f'{name}-generated-run-registry-scenario'
+            row = dict(mutation=label, test='run-registry/generate.mts::scenario-count',
+                       assertion=f'run-registry oracle scenario count: {actual} !== 25',
+                       status='INVALID', reason='not run', compiled=False)
+            try:
+                # Mirroring from the repository root also keeps ../../ imports
+                # and the provenance guard's import.meta.url inside scratch.
+                generator_path = copy_local_import_closure(
+                    FIXTURES / 'generate.mts', REPO, root / name)
+                assert source.count(guard) == 1, '#1129 unique generator count guard'
+                generator_path.write_text(source.replace(guard, mutation + '\n' + guard))
+                output = root / f'{name}-generated'
+                command = ['node', '--import', f'{baseline}/node_modules/tsx/dist/loader.mjs',
+                           str(generator_path), str(output)]
+                compile_mutant(label, env)
+                row['compiled'] = True
+                row['status'], row['reason'] = generator_status(execute(label, command, env), actual)
+                if row['status'] == 'KILLED':
+                    assert not (output / 'oracle.json').exists(), '#1129 failed generator published an oracle'
+                generator_path.write_text(source)
+                command[-1] = str(root / f'{name}-restored')
+                restored = execute(label + '-restored', command, env)
+                if restored.returncode != 0:
+                    raise RuntimeError('#1129 restored generator failed')
+                restored_oracle = json.loads((Path(command[-1]) / 'oracle.json').read_text())
+                assert len(restored_oracle['scenarios']) == 25, '#1129 restored generator scenario count'
+            except Exception as error:
+                row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+            results.append(row)
+    for row in results:
+        print(json.dumps(row), flush=True)
+    counts = {status: sum(row['status'] == status for row in results)
+              for status in ('KILLED', 'SURVIVED', 'INVALID')}
+    print('SUMMARY: ' + ' '.join(f'{status}={count}' for status, count in counts.items()), flush=True)
+    if len(results) != 4 or any(row['status'] != 'KILLED' for row in results):
+        return 1
     print('PASS: 4 / 4 run-registry count mutants killed', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
