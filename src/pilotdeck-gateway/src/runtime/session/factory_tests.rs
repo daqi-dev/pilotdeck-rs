@@ -1135,8 +1135,8 @@ async fn production_adapter_dispatches_to_host() {
     );
     h.finish("host-execution").await;
 }
-#[test]
-fn reload_capability_is_not_fake_success() {
+#[tokio::test]
+async fn reload_capability_is_not_fake_success() {
     struct LifecycleOnly;
     impl LiveSession for LifecycleOnly {
         fn snapshot(&self) -> JsValue {
@@ -5803,4 +5803,97 @@ async fn recreation_old_error_waiter_cannot_clear_new_error() {
 #[tokio::test]
 async fn recreation_idle_guard_drop_panic_cannot_skip_drain() {
     retry_idle_panic("guard-drop-panic").await;
+}
+
+/// Matrix cell 7 (#1010, _tmp/20261026-issue-1010/plan.md): PreparedResources
+/// dropped on a thread with no runtime context. The registration-time
+/// executor must still run the custom async release.
+#[tokio::test]
+async fn prepared_resources_released_when_dropped_off_runtime() {
+    let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut resources = PreparedResources::default();
+    resources.push({
+        let released = released.clone();
+        move || {
+            Box::pin(async move {
+                released.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+        }
+    });
+    let thread = std::thread::spawn(move || drop(resources));
+    thread
+        .join()
+        .expect("#1010 off-runtime PreparedResources drop finished");
+    bounded("#1010 off-runtime release ran", async {
+        while !released.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(
+        released.load(Ordering::SeqCst),
+        "#1010 the release ran on the captured executor, not the ambient one"
+    );
+}
+
+/// Matrix cell 8: the registration executor is gone when PreparedResources
+/// drops. The spawned task is never polled, so the async release cannot run,
+/// but the captured lease's synchronous Drop must still release the count.
+#[tokio::test]
+async fn prepared_resources_spawn_rejection_keeps_sync_semantics() {
+    let h = Harness::new("prepared-dead-executor");
+    let lease = h.registry.acquire(None).expect("#1010 lease acquired");
+    let dedicated = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("#1010 dedicated runtime built");
+    let resources = {
+        let _guard = dedicated.enter();
+        let mut resources = PreparedResources::default();
+        resources.retain_lease(lease);
+        resources
+    };
+    std::thread::spawn(move || drop(dedicated))
+        .join()
+        .expect("#1010 dedicated runtime dropped off the async context");
+    drop(resources);
+    assert_eq!(
+        h.leases(),
+        0,
+        "#1010 dead executor: the lease count is still released synchronously"
+    );
+    h.finish("prepared-dead-executor").await;
+}
+
+/// Matrix cell 10: the real factory chain. Dropping the only handle clone —
+/// without an explicit dispose and without the owner — must still run the
+/// release events, close the storage and release the project lease.
+#[tokio::test]
+async fn dropped_owned_session_disposes_storage_and_releases_lease() {
+    let h = Harness::new("handle-drop-e2e");
+    let handle = bounded(
+        "#1010 direct factory create",
+        h.factory.create(h.context(), None),
+    )
+    .await
+    .expect("#1010 factory created the session");
+    drop(handle);
+    bounded("#1010 release event after drop", async {
+        while !lock(&h.observed.events).iter().any(|e| e == "release.1") {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    bounded("#1010 storage close after drop", async {
+        while !lock(&h.observed.events).iter().any(|e| e == "close.1") {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert_eq!(
+        h.leases(),
+        0,
+        "#1010 dropped owned session releases the project lease"
+    );
+    h.finish("handle-drop-e2e").await;
 }

@@ -415,9 +415,15 @@ pub type Release = Box<dyn FnOnce() -> BoxFuture<RuntimeResult> + Send>;
 #[derive(Default)]
 pub struct PreparedResources {
     releases: Vec<Release>,
+    /// #1010 captured executor: registration happens inside async prepare,
+    /// while a runtime is current. Drop may run on a thread without one.
+    executor: Option<tokio::runtime::Handle>,
 }
 impl PreparedResources {
     pub fn push(&mut self, release: impl FnOnce() -> BoxFuture<RuntimeResult> + Send + 'static) {
+        if self.executor.is_none() {
+            self.executor = Some(tokio::runtime::Handle::current());
+        }
         self.releases.push(Box::new(release));
     }
     pub fn retain_lease(&mut self, mut lease: RuntimeLease) {
@@ -429,13 +435,27 @@ impl PreparedResources {
 }
 impl Drop for PreparedResources {
     fn drop(&mut self) {
-        if !self.releases.is_empty() {
+        // A runtime that rejects or drops the spawned task also drops the
+        // releases inside it; their own synchronous Drop semantics (lease
+        // counts, WriterCloseGuard threads) still run. The async custom
+        // releases cannot run without a live runtime — the same boundary TS
+        // hits at process exit.
+        #[cfg(test)]
+        let ambient_only = option_env!("PDRS_1010_DROP_AMBIENT_ONLY").is_some();
+        #[cfg(not(test))]
+        let ambient_only = false;
+        let executor = if ambient_only {
+            tokio::runtime::Handle::try_current().ok()
+        } else {
+            self.executor.take()
+        };
+        if let (Some(executor), false) = (executor, self.releases.is_empty()) {
             let releases = std::mem::take(&mut self.releases);
-            if let Ok(executor) = tokio::runtime::Handle::try_current() {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 executor.spawn(async move {
                     let _ = release_all(releases).await;
                 });
-            }
+            }));
         }
     }
 }
