@@ -62,7 +62,7 @@ switches = [
     ('native-ws-output-slots', SOURCE, PREFIX + 'output_slot_budget_and_full_close', '#749 full output queue preserves close frame'),
     ('native-ws-writer-deadline', SOURCE, PREFIX + 'stalled_output_is_bounded_and_cancellable', '#749 blocked flush releases resources'),
     ('native-ws-reader-deadline', SOURCE, PREFIX + 'close_deadline_reclaims_peer_without_fin', '#749 reader close deadline reclaims peer without FIN'),
-    ('native-ws-pending-limit', SOURCE, PREFIX + 'pending_requests_are_bounded_before_enqueue', '#749 pending cap rejects before host enqueue'),
+    ('native-ws-pending-limit', SOURCE, PREFIX + 'pending_requests_are_bounded_before_enqueue', '#1123 pending cap rejects before host enqueue'),
     ('native-ws-drain-no-deadline', SOURCE, PREFIX + 'bounded_drain', '#749 bounded host exit'),
     ('native-ws-handshake-no-deadline', SOURCE, PREFIX + 'shutdown_cancels_handshake', '#749 half handshake bounded'),
     ('native-ws-handshake-leak', SOURCE, PREFIX + 'shutdown_cancels_handshake', '#749 half handshake reclaimed'),
