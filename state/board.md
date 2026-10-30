@@ -1,11 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-30 17:50 · by Claude Code 协调者
+updated: 2026-10-31 04:10 · by Claude Code 协调者
 - #749 | impl | blocked | **关键路径** pr6c-1 已合（8ebb4054f）；关单待 #1071 pr6c-2（前置 #589、#1079）
-- #1071 | impl | doing | **关键路径** PR #1105 r4 Codex P0（两个新负控绑通用退出码断言、无关故障可判 KILLED）→ GLM fix-r3（上限轮）；A4 端口打印差异另开 #1131
-- #123 | impl | doing | D1-P06 已合（017a5b306，#1086 关）；P07 #1097 → PR #1106 r2（P2 轮）opus + GLM + cb8；P08、P09 串行其后
-- #1010 | impl | doing | PR #1094 r5：cb8 证实两处变异体失配（尺子 P1）→ Codex fix-r3c
+- #1071 | impl | doing | **关键路径** PR #1105 rebase 解 #996 冲突 2e10a3d38；Codex 复核 + GLM 结果块 0/0 → CI 后入队；合入后派 #1131 fix-r2
+- #123 | impl | doing | P07 #1097 已合（e13b189a3，#1106）；P08、P09 串行其后；#1136 前置于 #123 收尾
+- #1010 | impl | doing | 与 #1122 叠栈以 PR #1127 合入；macmini r7m 剩 session-factory，#1094 superseded
 - #1011 | impl | blocked | #745 FactoryStorage projection cache；同模块串行，等 #1010
 - #590 | impl | blocked | 前置 #1071（pr6c-2）
 - #589 | impl | blocked | 关单前置 #1010 #1011 #1019 #1020
@@ -15,7 +15,9 @@ updated: 2026-10-30 17:50 · by Claude Code 协调者
 - 749-diffs | coord | human | **待人复核**：A7.2-NATIVE-WS-DRAIN-001、A7.2-NATIVE-WS-RESOURCE-001（+R1 / R2）、A7.2-NATIVE-WS-AGGREGATE-001（#1079）原生隔离入口与 TS 的有界差异（未批准）
 - D-4 | coord | human | **AI 已实测，待人签字**：#1120 EdgeClaw 真实模型抽取 / 召回（_tmp/20261031-edgeclaw-smoke/RESULT.md：17/18 格，Rust 与 TS 全命中零误写）；装置 PR #1126 评审中
 - #953 | impl | blocked | item 3 余项等 #996 迁移
-- #983 | review | doing | PR #1121 r2：解码内存 P0 已修（128 MiB 1.02× TS，JsValue 96→56 B，stdout 与 TS 同）→ opus + Codex + macmini
+- #983 | review | doing | PR #1121：Codex r10x + Claude 块 r10 0/0；mbp2 r10b 宿主在跑 → 入队
+- #1125 | impl | doing | PR #1130 ETXTBSY：r3 新变异 Linux SURVIVED + 旧 PID SIGKILL（升 P0）→ GLM fix-r3（上限轮）
+- #1131 | impl | doing | PR #1133 A4 实际端口：r2 Codex P1 一行 → 等 #1071 合入后 fix-r2（rebase + R1 更正）
 - #892 | coord | blocked | 修 3 轮仍假 PASS，挂起；决策卡 decisions-20261028-892-suspend
 - #727 | impl | blocked | 前置 A7 Rust 宿主接线
 - #19 | impl | blocked | 修复归 #727
@@ -33,7 +35,6 @@ updated: 2026-10-30 17:50 · by Claude Code 协调者
 - #1099 | impl | doing | M6 总单：pr1 比对器、pr2 契约已合（1de25441e）；pr3 迁移首批 #1110（turn-submit / failure-guard + #935 #782 #835）→ Codex；共享负控件归 M6 车道独占
 - cb8 | coord | doing | 自检通过（227 case 一致）→ M6 宿主 + 短链车道（review-phase5 HOST=cb8 / host-only-cb8.sh）；macOS 专属套件留 macmini
 - #978 | impl | blocked | 第一轮扫描完成（实测可机械改写 0 项）；余 #1109 + 十轮验收
-- #1109 | impl | doing | #978 压测实测偶发跟进（transcript_resolve 矩阵、background_tasks 信号、4 个 INCOMPLETE 二进制）；前置于 #978 关单
 - #1111 | review | doing | M2-pr2 r1 opus + Codex + cb8（机械比对通过）
 - #1114 | impl | doing | PR #1117 r1 P0（detach 二次 poll panic）+ P1×2 → GLM fix-r1
 - mbp2 | coord | doing | 新宿主接入：子代理建链 + 判定一致性自检；通过后承接 macOS 专属套件 + 短链溢出
@@ -41,6 +42,7 @@ updated: 2026-10-30 17:50 · by Claude Code 协调者
 - #1122 | review | doing | PR #1127（叠 #1010）r1 opus + GLM + cb8
 - #1125 | impl | doing | Linux 偶发 ETXTBSY（测试写脚本后立即 exec，main CI ubuntu 同险）→ GLM
 - #1131 | impl | doing | A4 监听 :0 打印请求地址而非实际端口（与 TS 不一致，P1 产品）→ Codex
+- #1129 | impl | doing | run-registry 金样生成器同毫秒不 mask（快机器假 INVALID，P1）→ Codex
 <!-- READY:END -->
 
 > ## 2026-10-25 03:57 · #589/#590 fix-r4 ACK 收据与安全红探针配方（GLM glm-5.3-mb，wt=issue-589-live-integrity）
@@ -2496,3 +2498,17 @@ updated: 2026-10-30 17:50 · by Claude Code 协调者
 - 02:18 #1125（Linux ETXTBSY）GLM 交付 → PR #1130 r1 opus + Codex + cb8（Linux 判读 grep-etxtbsy 负控）；清单含 macOS 专属 exact-rerun-receipt → 同时 macmini 单跑该套（cb8 上它必因平台金样失败，按已知平台差异处理）。
 - 02:20 #1071 r4 Codex：P0（fix-r2 两个新负控绑定通用「Node 非零退出」断言，前序场景超时也会判 KILLED）→ GLM fix-r3（上限轮，要求专属断言）；P1（A4 监听 :0 打印请求地址、TS 打印实际端口，既存产品差异）→ 开 #1131 派 Codex。macmini r4m 宿主停（旧 head）。
 - 02:22 **两小时交接** `_tmp/20261031-handoff-0222.md`，board 与新决策卡同步入库（PR）。
+- 02:29 合入 #1112（#1109）→ 关 #1109，#978 只剩十轮验收。#983 r5：第 8 个漏守卫 sessions.rs → 改为按 crate 收齐（cli 65 + protocol 17 个 tracked 文件）015544227 → r6 + macmini。#1125 r1 Codex P1：rename 不消除继承写 fd 竞态 → 换修法（/bin/sh script，不 exec 脚本本身）→ GLM fix-r1。#1114 fix-r2 收货待评审。
+- 02:31 #1010 macmini 18/20：plugin-loader runtime-replay-generation marker 失配（#1122 已修这一处）→ 按叠栈先例以 PR #1127 一个 PR 合入、#1094 superseded（决策卡补节）。
+- 02:32 合入 #1126（D-4 装置）154be5998；#1120 保持打开等人签字。
+- 02:38 #983 r6 Codex P1×2（两 crate 枚举仍漏传递编译输入；ls-files 读 index 可被暂存删除绕过）→ 我改为正控前全树 `git diff [--cached] --quiet HEAD` + ls-tree HEAD 枚举 cd683aab9（一次闭合整类）→ Codex r9x + macmini r9m（目录避开 10-29 旧 review-r7）。#1114 r3 P1×3 → GLM fix-r3（上限轮；建议去掉进程级 panic hook）。#1071 fix-r3 收货（新负控改绑专属断言）→ r5 opus + Codex + macmini。合入 #1126。
+- 02:44 #1071 r5 Codex 0/0/0/0（专属断言修好、差异条目合规）→ 等 GLM 块 + macmini native-process 后入队。#1122 cb8 三套全绿（commands-catalog 39、plugin-loader 96/96、plugin-runtime）。#1131 Codex 交付 → PR #1133 r1；与 #1071 的就绪行冲突 → #1071 先合、#1131 rebase 后同步 fixture（决策卡补节）。
+- 02:47 #983 r9x Codex P1×3（来源保证类，无假 KILLED 实证）：未跟踪构建输入、assume-unchanged 当轮修 9fabb932d（四态实测）；判据模块取锁前导入转 M6 #1099。决策卡补「#983 守卫输入的收口」：过上限后一家确认，共享框架类拆 M6 放行 → r10x Codex 确认 + macmini r10m。
+- 02:49 #983 r10x Codex 0/0/0/0（P1-1/2 闭合，P1-3 属 M6）→ 当前 head Claude 结果块 + macmini r10m 后入队。
+- 03:06 #983 Claude 结果块 r10 四角色 PASS 0/0；宿主从 macmini 排队改投 mbp2（r10b，空闲机），macmini 让给关键路径 #1071。#1010 macmini r7m 19/20 套，plugin-loader 一条标记没跟上「#1010」断言前缀——#1127 栈顶已改并在 cb8 96/96，按叠栈决定取栈顶证据，不另修。#1131 GLM 块 P1×2（守卫漏两份共享负控件、oracle 绕过 baseline 溯源）→ GLM fix-r1。
+- 03:18 #1097 cb8 r2b：负控 107/48/29 全杀、lib 绿；定向一步是我把参数写成 gateway 包（目标在 cli），同树同环境补跑 35 passed → #1106 转 ready 入队（作者 Codex，opus + GLM 0/0）。#1125 fix-r1（helper 子进程写入后收割再 exec）推送 c60bb6416 → r2 opus + Codex，cb8 4 套 + mbp2 exact-rerun。#1131 fix-r1 f2b231fc5 → r2 opus + Codex（宿主等 #1071 合入后 rebase 再跑）。#1132 state 同步合入 37f43dc60。
+- 03:25 #1125 r2：cb8 四套全杀（grep-etxtbsy 3/3）、Linux 300 次压测 ok → Codex 的「缺 Linux 证据」P1 闭合；剩 4 条 P2（helper 等待无超时、守卫构造期 panic、共享 scratch.rs 单测在 35 个 crate 各编一份、负控锚点复制整函数）→ GLM fix-r2；mbp2 旧 head 那条停掉让车道。#1129 Codex 交付 → PR #1134 r1 opus + GLM，mbp2 三套负控 + 重生成 30 次。#1131 r2 opus 0/0、Codex P1（新判据 baseline.rs 未入 HEAD 守卫，一行）→ 并入 #1071 合入后的 rebase 轮，任务书已备。
+- 03:34 #1106 pr-gate 挂：我只摘了表格，没贴 summary 原块 → 贴全两份、本地 check-pr-gate PASS 后重新入队。#1071 macmini r5 负控 / 定向 / lib 全绿，opus + Codex r5 0/0 → #1105 转 ready 入队（合入后派 #1131 fix-r2 rebase 轮）。#1129 r1 opus + GLM 0/0，P2：README 输出路径冲突、三处新行为缺负控 → Codex fix-r1；clock 掩码收窄动共享尺子 → 开 #1135（P2-跟进，前置于 M6）。
+- 03:55 #1105 没跑 CI：与 main 冲突（#996 pr2 给 host_factory close_timeout 加了编译期开关）→ 我 rebase 逐块合并两侧 + fmt 提交 2e10a3d38，正控过、开关变异按 `factory forwards close_timeout` 杀死、native_process 3 passed → 推送；冲突解决请 Codex r6 只读复核，与 CI 并行，过了入队。#1129 mbp2：count-negative 自 #953 起就坏（只拷 baseline.mts，漏 generator_guard.mjs）→ Codex fix-r2（只改 run-registry 自己的脚本）。#1125 fix-r2 67e777005 → r3 opus + Codex，cb8 4 套 + mbp2 10 套。
+- 03:59 #1106 合入 e13b189a3（邮箱 noreply）→ #1097 收尾自查贴 issue 后关单；四族测试的大 stdin / wire-end 装置差距开 #1136（P2-跟进，前置于 #123）；wt-1097 已回收。
+- 04:07 **两小时交接** → `_tmp/20261031-handoff-0407.md`。#1071 新 head 结果块 GLM 0/0（P2×2 开 #1137）→ #1105 等 CI 入队。#1125 r3 cb8 新变异 SURVIVED + 旧 PID SIGKILL 升 P0 → GLM fix-r3（上限轮）。磁盘 200 → 140 GiB。
