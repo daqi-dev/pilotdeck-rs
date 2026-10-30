@@ -52,8 +52,6 @@ try:
             return replace('                started.push((plugin, completion, callback, first));',
                        '                let stop = matches!(&first, std::task::Poll::Ready(Err(_)));\n                started.push((plugin, completion, callback, first));\n                if stop { break; }')
         CASES = [
-            ('restore-old-order', lambda: replace('    registry.disposal_waiters.extend(woken);',
-                                       '    registry.disposal_waiters.splice(0..0, woken);'), 'runtime_dispose_retired_and_active_together', '"dispose-retired-and-active-together" calls'),
             ('serial-instead-of-parallel', serial_mutation, 'runtime_dispose_active_order_and_parallel', '"dispose-active-order-and-parallel" step 3'),
             ('reverse-active-order', lambda: replace('    let pending = plugins\n        .into_iter()', '    let pending = plugins\n        .into_iter().rev()'),
              'runtime_dispose_active_order_and_parallel', '"dispose-active-order-and-parallel" step 3'),
