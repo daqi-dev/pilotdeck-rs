@@ -24,6 +24,7 @@ import sys
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import classify as shared_classify
 
@@ -37,12 +38,20 @@ def classify_control(mutant, code, raw):
     result = SimpleNamespace(returncode=code, stdout=raw, stderr='')
     bound = SimpleNamespace(test=mutant['test'], assertion=mutant['anchor'])
     status, reason = shared_classify(result, bound)
-    if status == 'KILLED' and (
-        code != 101 or 'could not compile' in raw
-        or f'panicked at {TEST_FILE}:' not in raw
-        or (mutant['failure'] == 'assertion' and 'assertion' not in raw)
-    ):
+    if status != 'KILLED':
+        return status, reason
+    if (code != 101 or 'could not compile' in raw
+            or f'panicked at {TEST_FILE}:' not in raw
+            or (mutant['failure'] == 'assertion' and 'assertion' not in raw)):
         return 'INVALID', 'missing fixture-specific runtime failure'
+    # #818 fix-r10 (P1): the shared classify does not carry the pre-rebase
+    # strict judge, so keep requiring it too. `named_test_killed` rejects a
+    # watchdog/timeout payload (negative_panic HANG_PREFIXES, #813 fix-r8) --
+    # a hang is not an assertion kill even when the anchor text appears in
+    # it -- and requires the anchor to be a scoped marker in the named
+    # test's own panic block.
+    if not named_test_killed(raw, mutant['test'], mutant['anchor']):
+        return 'INVALID', 'hang/timeout or unscoped payload is not a kill'
     return status, reason
 
 
