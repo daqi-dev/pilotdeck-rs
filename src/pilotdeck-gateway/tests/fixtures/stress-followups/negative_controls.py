@@ -145,12 +145,14 @@ def main():
              assertion='#1109 matrix child timed out (30 s bound)',
              env={'PDRS_VERIFY_DELAY_MS': VERIFY_DELAY_MS}, with_baseline=True),
         # The verification phase must be bounded and must fail loudly.
+        # Duration::from_secs(0) debug-formats as 0ns, not 0s (fix-r3,
+        # review P1-1: the 0s binding could never match the panic payload).
         dict(name='transcript-verify-bound',
              changes=[(baseline_source,
                        'const VERIFY_BOUND: Duration = Duration::from_secs(300);',
                        'const VERIFY_BOUND: Duration = Duration::from_secs(0);')],
              crate=TRANSCRIPT_BINARY, test=TRANSCRIPT_TEST,
-             assertion='#1109 baseline verification exceeded the 0s bound without finishing',
+             assertion='#1109 baseline verification exceeded the 0ns bound without finishing',
              env={}, with_baseline=True),
         # Same regression on the signal-injected worker: without the env
         # removal the worker re-verifies, and the delayed probe table keeps
@@ -271,11 +273,16 @@ def main():
             texts[path] = texts[path].replace(old, new, 1)
             path.write_text(texts[path])
 
-    def save_diff(prefix, texts, edits):
-        for path, old, new in edits:
-            changed = texts[path].replace(old, new, 1)
+    def save_diff(prefix, pristine, texts, files):
+        """One patch per touched file: the baseline bytes against the text
+        that actually ran. apply_edits already moved texts, so re-applying
+        the anchors here recorded a second, never-executed mutation — most
+        patches came out empty, and a replacement that embeds its own anchor
+        recorded a phantom edit (#1109 fix-r3, review P1-3)."""
+        for path in sorted(files):
             save(f'{prefix}--{path.name}.patch', ''.join(difflib.unified_diff(
-                texts[path].splitlines(True), changed.splitlines(True),
+                pristine[path].decode().splitlines(True),
+                texts[path].splitlines(True),
                 fromfile=str(path), tofile=str(path))))
 
     def build(env, crate, label):
@@ -357,7 +364,8 @@ def main():
             positive = run_case(env, row, f'{case.mutation}-positive')
             expect(positive, case, 'SURVIVED', 'positive control')
             apply_edits(row['changes'], texts)
-            save_diff(f'{case.mutation}-negative', texts, row['changes'])
+            save_diff(f'{case.mutation}-negative', pristine, texts,
+                      {path for path, _old, _new in row['changes']})
             build(env, row['crate'], f'{case.mutation}-negative-build')
             negative = run_case(env, row, f'{case.mutation}-negative')
             # Retraction attribution: with the named rewrite severed on top
@@ -368,8 +376,9 @@ def main():
                     path.write_bytes(blob)
                 texts = {path: blob.decode() for path, blob in pristine.items()}
                 apply_edits(row['changes'] + other['changes'], texts)
-                save_diff(f"{case.mutation}-{other['name']}", texts,
-                          row['changes'] + other['changes'])
+                save_diff(f"{case.mutation}-{other['name']}", pristine, texts,
+                          {path for path, _old, _new
+                           in row['changes'] + other['changes']})
                 build(env, row['crate'], f"{case.mutation}-{other['name']}-build")
                 retracted = run_case(env, row, f"{case.mutation}-{other['name']}")
                 expect(retracted, case, 'SURVIVED', f"retraction {other['name']}")
