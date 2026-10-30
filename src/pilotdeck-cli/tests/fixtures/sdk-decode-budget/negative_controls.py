@@ -107,6 +107,23 @@ def tree_matches_head():
         listing = subprocess.run(['git', '-C', str(root), 'status', '--porcelain', '--untracked-files=no'],
                                  capture_output=True, text=True).stdout
         raise RuntimeError('#983 tracked tree differs from HEAD before positive control:\n' + listing)
+    # r9x: hidden index flags let a modified file look clean (assume-unchanged /
+    # skip-worktree), and untracked build inputs (build.rs, .cargo/config) are
+    # invisible to both diffs. Refuse both classes before the positive control.
+    flags = subprocess.run(['git', '-C', str(root), 'ls-files', '-v'],
+                           check=True, capture_output=True, text=True).stdout.splitlines()
+    hidden = [line for line in flags if line[:1].islower() or line[:1] == 'S']
+    if hidden:
+        raise RuntimeError('#983 index has assume-unchanged / skip-worktree entries:\n' + '\n'.join(hidden[:20]))
+    untracked = subprocess.run(['git', '-C', str(root), 'ls-files', '--others', '--exclude-standard', '-z', '--',
+                                'src/pilotdeck-cli', 'src/pilotdeck-protocol', 'src/Cargo.toml', '.cargo', 'src/.cargo'],
+                               check=True, capture_output=True).stdout.decode().split('\0')
+    untracked = [name for name in untracked if name]
+    for config in (root / '.cargo', root / 'src/.cargo'):
+        if config.exists():
+            untracked.append(str(config.relative_to(root)) + ' (cargo config dir present)')
+    if untracked:
+        raise RuntimeError('#983 untracked build inputs present:\n' + '\n'.join(untracked[:20]))
 
 
 def main():
