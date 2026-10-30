@@ -1,6 +1,7 @@
 import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Run from repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
 import { access, copyFile, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
@@ -26,6 +27,7 @@ const append = (r: any, event: unknown) => ({ op: 'append', input: r, event });
 const completed = (runId: string, finishReason = 'completed') => ({ type: 'turn_completed', runId, usage: {}, finishReason });
 const exists = (path: string) => access(path).then(() => true, () => false);
 // Mask only values this run wrote: its own pid and timestamps absent from the initial file.
+// The snapshot clock below guarantees new writes cannot collide with seed timestamps.
 // Initial files never carry this process's pid (realSnapshot rewrites it), so every
 // ownerPid equal to process.pid is "<self>"; any other pid is kept verbatim.
 const initialValues = (text: string) => {
@@ -94,7 +96,7 @@ async function scenario(name: string, options: { initial?: string | Buffer; lock
   const initialFile = options.initial === undefined ? null : `${name}.json`;
   if (initialFile) {
     await writeFile(path, options.initial!);
-    await copyFile(path, join(output, initialFile));
+    await copyFile(path, join(output, initialFile), constants.COPYFILE_EXCL);
   }
   if (options.lock) {
     await writeFile(lockPath, options.lock.contents);
@@ -112,7 +114,7 @@ async function scenario(name: string, options: { initial?: string | Buffer; lock
   let after = null;
   if (await exists(path)) {
     after = `${name}.after.json`;
-    await copyFile(path, join(output, after));
+    await copyFile(path, join(output, after), constants.COPYFILE_EXCL);
   }
   const lockLeft = await exists(lockPath);
   const leftovers = (await readdir(scratch)).filter(f => f.startsWith(`${name}.json.`) && f.endsWith('.tmp'));
@@ -155,6 +157,17 @@ function expectKinds(expected: string[]) {
 }
 const afterSnapshot = async () => JSON.parse(await readFile(join(output, scenarios.at(-1).after), 'utf8'));
 
+// #1129: every no-argument Date construction gets a distinct snapshot millisecond,
+// including seeds. Keep Date.now(), Date() and explicit Date arguments native:
+// lock deadlines, stale-lock checks and mtime still use the real wall clock.
+const NativeDate = Date;
+let tick = 0;
+const SnapshotDate = new Proxy(NativeDate, {
+  construct(target, args, newTarget) {
+    return Reflect.construct(target, args.length ? args : [1760745600000 + tick++], newTarget);
+  },
+});
+globalThis.Date = SnapshotDate;
 try {
   // Fresh registry: duplicate, conflict, every state transition and RunRegistryError branch.
   const p = (runId: string) => ref(runId);
@@ -428,6 +441,9 @@ try {
   const oracle = JSON.stringify({ sourceCommit, sourceSha256, generatorPid: process.pid, dead: DEAD, huge: HUGE, scenarios }, null, 2) + '\n';
   // Fixtures are machine-independent: no generation path survives in the oracle.
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);
-  await writeFile(join(output, 'oracle.json'), oracle);
+  await writeFile(join(output, 'oracle.json'), oracle, { flag: 'wx' });
   console.log(`PASS: generated ${scenarios.length} real TS FileRunRegistry scenarios`);
-} finally { await rm(scratch, { recursive: true, force: true }); }
+} finally {
+  globalThis.Date = NativeDate;
+  await rm(scratch, { recursive: true, force: true });
+}

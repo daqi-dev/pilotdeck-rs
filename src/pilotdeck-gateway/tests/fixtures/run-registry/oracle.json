@@ -652,7 +652,7 @@
     "src/web/client/protocol.ts": "d36eb220a30c04a58a77116a6ba0f1b54d250b5cf204b155ed065c4a52ef38f9",
     "src/web/client/webMessage.ts": "ada604e1438867fc15907e2dcd45daf3339c09c31e07d0cf595cd30fa9eb54a4"
   },
-  "generatorPid": 75867,
+  "generatorPid": 52133,
   "dead": 2147483647,
   "huge": 2147483648,
   "scenarios": [
@@ -1282,7 +1282,7 @@
               "state": "interrupted",
               "revision": 2,
               "lastSeq": 0,
-              "acceptedAt": "2026-10-18T00:01:02.224Z",
+              "acceptedAt": "2025-10-18T00:00:00.038Z",
               "updatedAt": "<new>"
             }
           }
@@ -1304,7 +1304,7 @@
               "state": "interrupted",
               "revision": 3,
               "lastSeq": 1,
-              "acceptedAt": "2026-10-18T00:01:02.224Z",
+              "acceptedAt": "2025-10-18T00:00:00.040Z",
               "updatedAt": "<new>"
             }
           }
@@ -1325,7 +1325,7 @@
               "state": "interrupted",
               "revision": 2,
               "lastSeq": 0,
-              "acceptedAt": "2026-10-18T00:01:02.225Z",
+              "acceptedAt": "2025-10-18T00:00:00.044Z",
               "updatedAt": "<new>"
             }
           }
@@ -1347,7 +1347,7 @@
               "state": "interrupted",
               "revision": 3,
               "lastSeq": 1,
-              "acceptedAt": "2026-10-18T00:01:02.226Z",
+              "acceptedAt": "2025-10-18T00:00:00.046Z",
               "updatedAt": "<new>"
             }
           }
@@ -1369,7 +1369,7 @@
               "state": "interrupted",
               "revision": 2,
               "lastSeq": 0,
-              "acceptedAt": "2026-10-18T00:01:02.227Z",
+              "acceptedAt": "2025-10-18T00:00:00.050Z",
               "updatedAt": "<new>"
             }
           }
@@ -1391,7 +1391,7 @@
               "state": "interrupted",
               "revision": 2,
               "lastSeq": 0,
-              "acceptedAt": "2026-10-18T00:01:02.227Z",
+              "acceptedAt": "2025-10-18T00:00:00.052Z",
               "updatedAt": "<new>"
             }
           }
@@ -1413,7 +1413,7 @@
               "state": "interrupted",
               "revision": 2,
               "lastSeq": 0,
-              "acceptedAt": "2026-10-18T00:01:02.228Z",
+              "acceptedAt": "2025-10-18T00:00:00.054Z",
               "updatedAt": "<new>"
             }
           }
@@ -1435,8 +1435,8 @@
               "state": "running",
               "revision": 2,
               "lastSeq": 1,
-              "acceptedAt": "2026-10-18T00:01:02.228Z",
-              "updatedAt": "2026-10-18T00:01:02.228Z"
+              "acceptedAt": "2025-10-18T00:00:00.056Z",
+              "updatedAt": "2025-10-18T00:00:00.058Z"
             }
           }
         },
@@ -1457,8 +1457,8 @@
               "state": "accepted",
               "revision": 1,
               "lastSeq": 0,
-              "acceptedAt": "2026-10-18T00:01:02.229Z",
-              "updatedAt": "2026-10-18T00:01:02.229Z"
+              "acceptedAt": "2025-10-18T00:00:00.060Z",
+              "updatedAt": "2025-10-18T00:00:00.060Z"
             }
           }
         },
@@ -1479,8 +1479,8 @@
               "state": "completed",
               "revision": 2,
               "lastSeq": 1,
-              "acceptedAt": "2026-10-18T00:01:02.229Z",
-              "updatedAt": "2026-10-18T00:01:02.230Z",
+              "acceptedAt": "2025-10-18T00:00:00.062Z",
+              "updatedAt": "2025-10-18T00:00:00.064Z",
               "result": {
                 "type": "turn_completed",
                 "runId": "orphan-dead-completed",
@@ -1507,8 +1507,8 @@
               "state": "failed",
               "revision": 2,
               "lastSeq": 1,
-              "acceptedAt": "2026-10-18T00:01:02.230Z",
-              "updatedAt": "2026-10-18T00:01:02.231Z",
+              "acceptedAt": "2025-10-18T00:00:00.066Z",
+              "updatedAt": "2025-10-18T00:00:00.068Z",
               "result": {
                 "type": "error",
                 "runId": "orphan-dead-failed",
@@ -1538,7 +1538,7 @@
               "state": "interrupted",
               "revision": 3,
               "lastSeq": 1,
-              "acceptedAt": "2026-10-18T00:01:02.224Z",
+              "acceptedAt": "2025-10-18T00:00:00.040Z",
               "updatedAt": "<new>"
             }
           }
@@ -1602,8 +1602,8 @@
               "state": "completed",
               "revision": 2,
               "lastSeq": 1,
-              "acceptedAt": "2026-10-18T00:01:02.229Z",
-              "updatedAt": "2026-10-18T00:01:02.230Z",
+              "acceptedAt": "2025-10-18T00:00:00.062Z",
+              "updatedAt": "2025-10-18T00:00:00.064Z",
               "result": {
                 "type": "turn_completed",
                 "runId": "orphan-dead-completed",
