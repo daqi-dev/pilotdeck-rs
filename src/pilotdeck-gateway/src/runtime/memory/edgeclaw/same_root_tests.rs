@@ -91,13 +91,29 @@ fn service(root: &Path, handle: &tokio::runtime::Handle) -> Arc<EdgeClawMemorySe
 thread_local! {
     static LOCK_OBSERVER: std::cell::RefCell<Option<mpsc::Sender<LockEvent>>> = const { std::cell::RefCell::new(None) };
 }
+#[derive(Debug, PartialEq)]
 pub(super) enum LockEvent {
     Contended,
+    CloseContended,
+    DropContended,
+    DropClosed,
     Completed,
 }
 pub(super) fn lock_observer() -> Option<mpsc::Sender<LockEvent>> {
     LOCK_OBSERVER.with(|observer| observer.borrow().clone())
 }
+fn join_bounded<T>(task: std::thread::JoinHandle<T>) -> T {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !task.is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "#1082 INVALID worker completion timeout"
+        );
+        std::thread::yield_now();
+    }
+    task.join().expect("#1082 INVALID worker panic")
+}
+
 struct Writer {
     release: Option<mpsc::Sender<()>>,
     task: Option<std::thread::JoinHandle<Result<(), super::StorageError>>>,
@@ -126,11 +142,7 @@ impl Writer {
             .expect("#1082 INVALID release owner")
             .send(())
             .expect("#1082 INVALID writer gone");
-        self.task
-            .take()
-            .expect("#1082 INVALID writer owner")
-            .join()
-            .expect("#1082 INVALID writer panic")
+        join_bounded(self.task.take().expect("#1082 INVALID writer owner"))
             .expect("#1082 INVALID writer commit");
     }
 }
@@ -139,15 +151,15 @@ impl Drop for Writer {
         if let Some(release) = self.release.take() {
             let _ = release.send(());
         }
-        if let Some(task) = self.task.take() {
-            let _ = task.join();
-        }
+        // Error cleanup must not turn a bounded failure into an unbounded join.
+        // The owned worker receives release; dropping its handle detaches it.
+        drop(self.task.take());
     }
 }
-fn competing<T: Send + 'static>(
+fn competing_events<T: Send + 'static>(
     writer: Writer,
     action: impl FnOnce() -> T + Send + 'static,
-) -> (bool, T) {
+) -> (Vec<LockEvent>, T) {
     let (sender, events) = mpsc::channel();
     let task = std::thread::spawn(move || {
         LOCK_OBSERVER.with(|observer| *observer.borrow_mut() = Some(sender.clone()));
@@ -156,14 +168,24 @@ fn competing<T: Send + 'static>(
         let _ = sender.send(LockEvent::Completed);
         result
     });
-    let event = events.recv_timeout(Duration::from_secs(5));
+    let first = events.recv_timeout(Duration::from_secs(5));
     writer.finish();
-    let result = task.join().expect("#1082 INVALID competing thread panic");
-    let contended = matches!(
-        event.expect("#1082 INVALID no acquisition/completion evidence"),
-        LockEvent::Contended
-    );
-    (contended, result)
+    let mut observed = vec![first.expect("#1082 INVALID no acquisition/completion evidence")];
+    while observed.last() != Some(&LockEvent::Completed) {
+        observed.push(
+            events
+                .recv_timeout(Duration::from_secs(5))
+                .expect("#1082 INVALID competing completion evidence"),
+        );
+    }
+    (observed, join_bounded(task))
+}
+fn competing<T: Send + 'static>(
+    writer: Writer,
+    action: impl FnOnce() -> T + Send + 'static,
+) -> (bool, T) {
+    let (events, result) = competing_events(writer, action);
+    (events.contains(&LockEvent::Contended), result)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -298,7 +320,7 @@ async fn same_root_lock_survives_writer_panic() {
         .send(())
         .expect("#1082 INVALID panic writer release");
     assert!(
-        writer.join().expect("#1082 panic thread").is_err(),
+        join_bounded(writer).is_err(),
         "#1082 in-flight writer panics after taking the lock"
     );
     new.repository
@@ -453,10 +475,20 @@ async fn same_root_drop_serializes_with_in_flight_write() {
     let old = service(&root.0, &handle);
     let new = service(&root.0, &handle);
     let writer = Writer::start(old.clone(), "drop-key");
-    let (contended, ()) = competing(writer, move || drop(new));
+    let weak = Arc::downgrade(&new.repository);
+    let (events, ()) = competing_events(writer, move || drop(new));
+    assert_eq!(
+        events.first(),
+        Some(&LockEvent::DropContended),
+        "#1082 implicit close must observe Drop-specific lock contention"
+    );
     assert!(
-        contended,
-        "#1082 implicit close must observe actual lock contention"
+        events.contains(&LockEvent::DropClosed),
+        "#1082 implicit close must finish SQLite close"
+    );
+    assert!(
+        weak.upgrade().is_none(),
+        "#1082 implicit close releases final storage owner"
     );
     assert!(
         old.repository
@@ -465,5 +497,252 @@ async fn same_root_drop_serializes_with_in_flight_write() {
             .expect("#1082 read after implicit close")
             .is_some(),
         "#1082 implicit close preserves writer row"
+    );
+}
+
+// Exercise the public callback boundary, not a fabricated private lock holder.
+// A self-contention event is a deterministic regression signal; a missing
+// event is INVALID. A regressed worker may be parked, but is never joined.
+fn reentrant_drop(mode: &str) {
+    let root = Root::new();
+    let path = root.0.join("memory.sqlite");
+    let mode = mode.to_owned();
+    let (sender, events) = mpsc::channel();
+    let task = std::thread::spawn(move || {
+        let old = EdgeClawStorage::open(&path).expect("#1082 callback old open");
+        let peer_path = if mode == "other-root" {
+            path.with_file_name("peer.sqlite")
+        } else {
+            path.clone()
+        };
+        let new = Arc::new(EdgeClawStorage::open(&peer_path).expect("#1082 callback peer open"));
+        let second =
+            Arc::new(EdgeClawStorage::open(&peer_path).expect("#1082 callback second peer open"));
+        let weak = Arc::downgrade(&new);
+        let second_weak = Arc::downgrade(&second);
+        let record = |id: &str| super::L0SessionRecord {
+            l0_index_id: id.into(),
+            session_key: "callback".into(),
+            timestamp: NOW.into(),
+            messages: js(&json!([])),
+            source: "openclaw".into(),
+            indexed: false,
+            created_at: NOW.into(),
+        };
+        old.insert_l0_session(&record("seed"))
+            .expect("#1082 callback seed row");
+        LOCK_OBSERVER.with(|observer| *observer.borrow_mut() = Some(sender.clone()));
+        let mut entered = 0;
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            old.insert_l0_session_if_new(&record("next"), |_| {
+                entered += 1;
+                if mode == "explicit" {
+                    new.close()
+                        .expect("#1082 callback explicit close completes");
+                    assert!(
+                        matches!(new.close(), Err(super::StorageError::Closed)),
+                        "#1082 callback explicit close is synchronous"
+                    );
+                    second
+                        .get_pipeline_state("unused")
+                        .expect("#1082 callback peer read reenters");
+                }
+                drop(new);
+                drop(second);
+                assert!(
+                    second_weak.upgrade().is_none(),
+                    "#1082 callback second owner released"
+                );
+                assert!(
+                    weak.upgrade().is_none(),
+                    "#1082 callback peer final owner released"
+                );
+                if mode == "panic" {
+                    panic!("#1082 intentional callback unwind");
+                }
+                mode == "early"
+            })
+        }));
+        let key = std::ptr::from_ref(old.process.as_ref()) as usize;
+        assert!(
+            !super::process_lock_held(key),
+            "#1082 callback outer guard releases ownership"
+        );
+        LOCK_OBSERVER.with(|observer| *observer.borrow_mut() = None);
+        let threw = result.is_err();
+        if mode == "panic" {
+            let panic = result.expect_err("#1082 callback panic caught");
+            assert_eq!(
+                panic.downcast_ref::<&str>(),
+                Some(&"#1082 intentional callback unwind"),
+                "#1082 callback catches only the intended panic"
+            );
+        } else {
+            assert_eq!(
+                result
+                    .expect("#1082 callback unexpectedly panicked")
+                    .expect("#1082 callback storage operation"),
+                mode != "early",
+                "#1082 callback insertion outcome"
+            );
+        }
+        let next = EdgeClawStorage::open(&path).expect("#1082 callback later generation opens");
+        let mut ids: Vec<_> = next
+            .list_recent_l0(10, 0)
+            .expect("#1082 callback later generation reads")
+            .into_iter()
+            .map(|row| row.l0_index_id)
+            .collect();
+        ids.sort();
+        next.set_pipeline_state("after-callback", &JsValue::from("ok"))
+            .expect("#1082 callback later generation writes");
+        let actual = json!({"entered":entered, "threw":threw, "rows":ids,
+            "after":next.get_pipeline_state("after-callback").expect("#1082 callback persisted later write")
+                .expect("#1082 callback later value exists").as_string().expect("#1082 callback later value string")
+                .to_utf8().expect("#1082 callback later value UTF8")});
+        let oracle: Value = serde_json::from_str(SAME_ROOT_ORACLE).expect("#1082 callback oracle");
+        let oracle_mode = if mode == "explicit" {
+            "normal"
+        } else {
+            mode.as_str()
+        };
+        if mode == "early" {
+            // TS has no equivalent public predicate; this is a Rust guard
+            // cleanup regression, not a claim of a TS callback probe.
+            assert_eq!(
+                actual,
+                json!({"entered":1,"threw":false,"rows":["seed"],"after":"ok"}),
+                "#1082 early callback preserves the existing row and releases ownership"
+            );
+        } else {
+            assert_eq!(
+                actual, oracle["closeCallbacks"][oracle_mode],
+                "#1082 callback matches TS visible outcomes"
+            );
+        }
+        drop(next);
+        drop(old);
+        sender
+            .send(LockEvent::Completed)
+            .expect("#1082 INVALID callback receiver");
+    });
+    let mut closed = 0;
+    loop {
+        let event = events
+            .recv_timeout(Duration::from_secs(5))
+            .expect("#1082 INVALID callback observation timeout");
+        assert!(
+            !matches!(
+                event,
+                LockEvent::Contended | LockEvent::DropContended | LockEvent::CloseContended
+            ),
+            "#1082 callback Drop must not reacquire its own process lock: {event:?}"
+        );
+        if event == LockEvent::DropClosed {
+            closed += 1;
+        }
+        if event == LockEvent::Completed {
+            break;
+        }
+    }
+    join_bounded(task);
+    assert_eq!(
+        closed, 2,
+        "#1082 callback closes both peer connections synchronously"
+    );
+}
+
+#[test]
+fn same_root_drop_from_locked_callback_completes() {
+    reentrant_drop("normal");
+}
+#[test]
+fn same_root_drop_from_locked_callback_early_return() {
+    reentrant_drop("early");
+}
+#[test]
+fn same_root_drop_from_locked_callback_unwinds() {
+    reentrant_drop("panic");
+}
+
+#[test]
+fn same_root_close_from_locked_callback_is_synchronous() {
+    reentrant_drop("explicit");
+}
+#[test]
+fn other_root_drop_from_locked_callback_completes() {
+    reentrant_drop("other-root");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn same_root_close_serializes_with_in_flight_write() {
+    let root = Root::new();
+    let handle = tokio::runtime::Handle::current();
+    let old = service(&root.0, &handle);
+    let new = service(&root.0, &handle);
+    let writer = Writer::start(old.clone(), "close-key");
+    let peer = new.clone();
+    let (events, result) = competing_events(writer, move || peer.repository.storage.close());
+    result.expect("#1082 explicit close succeeds after writer");
+    assert_eq!(
+        events.first(),
+        Some(&LockEvent::CloseContended),
+        "#1082 explicit close must observe Close-specific lock contention"
+    );
+    assert!(
+        matches!(
+            new.repository.storage.get_pipeline_state("close-key"),
+            Err(super::StorageError::Closed)
+        ),
+        "#1082 explicit close leaves peer connection closed"
+    );
+    assert_eq!(
+        old.repository
+            .storage
+            .get_pipeline_state("close-key")
+            .expect("#1082 read after explicit close"),
+        Some(js(&json!({"in_flight":true}))),
+        "#1082 explicit close preserves writer row"
+    );
+}
+
+#[test]
+fn same_root_reentrant_guards_preserve_outer_owner() {
+    let root = Root::new();
+    let path = root.0.join("memory.sqlite");
+    let (sender, events) = mpsc::channel();
+    let task = std::thread::spawn(move || {
+        let old = EdgeClawStorage::open(&path).expect("#1082 guard old open");
+        let peer = EdgeClawStorage::open(&path).expect("#1082 guard peer open");
+        let key = std::ptr::from_ref(old.process.as_ref()) as usize;
+        LOCK_OBSERVER.with(|observer| *observer.borrow_mut() = Some(sender.clone()));
+        let outer = old.conn().expect("#1082 guard outer acquire");
+        let inner = peer.conn().expect("#1082 guard inner acquire");
+        drop(inner);
+        let inner_preserved = super::process_lock_held(key);
+        drop(outer);
+        let outer_released = !super::process_lock_held(key);
+        LOCK_OBSERVER.with(|observer| *observer.borrow_mut() = None);
+        sender
+            .send(LockEvent::Completed)
+            .expect("#1082 INVALID guard event receiver");
+        (inner_preserved, outer_released)
+    });
+    let event = events
+        .recv_timeout(Duration::from_secs(5))
+        .expect("#1082 INVALID guard observation timeout");
+    assert_eq!(
+        event,
+        LockEvent::Completed,
+        "#1082 nested guards must reuse current ownership"
+    );
+    let (inner_preserved, outer_released) = join_bounded(task);
+    assert!(
+        inner_preserved,
+        "#1082 inner guard preserves outer ownership"
+    );
+    assert!(
+        outer_released,
+        "#1082 outer guard releases thread ownership"
     );
 }

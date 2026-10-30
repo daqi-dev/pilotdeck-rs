@@ -26,9 +26,21 @@ SERVICE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/service/mod.
 FACTORY = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/factory.rs'
 PROVIDER = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/provider.rs'
 switches = [
+    ('native-same-root-close-unserialized', STORAGE,
+     'same_root_tests::same_root_close_serializes_with_in_flight_write',
+     '#1082 explicit close must observe Close-specific lock contention'),
+    ('native-same-root-reentrant-lock-blocking', STORAGE,
+     'same_root_tests::same_root_drop_from_locked_callback_completes',
+     '#1082 callback Drop must not reacquire its own process lock'),
+    ('native-same-root-inner-releases-owner', STORAGE,
+     'same_root_tests::same_root_reentrant_guards_preserve_outer_owner',
+     '#1082 inner guard preserves outer ownership'),
+    ('native-same-root-stale-thread-owner', STORAGE,
+     'same_root_tests::same_root_reentrant_guards_preserve_outer_owner',
+     '#1082 outer guard releases thread ownership'),
     ('native-same-root-drop-unserialized', STORAGE,
      'same_root_tests::same_root_drop_serializes_with_in_flight_write',
-     '#1082 implicit close must observe actual lock contention'),
+     '#1082 implicit close must observe Drop-specific lock contention'),
     ('native-same-root-lock-bypassed', STORAGE,
      'same_root_tests::same_root_read_during_in_flight_write_does_not_error',
      '#1082 serialized read must see committed row'),

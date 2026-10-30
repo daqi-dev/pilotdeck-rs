@@ -19,6 +19,7 @@ use crate::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value as SqlValue};
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     fmt, fs,
     path::{Path, PathBuf},
@@ -250,6 +251,53 @@ fn process_lock_key(path: &Path) -> PathBuf {
     key
 }
 
+thread_local! {
+    static HELD_PROCESS_LOCKS: RefCell<HashSet<usize>> = RefCell::default();
+}
+
+fn process_lock_held(key: usize) -> bool {
+    HELD_PROCESS_LOCKS
+        .try_with(|held| held.borrow().contains(&key))
+        .unwrap_or(false)
+}
+
+// Public predicates and clocks run inside a ConnectionGuard and may release
+// another generation's last owner (or explicitly close/read that generation).
+// Reuse this thread's outer lock: the calls stay synchronous and all other
+// threads remain excluded. Each generation still locks its own connection;
+// this does not make recursive access to the *same* connection reentrant.
+struct ProcessGuard<'a> {
+    outer: Option<MutexGuard<'a, ()>>,
+    key: usize,
+}
+impl<'a> ProcessGuard<'a> {
+    fn owned(outer: MutexGuard<'a, ()>, key: usize) -> Self {
+        // During thread-local teardown the set may already be destroyed.
+        // Ordinary storage destruction still closes under the real mutex.
+        let _ = HELD_PROCESS_LOCKS.try_with(|held| held.borrow_mut().insert(key));
+        Self {
+            outer: Some(outer),
+            key,
+        }
+    }
+}
+impl Drop for ProcessGuard<'_> {
+    fn drop(&mut self) {
+        if (self.outer.is_some() || crate::mutants::on("native-same-root-inner-releases-owner"))
+            && !crate::mutants::on("native-same-root-stale-thread-owner")
+        {
+            let _ = HELD_PROCESS_LOCKS.try_with(|held| held.borrow_mut().remove(&self.key));
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ProcessOperation {
+    Call,
+    Close,
+    Drop,
+}
+
 /// A `MemoryRepository` opened on one SQLite file (`sqlite.ts:490-600`).
 pub struct EdgeClawStorage {
     path: PathBuf,
@@ -272,7 +320,7 @@ impl Drop for EdgeClawStorage {
         let _process = if crate::mutants::on("native-same-root-drop-unserialized") {
             None
         } else {
-            Some(self.serialized_guard())
+            Some(self.serialized_guard(ProcessOperation::Drop))
         };
         let connection = self
             .conn
@@ -280,6 +328,10 @@ impl Drop for EdgeClawStorage {
             .unwrap_or_else(PoisonError::into_inner)
             .take();
         drop(connection);
+        #[cfg(test)]
+        if let Some(sender) = same_root_tests::lock_observer() {
+            let _ = sender.send(same_root_tests::LockEvent::DropClosed);
+        }
     }
 }
 
@@ -288,7 +340,7 @@ struct ConnectionGuard<'a> {
     /// Held for as long as the SQLite call block, like one synchronous
     /// `DatabaseSync` call on the JS event loop. Lock order is always
     /// process -> connection; there is no reverse acquisition.
-    _process: Option<MutexGuard<'a, ()>>,
+    _process: Option<ProcessGuard<'a>>,
 }
 impl std::ops::Deref for ConnectionGuard<'_> {
     type Target = Connection;
@@ -383,7 +435,11 @@ impl EdgeClawStorage {
     /// checkpoints the WAL only when this is the last connection. Node's
     /// DatabaseSync.close() and later SQL operations report an already closed handle.
     pub fn close(&self) -> Result<(), StorageError> {
-        let _process = self.process_guard();
+        let _process = if crate::mutants::on("native-same-root-close-unserialized") {
+            None
+        } else {
+            self.process_guard(ProcessOperation::Close)
+        };
         let mut guard = self
             .conn
             .lock()
@@ -402,42 +458,56 @@ impl EdgeClawStorage {
 
     /// Acquire the per-file in-process lock. Lock order is always
     /// process -> connection; see [`ConnectionGuard`].
-    fn process_guard(&self) -> Option<MutexGuard<'_, ()>> {
+    fn process_guard(&self, operation: ProcessOperation) -> Option<ProcessGuard<'_>> {
         if crate::mutants::on("native-same-root-lock-bypassed")
             || crate::mutants::on("native-same-root-stage-unserialized")
         {
             return None;
         }
         if crate::mutants::on("native-same-root-lock-poison-fatal") {
-            return Some(
+            return Some(ProcessGuard::owned(
                 self.process
                     .lock()
                     .expect("#1082 shared write lock poisoned"),
-            );
+                std::ptr::from_ref(self.process.as_ref()) as usize,
+            ));
         }
-        Some(self.serialized_guard())
+        Some(self.serialized_guard(operation))
     }
 
-    fn serialized_guard(&self) -> MutexGuard<'_, ()> {
+    fn serialized_guard(&self, _operation: ProcessOperation) -> ProcessGuard<'_> {
+        let key = std::ptr::from_ref(self.process.as_ref()) as usize;
+        if process_lock_held(key) && !crate::mutants::on("native-same-root-reentrant-lock-blocking")
+        {
+            return ProcessGuard { outer: None, key };
+        }
         #[cfg(test)]
         if let Some(sender) = same_root_tests::lock_observer() {
             // Observe the real acquisition result, not thread startup. A
             // WouldBlock event proves overlap before the writer is released.
             match self.process.try_lock() {
-                Ok(guard) => return guard,
+                Ok(guard) => return ProcessGuard::owned(guard, key),
                 Err(std::sync::TryLockError::Poisoned(error)) => {
-                    return error.into_inner();
+                    return ProcessGuard::owned(error.into_inner(), key);
                 }
                 Err(std::sync::TryLockError::WouldBlock) => {
-                    let _ = sender.send(same_root_tests::LockEvent::Contended);
+                    let event = match _operation {
+                        ProcessOperation::Call => same_root_tests::LockEvent::Contended,
+                        ProcessOperation::Close => same_root_tests::LockEvent::CloseContended,
+                        ProcessOperation::Drop => same_root_tests::LockEvent::DropContended,
+                    };
+                    let _ = sender.send(event);
                 }
             }
         }
-        self.process.lock().unwrap_or_else(PoisonError::into_inner)
+        ProcessGuard::owned(
+            self.process.lock().unwrap_or_else(PoisonError::into_inner),
+            key,
+        )
     }
 
     fn conn(&self) -> Result<ConnectionGuard<'_>, StorageError> {
-        let process = self.process_guard();
+        let process = self.process_guard(ProcessOperation::Call);
         let guard = self
             .conn
             .lock()
