@@ -69,10 +69,18 @@ def classify(result, test, assertion):
 
 
 def write_summary(output, results):
+    """Publish the one final summary atomically, after restore verification.
+
+    Rows are accumulated in memory while the guarded mutation window is open
+    (#1076). A temp file plus rename keeps a reader from observing a
+    half-written JSON document; the payload shape is unchanged (#166 r8).
+    """
     counts = {state: sum(row['status'] == state for row in results)
               for state in ('KILLED', 'SURVIVED', 'INVALID')}
-    (output / 'summary.json').write_text(
-        json.dumps({'controls': results, 'counts': counts}, indent=2) + '\n')
+    target = Path(output) / 'summary.json'
+    temporary = target.with_name(target.name + '.tmp')
+    temporary.write_text(json.dumps({'controls': results, 'counts': counts}, indent=2) + '\n')
+    temporary.replace(target)
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()))
 
 
@@ -90,7 +98,12 @@ def main():
         with mutating_sources(ROOT, [GENERATOR, STORAGE_OBSERVER]) as originals:
             original = {path: originals[path].decode() for path in originals}
             for name, path, before, _after, _test, _assertion in MUTANT_ROWS:
-                assert original[path].count(before) == 1, (name, 'anchor must be unique')
+                count = original[path].count(before)
+                if count != 1:
+                    # Stale anchors fail closed: no row may be recorded as
+                    # SURVIVED just because the mutation never applied (#1076).
+                    raise ValueError(
+                        f'#1076 {name} anchor expired: count={count}, expected=1')
             for name, path, before, after, test, assertion in MUTANT_ROWS:
                 status, reason = 'INVALID', ''
                 try:
@@ -116,16 +129,22 @@ def main():
                 results.append({'mutation': name, 'test': test,
                                 'status': status, 'reason': reason})
                 print(f'{name}: {status}: {reason}', flush=True)
-                write_summary(output, results)
-    except Exception as error:
-        reason = f'source guard: {type(error).__name__}: {error}'
+    except BaseException as error:
         # The guard exits after restoring and re-verifying every mutated source.
-        # A failure there invalidates rows already recorded as KILLED; never
-        # leave them green and exit 0 (#979 P0). Shared with negative_suite.
+        # A failure there — including a SIGINT or a raw SystemExit — invalidates
+        # rows already recorded as KILLED; never leave them green, and never
+        # publish a KILLED summary from a cancelled run (#979 P0, #1076). The
+        # final summary was memory-only until now, so an interrupt during this
+        # publish leaves no summary (missing is fail-closed), not the old file.
+        reason = f'source guard: {type(error).__name__}: {error}'
         invalidate_completed(results, reason)
         for name, _path, _before, _after, test, _assertion in MUTANT_ROWS[len(results):]:
             results.append({'mutation': name, 'test': test,
                             'status': 'INVALID', 'reason': reason})
+        write_summary(output, results)
+        if isinstance(error, SystemExit):
+            raise SystemExit(2) from error
+        return 2
     write_summary(output, results)
     return int(not results or any(row['status'] != 'KILLED' for row in results))
 

@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -143,21 +144,25 @@ class SuiteTests(unittest.TestCase):
 
     def test_guard_refusal_accounts_for_every_case(self):
         code, summary, _ = self.exercise(output('kill'), guard=RuntimeError('baseline differs'))
-        self.assertEqual(code, 1)
-        self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 2})
+        self.assertEqual(code, 2, '#1076 a guard refusal must exit 2 with an INVALID summary')
+        self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 2},
+                         '#1076 a guard refusal must account for every selected case')
 
     def test_guard_exit_invalidates_previous_kills(self):
         code, summary, _ = self.exercise(output('kill'), guard_exit=RuntimeError('guard restore failed'))
-        self.assertEqual(code, 1, 'guard restoration failure must exit nonzero')
-        self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 2})
+        self.assertEqual(code, 2, '#1076 guard restoration failure must exit 2')
+        self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 2},
+                         '#1076 guard restoration failure must void every recorded kill')
         self.assertTrue(all(row['status'] == 'INVALID' for row in summary['controls']),
-                        'guard restoration failure invalidates every previous kill')
+                        '#1076 guard restoration failure invalidates every previous kill')
 
     def test_byte_restore_failure_stops_unsafe_mutation(self):
         code, summary, _ = self.exercise(output('kill'), restore_failure=True)
-        self.assertEqual(code, 1)
-        self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 2})
-        self.assertIn('injected restoration failure', summary['controls'][0]['reason'])
+        self.assertEqual(code, 2, '#1076 an unverified byte restore must exit 2')
+        self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 2},
+                         '#1076 an unverified byte restore must void every row')
+        self.assertIn('injected restoration failure', summary['controls'][0]['reason'],
+                      '#1076 the restoration failure must be attached to the row')
 
     def test_each_failure_marker_is_required(self):
         case = suite.Case('test', None, '', '', TEST, ANCHOR)
@@ -178,6 +183,141 @@ class SuiteTests(unittest.TestCase):
                 self.assertFalse(suite.passed(subprocess.CompletedProcess([], 0,
                                   passed.stdout.replace(marker, ''), ''), TEST),
                                  'positive needs exact test and one pass')
+
+
+class CancellationTests(unittest.TestCase):
+    """#1076: a cancellation in the guard exit must never keep an all-KILLED file."""
+
+    def drive_run_cases(self, canceled):
+        with tempfile.TemporaryDirectory(prefix='pdrs-1076-suite-') as directory:
+            root = Path(directory)
+            source = root / 'fixture.txt'
+            source.write_bytes(b'original')
+            out = root / 'logs'
+            out.mkdir()
+            case = suite.Case('one', source, 'original', 'mutant', TEST, ANCHOR)
+            summary_present = []
+            before_invalidate = []
+            original_invalidate = suite.invalidate_completed
+
+            def inject():
+                if canceled == 'sigint':
+                    signal.raise_signal(signal.SIGINT)
+                raise SystemExit(256)
+
+            @contextlib.contextmanager
+            def guard(_root, _paths, **_kwargs):
+                try:
+                    yield {source: b'original'}
+                finally:
+                    summary_present.append((out / 'summary.json').exists())
+                    inject()
+
+            def capture(rows, reason):
+                before_invalidate.append([row['status'] for row in rows])
+                return original_invalidate(rows, reason)
+
+            def run(command, **_kwargs):
+                self.assertEqual(command[-5:], [TEST, '--', '--exact', '--include-ignored',
+                                                '--nocapture'],
+                                 '#1076 the cancellation probe must run the exact ignored test')
+                if source.read_text() == 'mutant':
+                    return output('kill')
+                return output('pass')
+
+            def mutate(text, _scope, replacements):
+                old, new = replacements[0]
+                if text.count(old) != 1:
+                    raise ValueError('#1076 stale anchor in cancellation fixture')
+                return text.replace(old, new, 1)
+
+            previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+            self.addCleanup(signal.signal, signal.SIGINT, previous)
+            with patch.object(suite, 'mutating_sources', new=guard), \
+                    patch.object(suite, 'invalidate_completed', new=capture), \
+                    patch.object(suite, 'wait_for_slot', return_value=output('pass')), \
+                    patch.object(suite, 'run_owned', side_effect=run), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                try:
+                    code = suite.run_cases(root, [case], out,
+                                           {'CARGO_TARGET_DIR': str(root / 'target')}, mutate)
+                except BaseException as error:
+                    code = error
+            path = out / 'summary.json'
+            summary = json.loads(path.read_text()) if path.is_file() else None
+            return (code, summary, summary_present, before_invalidate,
+                    source.read_bytes())
+
+    def test_guard_sigint_voids_last_kill_and_exits_2(self):
+        code, summary, present, before, restored = self.drive_run_cases('sigint')
+        self.assertEqual(code, 2, '#1076 a SIGINT in the guard exit must return 2')
+        self.assertEqual(present, [False],
+                         '#1076 no summary may exist while the guard is unverified')
+        self.assertEqual(before, [['KILLED']],
+                         '#1076 the last row must be KILLED before the guard exit')
+        self.assertEqual(restored, b'original',
+                         '#1076 the cancellation fixture must restore its bytes')
+        self.assertIsNotNone(summary, '#1076 the failed guard exit must publish summary.json')
+        self.assertEqual([row['status'] for row in summary['controls']], ['INVALID'],
+                         '#1076 a SIGINT must not leave the final row KILLED')
+        self.assertIn('source guard: KeyboardInterrupt', summary['controls'][0]['reason'],
+                      '#1076 the SIGINT invalidation reason must be recorded')
+        self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                         '#1076 the published counts must be INVALID after SIGINT')
+
+    def test_guard_systemexit_256_voids_last_kill_and_exits_2(self):
+        code, summary, present, before, restored = self.drive_run_cases('systemexit')
+        self.assertIsInstance(code, SystemExit,
+                              '#1076 SystemExit(256) must be re-raised, not swallowed')
+        self.assertEqual(code.code, 2, '#1076 SystemExit(256) must normalize to exit code 2')
+        self.assertEqual(present, [False],
+                         '#1076 no summary may exist while the guard is unverified')
+        self.assertEqual(before, [['KILLED']],
+                         '#1076 the last row must be KILLED before the guard exit')
+        self.assertEqual(restored, b'original',
+                         '#1076 the cancellation fixture must restore its bytes')
+        self.assertIsNotNone(summary, '#1076 the failed guard exit must publish summary.json')
+        self.assertEqual([row['status'] for row in summary['controls']], ['INVALID'],
+                         '#1076 SystemExit(256) must not leave the final row KILLED')
+        self.assertIn('source guard: SystemExit', summary['controls'][0]['reason'],
+                      '#1076 the SystemExit invalidation reason must be recorded')
+        self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                         '#1076 the published counts must be INVALID after SystemExit')
+
+    def test_publish_summary_publishes_atomically(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-1076-suite-atomic-') as directory:
+            out = Path(directory)
+            target = out / 'summary.json'
+            target.write_text('previous\n')
+            row = {'mutation': 'one', 'test': TEST, 'assertion': ANCHOR,
+                   'status': 'INVALID', 'reason': '#1076 forced INVALID publish'}
+            real_write = Path.write_text
+            real_replace = Path.replace
+
+            def interrupt_write(path, text, *args, **kwargs):
+                if path.name == 'summary.json':
+                    real_write(path, text[:5], *args, **kwargs)
+                    signal.raise_signal(signal.SIGINT)
+                return real_write(path, text, *args, **kwargs)
+
+            def interrupt_replace(path, destination, *args, **kwargs):
+                if Path(destination).name == 'summary.json':
+                    signal.raise_signal(signal.SIGINT)
+                return real_replace(path, destination, *args, **kwargs)
+
+            previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+            try:
+                with patch.object(Path, 'write_text', new=interrupt_write), \
+                        patch.object(Path, 'replace', new=interrupt_replace), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    with self.assertRaises(
+                            KeyboardInterrupt,
+                            msg='#1076 the suite atomic publish interrupt must be delivered'):
+                        suite.publish_summary(out, [row])
+            finally:
+                signal.signal(signal.SIGINT, previous)
+            self.assertEqual(target.read_bytes(), b'previous\n',
+                             '#1076 an interrupted publish must preserve the previous summary')
 
 
 class SqliteHeaderExecutorTests(unittest.TestCase):
@@ -252,20 +392,162 @@ class SqliteHeaderExecutorTests(unittest.TestCase):
             except (OSError, ValueError) as error:
                 self.fail(f'#979 summary.json must be readable JSON: {type(error).__name__}: {error}')
         self.assertEqual(len(outcomes), 6,
-                         '#979 both mutants must finish positive/negative/restored before the guard exits')
+                         '#1076 both mutants must finish positive/negative/restored before the guard exits')
         self.assertEqual(report['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 2},
-                         '#979 a failed guard exit must invalidate every completed kill')
+                         '#1076 a failed guard exit must invalidate every completed kill')
         self.assertEqual([row['status'] for row in report['controls']],
                          ['INVALID', 'INVALID'],
-                         '#979 no completed row may stay KILLED after a guard failure')
-        self.assertIn(['KILLED', 'KILLED'], snapshots,
-                      '#979 both mutants must be KILLED before the guard exit')
-        self.assertEqual(snapshots[-1], ['INVALID', 'INVALID'],
-                         '#979 the guard failure must rewrite the persisted summary')
+                         '#1076 no completed row may stay KILLED after a guard failure')
+        self.assertEqual(snapshots, [['INVALID', 'INVALID']],
+                         '#1076 the summary must be published once, only after the guard exit')
+        self.assertNotIn(['KILLED', 'KILLED'], snapshots,
+                         '#1076 no KILLED summary may be readable while the guard is unverified')
         for row in report['controls']:
             self.assertIn('injected source guard restore failure', row['reason'],
-                          '#979 the guard exception must be attached to every row')
-        self.assertNotEqual(code, 0, '#979 a failed guard exit must return nonzero')
+                          '#1076 the guard exception must be attached to every row')
+        self.assertEqual(code, 2, '#1076 a failed guard exit must return exit code 2')
+
+
+class SqliteHeaderCancellationTests(unittest.TestCase):
+    """#1076: sqlite-header cancellation and atomic publication."""
+
+    def drive_sqlite(self, canceled):
+        with tempfile.TemporaryDirectory(prefix='pdrs-1076-sqlite-') as directory:
+            root = Path(directory)
+            source = root / 'generator.mts'
+            source.write_text('original')
+            out = root / 'evidence'
+            summary_present = []
+            before_invalidate = []
+            original_invalidate = sqlite_header.invalidate_completed
+            saved = (sqlite_header.GENERATOR, sqlite_header.STORAGE_OBSERVER,
+                     sqlite_header.MUTANT_ROWS)
+
+            def inject():
+                if canceled == 'sigint':
+                    signal.raise_signal(signal.SIGINT)
+                raise SystemExit(256)
+
+            @contextlib.contextmanager
+            def guard(_root, _paths, **_kwargs):
+                try:
+                    yield {source: b'original'}
+                finally:
+                    summary_present.append((out / 'summary.json').exists())
+                    inject()
+
+            def capture(rows, reason):
+                before_invalidate.append([row['status'] for row in rows])
+                return original_invalidate(rows, reason)
+
+            def cargo(command, **_kwargs):
+                self.assertIn(command[-1], (TEST,),
+                              '#1076 the sqlite cancellation probe must run the bound test')
+                if source.read_text() == 'mutant':
+                    return output('kill')
+                return output('pass')
+
+            sqlite_header.GENERATOR = source
+            sqlite_header.STORAGE_OBSERVER = source
+            sqlite_header.MUTANT_ROWS = [('one', source, 'original', 'mutant', TEST, ANCHOR)]
+            previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+            try:
+                with patch.object(sqlite_header, 'mutating_sources', new=guard), \
+                        patch.object(sqlite_header, 'invalidate_completed', new=capture), \
+                        patch.object(sqlite_header, 'wait_for_slot',
+                                     return_value=subprocess.CompletedProcess([], 0, '', '')), \
+                        patch.object(sqlite_header, 'run_owned', side_effect=cargo), \
+                        patch.object(sys, 'argv', ['negative_sqlite_header.py', str(out)]), \
+                        patch.dict('os.environ', {
+                            'PDRS_BASELINE': str(root),
+                            'CARGO_TARGET_DIR': str(root / 'target')}), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    try:
+                        code = sqlite_header.main()
+                    except BaseException as error:
+                        code = error
+            finally:
+                signal.signal(signal.SIGINT, previous)
+                (sqlite_header.GENERATOR, sqlite_header.STORAGE_OBSERVER,
+                 sqlite_header.MUTANT_ROWS) = saved
+            path = out / 'summary.json'
+            summary = json.loads(path.read_text()) if path.is_file() else None
+            return (code, summary, summary_present, before_invalidate,
+                    source.read_text())
+
+    def test_sqlite_guard_sigint_voids_last_kill_and_exits_2(self):
+        code, summary, present, before, restored = self.drive_sqlite('sigint')
+        self.assertEqual(code, 2, '#1076 a sqlite SIGINT in the guard exit must return 2')
+        self.assertEqual(present, [False],
+                         '#1076 no summary may exist while the sqlite guard is unverified')
+        self.assertEqual(before, [['KILLED']],
+                         '#1076 the last sqlite row must be KILLED before the guard exit')
+        self.assertEqual(restored, 'original',
+                         '#1076 the sqlite cancellation fixture must restore its bytes')
+        self.assertIsNotNone(summary, '#1076 the failed sqlite guard exit must publish summary.json')
+        self.assertEqual([row['status'] for row in summary['controls']], ['INVALID'],
+                         '#1076 a sqlite SIGINT must not leave the final row KILLED')
+        self.assertIn('source guard: KeyboardInterrupt', summary['controls'][0]['reason'],
+                      '#1076 the sqlite SIGINT invalidation reason must be recorded')
+        self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                         '#1076 the sqlite counts must be INVALID after SIGINT')
+
+    def test_sqlite_guard_systemexit_256_voids_last_kill_and_exits_2(self):
+        code, summary, present, before, restored = self.drive_sqlite('systemexit')
+        self.assertIsInstance(code, SystemExit,
+                              '#1076 sqlite SystemExit(256) must be re-raised')
+        self.assertEqual(code.code, 2,
+                         '#1076 sqlite SystemExit(256) must normalize to exit code 2')
+        self.assertEqual(present, [False],
+                         '#1076 no summary may exist while the sqlite guard is unverified')
+        self.assertEqual(before, [['KILLED']],
+                         '#1076 the last sqlite row must be KILLED before the guard exit')
+        self.assertEqual(restored, 'original',
+                         '#1076 the sqlite cancellation fixture must restore its bytes')
+        self.assertIsNotNone(summary, '#1076 the failed sqlite guard exit must publish summary.json')
+        self.assertEqual([row['status'] for row in summary['controls']], ['INVALID'],
+                         '#1076 sqlite SystemExit(256) must not leave the final row KILLED')
+        self.assertIn('source guard: SystemExit', summary['controls'][0]['reason'],
+                      '#1076 the sqlite SystemExit invalidation reason must be recorded')
+        self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                         '#1076 the sqlite counts must be INVALID after SystemExit')
+
+    def test_write_summary_publishes_atomically(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-1076-atomic-') as directory:
+            out = Path(directory)
+            target = out / 'summary.json'
+            target.write_text('previous\n')
+            row = {'mutation': 'one', 'test': TEST, 'status': 'INVALID',
+                   'reason': '#1076 forced INVALID publish'}
+            real_write = Path.write_text
+            real_replace = Path.replace
+
+            def interrupt_write(path, text, *args, **kwargs):
+                if path.name == 'summary.json':
+                    # The non-atomic mutant would overwrite the live summary
+                    # with this prefix before the cancellation lands.
+                    real_write(path, text[:5], *args, **kwargs)
+                    signal.raise_signal(signal.SIGINT)
+                return real_write(path, text, *args, **kwargs)
+
+            def interrupt_replace(path, destination, *args, **kwargs):
+                if Path(destination).name == 'summary.json':
+                    signal.raise_signal(signal.SIGINT)
+                return real_replace(path, destination, *args, **kwargs)
+
+            previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+            try:
+                with patch.object(Path, 'write_text', new=interrupt_write), \
+                        patch.object(Path, 'replace', new=interrupt_replace), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    with self.assertRaises(
+                            KeyboardInterrupt,
+                            msg='#1076 the atomic publish interrupt must be delivered'):
+                        sqlite_header.write_summary(out, [row])
+            finally:
+                signal.signal(signal.SIGINT, previous)
+            self.assertEqual(target.read_bytes(), b'previous\n',
+                             '#1076 an interrupted publish must preserve the previous summary')
 
 
 class AnchorPreflightTests(unittest.TestCase):
