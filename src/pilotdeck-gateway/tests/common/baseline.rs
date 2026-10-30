@@ -126,7 +126,7 @@ pub(crate) fn node_command() -> Command {
 fn generator_output_dir(fixture: &str, scratch: &Path) -> std::path::PathBuf {
     if fixture == "interaction-permission" {
         scratch.join("output")
-    } else if fixture == "session-stale-handoff" {
+    } else if matches!(fixture, "session-stale-handoff" | "session-drop-release") {
         // #1020 fix-r1: the fixture README documents a direct invocation
         // whose OUT does not exist yet, so the guard must exercise that entry
         // instead of a pre-created scratch directory.

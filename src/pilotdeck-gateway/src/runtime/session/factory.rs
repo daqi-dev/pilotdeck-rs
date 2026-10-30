@@ -420,6 +420,11 @@ pub struct PreparedResources {
     executor: Option<tokio::runtime::Handle>,
 }
 impl PreparedResources {
+    /// Register cleanup on the executor captured by the first registration.
+    ///
+    /// # Panics
+    /// The first registration requires a current Tokio runtime. Subsequent
+    /// registrations and Drop may run outside that runtime's thread context.
     pub fn push(&mut self, release: impl FnOnce() -> BoxFuture<RuntimeResult> + Send + 'static) {
         if self.executor.is_none() {
             self.executor = Some(tokio::runtime::Handle::current());

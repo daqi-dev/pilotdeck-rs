@@ -9,11 +9,10 @@
 //                              in-flight finishDispose
 //   process-exit    cells 3/8   the TS equivalent of a vanished runtime:
 //                              process.exit() skips pending async cleanup
-// Output is created exclusively (flag 'wx') in a fresh recursive directory;
-// the work-* roots this run creates are removed before the oracle is written.
-// #1010 fix-r1 (review P0): OUT may already hold unrelated content; the only
-// paths this generator ever removes are the mkdtemp roots it created itself
-// this run (same ownership rule as session-stale-handoff fix-r2).
+// Claim OUT before baseline loading or child work. Existing directories are
+// rejected untouched; missing ancestors are created recursively. Oracle is
+// separately protected with wx against a late competing file creation.
+// Only this invocation's mkdtemp roots are removed, including on failure.
 import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
@@ -22,8 +21,11 @@ import {assertBaseline,baselineSourceHashes} from '../_shared/baseline.mts';
 const base=path.resolve(process.env.PDRS_BASELINE!);
 const output=path.resolve(process.argv[2]);
 assert.equal(process.version,'v22.22.0','#1010 Node version');
+if(!process.argv[3]?.startsWith('--child-process-exit')){
+ fs.mkdirSync(path.dirname(output),{recursive:true});
+ fs.mkdirSync(output);
+}
 const sourceCommit=assertBaseline(base);
-const sourceSha256=await baselineSourceHashes(base,['src/agent/scope/AgentHandle.ts']);
 const {AgentHandle}=await import(`${base}/src/agent/scope/AgentHandle.ts`);
 async function bounded<T>(promise:Promise<T>,label:string):Promise<T>{
  let timer:any;
@@ -58,11 +60,14 @@ if(process.argv[3]?.startsWith('--child-process-exit')){
  process.exit(7);
 }
 
-fs.mkdirSync(output,{recursive:true});
+// Children still verify the entire pinned source tree via assertBaseline;
+// only the parent needs to compute the recorded closure (650 git reads).
+const sourceSha256=await baselineSourceHashes(base,['src/agent/scope/AgentHandle.ts']);
 const workRoots:string[]=[];
 const cases:any[]=[];
 function record(name:string,observations:any){cases.push({name,node:process.version,observations});}
 
+try{
 // cells 1/10: drop every reference. TS has no deterministic drop cleanup.
 {
  const gc=(globalThis as any).gc;
@@ -112,12 +117,17 @@ for(const name of ['process-exit','process-exit-release-pending','process-exit-c
    process.argv[1]!,output,'--child-'+name,workRoot,
   ],{env:process.env,stdio:['ignore','pipe','pipe'],timeout:15000});
  }catch(error){childError=error;}
- assert.equal(childError?.status??0,7,'#1010 process-exit child exit code');
+ assert.equal(childError?.status,7,'#1010 process-exit child exit code: '+JSON.stringify({
+  code:childError?.code,signal:childError?.signal,status:childError?.status,
+  stderr:childError?.stderr?.toString(),
+ }));
  const marker=JSON.parse(fs.readFileSync(path.join(workRoot,'marker.json'),'utf8'));
  record(name,{childExit:7,...marker});
 }
 
-for(const workRoot of workRoots)fs.rmSync(workRoot,{recursive:true,force:true,maxRetries:5});
 fs.writeFileSync(path.join(output,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,node:process.version,cases},null,2)+'\n',{flag:'wx'});
+}finally{
+ for(const workRoot of workRoots)fs.rmSync(workRoot,{recursive:true,force:true,maxRetries:5});
+}
 console.log('PASS: #1010 real TS AgentHandle drop-side probes',cases.length,'cases');
 console.log(JSON.stringify(cases,null,2));
