@@ -176,6 +176,15 @@ impl Drop for OwnedChild {
         }
     }
 }
+fn write_fixture_stdin(stdin: &mut impl Write, data: &[u8]) {
+    match stdin.write_all(data) {
+        Ok(()) => {}
+        // Local preflight failures may exit without consuming any input.
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}
+        Err(error) => panic!("#1075 fixture stdin: {error:?}"),
+    }
+}
+
 fn spawn(command: &mut Command, input: &Value) -> OwnedChild {
     let mut owned = OwnedChild(Some(command.spawn().expect("#983 spawn CLI")));
     let child = owned.0.as_mut().expect("#983 immediately owned child");
@@ -185,10 +194,57 @@ fn spawn(command: &mut Command, input: &Value) -> OwnedChild {
         .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("#983 stdin hex"))
         .collect();
     let mut stdin = child.stdin.take().expect("#983 stdin pipe");
-    stdin.write_all(&data).expect("#983 fixture stdin");
+    write_fixture_stdin(&mut stdin, &data);
     drop(stdin);
     owned
 }
+#[test]
+fn fixture_stdin_writes_all_bytes() {
+    let data = b"fixture input\0\xff\n";
+    let mut written = Vec::new();
+    write_fixture_stdin(&mut written, data);
+    verify(written == data, "#1075 complete stdin write");
+}
+
+#[test]
+fn fixture_stdin_other_errors_still_fail() {
+    // An exhausted slice returns WriteZero, not BrokenPipe.
+    let result = std::panic::catch_unwind(|| {
+        let mut writer = &mut [0_u8; 0][..];
+        write_fixture_stdin(&mut writer, b"fixture input");
+    });
+    verify(result.is_err(), "#1075 other stdin errors must fail");
+}
+
+#[tokio::test]
+async fn fixture_stdin_broken_pipe_preserves_output() {
+    let mut command = Command::new("/bin/sh");
+    command
+        .env_clear()
+        .args(["-c", "printf fixture-out; printf fixture-err >&2; exit 23"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // Larger than the pipe capacity: a child that never reads must close the
+    // reader before write_all can finish, independently of scheduler order.
+    let input = json!({"stdinHex": "61".repeat(2 * 1024 * 1024)});
+    let child =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| spawn(&mut command, &input)));
+    let child = child.unwrap_or_else(|error| {
+        // Only a write-side EPIPE is this regression. Setup/collection failures
+        // must not publish the negative control's assertion receipt.
+        let broken_pipe = error.downcast_ref::<String>().is_some_and(|message| {
+            message.starts_with("#1075 fixture stdin:") && message.contains("kind: BrokenPipe")
+        });
+        verify(!broken_pipe, "#1075 broken pipe must not panic");
+        std::panic::resume_unwind(error)
+    });
+    let output = collect(child).await;
+    verify(output.status.code() == Some(23), "#1075 preserve exit code");
+    verify(output.stdout == b"fixture-out", "#1075 preserve stdout");
+    verify(output.stderr == b"fixture-err", "#1075 preserve stderr");
+}
+
 async fn collect(child: OwnedChild) -> std::process::Output {
     collect_bounded(child, BOUND).await
 }
