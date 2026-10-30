@@ -290,13 +290,11 @@ impl TurnHostFactory {
                 })
             },
         )
-        .with_close_timeout(
-            if crate::mutants::on("gates-factory-close-timeout") {
-                Limits::default().close_timeout
-            } else {
-                close_timeout
-            },
-        );
+        .with_close_timeout(if crate::mutants::on("gates-factory-close-timeout") {
+            Limits::default().close_timeout
+        } else {
+            close_timeout
+        });
         match agent_config {
             Some(config) => session.with_agent_config(config),
             None => session,
