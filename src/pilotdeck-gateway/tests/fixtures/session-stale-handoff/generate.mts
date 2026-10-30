@@ -34,6 +34,10 @@ async function bounded<T>(promise:Promise<T>,label:string):Promise<T>{
 const err=(e:any):any=>({name:e?.name??typeof e,message:e?.message??String(e),...(e?.code?{code:e.code}:{}),...(e?.errors?{errors:[...e.errors].map(err)}:{})});
 const observe=(p:Promise<any>)=>{const o:any={status:'pending'};return {o,promise:p.then((v:any)=>{o.status='fulfilled';return v},(e:any)=>{o.status='rejected';o.error=err(e);return null})};};
 const context={sessionKey:'session-1020',channelKey:'probe'};
+// #1020 fix-r1: create OUT before the first makeFactory(). The documented
+// README invocation passes an OUT that does not exist yet; the work scratch
+// below lives inside it.
+fs.mkdirSync(output,{recursive:true});
 
 function makeFactory(prepareHook?:(composition:number)=>Promise<void>|void){
  const caseRoot=fs.mkdtempSync(path.join(output,'work-'));
@@ -148,7 +152,6 @@ function record(name:string,observations:any){cases.push({name,node:process.vers
  record('router-prepare-disposal',out);
 }
 
-fs.mkdirSync(output,{recursive:true});
-fs.rmSync(path.join(output,'work-'),{recursive:true,force:true,maxRetries:5});
+for(const entry of fs.readdirSync(output))if(entry.startsWith('work-'))fs.rmSync(path.join(output,entry),{recursive:true,force:true,maxRetries:5});
 fs.writeFileSync(path.join(output,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,node:process.version,cases},null,2)+'\n',{flag:'wx'});
 console.log('PASS: #1020 real TS SessionRouter disposed-previous probes',cases.length,'cases');

@@ -15,7 +15,7 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib r
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --audit
 ```
 
-150 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
+158 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --compile "$OUT_COMPILE"
@@ -65,3 +65,5 @@ fix-r4 将 handle 的 writer guard 接管提前到 adapter.abort 之前，覆盖
 pending 仅在错误码为 `SESSION_WRITER_BUSY` 且前驱 `recreation_drained()` 后失效；dispose 清理错误继续保留到外层 caller 消费。idle sweep 不移除 pending record。真实 TS AgentHandle 的 disposal/retry 四格复用 `session-disposal-retry` 金样；Rust future 取消、writer budget、pending 跨 sweep 保留不宣称 TS Router 端到端一致，范围补充见 `A7.2-SESSION-DRAIN-FILE-STATE-001-R3.md`。`writer_busy_wait_timeout` 的墙钟排除项也包括 initial recreation snapshot。
 
 #1020 owner 已选 previous 后同 key dispose 完成的窗口由受限重试覆盖：factory 在 prepare 前捕获 `Disposed && !retains_recreation_source()`，post-prepare 快照拒绝时打 `recreation_stale_handoff` 标记并原样返回 TS 错误；owner 重跑一次同步选择，死 handle 不再入选。直接 factory 调用方、prepare 中 dispose、重试上限 1 与初始 Disposed 过滤各有正控；TS Router 无过滤无重试（四格新金样 `session-stale-handoff/`，`stale_handoff_regenerates_identically` 守卫），差异登记在 `A7.2-SESSION-DISPOSAL-RETRY-001.md`。新增 4 项负控（总数 154）：`1020-stale-mark-removed`、`1020-stale-retry-removed`、`1020-stale-retry-unlimited` 用 `#[cfg(test)] option_env!` 编译期开关（`PDRS_1020_*`），`1020-stale-fixture-regeneration` 防金样漂移。
+
+#1020 fix-r1 按评审再增 4 项（总数 158）：`1020-generator-missing-out`（生成器提前 mkdir 被删，README 直跑命令的 OUT 原先不存在 → ENOENT，守卫改传不存在的 `out/` 子目录以覆盖该入口）、`1020-generator-work-dirs-kept`（清理变回字面量 `work-`，4 个 `work-*` 残留 → 守卫断言 OUT 内除 oracle.json 外无残留）、`1020-setup-passes-stale-previous`（owner 把已 Disposed 的缓存 handle 递给 setup → `recreate_retries_stale_disposed_handoff` 的 setup(previous) 契约断言失败）、`1020-second-error-flattened`（owner 上抛错误被拍平丢 code/causes → `stale_handoff_retry_is_limited_to_one` 断言第二次错误的完整形状）。

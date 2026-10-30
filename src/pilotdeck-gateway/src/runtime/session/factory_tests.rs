@@ -61,6 +61,8 @@ struct Observed {
     mcp: AtomicUsize,
     bindings: Mutex<Vec<SessionBinding>>,
     published: AtomicUsize,
+    setups: AtomicUsize,
+    setups_with_previous: AtomicUsize,
     created_handles: Mutex<Vec<LiveSessionHandle>>,
     writer_leases: Mutex<Vec<SharedWriterLease>>,
     diagnostics: Mutex<Vec<Diagnostic>>,
@@ -130,7 +132,20 @@ impl SessionFactory for PublishGate {
         previous: Option<LiveSessionHandle>,
     ) -> BoxFuture<RuntimeResult> {
         let gate = self.gate.clone();
+        let observed = self.observed.clone();
         Box::pin(async move {
+            // #1020 fix-r1: record the setup(previous) contract — how many
+            // attempts reached setup and whether a previous handle was handed
+            // over — so the stale-retry tests can pin it.
+            observed.setups.fetch_add(1, Ordering::SeqCst);
+            if previous.is_some() {
+                observed.setups_with_previous.fetch_add(1, Ordering::SeqCst);
+            }
+            observed.event(if previous.is_some() {
+                "setup.previous"
+            } else {
+                "setup.fresh"
+            });
             if previous.is_some()
                 && let Some(gate) = gate
             {
@@ -382,6 +397,9 @@ impl Harness {
         let publish_observed = observed.clone();
         options.on_evict = Some(Arc::new(move |_, reason| {
             if reason == super::super::EvictionReason::DirtyRecreate {
+                // #1020 fix-r1: an event next to the counter lets the retry
+                // test order the publication after a successful setup.
+                publish_observed.event("evict.dirty-recreate");
                 publish_observed.published.fetch_add(1, Ordering::SeqCst);
             }
         }));
@@ -445,6 +463,12 @@ fn ordered(events: &[String], first: &str, second: &str) -> bool {
         (Some(a), Some(b)) => a < b,
         _ => false,
     }
+}
+fn stale_case<'a>(cases: &'a [serde_json::Value], name: &str) -> &'a serde_json::Value {
+    cases
+        .iter()
+        .find(|row| row["name"].as_str() == Some(name))
+        .unwrap_or_else(|| panic!("#1020 stale handoff case {name} missing from oracle"))
 }
 fn fixture(name: &str) -> serde_json::Value {
     let oracle: serde_json::Value = serde_json::from_str(include_str!(
@@ -3368,26 +3392,81 @@ fn stale_handoff_matches_ts() {
     for row in cases {
         let name = row["name"].as_str().expect("#1020 case name");
         assert_eq!(row["node"], "v22.22.0", "#1020 {name} node oracle");
-        let error = &row["observations"]["secondError"];
-        if name.starts_with("router-") {
-            assert_eq!(
-                serde_json::json!({"name":"Error","message":"Session projection driver is disposed."}),
-                *error,
-                "#1020 {name} router rejection oracle"
-            );
-        } else {
-            assert_eq!(
-                serde_json::json!({"name":"Error","message":"Session projection driver is disposed."}),
-                row["observations"]["recreateError"],
-                "#1020 {name} factory rejection oracle"
-            );
-        }
     }
-    let third = &cases[0]["observations"]["thirdError"];
+    let disposed =
+        serde_json::json!({"name":"Error","message":"Session projection driver is disposed."});
+    // cell 1: the router keeps rejecting the dead session, with no recovery.
+    let previous = &stale_case(cases, "router-disposed-previous")["observations"];
     assert_eq!(
-        serde_json::json!({"name":"Error","message":"Session projection driver is disposed."}),
-        *third,
+        previous["firstState"], "active",
+        "#1020 router-disposed-previous first state oracle"
+    );
+    assert_eq!(
+        previous["registrySizeBefore"], 1,
+        "#1020 router-disposed-previous registry before oracle"
+    );
+    assert_eq!(
+        previous["afterDisposeState"], "disposed",
+        "#1020 router-disposed-previous disposal completes"
+    );
+    assert_eq!(
+        previous["dirty1"], true,
+        "#1020 router-disposed-previous dirty"
+    );
+    assert_eq!(
+        previous["secondError"], disposed,
+        "#1020 router-disposed-previous second error oracle"
+    );
+    assert_eq!(
+        previous["thirdError"], disposed,
         "#1020 router keeps rejecting without recovery"
+    );
+    assert_eq!(
+        previous["registrySizeAfter"], 1,
+        "#1020 router-disposed-previous registry after oracle"
+    );
+    // cell 1b: re-marking dirty after the rejection still hands the dead
+    // session over and is rejected again.
+    let second_dirty = &stale_case(cases, "router-disposed-second-dirty")["observations"];
+    assert_eq!(
+        second_dirty["dirty1"], true,
+        "#1020 router-disposed-second-dirty dirty1 oracle"
+    );
+    assert_eq!(
+        second_dirty["secondError"], disposed,
+        "#1020 router-disposed-second-dirty second error oracle"
+    );
+    assert_eq!(
+        second_dirty["dirty2"], true,
+        "#1020 router-disposed-second-dirty dirty2 oracle"
+    );
+    assert_eq!(
+        second_dirty["thirdError"], disposed,
+        "#1020 router-disposed-second-dirty third error oracle"
+    );
+    // factory-level self-check cell.
+    let direct = &stale_case(cases, "direct-recreate-disposed")["observations"];
+    assert_eq!(
+        direct["oldState"], "active",
+        "#1020 direct-recreate-disposed old state oracle"
+    );
+    assert_eq!(
+        direct["recreateError"], disposed,
+        "#1020 direct-recreate-disposed factory rejection oracle"
+    );
+    // cell 3: the old disposal completes inside the replacement's prepare.
+    let prepare = &stale_case(cases, "router-prepare-disposal")["observations"];
+    assert_eq!(
+        prepare["oldState"], "active",
+        "#1020 router-prepare-disposal old state oracle"
+    );
+    assert_eq!(
+        prepare["secondError"], disposed,
+        "#1020 router-prepare-disposal second error oracle"
+    );
+    assert_eq!(
+        prepare["disposalInsidePrepare"], "fulfilled",
+        "#1020 router-prepare-disposal disposal inside prepare"
     );
 }
 
@@ -3452,6 +3531,30 @@ async fn recreate_retries_stale_disposed_handoff() {
         1,
         "#1020 single dirty-recreate publication"
     );
+    // #1020 fix-r1 (review P2): the failed attempt never reaches setup; the
+    // successful retry sets up exactly once, without the dead previous, and
+    // the publication happens only after that setup.
+    assert_eq!(
+        h.observed.setups.load(Ordering::SeqCst),
+        2,
+        "#1020 successful retry reaches setup exactly once"
+    );
+    assert_eq!(
+        h.observed.setups_with_previous.load(Ordering::SeqCst),
+        0,
+        "#1020 stale retry sets up a fresh replacement"
+    );
+    {
+        let events = lock(&h.observed.events);
+        assert!(
+            !events.iter().any(|e| e == "setup.previous"),
+            "#1020 failed attempt never reaches setup"
+        );
+        assert!(
+            ordered(&events, "setup.fresh", "evict.dirty-recreate"),
+            "#1020 publication follows the successful setup"
+        );
+    }
     // dirty was cleared by the single publication; the record now caches the
     // replacement without a further factory call.
     let cached = bounded("stale cached", h.owner.get_or_create(h.context()))
@@ -3502,6 +3605,18 @@ async fn recreate_after_completed_disposal_resumes_without_previous() {
         1,
         "#1020 completed disposal single publication"
     );
+    // #1020 fix-r1: the disposed predecessor is filtered before the factory
+    // call, so the replacement is set up fresh (no previous handed over).
+    assert_eq!(
+        h.observed.setups.load(Ordering::SeqCst),
+        2,
+        "#1020 completed disposal reaches setup once per create"
+    );
+    assert_eq!(
+        h.observed.setups_with_previous.load(Ordering::SeqCst),
+        0,
+        "#1020 completed disposal sets up a fresh replacement"
+    );
     let cached = bounded(
         "completed disposal cached",
         h.owner.get_or_create(h.context()),
@@ -3532,6 +3647,7 @@ async fn stale_handoff_retry_is_limited_to_one() {
     struct StaleFactory {
         initial: Mutex<Option<LiveSessionHandle>>,
         calls: Arc<AtomicUsize>,
+        setups: Arc<AtomicUsize>,
     }
     impl SessionFactory for StaleFactory {
         fn can_recreate(&self) -> bool {
@@ -3547,17 +3663,44 @@ async fn stale_handoff_retry_is_limited_to_one() {
             }
             let calls = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
             Box::pin(async move {
-                // Calls 1-2 mark the previous stale and reject with the TS
-                // disposed error; call 3 succeeds, so an unbounded retry loop
-                // still terminates instead of hanging the mutant.
+                // Calls 1-2 mark the previous stale and reject; call 3
+                // succeeds, so an unbounded retry loop still terminates
+                // instead of hanging the mutant. The second rejection carries
+                // a distinct message, code and causes so a flattened or
+                // first-error passthrough cannot pass.
                 if calls < 3 {
                     if let Some(previous) = previous {
                         previous.mark_recreation_stale_handoff();
                     }
-                    Err(RuntimeError::new("Session projection driver is disposed."))
+                    if calls == 1 {
+                        Err(RuntimeError::new("first stale rejection"))
+                    } else {
+                        Err(RuntimeError {
+                            message: "second stale rejection".into(),
+                            causes: vec![RuntimeError::new("second stale cause")],
+                            js_error: Some(Box::new(crate::runtime::project::RuntimeJsError {
+                                name: "Error".into(),
+                                code: Some("ESECOND_STALE".into()),
+                                message: "second stale rejection".into(),
+                                requires_host: false,
+                            })),
+                        })
+                    }
                 } else {
                     Ok(LiveSessionHandle::new(Arc::new(LifecycleOnly), None))
                 }
+            })
+        }
+        fn setup(
+            &self,
+            _: SessionContext,
+            _: LiveSessionHandle,
+            _: Option<LiveSessionHandle>,
+        ) -> BoxFuture<RuntimeResult> {
+            let setups = self.setups.clone();
+            Box::pin(async move {
+                setups.fetch_add(1, Ordering::SeqCst);
+                Ok(())
             })
         }
     }
@@ -3568,11 +3711,20 @@ async fn stale_handoff_retry_is_limited_to_one() {
         .await
         .expect("#1020 stale limit initial");
     let calls = Arc::new(AtomicUsize::new(0));
+    let setups = Arc::new(AtomicUsize::new(0));
     let mut options = SessionOwnerOptions::new(Arc::new(StaleFactory {
         initial: Mutex::new(Some(initial)),
         calls: calls.clone(),
+        setups: setups.clone(),
     }));
     options.idle_sweep_interval_ms = 0;
+    let evictions = Arc::new(AtomicUsize::new(0));
+    let evict_count = evictions.clone();
+    options.on_evict = Some(Arc::new(move |_, reason| {
+        if reason == super::super::EvictionReason::DirtyRecreate {
+            evict_count.fetch_add(1, Ordering::SeqCst);
+        }
+    }));
     let owner = SessionOwner::new(options);
     owner
         .get_or_create(h.context())
@@ -3586,19 +3738,39 @@ async fn stale_handoff_retry_is_limited_to_one() {
         .await
         .err()
         .expect("#1020 stale handoff retry is limited to one");
+    // #1020 fix-r1 (review P2): the second rejection is distinct from the
+    // first, so the surfaced error must be the second one, byte for byte.
     assert_eq!(
-        error.message, "Session projection driver is disposed.",
-        "#1020 stale limit surfaces the last factory error"
+        error.message, "second stale rejection",
+        "#1020 stale limit surfaces the second factory error"
     );
     assert_eq!(
         error.js_error().and_then(|e| e.code.as_deref()),
-        None,
-        "#1020 stale limit keeps the TS error shape"
+        Some("ESECOND_STALE"),
+        "#1020 stale limit surfaces the second factory error code"
+    );
+    let causes: Vec<&str> = error.causes.iter().map(|c| c.message.as_str()).collect();
+    assert_eq!(
+        causes,
+        ["second stale cause"],
+        "#1020 stale limit surfaces the second factory causes"
     );
     assert_eq!(
         calls.load(Ordering::SeqCst),
         2,
         "#1020 stale handoff retry is limited to one"
+    );
+    // The initial cache fill is the only setup on this owner; both failed
+    // attempts stay on the failure path with no setup and no publication.
+    assert_eq!(
+        setups.load(Ordering::SeqCst),
+        1,
+        "#1020 stale limit failure path never reaches setup"
+    );
+    assert_eq!(
+        evictions.load(Ordering::SeqCst),
+        0,
+        "#1020 stale limit failure path never publishes"
     );
     owner.shutdown().await.expect("#1020 stale limit cleanup");
     h.finish("stale-limit").await;
