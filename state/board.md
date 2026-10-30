@@ -1,11 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-31 04:10 · by Claude Code 协调者
+updated: 2026-10-31 06:30 · by Claude Code 协调者
 - #749 | impl | blocked | **关键路径** pr6c-1 已合（8ebb4054f）；关单待 #1071 pr6c-2（前置 #589、#1079）
-- #1071 | impl | doing | **关键路径** PR #1105 rebase 解 #996 冲突 2e10a3d38；Codex 复核 + GLM 结果块 0/0 → CI 后入队；合入后派 #1131 fix-r2
+- #1071 | impl | blocked | **关键路径** PR #1105 已合（7175589a7）；关单前置 #1140 native 格采集器（冻结装置，改判分语义须人授权）
 - #123 | impl | doing | P07 #1097 已合（e13b189a3，#1106）；P08、P09 串行其后；#1136 前置于 #123 收尾
-- #1010 | impl | doing | 与 #1122 叠栈以 PR #1127 合入；macmini r7m 剩 session-factory，#1094 superseded
+- #1010 | impl | doing | 与 #1122 叠栈以 PR #1127 合入；r3 opus + GLM 0/0，GLM P2 观察循环超时失效（升 P0）→ macmini 后 fix-r3
 - #1011 | impl | blocked | #745 FactoryStorage projection cache；同模块串行，等 #1010
 - #590 | impl | blocked | 前置 #1071（pr6c-2）
 - #589 | impl | blocked | 关单前置 #1010 #1011 #1019 #1020
@@ -15,9 +15,8 @@ updated: 2026-10-31 04:10 · by Claude Code 协调者
 - 749-diffs | coord | human | **待人复核**：A7.2-NATIVE-WS-DRAIN-001、A7.2-NATIVE-WS-RESOURCE-001（+R1 / R2）、A7.2-NATIVE-WS-AGGREGATE-001（#1079）原生隔离入口与 TS 的有界差异（未批准）
 - D-4 | coord | human | **AI 已实测，待人签字**：#1120 EdgeClaw 真实模型抽取 / 召回（_tmp/20261031-edgeclaw-smoke/RESULT.md：17/18 格，Rust 与 TS 全命中零误写）；装置 PR #1126 评审中
 - #953 | impl | blocked | item 3 余项等 #996 迁移
-- #983 | review | doing | PR #1121：Codex r10x + Claude 块 r10 0/0；mbp2 r10b 宿主在跑 → 入队
-- #1125 | impl | doing | PR #1130 ETXTBSY：r3 新变异 Linux SURVIVED + 旧 PID SIGKILL（升 P0）→ GLM fix-r3（上限轮）
-- #1131 | impl | doing | PR #1133 A4 实际端口：r2 Codex P1 一行 → 等 #1071 合入后 fix-r2（rebase + R1 更正）
+- #983 | review | doing | PR #1121 fix-r11（json_pretty 收敛）r11 opus + Codex 0/0；mbp2 全量在跑 → 入队
+- #1131 | impl | doing | PR #1133 A4 实际端口：rebase 到 #1071 后 + 重钉 #749 哈希；GLM 块 0/0、macmini 全绿 → 补跑 sdk-sessions-list 后入队
 - #892 | coord | blocked | 修 3 轮仍假 PASS，挂起；决策卡 decisions-20261028-892-suspend
 - #727 | impl | blocked | 前置 A7 Rust 宿主接线
 - #19 | impl | blocked | 修复归 #727
@@ -40,8 +39,7 @@ updated: 2026-10-31 04:10 · by Claude Code 协调者
 - mbp2 | coord | doing | 新宿主接入：子代理建链 + 判定一致性自检；通过后承接 macOS 专属套件 + 短链溢出
 - #1123 | review | doing | PR #1124 ready 入队（两家 0/0，cb8 负控 53 + 5 KILLED）
 - #1122 | review | doing | PR #1127（叠 #1010）r1 opus + GLM + cb8
-- #1125 | impl | doing | Linux 偶发 ETXTBSY（测试写脚本后立即 exec，main CI ubuntu 同险）→ GLM
-- #1131 | impl | doing | A4 监听 :0 打印请求地址而非实际端口（与 TS 不一致，P1 产品）→ Codex
+- #1131 | impl | doing | PR #1133 A4 实际端口：rebase 到 #1071 后 + 重钉 #749 哈希；GLM 块 0/0、macmini 全绿 → 补跑 sdk-sessions-list 后入队
 - #1129 | impl | doing | run-registry 金样生成器同毫秒不 mask（快机器假 INVALID，P1）→ Codex
 <!-- READY:END -->
 
@@ -2512,3 +2510,11 @@ updated: 2026-10-31 04:10 · by Claude Code 协调者
 - 03:55 #1105 没跑 CI：与 main 冲突（#996 pr2 给 host_factory close_timeout 加了编译期开关）→ 我 rebase 逐块合并两侧 + fmt 提交 2e10a3d38，正控过、开关变异按 `factory forwards close_timeout` 杀死、native_process 3 passed → 推送；冲突解决请 Codex r6 只读复核，与 CI 并行，过了入队。#1129 mbp2：count-negative 自 #953 起就坏（只拷 baseline.mts，漏 generator_guard.mjs）→ Codex fix-r2（只改 run-registry 自己的脚本）。#1125 fix-r2 67e777005 → r3 opus + Codex，cb8 4 套 + mbp2 10 套。
 - 03:59 #1106 合入 e13b189a3（邮箱 noreply）→ #1097 收尾自查贴 issue 后关单；四族测试的大 stdin / wire-end 装置差距开 #1136（P2-跟进，前置于 #123）；wt-1097 已回收。
 - 04:07 **两小时交接** → `_tmp/20261031-handoff-0407.md`。#1071 新 head 结果块 GLM 0/0（P2×2 开 #1137）→ #1105 等 CI 入队。#1125 r3 cb8 新变异 SURVIVED + 旧 PID SIGKILL 升 P0 → GLM fix-r3（上限轮）。磁盘 200 → 140 GiB。
+- 04:17 #1105 进队列（CI 全绿）。#1138 pr-gate 挂：豁免写成正文明文、缺 no-issue 注释 → 修正后本地 PASS；一晚第三次栽在 PR 正文 → memory gate-roles-all-pass 升为硬步骤（任何 pr create/edit/ready 前先本地 check-pr-gate）。#1114 r4 opus 0/0、Codex 只差当前 head 宿主证据（cb8 在跑，第 1 套已全杀）。
+- 04:33 宿主两处 SURVIVED，都是尺子 P1、根因已核：① #1010 macmini session-factory `drain-cancelled-candidate-not-disposed`——#1010 的丢 handle 回退释放让「显式 dispose」变异等价 → Codex 在 #1127 栈顶修（改绑可区分断言或登记等价 + 补变异）；② #983 mbp2 sdk-sessions-list `pretty-indent`——#983 新加流式 pretty，sessions 不再走旧 json_pretty，变异打在死路径上 → GLM fix-r11（旧函数复用流式实现、只留一份缩进代码、锚点跟着改）。#1105、#1138 在队列里。
+- 04:37 **#1105 合入 7175589a7**（#1071 关键路径，邮箱 noreply）。自查发现「原生进程跑通 session_domain native 格」未做（缺 exec / 出网见证采集器，冻结装置）→ 不关单，标阻塞等前置，余项开 #1140。#1131 fix-r2 已派（rebase 到合入后 + r2 Codex P1 + A4 R1 更正）。#1129 r2 opus + GLM 0/0；两家独立撞上「count-negative 判杀要整行匹配，Node 断言格式可能对不上」→ 等 mbp2 实测后合成 fix-r3。
+- 04:56 #1125 fix-r3 2e27fbbc6 → r4 opus 0/0、Codex 0/0（P2 一条：stranger 用例场景不全，过上限开跟进）→ 等 cb8。#983 fix-r11 3d99b5500（json_pretty 收敛到流式实现）→ r11 Codex 0/0/0/0，等 opus + mbp2 全量 16 套。#1122 fix-r2 3b3c040f9（改为观察显式 dispose reason，TS 真实采集）→ r3 opus + GLM + macmini session-factory。#1138 state 同步合入 95a53d75f。
+- 05:07 #1125 cb8 全绿（lib 2959 passed、Linux 300 次压测 ok、grep-etxtbsy 6/6）→ #1130 转 ready 入队（作者 GLM，opus + Codex r4 0/0；P2 开 #1141）。#1131 fix-r2 rebase 到 #1071 之后（无冲突，撤 bind 重试、对齐地址行、A4 R1 更正）→ force-with-lease 推 aaed2a549 → r3 opus + Codex + macmini。#1122 r3 opus + GLM 0/0，等 macmini session-factory。
+- 05:35 **#1130 合入 de984fdc2**（#1125 ETXTBSY，邮箱 noreply，自动关单，树已回收）。#1131 macmini r3：native-process 一套挂在 #749 守卫 `default_mode_unchanged`（钉了 A4 main.rs 哈希，#1131 本意就是改 A4 日志），CI rust 同一处 → 我重钉哈希 354526d1e（新值与失败输出 left 一致，main.rs 只有本意 3 行），Codex r4 复核 + macmini 补跑。#1129 mbp2 全绿（regen 30/30；count 4/4 实测推翻「整行匹配判不了杀」）→ Codex fix-r3 修 3 条小 P2（上限轮）。
+- 06:17 #1131 当前 head 354526d1 GLM 结果块 0/0/0、macmini lib 2972 passed、native-process 全杀（含 a4-default-bytes）→ 补跑 sdk-sessions-list 后入队。#1129 r3 GLM P1×2：① TreeLock 的 setitimer 覆盖 scratch 的 alarm（macOS / Linux 实测确认，_tmp/20261031-alarm-itimer）→ 共享件开 #1142 归 M6；② recorder 同类 = #1139。README 预算描述我改为如实写明限制 2b49154e6。
+- 06:21 **两小时交接** → `_tmp/20261031-handoff-0620.md`（晚 13 分钟）。本段合入 #1105 #1130 #1138；#1071 未关（native 格采集器 #1140）。
