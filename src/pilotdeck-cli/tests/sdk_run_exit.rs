@@ -986,21 +986,10 @@ async fn run_duplicate_event_is_not_printed() {
 async fn run_unimplemented_options_are_explicit() {
     let _port = PORT.lock().await;
     let _lease = ParityLock::acquire().await;
-    for (flags, gap) in [
-        (vec!["--json"], "pilotdeck run JSON output (#123 P07)"),
-        (
-            vec!["--stream-json"],
-            "pilotdeck run JSON output (#123 P07)",
-        ),
-        (
-            vec!["--json", "--stream-json"],
-            "pilotdeck run JSON output (#123 P07)",
-        ),
-        (
-            vec!["--model", "fixture/model"],
-            "pilotdeck run model without project (#123 P06/P08)",
-        ),
-    ] {
+    for (flags, gap) in [(
+        vec!["--model", "fixture/model"],
+        "pilotdeck run model without project (#123 P06/P08)",
+    )] {
         let mut input = case("run--argv");
         input["input"]["argv"]
             .as_array_mut()

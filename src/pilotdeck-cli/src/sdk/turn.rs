@@ -1,5 +1,5 @@
-//! Shared run/resume control and query lifecycle. JSON output and query
-//! cancellation remain #123 P07–P08.
+//! Shared run/resume control and query lifecycle. Query cancellation remains
+//! #123 P08.
 use super::{Connection, output::TextOutput, positional, read_value, transport};
 use crate::{Failure, paths};
 use pilotdeck_protocol::JsValue;
@@ -13,12 +13,6 @@ pub(super) fn run(
     connection: &Connection,
     resume: Option<&str>,
 ) -> Result<u8, Failure> {
-    if argv
-        .iter()
-        .any(|arg| arg == "--json" || arg == "--stream-json")
-    {
-        return Err(Failure::Todo("pilotdeck run JSON output (#123 P07)"));
-    }
     if read_value(argv, "--model").is_some() && read_value(argv, "--project").is_none() {
         // The TS query leaks its socket after this validation error. Keep the
         // exceptional lifecycle explicitly unimplemented until P06/P08.
@@ -158,7 +152,12 @@ async fn query_turn(
             },
         )
         .await?;
-    let mut output = TextOutput::new(session, &run_id);
+    let mut output = TextOutput::new(
+        session,
+        &run_id,
+        argv.iter().any(|arg| arg == "--json"),
+        argv.iter().any(|arg| arg == "--stream-json"),
+    );
     loop {
         let Some((event, final_frame)) = query.stream_event(&request_id).await? else {
             return output.finish();
