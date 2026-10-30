@@ -81,7 +81,7 @@ CASES = [
         '            .filter(|value| !value.is_empty())\n'
         '            .or_else(|| env.string("PILOTDECK_TOKEN"))\n',
         TOKENS,
-        '#982 run--token-sdk-empty: exit code, stderr was',
+        '#982 run--token-sdk-empty: stderr',
     ),
 ]
 
