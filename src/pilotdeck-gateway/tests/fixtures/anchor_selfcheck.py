@@ -141,6 +141,11 @@ MARKER_PATTERN = re.compile(r'^#\s*anchor-selfcheck:\s*unsupported(?:\s+(.*))?$'
 # exempted helpers must remain free of these signals. The reason stays above;
 # neither a new filename nor a reason alone can hide a source mutation table.
 UNSUPPORTED_SIGNALS = {
+    # #1107: standalone M6 helpers; only test_contract declares a case table.
+    '_negkit/contract.py': set(),
+    '_negkit/test_contract.py': {'table:cases'},
+    '_negkit/negative_contract.py': set(),
+    '_negkit/toy_runner.py': set(),
     # #994: meta-controls mutate disposable Python modules or in-memory loaders;
     # their import/bootstrap machinery is outside the product-anchor grammar.
     'negative-adaptive/negative_controls.py': {'table:cases'},

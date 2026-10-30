@@ -36,6 +36,9 @@ fn negative_fixture_anchors_and_checker_controls() {
                 "OutputDirectoryRunnerTests",
             ][..],
         ),
+        ("_negkit/test_compare_verdicts.py", &[][..]),
+        ("_negkit/test_contract.py", &[][..]),
+        ("_negkit/negative_contract.py", &[][..]),
         ("negative-restore/test_restore.py", &[][..]),
         (
             "negative-restore/test_restore.py",
