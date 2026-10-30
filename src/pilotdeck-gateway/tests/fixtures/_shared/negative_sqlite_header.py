@@ -97,45 +97,52 @@ def main():
     # Same three-state exit contract as ``negative_suite.run_cases``
     # (#1076 fix-r1): a refusal before the guarded window opened keeps the
     # historical rc=1, only an unverified restore or a cancellation is rc=2.
+    # ``body_error`` keeps the body's own exception object so a different
+    # exception from the guard while unwinding is void -> rc=2 (#1076 fix-r2).
     phase = 'enter'
+    body_error = None
     try:
         with mutating_sources(ROOT, [GENERATOR, STORAGE_OBSERVER]) as originals:
             phase = 'body'
-            original = {path: originals[path].decode() for path in originals}
-            for name, path, before, _after, _test, _assertion in MUTANT_ROWS:
-                count = original[path].count(before)
-                if count != 1:
-                    # Stale anchors fail closed: no row may be recorded as
-                    # SURVIVED just because the mutation never applied (#1076).
-                    raise ValueError(
-                        f'#1076 {name} anchor expired: count={count}, expected=1')
-            for name, path, before, after, test, assertion in MUTANT_ROWS:
-                status, reason = 'INVALID', ''
-                try:
-                    if not passed(run(output, env, f'{name}-positive', test), test):
-                        reason = 'positive control did not pass'
-                    else:
-                        changed = original[path].replace(before, after, 1)
-                        path.write_bytes(changed.encode())
-                        status, reason = classify(
-                            run(output, env, f'{name}-negative', test), test, assertion)
-                except Exception as error:
-                    status, reason = 'INVALID', f'{type(error).__name__}: {error}'
-                finally:
-                    phase = 'restore'
-                    path.write_bytes(originals[path])
-                    if path.read_bytes() != originals[path]:
-                        raise RuntimeError(f'#979 byte restoration failed: {path}')
-                    phase = 'body'
-                try:
-                    if not passed(run(output, env, f'{name}-restored', test), test):
-                        status, reason = 'INVALID', reason + '; restored bound test did not pass'
-                except Exception as error:
-                    status, reason = (
-                        'INVALID', reason + f'; restored: {type(error).__name__}: {error}')
-                results.append({'mutation': name, 'test': test,
-                                'status': status, 'reason': reason})
-                print(f'{name}: {status}: {reason}', flush=True)
+            try:
+                original = {path: originals[path].decode() for path in originals}
+                for name, path, before, _after, _test, _assertion in MUTANT_ROWS:
+                    count = original[path].count(before)
+                    if count != 1:
+                        # Stale anchors fail closed: no row may be recorded as
+                        # SURVIVED just because the mutation never applied (#1076).
+                        raise ValueError(
+                            f'#1076 {name} anchor expired: count={count}, expected=1')
+                for name, path, before, after, test, assertion in MUTANT_ROWS:
+                    status, reason = 'INVALID', ''
+                    try:
+                        if not passed(run(output, env, f'{name}-positive', test), test):
+                            reason = 'positive control did not pass'
+                        else:
+                            changed = original[path].replace(before, after, 1)
+                            path.write_bytes(changed.encode())
+                            status, reason = classify(
+                                run(output, env, f'{name}-negative', test), test, assertion)
+                    except Exception as error:
+                        status, reason = 'INVALID', f'{type(error).__name__}: {error}'
+                    finally:
+                        phase = 'restore'
+                        path.write_bytes(originals[path])
+                        if path.read_bytes() != originals[path]:
+                            raise RuntimeError(f'#979 byte restoration failed: {path}')
+                        phase = 'body'
+                    try:
+                        if not passed(run(output, env, f'{name}-restored', test), test):
+                            status, reason = 'INVALID', reason + '; restored bound test did not pass'
+                    except Exception as error:
+                        status, reason = (
+                            'INVALID', reason + f'; restored: {type(error).__name__}: {error}')
+                    results.append({'mutation': name, 'test': test,
+                                    'status': status, 'reason': reason})
+                    print(f'{name}: {status}: {reason}', flush=True)
+            except BaseException as error:
+                body_error = error
+                raise
             # Done with the body: a failure from here on comes from the guard's
             # own restore/re-verify on context exit.
             phase = 'exit'
@@ -156,7 +163,10 @@ def main():
             raise SystemExit(2) from error
         # #1076 fix-r1: rc=2 only for an unverified restore or a cancellation;
         # a guard refusal to run (baseline mismatch, busy lock) stays rc=1.
-        if phase in ('restore', 'exit') or not isinstance(error, Exception):
+        # #1076 fix-r2: after a body exception, a different object here means
+        # the guard's own restore/re-verify failed while unwinding -> rc=2.
+        if (phase in ('restore', 'exit') or not isinstance(error, Exception)
+                or (body_error is not None and error is not body_error)):
             return 2
         return 1
     write_summary(output, results)

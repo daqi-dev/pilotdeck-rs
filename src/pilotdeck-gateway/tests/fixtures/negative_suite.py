@@ -111,7 +111,13 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
     # arguments) and keeps the historical rc=1; 'restore'/'exit' are
     # unverified restores and must exit 2; 'body' is an in-window
     # precondition such as an expired anchor, also a refusal (#1076 fix-r1).
+    # ``body_error`` remembers the object the guarded body raised. A guard that
+    # raises while unwinding raises a *different* object even though ``phase``
+    # still says 'body'; that is an unverified restore and must exit 2
+    # (#1076 fix-r2). A stale anchor refused by a guard that then restores
+    # cleanly keeps the historical rc=1.
     phase = 'enter'
+    body_error = None
     try:
         registrations = pending.for_script(root, script)
         paths = list(dict.fromkeys(c.path for c in cases))
@@ -119,38 +125,44 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
             paths.append(root / pending.FIXTURES / pending.REGISTRY)
         with mutating_sources(root, paths, baseline=baseline) as originals:
             phase = 'body'
-            for case in cases:
-                entry = pending.match(registrations, case.mutation)
-                if entry is not None:
-                    record(case, pending.SKIPPED, entry.reason())
-                    continue
-                status, reason, stage = 'INVALID', '', 'anchor'
-                try:
-                    changed = mutate(originals[case.path].decode(), case.scope,
-                                     [(case.old, case.new)])
-                    stage = 'positive'
-                    if not passed(run(case.mutation + '-positive', case.test), case.test):
-                        reason = 'positive control did not pass the bound test'
-                    else:
-                        stage = 'negative'
-                        case.path.write_text(changed)
-                        status, reason = classify(run(case.mutation + '-negative', case.test), case)
-                except Exception as error:
-                    status, reason = 'INVALID', f'{stage}: {type(error).__name__}: {error}'
-                finally:
-                    # Restore before every successor, also on timeout or bad anchors.
-                    # The enclosing guard independently restores and verifies on exit.
-                    phase = 'restore'
-                    case.path.write_bytes(originals[case.path])
-                    if case.path.read_bytes() != originals[case.path]:
-                        raise RuntimeError(f'byte restoration failed: {case.path}')
-                    phase = 'body'
-                try:
-                    if not passed(run(case.mutation + '-restored', case.test), case.test):
-                        status, reason = 'INVALID', reason + '; restored bound test did not pass'
-                except Exception as error:
-                    status, reason = 'INVALID', reason + f'; restored: {type(error).__name__}: {error}'
-                record(case, status, reason)
+            try:
+                for case in cases:
+                    entry = pending.match(registrations, case.mutation)
+                    if entry is not None:
+                        record(case, pending.SKIPPED, entry.reason())
+                        continue
+                    status, reason, stage = 'INVALID', '', 'anchor'
+                    try:
+                        changed = mutate(originals[case.path].decode(), case.scope,
+                                         [(case.old, case.new)])
+                        stage = 'positive'
+                        if not passed(run(case.mutation + '-positive', case.test), case.test):
+                            reason = 'positive control did not pass the bound test'
+                        else:
+                            stage = 'negative'
+                            case.path.write_text(changed)
+                            status, reason = classify(run(case.mutation + '-negative', case.test), case)
+                    except Exception as error:
+                        status, reason = 'INVALID', f'{stage}: {type(error).__name__}: {error}'
+                    finally:
+                        # Restore before every successor, also on timeout or bad anchors.
+                        # The enclosing guard independently restores and verifies on exit.
+                        phase = 'restore'
+                        case.path.write_bytes(originals[case.path])
+                        if case.path.read_bytes() != originals[case.path]:
+                            raise RuntimeError(f'byte restoration failed: {case.path}')
+                        phase = 'body'
+                    try:
+                        if not passed(run(case.mutation + '-restored', case.test), case.test):
+                            status, reason = 'INVALID', reason + '; restored bound test did not pass'
+                    except Exception as error:
+                        status, reason = 'INVALID', reason + f'; restored: {type(error).__name__}: {error}'
+                    record(case, status, reason)
+            except BaseException as error:
+                # Keep the refusal/cancellation object so the handler below can
+                # tell it apart from a failure raised by the guard exit.
+                body_error = error
+                raise
             # The body is done; an exception from here on comes from the
             # guard's own restore/re-verify on context exit.
             phase = 'exit'
@@ -176,7 +188,11 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
         # the guard opened (HEAD/baseline mismatch, busy lock, bad argument)
         # keeps the historical rc=1 that callers already assert
         # (``pending-reanchor/test_controls.py`` HEAD-failure exit).
-        if phase in ('restore', 'exit') or not isinstance(error, Exception):
+        # #1076 fix-r2: when the body already raised, a *different* exception
+        # here can only come from the guard's own restore/re-verify while
+        # unwinding, so the run is void even though ``phase`` is 'body'.
+        if (phase in ('restore', 'exit') or not isinstance(error, Exception)
+                or (body_error is not None and error is not body_error)):
             return 2
         return 1
     # Reaching here means mutating_sources restored every source and verified
