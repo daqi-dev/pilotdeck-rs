@@ -247,6 +247,27 @@ mutations = [
      "        previous = signal.signal(signal.SIGINT, signal.default_int_handler)\n"
      "        self.addCleanup(signal.signal, signal.SIGINT, previous)\n",
      "        pass  # mutant #1064 fix-r2: keep whatever disposition was inherited\n"),
+    # fix-r3 P0: the rerun gate is removed again — any nonzero child exit (a
+    # signal death, a crash, an unrelated failure) is wrapped into the marked
+    # AssertionError, so the runner counts a false KILLED.
+    ('sigint-rerun-gate-removed',
+     test_script,
+     "                marked = (result.returncode == 1\n"
+     "                          and 'Ran 1 test' in log\n"
+     "                          and re.search(r'^FAILED', log, re.MULTILINE)\n"
+     "                          and re.search(r'^FAIL: ' + re.escape(test.rpartition('.')[2])\n"
+     "                                        + r' \\(', log, re.MULTILINE)\n"
+     "                          and any(line.startswith('AssertionError: ') and swallowed in line\n"
+     "                                  for line in log.splitlines()))",
+     "                marked = True  # mutant #1064 fix-r3: any nonzero exit is wrapped\n"),
+    # fix-r3 P2 (Claude simplify #1): the rerun list silently drops one of the
+    # real-SIGINT tests; the source-scan self-check is the only witness that
+    # every ensure_default_sigint caller is rerun under the ignoring parent.
+    ('sigint-rerun-list-shortened',
+     test_script,
+     "            ('ContractTests.test_preflight_signal_before_spawn_return_still_stops_the_mock',\n"
+     "             '#933-8: the deferred signal must still surface'),\n",
+     "            # mutant #1064 fix-r3: the third real-SIGINT test is silently dropped\n"),
 ]
 tests = {
     'guard-blocking': 'ContractTests.test_guard_wait_is_bounded_when_a_sibling_holds_it',
@@ -269,6 +290,8 @@ tests = {
     'runner-empty-summary-pass': 'RunnerInvalidationControls.test_empty_mutation_table_is_not_a_pass',
     'runner-selection-assert-removed': 'RunnerInvalidationControls.test_fully_filtered_selection_fails_closed',
     'real-sigint-handler-removed': 'ContractTests.test_real_sigint_windows_survive_a_sigint_ignoring_parent',
+    'sigint-rerun-gate-removed': 'RunnerInvalidationControls.test_rerun_signal_death_is_invalid_not_killed',
+    'sigint-rerun-list-shortened': 'ContractTests.test_real_sigint_windows_survive_a_sigint_ignoring_parent',
 }
 # The exclusive assertion message each mutant must turn red.
 failure_fragments = {
@@ -292,6 +315,8 @@ failure_fragments = {
     'runner-empty-summary-pass': '#1064 fix-r2 an empty row set must exit nonzero, never pass',
     'runner-selection-assert-removed': '#1064 fix-r2 an unknown selection must fail closed, never run an empty table',
     'real-sigint-handler-removed': '#1064 fix-r2 the real-SIGINT windows must install the default disposition themselves',
+    'sigint-rerun-gate-removed': '#1064 fix-r3 a signal-killed rerun child must be INVALID, never KILLED',
+    'sigint-rerun-list-shortened': '#1064 fix-r3 the SIG_IGN rerun list must cover every ensure_default_sigint caller exactly',
 }
 
 SEPARATOR = '-' * 70
@@ -462,8 +487,9 @@ def main():
     try:
         # RUNNER and the bound test script are guarded too: six rows mutate
         # this delivered runner (the r1 P1-3 publication rules and the fix-r2
-        # exit-code/selection gates) and one mutates the test script's
-        # real-SIGINT disposition install (fix-r2 P1-2).
+        # exit-code/selection gates) and three mutate the test script — the
+        # fix-r2 real-SIGINT disposition install and the fix-r3 rerun gate
+        # plus its caller-list self-check.
         with mutating_sources(root, [RUNNER, common, test_script],
                               baseline=args.baseline) as snapshots:
             for name, path, old, new in rows:

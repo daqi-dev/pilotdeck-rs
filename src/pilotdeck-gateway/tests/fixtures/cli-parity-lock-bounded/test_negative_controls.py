@@ -1,5 +1,5 @@
 # anchor-selfcheck: unsupported kill-judge and runner-publication unit tests; no product mutation table
-"""Unit tests of the #1064 r1/r2 negative-control apparatus, on synthetic logs only.
+"""Unit tests of the #1064 r1/r2/r3 negative-control apparatus, on synthetic logs only.
 
 The judge is the piece a forged log could otherwise fool, so every forgery
 class the sibling fixtures demonstrated gets its own case here: a marker
@@ -14,16 +14,27 @@ itself must sit in the guarded set. The fix-r2 cases pin the normal-path exit
 contract the same way: a plain INVALID row (a failed positive control) must
 exit 2, an emptied mutation table must exit nonzero (a zero denominator is
 never a pass), and an unknown ``--selection`` must fail closed before any
-mutation starts. No real source is mutated; nothing here runs cargo, node, or
-the cli-parity scripts.
+mutation starts. The fix-r3 P0 cases rerun the real SIG_IGN wrapper test
+itself in-process (the isolation fixture's source-only load pattern) against
+synthetic rerun children: a signal-killed or never-started child must fail
+the wrapper without the kill marker (INVALID, never a wrapped KILLED), while
+a child that failed at its own swallowed-signal assertion must still kill.
+No real source is mutated; nothing here runs cargo, node, or spawns the
+cli-parity scripts (the apparatus test module is only imported from source).
 """
+import sys
+
+if not sys.flags.isolated or __file__.rpartition('/')[0] in sys.path:
+    raise SystemExit(f'#701: unsafe import path; run with -I by file: python3 -I {__file__}')
+
 from contextlib import contextmanager
 import hashlib
+import importlib.util
+import io
 import json
 from pathlib import Path
 import signal
 import subprocess
-import sys
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -31,6 +42,20 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import negative_controls
 from negative_controls import bound_failure_bodies, classify, passed, unittest_blocks
+
+# The real SIG_IGN rerun wrapper is rerun in-process below (fix-r3 P0): load
+# the apparatus test module from source the way the entries and the isolation
+# fixture do — never from an adjacent bytecode cache.
+_bootstrap_path = negative_controls.root / 'scripts/cli-parity/_bootstrap.py'
+_bootstrap_spec = importlib.util.spec_from_file_location('_cli_parity_bootstrap',
+                                                         _bootstrap_path)
+_bootstrap = importlib.util.module_from_spec(_bootstrap_spec)
+exec(compile(_bootstrap_path.read_bytes(), str(_bootstrap_path), 'exec'),
+     _bootstrap.__dict__)
+apparatus_tests = _bootstrap.load('test_cli_parity', negative_controls.test_script)
+RERUN_ROW = 'real-sigint-handler-removed'
+WRAPPER_TEST = negative_controls.tests[RERUN_ROW]
+WRAPPER_FRAGMENT = negative_controls.failure_fragments[RERUN_ROW]
 
 TEST = 'ContractTests.test_interrupt_during_acquisition_leaves_no_lease'
 MARKER = '#1064: an interrupted acquisition must not leave a lease'
@@ -141,6 +166,49 @@ FAILED (failures=1)
 
 def result(code, log):
     return subprocess.CompletedProcess([], code, log, '')
+
+
+# fix-r3 P0: a rerun child that failed exactly the way a swallowed SIGINT
+# makes it fail — normal exit (rc==1), a unittest failure summary, and its
+# own AssertionError carrying the swallowed-signal marker (the shape the r2
+# host negative run and the fix-r3 in-session probe both recorded).
+SWALLOWED_CHILD_LOG = """F
+======================================================================
+FAIL: test_interrupt_during_acquisition_leaves_no_lease (test_cli_parity.ContractTests.test_interrupt_during_acquisition_leaves_no_lease) (window='owner-written-real-sigint')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "scripts/cli-parity/test_cli_parity.py", line 2361, in test_interrupt_during_acquisition_leaves_no_lease
+    self.fail('#1064: acquisition survived its own cancellation')
+AssertionError: #1064: acquisition survived its own cancellation
+
+----------------------------------------------------------------------
+Ran 1 test in 0.039s
+
+FAILED (failures=1)
+"""
+
+
+def rerun_outer(child=None, startup_error=None):
+    """Run the real SIG_IGN rerun wrapper in-process against a synthetic child.
+
+    The wrapper's own rerun subprocess is patched, never spawned: the child
+    is either a finished result (a signal death, a swallowed-signal failure)
+    or a startup failure raised by subprocess.run itself. The return value is
+    shaped exactly like a run_test() result so the real judge applies to it.
+    """
+    stream = io.StringIO()
+    if startup_error is not None:
+        patcher = patch.object(apparatus_tests.subprocess, 'run',
+                               side_effect=startup_error)
+    else:
+        patcher = patch.object(apparatus_tests.subprocess, 'run',
+                               return_value=child)
+    with patcher:
+        outcome = unittest.TextTestRunner(stream=stream).run(
+            unittest.TestSuite([apparatus_tests.ContractTests(
+                'test_real_sigint_windows_survive_a_sigint_ignoring_parent')]))
+    return subprocess.CompletedProcess(
+        [], 0 if outcome.wasSuccessful() else 1, stream.getvalue(), '')
 
 
 class UnittestBlocksTests(unittest.TestCase):
@@ -591,6 +659,76 @@ class RunnerInvalidationControls(unittest.TestCase):
                 self.assertIsInstance(code, SystemExit, f'{message} ({label})')
                 self.assertIn('#953 refusing to reuse a non-empty output directory',
                               str(code), f'{message} ({label})')
+
+    def _drive_rerun_row(self, outer):
+        """Drive the delivered main() for the real-SIGINT row with a mocked
+        negative phase: the wrapper's own rerun result is the bound-test run,
+        exactly what run_test() would have produced for it."""
+        def run_test(_out, label, _test):
+            if label.endswith(('-positive', '-restored')):
+                return result(0, 'Ran 1 test\n\nOK\n')
+            return outer
+
+        return self._drive(run_test=run_test,
+                           rows=[(RERUN_ROW, self.source, 'x = 0', 'x = 1')],
+                           tests={RERUN_ROW: WRAPPER_TEST},
+                           fragments={RERUN_ROW: WRAPPER_FRAGMENT},
+                           selection=(RERUN_ROW,))
+
+    def test_rerun_signal_death_is_invalid_not_killed(self):
+        """fix-r3 P0: a signal-killed rerun child must be INVALID, never KILLED.
+
+        The r2 wrapper wrapped any nonzero child exit into the marked
+        AssertionError, so a signal death in the negative phase counted as a
+        kill (the r3 Codex P0 in-memory probe). This is the bound test of
+        sigint-rerun-gate-removed: under the mutant, the rc=-11 child is
+        wrapped again and the row reads KILLED.
+        """
+        message = '#1064 fix-r3 a signal-killed rerun child must be INVALID, never KILLED'
+        outer = rerun_outer(subprocess.CompletedProcess([], -11, '',
+                                                        'Segmentation fault\n'))
+        status, reason = classify(outer, WRAPPER_TEST, WRAPPER_FRAGMENT)
+        self.assertEqual(status, 'INVALID', f'{message}: {reason}')
+        code, summary, _ = self._drive_rerun_row(outer)
+        self.assertEqual(code, 2, message + ': the runner must exit nonzero')
+        self.assertIsNotNone(summary,
+                             message + ': the INVALID summary must be published')
+        self.assertEqual([row['status'] for row in summary['controls']], ['INVALID'],
+                         message + ': the row must be INVALID, never KILLED')
+
+    def test_rerun_startup_failure_is_invalid_not_killed(self):
+        """fix-r3 P0: a rerun child that never started must be INVALID, never
+        a wrapped KILLED — the startup failure surfaces as an unmarked failure
+        of the wrapper, and the runner must not read it as a kill."""
+        message = '#1064 fix-r3 a never-started rerun child must be INVALID, never KILLED'
+        outer = rerun_outer(startup_error=FileNotFoundError(
+            "[Errno 2] No such file or directory: 'python'"))
+        status, reason = classify(outer, WRAPPER_TEST, WRAPPER_FRAGMENT)
+        self.assertEqual(status, 'INVALID', f'{message}: {reason}')
+        code, summary, _ = self._drive_rerun_row(outer)
+        self.assertEqual(code, 2, message + ': the runner must exit nonzero')
+        self.assertIsNotNone(summary,
+                             message + ': the INVALID summary must be published')
+        self.assertEqual([row['status'] for row in summary['controls']], ['INVALID'],
+                         message + ': the row must be INVALID, never KILLED')
+
+    def test_rerun_swallowed_signal_failure_still_kills(self):
+        """fix-r3 P0 positive control: the gate must not seal the real kill.
+
+        A rerun child that exited normally and failed at its own
+        swallowed-signal assertion is exactly the mutant's symptom; the
+        wrapper must fail with its exclusive marker and the row must stay
+        KILLED (the r2 row's kill path, now earned only through the gate).
+        """
+        message = '#1064 fix-r3 a rerun child failing at its swallowed-signal assertion must still kill'
+        outer = rerun_outer(subprocess.CompletedProcess([], 1, SWALLOWED_CHILD_LOG,
+                                                        ''))
+        status, reason = classify(outer, WRAPPER_TEST, WRAPPER_FRAGMENT)
+        self.assertEqual(status, 'KILLED', f'{message}: {reason}')
+        code, summary, _ = self._drive_rerun_row(outer)
+        self.assertEqual(code, 0, message + ': the all-KILLED run must exit 0')
+        self.assertEqual([row['status'] for row in summary['controls']], ['KILLED'],
+                         message + ': the row must be KILLED')
 
 
 if __name__ == '__main__':
