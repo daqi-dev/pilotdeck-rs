@@ -143,7 +143,12 @@ impl ChildSignalProbe {
             summaries[0].starts_with("test result: ok. 1 passed; 0 failed; 0 ignored;"),
             "worker did not run: {stdout}"
         );
-        print!("{stdout}");
+        // #1109 fix-r3: never echo the worker's libtest report here. The
+        // echo lands in this test's captured stdout, and a failing parent
+        // reprints it, so the report would carry a second `running 1 test`
+        // header and the strict per-test negative-control contract would
+        // refuse the verdict. The assertions above embed the report in their
+        // messages when they fire; a passing run discards captured stdout.
         stdout
     }
 }
