@@ -50,10 +50,25 @@ def binding(test, assertion, field):
     return {'test': test, 'assertion': assertion}
 
 
+def single_binding(row, field):
+    if 'assertion' in row:
+        return binding(row.get('test'), row['assertion'], field)
+    # Some independent negative_process consumers omit the assertion marker.
+    # Absence is explicit; present null/empty/wrongly typed markers still fail.
+    test = required_string(row.get('test'), field + '.test')
+    return {'test': test, 'assertion': ''}
+
+
 def normalize(row, index):
     field = f'controls[{index}]'
     if not isinstance(row, dict):
         raise InputError(f'{field}: expected an object')
+    # Only observed metadata is ignored. In particular, never drop another
+    # runner's binding aliases (`anchor`, `message`), even beside `assertion`.
+    unknown = row.keys() - {'mutation', 'name', 'status', 'test', 'assertion', 'targets',
+                            'reason', 'compiled', 'restoredPass', 'hits'}
+    if unknown:
+        raise InputError(f'{field}: unsupported row fields: {sorted(unknown)!r}')
     status = row.get('status')
     if not isinstance(status, str) or status not in STATUSES:
         raise InputError(f'{field}.status: unknown status {status!r}')
@@ -61,7 +76,7 @@ def normalize(row, index):
         if 'name' in row or 'targets' in row:
             raise InputError(f'{field}: mixed mutation and name/targets schemas')
         key = required_string(row['mutation'], field + '.mutation')
-        bindings = [binding(row.get('test'), row.get('assertion'), field)]
+        bindings = [single_binding(row, field)]
     elif 'name' in row and 'targets' in row:
         if 'test' in row or 'assertion' in row:
             raise InputError(f'{field}: mixed test/assertion and targets schemas')
@@ -74,8 +89,11 @@ def normalize(row, index):
             if not isinstance(target, list) or len(target) != 2:
                 raise InputError(f'{field}.targets[{offset}]: expected [test, assertion]')
             bindings.append(binding(*target, f'{field}.targets[{offset}]'))
+    elif 'name' in row and 'test' in row:
+        key = required_string(row['name'], field + '.name')
+        bindings = [single_binding(row, field)]
     else:
-        raise InputError(f'{field}: expected mutation/test/assertion or name/targets')
+        raise InputError(f'{field}: expected mutation/test, name/test or name/targets')
     return {'case': key, 'status': status, 'bindings': bindings}
 
 

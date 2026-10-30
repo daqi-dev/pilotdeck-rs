@@ -7,13 +7,20 @@ No product/source mutation, runner import, cargo invocation or HEAD bypass.
 import copy
 import json
 from pathlib import Path
+import runpy
 import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 
 SCRIPT = Path(__file__).with_name('compare_verdicts.py')
+TESTDATA = Path(__file__).with_name('testdata')
+REAL_SUMMARIES = (
+    'run-cases.json', 'matrix-main.json', 'negative-output-directory.json',
+    'gateway-entry-guard.json', 'sdk-run.json',
+)
 SECTIONS = {
     'missing_cases': 'P0 MISSING CASES (case loss)',
     'status_changes': 'STATUS CHANGES',
@@ -34,6 +41,24 @@ def summary():
 
 
 class CompareVerdictsTests(unittest.TestCase):
+    def test_negative_runner_requires_the_declared_assertion_message(self):
+        judge = runpy.run_path(str(SCRIPT.with_name('negative_compare_verdicts.py')))[
+            'bound_failure_matches']
+        marker = '#1100 target assertion'
+        full_test = 'test_compare_verdicts.CompareVerdictsTests.test_case_keys_preserve_case'
+        for actual, message, expected in ((0, marker, True),
+                                          (marker, '#1100 earlier stderr guard', False)):
+            with self.subTest(message=message):
+                try:
+                    self.assertEqual(actual, 1, message)
+                except AssertionError as error:
+                    result = SimpleNamespace(testsRun=1, errors=[],
+                                             bound_failures=[(full_test, (type(error), error, None))])
+                self.assertEqual(judge(result, full_test, marker), expected,
+                                 '#1100 actual-value marker is not the declared assertion message')
+                self.assertFalse(judge(result, 'another.test', marker),
+                                 '#1100 negative runner must bind the complete test name')
+
     def invoke(self, old, new, *, raw=False, json_output=True):
         with tempfile.TemporaryDirectory(prefix='compare-verdicts-') as directory:
             root = Path(directory)
@@ -49,6 +74,121 @@ class CompareVerdictsTests(unittest.TestCase):
             self.assertEqual({path.name: path.read_bytes() for path in root.iterdir()}, contents,
                              '#1100 comparator must leave both inputs and directory untouched')
             return result, json.loads(result.stdout) if json_output else result.stdout
+
+    def test_real_runner_summaries(self):
+        for filename in REAL_SUMMARIES:
+            with self.subTest(filename=filename):
+                raw = (TESTDATA / filename).read_bytes()
+                old = json.loads(raw)
+                result, report = self.invoke(raw, raw, raw=True)
+                self.assertEqual(result.returncode, 0, '#1100 real summary must be accepted unchanged')
+                self.assertEqual(report['same'], len(old['controls']),
+                                 '#1100 every real summary row must be compared')
+                for change, category in (('delete', 'missing_cases'), ('status', 'status_changes'),
+                                         ('test', 'test_changes'), ('assertion', 'assertion_changes')):
+                    with self.subTest(change=change):
+                        new = copy.deepcopy(old)
+                        row = new['controls'][0]
+                        if change == 'delete':
+                            new['controls'].pop(0)
+                        elif change == 'status':
+                            row['status'] = 'SURVIVED' if row['status'] != 'SURVIVED' else 'KILLED'
+                        elif 'targets' in row:
+                            row['targets'][0][0 if change == 'test' else 1] = '#1100 changed binding'
+                        else:
+                            row[change] = '#1100 changed binding'
+                        self.different(old, new, category)
+
+    def test_missing_assertion_is_explicit_empty_marker(self):
+        for identity in ('mutation', 'name'):
+            with self.subTest(identity=identity):
+                document = {'controls': [{identity: 'alpha', 'status': 'KILLED',
+                                          'test': 'suite::alpha', 'compiled': True}]}
+                result, report = self.invoke(document, document)
+                self.assertEqual(result.returncode, 0, '#1100 absent marker schema is supported')
+                self.assertEqual(report['table'][0]['old'][0]['bindings'],
+                                 [{'test': 'suite::alpha', 'assertion': ''}],
+                                 '#1100 absent assertion normalizes to explicit empty marker')
+                marked = copy.deepcopy(document)
+                marked['controls'][0]['assertion'] = '#1100 present marker'
+                for old, new in ((document, marked), (marked, document)):
+                    self.different(old, new, 'assertion_changes')
+                other = {'controls': [{'name' if identity == 'mutation' else 'mutation': 'alpha',
+                                       'status': 'KILLED', 'test': 'suite::alpha'}]}
+                result, _ = self.invoke(document, other)
+                self.assertEqual(result.returncode, 0, '#1100 missing marker forms normalize equally')
+
+    def test_missing_assertion_does_not_hide_unknown_bindings(self):
+        for schema in ('mutation', 'name', 'mutation-marker', 'name-marker', 'targets'):
+            for extra in ('anchor', 'message', 'markers', 'assertions', 'unknown'):
+                with self.subTest(schema=schema, extra=extra):
+                    identity = 'mutation' if schema.startswith('mutation') else 'name'
+                    row = {identity: 'alpha', 'status': 'KILLED', extra: '#1100 other marker'}
+                    if schema == 'targets':
+                        row['targets'] = [['suite::alpha', '#1100 marker']]
+                    else:
+                        row['test'] = 'suite::alpha'
+                        if schema.endswith('-marker'):
+                            row['assertion'] = '#1100 marker'
+                    document = {'controls': [row]}
+                    self.invalid(document, document, 'unsupported row fields')
+
+    def test_scalar_schemas_keep_other_fields_strict(self):
+        for identity in ('mutation', 'name'):
+            for has_marker in (False, True):
+                base = {identity: 'alpha', 'status': 'KILLED', 'test': 'suite::alpha'}
+                if has_marker:
+                    base['assertion'] = '#1100 marker'
+                for field, values in ((identity, [None, '', '  ', 1, [], {}]),
+                                      ('test', [None, '', '  ', 1, [], {}]),
+                                      ('status', [None, '', 'killed', 1, [], {}])):
+                    for value in values:
+                        with self.subTest(identity=identity, has_marker=has_marker,
+                                          field=field, value=value):
+                            row = {**base, field: value}
+                            self.invalid({'controls': [row]}, {'controls': [row]}, field)
+                for field in (identity, 'test', 'status'):
+                    with self.subTest(identity=identity, has_marker=has_marker, missing=field):
+                        row = dict(base)
+                        del row[field]
+                        self.invalid({'controls': [row]}, {'controls': [row]}, 'controls[0]')
+                for marker in (None, '', '  ', 1, {}, [], [''], [1], [['nested']]):
+                    with self.subTest(identity=identity, has_marker=has_marker, marker=marker):
+                        row = {**base, 'assertion': marker}
+                        self.invalid({'controls': [row]}, {'controls': [row]}, 'assertion')
+
+    def strict_case_keys(self, before, after):
+        for schema in ('mutation', 'name', 'targets'):
+            with self.subTest(schema=schema):
+                identity = 'mutation' if schema == 'mutation' else 'name'
+                row = {identity: before, 'status': 'KILLED'}
+                if schema == 'targets':
+                    row['targets'] = [['suite::alpha', '#1100 alpha']]
+                else:
+                    row['test'] = 'suite::alpha'
+                old = {'controls': [row]}
+                new = copy.deepcopy(old)
+                new['controls'][0][identity] = after
+                report = self.different(old, new, 'missing_cases')
+                self.assertEqual(report['differences']['missing_cases'], sorted([
+                    {'case': before, 'missing_from': 'new', 'severity': 'P0'},
+                    {'case': after, 'missing_from': 'old', 'severity': 'P0'},
+                ], key=lambda item: item['case']), '#1100 exact case keys require two missing rows')
+                human, text = self.invoke(old, new, json_output=False)
+                self.assertEqual(human.returncode, 1, '#1100 strict key human verdict')
+                section = text.split(SECTIONS['missing_cases'] + '\n', 1)[1].split('\n\n', 1)[0]
+                for key in (before, after):
+                    self.assertIn(json.dumps(key), section,
+                                  '#1100 both exact case keys appear in human missing section')
+
+    def test_case_keys_preserve_case(self):
+        self.strict_case_keys('alpha', 'Alpha')
+
+    def test_case_keys_preserve_whitespace(self):
+        self.strict_case_keys('alpha', 'alpha ')
+
+    def test_case_keys_preserve_unicode(self):
+        self.strict_case_keys('caf\u00e9', 'cafe\u0301')
 
     def different(self, old, new, category):
         result, report = self.invoke(old, new)
@@ -215,7 +355,7 @@ class CompareVerdictsTests(unittest.TestCase):
                 self.assertEqual([e['side'] for e in report['errors']], ['old', 'new'])
 
     def test_missing_required_fields(self):
-        for field in ('mutation', 'status', 'test', 'assertion'):
+        for field in ('mutation', 'status', 'test'):
             with self.subTest(field=field):
                 document = summary()
                 del document['controls'][0][field]
@@ -241,10 +381,11 @@ class CompareVerdictsTests(unittest.TestCase):
 
     def test_unknown_and_mixed_row_schemas(self):
         variants = [
-            {'name': 'alpha', 'status': 'KILLED', 'test': 'test', 'assertion': 'marker'},
+            {'name': 'alpha', 'status': 'KILLED', 'assertion': 'marker'},
             {**summary()['controls'][0], 'name': 'other'},
             {**summary()['controls'][0], 'targets': [['test', 'marker']]},
             {'name': 'alpha', 'status': 'KILLED', 'targets': [['test', 'marker']], 'test': 'other'},
+            {'name': 'alpha', 'status': 'KILLED', 'targets': [['test', 'marker']], 'assertion': 'other'},
         ]
         for row in variants:
             with self.subTest(row=row):

@@ -1,0 +1,385 @@
+{
+  "controls": [
+    {
+      "name": "cwd-swallowed",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true,
+      "restoredPass": true,
+      "targets": [
+        [
+          "relative_deleted_cwd",
+          "native metadata matrix: relative-deleted"
+        ],
+        [
+          "empty_deleted_cwd",
+          "native metadata matrix: empty-deleted"
+        ]
+      ],
+      "hits": [
+        "relative_deleted_cwd",
+        "empty_deleted_cwd"
+      ]
+    },
+    {
+      "name": "absolute-home-error",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true,
+      "restoredPass": true,
+      "targets": [
+        [
+          "absolute_deleted_cwd",
+          "native metadata matrix: absolute-deleted"
+        ],
+        [
+          "tilde_deleted_cwd",
+          "native metadata matrix: tilde-deleted"
+        ],
+        [
+          "tilde_child_deleted_cwd",
+          "native metadata matrix: tilde-child-deleted"
+        ],
+        [
+          "unset_deleted_cwd",
+          "native metadata matrix: unset-deleted"
+        ]
+      ],
+      "hits": [
+        "absolute_deleted_cwd",
+        "tilde_deleted_cwd",
+        "tilde_child_deleted_cwd",
+        "unset_deleted_cwd"
+      ]
+    },
+    {
+      "name": "missing-home-error",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true,
+      "restoredPass": true,
+      "targets": [
+        [
+          "missing_home_deleted_cwd",
+          "native metadata matrix: missing-home-deleted"
+        ]
+      ],
+      "hits": [
+        "missing_home_deleted_cwd"
+      ]
+    },
+    {
+      "name": "cwd-message",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true,
+      "restoredPass": true,
+      "targets": [
+        [
+          "relative_deleted_cwd",
+          "native metadata matrix: relative-deleted"
+        ],
+        [
+          "empty_deleted_cwd",
+          "native metadata matrix: empty-deleted"
+        ]
+      ],
+      "hits": [
+        "relative_deleted_cwd",
+        "empty_deleted_cwd"
+      ]
+    },
+    {
+      "name": "cwd-code",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true,
+      "restoredPass": true,
+      "targets": [
+        [
+          "relative_deleted_cwd",
+          "native metadata matrix: relative-deleted"
+        ],
+        [
+          "empty_deleted_cwd",
+          "native metadata matrix: empty-deleted"
+        ]
+      ],
+      "hits": [
+        "relative_deleted_cwd",
+        "empty_deleted_cwd"
+      ]
+    },
+    {
+      "name": "cwd-name",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true,
+      "restoredPass": true,
+      "targets": [
+        [
+          "relative_deleted_cwd",
+          "native metadata matrix: relative-deleted"
+        ],
+        [
+          "empty_deleted_cwd",
+          "native metadata matrix: empty-deleted"
+        ]
+      ],
+      "hits": [
+        "relative_deleted_cwd",
+        "empty_deleted_cwd"
+      ]
+    },
+    {
+      "name": "normal-home-layout",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true,
+      "restoredPass": true,
+      "targets": [
+        [
+          "relative_normal_cwd",
+          "native metadata matrix: relative-normal"
+        ],
+        [
+          "empty_normal_cwd",
+          "native metadata matrix: empty-normal"
+        ],
+        [
+          "absolute_normal_cwd",
+          "native metadata matrix: absolute-normal"
+        ],
+        [
+          "tilde_normal_cwd",
+          "native metadata matrix: tilde-normal"
+        ],
+        [
+          "tilde_child_normal_cwd",
+          "native metadata matrix: tilde-child-normal"
+        ],
+        [
+          "unset_normal_cwd",
+          "native metadata matrix: unset-normal"
+        ]
+      ],
+      "hits": [
+        "relative_normal_cwd",
+        "empty_normal_cwd",
+        "absolute_normal_cwd",
+        "tilde_normal_cwd",
+        "tilde_child_normal_cwd",
+        "unset_normal_cwd"
+      ]
+    },
+    {
+      "name": "normal-cwd-layout",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true,
+      "restoredPass": true,
+      "targets": [
+        [
+          "relative_normal_cwd",
+          "native metadata matrix: relative-normal"
+        ],
+        [
+          "empty_normal_cwd",
+          "native metadata matrix: empty-normal"
+        ],
+        [
+          "absolute_normal_cwd",
+          "native metadata matrix: absolute-normal"
+        ],
+        [
+          "tilde_normal_cwd",
+          "native metadata matrix: tilde-normal"
+        ],
+        [
+          "tilde_child_normal_cwd",
+          "native metadata matrix: tilde-child-normal"
+        ],
+        [
+          "unset_normal_cwd",
+          "native metadata matrix: unset-normal"
+        ]
+      ],
+      "hits": [
+        "relative_normal_cwd",
+        "empty_normal_cwd",
+        "absolute_normal_cwd",
+        "tilde_normal_cwd",
+        "tilde_child_normal_cwd",
+        "unset_normal_cwd"
+      ]
+    },
+    {
+      "name": "missing-home-default",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true,
+      "restoredPass": true,
+      "targets": [
+        [
+          "missing_home_normal_cwd",
+          "native metadata matrix: missing-home-normal"
+        ]
+      ],
+      "hits": [
+        "missing_home_normal_cwd"
+      ]
+    },
+    {
+      "name": "catalog-swallow",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true,
+      "restoredPass": true,
+      "targets": [
+        [
+          "relative_deleted_cwd",
+          "catalog route matrix: relative-deleted"
+        ],
+        [
+          "empty_deleted_cwd",
+          "catalog route matrix: empty-deleted"
+        ]
+      ],
+      "hits": [
+        "relative_deleted_cwd",
+        "empty_deleted_cwd"
+      ]
+    },
+    {
+      "name": "session-swallow",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true,
+      "restoredPass": true,
+      "targets": [
+        [
+          "relative_deleted_cwd",
+          "session metadata route matrix: relative-deleted"
+        ],
+        [
+          "empty_deleted_cwd",
+          "session metadata route matrix: empty-deleted"
+        ]
+      ],
+      "hits": [
+        "relative_deleted_cwd",
+        "empty_deleted_cwd"
+      ]
+    },
+    {
+      "name": "catalog-normal-forward",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true,
+      "restoredPass": true,
+      "targets": [
+        [
+          "relative_normal_cwd",
+          "catalog route matrix: relative-normal"
+        ],
+        [
+          "empty_normal_cwd",
+          "catalog route matrix: empty-normal"
+        ],
+        [
+          "absolute_normal_cwd",
+          "catalog route matrix: absolute-normal"
+        ],
+        [
+          "tilde_normal_cwd",
+          "catalog route matrix: tilde-normal"
+        ],
+        [
+          "tilde_child_normal_cwd",
+          "catalog route matrix: tilde-child-normal"
+        ],
+        [
+          "unset_normal_cwd",
+          "catalog route matrix: unset-normal"
+        ]
+      ],
+      "hits": [
+        "relative_normal_cwd",
+        "empty_normal_cwd",
+        "absolute_normal_cwd",
+        "tilde_normal_cwd",
+        "tilde_child_normal_cwd",
+        "unset_normal_cwd"
+      ]
+    },
+    {
+      "name": "frame-code",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true,
+      "restoredPass": true,
+      "targets": [
+        [
+          "relative_deleted_cwd",
+          "catalog route matrix: relative-deleted"
+        ],
+        [
+          "empty_deleted_cwd",
+          "catalog route matrix: empty-deleted"
+        ]
+      ],
+      "hits": [
+        "relative_deleted_cwd",
+        "empty_deleted_cwd"
+      ]
+    },
+    {
+      "name": "frame-message",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true,
+      "restoredPass": true,
+      "targets": [
+        [
+          "relative_deleted_cwd",
+          "catalog route matrix: relative-deleted"
+        ],
+        [
+          "empty_deleted_cwd",
+          "catalog route matrix: empty-deleted"
+        ]
+      ],
+      "hits": [
+        "relative_deleted_cwd",
+        "empty_deleted_cwd"
+      ]
+    },
+    {
+      "name": "frame-id",
+      "status": "KILLED",
+      "reason": "named assertions produced current nonce receipts",
+      "compiled": true,
+      "restoredPass": true,
+      "targets": [
+        [
+          "relative_deleted_cwd",
+          "catalog route matrix: relative-deleted"
+        ],
+        [
+          "empty_deleted_cwd",
+          "catalog route matrix: empty-deleted"
+        ]
+      ],
+      "hits": [
+        "relative_deleted_cwd",
+        "empty_deleted_cwd"
+      ]
+    }
+  ],
+  "counts": {
+    "KILLED": 15,
+    "SURVIVED": 0,
+    "INVALID": 0,
+    "COMPILED": 0
+  }
+}
