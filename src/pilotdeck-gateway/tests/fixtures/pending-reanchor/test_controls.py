@@ -158,7 +158,9 @@ class Controls(unittest.TestCase):
             self.assertIn('pending-reanchor=0', report, f'{LABEL} unwired not pending')
         for relative in ('mcp-http-encoding/negative.py', 'skills-external/negative_controls.py',
                          'pump-order-cases/negative_controls.py', 'turn-gates/negative.py',
-                         'turn-runner-tail/negative_controls.py', 'interaction-bus/negative_controls.py'):
+                         'turn-runner-tail/negative_controls.py', 'interaction-bus/negative_controls.py',
+                         'tool-budget-cwd/negative_controls.py', 'tool-budget-cwd/session_negative.py',
+                         'turn-prompt-hooks/negative_controls.py', 'turn-start-notices/negative_controls.py'):
             self.assertFalse(pending.supports_host(relative), f'{LABEL} earlier host path')
         self.assertEqual(self.scan()[0], 0, f'{LABEL} shared host restored')
 
