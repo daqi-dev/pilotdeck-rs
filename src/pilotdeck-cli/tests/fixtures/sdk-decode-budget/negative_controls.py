@@ -89,12 +89,24 @@ def check(row):
 
 
 def crate_files(rel):
-    out = subprocess.run(['git', '-C', str(root), 'ls-files', '-z', '--', rel],
+    # Enumerate from the HEAD tree, not the index: a staged deletion must not
+    # drop a file from the guard while Cargo still reads it from disk (#983 r6).
+    out = subprocess.run(['git', '-C', str(root), 'ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', rel],
                          check=True, capture_output=True).stdout
     files = [root / name for name in out.decode().split('\0') if name]
     if not files:
         raise SystemExit(f'#983 no tracked files under {rel}')
     return files
+
+
+def tree_matches_head():
+    """Every tracked file (index and worktree) equals HEAD: closes transitive build inputs (#983 r6)."""
+    staged = subprocess.run(['git', '-C', str(root), 'diff', '--cached', '--quiet', 'HEAD'])
+    unstaged = subprocess.run(['git', '-C', str(root), 'diff', '--quiet', 'HEAD'])
+    if staged.returncode != 0 or unstaged.returncode != 0:
+        listing = subprocess.run(['git', '-C', str(root), 'status', '--porcelain', '--untracked-files=no'],
+                                 capture_output=True, text=True).stdout
+        raise RuntimeError('#983 tracked tree differs from HEAD before positive control:\n' + listing)
 
 
 def main():
@@ -162,6 +174,7 @@ def main():
             with mutating_sources(root, guarded) as originals:
                 original = originals[row.path].decode()
                 try:
+                    tree_matches_head()
                     if not compile_only and not passed(run(row.name + '-positive', row, env),
                                                         row.test):
                         raise RuntimeError('positive bound test failed')
