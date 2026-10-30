@@ -13,10 +13,13 @@ root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 lazy = 'host = async { host_factory(request.identity.clone(), recorder.clone(), signal).await } => host?,'
 # pr5f added a second select in submit. Bind the whole factory select exactly
-# once; neither the client gate nor its cancellation priority is mutated.
+# once; #996-pr2's gates-factory-ready-priority precondition is part of the
+# bound text. factory-before-cancel still only reorders the arms, and
+# ignore-factory-cancel swaps the cancelled() future for a never-ready one
+# while leaving the precondition untouched.
 factory_select = """                let (client, inner, lease, manifest, interaction_events, prompt_hooks, lifecycle) = tokio::select! {
                     biased;
-                    _ = cancellation.cancelled() => {
+                    _ = cancellation.cancelled(), if !crate::mutants::on("gates-factory-ready-priority") => {
                         return Ok(ExecuteResult::Aborted { terminal: None });
                     }
                     // select constructs every branch before polling; keep the
@@ -28,7 +31,7 @@ mutations = [
     ('factory-before-cancel', factory_select,
      factory_select.replace(lazy, '').replace('biased;', 'biased; ' + lazy)),
     ('ignore-factory-cancel', factory_select,
-     factory_select.replace('_ = cancellation.cancelled() =>', '_ = std::future::pending::<()>() =>')),
+     factory_select.replace('_ = cancellation.cancelled()', '_ = std::future::pending::<()>()')),
 ]
 if sys.argv[1:] == ['--check']:
     raise SystemExit(check_mutations((n, source, None, [(o, v)]) for n, o, v in mutations))

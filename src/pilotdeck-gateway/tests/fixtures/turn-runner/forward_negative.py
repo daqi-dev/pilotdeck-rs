@@ -119,8 +119,12 @@ cases = [
     ('status-pending-retained', base / 'live.rs',
      'if self.pending_event.is_some() {', 'if self.pending_event.take().is_some() {',
      None, test_prefix + 'forward_status_cancel', '#741h status predecessor still pending'),
+    # #996-pr2 fix-r5: the gates-release-pending-slot switch made this let a
+    # multi-line if/else, which the scoped mutate() single-line rule rejects.
+    # Anchor the else branch alone; replacing it with a typed None keeps the
+    # same mutant (the io worker holds no owner Arc).
     ('status-worker-slot', base / 'runner.rs',
-     'let owner = if crate::mutants::on("gates-release-pending-slot") {\n            None\n        } else {\n            self.owner.clone()\n        };', 'let owner: Option<Arc<dyn Send + Sync>> = None;',
+     'self.owner.clone()', 'Option::<Arc<dyn Send + Sync>>::None',
      'io', test_prefix + 'forward_status_drop', '#741h status dropped worker holds slot'),
     ('status-worker-lease', base / 'runner.rs',
      'let result = write(&recorder, &session, &turn);\n            drop(owner);\n            drop(lease);', 'drop(lease);\n            let result = write(&recorder, &session, &turn);\n            drop(owner);',
