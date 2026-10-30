@@ -1442,11 +1442,10 @@ mod tests {
         runtime::tools::builtin::is_absolute,
     };
     use std::{
-        os::unix::fs::PermissionsExt,
         path::PathBuf,
         sync::{
             Arc,
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         time::{Duration as StdDuration, UNIX_EPOCH},
     };
@@ -1469,11 +1468,14 @@ mod tests {
             Self { root }
         }
 
+        /// #1125: the file is published by rename through
+        /// [`crate::test_scratch::write_executable`]; a test that writes the
+        /// exec'd path directly can hit ETXTBSY when a sibling test thread
+        /// forks while the writer's descriptor is still open.
         fn script(&self, name: &str, body: &str) -> PathBuf {
             let path = self.root.join(name);
-            std::fs::write(&path, body).expect("write script");
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-                .expect("chmod script");
+            crate::test_scratch::write_executable(&path, body, 0o755)
+                .expect("#1125 publish script by rename");
             path
         }
     }
@@ -1847,16 +1849,15 @@ mod tests {
         std::fs::write(package_dir.join("package.json"), "{}").expect("wrapper manifest");
         let bundled = bin.join("rg");
         let leader_file = scratch.root.join("leader.pid");
-        std::fs::write(
+        crate::test_scratch::write_executable(
             &bundled,
-            format!(
+            &format!(
                 "#!/bin/sh\necho $$ > '{}'\nprintf 'x.txt:1:hit\\n'\n",
                 leader_file.display()
             ),
+            0o755,
         )
-        .expect("write bundled");
-        std::fs::set_permissions(&bundled, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod bundled");
+        .expect("#1125 publish bundled rg by rename");
 
         let resolved =
             resolve_ripgrep_with(None, std::slice::from_ref(&app)).expect("bundled resolution");
@@ -1914,9 +1915,8 @@ mod tests {
         let path_dir = scratch.root.join("path-bin");
         std::fs::create_dir(&path_dir).expect("path bin");
         let on_path = path_dir.join("rg");
-        std::fs::write(&on_path, "#!/bin/sh\nexit 0\n").expect("write path rg");
-        std::fs::set_permissions(&on_path, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod path rg");
+        crate::test_scratch::write_executable(&on_path, "#!/bin/sh\nexit 0\n", 0o755)
+            .expect("#1125 publish path rg by rename");
         assert!(is_executable(&on_path), "precondition: rg is on PATH");
         // Drive the same entry point the tool uses, with only a scratch root
         // and a pinned executable parent so the real machine's module tree
@@ -2026,28 +2026,87 @@ mod tests {
                 .stdout(Stdio::piped())
                 .kill_on_drop(true)
                 .spawn()
-                .expect("member");
-            let pid = rustix::process::Pid::from_raw(child.id().expect("pid") as i32).expect("pid");
+                .expect("#1125 member spawn");
+            let pid = rustix::process::Pid::from_raw(child.id().expect("#1125 member pid") as i32)
+                .expect("#1125 member pid");
             let mut ready = [0; 5];
             child
                 .stdout
                 .take()
-                .expect("stdout")
+                .expect("#1125 member stdout")
                 .read_exact(&mut ready)
                 .await
-                .expect("ready");
+                .expect("#1125 member ready");
             kill_descendant_if_alive(pid);
             let mut wait = std::pin::pin!(child.wait());
             let status = drive_test_run(wait.as_mut(), || false, Duration::ZERO)
                 .await
-                .expect("member reaped")
-                .expect("wait member");
+                .expect("#1125 member reaped")
+                .expect("#1125 member wait");
             use std::os::unix::process::ExitStatusExt;
             assert_eq!(
                 status.signal(),
-                Some(rustix::process::Signal::KILL.as_raw())
+                Some(rustix::process::Signal::KILL.as_raw()),
+                "#1125 member exit signal"
             );
         });
+    }
+
+    /// #1125: `Scratch::script` must publish the exec'd file by rename. A
+    /// direct write on the final path leaves a window where this thread holds
+    /// the file open for writing; a sibling test thread that forks inside
+    /// that window hands the write descriptor to its child (which keeps it
+    /// until its own exec), and exec'ing the script then fails with ETXTBSY
+    /// (`Os { code: 26, kind: ExecutableFileBusy }`) on Linux.
+    ///
+    /// This loop reproduces a parallel libtest run's fork pressure in one
+    /// process: while the forkers below spawn continuously, every iteration
+    /// writes the script and immediately execs it. With the rename
+    /// publication the exec'd inode has never been open for writing
+    /// anywhere, so the loop cannot fail; the same loop against a direct
+    /// write of the final path hits ETXTBSY on Linux (the `grep-etxtbsy`
+    /// negative control proves it there). macOS std::process uses
+    /// posix_spawn, which never leaves the inherited-descriptor window
+    /// observable, so only the smoke count runs there — the full count is
+    /// the Linux contract the issue asks for.
+    #[test]
+    fn script_spawn_survives_concurrent_forks() {
+        #[cfg(target_os = "linux")]
+        const ITERATIONS: usize = 300;
+        #[cfg(not(target_os = "linux"))]
+        const ITERATIONS: usize = 5;
+        let scratch = Scratch::new("etxtbsy");
+        let stop = Arc::new(AtomicBool::new(false));
+        let forkers: Vec<_> = (0..4)
+            .map(|_| {
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        // Fork pressure only: a failed spawn (a missing
+                        // program, or transient EAGAIN under load) loses
+                        // pressure but is not the race under test, and must
+                        // not turn the loop into a busy spin.
+                        if std::process::Command::new("/usr/bin/true")
+                            .status()
+                            .is_err()
+                        {
+                            std::thread::sleep(StdDuration::from_millis(5));
+                        }
+                    }
+                })
+            })
+            .collect();
+        for index in 0..ITERATIONS {
+            let script = scratch.script("member", "#!/bin/sh\nexit 0\n");
+            let status = std::process::Command::new(&script)
+                .status()
+                .unwrap_or_else(|error| panic!("#1125 iteration {index} exec: {error}"));
+            assert!(status.success(), "#1125 iteration {index} status: {status}");
+        }
+        stop.store(true, Ordering::Relaxed);
+        for forker in forkers {
+            forker.join().expect("#1125 forker thread must not panic");
+        }
     }
 
     #[test]
@@ -2317,9 +2376,8 @@ mod tests {
             let dir = root.join(shape);
             std::fs::create_dir_all(&dir).expect("create fixture dir");
             let script = dir.join("rg");
-            std::fs::write(&script, orphan_script(shape, &dir)).expect("write fake rg");
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-                .expect("chmod fake rg");
+            crate::test_scratch::write_executable(&script, &orphan_script(shape, &dir), 0o755)
+                .expect("#1125 publish fake rg by rename");
             let mut command = std::process::Command::new(&script);
             command
                 // Same detached group as `run_ripgrep`'s spawn (grep.rs:591-603,
