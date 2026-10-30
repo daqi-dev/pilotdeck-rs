@@ -187,6 +187,11 @@ impl LiveSessionHandle {
             .map(|s| s.file_state)
     }
 
+    /// Capture the executor that owns this session's asynchronous cleanup.
+    ///
+    /// # Panics
+    /// Must be constructed inside a Tokio runtime. Later disposal and Drop
+    /// may run on a plain thread; they continue to use this captured executor.
     pub fn new(session: Arc<dyn LiveSession>, lease: Option<RuntimeLease>) -> Self {
         Self(Arc::new(Inner {
             session,
@@ -316,7 +321,10 @@ impl Inner {
     /// last handle clone (#1010). The first call owns the single drain task;
     /// every later call — including Drop's — shares its completion channel.
     fn start_dispose(&self, reason: JsString) -> watch::Receiver<Option<RuntimeResult>> {
-        let mut progress = self.progress.lock().unwrap();
+        let mut progress = self
+            .progress
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(completion) = &progress.disposal {
             return completion.clone();
         }
@@ -334,7 +342,11 @@ impl Inner {
         let progress = self.progress.clone();
         let changed = self.changed.clone();
         let executor = self.executor.clone();
-        let lease = self.lease.lock().unwrap().take();
+        let lease = self
+            .lease
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
         // #1010: not a spawn-and-hope. If the executor rejects the task, or a
         // dropped/shut-down runtime drops it unpolled, this guard's own Drop
         // still lands the runtime-free cleanup: the custom writer guard
@@ -343,6 +355,8 @@ impl Inner {
         // the fallback cannot be skipped by "successfully" spawning.
         let fallback = DisposeFallback {
             session: Some(session.clone()),
+            progress: progress.clone(),
+            result: result.clone(),
         };
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             executor.spawn(async move {
@@ -368,13 +382,20 @@ impl Inner {
                         // after the ordinary disposer already returned a result.
                         let completed = self.outcome.is_some() && !std::thread::panicking();
                         {
-                            let mut progress = self.handle_progress.lock().unwrap();
+                            let mut progress = self
+                                .handle_progress
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                             progress.disposal_completed = completed;
                             progress.state = HandleState::Disposed;
                         }
                         let outcome = if completed { self.outcome.take() } else { None }
                             .unwrap_or_else(|| {
-                                Err(RuntimeError::new("Agent session dispose task panicked."))
+                                Err(RuntimeError::new(if std::thread::panicking() {
+                                    "Agent session dispose task panicked."
+                                } else {
+                                    "Agent session dispose task cancelled."
+                                }))
                             });
                         self.result.send_replace(Some(outcome));
                     }
@@ -412,7 +433,11 @@ impl Inner {
                 let mut failures: Vec<_> = abort_error.into_iter().collect();
                 let mut changed = changed.subscribe();
                 loop {
-                    if !progress.lock().unwrap().activity {
+                    if !progress
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .activity
+                    {
                         break;
                     }
                     let _ = changed.changed().await;
@@ -447,6 +472,8 @@ impl Inner {
 /// or unpolled future, so its Drop executes in all shutdown modes.
 struct DisposeFallback {
     session: Option<Arc<dyn LiveSession>>,
+    progress: Arc<Mutex<Progress>>,
+    result: watch::Sender<Option<RuntimeResult>>,
 }
 impl DisposeFallback {
     /// The drain body took over: its DisposeGuard and writer guard now own
@@ -466,6 +493,15 @@ impl Drop for DisposeFallback {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 drop(session.disposal_guard());
             }));
+            // No asynchronous hook completed. Publish a terminal error for
+            // every explicit waiter, without granting recreation eligibility.
+            self.progress
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .state = HandleState::Disposed;
+            self.result.send_replace(Some(Err(RuntimeError::new(
+                "Session lifecycle executor stopped.",
+            ))));
         }
     }
 }
@@ -514,7 +550,12 @@ impl HandleActivity {
 
 impl Drop for HandleActivity {
     fn drop(&mut self) {
-        self.0.0.progress.lock().unwrap().activity = false;
+        self.0
+            .0
+            .progress
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .activity = false;
         self.0.0.changed.send_modify(|version| *version += 1);
     }
 }
