@@ -120,18 +120,23 @@ async fn matrix(name: &str) {
                             env!("CARGO_MANIFEST_DIR"),
                             "/tests/fixtures/turn-gates/peer.py"
                         ))
-                        .arg(mode)
+                        .arg(&mode)
                         .arg(marker);
                     let client = HostClient::spawn(
                         &mut command,
                         Some(&"fixture".into()),
                         Limits {
-                            handshake_timeout: Duration::from_secs(5),
+                            // #1080: use the default startup budget. A 6s Python
+                            // startup delay exhausted the former 5s override
+                            // before execute, masquerading as a gate-count bug.
                             execution_timeout: Some(Duration::from_secs(10)),
                             ..Limits::default()
                         },
                     )
-                    .await?;
+                    .await
+                    .inspect_err(|error| {
+                        eprintln!("#1080 gates {mode} handshake prerequisite: {error:?}");
+                    })?;
                     children
                         .lock()
                         .expect("#743 gates prerequisite")
@@ -242,6 +247,8 @@ async fn matrix(name: &str) {
                 events.push(event);
                 if kind == Some("model_event".into()) {
                     if name.starts_with("cancel-") {
+                        // The peer closes the execute marker before emitting
+                        // this event: it is already our execute-entry latch.
                         session
                             .abort(&"user-stop".into())
                             .expect("#743 gates prerequisite");
