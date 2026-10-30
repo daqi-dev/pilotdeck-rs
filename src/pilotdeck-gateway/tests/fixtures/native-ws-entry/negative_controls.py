@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""#749 compile-time switches. HEAD guard is mandatory, including --compile-only.
+"""#749 compile-time switches with per-row compilation and nonce receipts.
 
-No source replacement. Caller supplies CARGO_TARGET_DIR; every row is compiled
-before it runs, and every selection is accounted for even after a failed row.
+No source replacement: use the shared tree lock + working-tree SHA contract.
+Caller supplies CARGO_TARGET_DIR; all selected rows run before the summary exit.
 """
 import argparse
 import json
@@ -13,9 +13,10 @@ import sys
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURE = Path(__file__).resolve().parent
 sys.path.insert(0, str(FIXTURE.parent))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import tree_lock, run_owned, wait_for_slot
 from negative_suite import ReceiptRun, judge, passed
-from _shared.mutant_switch import preflight
+from _shared.mutant_switch import (preflight, clean_environment, record_sources,
+                                   verify_unchanged, enforce_denominator)
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_ws.rs'
 PREFIX = 'native_ws::tests::'
 switches = [
@@ -34,6 +35,23 @@ switches = [
     ('native-ws-skip-host-cleanup', ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs', PREFIX + 'host_cleanup_precedes_runtime_exit', '#749 owned cleanup called'),
     ('native-ws-error-skips-cleanup', ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs', PREFIX + 'host_cleanup_runs_after_session_failure', '#749 cleanup runs after session failure'),
     ('native-ws-skip-drain', SOURCE, PREFIX + 'stop_accepting_drains_existing', '#749 drain waits for existing socket'),
+    ('native-ws-input-boundary', ROOT / 'src/pilotdeck-gateway/src/frame.rs', PREFIX + 'input_limit_boundary_preserves_proxy', '#749 exact input boundary remains accepted'),
+    ('native-ws-full-close-signal', SOURCE, PREFIX + 'output_slot_budget_and_full_close', '#749 full output queue forces close independently'),
+    ('native-ws-leak-output-permit', SOURCE, PREFIX + 'completed_writes_and_requests_release_capacity', '#749 completed writes and requests release capacity'),
+    ('native-ws-retain-completed-requests', SOURCE, PREFIX + 'completed_writes_and_requests_release_capacity', '#749 completed writes and requests release capacity'),
+    ('native-ws-buffer-limit', SOURCE, PREFIX + 'buffered_input_never_exceeds_frame_budget', '#749 buffered input capped before read allocation'),
+    ('native-ws-reset-close-deadline', SOURCE, PREFIX + 'close_deadline_is_not_extended_by_eof', '#749 EOF preserves first close deadline'),
+    ('native-ws-input-limit', SOURCE, PREFIX + 'oversized_header_closes_before_payload', '#749 input limit rejects header before allocation'),
+    ('native-ws-input-close-code', SOURCE, PREFIX + 'oversized_header_closes_before_payload', '#749 input limit close code'),
+    ('native-ws-output-bytes', SOURCE, PREFIX + 'output_byte_budget_includes_inflight_and_recovers', '#749 byte limit includes blocked writer'),
+    ('native-ws-output-slots', SOURCE, PREFIX + 'output_slot_budget_and_full_close', '#749 full output queue forces close independently'),
+    ('native-ws-writer-deadline', SOURCE, PREFIX + 'writer_deadline_releases_socket_before_stuck_business', '#749 writer deadline releases socket despite held business'),
+    ('native-ws-reader-deadline', SOURCE, PREFIX + 'close_deadline_reclaims_peer_without_fin', '#749 reader close deadline reclaims peer without FIN'),
+    ('native-ws-pending-limit', SOURCE, PREFIX + 'pending_requests_are_bounded_before_enqueue', '#749 pending cap rejects before host enqueue'),
+    ('native-ws-drain-no-deadline', SOURCE, PREFIX + 'bounded_drain', '#749 bounded host exit'),
+    ('native-ws-handshake-no-deadline', SOURCE, PREFIX + 'shutdown_cancels_handshake', '#749 half handshake bounded'),
+    ('native-ws-handshake-leak', SOURCE, PREFIX + 'shutdown_cancels_handshake', '#749 half handshake reclaimed'),
+    ('native-ws-drain-false-success', SOURCE, PREFIX + 'idle_socket_drain_reports_deadline', '#749 idle drain cannot claim success'),
 ]
 
 
@@ -60,7 +78,7 @@ def main():
     selected = [row for row in switches if row[0] in names]
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=False)
-    env = dict(os.environ, CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only')
+    env = dict(clean_environment(os.environ), CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only')
     for key in ('PDRS_MUTANT', ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'CARGO_TERM_QUIET'):
         env.pop(key, None)
     guarded = [SOURCE, SOURCE.with_suffix('') / 'tests.rs', ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs',
@@ -73,6 +91,14 @@ def main():
     guarded += [path for path in FIXTURE.iterdir() if path.is_file()]
     rows = []
 
+    def publish():
+        counts = {state: sum(row['status'] == state for row in rows)
+                  for state in ('KILLED', 'SURVIVED', 'INVALID', 'COMPILED')}
+        pending = output / 'summary.json.tmp'
+        pending.write_text(json.dumps({'controls': rows, 'counts': counts}, indent=2) + '\n')
+        pending.replace(output / 'summary.json')
+        return counts
+
     def run(label, test, current, compile_only=False):
         slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=900)
         (output / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
@@ -84,7 +110,8 @@ def main():
         return result
 
     try:
-        with mutating_sources(ROOT, guarded):
+        with tree_lock(ROOT, timeout=900):
+            hashes = record_sources(ROOT, output, guarded)
             for name, _, test, assertion in selected:
                 row = dict(name=name, test=test, status='INVALID', reason='not run', compiled=False)
                 try:
@@ -101,22 +128,28 @@ def main():
                         result = run(name + '-negative', test, receipt.environment(changed))
                         killed, reason, hits = judge(result, '', [(test, assertion)], receipt)
                         row.update(status='KILLED' if killed else ('SURVIVED' if passed(result, test) else 'INVALID'), reason=reason, hits=hits)
-                        if not passed(run(name + '-restored', test, env), test):
-                            raise RuntimeError('restored bound test failed')
                 except Exception as error:
                     row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+                # Always restore the selector and verify, including failed
+                # positives, compilation errors and receipt exceptions.
+                if not args.compile_only:
+                    try:
+                        if not passed(run(name + '-restored', test, env), test):
+                            raise RuntimeError('restored bound test failed')
+                    except Exception as error:
+                        row.update(status='INVALID', reason=row['reason'] + f'; restored: {error}')
                 rows.append(row)
+                publish()
                 print(f'{name}: {row["status"]}: {row["reason"]}', flush=True)
+            verify_unchanged(ROOT, hashes)
+            enforce_denominator(ROOT, Path(__file__), rows, args.selected)
     except Exception as error:
         reason = f'source guard: {type(error).__name__}: {error}'
         for row in rows:
             row.update(status='INVALID', reason=reason, compiled=False)
         for name, _, test, _ in selected[len(rows):]:
             rows.append(dict(name=name, test=test, status='INVALID', reason=reason, compiled=False))
-    counts = {state: sum(row['status'] == state for row in rows) for state in ('KILLED', 'SURVIVED', 'INVALID', 'COMPILED')}
-    summary = output / 'summary.json.tmp'
-    summary.write_text(json.dumps({'controls': rows, 'counts': counts}, indent=2) + '\n')
-    summary.replace(output / 'summary.json')
+    counts = publish()
     print(json.dumps(counts), flush=True)
     required = 'COMPILED' if args.compile_only else 'KILLED'
     return int(not rows or any(row['status'] != required for row in rows))

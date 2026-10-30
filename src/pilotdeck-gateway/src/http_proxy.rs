@@ -324,6 +324,7 @@ pub(crate) fn plain(status: StatusCode, message: &'static str) -> Response<Body>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_native_ws_sample::RFC6455_SAMPLE_NONCE;
     use hyper_util::{client::legacy::Client, rt::TokioExecutor};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -340,7 +341,7 @@ mod tests {
         }
         headers.insert(
             header::SEC_WEBSOCKET_KEY,
-            "dGhlIHNhbXBsZSBub25jZQ==".parse().unwrap(),
+            RFC6455_SAMPLE_NONCE.parse().unwrap(),
         );
         assert_eq!(
             acceptor::websocket_accept(&headers).as_deref(),
