@@ -82,3 +82,33 @@ export async function followups(base:string,output:string) {
  console.log('PASS: #1022 real stdio drain and abort throw cleanup');
  return rows;
 }
+
+// #1122: real AgentHandle maintenance exposes the explicit dispose reason.
+// The held callback never completes until the probe releases it; aborting the
+// signal does not falsely count as draining the callback itself.
+export async function cancellationDisposal(base:string) {
+ assert.equal(process.version,'v22.22.0','#1122 Node version');
+ const {AgentHandle}=await import(`${base}/src/agent/scope/AgentHandle.ts`);
+ const entered=deferred(),release=deferred();
+ const reasons:string[]=[];let disposed=0,signal:AbortSignal|undefined;
+ const handle=new AgentHandle({sessionId:'candidate-1122',pendingTurns:()=>[]} as any,{onDispose:()=>{disposed++;}});
+ handle.addDisposeStartListener((reason:string)=>{reasons.push(reason);});
+ const running=handle.runMaintenance(async(current:AbortSignal)=>{signal=current;entered.resolve();await release.promise;});
+ try {
+  await bounded(entered.promise,'#1122 maintenance entered');
+  const before={state:handle.state,aborted:signal!.aborted,disposed};
+  const disposing=handle.dispose('session_create_cancelled');
+  // Listener completion precedes maintenance abort in the real implementation.
+  await bounded(new Promise<void>(resolve=>{if(signal!.aborted)resolve();else signal!.addEventListener('abort',()=>resolve(),{once:true});}),'#1122 maintenance abort');
+  const during={state:handle.state,aborted:signal!.aborted,reason:signal!.reason,reasons:[...reasons],disposed};
+  release.resolve();await bounded(running,'#1122 maintenance drain');await bounded(disposing,'#1122 explicit dispose');
+  const after={state:handle.state,disposed};
+  assert.deepEqual(before,{state:'active',aborted:false,disposed:0},'#1122 maintenance starts active');
+  assert.deepEqual(during,{state:'draining',aborted:true,reason:'session_create_cancelled',reasons:['session_create_cancelled'],disposed:0},'#1122 explicit disposal reason is observable before drain');
+  assert.deepEqual(after,{state:'disposed',disposed:1},'#1122 explicit disposal completes once');
+  console.log('PASS: #1122 real TS maintenance dispose reason',JSON.stringify({before,during,after}));
+  return {before,during,after};
+ } finally {
+  release.resolve();await bounded(Promise.allSettled([running,handle.dispose('probe-cleanup')]),'#1122 maintenance cleanup');
+ }
+}

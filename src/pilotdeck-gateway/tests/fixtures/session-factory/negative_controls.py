@@ -148,7 +148,9 @@ cases = [
     ('drain-file-state-error-ignored', factory, 'match previous.drained_file_state() {', 'match previous.drained_file_state().or_else(|_| Ok(SeedState::default())) {', None, prefix+'failed_drained_seed_releases_prepared_resources', '#1022 seed failure propagated'),
     ('drain-file-state-error-leaks-prepared', factory, 'let _ = prepared.resources.release().await;\n                    return Err(error);\n                }\n            }\n        }\n        let storage =', 'std::mem::forget(prepared.resources);\n                    return Err(error);\n                }\n            }\n        }\n        let storage =', None, prefix+'failed_drained_seed_releases_prepared_resources', '#1022 seed failure releases prepared project lease'),
     ('drain-turn-drop-seed-removed', factory, 'if !self.finished\n            && self.started.load(Ordering::SeqCst)\n            &&', 'if false\n            && self.started.load(Ordering::SeqCst)\n            &&', None, prefix+'recreation_uses_file_state_saved_during_drain', '#1022 seed drop publishes final checkpoint'),
-    ('drain-cancelled-candidate-not-disposed', factory, 'let _ = handle.dispose("session_create_cancelled".into()).await;', 'let _ = handle;', None, prefix+'cancelled_recreation_finishes_drain_and_candidate_cleanup', '#1022 seed cancelled cleanup bounded wait'),
+    ('drain-cancelled-candidate-not-disposed', factory, 'let _ = handle.dispose("session_create_cancelled".into()).await;', 'let _ = handle;', None, prefix+'cancelled_recreation_finishes_drain_and_candidate_cleanup', '#1122 pending candidate explicit disposal reason'),
+    ('drain-cancelled-candidate-wrong-reason', factory, 'let _ = handle.dispose("session_create_cancelled".into()).await;', 'let _ = handle.dispose("agent_handle_dropped".into()).await;', None, prefix+'cancelled_recreation_finishes_drain_and_candidate_cleanup', '#1122 pending candidate explicit disposal reason'),
+    ('cancelled-disposal-regeneration', oracle, '"candidateState": "active"', '"candidateState": "disposed"', None, prefix+'cancelled_disposal_regenerates_identically', '#280 session-factory/oracle.json differs'),
     ('abort-session-cleanup-skipped', handle, 'if let Err(error) = session.dispose().await {', 'if let Err(error) = if failures.is_empty() { session.dispose().await } else { Ok(()) } {', None, prefix+'writer_abort_panic_releases_lease_before_session_dispose', '#1022 abort panic releases project resources with old handle retained'),
     ('followups-regeneration', oracle, '"name": "abort-throw",', '"name": "wrong-abort-throw",', None, prefix+'followups_regenerates_identically', '#280 session-factory/oracle.json differs'),
 
@@ -250,7 +252,7 @@ def audit():
             if not test_name.endswith('regenerates_identically') and not any(
                 marker_matches(literal) for literal in literals
                 if '#745 ' in literal or '#1022 ' in literal or '#1027 ' in literal
-                or '#1020 ' in literal):
+                or '#1020 ' in literal or '#1122 ' in literal):
                 raise ValueError('bound failure message not found: ' + assertion)
             rows.append(dict(mutation=name, status='CHECKED', test=test, assertion=assertion))
         except Exception as error:

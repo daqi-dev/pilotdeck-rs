@@ -24499,5 +24499,41 @@
         ]
       }
     }
-  ]
+  ],
+  "cancelledDisposal": {
+    "router": [
+      {
+        "event": "recreate",
+        "candidateReasons": [],
+        "candidateState": "active"
+      },
+      {
+        "event": "shutdown",
+        "candidateReasons": [
+          "session_router_shutdown"
+        ],
+        "candidateState": "disposed"
+      }
+    ],
+    "maintenance": {
+      "before": {
+        "state": "active",
+        "aborted": false,
+        "disposed": 0
+      },
+      "during": {
+        "state": "draining",
+        "aborted": true,
+        "reason": "session_create_cancelled",
+        "reasons": [
+          "session_create_cancelled"
+        ],
+        "disposed": 0
+      },
+      "after": {
+        "state": "disposed",
+        "disposed": 1
+      }
+    }
+  }
 }
