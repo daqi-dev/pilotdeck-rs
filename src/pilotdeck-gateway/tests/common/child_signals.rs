@@ -48,7 +48,10 @@ impl ChildSignalProbe {
             // #1109: the calling parent verified the committed oracle once;
             // the worker must not re-run the git probe table under the
             // bounds below (the #978 scan killed it mid-verification at
-            // load 90-106).
+            // load 90-106). Contract: a worker launched here never needs
+            // PDRS_BASELINE, so a parent whose worker replays a committed
+            // oracle must verify that oracle itself before launching (as
+            // background_tasks and transcript_resolve do).
             .env_remove("PDRS_BASELINE")
             .stdin(Stdio::null())
             .stdout(std::fs::File::create(&stdout_path).expect("#1109 worker stdout file"))
