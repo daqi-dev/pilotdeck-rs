@@ -424,6 +424,7 @@ impl PluginRuntime {
             released: false,
             release_receiver: None,
             waiters,
+            executor: tokio::runtime::Handle::current(),
         })
     }
 
@@ -446,6 +447,7 @@ impl PluginRuntime {
             released: false,
             release_receiver: None,
             waiters,
+            executor: tokio::runtime::Handle::current(),
         })
     }
 
@@ -465,6 +467,7 @@ impl PluginRuntime {
             released: false,
             release_receiver: None,
             waiters,
+            executor: tokio::runtime::Handle::current(),
         })
     }
 
