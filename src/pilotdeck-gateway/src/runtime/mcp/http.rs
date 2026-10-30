@@ -1470,6 +1470,11 @@ fn detached_dispatches() -> usize {
 /// continuation inline to that first suspension (one poll that reaches the
 /// exchange), then run the rest in the background exactly as before.
 ///
+/// A continuation that is already `Ready` on that first poll (a legacy
+/// transport with no endpoint, a send onto a closed link) finished as a
+/// microtask would: its result follows the original detached semantics and
+/// it is never spawned — polling a completed async block panics.
+///
 /// The inline poll registers the exchange with a no-op waker: every
 /// readiness it can miss is latched (tokio I/O and timer state, oneshot
 /// values), so the spawned remainder's first poll observes the state and
@@ -1483,8 +1488,9 @@ where
     DETACHED_DISPATCHES.with(|count| count.set(count.get() + 1));
     let mut continuation = Box::pin(continuation);
     let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-    let _ = continuation.as_mut().poll(&mut context);
-    tokio::spawn(continuation);
+    if continuation.as_mut().poll(&mut context).is_pending() {
+        tokio::spawn(continuation);
+    }
 }
 
 /// `_startOrAuthSse({ resumptionToken })`: open the GET event stream; a 405

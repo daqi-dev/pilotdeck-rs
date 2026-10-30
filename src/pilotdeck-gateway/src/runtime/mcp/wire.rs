@@ -527,8 +527,15 @@ impl Wire {
             Link::Http(_) => {
                 let wire = self.clone();
                 // `Protocol.request` fires `transport.send()` before returning
-                // the promise, so the POST is dispatched inline here too.
-                detach(async move {
+                // the promise, but its `_setupTimeout` (protocol.js:718) is
+                // armed even earlier, at :743 — the send's own preprocessing
+                // runs inside the request's timeout budget (probed on Node
+                // v22.22.0, `_tmp/20261026-issue-1114/fix-r1/probe/`). An
+                // inline first poll here would push that work past the
+                // `timeout` armed below, so the request POST keeps its
+                // background send; the #1114 dispatch guarantee is only
+                // needed for the sends a close can outright swallow.
+                tokio::spawn(async move {
                     if let Err(error) = wire.send(message).await {
                         wire.fail(id, error);
                     }
