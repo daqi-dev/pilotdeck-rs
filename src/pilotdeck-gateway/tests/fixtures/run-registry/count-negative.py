@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # anchor-selfcheck: unsupported imperative replacement chain, no mutation table
-"""#562 repair 5: both count guards reject added and missing TS scenarios."""
+"""#562 repair 5: both count guards reject added and missing TS scenarios.
+
+Run exclusively in this worktree, after committing all guarded inputs.
+"""
+from contextlib import contextmanager
 import copy
 import json
 import os
@@ -12,7 +16,7 @@ import sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '_shared'))
 from negative_control import environment, scratch
-from negative_process import run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import Case, classify, passed
 
 FIXTURES = Path(__file__).resolve().parent
@@ -23,8 +27,8 @@ TEST = ['cargo', 'test', '-p', 'pilotdeck-gateway', '--lib',
         '--', '--exact', '--nocapture', '--test-threads=4']
 
 
-def copy_local_import_closure(entry, source_root, destination_root):
-    """Mirror literal relative ESM imports, retaining their repository layout.
+def local_import_closure(entry, source_root):
+    """Find literal relative ESM imports, retaining their repository layout.
 
     Like baseline_source_guard.mjs, scan from/import string specifiers (including
     re-exports, side-effect imports and literal dynamic imports). This fixture
@@ -47,10 +51,32 @@ def copy_local_import_closure(entry, source_root, destination_root):
             specifier = match[2]
             if specifier.startswith(('./', '../')):
                 pending.append(path.parent / specifier)
-        target = destination_root / path.relative_to(source_root)
+    return sorted(seen)
+
+
+def copy_local_import_closure(entry, source_root, destination_root):
+    for path in local_import_closure(entry, source_root):
+        target = destination_root / path.relative_to(source_root.resolve())
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target)
-    return destination_root / entry.resolve().relative_to(source_root)
+    return destination_root / entry.resolve().relative_to(source_root.resolve())
+
+
+@contextmanager
+def guarded_inputs():
+    fixture_root = FIXTURES.parent
+    generator = FIXTURES / 'generate.mts'
+    guarded = [generator, FIXTURES / 'oracle.json', Path(__file__).resolve(),
+               fixture_root / '_shared/negative_control.py',
+               *(fixture_root / name for name in (
+                   'negative_process.py', 'negative_suite.py',
+                   'negative_panic.py', 'pending_reanchor.py',
+               ))]
+    # Discover imports only after the entry and runner are checked under the
+    # tree lock; keep that same reentrant lock through copying and all controls.
+    with mutating_sources(REPO, guarded):
+        with mutating_sources(REPO, local_import_closure(generator, REPO)):
+            yield
 
 
 def execute(name, command, env):
@@ -85,7 +111,9 @@ def generator_status(result, actual):
 
 def main():
     results = []
-    with scratch('run-registry-count') as root:
+    # Allow the replay/generation suite plus cargo-slot and compilation headroom.
+    # README's outer timeout leaves another 60 seconds for cleanup.
+    with scratch('run-registry-count', deadline=1800) as root, guarded_inputs():
         env = environment(root)
         baseline = os.environ['PDRS_BASELINE']
         oracle_path = root / 'oracle.json'

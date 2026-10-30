@@ -86,7 +86,13 @@ def main():
                 and lines.count(f'PASS: {test}') == 1)
 
     try:
-        with mutating_sources(root, [source, probe, Path(__file__).resolve()]) as originals:
+        fixture_root = source.parent.parent
+        guarded = [source, probe, Path(__file__).resolve(),
+                   *(fixture_root / name for name in (
+                       'negative_process.py', 'negative_suite.py',
+                       'negative_panic.py', 'pending_reanchor.py',
+                   ))]
+        with mutating_sources(root, guarded) as originals:
             for name, path, old, new, test, marker in mutations:
                 row = dict(mutation=name, test=test, assertion=marker,
                            status='INVALID', reason='not run', compiled=False)

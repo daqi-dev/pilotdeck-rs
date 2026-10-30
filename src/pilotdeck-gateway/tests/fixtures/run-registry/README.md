@@ -9,11 +9,13 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-ga
 
 生成器先断言基线 HEAD，并对 normal 与每个 quirk 场景逐步断言结果类别（created/duplicate/conflict/not_found/terminal/TypeError/record/absent/events:N/ok）及关键字段，防止步骤因引用写错而全部落空；`lock-stale-live` 场景要等满 TS 的 30 秒锁超时，整次生成约 30 秒。
 
-场景数固定为 **25**（normal / orphans / paging 各 1、quirk 10、bad 9、lock 3）。`generate.mts` 在发布 `oracle.json` 前、Rust `real_ts_scenarios_match_outcomes_and_snapshot_bytes` 在重放前都精确断言 25，增删场景必须同时更新两侧断言及本段。`count-negative.py` 复用 `../_shared/negative_control.py`，仅在 `/tmp` 副本对 Rust 读入的 oracle 和 TS 待发布的 scenarios 分别增加 / 删除 1 项，四项均须因计数错误失败；生成器失败不得发布 oracle，恢复后正控须通过。Rust 仅测试模块支持 `PDRS_RUN_REGISTRY_ORACLE` 指向副本，其余快照仍取本目录。负控不改受控源码、生成器或金样，沿用本树 `CARGO_TARGET_DIR`。
+场景数固定为 **25**（normal / orphans / paging 各 1、quirk 10、bad 9、lock 3）。`generate.mts` 在发布 `oracle.json` 前、Rust `real_ts_scenarios_match_outcomes_and_snapshot_bytes` 在重放前都精确断言 25，增删场景必须同时更新两侧断言及本段。`count-negative.py` 复用 `../_shared/negative_control.py`、`../negative_process.py` 和 `../negative_suite.py`，仅在 `/tmp` 副本对 Rust 读入的 oracle 和 TS 待发布的 scenarios 分别增加 / 删除 1 项，四项均须因计数错误失败；每项保留编译回执，生成器失败不得发布 oracle，恢复后正控须通过。全部处理并完成守卫恢复后打印逐项 JSON 与 `SUMMARY:`，任一非 KILLED 即非零退出。Rust 仅测试模块支持 `PDRS_RUN_REGISTRY_ORACLE` 指向副本，其余快照仍取本目录。变异只写副本，沿用本树 `CARGO_TARGET_DIR`。
+
+计数负控须提交后独占本树运行：同一树锁窗口内，先校验 oracle、生成器、脚本自身和共享 Python 裁决依赖均等于 HEAD，再发现并校验生成器的完整本地 import 闭包，随后按原仓库相对布局复制。守卫覆盖 `negative_control.py`、`negative_process.py`、`negative_suite.py`、`negative_panic.py`、`pending_reanchor.py`，任一输入脏即拒跑。14 个子进程阶段的套件显式使用 **1800 秒**总预算，外层 **1860 秒**保留 60 秒清理余量；共享 scratch 默认值不变。预算容纳实测约 240 秒运行与额外槽位/编译等待，仍可能在持续争用下有界失败。
 
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck
-timeout 600 python3 src/pilotdeck-gateway/tests/fixtures/run-registry/count-negative.py
+timeout 1860 python3 src/pilotdeck-gateway/tests/fixtures/run-registry/count-negative.py
 timeout 150 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-gateway/tests/fixtures/run-registry/verify-generation.mts /tmp/fresh-run-registry-verify
 ```
 
@@ -25,7 +27,7 @@ timeout 150 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/
 
 `verify-timestamps.mts` 将外层无参 Date 固定到同一毫秒，执行真实生成器，检查 11 条孤儿记录的保留/新写时间以及两个 stale-lock accept；旧生成器确定性漏 mask，修复后新写值为 `<new>`，种子原值保留。探针还捕获生成期间实际使用的 Date 构造器，验证其带参构造与 `Date.now()`，并检查生成结束后恢复调用方时钟。三个独占写探针各预置一个文件哨兵，分别要求 initial 拷贝、after 拷贝、oracle 发布以 EEXIST 拒绝且保留原字节。
 
-`timestamp-negative.py` 的六项变异分别撤回时钟安装、删除时钟恢复、去掉带参分支、允许上述三处覆盖。每项绑定具名探针与唯一的单行 `#1129` 断言；其他异常、超时、编译失败均为 INVALID。每项运行正控、应用变异、`cargo test --no-run`、负控、恢复正控，全部处理后原子汇总，任一非 KILLED 即非零退出。cargo 编译只证明 Rust 树可构建；`.mts` 的变异由真实 Node/tsx 执行验证。源码、探针与脚本须等于 HEAD，调用方必须提供构建目录；完整套件由协调者提交后在宿主运行。
+`timestamp-negative.py` 的六项变异分别撤回时钟安装、删除时钟恢复、去掉带参分支、允许上述三处覆盖。每项绑定具名探针与唯一的单行 `#1129` 断言；其他异常、超时、编译失败均为 INVALID。每项运行正控、应用变异、`cargo test --no-run`、负控、恢复正控，全部处理后原子汇总，任一非 KILLED 即非零退出。cargo 编译只证明 Rust 树可构建；`.mts` 的变异由真实 Node/tsx 执行验证。源码、探针、脚本及共享裁决依赖 `negative_process.py`、`negative_suite.py`、`negative_panic.py`、`pending_reanchor.py` 均须等于 HEAD，调用方必须提供构建目录；完整套件由协调者提交后在宿主运行。
 
 ```sh
 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-gateway/tests/fixtures/run-registry/verify-timestamps.mts /tmp/fresh-run-registry-collision
