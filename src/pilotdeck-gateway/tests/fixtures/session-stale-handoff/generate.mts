@@ -11,6 +11,8 @@
 // Only the model, tool registry, loop factory and the prepare hook are
 // deterministic probes. Output is created exclusively (flag 'wx') in a fresh
 // recursive directory; the work directories are removed before writing.
+// #1020 fix-r2 (review P0): OUT may already hold unrelated content; the
+// generator only ever removes the work-* roots it created itself this run.
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -38,9 +40,14 @@ const context={sessionKey:'session-1020',channelKey:'probe'};
 // README invocation passes an OUT that does not exist yet; the work scratch
 // below lives inside it.
 fs.mkdirSync(output,{recursive:true});
+// #1020 fix-r2 (review P0): the scratch roots this run created and owns. The
+// cleanup below removes exactly these paths, never other OUT content that
+// merely shares the work- prefix (e.g. a pre-existing work-notes/ directory).
+const workRoots:string[]=[];
 
 function makeFactory(prepareHook?:(composition:number)=>Promise<void>|void){
  const caseRoot=fs.mkdtempSync(path.join(output,'work-'));
+ workRoots.push(caseRoot);
  const workspace=path.join(caseRoot,'workspace'),pilotHome=path.join(caseRoot,'home');
  fs.mkdirSync(workspace,{recursive:true});
  let composition=0,storageCount=0,entryId=0;
@@ -152,6 +159,6 @@ function record(name:string,observations:any){cases.push({name,node:process.vers
  record('router-prepare-disposal',out);
 }
 
-for(const entry of fs.readdirSync(output))if(entry.startsWith('work-'))fs.rmSync(path.join(output,entry),{recursive:true,force:true,maxRetries:5});
+for(const workRoot of workRoots)fs.rmSync(workRoot,{recursive:true,force:true,maxRetries:5});
 fs.writeFileSync(path.join(output,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,node:process.version,cases},null,2)+'\n',{flag:'wx'});
 console.log('PASS: #1020 real TS SessionRouter disposed-previous probes',cases.length,'cases');

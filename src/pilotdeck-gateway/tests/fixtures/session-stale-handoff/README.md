@@ -21,8 +21,9 @@ Rust 侧 #1020 的宿主重试策略在这些格上均为**有意差异**，登�
 重试一次。`oracle.json` 记录源闭包哈希；Rust `stale_handoff_regenerates_identically`
 ignored 守卫逐字节复算。生成器输出目录递归创建、无需预先存在（README 命令可直接传
 新路径，fix-r1 起在首次 `makeFactory()` 前创建）；oracle 独占创建（`flag:'wx'`），
-`work-*` 临时目录在写 oracle 前全部删除（fix-r1 起按前缀逐个清理，不再依赖不存在的
-字面量 `work-` 路径）。
+`work-*` 临时目录在写 oracle 前删除——fix-r2 起只删本次 `mkdtempSync` 自建并登记的
+根，**不按前缀扫描**，既存 OUT 内容（含无关的 `work-*` 目录）逐字节保留，由 ignored
+守卫 `stale_handoff_preserves_unrelated_out_files` 以 sha256 前后比对钉住。
 
 ```sh
 export PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck

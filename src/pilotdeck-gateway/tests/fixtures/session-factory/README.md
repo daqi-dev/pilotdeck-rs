@@ -15,7 +15,7 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib r
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --audit
 ```
 
-158 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
+161 项变异绑定完整 Rust 测试名和专属失败消息。先应用补丁并提交，使所有变异目标等于 HEAD；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --compile "$OUT_COMPILE"
@@ -67,3 +67,5 @@ pending 仅在错误码为 `SESSION_WRITER_BUSY` 且前驱 `recreation_drained()
 #1020 owner 已选 previous 后同 key dispose 完成的窗口由受限重试覆盖：factory 在 prepare 前捕获 `Disposed && !retains_recreation_source()`，post-prepare 快照拒绝时打 `recreation_stale_handoff` 标记并原样返回 TS 错误；owner 重跑一次同步选择，死 handle 不再入选。直接 factory 调用方、prepare 中 dispose、重试上限 1 与初始 Disposed 过滤各有正控；TS Router 无过滤无重试（四格新金样 `session-stale-handoff/`，`stale_handoff_regenerates_identically` 守卫），差异登记在 `A7.2-SESSION-DISPOSAL-RETRY-001.md`。新增 4 项负控（总数 154）：`1020-stale-mark-removed`、`1020-stale-retry-removed`、`1020-stale-retry-unlimited` 用 `#[cfg(test)] option_env!` 编译期开关（`PDRS_1020_*`），`1020-stale-fixture-regeneration` 防金样漂移。
 
 #1020 fix-r1 按评审再增 4 项（总数 158）：`1020-generator-missing-out`（生成器提前 mkdir 被删，README 直跑命令的 OUT 原先不存在 → ENOENT，守卫改传不存在的 `out/` 子目录以覆盖该入口）、`1020-generator-work-dirs-kept`（清理变回字面量 `work-`，4 个 `work-*` 残留 → 守卫断言 OUT 内除 oracle.json 外无残留）、`1020-setup-passes-stale-previous`（owner 把已 Disposed 的缓存 handle 递给 setup → `recreate_retries_stale_disposed_handoff` 的 setup(previous) 契约断言失败）、`1020-second-error-flattened`（owner 上抛错误被拍平丢 code/causes → `stale_handoff_retry_is_limited_to_one` 断言第二次错误的完整形状）。
+
+#1020 fix-r2 按评审再增 3 项（总数 161）：`1020-generator-deletes-unrelated-out`（生成器清退变回按 `work-` 前缀扫描 OUT → 删掉既存无关内容，新守卫 `stale_handoff_preserves_unrelated_out_files` 逐字节比对失败；生成器改为只删本次 `mkdtempSync` 自建根，`1020-generator-work-dirs-kept` 锚点随清理行同步改写但语义不变）；`1020-publication-before-setup` 与 `1020-publication-before-setup-completed`（owner 把 `DirtyRecreate` 的 on_evict 发布移到 setup 之前，恰一次 → 两家顺序断言 `ordered("setup.fresh.2","evict.dirty-recreate")` 分别失败，setup 事件自 fix-r2 起带尝试序号）。

@@ -121,22 +121,10 @@ pub(crate) fn node_command() -> Command {
     command
 }
 
-/// Re-runs `tests/fixtures/<fixture>/generate.mts` against the real TS
-/// baseline (`PDRS_BASELINE`) into a fresh directory and requires a
-/// byte-identical `oracle.json`, except the exact clock/PID paths documented
-/// in `_shared/regeneration-masks.tsv`. Callers are `#[ignore]` tests.
-#[allow(dead_code)]
-pub(crate) fn regenerates_identically(fixture: &str) {
-    let baseline = std::path::PathBuf::from(
-        std::env::var("PDRS_BASELINE").expect("#280 set PDRS_BASELINE to the PilotDeck checkout"),
-    );
-    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(fixture);
-    // Every invocation gets its own directory; nothing outside it is removed.
-    let scratch = std::env::temp_dir().join(format!("pdrs-{fixture}-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(&scratch).expect("#280 create regeneration scratch");
-    let generator_output = if fixture == "interaction-permission" {
+/// The directory a fixture's generator writes into, below its scratch root.
+/// Historical layouts differ per fixture; nothing outside is touched.
+fn generator_output_dir(fixture: &str, scratch: &Path) -> std::path::PathBuf {
+    if fixture == "interaction-permission" {
         scratch.join("output")
     } else if fixture == "session-stale-handoff" {
         // #1020 fix-r1: the fixture README documents a direct invocation
@@ -144,8 +132,21 @@ pub(crate) fn regenerates_identically(fixture: &str) {
         // instead of a pre-created scratch directory.
         scratch.join("out")
     } else {
-        scratch.clone()
-    };
+        scratch.to_path_buf()
+    }
+}
+
+/// The node invocation of `tests/fixtures/<fixture>/generate.mts` against the
+/// real TS baseline, writing into `generator_output`.
+fn generator_command(
+    fixture: &str,
+    scratch: &Path,
+    generator_output: &Path,
+    baseline: &Path,
+) -> Command {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(fixture);
     let node_flags: &[&str] = match fixture {
         "model-stream-google" => &["--stack-size=8192"],
         "session-overrides" => &["--expose-gc"],
@@ -163,13 +164,33 @@ pub(crate) fn regenerates_identically(fixture: &str) {
         .arg("--import")
         .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
         .arg(fixtures.join("generate.mts"))
-        .arg(&generator_output)
+        .arg(generator_output)
         .args(extra_args)
-        .env("PDRS_BASELINE", &baseline)
+        .env("PDRS_BASELINE", baseline)
         .env(
             "PDRS_GIT",
             std::env::var_os("PDRS_GIT").unwrap_or_else(|| "/usr/bin/git".into()),
         );
+    command
+}
+
+/// Re-runs `tests/fixtures/<fixture>/generate.mts` against the real TS
+/// baseline (`PDRS_BASELINE`) into a fresh directory and requires a
+/// byte-identical `oracle.json`, except the exact clock/PID paths documented
+/// in `_shared/regeneration-masks.tsv`. Callers are `#[ignore]` tests.
+#[allow(dead_code)]
+pub(crate) fn regenerates_identically(fixture: &str) {
+    let baseline = std::path::PathBuf::from(
+        std::env::var("PDRS_BASELINE").expect("#280 set PDRS_BASELINE to the PilotDeck checkout"),
+    );
+    // Every invocation gets its own directory; nothing outside it is removed.
+    let scratch = std::env::temp_dir().join(format!("pdrs-{fixture}-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&scratch).expect("#280 create regeneration scratch");
+    let generator_output = generator_output_dir(fixture, &scratch);
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(fixture);
+    let mut command = generator_command(fixture, &scratch, &generator_output, &baseline);
     let (status, stdout, stderr) = match run_generator(&mut command, fixture) {
         Ok(output) => output,
         Err(message) => {
@@ -213,16 +234,108 @@ pub(crate) fn regenerates_identically(fixture: &str) {
         .unwrap_or_else(|error| {
             panic!(
                 "#280 {fixture}/oracle.json differs from the regenerated {}: {error}",
-                scratch.join("oracle.json").display()
+                generator_output.join("oracle.json").display()
             )
         });
     compare_companion_files(fixture, &generator_output, &fixtures)
         .unwrap_or_else(|error| panic!("#280 {fixture}: {error}"));
     assert!(
-        !scratch.join("oracle.json.tmp").exists(),
+        !generator_output.join("oracle.json.tmp").exists(),
         "#280 generator left a temporary file behind"
     );
     fs::remove_dir_all(&scratch).expect("#280 remove owned regeneration scratch");
+}
+
+/// sha256 of every regular file below `root`, keyed by its `/`-joined relative
+/// path. Special node kinds are failures, not silently skipped entries.
+fn digest_tree(root: &Path) -> std::collections::BTreeMap<String, String> {
+    fn walk(root: &Path, prefix: &str, out: &mut std::collections::BTreeMap<String, String>) {
+        for entry in fs::read_dir(root)
+            .unwrap_or_else(|error| panic!("#1020 read {}: {error}", root.display()))
+        {
+            let entry = entry.expect("#1020 seeded directory entry");
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let kind = entry.file_type().expect("#1020 seeded entry file type");
+            if kind.is_dir() {
+                walk(&entry.path(), &format!("{prefix}{name}/"), out);
+            } else if kind.is_file() {
+                let bytes = fs::read(entry.path()).unwrap_or_else(|error| {
+                    panic!("#1020 read {}: {error}", entry.path().display())
+                });
+                out.insert(
+                    format!("{prefix}{name}"),
+                    format!("{:x}", Sha256::digest(bytes)),
+                );
+            } else {
+                panic!("#1020 {prefix}{name} is neither a regular file nor a directory");
+            }
+        }
+    }
+    let mut digests = std::collections::BTreeMap::new();
+    walk(root, "", &mut digests);
+    digests
+}
+
+/// #1020 fix-r2 (review P0): a direct invocation may pass an OUT that already
+/// holds unrelated content, and the generator must remove only the work-*
+/// roots it created itself. Seeds the fixture's output directory with
+/// unrelated entries — including a `work-notes/` directory, exactly what the
+/// fix-r1 prefix cleanup deleted — runs the generator, and returns every
+/// seeded path that went missing or whose bytes changed (sha256 before vs
+/// after). Callers are `#[ignore]` tests.
+#[allow(dead_code)]
+pub(crate) fn unrelated_out_changes_after_regeneration(fixture: &str) -> Vec<String> {
+    let baseline = std::path::PathBuf::from(
+        std::env::var("PDRS_BASELINE").expect("#280 set PDRS_BASELINE to the PilotDeck checkout"),
+    );
+    let scratch = std::env::temp_dir().join(format!("pdrs-{fixture}-{}", uuid::Uuid::new_v4()));
+    let output = generator_output_dir(fixture, &scratch);
+    fs::create_dir_all(output.join("work-notes")).expect("#1020 seed unrelated work-notes");
+    fs::write(
+        output.join("work-notes").join("keep.txt"),
+        b"#1020 unrelated keep\n",
+    )
+    .expect("#1020 seed unrelated work-notes file");
+    fs::write(
+        output.join("unrelated.txt"),
+        b"#1020 unrelated top-level file\n",
+    )
+    .expect("#1020 seed unrelated top-level file");
+    let before = digest_tree(&output);
+    let mut command = generator_command(fixture, &scratch, &output, &baseline);
+    let (status, stdout, stderr) = match run_generator(&mut command, fixture) {
+        Ok(output) => output,
+        Err(message) => {
+            let _ = fs::remove_dir_all(&scratch);
+            panic!("{message}");
+        }
+    };
+    if !status.success() {
+        let _ = fs::remove_dir_all(&scratch);
+        panic!(
+            "#1020 {fixture}: generator failed on a pre-populated OUT\n{}{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
+    }
+    assert!(
+        output.join("oracle.json").is_file(),
+        "#1020 {fixture}: oracle.json missing after the generator ran"
+    );
+    let after = digest_tree(&output);
+    // Keep the scratch on mismatch so the differing bytes can be inspected.
+    let changed: Vec<String> = before
+        .iter()
+        .filter_map(|(path, digest)| match after.get(path) {
+            Some(actual) if actual == digest => None,
+            Some(actual) => Some(format!("{path}: {digest} -> {actual}")),
+            None => Some(format!("{path}: removed")),
+        })
+        .collect();
+    if changed.is_empty() {
+        fs::remove_dir_all(&scratch).expect("#1020 remove owned preservation scratch");
+    }
+    changed
 }
 
 /// Bound on reaping a killed process group and on each pipe drain after the
