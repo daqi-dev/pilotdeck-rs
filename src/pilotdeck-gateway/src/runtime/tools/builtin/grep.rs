@@ -1468,14 +1468,16 @@ mod tests {
             Self { root }
         }
 
-        /// #1125: the file is published by rename through
+        /// #1125: the file is written by a reaped helper process through
         /// [`crate::test_scratch::write_executable`]; a test that writes the
-        /// exec'd path directly can hit ETXTBSY when a sibling test thread
-        /// forks while the writer's descriptor is still open.
+        /// exec'd path directly in this process can hit ETXTBSY when a
+        /// sibling test thread forks while the writer's descriptor is still
+        /// open (an inherited descriptor even survives the rename onto the
+        /// final name).
         fn script(&self, name: &str, body: &str) -> PathBuf {
             let path = self.root.join(name);
             crate::test_scratch::write_executable(&path, body, 0o755)
-                .expect("#1125 publish script by rename");
+                .expect("#1125 publish script by helper");
             path
         }
     }
@@ -1857,7 +1859,7 @@ mod tests {
             ),
             0o755,
         )
-        .expect("#1125 publish bundled rg by rename");
+        .expect("#1125 publish bundled rg by helper");
 
         let resolved =
             resolve_ripgrep_with(None, std::slice::from_ref(&app)).expect("bundled resolution");
@@ -1916,7 +1918,7 @@ mod tests {
         std::fs::create_dir(&path_dir).expect("path bin");
         let on_path = path_dir.join("rg");
         crate::test_scratch::write_executable(&on_path, "#!/bin/sh\nexit 0\n", 0o755)
-            .expect("#1125 publish path rg by rename");
+            .expect("#1125 publish path rg by helper");
         assert!(is_executable(&on_path), "precondition: rg is on PATH");
         // Drive the same entry point the tool uses, with only a scratch root
         // and a pinned executable parent so the real machine's module tree
@@ -2052,34 +2054,24 @@ mod tests {
         });
     }
 
-    /// #1125: `Scratch::script` must publish the exec'd file by rename. A
-    /// direct write on the final path leaves a window where this thread holds
-    /// the file open for writing; a sibling test thread that forks inside
-    /// that window hands the write descriptor to its child (which keeps it
-    /// until its own exec), and exec'ing the script then fails with ETXTBSY
-    /// (`Os { code: 26, kind: ExecutableFileBusy }`) on Linux.
-    ///
-    /// This loop reproduces a parallel libtest run's fork pressure in one
-    /// process: while the forkers below spawn continuously, every iteration
-    /// writes the script and immediately execs it. With the rename
-    /// publication the exec'd inode has never been open for writing
-    /// anywhere, so the loop cannot fail; the same loop against a direct
-    /// write of the final path hits ETXTBSY on Linux (the `grep-etxtbsy`
-    /// negative control proves it there). macOS std::process uses
-    /// posix_spawn, which never leaves the inherited-descriptor window
-    /// observable, so only the smoke count runs there — the full count is
-    /// the Linux contract the issue asks for.
-    #[test]
-    fn script_spawn_survives_concurrent_forks() {
-        #[cfg(target_os = "linux")]
-        const ITERATIONS: usize = 300;
-        #[cfg(not(target_os = "linux"))]
-        const ITERATIONS: usize = 5;
-        let scratch = Scratch::new("etxtbsy");
-        let stop = Arc::new(AtomicBool::new(false));
-        let forkers: Vec<_> = (0..4)
-            .map(|_| {
+    /// Fork pressure for `script_spawn_survives_concurrent_forks`. `Drop`
+    /// stops the threads and reaps them with a deadline on every exit —
+    /// including the panic path a failed iteration takes — so a failing run
+    /// cannot leave four threads forking for the rest of the binary's
+    /// lifetime, where they would keep interfering with every later test.
+    struct ForkPressure {
+        stop: Arc<AtomicBool>,
+        done: std::sync::mpsc::Receiver<()>,
+        threads: usize,
+    }
+
+    impl ForkPressure {
+        fn start(threads: usize) -> Self {
+            let stop = Arc::new(AtomicBool::new(false));
+            let (sent, done) = std::sync::mpsc::channel();
+            for _ in 0..threads {
                 let stop = stop.clone();
+                let sent = sent.clone();
                 std::thread::spawn(move || {
                     while !stop.load(Ordering::Relaxed) {
                         // Fork pressure only: a failed spawn (a missing
@@ -2093,19 +2085,79 @@ mod tests {
                             std::thread::sleep(StdDuration::from_millis(5));
                         }
                     }
-                })
-            })
-            .collect();
+                    let _ = sent.send(());
+                });
+            }
+            Self {
+                stop,
+                done,
+                threads,
+            }
+        }
+    }
+
+    impl Drop for ForkPressure {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            let deadline = std::time::Instant::now() + StdDuration::from_secs(30);
+            for _ in 0..self.threads {
+                match self
+                    .done
+                    .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                {
+                    // A forker that died without reporting is gone with its
+                    // sender either way; only a stuck one hits the timeout.
+                    Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return,
+                }
+            }
+        }
+    }
+
+    /// #1125: `Scratch::script` must publish the exec'd file without this
+    /// process ever holding a write descriptor on it. A write on the final
+    /// path — or on a temporary name that is then renamed onto it — leaves a
+    /// window where this thread holds the file open for writing; a sibling
+    /// test thread that forks inside that window hands the write descriptor
+    /// to its child (which keeps it until its own exec, even across the
+    /// rename), and exec'ing the script then fails with ETXTBSY
+    /// (`Os { code: 26, kind: ExecutableFileBusy }`) on Linux. cb8 probes:
+    /// the in-process temp-name + rename shape hit ETXTBSY 28 times in 300
+    /// pressured iterations; moving the write into a reaped helper child
+    /// made it 0 of 300.
+    ///
+    /// This loop reproduces a parallel libtest run's fork pressure in one
+    /// process: while the forkers above fork continuously, every iteration
+    /// writes the script and immediately execs it, so only a publication
+    /// that never leaves a write descriptor in this process can pass
+    /// (the `grep-etxtbsy` negative control proves the mutants fail here).
+    /// macOS std::process uses posix_spawn, which never leaves the
+    /// inherited-descriptor window observable, so only the smoke count runs
+    /// there — the full count is the Linux contract the issue asks for.
+    #[test]
+    fn script_spawn_survives_concurrent_forks() {
+        #[cfg(target_os = "linux")]
+        const ITERATIONS: usize = 300;
+        #[cfg(not(target_os = "linux"))]
+        const ITERATIONS: usize = 5;
+        let scratch = Scratch::new("etxtbsy");
+        // Dropped on every exit, including a failed iteration's panic.
+        let _pressure = ForkPressure::start(4);
         for index in 0..ITERATIONS {
             let script = scratch.script("member", "#!/bin/sh\nexit 0\n");
             let status = std::process::Command::new(&script)
                 .status()
-                .unwrap_or_else(|error| panic!("#1125 iteration {index} exec: {error}"));
+                .unwrap_or_else(|error| {
+                    // Only ETXTBSY itself is the #1125 race; any other spawn
+                    // failure (EAGAIN under fork pressure, a missing binary)
+                    // is a harness failure of this test and must not feed
+                    // the `grep-etxtbsy` negative control's kill marker.
+                    if error.raw_os_error() == Some(26) {
+                        panic!("#1125 etxtbsy iteration {index} exec: {error}");
+                    }
+                    panic!("#1125 exec-error iteration {index}: {error}");
+                });
             assert!(status.success(), "#1125 iteration {index} status: {status}");
-        }
-        stop.store(true, Ordering::Relaxed);
-        for forker in forkers {
-            forker.join().expect("#1125 forker thread must not panic");
         }
     }
 
@@ -2377,7 +2429,7 @@ mod tests {
             std::fs::create_dir_all(&dir).expect("create fixture dir");
             let script = dir.join("rg");
             crate::test_scratch::write_executable(&script, &orphan_script(shape, &dir), 0o755)
-                .expect("#1125 publish fake rg by rename");
+                .expect("#1125 publish fake rg by helper");
             let mut command = std::process::Command::new(&script);
             command
                 // Same detached group as `run_ripgrep`'s spawn (grep.rs:591-603,

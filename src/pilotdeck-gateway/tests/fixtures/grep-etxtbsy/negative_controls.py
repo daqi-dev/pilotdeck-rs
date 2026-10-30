@@ -4,13 +4,20 @@
 Usage: CARGO_TARGET_DIR=... python3 negative_controls.py OUT [mutation ...]
 Every selected mutant compiles first; all results are reported before exit.
 
-The bound test is `script_spawn_survives_concurrent_forks`: it writes a
-script through the shared helper and immediately execs it while sibling
-threads fork continuously. On Linux a mutant that writes the exec'd path
-directly (or publishes it with a write on the final inode) must fail with
-`Os { code: 26, kind: ExecutableFileBusy }` at the `#1125 iteration`
-assertion. macOS uses posix_spawn and never shows the window, so this
-control is only meaningful on a Linux host; run it there (cb8 or CI).
+The fix keeps every write descriptor out of the test process: the body is
+piped to a `/bin/sh -c 'cat >"$tmp"'` helper child, the helper is reaped, and
+only then are chmod + rename applied. The bound stress test
+`script_spawn_survives_concurrent_forks` writes the script through that
+helper and immediately execs it while sibling threads fork continuously; a
+mutant that moves the write back into this process must fail there with
+ETXTBSY (`Os { code: 26, ... "Text file busy" }`), and only that failure
+kills: the test's `#1125 etxtbsy` marker is emitted for raw os error 26
+alone, so any other spawn failure (EAGAIN under fork pressure, a missing
+binary, a non-zero exit) classifies as INVALID, never KILLED. The
+`no-temp-cleanup` mutant is bound to the residue unit test instead: it is
+deterministic and platform-independent. macOS uses posix_spawn and never
+shows the window, so the race mutants are only meaningful on a Linux host;
+run them there (cb8 or CI).
 """
 import argparse
 import json
@@ -27,35 +34,82 @@ root = Path(__file__).resolve().parents[5]
 helper = root / 'src/pilotdeck-gateway/tests/common/scratch.rs'
 source = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/grep.rs'
 stress = 'runtime::tools::builtin::grep::tests::script_spawn_survives_concurrent_forks'
+residue = 'test_scratch::tests::failed_publication_removes_the_temporary_name'
 cases = [
-    # The helper writes the temporary name; pointing it at the final path
-    # reopens the exact window #1125 closed (the rename then renames the
-    # file onto itself, a no-op that keeps the directly-written inode).
-    ('helper-writes-final-path', helper,
-     '''    let name = path
-        .file_name()
-        .expect("executable file name")
-        .to_string_lossy();
-    let temporary = path.with_file_name(format!("{name}.tmp-{}", uuid::Uuid::new_v4()));''',
-     '''    // mutant: write the exec'd path directly, reopening the #1125 race
-    let temporary = path.to_path_buf();''',
-     stress, '#1125 iteration'),
-    # fs::copy opens the target for writing, so the published inode is a
-    # directly-written one even though a temporary name existed.
-    ('publish-by-copy', helper,
-     '    let published = fs::rename(&temporary, path);',
-     '    let published = fs::copy(&temporary, path).map(|_| ());',
-     stress, '#1125 iteration'),
     # The literal pre-fix shape: Scratch::script itself writes and chmods
-    # the exec'd path.
+    # the exec'd path in the test process, reopening the wide write window.
     ('script-direct-write', source,
      '''            crate::test_scratch::write_executable(&path, body, 0o755)
-                .expect("#1125 publish script by rename");''',
+                .expect("#1125 publish script by helper");''',
      '''            use std::os::unix::fs::PermissionsExt;
             std::fs::write(&path, body).expect("#1125 write script");
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
                 .expect("#1125 chmod script");''',
-     stress, '#1125 iteration'),
+     stress, '#1125 etxtbsy'),
+    # The shared helper itself regressed to an in-process write of the final
+    # path; every caller (test spawn, product spawn, orphan helper) is
+    # exposed again.
+    ('helper-in-process-write', helper,
+     '''    let name = path
+        .file_name()
+        .expect("#1125 executable file name")
+        .to_string_lossy();
+    let temporary = path.with_file_name(format!("{name}.tmp-{}", uuid::Uuid::new_v4()));
+    let mut helper = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg("cat >\\"$1\\"")
+        .arg("write-executable")
+        .arg(&temporary)
+        .stdin(std::process::Stdio::piped())
+        .spawn()?;
+    let mut stdin = helper.stdin.take().expect("#1125 helper stdin is piped");
+    let written = io::Write::write_all(&mut stdin, body.as_bytes());
+    // Close the pipe so `cat` sees EOF and exits; a broken pipe is reported
+    // by `written`, never by hanging on the helper.
+    drop(stdin);
+    let waited = helper.wait().and_then(|status| {
+        if status.success() {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "#1125 helper sh exited with {status}"
+            )))
+        }
+    });
+    let published = written.and(waited).and_then(|()| {
+        #[cfg(unix)]
+        fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))?;
+        #[cfg(not(unix))]
+        let _ = mode;
+        fs::rename(&temporary, path)
+    });
+    if published.is_err() {
+        // Every error exit after the helper may have created the file
+        // removes the temporary name again (#1125 fix-r1 review P2).
+        let _ = fs::remove_file(&temporary);
+    }
+    published
+}''',
+     '''    let mut file = fs::File::create(path)?;
+    io::Write::write_all(&mut file, body.as_bytes())?;
+    #[cfg(unix)]
+    file.set_permissions(fs::Permissions::from_mode(mode))?;
+    drop(file);
+    Ok(())
+}''',
+     stress, '#1125 etxtbsy'),
+    # A failed publication must not leave the `.tmp-` name behind; bound to
+    # the residue unit test, which fails deterministically (no race, so it
+    # also holds on macOS).
+    ('no-temp-cleanup', helper,
+     '''    if published.is_err() {
+        // Every error exit after the helper may have created the file
+        // removes the temporary name again (#1125 fix-r1 review P2).
+        let _ = fs::remove_file(&temporary);
+    }
+    published''',
+     '''    published''',
+     residue, '#1125 temp residue'),
 ]
 
 
