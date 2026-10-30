@@ -1678,7 +1678,7 @@ fn flush_session_filter_is_honored() {
         let pending = service
             .repository
             .storage
-            .list_pending_session_keys(30, None)
+            .list_pending_session_keys(30.0, None)
             .expect("#776 session-filter: list pending sessions");
         assert_eq!(
             pending,

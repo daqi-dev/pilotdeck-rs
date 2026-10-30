@@ -118,7 +118,7 @@ pub struct ServiceOptions {
     pub capture_strategy: CaptureStrategy,
     pub include_assistant: Option<bool>,
     pub max_message_chars: Option<f64>,
-    pub heartbeat_batch_size: Option<usize>,
+    pub heartbeat_batch_size: Option<f64>,
     pub default_indexing_settings: Option<JsValue>,
     pub source: Option<String>,
     pub llm: Option<LlmOptions>,
@@ -238,7 +238,7 @@ impl ServiceError {
     pub fn js_message(&self) -> JsString {
         match self {
             Self::File(error) => error.js_message(),
-            Self::Storage(error) => JsString::from(error.to_string()),
+            Self::Storage(error) => error.js_message(),
             Self::Heartbeat(error) if crate::mutants::on("heartbeat-message-not-reused") => {
                 match error {
                     HeartbeatError::Storage(StorageError::Closed) => {
@@ -378,7 +378,7 @@ impl EdgeClawMemoryService {
                 self.indexer
                     .lock()
                     .expect("indexer poisoned")
-                    .configured_batch_size() as f64,
+                    .configured_batch_size(),
             ),
         );
         let settings = &self.default_indexing_settings;
@@ -543,7 +543,7 @@ impl EdgeClawMemoryService {
         } else {
             HeartbeatOptions::new(initial_indexing_settings)
         };
-        heartbeat_options.batch_size = Some(options.heartbeat_batch_size.unwrap_or(30));
+        heartbeat_options.batch_size = Some(options.heartbeat_batch_size.unwrap_or(30.0));
         heartbeat_options.source = Some(source.clone());
         heartbeat_options.logger = logger
             .as_ref()

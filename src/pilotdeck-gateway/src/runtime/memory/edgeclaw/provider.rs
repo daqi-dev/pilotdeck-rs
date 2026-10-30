@@ -219,6 +219,31 @@ pub struct EdgeClawMemoryProvider {
     executor: Handle,
 }
 impl EdgeClawMemoryProvider {
+    /// Constructor options before retrieval's runtime defaults are applied.
+    #[doc(hidden)]
+    pub fn factory_configuration(&self) -> JsValue {
+        let mut out = JsObject::new();
+        out.insert(
+            "source".into(),
+            self.inner
+                .options
+                .source
+                .as_ref()
+                .map(|s| JsValue::from(s.as_str()))
+                .unwrap_or(JsValue::Undefined),
+        );
+        out.insert(
+            "retrievalMode".into(),
+            self.inner
+                .options
+                .retrieval_mode
+                .as_ref()
+                .map(|s| JsValue::String(s.clone()))
+                .unwrap_or(JsValue::Undefined),
+        );
+        JsValue::Object(out)
+    }
+
     pub fn new(options: EdgeClawMemoryProviderOptions, executor: Handle) -> Self {
         let now = options
             .now

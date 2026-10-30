@@ -10,7 +10,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {stub} from '../edgeclaw-llm/stub.mts';
 export const ENTRY='src/context/memory/createEdgeClawMemoryProviderFromConfig.ts';
 const CORE='src/context/memory/edgeclaw-memory-core/src';
-export const SOURCES=[ENTRY,'src/cli/ProjectMemoryBundle.ts','src/cli/ProjectMemoryMaintenanceController.ts',`${CORE}/index.ts`,`${CORE}/service.ts`,`${CORE}/core/storage/sqlite.ts`,`${CORE}/core/pipeline/heartbeat.ts`,`${CORE}/core/retrieval/reasoning-loop.ts`,`${CORE}/core/skills/llm-extraction.ts`];
+export const SOURCES=[ENTRY,'src/cli/ProjectMemoryBundle.ts','src/cli/ProjectMemoryMaintenanceController.ts',`${CORE}/index.ts`,`${CORE}/service.ts`,`${CORE}/core/storage/sqlite.ts`,`${CORE}/core/pipeline/heartbeat.ts`,`${CORE}/core/retrieval/reasoning-loop.ts`,`${CORE}/core/skills/llm-extraction.ts`,'src/telemetry/collector.ts'];
 export const NOW='2026-10-22T00:00:00.000Z';
 export const RANDOM=[0.25,0.5,0.75,0.125,0.875,0.375,0.625,0.0625];
 export const M21=['staged-dispose','disposing-dispose','disposed-dispose','staged-maintenance','disposing-maintenance','disposed-maintenance','staged-retrieve','disposing-retrieve','disposed-retrieve','generation-maintenance','generation-retrieve','never-maintenance','cancelled-retrieve'];
@@ -35,8 +35,8 @@ export async function load(baseline:string){
     register('data:text/javascript;base64,'+Buffer.from(moduleSource).toString('base64'),{parentURL:import.meta.url,data:{core:pathToFileURL(join(baseline,CORE,'index.ts')).href}});
     installed=true;
   }
-  const [factory,bundle,controller,service]=await Promise.all([ENTRY,SOURCES[1],SOURCES[2],`${CORE}/service.ts`].map(p=>import(pathToFileURL(join(baseline,p)).href)));
-  return {factory:factory.createEdgeClawMemoryProviderFromConfig,Bundle:bundle.ProjectMemoryBundle,Controller:controller.ProjectMemoryMaintenanceController,Service:service.EdgeClawMemoryService};
+  const [factory,bundle,controller,service,telemetry]=await Promise.all([ENTRY,SOURCES[1],SOURCES[2],`${CORE}/service.ts`,'src/telemetry/collector.ts'].map(p=>import(pathToFileURL(join(baseline,p)).href)));
+  return {factory:factory.createEdgeClawMemoryProviderFromConfig,Bundle:bundle.ProjectMemoryBundle,Controller:controller.ProjectMemoryMaintenanceController,Service:service.EdgeClawMemoryService,createTelemetry:telemetry.createTelemetryCollector};
 }
 function normalized(value:any,root:string,workspaces:string[],origin?:string):any {
   if(typeof value==='string'){
@@ -166,21 +166,43 @@ export function configSpecs(){
     {name:'empty-provider',config:{...on,model:'/model'}}, {name:'empty-model-id',config:{...on,model:'p/'}}, {name:'nested-model-id',config:{...on,model:'p/model/nested'}},
     ...['openai','openai-responses','anthropic','google','unknown'].map(protocol=>({name:'protocol-'+protocol,config:{...on,model:'p/model'},modelConfig:{providers:{p:{protocol,url:'http://127.0.0.1:1/v1',apiKey:'fixture-key'}}}})),
     {name:'api-type-override',config:{...on,model:'p/model',apiType:'google'},modelConfig:{providers:{p:{protocol:'openai',url:'http://127.0.0.1:1/v1',apiKey:'fixture-key'}}}},
+    {name:'host-telemetry',config:on,telemetry:'host'},
+    {name:'root-empty',config:{...on,rootDir:''}},
+    ...[0,-1,2.5,1e21,NaN,Infinity,-Infinity].flatMap((value,index)=>[
+      {name:'batch-edge-'+index,config:{...on,heartbeatBatchSize:value}},
+      {name:'chars-edge-'+index,config:{...on,maxMessageChars:value}},
+    ]),
+    {name:'batch-override-fraction',config:{...on,heartbeatBatchSize:30},flushBatchSize:2.5},
+    {name:'batch-override-nan',config:{...on,heartbeatBatchSize:30},flushBatchSize:NaN},
+    {name:'batch-override-one',config:{...on,heartbeatBatchSize:2.5},flushBatchSize:1},
     {name:'all-options',config:{...on,model:'p/model',captureStrategy:'full_session',includeAssistant:false,maxMessageChars:42,heartbeatBatchSize:7,schedule:{reasoningMode:'accuracy_first',autoIndexIntervalMinutes:4,autoDreamIntervalMinutes:9}}},
   ];
 }
-function configuration(api:any,base:string,spec:any){
+function directories(root:string,label:string):string[]{
+  if(!statSync(root,{throwIfNoEntry:false}))return [];
+  return [label,...readdirSync(root).sort().flatMap(name=>{const path=join(root,name);return statSync(path).isDirectory()?directories(path,label+'/'+name):[]})];
+}
+function batchSelection(service:any,limit:number){
+  for(let i=0;i<4;i++)service.repository.insertL0Session({l0IndexId:'batch-'+i,sessionKey:'s'+i,timestamp:NOW+i,messages:[],source:'pilotdeck',indexed:false,createdAt:NOW});
+  const observe=(preferred?:string[])=>{try{return {keys:service.repository.listPendingSessionKeys(limit,preferred)}}catch(error){return {error:errorShape(error)}}};
+  return {sql:observe(),preferred:observe(['s0','s1','s2','s3'])};
+}
+async function observeFlush(service:any,batchSize?:number){
+  try{await service.flush({batchSize});return {ok:true}}catch(error){return {error:errorShape(error)}}
+}
+async function configuration(api:any,base:string,spec:any){
   const root=join(base,'config',spec.name),workspace=join(root,'workspace');mkdirSync(workspace,{recursive:true});
   const config=spec.config&&{...spec.config,...(spec.config.rootDir?{rootDir:spec.config.rootDir.replace('$ROOT',root)}:{})};
-  const options={projectRoot:workspace,config,modelConfig:spec.modelConfig,agentModel:spec.agentModel};
+  const telemetry=spec.telemetry==='host'?api.createTelemetry({enabled:false,env:{},pilotHome:join(root,'host-home'),fetchImpl:()=>{throw Error('#778 telemetry must stay offline')}}):undefined;
+  const options={projectRoot:workspace,config,modelConfig:spec.modelConfig,agentModel:spec.agentModel,telemetry};
   if(spec.rootIsFile)writeFileSync(config.rootDir,'fixture occupies rootDir',{flag:'wx'});
   const data=config&&join(config.rootDir??'', 'workspaces',createHash('sha1').update(workspace).digest('hex').slice(0,10));
   if(spec.sqliteFault){mkdirSync(data,{recursive:true});if(spec.sqliteFault==='directory')mkdirSync(join(data,'control.sqlite'));else writeFileSync(join(data,'control.sqlite'),'not a database'.repeat(256),{flag:'wx'});}
   let created:any;
-  try{created=api.factory(options);}catch(error){return normalized(encode({name:spec.name,input:spec,created:false,error:errorShape(error),...(spec.sqliteFault?{files:[...tree(join(data,'memory')).map(f=>({...f,path:'memory/'+f.path})),...tree(join(config.rootDir,'global')).map(f=>({...f,path:'global/'+f.path}))]}:{})}),base,[workspace]);}
+  try{created=api.factory(options);}catch(error){return normalized(encode({name:spec.name,input:spec,created:false,error:errorShape(error),...(spec.sqliteFault?{directories:[...directories(join(data,'memory'),'memory'),...directories(join(config.rootDir,'global'),'global')],files:[...tree(join(data,'memory')).map(f=>({...f,path:'memory/'+f.path})),...tree(join(config.rootDir,'global')).map(f=>({...f,path:'global/'+f.path}))]}:{})}),base,[workspace]);}
   if(!created)return {name:spec.name,input:encode(spec),created:false};
   const {service,provider}=created;assert.ok(service instanceof api.Service,'#778 config source service');
-  try{return normalized(encode({name:spec.name,input:spec,created:true,service:{workspaceDir:service.workspaceDir,dataDir:service.dataDir,dbPath:service.dbPath,memoryDir:service.memoryDir,source:service.source,captureStrategy:service.captureStrategy,includeAssistant:service.includeAssistant,maxMessageChars:service.maxMessageChars,heartbeatBatchSize:service.indexer.batchSize,defaultIndexingSettings:service.defaultIndexingSettings,extractorConfig:service.extractor.config},provider:{source:provider.options.source,retrievalMode:provider.options.retrievalMode}}),base,[workspace]);}finally{service.close();}
+  try{return normalized(encode({name:spec.name,input:spec,created:true,service:{workspaceDir:service.workspaceDir,dataDir:service.dataDir,dbPath:service.dbPath,memoryDir:service.memoryDir,source:service.source,captureStrategy:service.captureStrategy,includeAssistant:service.includeAssistant,maxMessageChars:service.maxMessageChars,heartbeatBatchSize:service.indexer.batchSize,defaultIndexingSettings:service.defaultIndexingSettings,extractorConfig:service.extractor.config},provider:{source:provider.options.source,retrievalMode:provider.options.retrievalMode},...(spec.name.startsWith('batch-')?{flushResult:await observeFlush(service,spec.flushBatchSize)}:{}),...(spec.name.startsWith('batch-edge-')?{batchSelection:batchSelection(service,spec.config.heartbeatBatchSize)}:{})}),base,[workspace]);}finally{service.close();}
 }
 const E2E_SCRIPT=[
   response({route:'none'}),
@@ -255,7 +277,7 @@ export async function collect(baseline:string,options:{exportRoot?:string,readRo
     const api=await load(baseline),scenarios:any[]=[];
     if(options.readRoot)return await readPersisted(api,resolve(options.readRoot),()=>{draw=0});
     for(const name of M21){console.error('M21 '+name);scenarios.push(await lifecycle(api,root,name,()=>{draw=0}));}
-    const configurations=configSpecs().map(spec=>configuration(api,root,spec));
+    const configurations=[];for(const spec of configSpecs())configurations.push(await configuration(api,root,spec));
     const endToEnd=await endToEndRun(api,options.exportRoot?resolve(options.exportRoot):join(root,'end-to-end'),()=>{draw=0});
     const maxLines=maximumLines(api,join(root,"max-lines"));
     return {scenarios,configurations,endToEnd,maxLines};

@@ -40,8 +40,9 @@ M21 的 13 格由 `M21` 数组静态列全。LLM await 使用 fetch gate；全�
 之后放行只为了探针清理。该格不宣称生产取消了旧请求。热重载格使用相同
 projectRoot、不同配置 rootDir，真实两代 runtime 对象进入同一个 controller。
 
-配置 24 格覆盖缺失/禁用/provider、模型优先级/协议、rootDir（含孤立代理项和
-真实 ENOTDIR）。E2E 5 次 HTTP 请求记录原 body 文本，持久化比较包含所有非
+配置 43 格覆盖缺失/禁用/provider、模型优先级/协议、rootDir（含孤立代理项和
+真实 ENOTDIR）、宿主 telemetry、空 rootDir、batch/maxMessageChars 数值边界，
+以及真实 flush 的 batch 参数覆盖。E2E 5 次 HTTP 请求记录原 body 文本，持久化比较包含所有非
 sqlite_ 内部表、workspace/global memory 文本树。只归一化已绑定的root/hash/HTTP
 origin；保留其余业务字段、原始JSON文本与时刻。Rust真实双向运行和 ignored
 重生成守卫的最终结果写在任务证据 RESULT.md，生成器本身不替代这些验收。
@@ -49,7 +50,15 @@ origin；保留其余业务字段、原始JSON文本与时刻。Rust真实双向
 默认 bundle 无注入发布句柄的生产链由
 `memory_native_default_published_end_to_end` 另行守护。配置错误矩阵还覆盖
 损坏 SQLite / SQLite 路径为目录：比较错误 name/code/message 和失败时的
-memory/global 文件树，确认数据库失败先于记忆文件生成。
+memory/global 文件与目录树。目录路径的 CANTOPEN 必须早于 FileMemoryStore
+子目录创建；损坏文件则到初始化才报错，此前子目录已经创建（Node v22.22.0
+实测，不能提前 PRAGMA 校验）。目录清单逐路径比较，晚开 DB 变异绑定目录路径格。
+
+`heartbeat_batch_numeric_edges` 回放真实 service.flush（包括显式 batch 覆盖），
+以及 SQL LIMIT / preferred slice 的不同数值行为。`storage_invalid_paths` 直接
+调用 with_clock，核对损坏库/目录错误和损坏库原字节。opaque 宿主 telemetry
+无法适配为 MemoryTelemetry 时按 #778 fix-r1 授权降级无原生遥测；可调用 wrapper
+继续记录 M21/E2E 事件。构造成功不代表未知 opaque 客户端的事件已转发。
 
 #1052 的 `maxLines` 金样使用 81 行真实记录，分别调用省略参数、显式 undefined、
 null；Rust `service_get_maxlines_defaults_1052` 逐项比较内容。
@@ -57,4 +66,5 @@ null；Rust `service_get_maxlines_defaults_1052` 逐项比较内容。
 `negative.py` 复用 `_shared/mutant_switch.py`，一次编译全部分支，执行每个
 选中变异的正控/负控/恢复正控并按 `negative_suite` 汇总；不写源码、不改 HEAD。
 调用方必须提供 CARGO_TARGET_DIR；输出目录必须新建。作者会话仅运行
-`native-default-empty` 样本，其余已编译但待协调者批跑。
+`native-database-open-late` 样本，全部开关逐项执行 no-run 编译确认；其余负控
+由协调者在宿主批跑。原有13项宿主结果作为历史证据保留，本轮新增控制不冒充已杀。

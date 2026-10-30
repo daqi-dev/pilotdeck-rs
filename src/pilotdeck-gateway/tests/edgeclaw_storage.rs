@@ -760,21 +760,21 @@ fn observe(storage: &EdgeClawStorage) -> JsValue {
     let sessions = object(vec![
         (
             "pendingAll",
-            strings(storage.list_pending_session_keys(50, None).unwrap()),
+            strings(storage.list_pending_session_keys(50.0, None).unwrap()),
         ),
         (
             "pendingLimit1",
-            strings(storage.list_pending_session_keys(1, None).unwrap()),
+            strings(storage.list_pending_session_keys(1.0, None).unwrap()),
         ),
         (
             "pendingLimit0",
-            strings(storage.list_pending_session_keys(0, None).unwrap()),
+            strings(storage.list_pending_session_keys(0.0, None).unwrap()),
         ),
         (
             "pendingPreferred",
             strings(
                 storage
-                    .list_pending_session_keys(50, Some(&preferred))
+                    .list_pending_session_keys(50.0, Some(&preferred))
                     .unwrap(),
             ),
         ),
@@ -782,17 +782,21 @@ fn observe(storage: &EdgeClawStorage) -> JsValue {
             "pendingPreferredLimit1",
             strings(
                 storage
-                    .list_pending_session_keys(1, Some(&preferred_no_blank))
+                    .list_pending_session_keys(1.0, Some(&preferred_no_blank))
                     .unwrap(),
             ),
         ),
         (
             "pendingPreferredEmpty",
-            strings(storage.list_pending_session_keys(50, Some(&[])).unwrap()),
+            strings(storage.list_pending_session_keys(50.0, Some(&[])).unwrap()),
         ),
         (
             "pendingPreferredNone",
-            strings(storage.list_pending_session_keys(50, Some(&none)).unwrap()),
+            strings(
+                storage
+                    .list_pending_session_keys(50.0, Some(&none))
+                    .unwrap(),
+            ),
         ),
         (
             "countAll",

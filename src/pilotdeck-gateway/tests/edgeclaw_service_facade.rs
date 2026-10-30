@@ -678,8 +678,7 @@ fn run_scenario(
         options.max_message_chars = settings.get("maxMessageChars").and_then(JsValue::as_number);
         options.heartbeat_batch_size = settings
             .get("heartbeatBatchSize")
-            .and_then(js_u64)
-            .map(|value| value as usize);
+            .and_then(JsValue::as_number);
         options.default_indexing_settings = settings.get("defaultIndexingSettings").map(decode_js);
         options.source = settings
             .get("source")

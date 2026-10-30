@@ -3609,9 +3609,14 @@ mod memory_bundle_tests {
         let scratch = Scratch::new();
         let mut snapshot = memory_snapshot();
         snapshot["config"]["memory"]["rootDir"] = json!(scratch.0.join("memory"));
-        let group = memory_group(&scratch.0.join("project"), snapshot);
+        let group = memory_group_with(
+            &scratch.0.join("project"),
+            snapshot,
+            Arc::new(|| UNIX_EPOCH),
+            Some(Arc::new(ProbeTelemetry("host-default"))),
+        );
         stage_memory(&MemoryBundleFamilySource::default(), &group)
-            .expect("#778 default native factory constructs service");
+            .expect("#778 host telemetry default native factory constructs service");
         let context = group.context();
         assert!(
             context.owner(Family::MemoryBundle).is_some(),
