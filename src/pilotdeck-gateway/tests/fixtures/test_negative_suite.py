@@ -325,8 +325,10 @@ class CancellationTests(unittest.TestCase):
                 return original_invalidate(rows, reason)
 
             def run(command, **_kwargs):
-                self.assertEqual(command[-5:], [TEST, '--', '--exact', '--include-ignored',
-                                                '--nocapture'],
+                # #818 fix-r7 removed --nocapture from the shared judge's
+                # command; the #1076 cancellation probe keeps asserting the
+                # exact ignored binding under the merged command shape.
+                self.assertEqual(command[-4:], [TEST, '--', '--exact', '--include-ignored'],
                                  '#1076 the cancellation probe must run the exact ignored test')
                 if source.read_text() == 'mutant':
                     return output('kill')
