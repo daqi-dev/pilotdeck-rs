@@ -67,6 +67,14 @@ pub(crate) fn route_with_metadata<F: Files>(
     request: &JsValue,
     metadata: Option<&Metadata<F>>,
 ) -> Route {
+    route_with_environment(request, metadata, None)
+}
+
+pub(crate) fn route_with_environment<F: Files>(
+    request: &JsValue,
+    metadata: Option<&Metadata<F>>,
+    captured_env: Option<&crate::config::Env>,
+) -> Route {
     if !is_request(request) {
         return Route::Forward;
     }
@@ -85,14 +93,16 @@ pub(crate) fn route_with_metadata<F: Files>(
             .map_or(Route::Forward, Route::LocalResponse);
     }
     if method == "model_catalog_list" || method == "session_model_get" {
-        let env = std::env::vars_os()
-            .map(|(k, v)| {
-                (
-                    k.to_string_lossy().into_owned(),
-                    v.to_string_lossy().into_owned(),
-                )
-            })
-            .collect();
+        let env = captured_env.cloned().unwrap_or_else(|| {
+            std::env::vars_os()
+                .map(|(k, v)| {
+                    (
+                        k.to_string_lossy().into_owned(),
+                        v.to_string_lossy().into_owned(),
+                    )
+                })
+                .collect()
+        });
         if method == "session_model_get" {
             if let Some(metadata) = metadata {
                 return crate::session_model::response(request, metadata, &env)

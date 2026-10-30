@@ -196,7 +196,9 @@ pub struct SessionPorts {
     pub interaction: InteractionTurnInput,
 }
 
-type PortsFactory = dyn Fn(&ExecutionIdentity, Arc<Recorder>) -> SessionPorts + Send + Sync;
+type PortsFactory = dyn Fn(&ExecutionIdentity, Arc<Recorder>, crate::runtime::hooks::Cancellation) -> SessionPorts
+    + Send
+    + Sync;
 
 pub struct TurnHostFactory {
     registry: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
@@ -214,6 +216,30 @@ impl TurnHostFactory {
         limits: Limits,
         expected_module_id: Option<JsString>,
         ports: impl Fn(&ExecutionIdentity, Arc<Recorder>) -> SessionPorts + Send + Sync + 'static,
+    ) -> Self {
+        Self::new_with_signal(
+            registry,
+            deployment,
+            limits,
+            expected_module_id,
+            move |identity, recorder, _signal| ports(identity, recorder),
+        )
+    }
+
+    /// Production entry for ports sharing the LiveSession cancellation source.
+    pub fn new_with_signal(
+        registry: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+        deployment: Deployment,
+        limits: Limits,
+        expected_module_id: Option<JsString>,
+        ports: impl Fn(
+            &ExecutionIdentity,
+            Arc<Recorder>,
+            crate::runtime::hooks::Cancellation,
+        ) -> SessionPorts
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
         Self {
             registry,
@@ -241,8 +267,8 @@ impl TurnHostFactory {
         history: impl Fn() -> Vec<JsValue> + Send + Sync + 'static,
     ) -> LiveSessionAdapter {
         let ports = self.ports.clone();
-        self.ports = Arc::new(move |identity, recorder| {
-            let mut ports = ports(identity, recorder.clone());
+        self.ports = Arc::new(move |identity, recorder, signal| {
+            let mut ports = ports(identity, recorder.clone(), signal);
             ports.recorder = Some(model_port::DurableRecorder {
                 recorder,
                 recording_session_id: ports.recorder.and_then(|r| r.recording_session_id),
@@ -252,18 +278,25 @@ impl TurnHostFactory {
         let close_timeout = self.limits.close_timeout;
         let agent_config = self.agent_config.clone();
         let factory = Arc::new(self);
-        let session =
-            LiveSessionAdapter::with_interaction(recorder, history, move |identity, recorder| {
+        let session = LiveSessionAdapter::with_interaction_signal(
+            recorder,
+            history,
+            move |identity, recorder, signal| {
                 let factory = factory.clone();
-                Box::pin(async move { factory.create(&identity, recorder).await })
-            })
-            .with_close_timeout(
-                if crate::mutants::on("gates-factory-close-timeout") {
-                    Limits::default().close_timeout
-                } else {
-                    close_timeout
-                },
-            );
+                Box::pin(async move {
+                    factory
+                        .create_with_signal(&identity, recorder, signal)
+                        .await
+                })
+            },
+        )
+        .with_close_timeout(
+            if crate::mutants::on("gates-factory-close-timeout") {
+                Limits::default().close_timeout
+            } else {
+                close_timeout
+            },
+        );
         match agent_config {
             Some(config) => session.with_agent_config(config),
             None => session,
@@ -276,6 +309,20 @@ impl TurnHostFactory {
         &self,
         identity: &ExecutionIdentity,
         recorder: Arc<Recorder>,
+    ) -> Result<InteractionHost, HostError> {
+        self.create_with_signal(
+            identity,
+            recorder,
+            crate::runtime::hooks::Cancellation::new(),
+        )
+        .await
+    }
+
+    pub async fn create_with_signal(
+        &self,
+        identity: &ExecutionIdentity,
+        recorder: Arc<Recorder>,
+        signal: crate::runtime::hooks::Cancellation,
     ) -> Result<InteractionHost, HostError> {
         let (command, args, cwd, env) = match &self.deployment {
             Deployment::Stdio {
@@ -301,7 +348,7 @@ impl TurnHostFactory {
             .registry
             .acquire(None)
             .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
-        let ports = (self.ports)(identity, recorder);
+        let ports = (self.ports)(identity, recorder, signal);
         let (router, input, lease) = match Self::assemble(lease, identity, ports).await {
             Ok(value) => value,
             // `assemble` owns (and therefore drops) the lease on error.

@@ -158,6 +158,25 @@ impl LiveSessionAdapter {
         + Sync
         + 'static,
     ) -> Self {
+        Self::with_interaction_signal(recorder, history, move |identity, recorder, _signal| {
+            factory(identity, recorder)
+        })
+    }
+
+    /// Compose every host port with the session's actual cancellation signal.
+    /// A second signal created inside a ports factory cannot observe abort().
+    pub fn with_interaction_signal(
+        recorder: Arc<Recorder>,
+        history: impl Fn() -> Vec<JsValue> + Send + Sync + 'static,
+        factory: impl Fn(
+            ExecutionIdentity,
+            Arc<Recorder>,
+            crate::runtime::hooks::Cancellation,
+        ) -> HostFuture<InteractionHost>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
         Self {
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
@@ -165,7 +184,7 @@ impl LiveSessionAdapter {
             recorder,
             history: Arc::new(history),
             host_factory: Arc::new(move |identity, recorder, signal| {
-                let host = factory(identity.clone(), recorder.clone());
+                let host = factory(identity.clone(), recorder.clone(), signal.clone());
                 Box::pin(async move {
                     let mut host = host.await?;
                     let cwd = host.input.permission.context.cwd.clone();

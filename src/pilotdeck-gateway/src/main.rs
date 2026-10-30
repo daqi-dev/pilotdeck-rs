@@ -12,6 +12,13 @@ async fn main() -> Result<(), ProxyError> {
     // process lifetime (a static OnceLock in the library).
     #[cfg(unix)]
     pilotdeck_gateway::ensure_sigxfsz_ignored();
+    let mut args = std::env::args_os().skip(1);
+    if pilotdeck_gateway::native_process::native_requested(args.next().as_deref()) {
+        return pilotdeck_gateway::native_process::run(
+            pilotdeck_gateway::native_process::Options::parse(args)?,
+        )
+        .await;
+    }
     let listen: SocketAddr = std::env::var("PILOTDECK_PROXY_LISTEN")
         .unwrap_or_else(|_| "127.0.0.1:28789".into())
         .parse()?;
