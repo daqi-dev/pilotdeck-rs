@@ -1,0 +1,40 @@
+[
+  {
+    "id": "zh-project",
+    "messages": [
+      {"role": "user", "content": "请长期记住这个演示项目的约定：项目代号是青鹭，配置文件必须叫 heron-settings.toml，服务固定使用端口 43127。以后给我配置示例时都遵守这些约定。"},
+      {"role": "assistant", "content": "好的，后续配置示例将遵守这些项目约定。"},
+      {"role": "user", "content": "顺便闲聊一句：今天看到一朵像棉花糖的云，随口说说，不用记住。"}
+    ],
+    "query": "我们这个项目的配置文件名和服务端口约定是什么？",
+    "facts": [
+      {"id": "config-file", "all": ["heron-settings.toml"]},
+      {"id": "port", "all": ["43127"]}
+    ],
+    "chatter": ["棉花糖"]
+  },
+  {
+    "id": "en-preference",
+    "messages": [
+      {"role": "user", "content": "Please remember that I use British English spelling in documentation, and that I always use pytest for Python test examples. These are standing preferences for future sessions."},
+      {"role": "assistant", "content": "Understood; I will apply those preferences to future documentation and Python tests."},
+      {"role": "user", "content": "That imaginary cloud looks like a dancing teapot, just a passing thought. This is idle chatter, not a preference or something to remember."}
+    ],
+    "query": "What are my standing preferences for documentation spelling and Python testing?",
+    "facts": [
+      {"id": "spelling", "all": ["British", "English"]},
+      {"id": "test-framework", "all": ["pytest"]}
+    ],
+    "chatter": ["dancing teapot"]
+  },
+  {
+    "id": "zh-chatter-only",
+    "messages": [
+      {"role": "user", "content": "你好呀！只想随便打个招呼。窗外的云让我想到一只会跳舞的紫色河马，哈哈，这只是随口瞎想，不是我的爱好、计划或项目事实，不需要记录。"},
+      {"role": "assistant", "content": "你好，祝你今天愉快！"}
+    ],
+    "query": "我们之前确定过什么需要长期遵守的项目约定或个人偏好吗？",
+    "facts": [],
+    "chatter": ["紫色河马"]
+  }
+]
