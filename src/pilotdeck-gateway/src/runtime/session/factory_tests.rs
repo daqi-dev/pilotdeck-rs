@@ -5166,9 +5166,75 @@ async fn drained_seed_case(
 async fn recreation_uses_file_state_saved_during_drain() {
     drained_seed_case(false, false, None).await;
 }
-#[tokio::test]
-async fn cancelled_recreation_finishes_drain_and_candidate_cleanup() {
-    drained_seed_case(true, false, None).await;
+#[test]
+fn cancelled_recreation_finishes_drain_and_candidate_cleanup() {
+    // This runtime belongs only to this test. Its block_on root is not a
+    // spawned task, so zero live tasks proves the candidate's queued Drop
+    // has finished; no scheduler order or fixed yield count is assumed.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("#1122 candidate observation runtime");
+    runtime.block_on(async {
+        drained_seed_case(true, false, None).await;
+
+        // Keep the real cancelled-recreation end-to-end check above. This
+        // second, handoff-only cell observes PendingSession's explicit reason
+        // on a real factory candidate. Maintenance retains a handle clone and
+        // exposes cancellation without running a model or permitting the last
+        // handle Drop fallback to hide a missing explicit dispose.
+        let h = Harness::new("pending-candidate-reason-1122");
+        let candidate =
+            tokio::time::timeout(Duration::from_secs(8), h.factory.create(h.context(), None))
+                .await
+                .expect("#1122 candidate construction finishes")
+                .expect("#1122 candidate construction succeeds");
+        let activity = candidate
+            .begin_maintenance()
+            .expect("#1122 candidate maintenance observation starts");
+        drop(PendingSession::new(candidate.clone()));
+        let reason = tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                let reason = activity.cancellation_reason();
+                if reason.is_some() || runtime.metrics().num_alive_tasks() == 0 {
+                    break reason;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("#1122 candidate observation executor settles");
+        // An observation timeout is an invalid control, never a kill. Save the
+        // actual reason, then clean up even when the mutation omitted disposal.
+        drop(activity);
+        tokio::time::timeout(
+            Duration::from_secs(8),
+            candidate.dispose("probe-cleanup".into()),
+        )
+        .await
+        .expect("#1122 candidate cleanup finishes")
+        .expect("#1122 candidate cleanup succeeds");
+        h.finish("pending-candidate-reason-1122").await;
+        let ts = oracle_document();
+        let expected = ts["cancelledDisposal"]["maintenance"]["during"]["reason"]
+            .as_str()
+            .expect("#1122 real TS explicit disposal reason exists");
+        assert_eq!(
+            expected, "session_create_cancelled",
+            "#1122 explicit disposal reason fixture contract"
+        );
+        assert_eq!(
+            reason,
+            Some(expected.into()),
+            "#1122 pending candidate explicit disposal reason"
+        );
+    });
+}
+
+#[test]
+#[ignore = "requires fixed TS baseline and Node v22.22.0"]
+fn cancelled_disposal_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("session-factory");
 }
 
 #[test]
