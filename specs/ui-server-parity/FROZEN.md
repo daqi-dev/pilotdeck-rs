@@ -47,7 +47,7 @@ c8a21ce64dfa798a64667f82777704175b520115263f1917f56e0010c4b1754b  ../../scripts/
 e8724af2dd0c7536dc514c136ed8b4ae099257aeae461ff8b303fd22111c8f7a  ../../scripts/ui-server-parity/calibrate.sh
 206000021604a6f45890b1a3f8bc919117843452ca08648267de9c851b03ecd6  ../../scripts/ui-server-parity/chat_driver.mjs
 1c25f6b3013f28bfffea29becc0c52a4e452749a1487b6e6fbe8b988ad687879  ../../scripts/ui-server-parity/check_coverage.py
-161d93282ceb601f4019dc755a5ba552e0bb4180f0e57c3c5826ed648634aa7c  ../../scripts/ui-server-parity/check_frozen.py
+28d86c7395d5923e436a49d0a11339bd8c49325881ff21dbcbb72842b36c5dd0  ../../scripts/ui-server-parity/check_frozen.py
 2da03a3ce2f10676faec30dec9bb9bb51e57f2830ba22417f8ff3e8b476c54f8  ../../scripts/ui-server-parity/check_ruler.py
 621c35912de50a7c4496a8db589e28d09cbb18ecc42714eca9cb03ad6cc87ba9  ../../scripts/ui-server-parity/common.py
 d67728d6c560ccacfcc87da7a10bc7f68a0369d98eac63e5d9c2f85760e0ed83  ../../scripts/ui-server-parity/compare.py
@@ -99,3 +99,11 @@ Approval-Archive-SHA256: 108245ecb62996a9c88aa93659cfbcca6cc9e31c378dbc6983cd07d
 Approval-Archive-SHA256: 5d3e308c3ab508f542b1eaf095465e240433ac13c62942f8b7680fcb93d7f890  specs/ui-server-parity/approval/2026-10-14/review-claude.md
 Approval-Archive-SHA256: 4efbe795b6f06d53fdc92951b40a342c1c3c55ab4607d59f848666351a8ed730  specs/ui-server-parity/approval/2026-10-14/driver.log
 Approval-Archive-SHA256: 8fcf35c26663ed60cdf7bda58fd026ba66f87fa7f4b9c3332848d8d4dc1af2db  specs/ui-server-parity/approval/review-deepseek-r1.md
+
+## 2026-10-30 #1088 账本一条一文件重登记
+
+AI 代批，待人复核。依据 #1085 人定 D / #1088 PR-1，只移植 gateway 的 diffs/ 六字段校验、组合阅读与 --base 只新增保护；不跨装置 import。历史 accepted-diffs.md 原字节保留，新条目与更正分别新增文件；不改比较器、阈值、分母、场景、定标输入和判分路径。
+
+仅重登记本次 check_frozen.py 哈希。旧新真实登记逐项对照、负控、两家非作者评审及待验项目见本树 `_tmp/20261026-issue-1088/RESULT.md`；既有定标和历史批准依据不改。本次重登记的最终冻结仍须两家非作者评审完成及人复核，不以旧批准记录代替本次评审。
+
+本次账本存放规则也取代现有 acceptance.md / README.md 中“追加到 accepted-diffs.md”的旧指令；这些冻结规约的字节与判分语义保持不变。完整账本的阅读与更正规则以 diffs/README.md 为准。

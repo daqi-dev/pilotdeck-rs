@@ -15,11 +15,11 @@
 | 文件 | sha256（前 16 位） | 冻结时间 | 说明 |
 |---|---|---|---|
 | `README.md` | `f8958a3280a95df7…` | 2026-10-14（人过目） | 比什么 · 四项对照 · 阈值程序（k = 5、S 规则、\|S\| ≥ 45、分母）· 差异分诊 |
-| `accepted-diffs.md` | `653ccb1001d1b09a…` | 2026-10-14（人过目） | 表头；此后只增不删，AI 追加的条目状态为「待批」，追加不改表头 |
+| `accepted-diffs.md` | `12ca6dbfc7f161a0bdc18e2a2c927152d0c45285f5a58398b9ee5e3dbc4873b2` | 2026-10-30 #1088（**AI 代批，待人复核**） | 历史账本原字节冻结；新条目只新增 diffs/<ID>.md |
 | `acceptance.md` | `5e35715e01061778…` | 2026-10-25 #694 重登记：仅复算命令改 `python3 -I`（**AI 代批，待人复核**） | k = 5、S = 53（无排除）、Rust 配对规则、批准记录 |
 | `normalization.md` | `5a0c10b70a89a42a…` | 2026-10-14（**AI 代批，待人复核**） | 两侧同路径硬前提、路径对齐、ID / 时间、seq、请求体 |
 | `scripts/parity/bind.mjs` | `1b4a38037cf526c6…` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
-| `scripts/parity/check_frozen.py` | `e062ed423ff3b9ce…` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
+| `scripts/parity/check_frozen.py` | `7176799b2c2cd7c49a84543c723e0d8290862a1b465a8b7a89facc2607a1a2ea` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/check_ruler.py` | `34c8d0999aee2eff…` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/controls/README.md` | `36aee14ea36dcd70…` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/controls/review_r1.py` | `e47a3ca2bc05047e…` | 2026-10-30 #1067 fix-r1 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照；setUp 先建 `_tmp/`（新检出可跑） |
@@ -33,3 +33,13 @@
 | `scripts/parity/controls/multimodal.py` | `8479d196bacf3f32…` | 2026-10-30 #1067 fix-r1 重登记（**AI 代批，待人复核**） | 多态与日期前提的负例 / 正例；run_controls 先建 `_tmp/`（新检出可跑） |
 
 校验：`python3 -I scripts/parity/check_frozen.py`（全部登记文件的 sha256 前缀）。**冻结后改任何一份都要另开 issue、两家评审同意、写明理由**（`CLAUDE.md` §五）。
+
+## 2026-10-30 #1088 账本一条一文件重登记
+
+AI 代批，待人复核。依据 #1085 人定 D / #1088 PR-1，只移植 gateway 的 diffs/ 六字段校验、组合阅读与 --base 只新增保护；不跨装置 import。历史 accepted-diffs.md 原字节保留，新条目与更正分别新增文件；不改比较器、阈值、分母、场景、定标输入和判分路径。
+
+旧登记只绑定表头，本次将当前全文 SHA256 登记为 12ca6dbfc7f161a0bdc18e2a2c927152d0c45285f5a58398b9ee5e3dbc4873b2，移除表头回退。--base 仅放行源码中固定的旧行→本次全文行这一对迁移，仍核对历史账本原字节；以后账本哈希行逐字节冻结。
+
+仅重登记本次 check_frozen.py 哈希。旧新真实登记逐项对照、负控、两家非作者评审及待验项目见本树 `_tmp/20261026-issue-1088/RESULT.md`；既有定标和历史批准依据不改。本次重登记的最终冻结仍须两家非作者评审完成及人复核，不以旧批准记录代替本次评审。
+
+本次账本存放规则也取代现有 acceptance.md / README.md 中“追加到 accepted-diffs.md”的旧指令；这些冻结规约的字节与判分语义保持不变。完整账本的阅读与更正规则以 diffs/README.md 为准。

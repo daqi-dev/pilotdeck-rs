@@ -57,7 +57,7 @@
 
 ### 冻结尺子的变更（沿用既有批准程序）
 - 冻结文件不擅改：须独立 issue、理由、两家评审、真实数据复算、重新登记；改判分语义须明确授权，否则登记阻塞转独立工作；已获批的不重复申请。冻结装置的批准条件以其规约为准，不适用 P2 折中。
-- 差异账本只追加，每条写类别、依据、批准状态：`specs/gateway-parity/accepted-diffs.md` 已原字节冻结，新条目只新增 `specs/gateway-parity/diffs/<ID>.md`、更正只新增 `<ID>-R<n>.md`（规则见该目录 README，`check_frozen.py --base` 强制）；其余 `specs/*/accepted-diffs.md` 仍在文件末尾追加。定阈值（k、m）时不看 Rust 结果，不为变绿改标准。
+- 差异账本只追加，每条写类别、依据、批准状态：`specs/{parity,gateway-parity,ui-server-parity}/accepted-diffs.md` 均原字节冻结，新条目只新增对应 `diffs/<ID>.md`、更正只新增 `<ID>-R<n>.md`（规则见各目录 README，`check_frozen.py --base` 强制；parity 旧数字 ID 的更正规则见其 README）。定阈值（k、m）时不看 Rust 结果，不为变绿改标准。
 - 每次提交前：`cd specs/parity && shasum -a 256 README.md` 与 `FROZEN.md` 对得上。
 
 ### 当前协作与持续推进

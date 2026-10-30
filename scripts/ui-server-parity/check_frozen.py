@@ -59,11 +59,146 @@ from pathlib import Path
 import re
 import tempfile
 import subprocess
+import sys
 from apparatus import scan, ApparatusUnsafe, SPEC_FILES, EXP008_FILES, toolchain_files, approval_valid
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = ROOT / 'specs/ui-server-parity'
 REQUIRED = set(SPEC_FILES)
+
+
+ENTRY_ID = r'[A-Z][A-Z0-9]*(?:\.[0-9]+)*-(?:[A-Z0-9]+-)+[0-9]{3}'
+ENTRY_NAME = re.compile(rf'({ENTRY_ID})(-R[1-9][0-9]*)?\.md')
+FIELDS = ('类别', '基线依据', 'Rust 行为', '范围', '机器判据', '批准记录')
+
+
+def ledger_files(folder):
+    """Historical bytes first, then entries in filename order; README is not data."""
+    return [folder / 'accepted-diffs.md',
+            *sorted(path for path in (folder / 'diffs').glob('*.md')
+                    if path.name != 'README.md')]
+
+
+def ledger_bytes(folder):
+    """An empty diffs directory preserves the historical ledger byte for byte."""
+    return b'\n\n'.join(path.read_bytes() for path in ledger_files(folder))
+
+
+def check_diffs(folder, root):
+    failures = []
+    old = (folder / 'accepted-diffs.md').read_text(encoding='utf-8')
+    ids = set(re.findall(rf'^#{{1,6}}\s+({ENTRY_ID}(?:-R[1-9][0-9]*)?)\b', old, re.M))
+    parsed = []
+    for path in sorted((folder / 'diffs').iterdir()) if (folder / 'diffs').exists() else []:
+        if path.name == 'README.md' and path.is_file() and not path.is_symlink():
+            continue
+        match = ENTRY_NAME.fullmatch(path.name)
+        if not match or not path.is_file() or path.is_symlink():
+            failures.append(f'diffs/{path.name}: invalid entry filename or file type')
+            continue
+        name = path.stem
+        if name in ids:
+            failures.append(f'diffs/{path.name}: ID already exists in historical ledger')
+        ids.add(name)
+        try:
+            content = path.read_text(encoding='utf-8')
+        except (OSError, UnicodeError) as error:
+            failures.append(f'diffs/{path.name}: {error}')
+            continue
+        # Deliberately small frontmatter grammar: flat, unquoted ID scalars only.
+        # No YAML dependency or implicit boolean/null coercion.
+        header = re.match(r'\A---\n(.*?)\n---(?:\n|\Z)', content, re.S)
+        metadata = {}
+        if header:
+            for line in header[1].splitlines():
+                field = re.fullmatch(r'(id|original):\s*(\S+)\s*', line)
+                if not field or field[1] in metadata:
+                    failures.append(f'diffs/{path.name}: invalid/duplicate frontmatter field')
+                else:
+                    metadata[field[1]] = field[2]
+        if metadata.get('id') != name:
+            failures.append(f'diffs/{path.name}: frontmatter id must match filename')
+        sections = {}
+        body = content[header.end():] if header else content
+        headings = list(re.finditer(r'^## ([^\n]+)\n', body, re.M))
+        for index, heading in enumerate(headings):
+            key = '基线依据' if heading[1] == 'TS 依据' else heading[1]
+            end = headings[index + 1].start() if index + 1 < len(headings) else len(body)
+            if key in sections:
+                failures.append(f'diffs/{path.name}: duplicate section {key}')
+            sections[key] = body[heading.end():end].strip()
+        for field in FIELDS:
+            if not sections.get(field):
+                failures.append(f'diffs/{path.name}: missing/empty field {field}')
+        for pointer in re.findall(r'state/decisions-[\w.-]+\.md', sections.get('批准记录', '')):
+            if not (root / pointer).is_file():
+                failures.append(f'diffs/{path.name}: missing approval file {pointer}')
+        parsed.append((path.name, match, metadata))
+    for name, match, metadata in parsed:
+        original = metadata.get('original')
+        if match[2]:
+            if original != match[1] or original not in ids:
+                failures.append(f'diffs/{name}: original must name the existing base ID {match[1]}')
+        elif original is not None:
+            failures.append(f'diffs/{name}: original is only valid for corrections')
+    return failures
+
+
+def git(root, *args):
+    return subprocess.check_output(['git', '-C', str(root), *args], stderr=subprocess.PIPE,
+                                   timeout=30)
+
+
+def check_append_only(root, base, notes=None):
+    """Freeze the legacy ledger/hash row and existing diffs at the merge-base."""
+    failures = []
+    try:
+        merge_base = git(root, 'merge-base', 'HEAD', base).decode(encoding='utf-8').strip()
+        head = git(root, 'rev-parse', 'HEAD').decode(encoding='utf-8').strip()
+        base_commit = git(root, 'rev-parse', '--verify', f'{base}^{{commit}}').decode(encoding='utf-8').strip()
+        if merge_base == head:
+            if base_commit != head:
+                return [f'base {base}: base 与 HEAD 同源，只追加对照无效 '
+                        '(merge-base == HEAD; base commit != HEAD)']
+            if notes is not None:
+                notes.append('base 解析出的提交等于 HEAD（如空推送）；继续核对工作树冻结字节')
+        legacy = 'specs/ui-server-parity/accepted-diffs.md'
+        before = git(root, 'show', f'{merge_base}:{legacy}')
+        path = root / legacy
+        after = path.read_bytes() if path.is_file() and not path.is_symlink() else b''
+        if before != after or path.is_symlink():
+            offset = next((i for i, (a, b) in enumerate(zip(before, after)) if a != b),
+                          min(len(before), len(after)))
+            line = before[:offset].count(b'\n') + 1
+            failures.append(f'{legacy}:{line}: historical ledger differs from base '
+                            '(byte-frozen; first differing line)')
+        manifest = 'specs/ui-server-parity/FROZEN.md'
+        before_manifest = git(root, 'show', f'{merge_base}:{manifest}')
+        after_manifest = (root / manifest).read_bytes()
+        # Compare the entire raw hash row (including its line ending), not just
+        # the digest. Other rows may change for an approved ruler registration.
+        hash_row = rb'[0-9a-f]{64}  \.\./\.\./specs/ui-server-parity/accepted-diffs\.md\s*'
+        before_rows = [row for row in before_manifest.splitlines(keepends=True)
+                       if re.fullmatch(hash_row, row)]
+        after_rows = [row for row in after_manifest.splitlines(keepends=True)
+                      if re.fullmatch(hash_row, row)]
+        if len(before_rows) != 1 or before_rows != after_rows:
+            failures.append(f'{manifest}: accepted-diffs.md hash line changed/absent/duplicate '
+                            '(byte-frozen)')
+        entries = git(root, 'ls-tree', '-rz', merge_base, '--',
+                      'specs/ui-server-parity/diffs/').split(b'\0')
+        for entry in filter(None, entries):
+            meta, raw_path = entry.split(b'\t', 1)
+            mode, kind, oid = meta.split()
+            name = raw_path.decode(encoding='utf-8')
+            path = root / name
+            if (mode != b'100644' or kind != b'blob' or path.is_symlink()
+                    or not path.is_file() or path.stat().st_mode & 0o111
+                    or path.read_bytes() != git(root, 'cat-file', 'blob', oid.decode(encoding='utf-8'))):
+                failures.append(f'{name}: base file changed/deleted/renamed (append-only)')
+    except (OSError, UnicodeError, ValueError, subprocess.SubprocessError) as error:
+        failures.append(f'cannot verify append-only base {base}: {error}')
+    return failures
 
 
 def apparatus_files(root):
@@ -78,7 +213,7 @@ def required_files(root, folder):
             | set(toolchain_files(root)))
 
 
-def check(folder=SPEC, *, root=ROOT):
+def check(folder=SPEC, *, root=ROOT, base=None):
     root, folder = Path(root).resolve(), Path(folder).resolve()
     try:
         required = {p.resolve() for p in required_files(root, folder)}
@@ -119,7 +254,14 @@ def check(folder=SPEC, *, root=ROOT):
         errors.append('duplicate resolved SHA256 paths')
     if any(not p.is_relative_to(root) for p in required):
         errors.append('apparatus symlink escapes repository')
-    return {'verdict': 'FAIL' if errors else 'DRAFT' if draft else 'PASS',
+    try:
+        errors.extend(check_diffs(folder, root))
+    except (OSError, UnicodeError) as error:
+        errors.append(f'cannot read ledger: {error}')
+    notes = []
+    if base is not None:
+        errors.extend(check_append_only(root, base, notes))
+    return {'notes': notes, 'verdict': 'FAIL' if errors else 'DRAFT' if draft else 'PASS',
             'approved': approved and not draft and not errors, 'errors': errors,
             'entries': len(entries), 'hashes_consistent': not errors}
 
@@ -220,11 +362,18 @@ def self_test():
         return {'verdict': 'PASS' if all(c['passed'] for c in cases) else 'FAIL', 'controls': cases}
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--self-test', action='store_true')
-    args = parser.parse_args()
-    result = self_test() if args.self_test else check()
+    parser.add_argument('--base', help='check append-only against merge-base(HEAD, ref)')
+    parser.add_argument('--print-ledger', action='store_true', help='emit validated combined ledger bytes')
+    args = parser.parse_args(argv)
+    if args.self_test and (args.base is not None or args.print_ledger):
+        parser.error('--self-test cannot be combined with --base or --print-ledger')
+    result = self_test() if args.self_test else check(base=args.base)
+    if args.print_ledger and result['verdict'] == 'PASS':
+        sys.stdout.buffer.write(ledger_bytes(SPEC))
+        return 0
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 2 if result['verdict'] == 'DRAFT' else int(result['verdict'] != 'PASS')
 
