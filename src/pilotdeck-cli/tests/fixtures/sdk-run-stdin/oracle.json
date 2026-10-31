@@ -1,0 +1,47 @@
+{
+  "nodeVersion": "v22.22.0",
+  "sourceSha256": {
+    "src/cli/sdkCli.ts": "d41c08ce59380f85bb81ec8bd2d9bc876c778f9b2ebaea3fd25b1b5f08e288ec",
+    "dist/src/cli/sdkCli.js": "5734eed2c8e008e22ebd9f9a48b20cfe8808fc16519e32045fe05e08eb1333dc",
+    "packages/sdk/src/client.ts": "7dc380d0a7e0d3ac1d97210a36b2a18855d27936de9c12ea6cedf74f75e92c2a",
+    "packages/sdk/dist/client.js": "1fe1552964726337893b6f294552a385c5cdf5d16a0530e32b5d17f256a2bc49",
+    "packages/sdk/src/transport.ts": "793e38f0273836621c54a6bf9fb19645e4924343be9e6825d1fd06227136cb7f",
+    "packages/sdk/dist/transport.js": "065e0c379092571710f7ca3a2e02d9e417e43029fb8f4fadc1e305f7dc105d87"
+  },
+  "cases": [
+    {
+      "id": "early",
+      "delayed": false,
+      "repeat": 131072,
+      "stdinBytes": 131081,
+      "promptBytes": 131078,
+      "promptSha256": "800aa28ab9ed194637a5c3d01cdb9473565f044a978bd71dbdb3ba72634391b2",
+      "stdout": " subagent\n",
+      "stderr": "",
+      "exit": 0,
+      "signal": null,
+      "connections": 2,
+      "closes": [
+        2,
+        1
+      ]
+    },
+    {
+      "id": "after-create",
+      "delayed": true,
+      "repeat": 131072,
+      "stdinBytes": 131081,
+      "promptBytes": 131078,
+      "promptSha256": "800aa28ab9ed194637a5c3d01cdb9473565f044a978bd71dbdb3ba72634391b2",
+      "stdout": " subagent\n",
+      "stderr": "",
+      "exit": 0,
+      "signal": null,
+      "connections": 2,
+      "closes": [
+        2,
+        1
+      ]
+    }
+  ]
+}

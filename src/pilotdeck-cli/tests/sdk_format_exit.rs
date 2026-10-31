@@ -173,9 +173,10 @@ fn write_fixture_stdin(stdin: &mut impl Write, data: &[u8]) {
 struct StdinWriter {
     handle: std::thread::JoinHandle<()>,
     done: std::sync::mpsc::Receiver<std::thread::Result<()>>,
+    joined: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 impl StdinWriter {
-    fn start(mut stdin: std::process::ChildStdin, data: Vec<u8>) -> Self {
+    fn start(mut stdin: impl Write + Send + 'static, data: Vec<u8>) -> Self {
         let (finished, done) = std::sync::mpsc::channel();
         let handle = std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -184,7 +185,11 @@ impl StdinWriter {
             drop(stdin);
             let _ = finished.send(result);
         });
-        Self { handle, done }
+        Self {
+            handle,
+            done,
+            joined: Default::default(),
+        }
     }
     fn finish(self) {
         let result = self
@@ -192,32 +197,59 @@ impl StdinWriter {
             .recv_timeout(BOUND)
             .expect("#1097 bounded stdin cleanup");
         self.handle.join().expect("#1097 owned stdin thread");
+        self.joined
+            .store(true, std::sync::atomic::Ordering::Release);
         if let Err(payload) = result {
             std::panic::resume_unwind(payload);
         }
     }
 }
 
+// The hook belongs only to the thread invoking spawn. Ordinary replays leave
+// it empty; the wrapper reports the first actual write, including inline writes.
+type StdinObservation = (std::thread::ThreadId, Vec<u8>);
+thread_local! {
+    static STDIN_OBSERVER: std::cell::RefCell<Option<std::sync::mpsc::Sender<StdinObservation>>> = const { std::cell::RefCell::new(None) };
+}
+struct ObservedStdin {
+    stdin: std::process::ChildStdin,
+    entered: Option<std::sync::mpsc::Sender<StdinObservation>>,
+}
+impl Write for ObservedStdin {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if let Some(entered) = self.entered.take() {
+            entered
+                .send((std::thread::current().id(), bytes.to_vec()))
+                .expect("#1136 publish spawn first pipe write");
+        }
+        self.stdin.write(bytes)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.stdin.flush()
+    }
+}
+
 fn spawn(command: &mut Command, input: &Value) -> OwnedChild {
     let mut owned = OwnedChild(
-        Some(command.spawn().expect("#1097 spawn CLI")),
+        Some(command.spawn().expect("#1136 spawn CLI")),
         Writers::default(),
     );
-    let child = owned.0.as_mut().expect("#1097 immediately owned child");
+    let child = owned.0.as_mut().expect("#1136 immediately owned child");
     let hex = input["stdinHex"].as_str().unwrap_or("");
     let data: Vec<u8> = (0..hex.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("#1097 stdin hex"))
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("#1136 stdin hex"))
         .collect();
     if input["holdStdin"] != true && input["stdinAfterCreate"] != true {
+        let stdin = ObservedStdin {
+            stdin: child.stdin.take().expect("#1136 stdin pipe"),
+            entered: STDIN_OBSERVER.with(|observer| observer.borrow_mut().take()),
+        };
         owned
             .1
             .lock()
-            .expect("#1097 register early stdin")
-            .push(StdinWriter::start(
-                child.stdin.take().expect("#1097 stdin pipe"),
-                data,
-            ));
+            .expect("#1136 register early stdin")
+            .push(StdinWriter::start(stdin, data));
     }
     owned
 }
@@ -271,43 +303,86 @@ async fn fixture_stdin_broken_pipe_preserves_output() {
 
 #[tokio::test]
 async fn fixture_stdin_writer_yields_before_child_reads() {
-    let runtime = Runtime::new();
-    let release = runtime.0.join("release");
+    // This is the real spawn entry, including hex decoding and registration.
+    // The child never reads stdin. A separate socket gates its exit, so even
+    // an inline writer is released after its first-write event, before verdict.
+    let (mut release, reader_release) =
+        std::os::unix::net::UnixStream::pair().expect("#1136 blocked reader release socket");
+    release
+        .set_write_timeout(Some(BOUND))
+        .expect("#1136 bounded reader release");
     let mut command = Command::new("/bin/sh");
     command
         .env_clear()
-        .args([
-            "-c",
-            "while [ ! -f \"$1\" ]; do /bin/sleep 0.01; done; exit 23",
-            "fixture",
-        ])
-        .arg(&release)
+        .args(["-c", "read release <&1; exit 23"])
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
+        .stdout(Stdio::from(std::os::fd::OwnedFd::from(reader_release)))
         .stderr(Stdio::piped());
-    let input = json!({"stdinHex": "61".repeat(2 * 1024 * 1024)});
-    let (ready, observed) = std::sync::mpsc::channel();
+    let input = json!({"stdinHex": "00ff78c3".repeat(512 * 1024)});
+    let (entered, observed) = std::sync::mpsc::channel();
+    let (returned, spawned) = std::sync::mpsc::channel();
     let starter = std::thread::spawn(move || {
-        ready
-            .send(spawn(&mut command, &input))
-            .unwrap_or_else(|_| panic!("#1097 publish owned child"));
+        STDIN_OBSERVER.with(|observer| *observer.borrow_mut() = Some(entered));
+        let child = spawn(&mut command, &input);
+        returned.send(child).expect("#1136 publish spawn return");
     });
-    // Always release the child before checking: a synchronous-writer mutant
-    // fails this assertion without leaking a blocked writer or timing out.
-    let early = observed.recv_timeout(Duration::from_secs(3));
-    let yielded = early.is_ok();
-    let temporary = release.with_extension("tmp");
-    fs::write(&temporary, b"release").expect("#1097 release bytes");
-    fs::rename(temporary, &release).expect("#1097 atomic child release");
-    let child =
-        early.unwrap_or_else(|_| observed.recv_timeout(BOUND).expect("#1097 released child"));
-    starter.join().expect("#1097 starter joined");
-    let output = collect(child).await;
-    verify(yielded, "#1097 stdin writer yields before child reads");
+    let caller = starter.thread().id();
+    let first_write = observed.recv_timeout(BOUND);
+    // Release even on a missing progress event. Never turn a timeout/setup
+    // panic into the receipt for a synchronous writer regression.
+    let released = release.write_all(b"exit\n");
+    drop(release);
+    let mut child = spawned.recv_timeout(BOUND).expect("#1136 spawn returned");
+    starter.join().expect("#1136 spawn caller joined");
+    let output = collect_owned(&mut child, BOUND).await;
+    let writers = child.1.clone();
+    let registered = writers.lock().expect("#1136 spawn registry").len();
+    drop(child);
+    released.expect("#1136 release blocked reader");
+    let (writer, bytes) = first_write.expect("#1136 spawn first pipe write progress");
+    verify(
+        writer != caller,
+        "#1136 stdin writer yields before child reads",
+    );
+    verify(
+        bytes == [0x00, 0xff, 0x78, 0xc3].repeat(512 * 1024),
+        "#1136 spawn decodes complete stdinHex",
+    );
+    verify(registered == 1, "#1136 spawn registers stdin writer");
     verify(
         output.status.code() == Some(23),
-        "#1097 blocked reader exit preserved",
+        "#1136 blocked reader exit 23 preserved",
     );
+}
+
+#[tokio::test]
+async fn fixture_stdin_deferred_until_requested() {
+    for (hold, delayed) in [(true, false), (false, true), (true, true)] {
+        let mut command = Command::new("/bin/sh");
+        command
+            .env_clear()
+            .args(["-c", "exit 23"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = spawn(
+            &mut command,
+            &json!({"stdinHex": "00ff78c3", "holdStdin": hold, "stdinAfterCreate": delayed}),
+        );
+        let retained = child
+            .0
+            .as_ref()
+            .expect("#1136 deferred child")
+            .stdin
+            .is_some();
+        let registered = child.1.lock().expect("#1136 deferred registry").len();
+        let output = collect(child).await;
+        verify(
+            retained && registered == 0,
+            "#1136 hold or delayed stdin stays with child",
+        );
+        assert_eq!(output.status.code(), Some(23), "#1136 deferred child exit");
+    }
 }
 
 #[test]
@@ -328,11 +403,19 @@ fn fixture_stdin_cancel_reaps_writer() {
         writers.lock().expect("#1097 writer ownership").len() == 1,
         "#1097 writer registered",
     );
+    let joined = writers
+        .lock()
+        .expect("#1136 observe writer join")
+        .first()
+        .expect("#1136 registered writer exists")
+        .joined
+        .clone();
     // This child never consumes stdin. Cancelling its owner must close the
     // read end, finish the blocked write, and join the registered thread.
     drop(child);
     verify(
-        writers.lock().expect("#1097 joined writers").is_empty(),
+        writers.lock().expect("#1097 joined writers").is_empty()
+            && joined.load(std::sync::atomic::Ordering::Acquire),
         "#1097 cancellation joins stdin writer",
     );
 }
@@ -341,14 +424,18 @@ async fn collect(child: OwnedChild) -> std::process::Output {
     collect_bounded(child, BOUND).await
 }
 async fn collect_bounded(mut child: OwnedChild, bound: Duration) -> std::process::Output {
+    collect_owned(&mut child, bound).await
+}
+// The replay may register delayed stdin after process exit; retain its owner.
+async fn collect_owned(child: &mut OwnedChild, bound: Duration) -> std::process::Output {
     timeout(bound, async {
         loop {
             if child
                 .0
                 .as_mut()
-                .expect("#1097 owned child")
+                .expect("#1136 owned child")
                 .try_wait()
-                .expect("#1097 poll CLI")
+                .expect("#1136 poll CLI")
                 .is_some()
             {
                 break;
@@ -357,13 +444,13 @@ async fn collect_bounded(mut child: OwnedChild, bound: Duration) -> std::process
         }
     })
     .await
-    .expect("#1097 bounded CLI exit");
+    .expect("#1136 bounded CLI exit");
     child
         .0
         .take()
-        .expect("#1097 reap owned CLI")
+        .expect("#1136 reap owned CLI")
         .wait_with_output()
-        .expect("#1097 collect output")
+        .expect("#1136 collect output")
 }
 fn snapshot(root: &Path) -> Value {
     fn visit(root: &Path, path: &Path, entries: &mut BTreeMap<String, Value>) {
@@ -950,7 +1037,7 @@ async fn run_case(case: &Value) {
                     .expect("#1097 cleanup owner")
                     .kill()
                     .expect("#1097 explicit cleanup kill");
-                let output = collect(child).await;
+                let output = collect_owned(&mut child, BOUND).await;
                 release
                     .send(())
                     .expect("#1097 release held mock after cleanup");
@@ -967,14 +1054,15 @@ async fn run_case(case: &Value) {
                         .await
                         .expect("#1097 mock bounded; not a negative kill")
                 },
-                collect(child)
+                collect_owned(&mut child, BOUND)
             );
             run_ids = ids;
             output
         }
     } else {
-        collect(child).await
+        collect_owned(&mut child, BOUND).await
     };
+    drop(child); // replay can no longer register a writer
     if let Some(listener) = listener.as_ref() {
         if case["connections"]
             .as_u64()
@@ -1173,4 +1261,41 @@ mod format_cases {
     );
     cell!(run_format_json, "run--format-json");
     cell!(run_format_jsonl, "run--format-jsonl");
+}
+
+#[tokio::test]
+async fn fixture_stdin_registered_after_exit_is_joined() {
+    let mut command = Command::new("/bin/sh");
+    command
+        .env_clear()
+        .args(["-c", "exit 23"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = spawn(&mut command, &json!({"holdStdin": true}));
+    let stdin = child
+        .0
+        .as_mut()
+        .expect("#1136 late writer child")
+        .stdin
+        .take()
+        .expect("#1136 late writer pipe");
+    let output = collect_owned(&mut child, BOUND).await;
+    assert_eq!(
+        output.status.code(),
+        Some(23),
+        "#1136 predecessor exited before registration"
+    );
+    let writer = StdinWriter::start(stdin, vec![b'x'; 128 * 1024]);
+    let joined = writer.joined.clone();
+    child
+        .1
+        .lock()
+        .expect("#1136 late writer registry")
+        .push(writer);
+    drop(child); // final replay owner
+    verify(
+        joined.load(std::sync::atomic::Ordering::Acquire),
+        "#1136 post-exit writer joined",
+    );
 }
