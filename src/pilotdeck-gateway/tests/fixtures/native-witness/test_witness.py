@@ -2,8 +2,11 @@
 # anchor-selfcheck: unsupported witness parser and runtime controls, no source mutation table
 """#1140 synthetic parser controls; --capture separately tests real Linux output.
 
-Only the exec/network fields are under test. The full frozen audit's unrelated
-surface/binding fields are explicitly SYNTHETIC_CONTROL_ONLY, never A7 evidence.
+Only the exec/network fields are under test; the envelope below fills the
+remaining audit fields offline. The contract never carries a binding or
+observer rows: the independent observer records the binding at hello and it is
+bound to the contract only at audit time (#1140), so a pre-registered binding
+cannot audit, in tests or in real captures.
 """
 import sys
 if not sys.flags.isolated:
@@ -139,11 +142,16 @@ def exec_line(pid, path):
     return f'{pid} execve({hx(str(path))}, [{hx(str(path))}], 0x1 /* 0 vars */) = 0\n'
 
 
-def compatibility_envelope(folder, contract, evidence, *, connection_id='SYNTHETIC_CONTROL_ONLY'):
-    """Labelled audit consumer control; deliberately not a native scoring report."""
+def compatibility_envelope(folder, contract, evidence, *, connection_id='audit-envelope'):
+    """Offline audit envelope: real witness bytes, envelope-only remaining fields.
+
+    The contract carries no binding and no observer rows; w.audit binds the
+    hello the independent observer recorded (#1140). This is the audit
+    consumer path itself, no longer a synthetic-control shell.
+    """
     evidence, contract = copy.deepcopy(evidence), copy.deepcopy(contract)
-    artifact = Path(folder) / 'synthetic-control.txt'
-    artifact.write_text('SYNTHETIC_CONTROL_ONLY; not native surfaces or A7 acceptance\n')
+    artifact = Path(folder) / 'audit-envelope.txt'
+    artifact.write_text('#1140 offline audit envelope; exec/network fields are real witness bytes\n')
     binding = {'connectionId': connection_id, 'generation': 1}
     frame = {'type': 'hello_ok', 'protocolVersion': '1.2', 'interactionBinding': binding}
     payload = json.dumps(frame, separators=(',', ':')).encode()
@@ -157,8 +165,7 @@ def compatibility_envelope(folder, contract, evidence, *, connection_id='SYNTHET
     rows = [{'connection': 1, 'direction': 'receive', 'frame': frame, 'wireHex': (header + payload).hex(),
              'wire': {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': False,
                       'lengthCode': header[1], 'payloadLength': length}}]
-    contract.update(cases=['SYNTHETIC_CONTROL_ONLY'], capabilities={}, connections=1,
-                    binding=binding, observerRows=rows)
+    contract.update(cases=['AUDIT_ENVELOPE'], capabilities={}, connections=1)
     evidence.update(expectedCases=contract['cases'], executedCases=contract['cases'], capabilities={},
                     binding=binding, observer={'connections': 1, 'rows': rows},
                     surfaces={name: {'status': 'RECORDED', 'artifacts': [
@@ -214,13 +221,14 @@ class WitnessTests(unittest.TestCase):
             self.assertTrue(client.rows[-1]['wireHex'] == frame.hex(), '#1169 driver records sent bytes')
 
     def test_large_compatibility_frame(self):
-        error, contract = None, None
+        error, rows = None, None
         try:
-            contract, _ = compatibility_envelope(self.folder, self.contract, {}, connection_id='x' * 65536)
+            _, evidence = compatibility_envelope(self.folder, self.contract, {}, connection_id='x' * 65536)
+            rows = evidence['observer']['rows']
         except Exception as caught:
             error = caught
-        self.assertTrue(error is None, '#1169 envelope supports 64-bit frame lengths: ' + str(error))
-        row = contract['observerRows'][0]
+        self.assertTrue(error is None and bool(rows), '#1169 envelope supports 64-bit frame lengths: ' + str(error))
+        row = rows[0]
         frame = bytes.fromhex(row['wireHex'])
         payload = json.dumps(row['frame'], separators=(',', ':')).encode()
         self.assertTrue(frame[:2] == b'\x81\x7f' and int.from_bytes(frame[2:10], 'big') == len(payload), '#1169 envelope extended length is exact')
@@ -229,7 +237,7 @@ class WitnessTests(unittest.TestCase):
     def test_connect_eaddrinuse_not_blocked(self):
         from contextlib import nullcontext
         fault = OSError(errno.EADDRINUSE, 'ephemeral source ports exhausted')
-        def connect(*_):
+        def connect(*_, **__):
             return c.WireClient(28999, time.monotonic() + 5)
         error = None
         with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
@@ -361,7 +369,7 @@ class WitnessTests(unittest.TestCase):
         client.receive.side_effect = [{'type': 'hello_ok', 'interactionBinding': {}},
                                      {'id': 'witness', 'final': True, 'event': {'finishReason': 'completed', 'text': 'native witness text'}}]
         client.rows, client.upgrade = [], 'synthetic upgrade'
-        def capture(_contract, _output, _environment, *, exercise, validate):
+        def capture(_contract, _output, _environment, *, exercise, validate, **_):
             exercise(mock.Mock(), folder, time.monotonic() + 5)
         with mock.patch.object(c, 'BoundedHTTPServer', return_value=server), \
                 mock.patch.object(c.threading, 'Thread', return_value=worker), \
@@ -503,7 +511,7 @@ class WitnessTests(unittest.TestCase):
         lock = self.folder / 'parity.lock'
         real_lock = c.parity_lock
         for cancelled in (False, True):
-            def run(*_):
+            def run(*_, **__):
                 self.assertTrue(lock.is_dir(), '#1140 lease covers collection and cleanup')
                 if cancelled:
                     raise KeyboardInterrupt('deterministic owned cancellation')
@@ -552,7 +560,7 @@ class WitnessTests(unittest.TestCase):
     def test_provider_bind_conflict(self):
         from contextlib import nullcontext
         # A non-participant can bind between preflight and actual provider bind.
-        def provider_bind(*_):
+        def provider_bind(*_, **__):
             server = c.BoundedHTTPServer.__new__(c.BoundedHTTPServer)
             server.server_bind()
         with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
@@ -570,7 +578,7 @@ class WitnessTests(unittest.TestCase):
         from contextlib import nullcontext
         tracer = mock.Mock()
         tracer.poll.return_value = 1
-        def run(*_):
+        def run(*_, **__):
             c.wait_ready(tracer, self.folder, 28999, 0)
         with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
                 mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket') as sockets, \
@@ -659,11 +667,11 @@ class WitnessTests(unittest.TestCase):
 
     def test_native_validator_wired(self):
         # Exercise the real collector closure, with no socket or child process.
-        def capture(contract, output, environment, *, exercise, validate=None):
+        def capture(contract, output, environment, *, exercise, validate=None, **_):
             self.assertTrue(callable(validate), '#1140 collector wires prepublication validator')
             validate(contract, {'synthetic': True})
             self.assertTrue(server.shutdown.call_count == 1, '#1140 provider stops before receipt')
-            return 'validated'
+            return 'launch', 'validated'
         server, worker = mock.Mock(), mock.Mock()
         worker.is_alive.return_value = False
         with mock.patch.object(c, 'BoundedHTTPServer', return_value=server), \
@@ -671,7 +679,7 @@ class WitnessTests(unittest.TestCase):
                 mock.patch.object(c.w, 'identity', return_value={}), mock.patch.object(c.w, 'capture', side_effect=capture), \
                 mock.patch.object(c, 'validate_smoke') as validate:
             result = c._native_run(self.host, self.child, self.folder / 'native', 28999)
-        self.assertTrue(result == 'validated' and validate.call_count == 1, '#1140 collector invokes smoke validation')
+        self.assertTrue(result == ('launch', 'validated') and validate.call_count == 1, '#1140 collector invokes smoke validation')
         self.assertTrue(server.shutdown.call_count == server.server_close.call_count == worker.join.call_count == 1, '#1140 provider cleanup is idempotent')
 
     def test_tracer_nonzero(self):
@@ -725,7 +733,7 @@ class WitnessTests(unittest.TestCase):
         def capture(*_, **__):
             self.assertTrue(ready.wait(2), '#1140 provider thread publishes signal mask')
             observed.append(signal.pthread_sigmask(signal.SIG_BLOCK, []))
-            return 'captured'
+            return 'launch', 'evidence'
         before = signal.pthread_sigmask(signal.SIG_BLOCK, [])
         with mock.patch.object(c.BoundedHTTPServer, 'serve_forever', serve), \
                 mock.patch.object(c.http.server.HTTPServer, 'shutdown'), \
@@ -876,9 +884,10 @@ class WitnessTests(unittest.TestCase):
                     w.audit(self.raw, contract, bad)
         # Freeze the known limitation explicitly: raw replay, not the frozen
         # function alone, closes omissions in the caller-supplied calls list.
+        # The contract is bound the same way w.audit binds it (#1140).
         bad = copy.deepcopy(value)
         bad['networkWitness']['calls'] = []
-        w.frozen_auditor().audit_native(bad, contract)
+        w.frozen_auditor().audit_native(bad, w.bind_contract(contract, bad))
 
     def test_platform_and_identity(self):
         with mock.patch.object(sys, 'platform', 'darwin'):
@@ -1022,7 +1031,7 @@ def real_capture(folder):
                     verdicts.append({'name': name, 'status': 'KILLED' if getattr(error, 'rule', None) == expected else 'INVALID', 'reason': str(error)})
             except Exception as error:
                 verdicts.append({'name': name, 'status': 'INVALID', 'reason': str(error)})
-        print(json.dumps({'scope': 'REAL_WITNESS_WITH_SYNTHETIC_AUDIT_ENVELOPE', 'scoring': 'NOT_RUN', 'controls': verdicts}, indent=2))
+        print(json.dumps({'scope': 'REAL_WITNESS_AUDIT', 'scoring': 'NOT_RUN', 'controls': verdicts}, indent=2))
         return 0 if all(row['status'] == 'KILLED' for row in verdicts) else 1
 
 

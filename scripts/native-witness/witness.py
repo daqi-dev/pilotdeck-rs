@@ -232,10 +232,42 @@ def frozen_auditor():
     return module
 
 
+def observer_binding(evidence):
+    """The interaction binding the independent observer recorded at hello.
+
+    A runtime record cannot be pre-registered; the binding exists only once
+    the gateway has answered hello, and every hello must agree.
+    """
+    rows = (evidence.get('observer') or {}).get('rows')
+    need(isinstance(rows, list) and bool(rows), 'observer rows are required to bind the hello record')
+    hellos = [row['frame'].get('interactionBinding') for row in rows
+              if isinstance(row, dict) and isinstance(row.get('frame'), dict)
+              and row['frame'].get('type') == 'hello_ok']
+    need(bool(hellos), 'observer recorded no server hello/binding')
+    need(all(isinstance(binding, dict) for binding in hellos), 'observer hello binding malformed')
+    need(all(json.dumps(binding, sort_keys=True) == json.dumps(hellos[0], sort_keys=True)
+            for binding in hellos), 'observer hello records disagree on the binding')
+    return hellos[0]
+
+
+def bind_contract(contract, evidence):
+    """Bind the observer-recorded hello binding to a launch contract (#1140).
+
+    Mirrors the frozen loader's rule: a contract that already carries a
+    binding, observer rows or a binding source is rejected here instead of
+    being audited; the runtime record is the only admissible source.
+    """
+    for key in ('binding', 'observerRows', 'bindingSource'):
+        need(key not in contract, 'a pre-registered ' + key + ' cannot audit; bind the observer hello record')
+    return dict(contract, binding=observer_binding(evidence),
+                observerRows=copy.deepcopy(evidence['observer']['rows']),
+                bindingSource='observer-hello')
+
+
 def audit(raw, contract, evidence):
     module = frozen_auditor()
     checked = checked_evidence(raw, contract, evidence)
-    module.audit_native(checked, contract)
+    module.audit_native(checked, bind_contract(contract, checked))
     return checked
 
 
@@ -256,11 +288,12 @@ def stop_host(tracer, pid):
         os.close(fd)
 
 
-def capture(contract, output, environment, *, timeout=LIMIT_SECONDS, exercise=None, validate=None):
+def capture(contract, output, environment, *, timeout=LIMIT_SECONDS, exercise=None, validate=None,
+            limit=LIMIT_SECONDS):
     need(sys.platform == 'linux', 'Linux strace required; macOS needs future eslogger + root support')
     strace = shutil.which('strace')
     need(strace is not None, 'strace is not installed')
-    need(0 < timeout <= LIMIT_SECONDS, 'capture deadline must be 1..60 seconds')
+    need(0 < timeout <= limit, f'capture deadline must be 1..{limit} seconds')
     # --kill-on-exit is mandatory, never silently downgrade older strace.
     help_text = subprocess.run([strace, '--help'], capture_output=True, text=True, timeout=5, check=True).stdout
     need('--kill-on-exit' in help_text, 'strace lacks --kill-on-exit')

@@ -1782,6 +1782,73 @@ class ApparatusInputs(unittest.TestCase):
                     redirect_stdout(io.StringIO()):
                 code = entry.main()
             self.assertEqual(code, 2, '#166 BLOCKED remains distinct from NOT_RUN')
+            # #1140 native scoring wiring: a witness capture scores the
+            # rust-host/rust-sidecar cell against the registered A19-HOST
+            # expectations while the three cells without evidence stay NOT_RUN,
+            # so the batch cannot be PASS.  The observed batch status is also
+            # re-derived through the one shared aggregator (#892 runtime
+            # observation, never a static exit proof).
+            controls = _load('session_controls', common.SCRIPT / 'controls/session_domain.py')
+            with tempfile.TemporaryDirectory(prefix='pdrs-1140-native-') as native:
+                fixture = controls.native_capture_fixture(Path(native))
+                output = Path(native) / 'deadline-native'
+                with patch.object(entry, 'parity_lock', return_value=nullcontext()), \
+                        patch.object(sys, 'argv', ['session_domain', '--suite', 'deadline',
+                                                   '--native-capture', str(fixture),
+                                                   '--output', str(output)]), \
+                        redirect_stdout(io.StringIO()):
+                    code = entry.main()
+                self.assertEqual(code, 3, '#1140 a native PASS cell cannot make a NOT_RUN batch PASS')
+                report = json.loads((output / 'report.json').read_text())
+                self.assertEqual(report['status'], 'NOT_RUN', '#1140 batch keeps the most pessimistic cell')
+                self.assertEqual(report['executionStatus'], 'NOT_RUN', '#1140 execution discloses unexecuted cells')
+                self.assertTrue(report['status'] == common.aggregate_status(
+                    *[cell['status'] for cell in report['cells']])[0],
+                    '#892 observed batch status equals the one shared aggregation')
+                self.assertEqual(len(report['cells']), 4, '#1140 all four matrix cells remain')
+                others = [cell for cell in report['cells'] if (cell['host'], cell['sidecar']) != ('rust', 'rust')]
+                self.assertTrue(all(cell['status'] == 'NOT_RUN' and not cell['executedCases'] for cell in others),
+                                '#1140 cells without witness evidence stay NOT_RUN')
+                cell = next(c for c in report['cells'] if (c['host'], c['sidecar']) == ('rust', 'rust'))
+                self.assertEqual(cell['status'], 'PASS', '#1140 native cell scores the capture')
+                self.assertEqual(cell['executedCases'], cell['expectedCases'], '#1140 no denominator shrink: all 72 cases')
+                self.assertTrue(all(row['status'] == 'PASS' for row in cell['cases']),
+                                '#1140 fixture observations match the registered rust expectations')
+                self.assertEqual(cell['witness']['status'], 'PASS', '#1140 audit precedes scoring')
+                # One mutated surface of one case is an honest per-case FAIL,
+                # never hidden: exactly one case fails on exactly that surface.
+                document = json.loads((fixture / 'session-domain/cases.json').read_text())
+                document['cases'][0]['observation']['frames'][0] = {'type': 'agent_status', 'event': 'gateway_submit_failed'}
+                common.save(fixture / 'session-domain/cases.json', document)
+                receipt = json.loads((fixture / 'capture/receipt.json').read_text())
+                receipt['casesSha256'] = common.digest(fixture / 'session-domain/cases.json')
+                common.save(fixture / 'capture/receipt.json', receipt)
+                mutated = Path(native) / 'deadline-mutated'
+                with patch.object(entry, 'parity_lock', return_value=nullcontext()), \
+                        patch.object(sys, 'argv', ['session_domain', '--suite', 'deadline',
+                                                   '--native-capture', str(fixture),
+                                                   '--output', str(mutated)]), \
+                        redirect_stdout(io.StringIO()):
+                    code = entry.main()
+                self.assertEqual(code, 1, '#1140 an expectation mismatch is a batch FAIL')
+                report = json.loads((mutated / 'report.json').read_text())
+                self.assertEqual(report['status'], 'FAIL', '#1140 mismatch surfaces fail the batch')
+                cell = next(c for c in report['cells'] if (c['host'], c['sidecar']) == ('rust', 'rust'))
+                self.assertEqual(cell['status'], 'FAIL', '#1140 mismatch surfaces fail the native cell')
+                failed = [row for row in cell['cases'] if row['status'] != 'PASS']
+                self.assertEqual(len(failed), 1, '#1140 exactly one case carries the mutation')
+                self.assertEqual((failed[0]['rule'], failed[0]['surfaces']),
+                                 ('EXPECTATION_MISMATCH', ['frames']),
+                                 '#1140 the failing rule and surface are named')
+                with patch.object(entry, 'parity_lock', return_value=nullcontext()), \
+                        patch.object(sys, 'argv', ['session_domain', '--suite', 'deadline',
+                                                   '--native-capture', str(Path(native) / 'missing-capture'),
+                                                   '--output', str(Path(native) / 'deadline-blocked')]), \
+                        redirect_stdout(io.StringIO()):
+                    code = entry.main()
+                self.assertEqual(code, 2, '#1140 a missing capture directory is BLOCKED')
+                self.assertFalse((Path(native) / 'deadline-blocked').exists(),
+                                 '#1140 BLOCKED creates no output directory')
         for status, code in [('PASS', 0), ('FAIL', 1), ('PASS_WITH_SKIPS', 1),
                              ('BLOCKED', 2), ('NOT_RUN', 3)]:
             self.assertEqual(common.aggregate_status(status), (status, code), '#166 shared exit contract')

@@ -1,6 +1,6 @@
 # #1140 Linux 原生 exec / 出网见证
 
-本目录是独立采集器，不是 A7 评分入口。`session_domain.py`、冻结清单和 native 格的 `NOT_RUN` 不变；A5.4 之后再接评分路径。
+本目录是独立采集器，不是评分入口；但 `--session-domain` 模式的采集目录现在可被 `session_domain.py --suite deadline --native-capture` 消费（#1140 A5.4 接线），native 格由此产生真实的 PASS/FAIL，无证据的格保持 `NOT_RUN`。
 
 ## 运行
 
@@ -20,6 +20,16 @@ python3 -I scripts/native-witness/collect.py \
 
 python3 -I src/pilotdeck-gateway/tests/fixtures/native-witness/test_witness.py \
   --capture _tmp/20261026-issue-1140/linux-native-001/capture
+
+# session-domain 采集：72 个冻结 case 各占一个 session/run，随后由 deadline CLI 判分。
+python3 -I scripts/native-witness/collect.py \
+  --gateway "$CARGO_TARGET_DIR/debug/pilotdeck-gateway" \
+  --sidecar "$CARGO_TARGET_DIR/debug/pilotdeck-agent-loop-sidecar" \
+  --output _tmp/20261026-issue-1140/linux-session-001 --session-domain
+
+python3 -I scripts/gateway-parity/session_domain.py --suite deadline \
+  --native-capture _tmp/20261026-issue-1140/linux-session-001 \
+  --output _tmp/20261026-issue-1140/deadline-session-001
 ```
 
 输出目录必须不存在。默认网关 `127.0.0.1:28999`、模型 mock `127.0.0.1:29000`；`--port` 可选 28999..29008（模型为下一端口），绑定前使用 `scripts/gateway-parity/common.py::parity_lock` 的 `/tmp/pdrs-parity.lock` 目录租约，覆盖采集和 provider 清理；目录占用轮询 timeout 为 1 秒（guard 行为继承共享协议），锁忙或任一固定端口占用均报告 `BLOCKED`、退出码 2，不搜索或连接其他进程。探针按真实监听方区分策略：gateway 的预检和启动失败复查均不设 `SO_REUSEADDR`，TIME_WAIT 若使裸 bind 失败也报告 BLOCKED；provider 预检设置 `SO_REUSEADDR`，与 Python `HTTPServer` 一致，可复用 TIME_WAIT。两种策略均拒绝活动监听。与 CLI/native-topology/全量对拍共用租约。独立 `home/`、`project/`；环境只带这次 home、固定 PATH/LANG，不读真实 key，不碰 `~/.pilotdeck` 或 18789。仅发一次本地模型轮次（产品可能另发标题请求）；driver 的每次等待共用 60 秒绝对 deadline。模型服务器在 accept 后立即设置 5 秒 socket 空闲超时，覆盖请求行、headers 和 body。
@@ -28,14 +38,20 @@ CLI 消费者判定可重试 BLOCKED 时，必须同时核对退出码 2 和 **s
 
 EADDRINUSE 仅在预检/启动失败复查的 `probe.bind` 和 provider 的实际 `server_bind` 中映射为 BLOCKED。`WireClient.create_connection` 的临时源端口耗尽、socket 创建/选项错误以及其他采集行为保留原异常，不能归为固定监听端口冲突。WS 发送按 payload 字节数支持 7/16/64 位长度编码，包含 65535/65536 边界。
 
-`collect.py` 通过真实 native opt-in 启动 gateway，完成 WS hello / submit_turn，本地 mock 返回文本，以 pidfd 核实所属 tracer 后 SIGTERM 停机，等待完整 trace 与退出码 0，再确认 sidecar exec、模型出网和 JSONL 落盘；这些检查及 provider 清理都先于 receipt 发布。`driver.json` 保留本轮 WS 字节、解码和 mock 请求。它是驱动观察，不是已冻结的完整 A7 observer。
+`collect.py` 通过真实 native opt-in 启动 gateway，完成 WS hello / submit_turn，本地 mock 返回文本，以 pidfd 核实所属 tracer 后 SIGTERM 停机，等待完整 trace 与退出码 0，再确认 sidecar exec、模型出网和 JSONL 落盘；这些检查及 provider 清理都先于 receipt 发布。smoke 模式下 `driver.json` 保留本轮 WS 字节、解码和 mock 请求；它仍是驱动观察。采集 deadline：smoke 60 秒、session-domain 900 秒（`w.capture` 的 `timeout`/`limit` 显式传参，不接受无上限等待）。
+
+`--session-domain` 模式按 `scripts/gateway-parity/fixtures/session-calibration.json` 的 72 个冻结 case 顺序驱动：每个 case 独立 sessionKey/runId 与一次模型请求，超时类 case 带 `timeoutMs=400`，时序类 case 带 `timeoutMs=30000` 且 provider 延迟 1.5 秒；最终帧后固定 settle 0.5 秒再读取三面（frames / durableStatus / registry）。结果发布到输出目录的 `session-domain/`：
+
+- `observer.json`：独立 observer 在一条连接上记录的 hello 与全部帧（`{connections, rows}`）。
+- `cases.json`：72 行 `{case, observation}`，observation 含三面。
+- `provider.json`：driver 侧模型请求台账 `{endpoint, requests}`，与 strace 出网见证交叉核对。
 
 `capture/` 保留：
 
-- `prelaunch.json`：执行前固定的 ELF 路径、完整 argv、sha256、角色、端点与 case；`launch.json` 只追加实际 tracer 的 launcherPid。
+- `prelaunch.json`：执行前固定的 ELF 路径、完整 argv、sha256、角色、端点与 case；`launch.json` 只追加实际 tracer 的 launcherPid。两者都不得预注册 `binding` / `observerRows` / `bindingSource`。
 - `trace.log`：strace 原始完整进程树日志；`stdout.log`、`stderr.log`：被测物输出与跟踪器诊断。
 - `evidence.json`：processes / execWitness / networkWitness / cleanup，直接采用冻结消费者字段名；exec 包含短命后代、退出码、父子关系与线程归属；网络包含地址、端口、TID、TGID 和系统调用结果（失败的 connect 也保留）。
-- `receipt.json`：只有正常完成、解析完整、smoke 验证及 provider 清理通过后才原子发布；四份输入/输出哈希与 tracer 退出码。失败只有 `failure.json`，不能算 WITNESS_CAPTURED。
+- `receipt.json`：只有正常完成、解析完整、smoke/session 验证及 provider 清理通过后才原子发布；capture 四件加 `session-domain/` 三件共七份哈希与 tracer 退出码。失败只有 `failure.json`，不能算 WITNESS_CAPTURED。
 
 ## 证据边界
 
@@ -59,7 +75,9 @@ argv 元素内的逗号、空格、引号在 `-xx` 下均编码为 `\\xNN`，例
 
 冻结函数本身只信 `networkWitness.complete`，`calls=[]` 且 complete=true 会被它接受；本包明确测试这个既有边界。漏记出网通过独立回放使 complete=false，然后由原函数以 `NETWORK_WITNESS` 拒绝。短命子进程漏记与 source=ps 同样由原函数拒绝。
 
-完整 audit 还要求 observerRows、预注册 binding、capabilities、cases 和 output/disk/http 表面。真实 binding 是运行时生成的 UUID，现阶段不能伪称启动前已知。因此 `--capture` 测试把**真实 exec/network 见证**放进标为 `SYNTHETIC_CONTROL_ONLY` 的非 witness 外壳，验证接口兼容和三项拒收；输出 `REAL_WITNESS_WITH_SYNTHETIC_AUDIT_ENVELOPE`，绝不作为完整 A7 通过。全部真实报告继续标 `scoring: NOT_RUN`。
+完整 audit 还要求 observer rows、binding、capabilities、cases 和 output/disk/http 表面。**binding 的证据合同已按 #1140 改为：独立 observer 在 hello 时记录，再与 contract 绑定**——`witness.bind_contract()` 拒绝任何预注册了 `binding`/`observerRows`/`bindingSource` 的合同，只接受从 `evidence['observer']` 的 hello 帧推导的绑定，与冻结 loader 的规则互为镜像；离线 `--capture` 检查沿用同一入口，不再有 `SYNTHETIC_CONTROL_ONLY` 外壳，输出 `REAL_WITNESS_AUDIT`。全部真实报告继续标 `scoring: NOT_RUN`。
+
+deadline 判分入口只接受 `receipt.status == WITNESS_CAPTURED`、七份哈希核对通过、launch/prelaunch 一致且无预注册 binding 的采集目录；随后逐 case 与 #1177 登记的期望比对。Rust host 无法受控地产生慢速/失败写入，因此 72 个 case 的多数预期是诚实的 `COVERAGE`/期望不符 FAIL，这不是接线失败，更不允许缩小分母。
 
 ## 开发检查
 
@@ -71,4 +89,6 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/native-witness/negative.py \
   _tmp/20261026-issue-1140/negative-committed-001
 ```
 
-源码负控依赖 `negative_process.mutating_sources/run_owned`；每条变异先 `compile` 检查 Python 语法，再正控、变异、恢复复测，全部跑完汇总，共 63 个变异（#1169 新增 18 个）；可加 `--case NAME` 仅选一个样本。采集器、解析器、测试与负控脚本都须等于 HEAD；未提交时正常拒绝，不是 KILLED。Python 测试不运行 cargo，不创建第二构建目录。不新增 TS 金样，不声称 TS 行为对齐。
+源码负控依赖 `negative_process.mutating_sources/run_owned`；每条变异先 `compile` 检查 Python 语法，再正控、变异、恢复复测，全部跑完汇总，共 63 个变异；可加 `--case NAME` 仅选一个样本。采集器、解析器、测试与负控脚本都须等于 HEAD；未提交时正常拒绝，不是 KILLED。Python 测试不运行 cargo，不创建第二构建目录。不新增 TS 金样，不声称 TS 行为对齐。
+
+`test_frozen_audit_and_controls` 会调用 `_verify_cli_imports()` 的 #166 守卫：工作树与 HEAD 不一致时该用例按设计失败，提交后在干净检出上运行（协调者 chain 脚本已包含）；脏树下的本地验证可用 `_tmp/20261026-issue-1140/run-frozen-audit-check.py`，它以相同字节加载、只省略该 CLI HEAD 检查，不触碰任何守卫或影子 git。
