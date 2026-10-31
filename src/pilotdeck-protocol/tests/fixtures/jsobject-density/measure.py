@@ -103,10 +103,23 @@ def bench_line(output, marker):
     raise SystemExit(f'#1128 no {marker} line in runner output:\n{output[-2000:]}')
 
 
-def require_clean_tree(stage):
-    dirty = git('status', '--porcelain', '--untracked-files=all', '--', 'src', check=False).stdout.decode()
+# Every input cargo reads from this checkout: the workspace sources and the
+# root-level configuration it resolves from cwd (#1128 r5 Codex P1-1).
+BUILD_INPUTS = ('src', '.cargo', 'rust-toolchain', 'rust-toolchain.toml')
+
+
+def require_clean_tree(stage, allow=()):
+    """Fail unless every build input equals HEAD (tracked and untracked).
+
+    `allow` names repo-relative paths this process changed on purpose (the
+    pre window's reverted lib.rs). A git failure is never read as clean
+    (#1128 r5 Codex P1-3)."""
+    lines = git('status', '--porcelain', '--untracked-files=all', '--',
+                *BUILD_INPUTS).stdout.decode().splitlines()
+    dirty = [line for line in lines if line[3:] not in allow]
     if dirty:
-        raise SystemExit(f'#1128 tree differs from HEAD under the lock before {stage}:\n' + dirty)
+        raise SystemExit(f'#1128 build inputs differ from HEAD under the lock before {stage}:\n'
+                         + '\n'.join(dirty))
 
 
 def build_release_test(env, log_name, out):
@@ -302,6 +315,10 @@ def main():
     # snapshot back — a plain `git checkout --` here would also revert
     # changes this process never made.
     with mutating_sources(root, [root / LIB_RS]):
+        # mutating_sources only verifies lib.rs and gateway/src; the pre build
+        # also compiles protocol's other sources, tests and manifests
+        # (#1128 r5 Codex P1-2).
+        require_clean_tree('pre build')
         diff = git('diff', f'{BOXING_COMMIT}^', BOXING_COMMIT, '--', LIB_RS).stdout
         if b'Box<HashMap<JsString, usize>>' not in diff:
             raise SystemExit('#1128 boxing anchor vanished from the diff; refusing to '
@@ -320,6 +337,7 @@ def main():
         # review boundary #3): during the lock wait and the pre-patch checks
         # the tree is unmutated, so the marker would be a false positive.
         marker.write_text('unboxed measurement build active; lib.rs is reverted below HEAD\n')
+        require_clean_tree('pre build (after revert)', allow=(LIB_RS,))
         exe_pre = build_release_test(env, 'build-pre.slots.log', out)
         result['workloads']['pre'] = measure_rust('pre', exe_pre, env, out, workloads, inputs)
     # Removed only after the guard restored lib.rs byte-for-byte: a restore
