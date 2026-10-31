@@ -9,11 +9,24 @@ The sibling run.py remains the sole definition of observation rules.
 import argparse
 import copy
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import sys
 
-import run as matrix
+if not sys.flags.isolated:
+    # Same entry contract as run.py and test_signals.py (#1033/#1066): a
+    # plain `import run` either hits run.py's own -I guard (no -I) or misses
+    # the script directory (with -I, it is not on sys.path).
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+sys.dont_write_bytecode = True
+
+# fix-r1 (opus P1): load run.py by explicit path, exactly like test_signals.py;
+# `import run` has been broken since run.py grew its -I guard.
+_spec = importlib.util.spec_from_file_location('native_topology_run', Path(__file__).resolve().parent / 'run.py')
+matrix = importlib.util.module_from_spec(_spec)
+sys.modules['native_topology_run'] = matrix
+_spec.loader.exec_module(matrix)
 
 MAX_FILE_BYTES = 16 * 1024 * 1024
 MAX_ROWS = 10_000

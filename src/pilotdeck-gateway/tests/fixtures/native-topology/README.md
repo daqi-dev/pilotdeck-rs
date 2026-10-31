@@ -33,13 +33,13 @@ python3 -I pilotdeck-gateway/tests/fixtures/native-topology/run.py \
 
 ## 取消与清理（#1168）
 
-采集器在取租约前预装 SIGINT/SIGTERM 取消处理器（与 `native-witness/collect.py` 的 `lease_signals` 同形），退出时恢复原处理器。两个发布窗原子化：probe 的 `Popen`、`LIVE_GROUPS` 登记与首次后代清点在同一个 deferred-signal 窗内完成（`session_domain.py` #209 E1 形状），Provider 构造到 `Thread.start` 同理；probe 用 `preexec_fn` 解除继承的屏蔽掩码，自身的 SIGINT 取消不被父窗影响。两处清理窗（`run_probe` 的 `finally` 与 `run` 的 provider 清理 `finally`）不可中断：pending 的取消只在清理审计与报告发布完成后投递。取消一律走既有 `finally` 链并退出码 **1**（报告 FAIL），绝不以 0/2 离场；`LIVE_GROUPS` 登记探针组与自建组的组长，清理失败时由租约以 `cleanupPending` 如实发布残留组。
+采集器在取租约前预装 SIGINT/SIGTERM 取消处理器（与 `native-witness/collect.py` 的 `lease_signals` 同形），退出时恢复原处理器。同一发布窗内积压的多个不同信号只触发一次异常展开（展开进行中到达的后续信号不再抛出，以免截断待执行的清理；`sys.exception()` 使抑制恰好限定在展开期间，被其他异常接管或恢复执行后新信号仍可取消）。两个发布窗原子化：probe 的 `Popen`、`LIVE_GROUPS` 登记与首次后代清点在同一个 deferred-signal 窗内完成（`session_domain.py` #209 E1 形状），Provider 构造到 `Thread.start` 同理；probe 用 `preexec_fn` 解除继承的屏蔽掩码，自身的 SIGINT 取消不被父窗影响。两处清理窗（`run_probe` 的 `finally` 与 `run` 的 provider 清理 `finally`）不可中断：pending 的取消只在清理审计与报告发布完成后投递。取消一律走既有 `finally` 链并退出码 **1**（报告 FAIL），绝不以 0/2 离场：即使取消在清理窗或租约释放期才浮现（`run` 已保存过 PASS 报告），`main` 的取消出口也会把 `report.json` 改写为带取消原因的 FAIL，`except` 体内先换 `SIG_IGN` 防二次信号逃逸。`LIVE_GROUPS` 登记探针组与自建组的组长，清理失败时由租约以 `cleanupPending` 如实发布残留组。
 
-`test_signals.py` 以真实子进程矩阵逐格复验上述保证（15 相位 × INT/TERM，钩子在目标相位真实 `os.kill`）；`negative_signals.py` 逐项变异源码并要求对应格以自己的 #1168 消息失败（提交后在宿主跑：`python3 -I src/pilotdeck-gateway/tests/fixtures/native-topology/negative_signals.py <新证据目录>`）。
+`test_signals.py` 以真实子进程矩阵逐格复验上述保证（16 相位 × INT/TERM，含发布窗内 INT+TERM 混合顺序两格；钩子在目标相位真实 `os.kill`，`provider-thread-started` 以 serve 入口握手加闸门保证命中「start 返回、serve 未进入」窗口）；`negative_signals.py` 逐项变异源码并要求对应格在每个信号上以自己的 #1168 消息失败（每信号单独判杀，混合结果不算；提交后在宿主跑：`python3 -I src/pilotdeck-gateway/tests/fixtures/native-topology/negative_signals.py <新证据目录>`，默认全量，可跟变异名筛选）。
 
 ## 负控与发现的产品差异
 
-`controls.py --capture <本次输出目录> --output <新证据目录>` 在真实录制数据上做定向变异，检查各变异由对应规则拒绝，并检查 40 轮及 20 对比较的非空完整性。两侧产生相同坏输出也必须失败。
+`python3 -I controls.py --capture <本次输出目录> --output <新证据目录>` 在真实录制数据上做定向变异，检查各变异由对应规则拒绝，并检查 40 轮及 20 对比较的非空完整性。两侧产生相同坏输出也必须失败。与 `run.py`、`test_signals.py` 同入口守卫：必须带 `-I`（按显式路径加载 `run.py`）。
 
 每个负控只接受预先指定的规则前缀（例如 `MATRIX_COVERAGE`、`EVENT_ORDER`、`CONTENT`）；任意其他异常均判 FAIL，不能以“程序报错”冒充识别了指定问题。其他变异逐侧验证拒绝，共错 content 案额外证明两侧坏输出仍相等。
 

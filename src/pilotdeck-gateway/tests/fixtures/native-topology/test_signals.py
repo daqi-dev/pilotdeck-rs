@@ -7,7 +7,8 @@ subprocess groups, a real loopback provider and a real os.kill signal. Only
 the baseline source check and the shared lease path are redirected into a
 throwaway directory; the lifecycle logic under test is the fixture's own code.
 The companion negative_signals.py removes one guarantee at a time and
-requires the targeted cell below to fail with its own #1168 message.
+requires the targeted cell below to fail with its own #1168 message, per
+signal (PDRS_1168_ONLY_SIG narrows the grid to one signal per run).
 """
 import sys
 if not sys.flags.isolated:
@@ -35,11 +36,19 @@ matrix = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(matrix)
 common = matrix.common  # run.py's bootstrap loaded it; LIVE_GROUPS is one identity.
 
-PHASES = ('lease-wait', 'probe-pending', 'probe-spawn-window', 'probe-running', 'probe-cleanup',
+PHASES = ('lease-wait', 'probe-pending', 'probe-spawn-window', 'probe-spawn-window-mixed',
+          'probe-running', 'probe-cleanup',
           'provider-preflight', 'provider-bound', 'provider-thread-started', 'rounds-running',
           'cleanup-shutdown', 'cleanup-join', 'cleanup-close', 'release',
           'cleanup-residue', 'window-residue')
 RESIDUE_PHASES = ('cleanup-residue', 'window-residue')
+
+
+def tested_signals():
+    """The signal grid every cell runs; negative_signals.py narrows it to one
+    signal per run so a mixed result cannot pass for a whole guarantee."""
+    only = os.environ.get('PDRS_1168_ONLY_SIG')
+    return (int(only),) if only else (signal.SIGINT, signal.SIGTERM)
 
 PROBE_SCRIPT = """#!/usr/bin/env python3
 # #1168 stand-in probe: records its inherited signal mask, then sleeps.
@@ -67,7 +76,10 @@ def signal_child(folder, phase, signum):
     folder = Path(folder)
     lock = folder / 'parity.lock'
     out = folder / 'out'
-    long_probe = phase in ('probe-spawn-window', 'probe-running', 'probe-cleanup')
+    # fix-r1: probe-cleanup now fires inside its own cleanup window with no
+    # unwind in flight (the in-flight case is covered by probe-running and
+    # the mixed phase), so its probe may complete normally first.
+    long_probe = phase in ('probe-spawn-window', 'probe-spawn-window-mixed', 'probe-running')
     probe = write_probe(folder, 30.0 if long_probe else 0.05)
     baseline = folder / 'baseline'
     (baseline / 'src/cli').mkdir(parents=True)
@@ -87,6 +99,9 @@ def signal_child(folder, phase, signum):
     spawned = []
     counts = {}
     shutdowns, closes, joins = [0], [0], [0]
+    serve_entered = threading.Event()
+    serve_release = threading.Event()
+    serve_window = [None]
     predecessor = None
     if phase == 'lease-wait':
         predecessor = {'pid': os.getpid(), 'timestamp': time.time(),
@@ -100,11 +115,22 @@ def signal_child(folder, phase, signum):
         # deterministically, not by winning the next bytecode race.
         REAL_SLEEP(0.02)
 
+    def fire_mixed():
+        # fix-r1 P1-1: two different signals pile up inside one publish
+        # window; unblocking must still unwind exactly once.
+        other = signal.SIGTERM if signum == signal.SIGINT else signal.SIGINT
+        os.kill(os.getpid(), signum)
+        os.kill(os.getpid(), other)
+        REAL_SLEEP(0.02)
+
     def hit(name):
         events.append(name)
         if name == phase:
             fired[0] = True
-            fire()
+            if name == 'probe-spawn-window-mixed':
+                fire_mixed()
+            else:
+                fire()
             if name.startswith('cleanup-') or name == 'probe-cleanup':
                 fire()
 
@@ -127,9 +153,9 @@ def signal_child(folder, phase, signum):
         child = real_popen(*args, **kwargs)
         if kwargs.get('start_new_session'):
             spawned.append(child.pid)
-            if phase == 'probe-spawn-window':
+            if phase in ('probe-spawn-window', 'probe-spawn-window-mixed'):
                 wait_any_observer()
-                hit('probe-spawn-window')
+                hit(phase)
             elif phase == 'window-residue' and counted('window-spawn') == 1:
                 hit('window-residue')
         return child
@@ -138,7 +164,7 @@ def signal_child(folder, phase, signum):
 
     def collect(pid, owned):
         real_collect(pid, owned)
-        if counted('collect') == 2 and phase in ('probe-running', 'probe-cleanup'):
+        if counted('collect') == 2 and phase == 'probe-running':
             wait_any_observer()
             hit(phase)
 
@@ -176,6 +202,14 @@ def signal_child(folder, phase, signum):
         return {}
 
     class HookedProvider(matrix.Provider):
+        def serve_forever(self, *args, **kwargs):
+            # fix-r1 P1-5: handshake at the serve entry, before its body
+            # runs, so the caller can prove the exact target window.
+            serve_entered.set()
+            if phase == 'provider-thread-started':
+                serve_release.wait(10)
+            return super().serve_forever(*args, **kwargs)
+
         def __init__(self):
             super().__init__()
             if phase == 'provider-bound':
@@ -197,7 +231,12 @@ def signal_child(folder, phase, signum):
         def start(self):
             super().start()
             if phase == 'provider-thread-started':
+                # Deterministic window: start() has returned and the thread
+                # is parked at the serve entry gate — serve_forever's body
+                # has not been entered (fix-r1 P1-5).
+                serve_window[0] = serve_entered.wait(10)
                 hit('provider-thread-started')
+                serve_release.set()
 
         def join(self, *args, **kwargs):
             if phase == 'cleanup-join':
@@ -257,6 +296,18 @@ def signal_child(folder, phase, signum):
     first_launch_status = None
     if first_launch.is_file():
         first_launch_status = json.loads(first_launch.read_text()).get('cleanupStatus')
+    # fix-r1 P1-2: the published report is part of the cell's contract; a
+    # cancellation that only surfaced after run() saved its report must not
+    # leave a PASS one behind.
+    report = None
+    report_path = out / 'report.json'
+    if report_path.is_file():
+        try:
+            loaded = json.loads(report_path.read_text())
+            report = {'status': loaded.get('status'), 'failure': loaded.get('failure')} \
+                if isinstance(loaded, dict) else 'unreadable'
+        except (OSError, ValueError):
+            report = 'unreadable'
     print(json.dumps({'phase': phase, 'signum': signum, 'fired': fired[0], 'events': events,
                       'error': caught, 'exitCode': exit_code, 'lease': owner,
                       'predecessorUnchanged': (owner == predecessor) if phase == 'lease-wait' else None,
@@ -264,7 +315,18 @@ def signal_child(folder, phase, signum):
                       'restored': all(signal.getsignal(sig) == handler for sig, handler in previous.items()),
                       'probePid': probe_pid, 'probeAlive': probe_alive,
                       'probeMaskBlocked': mask_blocked,
+                      'serveWindow': serve_window[0],
+                      'report': report,
                       'firstLaunchCleanupStatus': first_launch_status}, ensure_ascii=False))
+    # Harness hygiene (fix-r1): a cut cleanup under a mutant can leave the
+    # probe running in its isolation directory; kill it only after the
+    # evidence above is published so it cannot race the caller's teardown
+    # into a flaky unrelated ERROR.
+    for pid in spawned:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
     return 0
 
 
@@ -290,6 +352,11 @@ class NativeTopologySignalTests(unittest.TestCase):
 
     def check_cancelled(self, value, phase, sig):
         self.assertTrue(value['fired'], f'#1168 the hook reached the target phase: {phase}/{sig}')
+        report = value['report'] if isinstance(value['report'], dict) else None
+        self.assertTrue(report is not None and report.get('status') == 'FAIL'
+                        and 'cancelled by signal' in str(report.get('failure')),
+                        f'#1168 a cancelled capture publishes a FAIL report naming the signal: '
+                        f'{phase}/{sig}: {value["report"]!r}')
         self.assertTrue(value['error'] is None,
                         f'#1168 cancellation unwinds through main: {phase}/{sig}: {value["error"]}')
         self.assertTrue(value['exitCode'] == 1,
@@ -307,9 +374,9 @@ class NativeTopologySignalTests(unittest.TestCase):
                         f'#1168 the probe inherits an unblocked signal mask: {phase}/{sig}')
 
     def check_provider_cleaned(self, value, phase, sig):
-        self.assertTrue(value['closes'] == value['joins'] == 1,
+        self.assertTrue(value['shutdowns'] == value['closes'] == value['joins'] == 1,
                         f'#1168 provider cleanup is not interruptible: {phase}/{sig}: '
-                        f"closes={value['closes']} joins={value['joins']}")
+                        f"shutdowns={value['shutdowns']} closes={value['closes']} joins={value['joins']}")
 
     def check_residue_marked(self, value, phase, sig):
         pending = (value['lease'] or {}).get('cleanupPending') if isinstance(value['lease'], dict) else None
@@ -321,7 +388,7 @@ class NativeTopologySignalTests(unittest.TestCase):
                         f'#1168 residue is reported in the launch audit: {phase}/{sig}')
 
     def test_lease_wait(self):
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('lease-wait', sig)
                 self.check_cancelled(value, 'lease-wait', sig)
@@ -333,7 +400,7 @@ class NativeTopologySignalTests(unittest.TestCase):
                                 '#1168 a cancelled waiter spawns nothing: lease-wait')
 
     def test_probe_pending(self):
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('probe-pending', sig)
                 self.check_cancelled(value, 'probe-pending', sig)
@@ -343,7 +410,7 @@ class NativeTopologySignalTests(unittest.TestCase):
                 self.check_provider_cleaned(value, 'probe-pending', sig)
 
     def test_probe_spawn_window(self):
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('probe-spawn-window', sig)
                 self.check_cancelled(value, 'probe-spawn-window', sig)
@@ -353,7 +420,7 @@ class NativeTopologySignalTests(unittest.TestCase):
                                 '#1168 the publish-window cleanup audit is published: probe-spawn-window')
 
     def test_probe_running(self):
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('probe-running', sig)
                 self.check_cancelled(value, 'probe-running', sig)
@@ -363,17 +430,42 @@ class NativeTopologySignalTests(unittest.TestCase):
                                 '#1168 the running-probe cleanup audit is published: probe-running')
 
     def test_probe_cleanup(self):
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('probe-cleanup', sig)
                 self.check_cancelled(value, 'probe-cleanup', sig)
-                self.check_released(value, 'probe-cleanup', sig)
                 self.check_probe_reaped(value, 'probe-cleanup', sig)
+                # fix-r1 P1-4: dedicated binding for cleanup-unshielded. The
+                # signal is fired inside the cleanup window itself with no
+                # unwind in flight, so only the window keeps the audit and
+                # the lease release intact.
+                self.assertTrue(value['firstLaunchCleanupStatus'] == 'PASS' and value['lease'] is None,
+                                f'#1168 cleanup is not interruptible, the audit is published and the '
+                                f'lease released: probe-cleanup/{sig}: '
+                                f'audit={value["firstLaunchCleanupStatus"]} lease={value["lease"]!r}')
+
+    def test_probe_spawn_window_mixed(self):
+        """fix-r1 P1-1: INT and TERM pile up inside one publish window.
+
+        sig selects the order: SIGINT fires first, then SIGTERM (and vice
+        versa). The binding assertion runs before the shared checks so the
+        cancel-raises-twice mutant dies on its own message.
+        """
+        for sig in tested_signals():
+            with self.subTest(sig=sig):
+                value = self.cell('probe-spawn-window-mixed', sig)
+                self.assertTrue(value['error'] is None and value['probeAlive'] is False,
+                                f'#1168 mixed signals unwind exactly once and still reap the probe: '
+                                f'probe-spawn-window-mixed/{sig}: error={value["error"]} '
+                                f'probeAlive={value["probeAlive"]}')
+                self.check_cancelled(value, 'probe-spawn-window-mixed', sig)
+                self.check_released(value, 'probe-spawn-window-mixed', sig)
+                self.check_probe_reaped(value, 'probe-spawn-window-mixed', sig)
                 self.assertTrue(value['firstLaunchCleanupStatus'] == 'PASS',
-                                '#1168 cleanup is not interruptible, the audit is published: probe-cleanup')
+                                '#1168 the mixed-window cleanup audit is published: probe-spawn-window-mixed')
 
     def test_provider_preflight(self):
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('provider-preflight', sig)
                 self.check_cancelled(value, 'provider-preflight', sig)
@@ -384,7 +476,7 @@ class NativeTopologySignalTests(unittest.TestCase):
                                 '#1168 a pre-publish cancellation never creates the provider: provider-preflight')
 
     def test_provider_bound(self):
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('provider-bound', sig)
                 self.check_cancelled(value, 'provider-bound', sig)
@@ -394,17 +486,23 @@ class NativeTopologySignalTests(unittest.TestCase):
                 self.check_provider_cleaned(value, 'provider-bound', sig)
 
     def test_provider_thread_started(self):
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('provider-thread-started', sig)
                 self.check_cancelled(value, 'provider-thread-started', sig)
                 self.check_released(value, 'provider-thread-started', sig)
+                # fix-r1 P1-5: the handshake proves the signal fired only
+                # after start() returned and while serve_forever's body had
+                # not been entered (the thread is parked at the entry gate).
+                self.assertTrue(value['serveWindow'] is True,
+                                f'#1168 the signal lands after start returns and before serve_forever '
+                                f'is entered: provider-thread-started/{sig}: {value["serveWindow"]}')
                 self.assertTrue(value['probePid'] is None,
                                 '#1168 a publish-window cancellation spawns no probe: provider-thread-started')
                 self.check_provider_cleaned(value, 'provider-thread-started', sig)
 
     def test_rounds_running(self):
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('rounds-running', sig)
                 self.check_cancelled(value, 'rounds-running', sig)
@@ -413,7 +511,7 @@ class NativeTopologySignalTests(unittest.TestCase):
                 self.check_provider_cleaned(value, 'rounds-running', sig)
 
     def test_cleanup_shutdown(self):
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('cleanup-shutdown', sig)
                 self.check_cancelled(value, 'cleanup-shutdown', sig)
@@ -422,7 +520,7 @@ class NativeTopologySignalTests(unittest.TestCase):
                 self.check_provider_cleaned(value, 'cleanup-shutdown', sig)
 
     def test_cleanup_join(self):
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('cleanup-join', sig)
                 self.check_cancelled(value, 'cleanup-join', sig)
@@ -431,7 +529,7 @@ class NativeTopologySignalTests(unittest.TestCase):
                 self.check_provider_cleaned(value, 'cleanup-join', sig)
 
     def test_cleanup_close(self):
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('cleanup-close', sig)
                 self.check_cancelled(value, 'cleanup-close', sig)
@@ -440,7 +538,7 @@ class NativeTopologySignalTests(unittest.TestCase):
                 self.check_provider_cleaned(value, 'cleanup-close', sig)
 
     def test_release(self):
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('release', sig)
                 self.check_cancelled(value, 'release', sig)
@@ -449,7 +547,7 @@ class NativeTopologySignalTests(unittest.TestCase):
                 self.check_provider_cleaned(value, 'release', sig)
 
     def test_cleanup_residue(self):
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('cleanup-residue', sig)
                 self.check_cancelled(value, 'cleanup-residue', sig)
@@ -457,7 +555,7 @@ class NativeTopologySignalTests(unittest.TestCase):
                 self.check_provider_cleaned(value, 'cleanup-residue', sig)
 
     def test_window_residue(self):
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in tested_signals():
             with self.subTest(sig=sig):
                 value = self.cell('window-residue', sig)
                 self.check_cancelled(value, 'window-residue', sig)
