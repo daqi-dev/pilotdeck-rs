@@ -141,6 +141,7 @@ MARKER_PATTERN = re.compile(r'^#\s*anchor-selfcheck:\s*unsupported(?:\s+(.*))?$'
 # exempted helpers must remain free of these signals. The reason stays above;
 # neither a new filename nor a reason alone can hide a source mutation table.
 UNSUPPORTED_SIGNALS = {
+    'native-witness/test_witness.py': set(),  # #1140 in-memory/raw-trace controls, no source mutation table
     # #1107: standalone M6 helpers; only test_contract declares a case table.
     '_negkit/contract.py': set(),
     '_negkit/test_contract.py': {'table:cases'},
