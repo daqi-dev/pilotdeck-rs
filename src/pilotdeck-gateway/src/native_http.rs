@@ -3,8 +3,10 @@
 //! TS `GatewayServer.handleHttpRequest` (fixture `native-http-basic`).
 //! `/api/web`, public approvals, and module-host stay with TS, and the
 //! default proxy routing is untouched. Transport byte-level divergences
-//! (header name case, chunk-size case, the bare 400's `content-length: 0`)
-//! are registered in the gateway-parity diff ledger.
+//! (header name case, chunk-size case, the bare 400's `content-length: 0`,
+//! the HTTP/1.0 status line echo) and parse-layer divergences (target
+//! charset, header/URI size limits) are registered in the gateway-parity
+//! diff ledger.
 use crate::{Body, ProxyError, http_proxy};
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -92,6 +94,23 @@ pub(crate) async fn serve<B>(
     {
         return Ok(parser_bad_request());
     }
+    // llhttp validates the request-target bytes before method dispatch, so a
+    // non-ASCII target is a bare 400 even for CONNECT; authority-form targets
+    // live in `uri()`'s authority while origin/absolute-form targets live in
+    // its path-and-query, so both parts are what is checked (the scheme
+    // grammar is ASCII-only by construction).
+    if !crate::mutants::on("native-http-target-bytes-off")
+        && (request
+            .uri()
+            .authority()
+            .is_some_and(|authority| authority.as_str().bytes().any(|byte| byte >= 0x80))
+            || request
+                .uri()
+                .path_and_query()
+                .is_some_and(|path| path.as_str().bytes().any(|byte| byte >= 0x80)))
+    {
+        return Ok(parser_bad_request());
+    }
     if request.method() == hyper::Method::CONNECT {
         // TS destroys the socket with no bytes; a service error makes hyper
         // close the connection without writing a response.
@@ -101,11 +120,8 @@ pub(crate) async fn serve<B>(
         .uri()
         .path_and_query()
         .map_or("", |value| value.as_str());
-    if !crate::mutants::on("native-http-target-form-off") && !llhttp_target_form(target) {
-        return Ok(parser_bad_request());
-    }
-    if !crate::mutants::on("native-http-target-bytes-off")
-        && target.bytes().any(|byte| byte >= 0x80)
+    if !crate::mutants::on("native-http-target-form-off")
+        && (!llhttp_scheme_alpha(request.uri().scheme()) || !llhttp_target_form(target))
     {
         return Ok(parser_bad_request());
     }
@@ -114,8 +130,16 @@ pub(crate) async fn serve<B>(
     {
         return Ok(headless_bad_request());
     }
+    let keep_alive = !crate::mutants::on("native-http-connection-close-off")
+        && request.version() == hyper::Version::HTTP_11
+        && !request_wants_close(request);
     let path = if crate::mutants::on("native-http-normalization-off") {
         request.uri().path().to_owned()
+    } else if request.uri().scheme().is_some() {
+        // Absolute-form: `new URL(request.url)` sees the full target, whose
+        // `//` paths are not the scheme-relative collapse the bare
+        // path-and-query would resolve to.
+        whatwg_path(&request.uri().to_string())
     } else {
         whatwg_path(target)
     };
@@ -124,6 +148,7 @@ pub(crate) async fn serve<B>(
             hyper::StatusCode::OK,
             "application/json",
             "{\"ok\":true}".to_owned(),
+            keep_alive,
         ));
     }
     if path == "/auth/local-token" {
@@ -132,35 +157,57 @@ pub(crate) async fn serve<B>(
                 hyper::StatusCode::OK,
                 "application/json",
                 format!("{{\"token\":{}}}", json_string(&config.token)),
+                keep_alive,
             ));
         }
-        return Ok(not_found());
+        return Ok(not_found(keep_alive));
     }
-    if let Some(root) = &config.static_root
-        && let Some(response) = serve_static(root, &path).await
+    let static_root = config.static_root.as_deref().map(|root| {
+        if crate::mutants::on("native-http-root-normalize-off") {
+            root.to_path_buf()
+        } else {
+            normalize_root(root)
+        }
+    });
+    if let Some(root) = &static_root
+        && let Some(response) = serve_static(root, &path, keep_alive).await
     {
         return Ok(response);
     }
-    Ok(not_found())
+    Ok(not_found(keep_alive))
 }
 
-/// llhttp's request-target shape rule: origin-form (leading `/`), asterisk
-/// (`*`), or absolute-form (`scheme "://" ...`). Anything else — `%2Fhealth`,
-/// authority-form without CONNECT — is a bare parser-level 400 in TS.
-fn llhttp_target_form(target: &str) -> bool {
-    if target.starts_with('/') || target == "*" {
-        return true;
-    }
-    target.split_once("://").is_some_and(|(scheme, _)| {
+/// Node v22.22.0 answers `Connection: close` requests and every HTTP/1.0
+/// request with `Connection: close` and no `Keep-Alive` header, closing the
+/// socket after the response (probe `probe-fixr1.out` A).
+fn request_wants_close<B>(request: &hyper::Request<B>) -> bool {
+    request
+        .headers()
+        .get_all(hyper::header::CONNECTION)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|token| token.trim().eq_ignore_ascii_case("close"))
+}
+
+/// llhttp accepts only all-alphabetic request-target schemes (`a1://`, `ab+c:`
+/// are parse-time 400s in TS); http::Uri's own scheme grammar is wider, so the
+/// stricter rule is re-imposed here on the parsed scheme.
+fn llhttp_scheme_alpha(scheme: Option<&hyper::http::uri::Scheme>) -> bool {
+    scheme.is_none_or(|scheme| {
         scheme
+            .as_str()
             .bytes()
-            .next()
-            .is_some_and(|byte| byte.is_ascii_alphabetic())
-            && scheme
-                .bytes()
-                .skip(1)
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+            .all(|byte| byte.is_ascii_alphabetic())
     })
+}
+
+/// llhttp's request-target shape rule for the path-and-query: origin-form
+/// (leading `/`) or asterisk (`*`). Absolute-form is admitted by the scheme
+/// check in [`serve`]; anything else — `%2Fhealth`, authority-form without
+/// CONNECT — is a bare parser-level 400 in TS.
+fn llhttp_target_form(target: &str) -> bool {
+    target.starts_with('/') || target == "*"
 }
 
 /// The WHATWG path of the request target, exactly what `new URL(request.url,
@@ -205,7 +252,7 @@ fn headless_bad_request() -> hyper::Response<Body> {
 }
 
 /// The final 404: `text/plain; charset=utf-8`, body `not found`.
-fn not_found() -> hyper::Response<Body> {
+fn not_found(keep_alive: bool) -> hyper::Response<Body> {
     let message = if crate::mutants::on("native-http-404-message") {
         "Not Found"
     } else {
@@ -215,42 +262,61 @@ fn not_found() -> hyper::Response<Body> {
         hyper::StatusCode::NOT_FOUND,
         "text/plain; charset=utf-8",
         message.to_owned(),
+        keep_alive,
     )
 }
 
 /// A TS `writeHead` + `end` response: unknown-length body (chunked), the
-/// literal `content-type`, Node's `Date`, and Node's default keep-alive pair,
-/// in Node's exact header order.
+/// literal `content-type`, Node's `Date`, and either Node's default keep-alive
+/// pair or `Connection: close` for close/HTTP/1.0 requests, in Node's exact
+/// header order.
 fn handler_response(
     status: hyper::StatusCode,
     content_type: &str,
     body: String,
+    keep_alive: bool,
 ) -> hyper::Response<Body> {
-    hyper::Response::builder()
+    let mut builder = hyper::Response::builder()
         .status(status)
         .header(hyper::header::CONTENT_TYPE, content_type)
         .header(
             hyper::header::DATE,
             httpdate::fmt_http_date(SystemTime::now()),
-        )
-        .header(hyper::header::CONNECTION, "keep-alive")
-        .header("keep-alive", "timeout=5")
+        );
+    if keep_alive {
+        builder = builder
+            .header(hyper::header::CONNECTION, "keep-alive")
+            .header("keep-alive", "timeout=5");
+    } else {
+        builder = builder.header(hyper::header::CONNECTION, "close");
+    }
+    builder
         .body(streamed(Some(Bytes::from(body))))
         .expect("valid response")
 }
 
 /// A streaming file response with the same framing as
 /// `createReadStream().pipe(response)`.
-fn file_response(content_type: &str, file: tokio::fs::File) -> hyper::Response<Body> {
-    hyper::Response::builder()
+fn file_response(
+    content_type: &str,
+    file: tokio::fs::File,
+    keep_alive: bool,
+) -> hyper::Response<Body> {
+    let mut builder = hyper::Response::builder()
         .status(hyper::StatusCode::OK)
         .header(hyper::header::CONTENT_TYPE, content_type)
         .header(
             hyper::header::DATE,
             httpdate::fmt_http_date(SystemTime::now()),
-        )
-        .header(hyper::header::CONNECTION, "keep-alive")
-        .header("keep-alive", "timeout=5")
+        );
+    if keep_alive {
+        builder = builder
+            .header(hyper::header::CONNECTION, "keep-alive")
+            .header("keep-alive", "timeout=5");
+    } else {
+        builder = builder.header(hyper::header::CONNECTION, "close");
+    }
+    builder
         .body(FileBody { file, done: false }.boxed())
         .expect("valid response")
 }
@@ -319,7 +385,7 @@ impl hyper::body::Body for FileBody {
 /// `index.html`, a missing path or directory falls back to the root
 /// `index.html`, and the containment guard rejects anything that would
 /// escape the root (defense in depth behind the URL layer).
-async fn serve_static(root: &Path, path: &str) -> Option<hyper::Response<Body>> {
+async fn serve_static(root: &Path, path: &str, keep_alive: bool) -> Option<hyper::Response<Body>> {
     let pathname = if path == "/" { "/index.html" } else { path };
     let candidate = node_join(root, pathname);
     if !crate::mutants::on("native-http-containment-off") && !contained(root, &candidate) {
@@ -335,7 +401,38 @@ async fn serve_static(root: &Path, path: &str) -> Option<hyper::Response<Body>> 
         fallback
     };
     let file = tokio::fs::File::open(&file_path).await.ok()?;
-    Some(file_response(content_type_for(&file_path), file))
+    Some(file_response(
+        content_type_for(&file_path),
+        file,
+        keep_alive,
+    ))
+}
+
+/// `resolve(staticRoot)` (staticAssets.ts:14): lexical fold of `.`/`..` and
+/// trailing separators, made absolute against the process directory for a
+/// relative root. No `canonicalize`, so symlinks stay the caller's choice.
+/// A root of `/` is kept: TS's guard then 404s everything (the required
+/// prefix would be `//`), and a failed cwd lookup maps to `/` so nothing
+/// escapes through an empty prefix.
+fn normalize_root(root: &Path) -> PathBuf {
+    let absolute = if root.is_absolute() {
+        root.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("/"))
+            .join(root)
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 /// Node's `resolve(join(root, pathname))`: lexical join where `.` keeps the

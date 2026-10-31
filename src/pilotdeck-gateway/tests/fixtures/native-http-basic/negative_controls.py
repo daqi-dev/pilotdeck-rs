@@ -14,6 +14,7 @@ from _shared import mutant_switch
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_http.rs'
+SOURCE_PROXY = ROOT / 'src/pilotdeck-gateway/src/http_proxy.rs'
 PREFIX = 'native_http::tests::'
 switches = [
     ('native-http-method-allowlist-off', SOURCE, 'method_outside_llhttp_table_rejected', '#1209 unknown method is a bare 400'),
@@ -23,6 +24,13 @@ switches = [
     ('native-http-token-loopback-skip', SOURCE, 'local_token_requires_loopback_binding', '#1209 non-loopback local-token is a 404'),
     ('native-http-404-message', SOURCE, 'not_found_body_matches_ts', '#1209 404 body bytes'),
     ('native-http-containment-off', SOURCE, 'static_guard_rejects_escape', '#1209 containment guard rejects escape'),
+    # fix-r1: keep-alive/close; the mutant disables close detection so every
+    # response closes, which diverges on a keep-alive cell, not on the close
+    # cell whose bytes it reproduces.
+    ('native-http-connection-close-off', SOURCE, 'health_get', '#1209 cell health-get normalized response'),
+    ('native-http-root-normalize-off', SOURCE, 'trailing_separator_root_still_serves', '#1209 trailing-separator root serves after normalization'),
+    ('native-http-idle-close-off', SOURCE_PROXY, 'stop_closes_idle_keep_alive_connections', '#1209 stop closes idle keep-alive connections within the drain budget'),
+    ('native-http-header-count-off', SOURCE_PROXY, 'header_counts_within_ts_bounds_stay_served', '#1209 150 small headers stay served like TS'),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',

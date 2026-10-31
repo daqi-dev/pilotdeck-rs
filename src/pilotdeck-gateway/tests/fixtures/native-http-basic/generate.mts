@@ -128,6 +128,9 @@ const cells: Array<{id: string, server: string, request: string}> = [
   {id: 'health-absolute', server: 'a', request: get('http://127.0.0.1/health')},
   {id: 'health-upper-path', server: 'a', request: get('/HEALTH')},
   {id: 'health-trailing', server: 'a', request: get('/health/')},
+  // a close request is answered with Connection: close and the socket closed.
+  {id: 'health-conn-close', server: 'a', request: 'GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n'},
+  {id: 'head-conn-close', server: 'a', request: 'HEAD /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n'},
   // local-token: loopback binds return the token, non-loopback 404s.
   {id: 'token-get', server: 'a', request: get('/auth/local-token')},
   {id: 'token-head', server: 'a', request: head('/auth/local-token')},
@@ -156,6 +159,9 @@ const cells: Array<{id: string, server: string, request: string}> = [
   {id: 'static-missing', server: 'a', request: get('/missing')},
   {id: 'static-encoded', server: 'a', request: get('/enc%20oded')},
   {id: 'static-fragment', server: 'a', request: get('/app.js#x')},
+  // absolute-form keeps the // in the path (unlike origin-form //app.js,
+  // which new URL resolves against the base as scheme-relative).
+  {id: 'static-absolute-dblslash', server: 'a', request: get('http://127.0.0.1//app.js')},
   // traversal attempts: URL normalization decides what is served.
   {id: 'traversal-parent', server: 'a', request: get('/../x')},
   {id: 'traversal-encoded', server: 'a', request: get('/..%2f..%2fetc/passwd')},
@@ -185,9 +191,12 @@ const cells: Array<{id: string, server: string, request: string}> = [
   {id: 'garbage', server: 'a', request: 'GARBAGE\r\n\r\n'},
   {id: 'pct-target', server: 'a', request: get('%2Fhealth')},
   {id: 'authority-form', server: 'a', request: method('GET', '127.0.0.1:1')},
+  {id: 'abs-scheme-nonalpha', server: 'a', request: get('a1://x/health')},
   {id: 'empty-request', server: 'a', request: '\r\nHost: 127.0.0.1\r\n\r\n'},
   {id: 'star', server: 'a', request: method('OPTIONS', '*')},
   {id: 'connect', server: 'a', request: method('CONNECT', '127.0.0.1:1')},
+  // a non-ASCII target is llhttp's bare 400 even for CONNECT (parse-time).
+  {id: 'connect-nonascii', server: 'a', request: method('CONNECT', 'cafÃ©:1')},
   {id: 'pipeline', server: 'a', request: get('/health') + get('/')},
   {id: 'unread-body-pipeline', server: 'a', request: 'POST /health HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 5\r\n\r\nhello' + get('/app.js')},
 ];

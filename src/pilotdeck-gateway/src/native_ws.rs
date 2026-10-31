@@ -118,6 +118,10 @@ impl NativeWsServer {
                 http,
             } = self;
             let mut connections = JoinSet::new();
+            // Node's server.close() closes idle keep-alive connections (probe
+            // `probe-fixr1.out` B); each connection task hears the stop and
+            // shuts down its HTTP serving when the accept loop exits.
+            let (stop_http, stop_http_rx) = watch::channel(false);
             tokio::pin!(stop);
             let accept_error = loop {
                 tokio::select! {
@@ -138,6 +142,7 @@ impl NativeWsServer {
                             let version = version.clone();
                             let input = resources.input.clone();
                             let http = http.clone();
+                            let stop_http = stop_http_rx.clone();
                             connections.spawn(async move {
                                 let _permit = if crate::mutants::on("ws-caps-early-connection-release") {
                                     drop(permit);
@@ -145,7 +150,10 @@ impl NativeWsServer {
                                 } else {
                                     Some(permit)
                                 };
-                                if let Err(error) = serve_socket(socket, host, token, version, input, http).await {
+                                if let Err(error) =
+                                    serve_socket(socket, host, token, version, input, http, stop_http)
+                                        .await
+                                {
                                     eprintln!("native WS connection: {error}");
                                 }
                                 if crate::mutants::on("ws-caps-connection-leak") {
@@ -167,6 +175,7 @@ impl NativeWsServer {
                 }
             };
             drop(listener);
+            let _ = stop_http.send(true);
             if crate::mutants::on("native-ws-skip-drain") {
                 return Ok(());
             }
@@ -519,35 +528,40 @@ async fn serve_socket(
     version: String,
     input: Arc<Semaphore>,
     http: native_http::Config,
+    stop: watch::Receiver<bool>,
 ) -> Result<(), ProxyError> {
     let (upgrade, upgraded) = oneshot::channel();
     let upgrade = Mutex::new(Some(upgrade));
     let upgrade_sender = &upgrade;
     let http_config = &http;
-    http_proxy::serve_connection_native(socket, move |mut request, lease| async move {
-        if http_proxy::is_upgrade(&request) {
-            match (
-                request.uri().path(),
-                acceptor::websocket_accept(request.headers()),
-                lease,
-            ) {
-                ("/ws", Some(key), Some(lease)) => {
-                    if let Some(upgrade) =
-                        upgrade_sender.lock().expect("native upgrade state").take()
-                    {
-                        let _ = upgrade.send((hyper::upgrade::on(&mut request), lease));
+    http_proxy::serve_connection_native_with_shutdown(
+        socket,
+        move |mut request, lease| async move {
+            if http_proxy::is_upgrade(&request) {
+                match (
+                    request.uri().path(),
+                    acceptor::websocket_accept(request.headers()),
+                    lease,
+                ) {
+                    ("/ws", Some(key), Some(lease)) => {
+                        if let Some(upgrade) =
+                            upgrade_sender.lock().expect("native upgrade state").take()
+                        {
+                            let _ = upgrade.send((hyper::upgrade::on(&mut request), lease));
+                        }
+                        Ok(acceptor::websocket_response(Default::default(), &key))
                     }
-                    Ok(acceptor::websocket_response(Default::default(), &key))
+                    _ if crate::mutants::on("native-ws-invalid-upgrade") => {
+                        Ok(acceptor::websocket_response(Default::default(), "invalid"))
+                    }
+                    _ => Err(std::io::Error::other("invalid native WS upgrade")),
                 }
-                _ if crate::mutants::on("native-ws-invalid-upgrade") => {
-                    Ok(acceptor::websocket_response(Default::default(), "invalid"))
-                }
-                _ => Err(std::io::Error::other("invalid native WS upgrade")),
+            } else {
+                native_http::serve(&request, http_config).await
             }
-        } else {
-            native_http::serve(&request, http_config).await
-        }
-    })
+        },
+        stop,
+    )
     .await?;
     drop(upgrade);
     let Ok((upgraded, lease)) = upgraded.await else {

@@ -115,8 +115,11 @@ fn roots() -> Fixture {
     }
 }
 
-/// The routing config of one fixture server: `c` binds 127.0.0.2 (the TS
-/// non-loopback case), `b` serves the index-less root, `d` has no static root.
+/// The routing config of one fixture server: `c` is the TS non-loopback case
+/// (the recorder bound 127.0.0.2, but the address is not part of any golden
+/// bytes, so the replay binds 127.0.0.1 everywhere and only the routing
+/// config carries `loopback: false`), `b` serves the index-less root, `d`
+/// has no static root.
 fn config_for(server: &str, fixture: &Fixture) -> Config {
     let static_root = match server {
         "a" | "c" => Some(fixture.root.clone()),
@@ -130,12 +133,8 @@ fn config_for(server: &str, fixture: &Fixture) -> Config {
     }
 }
 
-fn listener_address(server: &str) -> &str {
-    if server == "c" {
-        "127.0.0.2:0"
-    } else {
-        "127.0.0.1:0"
-    }
+fn listener_address(_server: &str) -> &str {
+    "127.0.0.1:0"
 }
 
 /// Bind one native listener with the cell's routing config and write the raw
@@ -153,10 +152,17 @@ async fn exchange(server: &str, request: &[u8], id: &str, fixture: &Fixture) -> 
             let (socket, _) = listener.accept().await.expect("#1209 accept connection");
             let config = config.clone();
             tokio::spawn(async move {
-                let served = http_proxy::serve_connection_native(socket, move |request, _lease| {
-                    let config = config.clone();
-                    async move { serve(&request, &config).await }
-                })
+                // The production path always carries a stop signal; a sender
+                // that is dropped on the spot is the no-stop case.
+                let (_, stop) = tokio::sync::watch::channel(false);
+                let served = http_proxy::serve_connection_native_with_shutdown(
+                    socket,
+                    move |request, _lease| {
+                        let config = config.clone();
+                        async move { serve(&request, &config).await }
+                    },
+                    stop,
+                )
                 .await;
                 if let Err(error) = served {
                     // A handler Err (CONNECT) is a deliberate zero-byte close.
@@ -234,6 +240,9 @@ async fn replay(id: &str) {
 
 macro_rules! replay_tests {
     ($($function:ident => $id:literal),* $(,)?) => {
+        /// Every cell id the macro instantiates; a test asserts this is exactly
+        /// the oracle's cell set, so neither list can drift alone.
+        const REPLAY_CELL_IDS: &[&str] = &[$($id),*];
         $(
             #[tokio::test]
             async fn $function() {
@@ -271,6 +280,8 @@ replay_tests! {
     health_absolute => "health-absolute",
     health_upper_path => "health-upper-path",
     health_trailing => "health-trailing",
+    health_conn_close => "health-conn-close",
+    head_conn_close => "head-conn-close",
     token_get => "token-get",
     token_head => "token-head",
     token_post => "token-post",
@@ -297,6 +308,7 @@ replay_tests! {
     static_missing => "static-missing",
     static_encoded => "static-encoded",
     static_fragment => "static-fragment",
+    static_absolute_dblslash => "static-absolute-dblslash",
     traversal_parent => "traversal-parent",
     traversal_encoded => "traversal-encoded",
     traversal_pct => "traversal-pct",
@@ -322,11 +334,51 @@ replay_tests! {
     garbage => "garbage",
     pct_target => "pct-target",
     authority_form => "authority-form",
+    abs_scheme_nonalpha => "abs-scheme-nonalpha",
     empty_request => "empty-request",
     star => "star",
     connect => "connect",
+    connect_nonascii => "connect-nonascii",
     pipeline => "pipeline",
     unread_body_pipeline => "unread-body-pipeline",
+}
+
+/// #1209: the replay list and the oracle describe the same cell set; a cell
+/// added to the oracle without a replay test (or vice versa) fails here.
+#[test]
+fn replay_cells_cover_exactly_the_oracle() {
+    let recorded = oracle();
+    let mut oracle_ids: Vec<&str> = recorded["cells"]
+        .as_array()
+        .expect("#1209 oracle cells array")
+        .iter()
+        .map(|cell| cell["id"].as_str().expect("#1209 oracle cell id"))
+        .collect();
+    oracle_ids.sort_unstable();
+    let mut replayed: Vec<&str> = REPLAY_CELL_IDS.to_vec();
+    replayed.sort_unstable();
+    assert_eq!(
+        replayed, oracle_ids,
+        "#1209 replay cell ids and oracle cell ids are the same set"
+    );
+}
+
+/// #1209: the method allowlist is the recorded llhttp table (`http.METHODS`
+/// on the pinned Node), not an independent transcription.
+#[test]
+fn llhttp_methods_match_the_oracle() {
+    let value = oracle();
+    let recorded = value["methods"]
+        .as_array()
+        .expect("#1209 oracle methods array")
+        .iter()
+        .map(|method| method.as_str().expect("#1209 oracle method entry"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        LLHTTP_METHODS.as_slice(),
+        recorded.as_slice(),
+        "#1209 llhttp method table equals the recorded http.METHODS"
+    );
 }
 
 /// The bytes both sides are compared in: the Date value is masked, header
@@ -334,7 +386,9 @@ replay_tests! {
 /// literal lowercase — the registered transport diff), the bare 400's
 /// `content-length: 0` line is dropped (registered transport diff), and
 /// chunk sizes are case-folded (hyper writes `B`, Node writes `b` —
-/// registered transport diff). Chunk bodies themselves are never folded.
+/// registered transport diff). Status lines are compared verbatim — both
+/// stacks write canonical `HTTP/1.1 200 OK` casing — and chunk bodies are
+/// never folded.
 fn normalize(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut rest = raw;
@@ -357,9 +411,14 @@ fn normalize(raw: &str) -> String {
                 length = value.trim().parse::<usize>().ok();
             }
         }
-        for line in head.split("\r\n") {
+        for (index, line) in head.split("\r\n").enumerate() {
+            if index == 0 {
+                out.push_str(line);
+                out.push_str("\r\n");
+                continue;
+            }
             let Some((name, value)) = line.split_once(':') else {
-                out.push_str(&line.to_ascii_lowercase());
+                out.push_str(line);
                 out.push_str("\r\n");
                 continue;
             };
@@ -529,9 +588,9 @@ async fn traversal_collapses_before_the_static_root() {
 #[tokio::test]
 async fn static_guard_rejects_escape() {
     let fixture = roots();
-    let escaped = serve_static(&fixture.root, "/../outside.html").await;
+    let escaped = serve_static(&fixture.root, "/../outside.html", true).await;
     assert!(escaped.is_none(), "#1209 containment guard rejects escape");
-    let served = serve_static(&fixture.root, "/app.js").await;
+    let served = serve_static(&fixture.root, "/app.js", true).await;
     assert!(served.is_some(), "#1209 contained path still serves");
 }
 
@@ -635,6 +694,77 @@ async fn registered_transport_diffs_stay_pinned() {
     let _ = std::fs::remove_dir_all(&fixture.parent);
 }
 
+/// #1209: raw-byte pins the replay normalization cannot swallow: the bare
+/// parser-level 400s (FOO, garbage) carry no Date (only the missing-Host 400
+/// does), and a HEAD response carries neither Content-Length nor
+/// Transfer-Encoding (Node omits both rather than describing a body it will
+/// not write).
+#[tokio::test]
+async fn rejection_and_head_bytes_stay_pinned() {
+    let fixture = roots();
+    for id in ["pin-foo", "pin-garbage"] {
+        let request = if id == "pin-foo" {
+            "FOO /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+        } else {
+            "GARBAGE\r\n\r\n"
+        };
+        let bare = exchange("a", &latin1_bytes(request), id, &fixture).await.0;
+        assert!(
+            bare.starts_with("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n")
+                && !bare.contains("\r\nDate:"),
+            "#1209 pin {id}: the bare 400 has no Date: {bare:?}"
+        );
+    }
+    let head = exchange(
+        "a",
+        &latin1_bytes("HEAD /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"),
+        "pin-head",
+        &fixture,
+    )
+    .await
+    .0;
+    assert!(
+        head.starts_with("HTTP/1.1 200 OK\r\n")
+            && !head.contains("\r\n\r\n0")
+            && !head.to_ascii_lowercase().contains("content-length")
+            && !head.to_ascii_lowercase().contains("transfer-encoding"),
+        "#1209 pin: the HEAD response has no body framing: {head:?}"
+    );
+    let _ = std::fs::remove_dir_all(&fixture.parent);
+}
+
+/// #1209: HTTP/1.0 (and any close request) is answered `Connection: close`
+/// without a Keep-Alive header, like Node v22 (probe `probe-fixr1.out` A);
+/// the body is close-delimited. hyper writes a `HTTP/1.0` status line where
+/// Node writes `HTTP/1.1` — a registered transport diff, which is why this
+/// is a raw pin and not a golden cell.
+#[tokio::test]
+async fn http10_close_delimited_response() {
+    let fixture = roots();
+    let raw = exchange(
+        "a",
+        &latin1_bytes("GET /health HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n"),
+        "pin-http10",
+        &fixture,
+    )
+    .await
+    .0;
+    assert!(
+        raw.starts_with("HTTP/1.0 200 OK\r\n"),
+        "#1209 pin: HTTP/1.0 is answered with a 1.0 status line (registered diff vs Node's 1.1 line): {raw:?}"
+    );
+    assert!(
+        raw.contains("\r\nConnection: close\r\n")
+            && !raw.to_ascii_lowercase().contains("keep-alive"),
+        "#1209 pin: HTTP/1.0 is answered close with no keep-alive: {raw:?}"
+    );
+    assert!(
+        raw.ends_with("{\"ok\":true}"),
+        "#1209 pin: the HTTP/1.0 body is close-delimited, not chunked: {raw:?}"
+    );
+    let _ = std::fs::remove_dir_all(&fixture.parent);
+}
+
 struct Unused;
 impl GatewayRequests for Unused {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
@@ -713,6 +843,205 @@ async fn exchange_on(address: SocketAddr, request: &[u8], id: &str) -> (String, 
     let captured = capture(&mut stream, id).await;
     let _ = stream.shutdown().await;
     captured
+}
+
+/// #1209: a trailing-separator static root serves after the same lexical
+/// fold TS's `resolve(staticRoot)` performs; without the fold the containment
+/// guard's `root + sep` prefix never matches the joined candidate and every
+/// path 404s.
+#[tokio::test]
+async fn trailing_separator_root_still_serves() {
+    let fixture = roots();
+    let config = Config {
+        token: "fixture-token".into(),
+        loopback: true,
+        static_root: Some(PathBuf::from(format!("{}/", fixture.root.display()))),
+    };
+    let response = route("GET", "/app.js", &config).await;
+    assert_eq!(
+        u16::from(response.status()),
+        200,
+        "#1209 trailing-separator root serves after normalization"
+    );
+    assert_eq!(
+        body_of(response).await,
+        "console.log(1)\n",
+        "#1209 trailing-separator root serves the app.js bytes"
+    );
+    let _ = std::fs::remove_dir_all(&fixture.parent);
+}
+
+/// #1209: llhttp has no header-count limit (probe `probe-fixr1.out` C serves
+/// 2001 small headers); hyper's default cap of 100 would 431 requests TS
+/// serves, so the native builder raises it and 150 small headers stay served.
+#[tokio::test]
+async fn header_counts_within_ts_bounds_stay_served() {
+    let fixture = roots();
+    let mut request = String::from("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n");
+    for index in 0..150 {
+        request.push_str(&format!("x{index:04}: v\r\n"));
+    }
+    request.push_str("\r\n");
+    let (raw, _) = exchange("a", request.as_bytes(), "pin-headers-150", &fixture).await;
+    assert!(
+        raw.starts_with("HTTP/1.1 200 OK\r\n"),
+        "#1209 150 small headers stay served like TS: {raw:?}"
+    );
+    let _ = std::fs::remove_dir_all(&fixture.parent);
+}
+
+/// #1209: parse-layer size limits where TS 431s and hyper serves — a 20 KiB
+/// header value and a 20 KiB query (probe `probe-fixr1.out` C); registered
+/// diff A8.4-NATIVE-HTTP-002, pending approval. The raw pins keep the
+/// divergence visible instead of normalized away.
+#[tokio::test]
+async fn parse_size_limits_stay_pinned() {
+    let fixture = roots();
+    let header = format!(
+        "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nbig: {}\r\n\r\n",
+        "a".repeat(20 * 1024)
+    );
+    let (raw, _) = exchange("a", header.as_bytes(), "pin-20kb-header", &fixture).await;
+    assert!(
+        raw.starts_with("HTTP/1.1 200 OK\r\n"),
+        "#1209 20KB header stays served (registered diff vs TS 431): {raw:?}"
+    );
+    let url = format!(
+        "GET /health?x={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        "a".repeat(20 * 1024)
+    );
+    let (raw, _) = exchange("a", url.as_bytes(), "pin-20kb-url", &fixture).await;
+    assert!(
+        raw.starts_with("HTTP/1.1 200 OK\r\n"),
+        "#1209 20KB URL stays served (registered diff vs TS 431): {raw:?}"
+    );
+    let _ = std::fs::remove_dir_all(&fixture.parent);
+}
+
+/// #1209: llhttp accepts `<` in the request target (probe
+/// `probe-fixr1.out` C serves `/health?x=<`); hyper's URI parser rejects the
+/// byte and the connection answers 400 — registered diff A8.4-NATIVE-HTTP-002,
+/// pending approval.
+#[tokio::test]
+async fn angle_bracket_target_stays_pinned() {
+    let fixture = roots();
+    let (raw, _) = exchange(
+        "a",
+        &latin1_bytes("GET /health?x=< HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"),
+        "pin-angle-bracket",
+        &fixture,
+    )
+    .await;
+    assert!(
+        raw.starts_with("HTTP/1.1 400"),
+        "#1209 `<` in the query stays a hyper 400 (registered diff vs TS 200): {raw:?}"
+    );
+    let _ = std::fs::remove_dir_all(&fixture.parent);
+}
+
+/// #1209: Node's server.close() closes idle keep-alive connections (probe
+/// `probe-fixr1.out` B); stop must drain them instead of burning the whole
+/// budget and reporting a deadline error.
+#[tokio::test]
+async fn stop_closes_idle_keep_alive_connections() {
+    let host = gateway::tests::native_ws_fixture(Arc::new(Unused));
+    let server = crate::native_ws::NativeWsServer::bind(
+        "127.0.0.1:0".parse().expect("#1209 native listen address"),
+        host,
+        "fixture-token".into(),
+        "probe".into(),
+    )
+    .await
+    .expect("#1209 bind native listener");
+    let address = server
+        .local_addr()
+        .expect("#1209 native listener local address");
+    let (stop, stopped) = oneshot::channel();
+    let task = tokio::spawn(server.run(
+        async {
+            let _ = stopped.await;
+        },
+        Duration::from_secs(2),
+    ));
+
+    let mut idle = timeout(DEADLINE, TcpStream::connect(address))
+        .await
+        .expect("#1209 connect deadline")
+        .expect("#1209 connect to the native listener");
+    idle.write_all(&latin1_bytes(
+        "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+    ))
+    .await
+    .expect("#1209 write the health request");
+    let (response, closed) = capture(&mut idle, "stop-idle").await;
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "#1209 the idle connection served health first: {response:?}"
+    );
+    assert!(
+        !closed,
+        "#1209 the keep-alive connection stays open before stop"
+    );
+
+    stop.send(()).expect("#1209 stop native listener");
+    let drained = timeout(Duration::from_secs(10), task)
+        .await
+        .expect("#1209 stop joins the idle listener")
+        .expect("#1209 stop task");
+    assert!(
+        drained.is_ok(),
+        "#1209 stop closes idle keep-alive connections within the drain budget: {drained:?}"
+    );
+    let mut buffer = [0u8; 1];
+    match timeout(QUIET, idle.read(&mut buffer)).await {
+        Ok(Ok(0)) => {}
+        other => panic!("#1209 the idle connection reached EOF after stop: {other:?}"),
+    }
+}
+
+/// #1209: Node's server.close() does not close a connection that never sent
+/// bytes (probe `probe-fixr1.out` B: close() resolved only once that peer
+/// disconnected); the bounded runner surfaces the same wait as the drain
+/// error instead of hanging forever.
+#[tokio::test]
+async fn stop_waits_for_never_requested_connections() {
+    let host = gateway::tests::native_ws_fixture(Arc::new(Unused));
+    let server = crate::native_ws::NativeWsServer::bind(
+        "127.0.0.1:0".parse().expect("#1209 native listen address"),
+        host,
+        "fixture-token".into(),
+        "probe".into(),
+    )
+    .await
+    .expect("#1209 bind native listener");
+    let address = server
+        .local_addr()
+        .expect("#1209 native listener local address");
+    let (stop, stopped) = oneshot::channel();
+    let task = tokio::spawn(server.run(
+        async {
+            let _ = stopped.await;
+        },
+        Duration::from_secs(1),
+    ));
+
+    let _silent = timeout(DEADLINE, TcpStream::connect(address))
+        .await
+        .expect("#1209 connect deadline")
+        .expect("#1209 connect to the native listener");
+    // Let the accept loop take the connection before stop, so the drain is
+    // held by the connection task and not by the listener's backlog.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    stop.send(()).expect("#1209 stop native listener");
+    let drained = timeout(Duration::from_secs(10), task)
+        .await
+        .expect("#1209 stop joins the silent listener")
+        .expect("#1209 stop task");
+    assert!(
+        drained.is_err(),
+        "#1209 a never-requested connection keeps the drain open like TS server.close(): {drained:?}"
+    );
 }
 
 /// #996-style regeneration guard for the fixture; see the fixture README for
