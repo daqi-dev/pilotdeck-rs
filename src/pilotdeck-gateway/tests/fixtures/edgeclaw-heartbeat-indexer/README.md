@@ -33,6 +33,18 @@ The M13 matrix observed from this real TS baseline:
 | close during awaited classify/create/select | per-session catch warns; final trace save rejects with `database is not open` |
 | close before `markL0Indexed` | `markL0Indexed` rejects immediately, no per-session warning |
 
+`oracle.json` is untouched by #917: the five "resurrected" cells above stay
+byte-identical TS observations, and the `#[ignore]` regeneration guard,
+`verify.mts` and the #280 regeneration-negative controls all keep passing.
+The registered divergence `A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-001`
+(#917, human decision #914 A) lives in `fix-917.json`: the same five cells'
+inputs, but the cleared session's turn is discarded before the persist (no
+file write, `storedResults=[]`, `isNoOp=true`), while requests and
+`promptDebug` stay byte-identical to the TS cells. Every other cell —
+including `clearSession` before `markL0Indexed` and all `close` cells — still
+replays byte-identically against `oracle.json`. The Rust recheck fails open on
+a lookup error so the `close` cells keep failing where TS fails.
+
 Run the generator with Node 22 and the baseline's `tsx`:
 
 ```sh
@@ -53,7 +65,11 @@ Two cases carry a candidate name cut at 80 UTF-16 units
 as Node does; a third carries an untruncated non-BMP name.
 
 The negative controls mutate committed bytes, so `mutating_sources` refuses to
-run on an uncommitted working tree. After commit:
+run on an uncommitted working tree. Three #917 mutants guard the persist-site
+recheck: neutralizing it, hoisting it in front of the classify await (a
+two-edit `dict(changes=[...])` row), and flipping its fail-open arm. The first
+two must resurrect the cleared session's file and the last must drift a `close`
+cell away from the TS baseline. After commit:
 
 ```sh
 CARGO_TARGET_DIR=/abs/cargo-target python3 tests/fixtures/edgeclaw-heartbeat-indexer/negative.py /abs/negative-out

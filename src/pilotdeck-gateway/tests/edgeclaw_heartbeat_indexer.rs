@@ -45,6 +45,20 @@ use std::{
 const ORACLE: &str = include_str!("fixtures/edgeclaw-heartbeat-indexer/oracle.json");
 const NOW: &str = "2026-10-22T00:00:00.000Z";
 
+// #917: the five M13 clearSession cells whose expectation flips from the TS
+// baseline (which resurrects the cleared session's file after the clear) to
+// the registered divergence `A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-001`
+// (human decision 2026-10-27, #914 option A). `oracle.json` itself stays
+// byte-identical to TS, so the regeneration guard keeps proving the TS side.
+const FIX_ORACLE: &str = include_str!("fixtures/edgeclaw-heartbeat-indexer/fix-917.json");
+const DIVERGED_CASES: [&str; 5] = [
+    "matrix-single-afterList-clearSession",
+    "matrix-single-classify-clearSession",
+    "matrix-single-createNote-clearSession",
+    "matrix-general-classify-clearSession",
+    "matrix-general-createNote-clearSession",
+];
+
 // -- oracle access ---------------------------------------------------------
 
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
@@ -896,6 +910,18 @@ macro_rules! case_test {
     };
 }
 
+// #917: the same replay shape, but the expectation is the registered
+// divergence in `fix-917.json` instead of the TS cell.
+macro_rules! diverged_case_test {
+    ($function:ident, $name:literal) => {
+        #[tokio::test]
+        async fn $function() {
+            let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+            assert_diverged_case($name).await;
+        }
+    };
+}
+
 case_test!(single_project_cycle_matches_ts, "single-project");
 case_test!(single_all_kinds_matches_ts, "single-all-kinds");
 case_test!(general_create_matches_ts, "general-create");
@@ -911,31 +937,33 @@ case_test!(
     "capture-duplicate-suppression"
 );
 case_test!(
-    matrix_after_list_clear_session_matches_ts,
-    "matrix-single-afterList-clearSession"
-);
-case_test!(
     matrix_classify_capture_matches_ts,
     "matrix-single-classify-capture"
 );
-case_test!(
-    matrix_classify_clear_session_matches_ts,
+// #917: the five clearSession resurrection cells replay the same TS inputs
+// but expect the registered divergence (`fix-917.json`), not the TS outcome.
+diverged_case_test!(
+    matrix_after_list_clear_session_no_resurrection,
+    "matrix-single-afterList-clearSession"
+);
+diverged_case_test!(
+    matrix_classify_clear_session_no_resurrection,
     "matrix-single-classify-clearSession"
 );
-case_test!(
-    matrix_create_note_clear_session_matches_ts,
+diverged_case_test!(
+    matrix_create_note_clear_session_no_resurrection,
     "matrix-single-createNote-clearSession"
 );
 case_test!(
     matrix_before_mark_clear_session_matches_ts,
     "matrix-single-beforeMark-clearSession"
 );
-case_test!(
-    matrix_general_classify_clear_session_matches_ts,
+diverged_case_test!(
+    matrix_general_classify_clear_session_no_resurrection,
     "matrix-general-classify-clearSession"
 );
-case_test!(
-    matrix_general_create_note_clear_session_matches_ts,
+diverged_case_test!(
+    matrix_general_create_note_clear_session_no_resurrection,
     "matrix-general-createNote-clearSession"
 );
 case_test!(
@@ -1096,4 +1124,321 @@ fn capture_l0_session_two_threads_is_atomic() {
 #[test]
 fn regenerates_identically() {
     baseline::regenerates_identically("edgeclaw-heartbeat-indexer");
+}
+
+// -- #917 registered divergence ---------------------------------------------
+
+fn oracle_case<'a>(parsed: &'a JsValue, name: &str) -> &'a JsValue {
+    array(field(parsed, "cases"))
+        .iter()
+        .find(|case| text(field(case, "name")) == name)
+        .unwrap_or_else(|| panic!("#917 oracle.json is missing case {name}"))
+}
+
+fn fix_case<'a>(fix: &'a JsValue, name: &str) -> &'a JsValue {
+    fix.get("cases")
+        .and_then(|cases| cases.get(name))
+        .unwrap_or_else(|| panic!("#917 fix-917.json is missing case {name}"))
+}
+
+/// Same replay as [`assert_case`], but the expectation is the #917 registered
+/// divergence in `fix-917.json` instead of the TS cell: the session was
+/// cleared while the classify/createNote awaits were in flight, so the turn's
+/// candidates must be discarded instead of writing the file the TS baseline
+/// resurrects.
+async fn assert_diverged_case(name: &str) {
+    let parsed = parse_json(ORACLE).expect("#917 oracle json");
+    let fix = parse_json(FIX_ORACLE).expect("#917 fix-917.json");
+    let case = oracle_case(&parsed, name);
+    let expected = fix_case(&fix, name);
+    let observed = run_case(case).await;
+    assert_eq!(
+        canonical(field(&observed, "requests")),
+        canonical(field(expected, "requests")),
+        "#917 case {name} request method/url/headers/body differs"
+    );
+    assert_eq!(
+        canonical(&prompt_debug_values(&observed)),
+        canonical(&prompt_debug_values(expected)),
+        "#917 case {name} promptDebug differs"
+    );
+    assert_eq!(
+        canonical(&stored_candidate_fields(&observed)),
+        canonical(&stored_candidate_fields(expected)),
+        "#917 case {name} storedResults candidate source differs"
+    );
+    if canonical(&observed) != canonical(expected) {
+        panic!(
+            "#917 case {name} differs\n  actual:   {}\n  expected: {}",
+            canonical(&observed),
+            canonical(expected)
+        );
+    }
+}
+
+/// `fix-917.json` must override exactly the registered resurrection cells,
+/// and every override must really remove what the TS cell still records: the
+/// TS cell writes at least one `Project/` / `GeneralProjects/` file, reports
+/// `writtenFiles > 0` and keeps its L0 rows deleted; the divergence writes no
+/// such file, reports `writtenFiles = 0`, keeps the L0 rows deleted and keeps
+/// the TS request sequence and promptDebug bytes untouched.
+#[test]
+fn registered_divergence_covers_exactly_the_resurrect_cells() {
+    let parsed = parse_json(ORACLE).expect("#917 oracle json");
+    let fix = parse_json(FIX_ORACLE).expect("#917 fix-917.json");
+    let registered = match field(&fix, "cases") {
+        JsValue::Object(cases) => cases
+            .entries()
+            .iter()
+            .map(|(key, _)| {
+                key.to_utf8()
+                    .expect("#917 fix-917.json case keys must be UTF-8")
+            })
+            .collect::<Vec<_>>(),
+        other => panic!("#917 fix-917.json cases must be an object, got {other:?}"),
+    };
+    assert_eq!(
+        registered,
+        DIVERGED_CASES.to_vec(),
+        "#917 fix-917.json must override exactly the registered M13 resurrection cells"
+    );
+    let resurrected = |case: &JsValue| {
+        array(field(field(case, "files"), "memory"))
+            .iter()
+            .filter(|file| {
+                let path = text(field(file, "relativePath"));
+                path.starts_with("Project/") || path.starts_with("GeneralProjects/")
+            })
+            .count()
+    };
+    let written_files = |case: &JsValue| {
+        field(case, "result")
+            .get("stats")
+            .and_then(|stats| stats.get("writtenFiles"))
+            .and_then(JsValue::as_number)
+            .unwrap_or_default()
+    };
+    for name in DIVERGED_CASES {
+        let ts = oracle_case(&parsed, name);
+        let expected = fix_case(&fix, name);
+        assert!(
+            resurrected(ts) > 0,
+            "#917 TS cell {name} must still record the resurrected file in oracle.json"
+        );
+        assert_eq!(
+            resurrected(expected),
+            0,
+            "#917 divergence cell {name} must not write Project/GeneralProjects files"
+        );
+        assert!(
+            written_files(ts) > 0.0,
+            "#917 TS cell {name} must record writtenFiles > 0"
+        );
+        assert_eq!(
+            written_files(expected),
+            0.0,
+            "#917 divergence cell {name} must record writtenFiles = 0"
+        );
+        assert!(
+            array(field(field(ts, "db"), "l0")).is_empty(),
+            "#917 TS cell {name} must record the cleared L0 rows"
+        );
+        assert!(
+            array(field(field(expected, "db"), "l0")).is_empty(),
+            "#917 divergence cell {name} must keep the L0 rows deleted"
+        );
+        assert_eq!(
+            canonical(field(ts, "requests")),
+            canonical(field(expected, "requests")),
+            "#917 divergence cell {name} must keep the TS request sequence"
+        );
+        assert_eq!(
+            canonical(&prompt_debug_values(ts)),
+            canonical(&prompt_debug_values(expected)),
+            "#917 divergence cell {name} must keep the TS promptDebug"
+        );
+    }
+}
+
+// #917: the deterministic hook injects `clearSession` at the point where the
+// real-TS probe released the gated createNote request and asserts it hit the
+// target session. The persist after the await must then discard the turn — no
+// file is written and no storedResult is recorded — instead of resurrecting
+// the cleared session's memory the way the TS baseline does.
+#[tokio::test]
+async fn clear_during_create_note_await_discards_persist() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let root = TempDir::new("clear-create-note");
+    let root_path = root.path();
+    let home = root_path.join("home");
+    fs::create_dir_all(&home).expect("#917 create home");
+    let workspace = root_path.join("workspace");
+    fs::create_dir_all(&workspace).expect("#917 create workspace");
+    let clock = Arc::new(|| NOW.to_string());
+    let stores = Arc::new(
+        EdgeClawFileStores::with_workspace_clock(
+            root_path.join("control.sqlite"),
+            root_path.join("memory"),
+            root_path.join("root").join("global"),
+            &workspace,
+            home.join(".pilotdeck"),
+            clock.clone(),
+        )
+        .expect("#917 open repository"),
+    );
+    stores
+        .storage
+        .set_pipeline_state(
+            "workspaceDir",
+            &JsValue::String(workspace.to_string_lossy().as_ref().into()),
+        )
+        .expect("#917 set workspaceDir");
+
+    let response = |value: serde_json::Value| {
+        serde_json::json!({
+            "status": 200,
+            "body": serde_json::to_string(&serde_json::json!({
+                "choices": [{
+                    "message": {
+                        "content": serde_json::to_string(&value)
+                            .expect("#917 scripted response content")
+                    }
+                }]
+            })).expect("#917 scripted response envelope"),
+        })
+    };
+    let steps = vec![
+        response(serde_json::json!({
+            "should_store": true,
+            "labels": [{
+                "type": "project",
+                "reason": "durable project fact",
+                "evidence": "project evidence"
+            }]
+        })),
+        response(serde_json::json!({
+            "skip": false,
+            "reason": "",
+            "name": "Alpha",
+            "description": "Alpha description",
+            "markdown": "## Summary\nAlpha body"
+        })),
+    ];
+    let server = LlmStub::start(steps, Arc::new(AtomicU64::new(0))).await;
+    let extractor = Arc::new(LlmMemoryExtractor::new(
+        config(&server.origin),
+        Arc::new(HyperModelTransport::new()),
+        Arc::new(()),
+    ));
+    let indexer = HeartbeatIndexer::new(
+        stores.clone(),
+        extractor,
+        HeartbeatOptions {
+            batch_size: None,
+            source: Some("edgeclaw".into()),
+            settings: IndexingSettings {
+                reasoning_mode: "answer_first".into(),
+                auto_index_interval_minutes: 30.0,
+                auto_dream_interval_minutes: 60.0,
+            },
+            logger: None,
+            clock: Some(clock),
+        },
+    );
+    indexer
+        .capture_l0_session(CaptureL0SessionInput {
+            session_key: "s1".into(),
+            timestamp: Some("2026-10-22T00:00:01.000Z".into()),
+            messages: vec![MemoryMessage {
+                msg_id: None,
+                role: MemoryRole::User,
+                content: "cleared during create".into(),
+            }],
+            source: None,
+        })
+        .expect("#917 capture l0 must not fail")
+        .expect("#917 capture l0 must insert the first row");
+
+    let injected: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+    let hook_injected = injected.clone();
+    let hook_stores = stores.clone();
+    let hooked = indexer.with_hook(Arc::new(move |stage, session_key| {
+        assert_eq!(
+            session_key, "s1",
+            "#917 the clear hook must fire on the target session"
+        );
+        if stage == HeartbeatStage::BeforeCreateNote {
+            let mut injected = hook_injected.lock().expect("#917 hook lock");
+            assert_eq!(
+                *injected, 0,
+                "#917 the createNote clear must be injected exactly once"
+            );
+            *injected += 1;
+            hook_stores
+                .clear_session_memory_data("s1")
+                .expect("#917 hook clearSession");
+        }
+    }));
+
+    let stats = hooked
+        .run_heartbeat(HeartbeatRunOptions {
+            reason: Some("manual".into()),
+            ..HeartbeatRunOptions::default()
+        })
+        .await
+        .expect("#917 runHeartbeat must not reject when the session is cleared mid-await");
+    assert_eq!(
+        *injected.lock().expect("#917 hook lock"),
+        1,
+        "#917 the clear hook must have fired at the createNote await"
+    );
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 0, 0),
+        "#917 a cleared session must not count any written file"
+    );
+    let l0 = stores.storage.list_all_l0().expect("#917 list l0 rows");
+    assert!(
+        l0.is_empty(),
+        "#917 the cleared session's L0 rows must stay deleted"
+    );
+    let memory_files = array(&tree(stores.get_file_memory_store().get_root_dir()))
+        .iter()
+        .map(|file| text(field(file, "relativePath")))
+        .collect::<Vec<_>>();
+    assert!(
+        memory_files
+            .iter()
+            .all(|path| !path.starts_with("Project/")),
+        "#917 no project memory file may be written for the cleared session, got {memory_files:?}"
+    );
+    let global_tree = tree(stores.get_global_user_store().get_root_dir());
+    let global_files = array(&global_tree);
+    assert!(
+        global_files.is_empty(),
+        "#917 no global user file may be written for the cleared session"
+    );
+    let traces = stores
+        .storage
+        .list_recent_index_traces(20)
+        .expect("#917 list traces");
+    let trace = traces
+        .first()
+        .expect("#917 the heartbeat must record its index trace");
+    assert_eq!(
+        trace.get("isNoOp"),
+        Some(&JsValue::Bool(true)),
+        "#917 the discarded turn must leave a no-op trace"
+    );
+    let requests = server.requests.lock().expect("#917 stub requests").clone();
+    server.close().await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "#917 classify and createNote must still run; only the persist is discarded"
+    );
 }
