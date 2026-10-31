@@ -660,43 +660,256 @@
       {
         "name": "empty",
         "marker": "",
+        "kind": "file",
+        "cwd": "project",
         "registered": false,
         "errorCode": "PROJECT_NOT_FOUND",
+        "before": {
+          "kind": "file",
+          "bytesHex": ""
+        },
+        "after": {
+          "kind": "file",
+          "bytesHex": ""
+        },
         "markerUnchanged": true
       },
       {
         "name": "whitespace",
         "marker": " \t ﻿ ",
+        "kind": "file",
+        "cwd": "project",
         "registered": false,
         "errorCode": "PROJECT_NOT_FOUND",
+        "before": {
+          "kind": "file",
+          "bytesHex": "2009c2a0efbbbf20"
+        },
+        "after": {
+          "kind": "file",
+          "bytesHex": "2009c2a0efbbbf20"
+        },
         "markerUnchanged": true
       },
       {
         "name": "newline",
         "marker": "\n",
+        "kind": "file",
+        "cwd": "project",
         "registered": false,
         "errorCode": "PROJECT_NOT_FOUND",
+        "before": {
+          "kind": "file",
+          "bytesHex": "0a"
+        },
+        "after": {
+          "kind": "file",
+          "bytesHex": "0a"
+        },
         "markerUnchanged": true
       },
       {
         "name": "matching",
         "marker": "{project}",
+        "kind": "file",
+        "cwd": "other",
         "registered": true,
         "errorCode": null,
+        "before": {
+          "kind": "file",
+          "bytesHex": "7b70726f6a6563747d"
+        },
+        "after": {
+          "kind": "file",
+          "bytesHex": "7b70726f6a6563747d"
+        },
         "markerUnchanged": true
       },
       {
         "name": "padded",
         "marker": " \t{project}\n",
+        "kind": "file",
+        "cwd": "other",
         "registered": true,
         "errorCode": null,
+        "before": {
+          "kind": "file",
+          "bytesHex": "20097b70726f6a6563747d0a"
+        },
+        "after": {
+          "kind": "file",
+          "bytesHex": "20097b70726f6a6563747d0a"
+        },
         "markerUnchanged": true
       },
       {
         "name": "foreign",
         "marker": "{other}",
+        "kind": "file",
+        "cwd": "other",
         "registered": false,
         "errorCode": "PROJECT_NOT_FOUND",
+        "before": {
+          "kind": "file",
+          "bytesHex": "7b6f746865727d"
+        },
+        "after": {
+          "kind": "file",
+          "bytesHex": "7b6f746865727d"
+        },
+        "markerUnchanged": true
+      },
+      {
+        "name": "relative-dot",
+        "marker": ".",
+        "kind": "file",
+        "cwd": "other",
+        "registered": false,
+        "errorCode": "PROJECT_NOT_FOUND",
+        "before": {
+          "kind": "file",
+          "bytesHex": "2e"
+        },
+        "after": {
+          "kind": "file",
+          "bytesHex": "2e"
+        },
+        "markerUnchanged": true
+      },
+      {
+        "name": "relative-dot-slash",
+        "marker": "./",
+        "kind": "file",
+        "cwd": "other",
+        "registered": false,
+        "errorCode": "PROJECT_NOT_FOUND",
+        "before": {
+          "kind": "file",
+          "bytesHex": "2e2f"
+        },
+        "after": {
+          "kind": "file",
+          "bytesHex": "2e2f"
+        },
+        "markerUnchanged": true
+      },
+      {
+        "name": "trailing-slash",
+        "marker": "{project}/",
+        "kind": "file",
+        "cwd": "other",
+        "registered": true,
+        "errorCode": null,
+        "before": {
+          "kind": "file",
+          "bytesHex": "7b70726f6a6563747d2f"
+        },
+        "after": {
+          "kind": "file",
+          "bytesHex": "7b70726f6a6563747d2f"
+        },
+        "markerUnchanged": true
+      },
+      {
+        "name": "crlf",
+        "marker": "{project}\r\n",
+        "kind": "file",
+        "cwd": "other",
+        "registered": true,
+        "errorCode": null,
+        "before": {
+          "kind": "file",
+          "bytesHex": "7b70726f6a6563747d0d0a"
+        },
+        "after": {
+          "kind": "file",
+          "bytesHex": "7b70726f6a6563747d0d0a"
+        },
+        "markerUnchanged": true
+      },
+      {
+        "name": "directory",
+        "kind": "directory",
+        "cwd": "other",
+        "registered": false,
+        "errorCode": "PROJECT_NOT_FOUND",
+        "before": {
+          "kind": "directory",
+          "entries": []
+        },
+        "after": {
+          "kind": "directory",
+          "entries": []
+        },
+        "markerUnchanged": true
+      },
+      {
+        "name": "dangling-symlink",
+        "kind": "symlink",
+        "cwd": "other",
+        "registered": false,
+        "errorCode": "PROJECT_NOT_FOUND",
+        "before": {
+          "kind": "symlink",
+          "target": "missing-target",
+          "targetExists": false
+        },
+        "after": {
+          "kind": "symlink",
+          "target": "missing-target",
+          "targetExists": false
+        },
+        "markerUnchanged": true
+      },
+      {
+        "name": "invalid-utf8",
+        "markerHex": "ff",
+        "kind": "file",
+        "cwd": "other",
+        "registered": false,
+        "errorCode": "PROJECT_NOT_FOUND",
+        "before": {
+          "kind": "file",
+          "bytesHex": "ff"
+        },
+        "after": {
+          "kind": "file",
+          "bytesHex": "ff"
+        },
+        "markerUnchanged": true
+      },
+      {
+        "name": "relative-dot-at-project",
+        "marker": ".",
+        "kind": "file",
+        "cwd": "project",
+        "registered": true,
+        "errorCode": null,
+        "before": {
+          "kind": "file",
+          "bytesHex": "2e"
+        },
+        "after": {
+          "kind": "file",
+          "bytesHex": "2e"
+        },
+        "markerUnchanged": true
+      },
+      {
+        "name": "relative-dot-slash-at-project",
+        "marker": "./",
+        "kind": "file",
+        "cwd": "project",
+        "registered": true,
+        "errorCode": null,
+        "before": {
+          "kind": "file",
+          "bytesHex": "2e2f"
+        },
+        "after": {
+          "kind": "file",
+          "bytesHex": "2e2f"
+        },
         "markerUnchanged": true
       }
     ],

@@ -299,24 +299,97 @@ async fn replacement_clone_shares_state() {
     );
 }
 
-#[test]
-fn project_marker_ownership_matches_ts() {
-    let expected: Value = serde_json::from_str(include_str!(
+const MARKER_CASE_COUNT: usize = 15;
+
+fn marker_oracle() -> Value {
+    serde_json::from_str(include_str!(
         "../../tests/fixtures/native-cwd-marker/oracle.json"
     ))
-    .expect("#1137 marker oracle JSON");
+    .expect("#1137 marker oracle JSON")
+}
+
+fn marker_bytes(hex: &str) -> Vec<u8> {
+    hex.as_bytes()
+        .chunks(2)
+        .map(|pair| {
+            let text = std::str::from_utf8(pair).expect("#1137 marker hex is ASCII");
+            u8::from_str_radix(text, 16).expect("#1137 marker hex byte")
+        })
+        .collect()
+}
+
+fn marker_snapshot(marker: &Path, project: &Path, other: &Path) -> Value {
+    let entry = std::fs::symlink_metadata(marker).expect("#1137 marker node after registration");
+    if entry.is_symlink() {
+        json!({"kind": "symlink",
+            "target": std::fs::read_link(marker).expect("#1137 marker symlink target"),
+            "targetExists": marker.exists()})
+    } else if entry.is_dir() {
+        let mut entries = std::fs::read_dir(marker)
+            .expect("#1137 marker directory contents")
+            .map(|entry| {
+                entry
+                    .expect("#1137 marker directory entry")
+                    .file_name()
+                    .into_string()
+                    .expect("#1137 marker directory entry UTF-8")
+            })
+            .collect::<Vec<_>>();
+        entries.sort();
+        json!({"kind": "directory", "entries": entries})
+    } else {
+        assert!(entry.is_file(), "#1137 marker regular file");
+        let hex = |bytes: &[u8]| {
+            bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        };
+        let bytes = std::fs::read(marker).expect("#1137 read raw marker after registration");
+        let bytes_hex = hex(&bytes)
+            .replace(
+                &hex(project.to_string_lossy().as_bytes()),
+                &hex(b"{project}"),
+            )
+            .replace(&hex(other.to_string_lossy().as_bytes()), &hex(b"{other}"));
+        json!({"kind": "file", "bytesHex": bytes_hex})
+    }
+}
+
+#[test]
+fn project_marker_ownership_matches_ts() {
+    let expected = marker_oracle();
     let cases = expected["observations"]["cases"]
         .as_array()
         .expect("#1137 marker oracle cases");
+    negative_assert!(!cases.is_empty(), "#1137 marker ownership cases nonempty");
+    negative_assert_eq!(
+        cases.len(),
+        MARKER_CASE_COUNT,
+        "#1137 marker ownership case count"
+    );
     for row in cases {
         let root = std::env::temp_dir().join(format!("pdrs-1137-{}", uuid::Uuid::new_v4()));
+        let mut scratch = Scratch(root);
         for name in ["home", "project", "other"] {
-            std::fs::create_dir_all(root.join(name)).expect("#1137 marker scratch directories");
+            std::fs::create_dir_all(scratch.0.join(name))
+                .expect("#1137 marker scratch directories");
         }
-        let scratch = Scratch(root.canonicalize().expect("#1137 canonical marker scratch"));
+        scratch.0 = scratch
+            .0
+            .canonicalize()
+            .expect("#1137 canonical marker scratch");
+        // Never change the test process's shared cwd. For the cwd=project
+        // rows, register that existing directory under our isolated home.
+        let project = if row["cwd"] == "project" {
+            std::env::current_dir().expect("#1137 current marker project")
+        } else {
+            scratch.0.join("project")
+        };
+        let other = scratch.0.join("other");
         let options = Options {
             home: scratch.0.join("home"),
-            project: scratch.0.join("project"),
+            project,
             listen: "127.0.0.1:0".parse().expect("#1137 marker listen address"),
             token_file: scratch.0.join("unused-token"),
             sidecar: scratch.0.join("unused-sidecar"),
@@ -331,33 +404,79 @@ fn project_marker_ownership_matches_ts() {
         let directory = chats.parent().expect("#1137 marker storage directory");
         std::fs::create_dir_all(directory).expect("#1137 create marker storage");
         let marker = directory.join(".cwd");
-        let bytes = row["marker"]
-            .as_str()
-            .expect("#1137 marker fixture text")
-            .replace("{project}", &options.project.to_string_lossy())
-            .replace("{other}", &scratch.0.join("other").to_string_lossy());
-        std::fs::write(&marker, &bytes).expect("#1137 seed marker");
+        match row["kind"].as_str().expect("#1137 marker fixture kind") {
+            "directory" => std::fs::create_dir(&marker).expect("#1137 seed marker directory"),
+            "symlink" => std::os::unix::fs::symlink("missing-target", &marker)
+                .expect("#1137 seed dangling marker symlink"),
+            "file" => {
+                let bytes = if let Some(hex) = row["markerHex"].as_str() {
+                    marker_bytes(hex)
+                } else {
+                    row["marker"]
+                        .as_str()
+                        .expect("#1137 marker fixture text")
+                        .replace("{project}", &options.project.to_string_lossy())
+                        .replace("{other}", &other.to_string_lossy())
+                        .into_bytes()
+                };
+                std::fs::write(&marker, bytes).expect("#1137 seed raw marker");
+            }
+            _ => panic!("#1137 unknown marker fixture kind"),
+        }
+        let before = marker_snapshot(&marker, &options.project, &other);
+        let raw_before = if row["kind"] == "file" {
+            Some(std::fs::read(&marker).expect("#1137 raw marker before registration"))
+        } else {
+            None
+        };
+        negative_assert_eq!(
+            before,
+            row["before"],
+            "#1137 marker initial node matches TS"
+        );
         let accepted = row["registered"]
             .as_bool()
             .expect("#1137 TS registration result");
+        let result = assembly::register_project(&options);
+        let after = marker_snapshot(&marker, &options.project, &other);
+        let raw_unchanged = raw_before.is_none_or(|before| {
+            before == std::fs::read(&marker).expect("#1137 raw marker after registration")
+        });
+        println!(
+            "#1137 marker {}: registered={} error={:?} before={} after={}",
+            row["name"],
+            result.is_ok(),
+            result.as_ref().err().map(|e| e.to_string()),
+            before,
+            after
+        );
         negative_assert_eq!(
-            assembly::register_project(&options).is_ok(),
+            result.is_ok(),
             accepted,
             "#1137 native marker ownership matches TS registration"
         );
         negative_assert_eq!(
-            std::fs::read_to_string(&marker).expect("#1137 read marker after registration")
-                == bytes,
+            raw_unchanged && after == before,
             row["markerUnchanged"]
                 .as_bool()
                 .expect("#1137 TS marker preservation"),
             "#1137 existing marker bytes preserved"
         );
+        negative_assert_eq!(after, row["after"], "#1137 marker final node matches TS");
     }
 }
 
 #[test]
 fn marker_fixture_provenance() {
+    let expected = marker_oracle();
+    let cases = expected["observations"]["cases"]
+        .as_array()
+        .expect("#1137 provenance marker cases");
+    negative_assert_eq!(
+        cases.len(),
+        MARKER_CASE_COUNT,
+        "#1137 marker provenance case count"
+    );
     let result = std::panic::catch_unwind(|| {
         crate::test_baseline::oracle(include_str!(
             "../../tests/fixtures/native-cwd-marker/oracle.json"
