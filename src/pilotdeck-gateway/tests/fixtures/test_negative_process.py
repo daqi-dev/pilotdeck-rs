@@ -24,7 +24,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from negative_process import (SourceBaselineError, exclusive_write,
                               mutating_sources, new_output_directory,
-                              node_version, run_owned, tree_lock, wait_for_slot)
+                              node_version, published_module, run_owned,
+                              tree_lock, wait_for_slot)
 import negative_process
 
 
@@ -581,7 +582,8 @@ class TreeLockBudget(unittest.TestCase):
                                 '#1142 caller deadline must interrupt a busy lock')
                 self.assertTrue(len(closed) == 1, '#1142 interrupted acquisition must close its fd')
                 self.assertNotIn(negative_process._held_key(Path(root) / '.negative-source.lock'),
-                                 negative_process._HELD, '#1142 cancelled acquisition must not own the lock')
+                                 negative_process._held_state()['held'],
+                                 '#1142 cancelled acquisition must not own the lock')
             with tree_lock(root, timeout=0.1):
                 pass
 
@@ -810,6 +812,41 @@ class MutatingSources(unittest.TestCase):
                     self.assertEqual(inner[target], b"// head\n")
                 target.write_text("// outer mutant\n")
             self.assertEqual(target.read_bytes(), b"// head\n")
+
+    def test_published_module_copy_reenters_the_held_tree_lock(self):
+        # #1166 r9: runner_control compiles an in-memory candidate
+        # negative_process and publishes it as the sys.modules entry while
+        # the original module already owns the tree lock. The copy must share
+        # the reentrancy registry: with its own empty registry the copy's
+        # tree_lock opens a second fd and flocks against its own process
+        # until the lock deadline (cb8: round6 waited the full 900 s for
+        # "source lock busy"). lock_timeout bounds this regression to seconds
+        # when that regression is present.
+        module_path = Path(negative_process.__file__)
+        candidate = module_path.read_bytes().decode()
+        with tempfile.TemporaryDirectory(prefix="pdrs-negative-published-") as temp:
+            root, target = self.repo(temp)
+            with mutating_sources(root, [target]) as outer:
+                self.assertTrue(outer[target] == b"// head\n",
+                                "#1166 r9 outer window must snapshot HEAD bytes")
+                with published_module("negative_process", module_path,
+                                      candidate) as copy:
+                    started = time.monotonic()
+                    try:
+                        with copy.mutating_sources(root, [target],
+                                                  lock_timeout=15) as inner:
+                            self.assertTrue(inner[target] == b"// head\n",
+                                            "#1166 r9 copy must snapshot HEAD bytes")
+                            target.write_text("// inner mutant\n")
+                    except TimeoutError as error:
+                        self.fail("#1166 r9 published copy must reenter the held "
+                                  "tree lock instead of flocking against its own "
+                                  "process: " + str(error))
+                    self.assertLess(time.monotonic() - started, 10,
+                                    "#1166 r9 published copy must reenter the held "
+                                    "tree lock within seconds, not the lock deadline")
+                self.assertTrue(target.read_bytes() == b"// head\n",
+                                "#1166 r9 copy must restore its own mutation")
 
 
 class ParityMutationLock(unittest.TestCase):
