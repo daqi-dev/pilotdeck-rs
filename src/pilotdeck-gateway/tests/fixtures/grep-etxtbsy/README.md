@@ -17,7 +17,12 @@ fix-r3 起收尾结构：`ReapGuard` 从 helper spawn 起持有它，一切非�
 （错误返回、截止超时、panic 展开）都经 guard 的 Drop 单点 kill + wait 收割、
 把 kill+wait 结果交给 `reaped` 钩子、删除临时名；写端设为非阻塞，writer
 线程与父进程共享同一 expiry，读端被任何进程卡住也只放弃而不挂死
-（fix-r3 评审 P2-1/P2-2）。
+（fix-r3 评审 P2-1/P2-2）。fix-r2（#1141）起 `spawned` 钩子把 spawn 返回的
+pid（对 `process_group(0)` 的 helper 即进程组号）在 guard 接管的同一刻交给
+调用方，清理不再依赖子进程事后写组号文件；dead-stranger 用例的陌生进程是
+一个 python3 探针，go 信号后用零超时 `select` + `os.read` 对读端分类（0
+字节 = EOF 挂起 = 返回前全部写端已关；未就绪 = 仍有写端活过返回边界），
+判定原子写进 marker。
 
 变异体：
 
@@ -43,21 +48,35 @@ fix-r3 起收尾结构：`ReapGuard` 从 helper spawn 起持有它，一切非�
   的 `#1125 helper writer did not exit by its deadline` 断言（确定性）；
 - `deadline-write-end-kept-open`：writer 的截止放弃分支泄漏一个写端克隆
   （`std::mem::forget(stdin.as_fd().try_clone_to_owned())`，
-  `ChildStdin` 无 `try_clone`），本进程在放弃后仍持有写端，
-  陌生进程读不到 EOF、marker 不出现——绑定
+  `ChildStdin` 无 `try_clone`），本进程在放弃后仍持有写端——绑定
   `test_scratch_publication::a_dead_helper_with_a_stranger_reader_still_closes_the_write_end`
-  的 `#1141 the write end must be closed` 断言（确定性；该测试是唯一观察
-  写端关闭的用例，#1141）；
-- `deadline-write-end-released-late`（#1141 fix-r1 评审 P2-1）：writer 截止
-  放弃时把写端克隆交给 4 秒后才释放的线程——返回及时、TimedOut、自然死亡
-  报告、marker 最终都成立，只有 marker 相对测试 go 信号的时间戳暴露晚释放，
-  绑定同一用例的 `#1141 the write end must be closed by the time the
-  publication returns` 断言（确定性，写端关闭观测绑定到函数返回边界）；
+  的 `#1141 the write end must be closed by the time the publication returns`
+  断言（确定性；该测试是唯一观察写端关闭的用例，#1141）；
+- `parent-write-end-held-past-return`（#1141 fix-r2 评审 P2-1）：父进程在
+  writer 起动前泄漏自己那份写端克隆（同一 `mem::forget` 形状，另一处持有
+  者）——返回及时、TimedOut、自然死亡报告全部成立，只有 go 信号后的非阻塞
+  探测把「写端活过返回边界」判为 `write-end-still-held`，绑定同一用例的
+  同一断言（确定性；泄漏克隆被持有到观测完成之后，不与任何定时器竞速；
+  它取代 r1 的 `deadline-write-end-released-late`——4s 定时释放只能靠
+  marker 时间戳分辨，已被探针判定取代）；
 - `stranger-guard-kill-removed`（#1141 fix-r1 评审 P1-1）：删掉测试守卫
   `StrangerGuard` 的进程组 kill——停驻在 `sleep 30` 的陌生进程活过整个用例、
   进程组永不为空，绑定同一用例的 `#1141 the stranger must be killed and
-  reaped by the test's guard` 断言（确定性；陌生进程在记完 EOF 后停驻，
-  只能由守卫回收）。
+  reaped by the test's guard` 断言（确定性；陌生进程在记完判定后停驻，
+  只能由守卫回收）；
+- `stranger-panic-guard-kill-removed`（#1141 fix-r2 评审 P1-1）：同一 kill
+  删除，绑定新用例
+  `test_scratch_publication::a_panic_while_the_stranger_runs_still_ends_it`
+  ——发布函数在陌生进程已启动、后续步骤未跑时 panic（`spawned` 钩子里
+  故意 panic，`catch_unwind` 捕获后显式收尾），守卫若不 kill，组不为空，
+  `#1141 the stranger must still be killed and confirmed gone after a panic`
+  失败；
+- `spawn-hook-removed`（#1141 fix-r2 评审 P1-1）：`write_executable_bounded`
+  的 `spawned(helper_id)` 交接被删——钩子不再被调用，窗口里没有 panic 发生、
+  发布跑完整个截止错误，panic 用例的
+  `#1141 the publication must panic while the stranger is running` 最先失败
+  （其后紧跟的 `#1141 the guard must own the stranger's group from the spawn
+  on` 所有权断言保证半途而废的钩子也不能空转通过）。
 
 `test_scratch_publication` 是 lib 专属测试模块
 （`src/test_scratch_publication.rs`，`#[cfg(all(test, unix))]`，fix-r3 评审 P2
@@ -75,14 +94,14 @@ crate 以 `#[path]` 各编一份，共享文件里不再放单测，避免每份
 
 ```sh
 CARGO_TARGET_DIR=<绝对路径> python3 -I negative_controls.py NEW_OUT_DIR
-# 锚点新鲜度预检（须打印 `9 anchors: ok` 后退出 0）
+# 锚点新鲜度预检（须打印 `11 anchors: ok` 后退出 0）
 python3 -I negative_controls.py --check-anchors
 ```
 
 平台契约：macOS 的 std::process 走 posix_spawn，观察不到继承描述符窗口，
 `script-direct-write` / `helper-in-process-write` 在该平台预期 SURVIVED
 （或因无关失败 INVALID）——这两个竞态负控是 **Linux 契约**，判杀只在
-Linux 宿主（cb8 / CI）上成立；`no-temp-cleanup` 与六个 deadline/writer/
+Linux 宿主（cb8 / CI）上成立；`no-temp-cleanup` 与九个 deadline/writer/
 guard 变异体在任意 unix 宿主上确定性判杀（unix 平台无关，非 unix 无该测试
 模块）。
 cargo 不得带 `-q`（共享执行器靠逐测试行判读）。
