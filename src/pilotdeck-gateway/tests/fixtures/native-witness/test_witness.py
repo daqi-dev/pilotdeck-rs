@@ -12,9 +12,11 @@ import sys
 if not sys.flags.isolated:
     raise SystemExit('run with python3 -I')
 sys.dont_write_bytecode = True
+import base64
 import copy
 from contextlib import contextmanager, redirect_stdout, redirect_stderr
 import errno
+import hashlib
 import io
 import importlib.util
 import json
@@ -24,6 +26,7 @@ import signal
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -142,32 +145,39 @@ def exec_line(pid, path):
     return f'{pid} execve({hx(str(path))}, [{hx(str(path))}], 0x1 /* 0 vars */) = 0\n'
 
 
-def compatibility_envelope(folder, contract, evidence, *, connection_id='audit-envelope'):
+def compatibility_envelope(folder, contract, evidence, *, connection_id='audit-envelope', rows=None):
     """Offline audit envelope: real witness bytes, envelope-only remaining fields.
 
     The contract carries no binding and no observer rows; w.audit binds the
     hello the independent observer recorded (#1140). This is the audit
-    consumer path itself, no longer a synthetic-control shell.
+    consumer path itself, no longer a synthetic-control shell.  rows, when
+    given, are a real recorder's observer rows: the binding comes from the
+    hello they recorded, so the audit sees the collector's true row shape
+    (#1140 fix-r1) instead of the fabricated envelope hello.
     """
     evidence, contract = copy.deepcopy(evidence), copy.deepcopy(contract)
     artifact = Path(folder) / 'audit-envelope.txt'
     artifact.write_text('#1140 offline audit envelope; exec/network fields are real witness bytes\n')
-    binding = {'connectionId': connection_id, 'generation': 1}
-    frame = {'type': 'hello_ok', 'protocolVersion': '1.2', 'interactionBinding': binding}
-    payload = json.dumps(frame, separators=(',', ':')).encode()
-    length = len(payload)
-    if length < 126:
-        header = bytes([129, length])
-    elif length <= 65535:
-        header = b'\x81\x7e' + length.to_bytes(2, 'big')
+    if rows is None:
+        binding = {'connectionId': connection_id, 'generation': 1}
+        frame = {'type': 'hello_ok', 'protocolVersion': '1.2', 'interactionBinding': binding}
+        payload = json.dumps(frame, separators=(',', ':')).encode()
+        length = len(payload)
+        if length < 126:
+            header = bytes([129, length])
+        elif length <= 65535:
+            header = b'\x81\x7e' + length.to_bytes(2, 'big')
+        else:
+            header = b'\x81\x7f' + length.to_bytes(8, 'big')
+        rows = [{'connection': 1, 'direction': 'receive', 'frame': frame, 'wireHex': (header + payload).hex(),
+                 'wire': {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': False,
+                          'lengthCode': header[1], 'payloadLength': length}}]
     else:
-        header = b'\x81\x7f' + length.to_bytes(8, 'big')
-    rows = [{'connection': 1, 'direction': 'receive', 'frame': frame, 'wireHex': (header + payload).hex(),
-             'wire': {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': False,
-                      'lengthCode': header[1], 'payloadLength': length}}]
+        # The hello a real recorder captured is the only admissible binding.
+        binding = w.observer_binding({'observer': {'rows': copy.deepcopy(rows)}})
     contract.update(cases=['AUDIT_ENVELOPE'], capabilities={}, connections=1)
     evidence.update(expectedCases=contract['cases'], executedCases=contract['cases'], capabilities={},
-                    binding=binding, observer={'connections': 1, 'rows': rows},
+                    binding=binding, observer={'connections': 1, 'rows': copy.deepcopy(rows)},
                     surfaces={name: {'status': 'RECORDED', 'artifacts': [
                         {'path': str(artifact), 'sha256': w.sha(artifact)}]} for name in ('output', 'disk', 'http')})
     return contract, evidence
@@ -233,6 +243,163 @@ class WitnessTests(unittest.TestCase):
         payload = json.dumps(row['frame'], separators=(',', ':')).encode()
         self.assertTrue(frame[:2] == b'\x81\x7f' and int.from_bytes(frame[2:10], 'big') == len(payload), '#1169 envelope extended length is exact')
         self.assertTrue(frame[10:] == payload and row['wire']['lengthCode'] == 127, '#1169 envelope wire metadata matches bytes')
+
+    def test_wire_row_schema(self):
+        # The frozen audit reads wire metadata and the payload text from every
+        # sent row (#1140 fix-r1): a row without either cannot be audited.
+        client = c.WireClient.__new__(c.WireClient)
+        client.socket, client.rows = mock.Mock(), []
+        client.deadline = time.monotonic() + 30
+        value = 'x' * 200  # forces the 16-bit extended length
+        client.send(value)
+        row = client.rows[-1]
+        self.assertTrue(set(row) == {'direction', 'wireHex', 'wire', 'frame', 'connection'},
+                        '#1140 sent recorder rows carry the audit contract fields')
+        self.assertTrue(row['direction'] == 'send' and isinstance(row['frame'], str),
+                        '#1140 a sent row records the payload text, not a decoded object')
+        self.assertTrue(row['frame'] == json.dumps(value, separators=(',', ':')),
+                        '#1140 a sent row frame is the exact payload text')
+        size = len(row['frame'].encode())
+        self.assertTrue(row['wire'] == {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': True,
+                                        'lengthCode': 126, 'payloadLength': size},
+                        '#1140 sent-row wire metadata matches the frame bytes')
+        frozen = w.frozen_auditor()
+        decoded = []
+        frozen.Decoder(decoded.append, 'send').feed(
+            b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n' + bytes.fromhex(row['wireHex']))
+        self.assertTrue(len(decoded) == 1 and decoded[0].get('raw') == row['frame'],
+                        '#1140 the frozen decoder cross-check reads a sent row as its payload text')
+        error = None
+        try:
+            frozen.wire_frame(copy.deepcopy(row))
+        except Exception as caught:
+            error = caught
+        self.assertTrue(error is None, '#1140 the frozen wire checker accepts a real sent row: ' + str(error))
+
+    def test_receive_wire_row_schema(self):
+        for payload in (b'{"ok":1}', b'{"pad":"' + b'x' * 200 + b'"}'):
+            code = len(payload) if len(payload) < 126 else 126
+            head = bytes([0x81, code]) if len(payload) < 126 else b'\x81\x7e' + len(payload).to_bytes(2, 'big')
+            client = c.WireClient.__new__(c.WireClient)
+            client.socket, client.rows = mock.Mock(), []
+            client.socket.recv.side_effect = [head, payload]
+            client.buffer, client.deadline = b'', time.monotonic() + 30
+            value = client.receive()
+            row = client.rows[-1]
+            self.assertTrue(set(row) == {'direction', 'wireHex', 'wire', 'frame', 'connection'},
+                            '#1140 received recorder rows carry the audit contract fields')
+            self.assertTrue(row['direction'] == 'receive' and row['frame'] == value == json.loads(payload),
+                            '#1140 a received row records the decoded frame')
+            self.assertTrue(row['wire'] == {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': False,
+                                            'lengthCode': code, 'payloadLength': len(payload)},
+                            '#1140 received-row wire metadata matches the frame bytes')
+            self.assertTrue(row['wireHex'] == (head + payload).hex(), '#1140 received-row bytes are the raw frame')
+            frozen = w.frozen_auditor()
+            decoded = []
+            frozen.Decoder(decoded.append, 'receive').feed(
+                b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n' + bytes.fromhex(row['wireHex']))
+            self.assertTrue(len(decoded) == 1 and decoded[0].get('frame') == row['frame'],
+                            '#1140 the frozen decoder cross-check reads a received row as its decoded frame')
+            error = None
+            try:
+                frozen.wire_frame(copy.deepcopy(row))
+            except Exception as caught:
+                error = caught
+            self.assertTrue(error is None, '#1140 the frozen wire checker accepts a real received row: ' + str(error))
+
+    def test_recorder_rows_audit(self):
+        # A real loopback WebSocket exchange: every observer row the frozen
+        # audit consumes is produced by the real WireClient against a real
+        # socket, so the audit no longer only ever sees fabricated hellos
+        # (#1140 fix-r1 P2-3).
+        listener = socket.socket()
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+        listener.listen(1)
+        listener.settimeout(10)
+
+        def read_exact(connection, count):
+            data = b''
+            while len(data) < count:
+                chunk = connection.recv(count - len(data))
+                if not chunk:
+                    raise AssertionError('#1140 recorder audit server socket closed early')
+                data += chunk
+            return data
+
+        def drain_frame(connection):
+            head = read_exact(connection, 2)
+            length = head[1] & 127
+            if length >= 126:
+                length = int.from_bytes(read_exact(connection, 2 if length == 126 else 8), 'big')
+            read_exact(connection, 4 + length)
+
+        def server():
+            connection, _ = listener.accept()
+            with connection:
+                connection.settimeout(10)
+                request = b''
+                while not request.endswith(b'\r\n\r\n'):
+                    request += read_exact(connection, 1)
+                key = request.decode().split('Sec-WebSocket-Key: ', 1)[1].split('\r\n', 1)[0]
+                accept = base64.b64encode(hashlib.sha1(
+                    (key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest())
+                connection.sendall(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n'
+                                  b'Sec-WebSocket-Accept: ' + accept + b'\r\n\r\n')
+                drain_frame(connection)
+                frames = [{'type': 'hello_ok', 'protocolVersion': '1.2',
+                           'interactionBinding': {'connectionId': 'recorder-audit', 'generation': 1}},
+                          {'id': 'witness', 'final': True,
+                           'event': {'finishReason': 'completed', 'text': 'native witness text'}}]
+                for index, frame in enumerate(frames):
+                    payload = json.dumps(frame, separators=(',', ':')).encode()
+                    header = (bytes([0x81, len(payload)]) if len(payload) < 126
+                              else b'\x81\x7e' + len(payload).to_bytes(2, 'big'))
+                    connection.sendall(header + payload)
+                    if index == 0:
+                        drain_frame(connection)
+
+        thread = threading.Thread(target=server)
+        thread.start()
+        client = c.WireClient(port, time.monotonic() + 10)
+        try:
+            client.send({'type': 'hello', 'protocolVersion': '1.2', 'clientName': 'ui',
+                         'clientVersion': 'native-witness', 'token': 'native-witness-fixture'})
+            hello = client.receive()
+            client.send({'type': 'request', 'id': 'witness', 'method': 'submit_turn', 'params': {
+                'projectKey': 'proj', 'sessionKey': 'recorder-audit', 'runId': 'run-01',
+                'channelKey': 'session-domain', 'message': '[native-witness:recorder] controlled wait',
+                'allowedTools': [], 'timeoutMs': 400}})
+            reply = client.receive()
+        finally:
+            thread.join(10)
+            client.socket.close()
+        listener.close()
+        self.assertTrue(hello.get('type') == 'hello_ok' and reply.get('final'), '#1140 recorder exchange completed')
+        rows = client.rows
+        self.assertTrue(len(rows) == 4 and [row['direction'] for row in rows] == ['send', 'receive', 'send', 'receive'],
+                        '#1140 the recorder observed the full exchange')
+        contract, evidence = compatibility_envelope(self.folder, self.contract,
+                                                     w.parse_trace(self.raw, self.contract), rows=rows)
+        w.audit(self.raw, contract, evidence)
+        for kind in ('send-frame-object', 'no-wire'):
+            bad = copy.deepcopy(evidence)
+            for row in bad['observer']['rows']:
+                if kind == 'send-frame-object' and row['direction'] == 'send':
+                    row['frame'] = json.loads(row['frame'])
+                elif kind == 'no-wire':
+                    row.pop('wire')
+            with self.subTest(kind=kind):
+                error = None
+                try:
+                    w.audit(self.raw, contract, bad)
+                except ValueError as caught:
+                    error = caught
+                self.assertTrue(error is not None, '#1140 the frozen audit rejects a recorder row with ' + kind)
+                self.assertTrue(getattr(error, 'rule', None) == 'OBSERVER_WIRE'
+                                or 'wire bytes/decoded frame disagree' in str(error),
+                                '#1140 ' + kind + ' fails on the wire contract, not elsewhere')
 
     def test_connect_eaddrinuse_not_blocked(self):
         from contextlib import nullcontext
@@ -682,6 +849,34 @@ class WitnessTests(unittest.TestCase):
         self.assertTrue(result == ('launch', 'validated') and validate.call_count == 1, '#1140 collector invokes smoke validation')
         self.assertTrue(server.shutdown.call_count == server.server_close.call_count == worker.join.call_count == 1, '#1140 provider cleanup is idempotent')
 
+    def test_session_contract_declares_connections(self):
+        # The frozen audit checks observer connections against the contract;
+        # the session-domain contract must declare the planned count (#1140
+        # fix-r1 P1) instead of leaving the key absent.
+        seen, published = [], []
+
+        def capture(contract, output, environment, *, exercise, validate=None, **_):
+            seen.append(copy.deepcopy(contract))
+            return 'launch', 'validated'
+
+        def publish(output, observer, rows, requests, endpoint):
+            published.append((copy.deepcopy(observer), list(rows), list(requests), endpoint))
+
+        server, worker = mock.Mock(), mock.Mock()
+        worker.is_alive.return_value = False
+        with mock.patch.object(c, 'BoundedHTTPServer', return_value=server), \
+                mock.patch.object(c.threading, 'Thread', return_value=worker), \
+                mock.patch.object(c.w, 'identity', return_value={}), mock.patch.object(c.w, 'capture', side_effect=capture), \
+                mock.patch.object(c, 'publish_session_domain', side_effect=publish):
+            c._native_run(self.host, self.child, self.folder / 'native-session', 28999, session_domain=True)
+        self.assertTrue(len(seen) == 1, '#1140 the session-domain run launches exactly one capture')
+        contract = seen[0]
+        self.assertTrue(contract.get('connections') == 1, '#1140 session-domain contract declares the planned connection count')
+        self.assertTrue(contract['cases'] == c.session_manifest(), '#1140 session-domain contract declares the full 72-case manifest')
+        self.assertTrue(contract['externalEndpoints'] == ['127.0.0.1:29000'], '#1140 session-domain contract declares the provider endpoint')
+        self.assertTrue(published and published[0][0] == {'connections': 1, 'rows': []},
+                        '#1140 session-domain publish declares the observer connection count')
+
     def test_tracer_nonzero(self):
         for result in (-signal.SIGTERM, 128 + signal.SIGTERM, 1):
             folder = self.folder / ('nonzero-' + str(result))
@@ -1002,11 +1197,136 @@ class WitnessTests(unittest.TestCase):
         self.assertTrue(signal.getsignal(signal.SIGTERM) == previous, '#1140 signal handler restored')
         self.assertFalse((self.folder / 'spawn-cancel/receipt.json').exists(), '#1140 spawn cancellation never complete')
 
+    def test_registry_applicable_derived(self):
+        # Registry applicability is an observation from runs.json, not the
+        # hardcoded assumption the frozen projection could never match (#1140
+        # fix-r1 P2-4): a run key the host never answered is inapplicable.
+        home = self.folder / 'home'
+        (home / 'projects' / 'proj' / 'chats').mkdir(parents=True)
+        (home / 'projects' / 'proj' / 'chats' / 'session-a.jsonl').write_text(
+            json.dumps({'type': 'agent_status_message', 'event': 'turn-start'}) + '\n')
+        received = [{'id': 'case-01', 'final': True,
+                     'event': {'type': 'agent_status_message', 'event': 'turn-start'}}]
+        observation = c.read_observation(home, 'proj', 'session-a', 'run-01', received)
+        self.assertTrue(observation['frames'] == [{'type': 'agent_status_message', 'event': 'turn-start'}],
+                        '#1140 observed frames are the raw gateway events')
+        self.assertTrue(observation['durableStatus']['entries'] == [{'type': 'agent_status_message', 'event': 'turn-start'}],
+                        '#1140 durable entries are the transcript status rows')
+        self.assertTrue(observation['registry']['applicable'] is False,
+                        '#1140 without runs.json the registry surface is inapplicable')
+        runs = {'events': {'proj\0session-a\0run-01': [{'seq': 1, 'event': {'type': 'run', 'event': 'start'}}]},
+                'records': []}
+        (home / 'runs.json').write_text(json.dumps(runs))
+        observation = c.read_observation(home, 'proj', 'session-a', 'run-01', received)
+        self.assertTrue(observation['registry']['applicable'] is True
+                        and observation['registry']['events'] == runs['events']['proj\0session-a\0run-01'],
+                        '#1140 a run key the registry answered is applicable')
+        runs = {'events': {}, 'records': [{'runId': 'run-01', 'sessionKey': 'session-a',
+                                           'state': 'completed', 'result': None}]}
+        (home / 'runs.json').write_text(json.dumps(runs))
+        observation = c.read_observation(home, 'proj', 'session-a', 'run-01', received)
+        self.assertTrue(observation['registry']['applicable'] is True
+                        and observation['registry']['record'] == runs['records'][0],
+                        '#1140 a recorded run record makes the registry applicable')
+        runs['records'][0]['runId'] = 'run-02'
+        (home / 'runs.json').write_text(json.dumps(runs))
+        observation = c.read_observation(home, 'proj', 'session-a', 'run-01', received)
+        self.assertTrue(observation['registry']['applicable'] is False
+                        and observation['registry']['record'] == {},
+                        '#1140 an unanswered run key stays inapplicable with an empty record')
+
+    def test_case_plan_and_ordering_variants(self):
+        # The hardcoded ordering list must stay reconciled with the frozen
+        # manifest (#1140 fix-r1 opus#7): a new manifest variant is never
+        # silently treated as timeout-first.
+        manifest = c.session_manifest()
+        variants = {case.split('/')[1] for case in manifest}
+        self.assertTrue(set(c.SESSION_ORDERING_VARIANTS) <= variants,
+                        '#1140 every ordering variant is a manifest variant')
+        for case in manifest:
+            plan = c.case_plan(case)
+            if case.split('/')[1] in c.SESSION_ORDERING_VARIANTS:
+                self.assertTrue(plan == {'timeoutMs': c.SESSION_ORDERING_TIMEOUT_MS, 'delay': 0.0},
+                                '#1140 ordering variants finish before the deadline: ' + case)
+            else:
+                self.assertTrue(plan == {'timeoutMs': c.SESSION_TIMEOUT_MS, 'delay': c.SESSION_PROVIDER_DELAY},
+                                '#1140 non-ordering variants are timeout-first: ' + case)
+
+    def test_bind_contract_rejects_preregistered(self):
+        # The mirror of the frozen loader's rejection: a contract that already
+        # carries a binding, observer rows or a binding source cannot audit
+        # (#1140 fix-r1 opus#6).
+        _, evidence = compatibility_envelope(self.folder, self.contract, {})
+        for key in ('binding', 'observerRows', 'bindingSource'):
+            contract = copy.deepcopy(self.contract)
+            contract[key] = 'pre-registered'
+            with self.assertRaises(w.Incomplete, msg='#1140 a pre-registered ' + key + ' cannot audit'):
+                w.bind_contract(contract, evidence)
+        bound = w.bind_contract(copy.deepcopy(self.contract), evidence)
+        self.assertTrue(bound['bindingSource'] == 'observer-hello'
+                        and bound['binding'] == evidence['binding']
+                        and bound['observerRows'] == evidence['observer']['rows'],
+                        '#1140 the observer hello binds the runtime record')
+
+    def test_validate_session_covers_manifest(self):
+        # The pre-receipt invariants: real provider traffic and full manifest
+        # coverage with no denominator shrink (#1140 fix-r1 opus#6).
+        manifest = c.session_manifest()
+        rows = [{'case': case, 'observation': None} for case in manifest]
+        requests = [{'case': manifest[0], 'path': '/v1/chat/completions'}]
+        c.validate_session({}, {}, rows, requests, manifest)
+        for fault in ('requests', 'rows', 'order'):
+            bad_rows, bad_requests = list(rows), list(requests)
+            if fault == 'requests':
+                bad_requests = []
+            elif fault == 'rows':
+                bad_rows = rows[:-1]
+            else:
+                bad_rows[0], bad_rows[1] = bad_rows[1], bad_rows[0]
+            with self.assertRaises(c.w.Incomplete, msg='#1140 session capture rejects ' + fault):
+                c.validate_session({}, {}, bad_rows, bad_requests, manifest)
+
+    def test_publish_session_domain_receipt(self):
+        # The published receipt pins every session-domain artifact, so the
+        # frozen loader fails closed on the first altered file (#1140 fix-r1
+        # opus#6).
+        output = self.folder / 'session'
+        (output / 'capture').mkdir(parents=True)
+        w.save(output / 'capture/receipt.json', {'status': 'WITNESS_CAPTURED', 'tracerExitCode': 0})
+        rows = [{'case': 'no-registry-fast/fast/model', 'observation': None}]
+        requests = [{'case': 'no-registry-fast/fast/model', 'path': '/v1/chat/completions'}]
+        observer = {'connections': 1, 'rows': []}
+        c.publish_session_domain(output, observer, rows, requests, '127.0.0.1:29000')
+        receipt = json.loads((output / 'capture/receipt.json').read_text())
+        self.assertTrue(receipt['status'] == 'WITNESS_CAPTURED' and receipt['tracerExitCode'] == 0,
+                        '#1140 the session receipt extends the capture receipt')
+        for name, key in (('observer.json', 'observerSha256'), ('cases.json', 'casesSha256'),
+                          ('provider.json', 'providerSha256')):
+            self.assertTrue(receipt[key] == w.sha(output / 'session-domain' / name),
+                            '#1140 the session receipt pins ' + name)
+        self.assertFalse((output / 'session-domain.partial').exists(), '#1140 publish leaves no staging directory')
+        (output / 'session-domain/observer.json').write_text('{}')
+        self.assertTrue(receipt['observerSha256'] != w.sha(output / 'session-domain/observer.json'),
+                        '#1140 an altered artifact breaks its pinned hash')
+        with self.assertRaises(FileExistsError, msg='#1140 publish refuses an existing session-domain directory'):
+            c.publish_session_domain(output, observer, rows, requests, '127.0.0.1:29000')
+
 
 def real_capture(folder):
     raw, contract, value = w.load_capture(folder)
+    # The audit envelope must see the recorder's true row shape (#1140 fix-r1):
+    # session-domain captures carry the full observer ledger, smoke captures
+    # carry the driver ledger, and only a capture without either falls back to
+    # the fabricated envelope hello.
+    parent = Path(folder).parent
+    rows, source = None, 'envelope'
+    for name, document in (('session-domain/observer.json', 'session-domain'),
+                           ('driver.json', 'driver')):
+        if (parent / name).is_file():
+            rows, source = json.loads((parent / name).read_text())['rows'], document
+            break
     with tempfile.TemporaryDirectory(prefix='pdrs-1140-real-audit-') as temporary:
-        contract, evidence = compatibility_envelope(temporary, contract, value)
+        contract, evidence = compatibility_envelope(temporary, contract, value, rows=rows)
         w.audit(raw, contract, evidence)
         verdicts = []
         for name in ('omit-short-child', 'omit-egress', 'ps-sampling'):
@@ -1031,7 +1351,8 @@ def real_capture(folder):
                     verdicts.append({'name': name, 'status': 'KILLED' if getattr(error, 'rule', None) == expected else 'INVALID', 'reason': str(error)})
             except Exception as error:
                 verdicts.append({'name': name, 'status': 'INVALID', 'reason': str(error)})
-        print(json.dumps({'scope': 'REAL_WITNESS_AUDIT', 'scoring': 'NOT_RUN', 'controls': verdicts}, indent=2))
+        print(json.dumps({'scope': 'REAL_WITNESS_AUDIT', 'scoring': 'NOT_RUN', 'rows': source,
+                          'controls': verdicts}, indent=2))
         return 0 if all(row['status'] == 'KILLED' for row in verdicts) else 1
 
 

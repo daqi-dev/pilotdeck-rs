@@ -821,7 +821,10 @@ def project_observation(observation):
                   if event['event']['type'] not in SESSION_PREFIX_TYPES]
         record = registry['record']
         result = record.get('result')
-        projected = {'applicable': True, 'events': events, 'state': record['state'],
+        # A missing state is an observed surface mismatch for this case, never
+        # a batch-level KeyError (#1140 fix-r1): the projection scores it on
+        # registry.state so every other case keeps its verdict.
+        projected = {'applicable': True, 'events': events, 'state': record.get('state'),
                     'result': None if result is None else _session_label(result)}
     else:
         projected = {'applicable': False}
@@ -1157,14 +1160,23 @@ def audit_native(evidence, contract):
             'binding must be recorded by the independent observer at hello and bound '
             'to the contract afterwards; pre-registered/SYNTHETIC bindings are rejected')
     # Validate bytes using the existing independent TCP decoder and wire checker.
+    # #1140 fix-r1: every recorder row must carry wire metadata, and the decoder
+    # cross-check is direction-aware -- a sent row's frame is the payload text
+    # (compare.wire_frame's A4 contract) while only received frames are recorded
+    # decoded, so the sent text is compared against the decoder's raw view.
     for row in observer['rows']:
+        require(isinstance(row.get('wire'), dict), 'OBSERVER_WIRE',
+                'observer rows must carry wire metadata '
+                '(opcode/fin/rsv/masked/lengthCode/payloadLength)')
         wire_frame(row)
         decoded = []
         decoder = Decoder(decoded.append, row['direction'])
         decoder.feed(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n' + bytes.fromhex(row['wireHex']))
-        require(len(decoded) == 1 and decoded[0].get('frame') == row['frame'],
+        require(len(decoded) == 1
+                and decoded[0].get('raw' if row['direction'] == 'send' else 'frame') == row['frame'],
                 'OBSERVER_WIRE', 'wire observation disagrees with recorder')
-    hellos = [r['frame'] for r in observer['rows'] if r['frame'].get('type') == 'hello_ok']
+    hellos = [r['frame'] for r in observer['rows']
+              if isinstance(r['frame'], dict) and r['frame'].get('type') == 'hello_ok']
     require(bool(hellos), 'BINDING', 'actual server hello/binding missing')
     for frame in hellos:
         binding = frame.get('interactionBinding', {})
@@ -1244,9 +1256,15 @@ def load_native_capture(folder):
     requests = provider.get('requests') if isinstance(provider, dict) else None
     require(isinstance(requests, list), 'NETWORK_WITNESS', 'provider request ledger malformed')
     require(isinstance(provider.get('endpoint'), str), 'NETWORK_WITNESS', 'provider endpoint missing')
+    require(bool(requests), 'NETWORK_WITNESS',
+            'provider request ledger is empty: no model egress was observed')
     targets = {call.get('target') for call in evidence.get('networkWitness', {}).get('calls', [])}
     require(not requests or provider['endpoint'] in targets, 'NETWORK_WITNESS',
             'driver-observed provider traffic missing from the egress witness')
+    # The output/disk/http surface names are the audit's fixed accounting set;
+    # #1140 maps the session-domain capture trio onto them as placeholders
+    # (observer/cases/provider).  The audit verifies artifact hashes only, so
+    # the names carry no scoring semantics here.
     surfaces = {}
     for surface, name in (('output', 'observer.json'), ('disk', 'cases.json'), ('http', 'provider.json')):
         path = folder / 'session-domain' / name
@@ -1259,15 +1277,23 @@ def load_native_capture(folder):
 
 
 def _native_observation_structure(observation):
-    """Shape of one observed native case; None when healthy, else the field."""
+    """Shape of one observed native case; None when healthy, else the field.
+
+    #1140 fix-r1: the shapes the projection dereferences are checked here, so
+    a malformed event is a rejected capture (OBSERVATION_STRUCTURE) rather than
+    a batch-level KeyError.  A missing run-record state is deliberately not
+    structural: the projection scores it as that case's registry.state mismatch.
+    """
     if not isinstance(observation, dict) or set(observation) != {'frames', 'durableStatus', 'registry'}:
         return 'observation keys'
     if not (isinstance(observation['frames'], list)
-            and all(isinstance(event, dict) for event in observation['frames'])):
+            and all(isinstance(event, dict) and isinstance(event.get('type'), str)
+                    for event in observation['frames'])):
         return 'frames'
     durable = observation['durableStatus']
     if not (isinstance(durable, dict) and isinstance(durable.get('entries'), list)
-            and all(isinstance(entry, dict) for entry in durable['entries'])):
+            and all(isinstance(entry, dict) and isinstance(entry.get('event'), str)
+                    for entry in durable['entries'])):
         return 'durableStatus'
     registry = observation['registry']
     if not isinstance(registry, dict) or not isinstance(registry.get('applicable'), bool):
@@ -1275,8 +1301,12 @@ def _native_observation_structure(observation):
     if registry['applicable'] and not (isinstance(registry.get('events'), list)
                                        and all(isinstance(event, dict) and isinstance(event.get('seq'), int)
                                                and isinstance(event.get('event'), dict)
+                                               and isinstance(event['event'].get('type'), str)
                                                for event in registry['events'])
-                                       and isinstance(registry.get('record'), dict)):
+                                       and isinstance(registry.get('record'), dict)
+                                       and (registry['record'].get('result') is None
+                                            or (isinstance(registry['record'].get('result'), dict)
+                                                and isinstance(registry['record']['result'].get('type'), str)))):
         return 'registry events/record'
     return None
 
@@ -1348,7 +1378,11 @@ def deadline_report(native_capture=None):
             # five-repetition registration stays the calibrate suite's own.
             cell['cases'] = native['verdicts']
             cell['expectedCases'] = native['expected']
-            cell['executedCases'] = [row['case'] for row in native['verdicts']]
+            # Only cases the capture actually scored count as executed; a
+            # NOT_RUN verdict is the absence of evidence, not an execution
+            # (#1140 fix-r1).
+            cell['executedCases'] = [row['case'] for row in native['verdicts']
+                                     if row['status'] != 'NOT_RUN']
             cell['repeats'] = 1
             cell['processes'] = native['processes']
             cell['connections'] = native['connections']

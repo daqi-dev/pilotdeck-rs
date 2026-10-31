@@ -282,29 +282,29 @@ def main():
                     elif outcome == 'invalid':
                         row['status'], row['reason'] = 'INVALID', detail
                     else:
-                        ok, why = mutant_ok(code, verdict, name, bound_rule)
-                        if not ok:
-                            row['status'], row['reason'] = 'INVALID', \
-                                f'unexpected mutant verdict: exit {code} {verdict}'
+                        # classify_mutant already checked the mutant shape via
+                        # mutant_ok and returned its detail; a second call here
+                        # once passed four arguments to a three-argument
+                        # function and turned every KILLED row into a TypeError
+                        # INVALID (#1140 fix-r1 opus finding).
+                        evidence['mutant'] = detail
+                        if unaffected is None:
+                            row['status'] = 'KILLED'
+                            row['reason'] = detail + ' (batch bypass: every native ' \
+                                            'control precondition fires first)'
                         else:
-                            evidence['mutant'] = why
-                            if unaffected is None:
-                                row['status'] = 'KILLED'
-                                row['reason'] = why + ' (batch bypass: every native ' \
-                                                'control precondition fires first)'
+                            code, verdict = run_control(out, f'{name}-unaffected',
+                                                         unaffected[0])
+                            problem = classify_bound(code, verdict, unaffected[0],
+                                                     unaffected[1])
+                            if problem is not None:
+                                row['status'], row['reason'] = 'INVALID', \
+                                    'unaffected control also disabled: ' + problem
                             else:
-                                code, verdict = run_control(out, f'{name}-unaffected',
-                                                             unaffected[0])
-                                problem = classify_bound(code, verdict, unaffected[0],
-                                                         unaffected[1])
-                                if problem is not None:
-                                    row['status'], row['reason'] = 'INVALID', \
-                                        'unaffected control also disabled: ' + problem
-                                else:
-                                    evidence['unaffected'] = \
-                                        f'still failed with {unaffected[1]}'
-                                    row['status'] = 'KILLED'
-                                    row['reason'] = why
+                                evidence['unaffected'] = \
+                                    f'still failed with {unaffected[1]}'
+                                row['status'] = 'KILLED'
+                                row['reason'] = detail
                 except Exception as error:
                     row['status'], row['reason'] = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:

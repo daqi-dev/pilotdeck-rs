@@ -141,18 +141,28 @@ class WireClient:
         frame = header + mask + bytes(byte ^ mask[i % 4] for i, byte in enumerate(payload))
         self.socket.settimeout(self.remaining())
         self.socket.sendall(frame)
-        self.rows.append({'direction': 'send', 'wireHex': frame.hex(), 'frame': value, 'connection': 1})
+        # The recorder contract the frozen audit reads (#1140 fix-r1): every row
+        # carries wire metadata for compare.wire_frame, and a sent row's frame
+        # is the payload text -- only received frames are recorded decoded.
+        self.rows.append({'direction': 'send', 'wireHex': frame.hex(),
+                          'wire': {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': True,
+                                   'lengthCode': 126 if 126 <= size <= 65535 else 127 if size > 65535 else size,
+                                   'payloadLength': size},
+                          'frame': payload.decode(), 'connection': 1})
 
     def receive(self):
         head = self.read(2)
         w.need(head[0] == 0x81 and head[1] & 0x80 == 0, 'unexpected/fragmented WS frame')
-        length = head[1] & 127
+        code = head[1] & 127
+        length = code
         extra = self.read(2 if length == 126 else 8) if length >= 126 else b''
         length = int.from_bytes(extra, 'big') if extra else length
         w.need(length <= 4 * 1024 * 1024, 'oversized WS frame')
         payload = self.read(length)
         value = json.loads(payload)
         self.rows.append({'direction': 'receive', 'wireHex': (head + extra + payload).hex(),
+                          'wire': {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': False,
+                                   'lengthCode': code, 'payloadLength': length},
                           'frame': value, 'connection': 1})
         return value
 
@@ -223,16 +233,19 @@ def read_observation(home, project, session, run_id, received):
 
     frames are the raw gateway events the driver received; durableStatus
     entries are the transcript's agent_status_message rows; registry events and
-    record come from runs.json under the turn's run key. An absent record is
-    recorded as an empty record: an observed absence scores as a per-case
-    mismatch, never as a structural failure.
+    record come from runs.json under the turn's run key.  Applicability is an
+    observation, not an assumption (#1140 fix-r1): a turn whose run key the
+    host's registry never answered is recorded inapplicable, and an absent
+    record under an applicable registry is recorded as an empty record -- the
+    frozen projection scores both as per-case mismatches, never as batch
+    structural failures.
     """
     frames = [frame['event'] for frame in received if isinstance(frame.get('event'), dict)]
     matches = sorted((home / 'projects').glob(f'*/chats/{session}.jsonl'))
     w.need(len(matches) == 1, 'expected exactly one transcript for session ' + session)
     entries = [json.loads(line) for line in matches[0].read_text().splitlines() if line.strip()]
     durable = [entry for entry in entries if entry.get('type') == 'agent_status_message']
-    registry = {'applicable': True, 'events': [], 'record': {}}
+    registry = {'applicable': False, 'events': [], 'record': {}}
     document = home / 'runs.json'
     if document.is_file():
         runs = json.loads(document.read_text())
@@ -240,6 +253,7 @@ def read_observation(home, project, session, run_id, received):
         registry['events'] = runs.get('events', {}).get(key, [])
         registry['record'] = next((record for record in runs.get('records', [])
                                    if record.get('runId') == run_id and record.get('sessionKey') == session), {})
+        registry['applicable'] = bool(registry['events'] or registry['record'])
     return {'frames': frames,
             'durableStatus': {'entries': durable},
             'registry': registry}
@@ -376,6 +390,7 @@ def _native_run(gateway, sidecar, output, port, session_domain=False):
         contract = {'host': 'rust', 'project': str(project), 'processRoles': ['host', 'sidecar'],
                     'binaries': {'host': w.identity(gateway, argv), 'sidecar': w.identity(sidecar, [sidecar])},
                     'externalEndpoints': [f'127.0.0.1:{port + 1}'],
+                    'connections': 1,
                     'cases': cases if session_domain else ['native-witness-smoke'],
                     'capabilities': {'provider': 'loopback-mock', 'tools': []}}
 
