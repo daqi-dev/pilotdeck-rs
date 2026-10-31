@@ -65,6 +65,31 @@ def require(condition, message):
         raise ValueError(message)
 
 
+def publish_cancelled(output, error):
+    """fix-r1 P1-2: a cancelled capture leaves a FAIL report naming the signal.
+
+    run() saves its last report inside its shielded cleanup; a cancellation
+    that pends through that window (or first lands during the lease release)
+    used to exit 1 while report.json still said NOT_RUN/moduleMatrixStatus
+    PASS with no cancellation reason. Best effort: when even this write
+    fails, exit code 1 remains the authority.
+    """
+    reason = str(error) or type(error).__name__
+    report = {}
+    path = output / 'report.json'
+    try:
+        if path.is_file():
+            loaded = json.loads(path.read_text())
+            if isinstance(loaded, dict):
+                report = loaded
+        report['status'], report['moduleMatrixStatus'] = 'FAIL', 'FAIL'
+        report['failure'] = reason
+        output.mkdir(parents=True, exist_ok=True)
+        save(path, report)
+    except OSError:
+        pass
+
+
 @contextmanager
 def cancel_signals():
     """Install before acquiring the lease; restore only after its cleanup.
@@ -75,7 +100,17 @@ def cancel_signals():
     shape as scripts/native-witness/collect.py lease_signals (#1140).
     """
     def cancel(signum, _frame):
+        # fix-r1 P1-1: while one cancellation is already unwinding, a second
+        # raise would cut the pending cleanup short (SIGINT and SIGTERM piled
+        # up inside one publish window both fire at the unblock). Suppress it
+        # only for the duration of that unwind: once a different exception
+        # takes over or a handler resumes normal execution, a fresh signal
+        # must cancel again — sys.exception() is the in-flight exception
+        # exactly while it propagates through the finally clauses.
+        if isinstance(sys.exception(), KeyboardInterrupt):
+            return
         raise KeyboardInterrupt(f'#1168 native-topology cancelled by signal {signum}')
+
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
         for sig in previous:
@@ -540,9 +575,16 @@ def main():
         try:
             with parity_lock():
                 return run(args)
-        except KeyboardInterrupt:
+        except KeyboardInterrupt as error:
             # A cancelled capture already published its FAIL report through
-            # run()'s BaseException branch; never exit 0 or 2 (#1168).
+            # run()'s BaseException branch; never exit 0 or 2 (#1168). The
+            # SIG_IGN pair keeps a further delivery from escaping main()
+            # through this handler body, and publish_cancelled is the fix-r1
+            # P1-2 backstop for a cancellation surfacing only after run()
+            # saved its report (cleanup windows, lease release).
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            publish_cancelled(args.output, error)
             return 1
 
 
