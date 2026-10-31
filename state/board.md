@@ -1,14 +1,17 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-31 16:40 · by Claude Code 协调者
+updated: 2026-10-31 17:15 · by Claude Code 协调者
 - #1011 | impl | doing | PR #1175 第一步（TS 矩阵 + 金样）r1 opus + GLM 0/0（P2×2）；本机宿主在跑 → 第二步 Rust 实现 + 两条 P2 → Codex（`_tmp/20261031-p2-1011-phase2/extra.md`）
-- #1145 | review | doing | PR #1148 rebase 到 #1173 后 d912417b3；macmini r5m（34 源码负控 + sdk_signal_exit）+ GLM r5 全量闸门 → 补结果块入队
-- #1166 | impl | doing | PR #1172（M6）Codex fix-r3（末轮）：去掉树内 CARGO_TARGET_DIR 要求、example 在 mutating_sources 内构建
+- #1145 | impl | doing | PR #1148 r5 GLM 0/0 但 abort 期限洪泛不触发升 P1 → Codex fix-r5；mbp2 r5m 在跑；RST 映射跟进 #1178
+- #1166 | impl | doing | PR #1172（M6）r3 GLM 尺子 P1（跨树 target 归属）+ 两家同撞锁外 bootstrap → Codex fix-r4；余项 #1180
 - #1139 | impl | blocked | PR #1170；等 #1166 合入后改用 proc-macro2 共享入口（同时关 #1174）
-- #1136 | review | doing | PR #1171 macmini 宿主在跑 → fix-r1（wire-end 检查依赖子进程退出后 20 ms accept，升 P1）
+- #1136 | impl | doing | PR #1171 macmini 全绿；Codex fix-r1（wire-end RST 路径升 P1 + 补负控）；重复抽取跟进 #1179
 - #1154 | impl | doing | 原生进程 Metadata cwd 对齐 TS + Cwd.set 差异登记 → Codex
-- #917 | impl | doing | EdgeClaw clearSession 后 heartbeat 不复活（人定 #914 A）→ GLM
+- #917 | review | doing | GLM 交付 32de320dd → r1 opus + Codex + macmini
+- #1169 | review | doing | PR #1181 Codex 交付 d55520f25；r1 opus + GLM；cb8 r1b 等 #1166 cb8 链结束后重跑（对拍锁被占）
+- #1177 | impl | doing | A5.4-pr1 A19-HOST 逐格期望（冻结件）→ GLM
+- #1168 | impl | doing | native-topology 信号矩阵（#590 前置）→ GLM
 - A5.4 | coord | doing | 子代理梳理剩余定标范围（`_tmp/20261031-a54-scope/SCOPE.md`）→ 拆包解锁 #1140 判分接线 / #590 / D4
 - #589 | impl | blocked | 关单前置只剩 #1011（#1010 #1019 #1020 已关）
 - #590 | impl | blocked | 前置 A5.4 冻结期望（#1140 采集器已合）
@@ -2539,3 +2542,8 @@ updated: 2026-10-31 16:40 · by Claude Code 协调者
 - 15:01 **两小时交接** → `_tmp/20261031-handoff-1501.md`。本段合入 #1161 #1167 #1152 #1153 #1163；人批全部落地；待人清零。
 - 15:52 **#1165 合入 d5a5f89a8**（#1144，自动关单）→ #1011 解锁。#1145 P08 第四阶段 d71466407（#1164 选 B，8 格 stderr 登记差异）：96 格 94 PASS / 2 FAIL（动态 runId，按规约保留）；决策卡 #1164 追加段经本 state PR 进 main。#1166 fix-r1 Codex 用 Python 手写了 Rust 词法器（违反 scanner-real-lexer）→ 退回 fix-r2，改为复用 unsafe_boundary.rs 的 proc-macro2；规则补进 negctl-rules。#1145 r3m 定向参数又漏 -p pilotdeck-cli（同类第二次，记忆 host-verify-entry），补跑 82 passed。
 - 16:40 **两小时交接** → `_tmp/20261031-handoff-1640.md`。#1173 合入 50effdc9b → #1145 rebase（决策卡冲突取 main 超集）推 d912417b3，macmini r5m + GLM r5 起跑。READY 陈旧重写（11 张已关单清出）。#1011 r1 两家 0/0、本机宿主补起；派 #1154 → Codex、#917 → GLM（P2 集中清理）；A5.4 剩余范围交子代理梳理。下一步：#1011 宿主过 → 派第二步；#1145 闸门齐 → 入队。
+- 16:57 #1145 r5 GLM 全量 0/0 P2×3：tokio timeout_at 每轮重建致帧洪泛下 abort 期限不触发 → 升 P1，与 exact-rerun marker 行一起 Codex fix-r5；RST 映射开 #1178。#1136 macmini 负控 + 定向绿 → Codex fix-r1（wire-end RST 路径未实测升 P1 + resume/format 补负控 + 3 s 墙钟改进展等待），重复 800 行开 #1179。#1166 r3（cb8 + opus + GLM）、#1011 本机宿主、#1145 mbp2 在跑。
+- 17:02 #1166 r3：GLM P1（跨树共享 target 时复制窗口可能记错二进制归属，尺子 P1 不放行）+ 两家同撞「scanner 冷启动在树锁外编译」→ Codex fix-r4（归属标记 + 锁内 bootstrap + target 边界值）；其余 P2 开跟进。#1136 macmini 全绿，fix-r1 在 Codex。
+- 17:03 #1166 P2 余项开 #1180；派 #1168（native-topology 信号矩阵，A5.4 → #590 路径）→ GLM。
+- 17:10 #1169 Codex 交付 d55520f25（PR #1181）→ r1 opus + GLM + cb8（真实采集，路径含逗号空格 + 离线审计 + 源码负控）。
+- 17:15 #1154 看板评审轮数误 +1（worker 自审被我当正式轮）：正式 r1 派出时不再 +1。#1169 cb8 r1 FAILED 是对拍锁被 #1166 r3 负控占用（collect 按设计 BLOCKED），其余项全过 → 等 #1166 cb8 链结束后重跑 r1b。
