@@ -130,7 +130,7 @@ with mutating_sources(root, [generated, fixture, node_io]) as snapshots:
         changed = content.replace(old, new, 1)
         (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(
             content.splitlines(True), changed.splitlines(True),
-            fromfile=path.relative_to(root), tofile=path.relative_to(root))))
+            fromfile=str(path.relative_to(root)), tofile=str(path.relative_to(root)))))
         try:
             wait_for_slot(root / 'scripts/cargo-slots.sh')
             path.write_text(changed)

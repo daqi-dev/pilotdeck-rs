@@ -22,10 +22,12 @@ v22.22.0）上补齐端到端验收：
   与意图逐一相等，不依赖被测 lossy）→ Rust 侧先跑请求矩阵（含 cursor 回放）→
   写 requests.json → 有界 spawn 探针（进程组 + 超时杀组）→ 两层对拍 →
   原子写 receipt → 清理并断言树消失。
-- `negative_controls.py`：4 个变异（strict-decode / reverse-dirent-order /
-  flip-directory-type / reverse-wire-sort），全部绑定单行可识别断言，全部跑完
-  后汇总。锚点计数：字节排序锚在 `native_entries` 的 unix 与非 unix 两份实现
-  各出现一次（共 2），只替换第一处。
+- `negative_controls.py`：5 个变异（strict-decode / reverse-dirent-order /
+  flip-directory-type / reverse-wire-sort / listed-plain-dist），全部绑定单行可
+  识别断言，全部跑完后汇总。前四个改 `project_files.rs`；listed-plain-dist 改
+  `linux_dirent.rs` 的期望过滤（目录限定 EXCLUDED 改回按名排除），由
+  `nested-é/dist` 普通文件判杀。锚点计数：字节排序锚在 `native_entries` 的
+  unix 与非 unix 两份实现各出现一次（共 2），只替换第一处。
 - `run-linux.sh`：cb8 总控（见下）。
 
 ## 两层对拍
@@ -40,7 +42,9 @@ cursor 回放）走 dispatch 真 wire，逐字段比较（数值按 f64：V8 对
 不加 `.0`，serde_json 加）。TS 侧 `realpath(absolute).catch(() => undefined)`
 失败即 `continue`——lossy 解码不回环的名字（如 `\xff`→U+FFFD→`ef bf bd`）被
 **两侧一致跳过**，所以 wire 输出只含合法名；「非法名被一致跳过」本身由
-expected-listed 断言与 wire 全量比较共同验证。
+expected-listed 断言与 wire 全量比较共同验证。树里特意放了 `nested-é/dist`
+普通文件：EXCLUDED（`dist` 等）只裁剪**目录**，普通文件必须照常列出——该分支
+由 expected-listed 断言锚定，负控 listed-plain-dist 判杀。
 
 ## 顺序论证（不预设 OS 顺序）
 
@@ -59,6 +63,7 @@ expected-listed 断言与 wire 全量比较共同验证。
 | reverse-dirent-order（字节排序比较器反转） | `#133 dirent byte-order sort differs from Node readdir` |
 | flip-directory-type（d_type 目录标志取反） | `#133 dirent file/dir types differ from Node readdir` |
 | reverse-wire-sort（最终 collator 排序反转） | `#133 wire item order differs from Node` |
+| listed-plain-dist（期望过滤改回按名排除，漏列普通文件 dist） | `#133 wire listed set differs from the valid-UTF-8 expectation` |
 
 预期 lossy 分组（`String::from_utf8_lossy` 由 raw 规格推导）是额外的正向自检，
 其负控即 strict-decode 变异（同一解码路径）。
@@ -67,10 +72,13 @@ expected-listed 断言与 wire 全量比较共同验证。
 
 ```sh
 CARGO_TARGET_DIR=<caller-owned-build-tree> \
-PDRS_NODE=<pinned-node-binary>        # 可选；默认 ~/opt/node-v22.22.0-icu78-linux-arm64/bin/node \
+PDRS_NODE=<pinned-node-binary> \
   ./src/pilotdeck-gateway/tests/fixtures/project-files-linux-dirent/run-linux.sh \
   <pinned-pilotdeck-ts-checkout> [evidence-dir]
 ```
+
+`PDRS_NODE` 整行可省略（默认 `~/opt/node-v22.22.0-icu78-linux-arm64/bin/node`）。
+注意行内 `#` 注释会吞掉续行反斜杠且赋值不导出给子进程，默认值说明只写在代码块外。
 
 必需环境：`CARGO_TARGET_DIR`（调用方持有的构建树）。Node 不走 PATH：`PDRS_NODE`
 （或默认路径）指到钉死构建（v22.22.0 / ICU 78.2 / libuv 1.52.1），其 bin 目录前置

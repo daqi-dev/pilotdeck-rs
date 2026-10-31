@@ -1,6 +1,6 @@
 // Shared Node errno-table collection: the single implementation behind both
 // generate_node_io.mjs (the recording generator, darwin fixture) and
-// fixtures/node-io/linux-errno.mjs-style fresh sampling (linux-errno-verify.mjs),
+// fixtures/node-io/linux-errno-verify.mjs (Linux fresh sampling),
 // so the verifier cannot drift from the generator it is meant to check
 // (#133 fix-r1 review: near-identical copies had already diverged in comments).
 // Run with the pinned Node: node --expose-internals <caller>.

@@ -51,7 +51,9 @@ type RawEntry = (&'static [&'static [u8]], bool, &'static [u8]);
 /// beyond-Unicode, truncated sequences, the legal U+FFFD and emoji, mixed
 /// ASCII, three raw names decoding to one display name, illegal-named
 /// directories, the excluded `dist` directory, and a legal multi-byte
-/// directory. NUL and `/` never occur (readdir names cannot hold them).
+/// directory holding a plain file also named `dist` (production excludes
+/// only directories, so this file must be listed — the fixture anchors that
+/// distinction). NUL and `/` never occur (readdir names cannot hold them).
 const RAW_TREE: &[RawEntry] = &[
     (&[b"plain.txt"], false, b"ascii control file\n"),
     (
@@ -120,6 +122,11 @@ const RAW_TREE: &[RawEntry] = &[
         b"under dist fffd\n",
     ),
     (&[b"dist\xff"], true, b""),
+    (
+        &[b"nested-\xc3\xa9", b"dist"],
+        false,
+        b"plain file named dist: excluded only as a directory\n",
+    ),
     (
         &[b"nested-\xc3\xa9", b"inner-\xef\xbf\xbd.txt"],
         false,

@@ -25,6 +25,7 @@ root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/project_files.rs'
+dirent_test = root / 'src/pilotdeck-gateway/src/project_files/tests/linux_dirent.rs'
 test = 'project_files::tests::linux_dirent::linux_dirent_matches_node_v22_on_raw_byte_names'
 
 # Source occurrence counts, independent of replace(..., 1)'s replacement limit:
@@ -70,6 +71,14 @@ mutations = [
             &text_field(a, "relativePath").unwrap(),
         )
     });'''),
+    # The listed-set expectation's directory-only EXCLUDED rule reverted to
+    # name-only: the plain nested-é/dist file the tree carries must be listed,
+    # so the expectation comparison fails (r2 review P2-3: without that file
+    # this branch could be reverted with the test still green).
+    ('listed-plain-dist',
+     dirent_test,
+     'let this_is_directory = index + 1 < segments.len() || *is_directory;',
+     'let this_is_directory = true;'),
 ]
 # A killed mutant must fail through its bound assertion, not by failing to
 # compile or by panicking elsewhere; the message proves the intended
@@ -79,6 +88,7 @@ failure_markers = {
     'reverse-dirent-order': '#133 dirent byte-order sort differs from Node readdir',
     'flip-directory-type': '#133 dirent file/dir types differ from Node readdir',
     'reverse-wire-sort': '#133 wire item order differs from Node',
+    'listed-plain-dist': '#133 wire listed set differs from the valid-UTF-8 expectation',
 }
 selected = sys.argv[2:]
 if selected:
@@ -105,7 +115,7 @@ def run_named(receipt_dir):
     return result.returncode, log
 
 
-with mutating_sources(root, [source]) as snapshots:
+with mutating_sources(root, [source, dirent_test]) as snapshots:
     # #819: an unmutated baseline must be green first, and the receipt the
     # test publishes only at full completion must prove it actually compared.
     wait_for_slot(root / 'scripts/cargo-slots.sh')
@@ -120,7 +130,7 @@ with mutating_sources(root, [source]) as snapshots:
         receipt_ok = (receipt.get('cleanup') is True
                       and receipt.get('responses') == 5
                       and receipt.get('direntEntries') == 21
-                      and receipt.get('wireItemCounts', [None])[0] == 6)
+                      and receipt.get('wireItemCounts', [None])[0] == 7)
     baseline_ok = code == 0 and baseline_passed(log, test) and receipt_ok
     print(f'baseline: {"PASS" if baseline_ok else "INVALID"} '
           f'(receipt_ok={receipt_ok})', flush=True)
