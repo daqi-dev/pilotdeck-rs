@@ -38,6 +38,7 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import shutil
 import statistics
 import subprocess
 import sys
@@ -124,7 +125,16 @@ def build_release_test(env, log_name, out):
             executable = entry['executable']
     if not executable:
         raise SystemExit('#1128 could not locate the built harness executable')
-    return executable
+    # Snapshot the binary while the caller still holds the tree lock: the
+    # cargo artifact path is shared by every build of this tree, so another
+    # round finishing its own build after the lock is released would swap the
+    # bytes this round measures (#1128 r3 Codex P1). Each build gets its own
+    # copy under this run's output directory, named after its log.
+    snapshot = out / ('bin-' + log_name.removesuffix('.slots.log'))
+    if snapshot.exists():
+        raise SystemExit(f'#1128 binary snapshot already exists: {snapshot}')
+    shutil.copy2(executable, snapshot)
+    return str(snapshot)
 
 
 def run_wrapped(command, run_env, label, out):
