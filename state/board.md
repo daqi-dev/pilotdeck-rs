@@ -2616,3 +2616,4 @@ updated: 2026-10-31 22:35 · by Claude Code 协调者
 - 02:07 #1166 r9-fix 29bb76a1b（可重入登记表挪到进程级）→ r10 opus+DeepSeek + cb8。
 - 02:18 #1154 macmini：native-archive-cwd_negative_proxy 1 INVALID = 正控 archive_nullish_project_key_uses_the_proxy_boot_fallback 3 s 读超时（macmini 同时跑 2 条长链）；本机连跑 3 次都过（每次 0.03 s）。DEADLINE=3 s 是 main 上既有常量，非本 PR 引入 → 判负载偶发，链跑完后单项重跑这一套。
 - 02:32 **两小时交接** → `_tmp/20261101-handoff-0232.md`。
+- 04:25 **两小时交接** → `_tmp/20261101-handoff-0425.md`。#1154 宿主 3 个超时 INVALID（正控就挂、同变异体他单 KILLED）→ macmini 单项重跑；#1136 宿主 resume_exit 超时落在本 PR 大改的测试 → 本机 5 连跑判定；#1209 GLM 交付 → PR #1212 r1 opus+DeepSeek + cb8。
