@@ -58,15 +58,16 @@
 
 前缀 `feat` / `fix` / `docs` / `chore`，后接一句话说清改了什么。
 
-**每次改动附五行标注**（照抄）：
+**提交尾注**（2026-10-31 人定，#1156 选 2A；与 CLAUDE.md「署名如实写」一致，以 CLAUDE.md 为准）：最后一段只写实际实现方的 `Co-Authored-By`，例如
 
 ```
-Change-By:      human | ai | ai+human
-Agent:          用的哪个工具
-Model:          哪个模型
-Suggested-By:   建议来自谁
-Co-authored-by: 姓名 <邮箱>
+Co-Authored-By: Codex <noreply@openai.com>
+Co-Authored-By: DeepSeek <noreply@deepseek.com>
+Co-Authored-By: GLM-5.3 <noreply@zhipu.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>   # Claude 真改过代码才加
 ```
+
+原样提交 worker 代码时只写 worker；协调者改过才加 Claude。pr-gate 的作者谱系依赖这一行。原先的五行标注（Change-By / Agent / Model / Suggested-By / Co-authored-by）不再要求，旧提交不改。
 
 **作者亲手改的那些提交，就是日后喂给 AI 学你风格的唯一真相源**——标注是为了日后分得出哪些提交是人亲手改的。
 
