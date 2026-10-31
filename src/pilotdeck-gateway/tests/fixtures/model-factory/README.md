@@ -11,7 +11,7 @@
 ```sh
 export PDRS_BASELINE=/absolute/PilotDeck
 export PDRS_GIT=/usr/bin/git
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/src/target}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/_build/cargo-target}"
 out=$(mktemp -d /tmp/pdrs-model-factory.XXXXXX)
 timeout 120 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   src/pilotdeck-gateway/tests/fixtures/model-factory/generate.mts "$out"
@@ -44,7 +44,7 @@ CARGO_BUILD_JOBS=4 timeout 600 python3 \
 
 15 个变异：新调用误拿旧代、drain 前释放、HTTP 不接取消、旧 registration 误删新代、替换改变 Map 清理次序、complete 提前释放 lease、factory 跳过 recorder、漏校验 JS BOM 空白、原生族不注册 provider、忽略项目 router 默认值。各项的测试名与精确变异锚点直接见脚本。
 
-本轮增加 5 项：混合表错误要求全 provider complete、全 native staging 错误拒绝、空表 staging 错误拒绝、complete 忽略请求 provider、model staging 在无 Tokio 线程 panic。构建复用启动器的 CARGO_TARGET_DIR（本树 src/target）；缺失时只补此同一路径，不另建 target。
+本轮增加 5 项：混合表错误要求全 provider complete、全 native staging 错误拒绝、空表 staging 错误拒绝、complete 忽略请求 provider、model staging 在无 Tokio 线程 panic。构建复用启动器的 CARGO_TARGET_DIR（本树 _build/cargo-target）；缺失时只补此同一路径，不另建 target。
 
 修复轮 2 再增 2 项（合计 17 项）：native provider 错报支持 complete，以及无 provider 的 complete 错报 `Provider null`。分别要求原生能力契约测试与新增无 provider 金样测试断言失败。registry 的混合 / 全 native / 空表暴露语义继续由既有三项负控守护。
 

@@ -380,7 +380,10 @@ def _ensure_workspace_scanner(env=None):
         if executable.is_file():
             return
         wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15).check_returncode()
-        result = run_owned(['cargo', 'build', '--offline', '--manifest-path', 'src/Cargo.toml',
+        # --locked, not --offline: a cold registry (fresh CI runner) must be
+        # allowed to download exactly the committed Cargo.lock versions, while
+        # the lockfile itself stays pinned (#1166 fix-r6 metadata-observer red).
+        result = run_owned(['cargo', 'build', '--locked', '--manifest-path', 'src/Cargo.toml',
                             '-p', 'pilotdeck-gateway', '--example', 'workspace_inputs'],
                            cwd=root, env=env, timeout=1800, idle_timeout=600)
         result.check_returncode()
@@ -412,7 +415,7 @@ def _workspace_literal_inputs(root, baseline, *, env=None):
         document = json.loads(result.stdout)
         if (not isinstance(document, dict) or document.get('head') != expected_head
                 or document.get('root') != str(root) or document.get('scanner_sha256') != digest):
-            raise ValueError('Rust scanner identity mismatch; prebuild the current example offline')
+            raise ValueError('Rust scanner identity mismatch; prebuild the current example')
         inputs = document.get('inputs')
         if not isinstance(inputs, list):
             raise ValueError('Rust scanner input list is malformed')
