@@ -57,8 +57,8 @@ mutations = [
              True),
     # stream_event must still extract the event payload through take_field.
     Mutation('stream-event-field', transport, 'pilotdeck-cli', 'sdk_run_exit',
-             'return Ok(Some((take_field(frame, "event"), final_frame)));',
-             'return Ok(Some((take_field(frame, "final"), final_frame)));',
+             'return Ok(QueryFrame::Event(take_field(frame, "event"), final_frame));',
+             'return Ok(QueryFrame::Event(take_field(frame, "final"), final_frame));',
              'run_matches_ts_matrix', '#1058 output bytes and exit', True),
     # The array continuation frame must close with ']' for an empty element:
     # the empty-container byte goldens pin the separator-free bytes.
