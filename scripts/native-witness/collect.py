@@ -53,17 +53,33 @@ def lease_signals():
             signal.signal(sig, handler)
 
 
+@contextmanager
+def fixed_port_bind():
+    """Only a witness listener bind can establish fixed-port contention."""
+    try:
+        yield
+    except OSError as error:
+        if error.errno == errno.EADDRINUSE:
+            raise Blocked('#1140 BLOCKED: fixed witness port occupied') from error
+        raise
+
+
 def probe_bind(port, *, reuse_address):
     # Tokio's gateway bind does not reuse addresses; HTTPServer does.
     # Probe with the respective policy, including during startup rechecks.
     with socket.socket() as probe:
         if reuse_address:
             probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        probe.bind(('127.0.0.1', port))
+        with fixed_port_bind():
+            probe.bind(('127.0.0.1', port))
 
 
 class BoundedHTTPServer(http.server.HTTPServer):
     shutdown_timeout = 6
+
+    def server_bind(self):
+        with fixed_port_bind():
+            super().server_bind()
 
     def get_request(self):
         connection, address = super().get_request()
@@ -116,7 +132,12 @@ class WireClient:
         payload = json.dumps(value, separators=(',', ':')).encode()
         size = len(payload)
         mask = os.urandom(4)
-        header = bytes([0x81, 0x80 | size]) if size < 126 else b'\x81\xfe' + size.to_bytes(2, 'big')
+        if size < 126:
+            header = bytes([0x81, 0x80 | size])
+        elif size <= 65535:
+            header = b'\x81\xfe' + size.to_bytes(2, 'big')
+        else:
+            header = b'\x81\xff' + size.to_bytes(8, 'big')
         frame = header + mask + bytes(byte ^ mask[i % 4] for i, byte in enumerate(payload))
         self.socket.settimeout(self.remaining())
         self.socket.sendall(frame)
@@ -144,16 +165,11 @@ def native_run(gateway, sidecar, output, port=28999):
             lease.enter_context(parity_lock(timeout=1))
         except TimeoutError as error:
             raise Blocked('#1140 BLOCKED: parity lease unavailable') from error
-        try:
-            # Check both fixed endpoints before launching any owned process.
-            # The shared lease spans the bind handoff and provider cleanup.
-            for candidate, reuse_address in ((port, False), (port + 1, True)):
-                probe_bind(candidate, reuse_address=reuse_address)
-            result = _native_run(gateway, sidecar, output, port)
-        except OSError as error:
-            if error.errno == errno.EADDRINUSE:
-                raise Blocked('#1140 BLOCKED: fixed witness port occupied') from error
-            raise
+        # Check both fixed endpoints before launching any owned process.
+        # The shared lease spans the bind handoff and provider cleanup.
+        for candidate, reuse_address in ((port, False), (port + 1, True)):
+            probe_bind(candidate, reuse_address=reuse_address)
+        result = _native_run(gateway, sidecar, output, port)
     print(json.dumps({'status': 'WITNESS_CAPTURED', 'scoring': 'NOT_RUN', 'output': str(Path(output).resolve())}))
     return result
 
@@ -169,7 +185,7 @@ def wait_ready(tracer, folder, port, deadline):
     while True:
         if tracer.poll() is not None:
             # A non-participant may claim the gateway port after preflight.
-            # Probe the same endpoint; native_run maps EADDRINUSE to BLOCKED.
+            # Probe the same endpoint; only its bind maps EADDRINUSE to BLOCKED.
             probe_bind(port, reuse_address=False)
             w.need(False, 'native gateway exited before readiness')
         stderr = (folder / 'stderr.log').read_text()
@@ -274,7 +290,7 @@ def _native_run(gateway, sidecar, output, port):
                                                'upgrade': client.upgrade, 'requests': requests})
             finally:
                 client.socket.close()
-            root_exec = re.search(r'^(\d+)\s+execve\(', (folder / 'trace.log').read_text(), re.M)
+            root_exec = re.search(r'^(\d+)\s+execve\(', w.read_trace(folder / 'trace.log'), re.M)
             w.need(root_exec is not None, 'host exec is absent from trace')
             w.stop_host(tracer, int(root_exec[1]))
 
