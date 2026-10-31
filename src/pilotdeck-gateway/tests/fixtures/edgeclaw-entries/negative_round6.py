@@ -5,7 +5,6 @@ import contextlib
 import hashlib
 import io
 import json
-import os
 from pathlib import Path
 import runpy
 import subprocess
@@ -13,7 +12,7 @@ import sys
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, target_environment
 
 p = argparse.ArgumentParser()
 p.add_argument('--out', required=True)
@@ -89,10 +88,7 @@ for path, test, run_anchor, slot_anchor in [
          test),
     ])
 rows = []
-env = os.environ.copy()
-target = root/'_build/cargo-target'
-assert Path(env.get('CARGO_TARGET_DIR', target)).resolve() == target.resolve(), '#1166 use this worktree _build/cargo-target only'
-env['CARGO_TARGET_DIR'] = str(target)
+env = target_environment(root)
 originals = {}
 runner_originals = {}
 

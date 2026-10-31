@@ -8,20 +8,18 @@ original Notified state. Compilation errors / parent timeouts never count.
 """
 import hashlib
 import json
-import os
 from pathlib import Path
 import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, target_environment
 from negative_selection import baseline_passed
 
 ROOT = Path(__file__).resolve().parents[5]
-TARGET = ROOT / '_build/cargo-target'
-assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve(), '#1166 use this worktree _build/cargo-target only'
-env = dict(os.environ, CARGO_TARGET_DIR=str(TARGET), CARGO_BUILD_JOBS='4')
+env = target_environment(ROOT)
+env['CARGO_BUILD_JOBS'] = '4'
 OUT = Path(sys.argv[1]).resolve()
 OUT.mkdir(parents=True, exist_ok=False)
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/plugins.rs'

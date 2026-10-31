@@ -348,6 +348,23 @@ def _head_bytes(root, relative, baseline):
                                   f"cannot read {baseline} bytes: {error}")
 
 
+def target_environment(root, env=None):
+    """Admit the caller's CARGO_TARGET_DIR through the one shared rule.
+
+    #1166 redesign spec: sibling runners must not keep their own allow-lists of
+    target directories. This is the single sibling entry point: an unset
+    variable defaults to this tree's shared target, and every rejection is
+    defined only in ``_target_environment`` (blank, dot, filesystem root,
+    repository root, inside ``src``); an in-tree ``_build`` directory or the
+    host chain's dedicated out-of-tree target is equally admissible.
+    """
+    root = Path(root).resolve()
+    env = dict(os.environ if env is None else env)
+    if 'CARGO_TARGET_DIR' not in env:
+        env['CARGO_TARGET_DIR'] = str(root / '_build/cargo-target')
+    return _target_environment(root, env)
+
+
 def _scanner_environment(env=None):
     """One target interpretation, independent of the Python/Cargo caller cwd.
 
@@ -355,11 +372,7 @@ def _scanner_environment(env=None):
     one tree; location is not provenance. Relative paths are rooted here and
     the absolute value is passed to both Cargo and the scanner.
     """
-    env = dict(os.environ if env is None else env)
-    scanner_root = Path(__file__).resolve().parents[4]
-    if 'CARGO_TARGET_DIR' not in env:
-        env['CARGO_TARGET_DIR'] = str(scanner_root / '_build/cargo-target')
-    return _target_environment(scanner_root, env)
+    return target_environment(Path(__file__).resolve().parents[4], env)
 
 
 def _ensure_workspace_scanner(env=None):
@@ -550,15 +563,18 @@ def _artifact_identity(path):
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
-def _verify_snapshot_owner(marker, payload, artifact, identity, started_ns):
-    """共享构建目录的产物守卫只对协作写者负责，对抗写者归已知边界。"""
+def _verify_snapshot_owner(marker, payload, artifact, identity):
+    """共享构建目录的产物守卫只对协作写者负责，对抗写者归已知边界。
+
+    A reused cargo artifact legitimately predates this build's start (cargo
+    skips recompilation), so no mtime lower bound exists (#1166 redesign:
+    the r4 bound rejected every warm target as a false FAIL).
+    """
     try:
         if marker.read_text() != payload:
             raise RuntimeError('#1166 build owner changed during snapshot')
         if _artifact_identity(artifact) != identity:
             raise RuntimeError('#1166 build artifact changed during snapshot')
-        if identity[3] < started_ns:
-            raise RuntimeError('#1166 build artifact predates this build')
     except OSError as error:
         raise RuntimeError('#1166 build provenance unavailable after copy') from error
 
@@ -594,7 +610,6 @@ def build_snapshot(root, output, *, package, target, kind='test', release=True,
         slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15)
         (output / 'slots.log').write_text(slot.stdout + slot.stderr)
         marker, owner = _publish_build_owner(root, env)
-        started_ns = time.time_ns()
         result = run_owned(command, cwd=root, env=env, timeout=1800, idle_timeout=600)
         (output / 'build.log').write_text(result.stdout + result.stderr)
         result.check_returncode()
@@ -610,7 +625,7 @@ def build_snapshot(root, output, *, package, target, kind='test', release=True,
         artifact = executables.pop()
         identity = _artifact_identity(artifact)
         binary = copy_binary(artifact, output / 'executable')
-        _verify_snapshot_owner(marker, owner, artifact, identity, started_ns)
+        _verify_snapshot_owner(marker, owner, artifact, identity)
         (output / 'build-owner.json').write_text(owner)
         (output / 'sha256').write_text(hashlib.sha256(Path(binary).read_bytes()).hexdigest() + '\n')
         return binary

@@ -6,7 +6,6 @@ Every selected replacement has one exact source anchor; no test/oracle is edited
 """
 import hashlib
 import json
-import os
 import re
 from pathlib import Path
 import signal
@@ -16,15 +15,14 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_process import mutating_sources, run_owned
+from negative_process import mutating_sources, run_owned, target_environment
 from negative_selection import select
 
 fixture = Path(__file__).resolve().parent
 workspace = fixture.parents[3]
 repo = workspace.parent
-TARGET = repo / '_build/cargo-target'
-assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve(), '#1166 use this worktree _build/cargo-target only'
-env = dict(os.environ, CARGO_TARGET_DIR=str(TARGET), CARGO_NET_OFFLINE='true')
+env = target_environment(repo)
+env['CARGO_NET_OFFLINE'] = 'true'
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=True)
 turn = workspace / 'pilotdeck-gateway/src/runtime/turn'

@@ -2,7 +2,9 @@
 # anchor-selfcheck: unsupported generator computes function spans and yields transformed bodies
 """#595 controls: mutate disposable source copies, never the working tree.
 
-Uses this tree's existing CARGO_TARGET_DIR. Each mutation must compile, run its
+The Cargo target is admitted by the shared rule (unset defaults to this
+tree's shared build directory; a dedicated out-of-tree target is equally
+admissible). Each mutation must compile, run its
 named test and fail an assertion; a restored-source run must then pass. SIGINT,
 SIGTERM and timeouts kill/reap the owned child before removing the copy.
 """
@@ -15,12 +17,13 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import target_environment
+
 REPO = Path(__file__).resolve().parents[5]
 LOGS = REPO / '_tmp/20261023-issue-595-tree-files'
 RELATIVE = Path('src/pilotdeck-gateway/src/skills/import.rs')
-TARGET = REPO / '_build/cargo-target'
-assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve(), '#1166 use this worktree _build/cargo-target only'
-ENV = dict(os.environ, CARGO_TARGET_DIR=str(TARGET))
+ENV = target_environment(REPO)
 ORIGINAL = (REPO / RELATIVE).read_bytes()
 
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # anchor-selfcheck: unsupported imperative sequential once/write mutations
 """Round 9 product mutations, serialized, bounded and restored byte-for-byte.
-Run from any directory; set the launcher's CARGO_TARGET_DIR to this tree's _build/cargo-target.
+Run from any directory with the caller-owned CARGO_TARGET_DIR (the shared
+admission also provides this tree's default build directory when unset).
 """
 import json
 import os
