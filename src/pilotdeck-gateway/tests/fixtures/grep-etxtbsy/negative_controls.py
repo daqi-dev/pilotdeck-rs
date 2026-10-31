@@ -21,9 +21,13 @@ KILLED. The cleanup, deadline, and writer mutants are bound to the
 lib-only publication unit tests instead: they are deterministic and
 unix-only like the module itself. macOS uses posix_spawn and never shows
 the window, so the two race mutants are a Linux contract (expected
-SURVIVED elsewhere); the other five must kill on every unix host. The
-#1141 mutant targets the write-end closure the dead-helper stranger test
-observes through EOF.
+SURVIVED elsewhere); the other seven must kill on every unix host. The
+#1141 mutants target the dead-helper stranger test's write-end
+observations — EOF arriving at all (`deadline-write-end-kept-open`), EOF
+arriving by the publication's return boundary rather than later
+(`deadline-write-end-released-late`, fix-r1 review P2-1) — and its
+stranger guard (`stranger-guard-kill-removed`, fix-r1 review P1-1): the
+stranger parks in a bounded sleep that only that guard may end.
 """
 import argparse
 import json
@@ -39,6 +43,7 @@ from negative_suite import Case, classify, passed
 root = Path(__file__).resolve().parents[5]
 helper = root / 'src/pilotdeck-gateway/tests/common/scratch.rs'
 source = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/grep.rs'
+publication = root / 'src/pilotdeck-gateway/src/test_scratch_publication.rs'
 stress = 'runtime::tools::builtin::grep::tests::script_spawn_survives_concurrent_forks'
 residue = 'test_scratch_publication::failed_publication_removes_the_temporary_name'
 stalled = 'test_scratch_publication::a_stalled_helper_is_killed_and_cleaned_up'
@@ -258,6 +263,38 @@ cases = [
                     return Err(helper_deadline_error(deadline));
                 }''',
      dead_stranger, '#1141 the write end must be closed'),
+    # #1141 fix-r1 review P2-1: the write end must be closed by the time the
+    # publication returns, not merely eventually. The mutant hands the
+    # writer's give-up clone to a thread that releases it 4 s later: the
+    # writer still exits on schedule, the error is still TimedOut, the
+    # helper still died on its own, and the stranger still sees EOF — only
+    # the marker's timestamp against the test's go signal betrays the late
+    # release, so only the dead-helper test's return-boundary assertion
+    # kills.
+    ('deadline-write-end-released-late', helper,
+     '''                if Instant::now() >= expiry {
+                    return Err(helper_deadline_error(deadline));
+                }''',
+     '''                if Instant::now() >= expiry {
+                    use std::os::fd::AsFd;
+                    let held = stdin.as_fd().try_clone_to_owned()?;
+                    let _ = thread::Builder::new()
+                        .name("#1141 late releaser".into())
+                        .spawn(move || {
+                            thread::sleep(Duration::from_secs(4));
+                            drop(held);
+                        });
+                    return Err(helper_deadline_error(deadline));
+                }''',
+     dead_stranger, '#1141 the write end must be closed by the time the publication returns'),
+    # #1141 fix-r1 review P1-1: the stranger must be ended by the test's own
+    # guard, never left parked behind the pipe. The mutant drops the guard's
+    # group kill, so the parked stranger outlives the whole test and the
+    # group never empties: only the dead-helper test's reap assertion kills.
+    ('stranger-guard-kill-removed', publication,
+     '''        super::process_group::kill(Some(group), Signal::KILL);''',
+     '''        let _ = group;''',
+     dead_stranger, "#1141 the stranger must be killed and reaped by the test's guard"),
 ]
 
 
@@ -301,7 +338,7 @@ def main():
         print(f'{name}: {status}: {reason}', flush=True)
 
     try:
-        with mutating_sources(root, [helper, source]) as snapshots:
+        with mutating_sources(root, [helper, source, publication]) as snapshots:
             for name, path, old, new, test, assertion in selected:
                 status, reason = 'INVALID', 'not run'
                 try:
