@@ -104,6 +104,13 @@ pub fn native_requested(first: Option<&std::ffi::OsStr>) -> bool {
 
 impl Options {
     pub fn parse(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<Self, ProxyError> {
+        Self::parse_at(args, Path::new(""))
+    }
+
+    fn parse_at(
+        args: impl IntoIterator<Item = std::ffi::OsString>,
+        cwd: &Path,
+    ) -> Result<Self, ProxyError> {
         let mut args = args.into_iter();
         let mut values = std::collections::HashMap::new();
         let mut sidecar_args = Vec::new();
@@ -143,8 +150,11 @@ impl Options {
                 .ok_or_else(|| format!("native mode requires {key}"))
         };
         let home = directory(Path::new(take("--home")?), "home")?;
-        let project = directory(Path::new(take("--project")?), "project")?;
-        if home.starts_with(&project) || project.starts_with(&home) {
+        // Keep Node path.resolve identity (including symlink spelling). Only
+        // the containment check uses the physical path, preserving isolation.
+        let project = crate::metadata::resolve_process_path(cwd, Path::new(take("--project")?))?;
+        let physical_project = directory(&project, "project")?;
+        if home.starts_with(&physical_project) || physical_project.starts_with(&home) {
             return Err("native home and project must be separate directories".into());
         }
         let listen: SocketAddr = take("--listen")?
@@ -178,6 +188,11 @@ impl Options {
             sidecar_args,
             drain_budget: Duration::from_millis(drain_ms),
         })
+    }
+
+    fn serves_project(&self, project: &str) -> bool {
+        crate::metadata::resolve_process_path(Path::new(""), Path::new(project))
+            .is_ok_and(|path| path == self.project)
     }
 
     /// A captured environment for config/children. The isolated home wins over

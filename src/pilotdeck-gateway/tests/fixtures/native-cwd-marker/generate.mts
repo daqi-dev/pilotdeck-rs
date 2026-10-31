@@ -12,7 +12,7 @@ const sources = ['src/pilot/paths.ts', 'src/web/server/listProjects.ts',
 const sourceCommit = assertBaseline(baseline);
 const sourceSha256 = await baselineSourceHashes(baseline, sources);
 const load = (file: string) => import(pathToFileURL(join(baseline, file)).href);
-const {createProjectId} = await load(sources[0]);
+const {createProjectId, resolveProjectStorageId} = await load(sources[0]);
 const {createRegisteredWebProjectResolver, listRegisteredWebProjects} = await load(sources[1]);
 const {createDialogProjectRegistry} = await load(sources[2]);
 const {GatewayTurnReplacementCoordinator} = await load(sources[3]);
@@ -86,6 +86,42 @@ try {
   await rm(work, {recursive: true, force: true});
 }
 
+const paths = await (async () => {
+const root = await realpath(await mkdtemp(join(output, 'probe-')));
+const old = process.cwd();
+const result: any = {options: [], boundaries: []};
+const normalized = (text: string) => text.replaceAll(root, '{root}');
+try {
+  const home = join(root,'home'), project = join(root,'project'), other = join(root,'other');
+  for (const dir of [home, project, other, join(project,'child')]) await mkdir(dir, {recursive:true});
+  await symlink(project, join(root,'alias'));
+  process.chdir(root);
+  for (const input of ['project', './project/', 'project/child/..', 'alias']) {
+    const identity = resolve(input);
+    const directory = join(home, 'projects', createProjectId(identity));
+    await mkdir(directory, {recursive:true});
+    // Native provisioning has no TS counterpart; seed exactly its normalized bytes.
+    if (input === 'project' || input === 'alias') await writeFile(join(directory,'.cwd'), identity, {flag:'wx'});
+    const resolver = createRegisteredWebProjectResolver({pilotHome:home});
+    result.options.push({input, resolved:normalized(identity), registered:await resolver(identity) === identity});
+  }
+  const resolver = createRegisteredWebProjectResolver({pilotHome:home});
+  process.chdir(other);
+  for (const input of ['.', './', '', '../project', project]) {
+    result.boundaries.push({input:normalized(input), resolved:normalized(resolve(input)),
+      registered:await resolver(input) === project,
+      storageMatches:resolveProjectStorageId(input, home) === resolveProjectStorageId(project,home)});
+  }
+  const doomed = join(root,'deleted');
+  await mkdir(doomed);
+  process.chdir(doomed);
+  await rm(doomed, {recursive:true});
+  try {process.cwd(); result.cwdUnreadable=false;} catch {result.cwdUnreadable=true;}
+  result.deletedCwdAbsolute = await resolver(project) === project;
+} finally { process.chdir(old); await rm(root,{recursive:true,force:true}); }
+return result;
+})();
+
 // Rust Clone models another handle to the same TS object, not a TS clone API.
 const original = new GatewayTurnReplacementCoordinator({timeoutMs: 1000, session: {
   activeTurnRunId() { return undefined; }, hasActiveTurn() { return false; },
@@ -99,7 +135,7 @@ try { alias.reserveTranscriptWrite('clone-probe', 'probe'); }
 catch (error: any) { conflictCode = error.code; }
 alias.releaseTranscriptWrite('clone-probe');
 const releasedThroughOriginal = !original.hasTranscriptWriteReservation('clone-probe');
-const observations = {cases, alias: {reservedThroughAlias, conflictCode, releasedThroughOriginal}};
+const observations = {cases, paths, alias: {reservedThroughAlias, conflictCode, releasedThroughOriginal}};
 const record = {sourceCommit, sourceSha256, node: process.version, observations};
 await writeFile(join(output, 'oracle.json'), JSON.stringify(record, null, 2) + '\n', {flag: 'wx'});
 console.log(JSON.stringify(record, null, 2));

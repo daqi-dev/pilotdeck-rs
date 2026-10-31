@@ -468,7 +468,7 @@ async fn production_profile_and_registration() {
     assembly::register_project(&options).expect("#1071 repeated project registration");
     let metadata = crate::metadata::Metadata {
         home: options.home.clone(),
-        cwd: options.project.clone(),
+        cwd: scratch.0.clone(),
         files: crate::metadata::NativeFiles,
     };
     negative_assert!(
