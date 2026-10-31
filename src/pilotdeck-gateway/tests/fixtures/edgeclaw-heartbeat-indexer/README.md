@@ -79,20 +79,37 @@ Two cases carry a candidate name cut at 80 UTF-16 units
 (`'a'.repeat(79) + '😀'`), so the trace keeps the lone high surrogate exactly
 as Node does; a third carries an untruncated non-BMP name.
 
+fix-r3 narrows the clear discrimination from session level to per L0 row: the
+mismatch arm and the in-lock recheck consult the removed-id set recorded at
+clear time (`session_clear_removed_since`), so a turn captured after a
+completed clear survives the recheck, and a heartbeat parked between its
+baseline read and its list no longer lets a same-thread clear silently drop
+that turn. The new `BeforeDeleteL0` seam (after `delete_memory_entries`,
+before the L0 DELETE) and the `BeforeListUnindexed` heartbeat seam anchor the
+two tests that pin this ordering (`clear_failing_before_l0_delete_keeps_
+generation_and_turn` and `turn_captured_after_completed_clear_is_not_
+silently_dropped`); the parked test now asserts the generation is still the
+baseline while the clear is parked, so a pure fix-r2 rollback cannot pass it.
+
 The negative controls mutate committed bytes, so `mutating_sources` refuses to
-run on an uncommitted working tree. Nine #917 mutants guard the fix-r1/fix-r2
-recheck: removing both layers (the round-1 shape, three edits), hoisting the
-recheck in front of the classify await (three edits), letting the in-lock
-recheck fire only while `storedResults` is empty, removing the in-lock recheck
-alone, dropping the commit segment's snapshot scope, flipping the `Closed`
-fail-open arm, treating a non-`Closed` L0 read error as not-cleared, and moving
-the clear-generation bump back in front of the deletion (the failed-clear
-regression; the parked-window variant of the same move additionally flips the
-empty-L0 backstop). The first four must resurrect the cleared session's turn,
-the fifth must let a concurrent clear run inside the commit segment, the sixth
-must drift a `close` cell away from the TS baseline, the seventh must
-resurrect through a dropped `l0_sessions` table, and the last two must lose
-the turn to a failed clear / resurrect it across the parked clear's window.
+run on an uncommitted working tree. Eleven #917 mutants guard the fix-r1
+through fix-r3 recheck: removing both layers (the round-1 shape, three edits),
+hoisting the recheck in front of the classify await (three edits), letting the
+in-lock recheck fire only while `storedResults` is empty, removing the in-lock
+recheck alone, dropping the commit segment's snapshot scope, flipping the
+`Closed` fail-open arm, treating a non-`Closed` L0 read error as not-cleared,
+and the three clear-generation bumps — the failed-clear regression (early
+SELECT + claim before the deletion), the parked-window pure rollback of the
+fix-r2 bump move, and the bump hoisted in front of the L0 DELETE itself. The
+first four must resurrect the cleared session's turn, the fifth must let a
+concurrent clear run inside the commit segment, the sixth must drift a `close`
+cell away from the TS baseline, the seventh must resurrect through a dropped
+`l0_sessions` table, and the last three must lose the turn to a failed clear /
+resurrect it across the parked clear's window / advance the generation before
+the L0 deletion. Two further fix-r3 mutants make the recheck ignore the
+removed-id set — the mismatch arm unconditionally (dropping the post-clear
+captured turn) and the in-lock recheck comparing generations only — so both
+layers must consult the recorded rows, not just the session generation.
 After commit:
 
 ```sh

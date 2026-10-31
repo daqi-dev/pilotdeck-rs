@@ -128,6 +128,15 @@ impl HeartbeatLogger for () {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeartbeatStage {
     AfterListUnindexed,
+    /// #917 fix-r3 (review P0): a Rust-only seam with no TS counterpart. TS
+    /// runs `listUnindexedL0BySession` (heartbeat.ts:587) synchronously at the
+    /// top of the per-session loop, so no event can land between the baseline
+    /// equivalent and the list; this indexer is shared across threads, so the
+    /// hook fires between the clear-baseline read and the list. A hook may
+    /// complete a `clearSession` and capture a new turn here — the exact
+    /// interleaving the per-row recheck must survive. Nothing is held at this
+    /// point, so a same-thread clear is safe.
+    BeforeListUnindexed,
     BeforeClassify,
     BeforeCreateNote,
     BeforeSelectIndexProject,
@@ -318,6 +327,7 @@ impl HeartbeatIndexer {
             // that lands in a later await is detected even when the L0 lookup
             // itself can no longer read SQLite (clear followed by close).
             let clear_baseline = self.repository.session_clear_generation(&session_key);
+            self.fire(HeartbeatStage::BeforeListUnindexed, &session_key);
             let sessions = self
                 .repository
                 .storage
@@ -1149,6 +1159,11 @@ impl HeartbeatIndexer {
             // awaits must keep failing at the same calls TS fails at, or the
             // close matrix cells would drift. Any other read error is
             // fail-closed: it propagates instead of silently resurrecting.
+            // fix-r3 (review P0): the generation mismatch alone says "some
+            // clear completed since the baseline", not "this row was cleared"
+            // — a turn captured after that clear completed must survive it,
+            // so the mismatch arm discriminates per row via the removed-id
+            // set.
             let session_cleared =
                 self.session_cleared(&session.session_key, clear_baseline, &session.l0_index_id)?;
 
@@ -1183,11 +1198,14 @@ impl HeartbeatIndexer {
                     .repository
                     .snapshot_operation_scope()
                     .map_err(HeartbeatError::File)?;
-                if self
-                    .repository
-                    .session_clear_generation(&session.session_key)
-                    != clear_baseline
-                {
+                // #917 fix-r3 (review P0): per-row discrimination here too —
+                // a clear that completed since the baseline discards only the
+                // rows it deleted, never a turn captured after it finished.
+                if self.repository.session_clear_removed_since(
+                    &session.session_key,
+                    clear_baseline,
+                    &session.l0_index_id,
+                ) {
                     self.info(JsString::from(format!(
                         "[clawxmemory] skip persist for cleared session={}",
                         session.session_key
@@ -1686,6 +1704,11 @@ impl HeartbeatIndexer {
     /// a close during the awaited classify/createNote keeps failing at the
     /// same call TS fails at; every other read error is fail-closed and
     /// propagates instead of silently resurrecting the turn.
+    /// #917 fix-r3 (review P0): a generation mismatch means a clear completed
+    /// since the baseline — but only for the rows that clear deleted. A turn
+    /// captured after the clear finished is new data and must be persisted,
+    /// exactly like the TS baseline persists it on the next run, so the
+    /// mismatch arm consults the per-row removed-id set.
     fn session_cleared(
         &self,
         session_key: &str,
@@ -1693,7 +1716,11 @@ impl HeartbeatIndexer {
         l0_index_id: &String,
     ) -> Result<bool, HeartbeatError> {
         if self.repository.session_clear_generation(session_key) != clear_baseline {
-            return Ok(true);
+            return Ok(self.repository.session_clear_removed_since(
+                session_key,
+                clear_baseline,
+                l0_index_id,
+            ));
         }
         match self
             .repository
