@@ -29,14 +29,14 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 
 共 **28** 个真实 TS 场景。生成器与 Rust 默认测试 `real_ts_scenarios_match_outcomes_and_bytes` 均断言场景数精确等于 28，防止金样再生或合并时静默缩水；新增或删除场景须同步更新两处计数与本 README。Rust 逐场景重放，把步骤结果与整份 transcript 文件序列化后与 oracle 逐字节比较。归一化只有两条：场景目录 → `<dir>`；v4 UUID → `<id-N>`（按整份场景文本首次出现顺序）。
 
-计数负控（仓库根执行）：
+`fix3-negative.py` 复用 `../_shared/negative_control.py`、`../negative_process.py` 和 `../negative_suite.py`，仅在 `/tmp` 副本对 Rust 读入的 oracle 和 TS 待发布的 scenarios 分别增加 / 删除 1 项，四项均须因 `recorder oracle scenario count` 计数断言失败；每项保留编译回执，生成器失败不得发布 oracle，恢复后正控须通过。全部处理并完成守卫恢复后打印逐项 JSON 与 `SUMMARY:`，任一非 KILLED 即非零退出。Rust 仅测试构建经仅测试可见的 `PDRS_RECORDER_ORACLE` 读入副本，其余快照仍取本目录。变异只写副本，沿用本树 `CARGO_TARGET_DIR`。
+
+计数负控须提交后独占本树运行：同一树锁窗口内，先校验 oracle、生成器、脚本自身和共享 Python 裁决依赖均等于 HEAD，再发现并校验生成器的完整本地 import 闭包（`generate.mts` → `../_shared/baseline.mts` → `./generator_guard.mjs` 与 `../../baseline_source_guard.mjs`，#1139），随后按原仓库相对布局复制到 scratch，缺文件或越界即拒跑。守卫覆盖 `negative_control.py`、`negative_process.py`、`negative_suite.py`、`negative_panic.py`、`pending_reanchor.py`，任一输入脏即拒跑。子进程阶段的套件向 scratch 传 **1800 秒**总预算，外层 **1860 秒**保留 60 秒清理余量；共享 scratch 默认值不变。**已知限制（#1142，M6）**：共享 `TreeLock._acquire` 的 `setitimer(ITIMER_REAL)` 会覆盖并清零 scratch 的 `alarm`，进入树锁后这 1800 秒内部预算实际失效，超时目前只由外层 `timeout 1860`（SIGTERM 后 finally 清理）兜底；裸跑没有总预算。fail-closed，不产生假 PASS。
 
 ```sh
-CARGO_TARGET_DIR="$PWD/src/target" PDRS_BASELINE=/absolute/path/to/PilotDeck timeout 600 python3 \
-  src/pilotdeck-gateway/tests/fixtures/recorder/fix3-negative.py
+export PDRS_BASELINE=/absolute/path/to/PilotDeck
+timeout 1860 python3 src/pilotdeck-gateway/tests/fixtures/recorder/fix3-negative.py
 ```
-
-脚本要求沿用启动器的本树 `CARGO_TARGET_DIR=.../src/target`，串行执行：先跑 Rust 正控，在 `/tmp` 独占副本中删除一条 oracle 场景，通过仅测试可见的 `PDRS_RECORDER_ORACLE` 确认 Rust 以 27/28 转红；再让生成器副本少发布一条场景，确认真实 TS 以 27/28 拒绝写出 oracle；最后用完整 oracle 副本跑正控。脚本不改工作树文件、不在本树 `_tmp` 建目录；正常结束、异常及 SIGTERM 均回收子进程并删除临时目录，SIGKILL 只可能留下 `/tmp` 副本。每个子进程限时 240 s、整套父进程限时 580 s，原始输出打印至 stdout，可由调用者留证。
 
 交叉测试 `real_ts_and_rust_continue_each_others_transcripts` 由 `generate.mts <dir> --cross-ts-write` / `--cross-ts-verify` 驱动：
 
