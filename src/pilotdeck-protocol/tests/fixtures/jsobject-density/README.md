@@ -35,21 +35,29 @@ v22.22.0；启动前 tracked 树必须等于 HEAD。cargo 构建经 `scripts/car
 - 未装箱变体 = 在本树原地 `git apply -R` 装箱 diff（锚点提交不可达或锚点内容
   失效即报错退出），整个反向补丁窗口跑在共享 `mutating_sources` 守卫内：树锁
   串行化本树的其它原地运行者，`lib.rs` 进窗前逐字节对 HEAD 校验，出窗恢复
-  HEAD 快照并双重核验（绝不用一刀切的 `git checkout --`）；窗口内输出目录留
-  `pre-build-in-progress` 标记；恢复后重建并复跑一格 spot-check（未跑显式记
-  `not-run`，不与通过混淆）。不用影子仓库或第二份构建目录。
+  HEAD 快照并双重核验（绝不用一刀切的 `git checkout --`）。post 与 restored
+  两次构建同样持有该树锁（构建是唯一读源码的阶段，测量与 emit 只跑已构建的
+  二进制）。`pre-build-in-progress` 标记只在 `lib.rs` 实际低于 HEAD 期间存在：
+  反向补丁验证通过才写入，守卫成功恢复后才删除，任何失败路径都会留下标记；
+  恢复后重建并复跑一格 spot-check（未跑显式记 `{'status': 'not-run'}`，不与
+  通过混淆）。不用影子仓库或第二份构建目录。
 - 耗时为 release 构建、每格 warmup 1 + 7 reps 的原始数组（result.json 里），
   汇总取中位数；峰值 RSS 取单 rep 进程的 wait4 `ru_maxrss`（macOS 字节），
   TS 基线进程单列。各格串行执行。
 - Rust 侧 pretty 指标 = `stringify_json`（紧凑）+ `write_json_pretty_into`
   的字节语义重排，与产线管线一致（`object_density.rs` 里的本地副本由
-  `object_density_pretty_copy_tracks_cli_implementation` 与 CLI 实现钉死）；
+  `object_density_pretty_copy_tracks_cli_implementation` 与 CLI 实现钉死：
+  函数体文本 `contains` + 字节字面量差分，覆盖不含调用方/管线其余部分）；
   Rust/TS 的 pretty 输出按 1 MiB 档与 transcript 逐字节 sha256 对照（Rust
   装箱前后必须一致，被选格 dump 缺失即失败退出，与 TS 一致为信息项）。
 - Node v22.22.0 的 `JSON.stringify(x, null, 2)` 在 10^4 层深嵌套上抛
   `RangeError: Maximum call stack size exceeded`（默认栈、缩进模式递归），
   结果行里如实记录 `stringifyError`，但解析相照常采满全部 reps（deep 格与
-  Rust 同样 5 轮 × 7 reps 对照）；Rust 侧 #983 起全迭代。
+  Rust 同样 5 轮 × 7 reps 对照）；Rust 侧 #983 起全迭代。TS dump 缺失只有
+  这一种允许情形：该格是 deep 类、且 timed / 写 dump 的 RSS 单 rep 运行至少
+  一路实测记录了该 RangeError（错误原文记入 `prettySha256` 的
+  `tsStringifyError`，`tsMatchesRust` 记 `null`）；非 deep 格或错误不是
+  RangeError 的 dump 缺失一律失败退出，不记 `null` 通过。
 
 证据归档：本机一轮全矩阵见 `_tmp/20261026-issue-1128/host-run/`（RESULT.md
 在证据目录，不进提交）。`negative_controls.py` 是 harness 正控

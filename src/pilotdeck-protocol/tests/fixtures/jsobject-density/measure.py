@@ -23,11 +23,16 @@ commit is reachable, and runs the reverse-patch window inside the shared
 `mutating_sources` guard: the tree lock serializes concurrent in-place
 runners, lib.rs is verified byte-for-byte against HEAD before the window
 opens, and the snapshot restore is verified against both the snapshot and
-the git object on the way out — never a blanket `git checkout`. It fails
+the git object on the way out — never a blanket `git checkout`. Every cargo
+build runs under the same tree lock (the pre window through mutating_sources,
+the post and restored builds through tree_lock directly), so no other in-place
+runner of this tree can mutate a source while cargo reads it. It fails
 closed if the diff anchor no longer applies, rebuilds after restoring, and
 re-runs one spot-check workload so the post numbers reproduce. A
 `pre-build-in-progress` marker file inside the output directory marks the
-mutation window.
+mutation window: written only once lib.rs is actually below HEAD, and removed
+only after the guard restored it byte-for-byte (any failure path leaves the
+marker behind).
 """
 from pathlib import Path
 import hashlib
@@ -43,7 +48,7 @@ root = Path(__file__).resolve().parents[5]
 shared = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path.insert(0, str(shared))
 from negative_process import (mutating_sources, new_output_directory,  # noqa: E402
-                              run_owned, wait_for_slot)
+                              run_owned, tree_lock, wait_for_slot)
 
 # The commit that boxed JsObject.indices (#983 fix-r1); its parent is the
 # unboxed baseline. Override only if the anchor is known to have moved.
@@ -53,10 +58,14 @@ TRANSCRIPT = 'src/pilotdeck-gateway/tests/fixtures/compaction-orchestrator/oracl
 MIB = 1024 * 1024
 # Pretty outputs that are dumped and sha256-compared across all three
 # runners (boxed, unboxed, Node): one per class plus the transcript. A
-# selected label of this set whose post or pre dump is missing aborts the
-# run; a missing Node dump stays `tsMatchesRust: null` because the
-# indented-stringify RangeError on deep spines is an expected baseline
-# property, not a harness failure.
+# selected label of this set whose post, pre or Node dump is missing aborts
+# the run. The single exception (#1128 fix-r2, review Codex P1-1): a deep
+# grid whose Node runs actually recorded the indented-stringify RangeError
+# (V8's indented stringify is recursive and overflows at the 10^4-level
+# spines) may lack a Node dump, recorded as `tsMatchesRust: null` plus the
+# error text in `tsStringifyError`. Any other missing Node dump — including
+# a deep grid without a recorded RangeError — is a harness failure, not a
+# baseline property.
 DUMP_CLASSES = {'small-1', 'wide-1', 'deep-1', 'empty-1', 'transcript'}
 REPS = 7
 NODE = os.environ.get('NODE22', '/opt/homebrew/bin/node')
@@ -224,7 +233,14 @@ def main():
 
     (out / 'workloads').mkdir()
     (out / 'dumps').mkdir()
-    exe = build_release_test(env, 'build-post.slots.log', out)
+    # The post build reads the sources cargo compiles, so it runs under the
+    # shared tree lock like every other in-place window of this tree: another
+    # runner's mutation must not slip between the dirty check above and this
+    # build (#1128 fix-r2, review boundary #1). The lock is acquired before
+    # the cargo-slot queue, the same order mutating_sources uses, so a slot
+    # holder never waits on this tree's lock.
+    with tree_lock(root, timeout=900):
+        exe = build_release_test(env, 'build-post.slots.log', out)
 
     inputs = {}
     for label, kind, target in workloads:
@@ -252,41 +268,53 @@ def main():
     result['workloads']['post'] = measure_rust('post', exe, env, out, workloads, inputs)
 
     marker = out / 'pre-build-in-progress'
-    marker.write_text('unboxed measurement build active; lib.rs is reverted below HEAD\n')
+    # The reachability check precedes the marker and the lock: an unreachable
+    # anchor must exit before any "window open" evidence appears, and the
+    # marker must never claim a revert while this process is still queued on
+    # the tree lock (#1128 fix-r2, review opus #2 / boundary #3).
+    if git('cat-file', '-e', f'{BOXING_COMMIT}^{{commit}}', check=False).returncode:
+        raise SystemExit(f'#1128 boxing commit {BOXING_COMMIT} is not reachable from this '
+                         'history; set PDRS_BOXING_COMMIT to the moved anchor')
     # The whole reverse-patch window runs inside the shared `mutating_sources`
     # guard (#1128 fix-r1, review P0): the tree lock serializes any other
     # in-place runner of this tree, lib.rs is verified byte-for-byte against
     # HEAD before the window opens, and the exit restore writes the HEAD
     # snapshot back — a plain `git checkout --` here would also revert
     # changes this process never made.
-    if git('cat-file', '-e', f'{BOXING_COMMIT}^{{commit}}', check=False).returncode:
-        raise SystemExit(f'#1128 boxing commit {BOXING_COMMIT} is not reachable from this '
-                         'history; set PDRS_BOXING_COMMIT to the moved anchor')
-    try:
-        with mutating_sources(root, [root / LIB_RS]):
-            diff = git('diff', f'{BOXING_COMMIT}^', BOXING_COMMIT, '--', LIB_RS).stdout
-            if b'Box<HashMap<JsString, usize>>' not in diff:
-                raise SystemExit('#1128 boxing anchor vanished from the diff; refusing to '
-                                 'measure a different change')
-            applied = subprocess.run(['git', 'apply', '-R', '-'], input=diff, cwd=str(root),
-                                     capture_output=True)
-            if applied.returncode:
-                raise SystemExit('#1128 reverse boxing patch no longer applies: '
-                                 + applied.stderr.decode().strip())
-            unboxed = (root / LIB_RS).read_text()
-            if ('indices: HashMap<JsString, usize>,' not in unboxed
-                    or 'indices: Box<HashMap<JsString, usize>>,' in unboxed):
-                raise SystemExit('#1128 unboxed verification failed after patching')
-            (out / 'pre.patch').write_text(diff.decode())
-            exe_pre = build_release_test(env, 'build-pre.slots.log', out)
-            result['workloads']['pre'] = measure_rust('pre', exe_pre, env, out, workloads, inputs)
-    finally:
-        marker.unlink()
+    with mutating_sources(root, [root / LIB_RS]):
+        diff = git('diff', f'{BOXING_COMMIT}^', BOXING_COMMIT, '--', LIB_RS).stdout
+        if b'Box<HashMap<JsString, usize>>' not in diff:
+            raise SystemExit('#1128 boxing anchor vanished from the diff; refusing to '
+                             'measure a different change')
+        applied = subprocess.run(['git', 'apply', '-R', '-'], input=diff, cwd=str(root),
+                                 capture_output=True)
+        if applied.returncode:
+            raise SystemExit('#1128 reverse boxing patch no longer applies: '
+                             + applied.stderr.decode().strip())
+        unboxed = (root / LIB_RS).read_text()
+        if ('indices: HashMap<JsString, usize>,' not in unboxed
+                or 'indices: Box<HashMap<JsString, usize>>,' in unboxed):
+            raise SystemExit('#1128 unboxed verification failed after patching')
+        (out / 'pre.patch').write_text(diff.decode())
+        # Written only now that lib.rs is actually below HEAD (#1128 fix-r2,
+        # review boundary #3): during the lock wait and the pre-patch checks
+        # the tree is unmutated, so the marker would be a false positive.
+        marker.write_text('unboxed measurement build active; lib.rs is reverted below HEAD\n')
+        exe_pre = build_release_test(env, 'build-pre.slots.log', out)
+        result['workloads']['pre'] = measure_rust('pre', exe_pre, env, out, workloads, inputs)
+    # Removed only after the guard restored lib.rs byte-for-byte: a restore
+    # failure (or any window error) propagates out of the `with` and leaves
+    # the marker behind for a human (#1128 fix-r2, review opus #1 /
+    # boundary #2 — the old `finally` unlinked it unconditionally).
+    marker.unlink()
     for label, row in result['workloads']['pre'].items():
         if row['timed']['inputFnv64'] != result['workloads']['post'][label]['timed']['inputFnv64']:
             raise SystemExit(f'#1128 variants disagree on the input digest of {label}')
 
-    exe_restored = build_release_test(env, 'build-restored.slots.log', out)
+    # Same tree lock as the post build: the restored binary must be built
+    # from the same HEAD bytes the pre window was verified against.
+    with tree_lock(root, timeout=900):
+        exe_restored = build_release_test(env, 'build-restored.slots.log', out)
     spot = None
     if 'small-8' in inputs:
         spot, _ = run_rust(exe_restored, env, out, label='restored-spot-small-8', kind='file',
@@ -295,9 +323,13 @@ def main():
         if spot['valueBytes'] != post_line['valueBytes'] or \
                 spot['prettyFnv64'] != post_line['prettyFnv64']:
             raise SystemExit('#1128 restored spot-check disagrees with the post measurement')
-    # An unrun check must not read as a passed one: `null` and a passed line
-    # are different states (#1128 fix-r1, review opus #3).
-    result['restoredSpotCheck'] = spot if spot is not None else 'not-run (small-8 not selected)'
+    # A stable three-state field, not `dict | str` (#1128 fix-r2, review
+    # opus #5): an unrun check must not read as a passed one, and downstream
+    # readers must not branch on the value's type.
+    if spot is not None:
+        result['restoredSpotCheck'] = {'status': 'pass', 'timed': spot}
+    else:
+        result['restoredSpotCheck'] = {'status': 'not-run', 'reason': 'small-8 not selected'}
 
     ts_rows = {}
     for label, _kind, _target in workloads:
@@ -306,9 +338,13 @@ def main():
         timed, _ = run_ts(env, out, label=f'{label}-timed', input_path=inputs[label],
                           reps=REPS, warmup=1)
         dump = out / 'dumps' / f'ts-{label}.pretty' if label in DUMP_CLASSES else None
-        _, rss = run_ts(env, out, label=f'{label}-rss', input_path=inputs[label],
-                        reps=1, warmup=0, dump=dump)
-        ts_rows[label] = {'timed': timed, 'rssBytes': rss}
+        # The RSS run is the one that writes the dump (bench_ts.mjs dumps its
+        # first rep), so its result line is kept and checked too — discarding
+        # it with `_` would leave the dump decision blind to what the writing
+        # run actually observed (#1128 fix-r2, review Codex P1-1).
+        rss_timed, rss = run_ts(env, out, label=f'{label}-rss', input_path=inputs[label],
+                                reps=1, warmup=0, dump=dump)
+        ts_rows[label] = {'timed': timed, 'rssTimed': rss_timed, 'rssBytes': rss}
         stringify = (f'{statistics.median(timed["stringifyMs"]):.1f}ms'
                      if timed['stringifyMs'] else timed['stringifyError'])
         print(f'#1128 ts {label}: parse={statistics.median(timed["parseMs"]):.1f}ms '
@@ -318,10 +354,11 @@ def main():
     result['tsBaselineRssBytes'] = usage['rssWait4Bytes']
 
     digests = {}
+    kinds = {label: kind for label, kind, _target in workloads}
     for label in sorted(DUMP_CLASSES):
         if label not in inputs:
             continue  # not selected in this run
-        entry = {}
+        entry = {'ts': None, 'tsMatchesRust': None, 'tsStringifyError': None}
         for name in ('post', 'pre'):
             path = out / 'dumps' / f'{name}-{label}.pretty'
             # A selected dump class whose Rust-side dump is missing must fail
@@ -331,14 +368,26 @@ def main():
             if not path.is_file():
                 raise SystemExit(f'#1128 {name} pretty dump missing for {label}')
             entry[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+        if entry['post'] != entry['pre']:
+            raise SystemExit(f'#1128 pretty output differs between boxed and unboxed for {label}')
         ts_path = out / 'dumps' / f'ts-{label}.pretty'
+        # Both Node runs are consulted: the timed run and the RSS run that
+        # writes the dump. A missing dump is acceptable only as the expected
+        # deep-spine RangeError — the grid must be a deep one and a run must
+        # have actually recorded that exact error; anything else (a silent
+        # Node-side failure on small/wide/empty/transcript, or a non-Range
+        # error anywhere) fails the run instead of passing as `null`
+        # (#1128 fix-r2, review Codex P1-1 / opus #6).
+        errors = [ts_rows[label][run]['stringifyError'] for run in ('timed', 'rssTimed')]
         if ts_path.is_file():
             entry['ts'] = hashlib.sha256(ts_path.read_bytes()).hexdigest()
             entry['tsMatchesRust'] = entry['ts'] == entry['post']
+        elif kinds[label] == 'deep' and any(
+                error and 'RangeError' in error for error in errors):
+            entry['tsStringifyError'] = next(error for error in errors if error)
         else:
-            entry['tsMatchesRust'] = None  # Node could not stringify this workload.
-        if entry['post'] != entry['pre']:
-            raise SystemExit(f'#1128 pretty output differs between boxed and unboxed for {label}')
+            raise SystemExit(f'#1128 ts pretty dump missing for {label} without the expected '
+                             f'deep RangeError (timed={errors[0]!r}, rss={errors[1]!r})')
         digests[label] = entry
     result['prettySha256'] = digests
 

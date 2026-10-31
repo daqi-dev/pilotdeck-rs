@@ -15,8 +15,9 @@
 //! to the product binary. It cannot drift unmutated either way —
 //! `negative_controls.py` anchors this copy the same way `sdk-decode-budget`
 //! anchors the CLI's, and `object_density_pretty_copy_tracks_cli_implementation`
-//! below fails whenever the CLI's function text changes, so the copy and the
-//! product pipeline must be re-derived together.
+//! below fails whenever the CLI's function text changes or the copy's byte
+//! literals stop matching the pinned CLI text, so the copy and the product
+//! pipeline must be re-derived together.
 use std::time::Instant;
 
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
@@ -363,13 +364,61 @@ fn write_json_pretty_into(raw: &str, out: &mut impl Write) -> std::io::Result<()
     Ok(())
 }"#;
 
+/// The `b"…"`/`b'…'` byte literals of a pretty-printer source, in order of
+/// appearance: the newline byte, the indent width and the colon separator
+/// are the semantic knobs of the reindentation, so the pinned CLI text and
+/// the local copy must carry the same sequence (#1128 fix-r2, review opus
+/// #3: re-deriving only the pinned constant while leaving `reindent_pretty`
+/// stale must fail, not pass).
+fn pretty_byte_literals(source: &str) -> Vec<String> {
+    let mut literals = Vec::new();
+    let mut rest = source;
+    while let Some(offset) = rest.find('b') {
+        rest = &rest[offset + 1..];
+        let quote = match rest.chars().next() {
+            Some(quote @ ('"' | '\'')) => quote,
+            _ => continue,
+        };
+        let literal = &rest[1..];
+        let end = literal
+            .find(quote)
+            .expect("#1128 unterminated byte literal in pretty-printer source");
+        literals.push(literal[..end].to_string());
+        rest = &literal[end + 1..];
+    }
+    literals
+}
+
 /// Review P2 (#1128 fix-r1): `reindent_pretty` is a copy of the CLI's
 /// `write_json_pretty_into`, and the copy staying green while the CLI changed
 /// semantics would measure a pipeline the product no longer ships. Fail
 /// closed on any change to the CLI function's text; the copy's own rules are
 /// anchored by `negative_controls.py`'s pretty-* mutations.
+///
+/// Coverage boundary (#1128 fix-r2, review opus #4): the two assertions below
+/// bind the CLI **function body's text** and its **byte literals** — the
+/// caller that feeds `write_json_pretty_into` its input, the `use` items, or
+/// a second pretty path elsewhere in the CLI are outside this binding.
+///
+/// The literal parity runs first on purpose: a CLI change that only gets the
+/// pinned constant re-derived (leaving the copy stale) fails the parity
+/// assertion, while a change to the CLI source itself still fails the
+/// containment assertion after it.
 #[test]
 fn object_density_pretty_copy_tracks_cli_implementation() {
+    let harness = include_str!("object_density.rs");
+    let begin = harness
+        .find("fn newline(out: &mut Vec<u8>, depth: usize)")
+        .expect("#1128 reindent copy anchor vanished from this file");
+    let end = begin
+        + harness[begin..]
+            .find("fn pipeline(")
+            .expect("#1128 reindent copy end anchor vanished from this file");
+    assert_eq!(
+        pretty_byte_literals(&harness[begin..end]),
+        pretty_byte_literals(CLI_WRITE_JSON_PRETTY_INTO),
+        "#1128 pretty byte literals diverged between CLI and the harness copy"
+    );
     assert!(
         CLI_MAIN.contains(CLI_WRITE_JSON_PRETTY_INTO),
         "#1128 CLI write_json_pretty_into changed; re-derive the harness pretty copy"
