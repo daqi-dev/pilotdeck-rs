@@ -21,7 +21,9 @@ KILLED. The cleanup, deadline, and writer mutants are bound to the
 lib-only publication unit tests instead: they are deterministic and
 unix-only like the module itself. macOS uses posix_spawn and never shows
 the window, so the two race mutants are a Linux contract (expected
-SURVIVED elsewhere); the other four must kill on every unix host.
+SURVIVED elsewhere); the other five must kill on every unix host. The
+#1141 mutant targets the write-end closure the dead-helper stranger test
+observes through EOF.
 """
 import argparse
 import json
@@ -42,6 +44,8 @@ residue = 'test_scratch_publication::failed_publication_removes_the_temporary_na
 stalled = 'test_scratch_publication::a_stalled_helper_is_killed_and_cleaned_up'
 unread = 'test_scratch_publication::a_helper_that_never_reads_hits_the_write_deadline'
 stranger = 'test_scratch_publication::a_stranger_on_the_read_end_still_hits_the_write_deadline'
+dead_stranger = ('test_scratch_publication::'
+                 'a_dead_helper_with_a_stranger_reader_still_closes_the_write_end')
 cases = [
     # The literal pre-fix shape: Scratch::script itself writes and chmods
     # the exec'd path in the test process, reopening the wide write window.
@@ -237,6 +241,23 @@ cases = [
                     return Err(helper_deadline_error(deadline));
                 }''',
      stranger, '#1125 helper writer did not exit by its deadline'),
+    # The give-up must also close this process's copy of the write end: the
+    # mutant leaks a clone past the deadline, so the stranger that the
+    # dead-helper test leaves holding the read end never reads EOF and its
+    # marker never appears. Only that test observes the write end — the
+    # other bound tests assert the error, the kill report, or the residue,
+    # none of which the leaked descriptor touches (#1141, #1125 r4 review
+    # P2-1).
+    ('deadline-write-end-kept-open', helper,
+     '''                if Instant::now() >= expiry {
+                    return Err(helper_deadline_error(deadline));
+                }''',
+     '''                if Instant::now() >= expiry {
+                    use std::os::fd::AsFd;
+                    std::mem::forget(stdin.as_fd().try_clone_to_owned());
+                    return Err(helper_deadline_error(deadline));
+                }''',
+     dead_stranger, '#1141 the write end must be closed'),
 ]
 
 

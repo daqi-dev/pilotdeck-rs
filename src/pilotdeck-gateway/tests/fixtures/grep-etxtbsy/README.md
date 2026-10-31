@@ -40,7 +40,14 @@ fix-r3 起收尾结构：`ReapGuard` 从 helper spawn 起持有它，一切非�
   的 `#1125 deadline error must be TimedOut` 断言（确定性）；
 - `writer-deadline-removed`：writer 的截止放弃检查改成 `if false`，绑定
   `test_scratch_publication::a_stranger_on_the_read_end_still_hits_the_write_deadline`
-  的 `#1125 helper writer did not exit by its deadline` 断言（确定性）。
+  的 `#1125 helper writer did not exit by its deadline` 断言（确定性）；
+- `deadline-write-end-kept-open`：writer 的截止放弃分支泄漏一个写端克隆
+  （`std::mem::forget(stdin.as_fd().try_clone_to_owned())`，
+  `ChildStdin` 无 `try_clone`），本进程在放弃后仍持有写端，
+  陌生进程读不到 EOF、marker 不出现——绑定
+  `test_scratch_publication::a_dead_helper_with_a_stranger_reader_still_closes_the_write_end`
+  的 `#1141 the write end must be closed` 断言（确定性；该测试是唯一观察
+  写端关闭的用例，#1141）。
 
 `test_scratch_publication` 是 lib 专属测试模块
 （`src/test_scratch_publication.rs`，`#[cfg(all(test, unix))]`，fix-r3 评审 P2
@@ -58,13 +65,13 @@ crate 以 `#[path]` 各编一份，共享文件里不再放单测，避免每份
 
 ```sh
 CARGO_TARGET_DIR=<绝对路径> python3 -I negative_controls.py NEW_OUT_DIR
-# 锚点新鲜度预检（须打印 `6 anchors: ok` 后退出 0）
+# 锚点新鲜度预检（须打印 `7 anchors: ok` 后退出 0）
 python3 -I negative_controls.py --check-anchors
 ```
 
 平台契约：macOS 的 std::process 走 posix_spawn，观察不到继承描述符窗口，
 `script-direct-write` / `helper-in-process-write` 在该平台预期 SURVIVED
 （或因无关失败 INVALID）——这两个竞态负控是 **Linux 契约**，判杀只在
-Linux 宿主（cb8 / CI）上成立；`no-temp-cleanup` 与三个 deadline/writer
+Linux 宿主（cb8 / CI）上成立；`no-temp-cleanup` 与四个 deadline/writer
 变异体在任意 unix 宿主上确定性判杀（unix 平台无关，非 unix 无该测试模块）。
 cargo 不得带 `-q`（共享执行器靠逐测试行判读）。
