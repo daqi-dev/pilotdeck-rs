@@ -2,13 +2,12 @@
 
 `measure.py` 在 macOS 上启动真实 Rust / TS CLI，经 `127.0.0.1:28999` 的最小 WS mock 发送精确 32 / 64 / 128 MiB 的合法 `result.sessions=[0,0,…]`。逐块发送并流式计算 stdout 哈希，不在测量器内存中构造大数组或大输出。它是诊断工具，不是已实测的 TS 金样，不代表本问题已修复。
 
-必须先构建当前工作树的 CLI。`CARGO_TARGET_DIR` 必须由调用方设置；TS 使用 `PDRS_BASELINE` 指向的只读原件 `src/cli/pilotdeck.ts`，Node 默认 `/opt/homebrew/bin/node`，可由 `NODE22` 指定，版本必须为 v22.22.0。所有运行使用独立 HOME / PILOT_HOME / TMPDIR；不读取用户的 PilotDeck 配置。
+Rust 测量由脚本在树锁内校验已提交 HEAD、排槽、构建并复制独占快照；计时只执行快照。`CARGO_TARGET_DIR` 必须由调用方设置；TS 使用 `PDRS_BASELINE` 指向的只读原件 `src/cli/pilotdeck.ts`，Node 默认 `/opt/homebrew/bin/node`，可由 `NODE22` 指定，版本必须为 v22.22.0。所有运行使用独立 HOME / PILOT_HOME / TMPDIR；不读取用户的 PilotDeck 配置。
 
 ```sh
 export CARGO_TARGET_DIR=/Users/da/ws/pilotdeck-rs/_build/wt-983/_build/cargo-target
 export CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_PROFILE_TEST_DEBUG=line-tables-only
 export PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck
-scripts/cargo-slots.sh && cargo build --offline --manifest-path src/Cargo.toml -p pilotdeck-cli
 python3 src/pilotdeck-cli/tests/fixtures/sdk-decode-budget/measure.py _tmp/20261026-issue-983/host-rust-32 rust 32
 python3 src/pilotdeck-cli/tests/fixtures/sdk-decode-budget/measure.py _tmp/20261026-issue-983/host-ts-32 ts 32
 ```

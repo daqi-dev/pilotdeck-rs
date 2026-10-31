@@ -699,7 +699,8 @@ class MutatingSources(unittest.TestCase):
 
     def test_other_product_source_residue_is_refused(self):
         # A runner names only its own files, but a killed runner from another
-        # group can leave any gateway source mutated. The global product check
+        # group can leave any workspace input mutated (full matrix in
+        # workspace-pristine/test_controls.py). The global product check
         # must refuse before the new runner compiles a polluted tree.
         with tempfile.TemporaryDirectory(prefix="pdrs-negative-other-") as temp:
             root, target = self.repo(temp)

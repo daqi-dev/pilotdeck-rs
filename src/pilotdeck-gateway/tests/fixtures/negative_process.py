@@ -9,11 +9,14 @@ the leader is dead (#528).
 """
 from contextlib import contextmanager, nullcontext
 import fcntl
+import hashlib
 import json
 import math
 import os
 from pathlib import Path
 import signal
+import shutil
+import stat
 import subprocess
 import sys
 import threading
@@ -347,18 +350,95 @@ def _head_bytes(root, relative, baseline):
 def _assert_product_pristine(root, baseline):
     # A runner only names the files it is about to mutate, but a killed
     # predecessor from another group can leave any product source mutated.
-    # Checking the whole gateway product tree turns that residue into a
+    # Checking the whole workspace (including fixtures and path dependencies)
+    # turns that residue into a
     # refusal for every next runner, not just the one that shares its file.
-    area = "src/pilotdeck-gateway/src"
-    changed = _git(root, "diff", "--name-only", baseline, "--", area).decode(
-        "utf-8", "replace").splitlines()
-    untracked = _git(root, "ls-files", "--others", "--exclude-standard",
-                     "--", area).decode("utf-8", "replace").splitlines()
-    unexpected = changed + untracked
-    if unexpected:
-        detail = "differs from" if changed else "untracked at"
-        raise SourceBaselineError(root, unexpected[0],
-                                  f"{detail} {baseline}")
+    # include_str!/include_bytes! can read non-Rust files; src/vendor
+    # and src/data are path dependencies too. Do not maintain a crate list.
+    areas = ('src', '.cargo', ':(top,glob)rust-toolchain*')
+    for options in ((), ('--cached',)):
+        changed = _git(root, 'diff', *options, '--name-only', '-z', baseline,
+                       '--', *areas).split(b'\0')
+        if changed[0]:
+            raise SourceBaselineError(root, os.fsdecode(changed[0]),
+                                      f'differs from {baseline}')
+    flags = _git(root, 'ls-files', '-v', '-z', '--', *areas).split(b'\0')
+    for entry in flags:
+        if entry and (entry[:1].islower() or entry[:1] == b'S'):
+            raise SourceBaselineError(root, os.fsdecode(entry[2:]),
+                                      'assume-unchanged / skip-worktree input')
+    # Include ignored inputs: .gitignore is not a compilation boundary.
+    # Only disposable Cargo/Python caches are excluded, and only here (never
+    # from the tracked/index checks). Keep artifacts outside source folders.
+    untracked = _git(root, 'ls-files', '--others', '-z', '--', *areas,
+                     ':(exclude,literal)src/target',
+                     ':(exclude,glob)src/*/target/**',
+                     ':(exclude,glob)src/**/__pycache__/**',
+                     ':(exclude,glob)src/**/*.pyc').split(b'\0')
+    if untracked[0]:
+        raise SourceBaselineError(root, os.fsdecode(untracked[0]),
+                                  f'untracked build input at {baseline}')
+
+
+def copy_binary(source, destination, *, expected_sha256=None):
+    """Create a new inode, optionally checking an explicitly pinned snapshot.
+
+    A pinned snapshot needs no source-tree lease: it reads no source or shared
+    Cargo artifact. Hash the copied bytes, so changing the source during copy
+    fails rather than attributing new bytes to the caller's expected build.
+    """
+    source, destination = Path(source), Path(destination)
+    with source.open('rb') as reader, destination.open('xb') as writer:
+        shutil.copyfileobj(reader, writer)
+        os.fchmod(writer.fileno(), stat.S_IMODE(os.fstat(reader.fileno()).st_mode))
+    digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise RuntimeError('#1166 binary snapshot SHA-256 mismatch')
+    return str(destination)
+
+
+def build_snapshot(root, output, *, package, target, kind='test', release=True,
+                   env=None):
+    """Build verified workspace inputs and copy the executable under one lease.
+
+    tree_lock alone only serializes readers/writers; it does not validate
+    source provenance. This entry point and mutating_sources validate after
+    acquiring it. Only this run's exclusive snapshot escapes the lease.
+    """
+    root = Path(root).resolve()
+    env = dict(os.environ if env is None else env)
+    if not env.get('CARGO_TARGET_DIR'):
+        raise RuntimeError('#1166 CARGO_TARGET_DIR must be supplied by the caller')
+    if kind not in ('test', 'bin'):
+        raise ValueError('#1166 unsupported measurement target kind')
+    output = Path(output).resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    command = ['cargo', 'test' if kind == 'test' else 'build', '--offline',
+               '--manifest-path', 'src/Cargo.toml', '-p', package,
+               '--' + kind, target, '--message-format=json']
+    if kind == 'test':
+        command.append('--no-run')
+    if release:
+        command.append('--release')
+    with tree_lock(root, timeout=900):
+        _assert_product_pristine(root, 'HEAD')
+        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15)
+        (output / 'slots.log').write_text(slot.stdout + slot.stderr)
+        result = run_owned(command, cwd=root, env=env, timeout=1800, idle_timeout=600)
+        (output / 'build.log').write_text(result.stdout + result.stderr)
+        result.check_returncode()
+        executables = set()
+        for line in result.stdout.splitlines():
+            row = json.loads(line)
+            if (row.get('reason') == 'compiler-artifact'
+                    and row.get('target', {}).get('name') == target
+                    and row['target'].get('kind') == [kind] and row.get('executable')):
+                executables.add(row['executable'])
+        if len(executables) != 1:
+            raise RuntimeError('#1166 expected exactly one measurement executable')
+        binary = copy_binary(executables.pop(), output / 'executable')
+        (output / 'sha256').write_text(hashlib.sha256(Path(binary).read_bytes()).hexdigest() + '\n')
+        return binary
 
 
 @contextmanager
@@ -396,7 +476,7 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
 
     ``paths`` must be repo-relative or absolute paths inside ``root``. Every
     path is checked byte-for-byte against ``git show <baseline>:<path>`` while
-    the tree lock is held; the whole gateway product tree is also checked so a
+    the tree lock is held; the whole workspace input tree is also checked so a
     killed runner from another group cannot leave a mutant behind. A mismatch
     aborts *before* anything is written and leaves the unexpected bytes for a
     human to inspect. On exit the snapshot is written back and compared both to
