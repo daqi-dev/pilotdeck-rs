@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 # anchor-selfcheck: unsupported in-process meta-control, no cargo mutations
-"""#1139 fix-r1: neutralized closure/criterion guards must kill their bound tests.
+"""#1139 fix-r2: neutralized closure/criterion guards must kill their bound tests.
 
 Mutates the two count runners in place inside the shared source guard and runs
 the bound ``test_import_closure.py`` tests in-process (same thread, reentrant
 tree lock, no cargo anywhere): positive -> negative -> restored per row, every
-row recorded before the summary, any non-KILLED row exits nonzero. Run after
-committing, on a clean tree, like the suites it guards.
+row recorded before the summary, any non-KILLED row exits nonzero. The guard
+covers the two mutated runners and the bound criterion file itself, so a dirty
+criterion is refused before the first positive control (#1139 fix-r2 P1-3);
+every probe's kill comes from its own bound assertion, never from the runner
+self-check. SIGTERM/SIGHUP unwind through the finally clauses so a killed run
+still restores the mutated sources. Run after committing, on a clean tree, like
+the suites it guards. ``--check-anchors`` only verifies that every anchor is
+unique and every mutant still parses.
 """
+import ast
 import importlib.util
 import io
 import json
+import signal
 import sys
 import unittest
 from pathlib import Path
@@ -19,7 +27,10 @@ sys.dont_write_bytecode = True
 FIXTURES = Path(__file__).resolve().parent
 REPO = FIXTURES.parents[3]
 TESTS = FIXTURES / 'test_import_closure.py'
+# negative_process.py sits in the fixtures root; only negative_control.py,
+# imported first by the runners, would otherwise put it on the path.
 sys.path.insert(0, str(FIXTURES / '_shared'))
+sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources
 
 RECORDER = FIXTURES / 'recorder/fix3-negative.py'
@@ -30,65 +41,163 @@ GUARD_PROBES = [
     ('recorder-closure-accept-unrecognized', RECORDER,
      'ClosureTests.test_unrecognized_dynamic_import_is_rejected',
      """        raise ValueError(
-            f'#1139 unrecognized dynamic import argument in {path}: {argument}')""",
+            f'#1139 unrecognized dynamic import argument in {path}: {original}')""",
      '        return []  # mutated: unrecognized dynamic import accepted',
-     '#1139 fix-r1: unrecognized dynamic import must fail closed'),
+     '#1139 fix-r2: unrecognized dynamic import must fail closed'),
     ('run-registry-closure-accept-unrecognized', RUN_REGISTRY,
      'ClosureTests.test_unrecognized_dynamic_import_is_rejected',
      """        raise ValueError(
-            f'#1129 unrecognized dynamic import argument in {path}: {argument}')""",
+            f'#1129 unrecognized dynamic import argument in {path}: {original}')""",
      '        return []  # mutated: unrecognized dynamic import accepted',
-     '#1139 fix-r1: unrecognized dynamic import must fail closed'),
+     '#1139 fix-r2: unrecognized dynamic import must fail closed'),
+    ('recorder-closure-widen-baseline-whitelist', RECORDER,
+     'ClosureTests.test_unrecognized_dynamic_import_is_rejected',
+     """    else:
+        raise ValueError(
+            f'#1139 unrecognized dynamic import argument in {path}: {original}')""",
+     """    else:
+        if re.search(r'\\bbaseline\\b', argument):
+            return []  # mutated: any baseline mention accepted
+        raise ValueError(
+            f'#1139 unrecognized dynamic import argument in {path}: {original}')""",
+     '#1139 fix-r2: unrecognized dynamic import must fail closed'),
+    ('run-registry-closure-widen-baseline-whitelist', RUN_REGISTRY,
+     'ClosureTests.test_unrecognized_dynamic_import_is_rejected',
+     """    else:
+        raise ValueError(
+            f'#1129 unrecognized dynamic import argument in {path}: {original}')""",
+     """    else:
+        if re.search(r'\\bbaseline\\b', argument):
+            return []  # mutated: any baseline mention accepted
+        raise ValueError(
+            f'#1129 unrecognized dynamic import argument in {path}: {original}')""",
+     '#1139 fix-r2: unrecognized dynamic import must fail closed'),
     ('recorder-closure-skip-absolute', RECORDER,
      'ClosureTests.test_absolute_dynamic_import_outside_repository_is_rejected',
      """    raise ValueError(
-        f'#1139 absolute dynamic import outside the repository in {path}: {argument}')""",
+        f'#1139 absolute dynamic import outside the repository in {path}: {original}')""",
      '    return []  # mutated: absolute dynamic import skipped',
      '#1139 fix-r1: out-of-root absolute dynamic import must fail closed'),
     ('run-registry-closure-skip-absolute', RUN_REGISTRY,
      'ClosureTests.test_absolute_dynamic_import_outside_repository_is_rejected',
      """    raise ValueError(
-        f'#1129 absolute dynamic import outside the repository in {path}: {argument}')""",
+        f'#1129 absolute dynamic import outside the repository in {path}: {original}')""",
      '    return []  # mutated: absolute dynamic import skipped',
      '#1139 fix-r1: out-of-root absolute dynamic import must fail closed'),
+    ('recorder-closure-skip-file-url', RECORDER,
+     'ClosureTests.test_file_url_dynamic_imports_follow_absolute_rules',
+     """    scheme = re.match(r'[A-Za-z][A-Za-z0-9+.\\-]*:', specifier)
+    if scheme is not None:""",
+     """    scheme = re.match(r'[A-Za-z][A-Za-z0-9+.\\-]*:', specifier)
+    if False:  # mutated: file: URLs skipped""",
+     '#1139 fix-r2: in-root file: URL dynamic import must join the closure'),
+    ('run-registry-closure-skip-file-url', RUN_REGISTRY,
+     'ClosureTests.test_file_url_dynamic_imports_follow_absolute_rules',
+     """    scheme = re.match(r'[A-Za-z][A-Za-z0-9+.\\-]*:', specifier)
+    if scheme is not None:""",
+     """    scheme = re.match(r'[A-Za-z][A-Za-z0-9+.\\-]*:', specifier)
+    if False:  # mutated: file: URLs skipped""",
+     '#1139 fix-r2: in-root file: URL dynamic import must join the closure'),
     ('recorder-closure-drop-literal-dynamic', RECORDER,
      'ClosureTests.test_literal_dynamic_imports_join_the_closure',
      """        for argument in _dynamic_import_arguments(text):
             pending.extend(_dynamic_import_targets(path, argument, source_root))""",
      '        for argument in _dynamic_import_arguments(text):\n'
      '            pass  # mutated: literal dynamic imports dropped',
-     '#1139 fix-r1: literal dynamic imports must join the closure'),
+     '#1139 fix-r2: literal dynamic imports must join the closure'),
+    ('run-registry-closure-drop-literal-dynamic', RUN_REGISTRY,
+     'ClosureTests.test_literal_dynamic_imports_join_the_closure',
+     """        for argument in _dynamic_import_arguments(text):
+            pending.extend(_dynamic_import_targets(path, argument, source_root))""",
+     '        for argument in _dynamic_import_arguments(text):\n'
+     '            pass  # mutated: literal dynamic imports dropped',
+     '#1139 fix-r2: literal dynamic imports must join the closure'),
+    ('recorder-closure-drop-trailing-strip', RECORDER,
+     'ClosureTests.test_literal_dynamic_imports_join_the_closure',
+     """    original = argument
+    argument = _argument_without_trailing(argument, path)""",
+     '    original = argument  # mutated: trailing comment and comma kept',
+     '#1139 fix-r2: literal dynamic imports must join the closure'),
+    ('run-registry-closure-drop-trailing-strip', RUN_REGISTRY,
+     'ClosureTests.test_literal_dynamic_imports_join_the_closure',
+     """    original = argument
+    argument = _argument_without_trailing(argument, path)""",
+     '    original = argument  # mutated: trailing comment and comma kept',
+     '#1139 fix-r2: literal dynamic imports must join the closure'),
+    ('recorder-closure-drop-static-edge-forms', RECORDER,
+     'ClosureTests.test_static_import_edge_forms_join_the_closure',
+     """            index = _skip_spacing(text, found.end())
+            if index >= len(text) or text[index] not in '\\'"':""",
+     "            index = found.end()  # mutated: comment-separated static imports dropped\n"
+     "            if index >= len(text) or text[index] not in '\\\"':",
+     '#1139 fix-r2: static import edge forms must join the closure'),
+    ('run-registry-closure-drop-static-edge-forms', RUN_REGISTRY,
+     'ClosureTests.test_static_import_edge_forms_join_the_closure',
+     """            index = _skip_spacing(text, found.end())
+            if index >= len(text) or text[index] not in '\\'"':""",
+     "            index = found.end()  # mutated: comment-separated static imports dropped\n"
+     "            if index >= len(text) or text[index] not in '\\\"':",
+     '#1139 fix-r2: static import edge forms must join the closure'),
     ('recorder-closure-reject-baseline-loader', RECORDER,
      'ClosureTests.test_baseline_loader_dynamic_import_is_allowed',
-     """        if re.search(r'\\bbaseline\\b', argument):
-            return []""",
-     """        if re.search(r'\\bbaseline\\b', argument):
-            raise ValueError('mutated: baseline loader rejected')""",
-     '#1139 fix-r1: baseline loader dynamic import must stay allowed'),
-    ('recorder-guard-drop-rust-criterion', RECORDER,
-     'GuardedInputTests.test_dirty_rust_criterion_is_refused_before_positive',
-     """               gateway / 'tests/recorder.rs',
-               gateway / 'tests/common/baseline.rs',
-               gateway / 'tests/common/regeneration_masks.rs',
-               fixture_root / '_shared/regeneration-masks.tsv',
-               gateway / 'Cargo.toml']""",
-     '               ]',
-     '#1139 fix-r1: dirty Rust criterion input must be refused: '),
+     """    elif re.sub(r'\\s+', ' ', argument) in BASELINE_LOADERS:
+        return []""",
+     """    elif re.sub(r'\\s+', ' ', argument) in BASELINE_LOADERS:
+        raise ValueError('mutated: baseline loader rejected')""",
+     '#1139 fix-r2: baseline loader dynamic imports must stay allowed'),
+    ('run-registry-closure-reject-baseline-loader', RUN_REGISTRY,
+     'ClosureTests.test_baseline_loader_dynamic_import_is_allowed',
+     """    elif re.sub(r'\\s+', ' ', argument) in BASELINE_LOADERS:
+        return []""",
+     """    elif re.sub(r'\\s+', ' ', argument) in BASELINE_LOADERS:
+        raise ValueError('mutated: baseline loader rejected')""",
+     '#1139 fix-r2: baseline loader dynamic imports must stay allowed'),
+    ('recorder-closure-helpers-drift', RECORDER,
+     'ClosureTests.test_runner_closure_helpers_stay_synchronized',
+     """    'pathToFileURL(join(baseline, source)).href',""",
+     """    'pathToFileURL(join(baseline, sources)).href',""",
+     "#1139 fix-r2: the runners' closure helpers must stay synchronized"),
+    ('recorder-guard-drop-include-input', RECORDER,
+     'GuardedInputTests.test_declared_rust_dependency_joins_the_criterion_guard',
+     """                if kind == 'data':
+                    seen.add(resolved)
+                    continue""",
+     '                if kind == \'data\':\n'
+     '                    continue  # mutated: include inputs dropped from the guard',
+     '#1139 fix-r2: declared Rust dependencies must join the criterion guard'),
+    ('recorder-guard-drop-path-module', RECORDER,
+     'GuardedInputTests.test_criterion_inputs_are_discovered_from_declarations',
+     "        declarations.append(('path', strings[match.start(1) - 1][0]))",
+     '        pass  # mutated: #[path] modules dropped from the guard',
+     '#1139 fix-r2: the real criterion chain must be discovered as declared'),
+    ('recorder-guard-drop-plain-module', RECORDER,
+     'GuardedInputTests.test_declared_rust_dependency_joins_the_criterion_guard',
+     "        declarations.append(('mod', match[1]))",
+     '        pass  # mutated: plain modules dropped from the guard',
+     '#1139 fix-r2: declared Rust dependencies must join the criterion guard'),
+    ('recorder-guard-skip-unresolvable-module', RECORDER,
+     'GuardedInputTests.test_unresolvable_rust_declarations_fail_closed',
+     """                if len(existing) != 1:
+                    raise ValueError(
+                        f'#1139 module {target} in {path} does not resolve to '
+                        f'exactly one file: {[str(c) for c in existing]}')""",
+     '                if len(existing) != 1:\n'
+     '                    continue  # mutated: unresolvable modules skipped',
+     '#1139 fix-r2: unresolvable Rust declarations must fail closed'),
 ]
 
 
 def run_bound_test(test):
-    """Run one bound test from a freshly loaded module; return (result, text)."""
+    """Run one bound test from a freshly loaded module; return its outcome."""
     spec = importlib.util.spec_from_file_location('import_closure_under_probe', TESTS)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     stream = io.StringIO()
-    outcome = unittest.TextTestRunner(stream=stream, verbosity=0).run(
+    return unittest.TextTestRunner(stream=stream, verbosity=0).run(
         unittest.TestLoader().loadTestsFromName(test, module))
-    return outcome, stream.getvalue()
 
 
-def judge(outcome, output, marker):
+def judge(outcome, marker):
     if outcome.wasSuccessful() and not outcome.skipped:
         return 'SURVIVED', 'bound test still passed'
     if outcome.errors:
@@ -99,9 +208,31 @@ def judge(outcome, output, marker):
     return 'INVALID', 'bound test failed without its mutant-binding marker'
 
 
+def check_anchors():
+    """Validate every anchor and mutant without entering the tree lock."""
+    for probe, path, _test, pristine, mutant, _marker in GUARD_PROBES:
+        source = path.read_text()
+        if source.count(pristine) != 1:
+            raise SystemExit(f'#1139 stale probe anchor: {probe}')
+        ast.parse(source.replace(pristine, mutant))
+    print(f'PASS: {len(GUARD_PROBES)} probe anchors unique, mutants parse', flush=True)
+    return 0
+
+
 def main():
+    if '--check-anchors' in sys.argv[1:]:
+        return check_anchors()
+    # An outer timeout's SIGTERM/SIGHUP must unwind through the finally
+    # clauses instead of dying with the sources left mutated (#1139 fix-r2).
+    def terminate(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    for received in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(received, terminate)
     results = []
-    with mutating_sources(REPO, [RECORDER, RUN_REGISTRY]):
+    # The guard covers the two mutated runners and the bound criterion file:
+    # results generated from a dirty criterion prove nothing about this HEAD.
+    with mutating_sources(REPO, [RECORDER, RUN_REGISTRY, TESTS]):
         for probe, path, test, pristine, mutant, marker in GUARD_PROBES:
             row = dict(probe=probe, test=f'test_import_closure.py::{test}',
                        assertion=marker, status='INVALID', reason='not run')
@@ -109,21 +240,20 @@ def main():
                 source = path.read_text()
                 if source.count(pristine) != 1:
                     raise RuntimeError(f'#1139 stale probe anchor: {probe}')
-                outcome, _output = run_bound_test(test)
-                if not outcome.wasSuccessful():
-                    raise RuntimeError('#1139 bound test failed before mutation')
+                baseline = run_bound_test(test)
+                if not baseline.wasSuccessful() or baseline.skipped:
+                    raise RuntimeError('#1139 bound test failed or skipped before mutation')
                 try:
                     path.write_text(source.replace(pristine, mutant))
-                    outcome, output = run_bound_test(test)
-                    row['status'], row['reason'] = judge(outcome, output, marker)
+                    row['status'], row['reason'] = judge(run_bound_test(test), marker)
                 finally:
                     path.write_text(source)
             except Exception as error:
                 row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
             try:
-                outcome, _output = run_bound_test(test)
-                if not outcome.wasSuccessful():
-                    raise RuntimeError('restored bound test failed')
+                restored = run_bound_test(test)
+                if not restored.wasSuccessful() or restored.skipped:
+                    raise RuntimeError('restored bound test failed or skipped')
             except Exception as error:
                 row.update(status='INVALID',
                            reason=row['reason'] + f'; restored: {error}')

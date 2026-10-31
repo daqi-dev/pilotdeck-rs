@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import shutil
 import sys
+from urllib.parse import unquote, urlparse
 
 # Kept in sync with recorder/fix3-negative.py by hand; extracting the shared
 # closure/guard helpers is M6 #1099 (#1139 fix-r1 sibling review).
@@ -83,47 +84,123 @@ def _dynamic_import_arguments(text):
     return arguments
 
 
+# The only allowed computed dynamic-import arguments, verbatim: the two fixed
+# TS baseline loaders. recorder/generate.mts loads per-file sources with
+# ('src', path); run-registry/generate.mts loads one full 'src/...' path. Both
+# resolve inside PDRS_BASELINE, whose SHA-256 hashes oracle.json records, and
+# whitespace runs collapse before the comparison. Every other shape — templates
+# with substitutions, variables, concatenations, and arguments that merely
+# mention baseline — is rejected, never silently skipped (#1139 fix-r2 P1-1:
+# a whitelist, not a substring search).
+BASELINE_LOADERS = (
+    "pathToFileURL(join(baseline, 'src', path)).href",
+    'pathToFileURL(join(baseline, source)).href',
+)
+
+
+def _argument_without_trailing(argument, path):
+    """Strip trailing block comments and commas from a dynamic import argument.
+
+    Leading comments were already skipped by the argument scanner; a trailing
+    comment or comma (``import('./a.mjs' /* x */)``, ``import('./a.mjs',)``)
+    still denotes one literal specifier, so it is stripped before matching.
+    """
+    stripped = argument.rstrip()
+    while stripped.endswith(',') or stripped.endswith('*/'):
+        if stripped.endswith(','):
+            stripped = stripped[:-1].rstrip()
+            continue
+        start = stripped.rfind('/*')
+        if start < 0:
+            raise ValueError(
+                f'#1129 unterminated comment in dynamic import in {path}: {argument}')
+        stripped = stripped[:start].rstrip()
+    return stripped
+
+
 def _dynamic_import_targets(path, argument, source_root):
     """Closure members of one dynamic import argument; unprovable is an error.
 
-    Literal specifiers (quoted, comment-free templates) join the closure when
-    relative or inside the repository. Everything the closure cannot prove —
-    templates with substitutions, variables, concatenations and absolute paths
-    outside the repository — is an error, never a silently skipped dependency
-    (#1139 fix-r1 P1, synced here). The one allowed computed specifier is the
-    fixed TS baseline loader: those sources live outside the repository and
-    oracle.json records their SHA-256 hashes.
+    Only two argument shapes are accepted: literal specifiers (quoted,
+    comment-free templates) and the fixed baseline loaders listed above.
+    Everything else — templates with substitutions, variables, concatenations
+    and arguments that merely mention baseline — is an error, never a silently
+    skipped dependency (#1139 fix-r1 P1, whitelist in fix-r2 P1-1). file: URLs
+    are local dependencies and follow the absolute-path rules; node: builtins
+    skip like a static import; every other scheme is an error.
     """
+    original = argument
+    argument = _argument_without_trailing(argument, path)
     quoted = re.fullmatch(r'''(['"])([^'"\n]*)\1''', argument)
     if quoted is not None:
         specifier = quoted[2]
     elif re.fullmatch(r'`[^`]*`', argument) is not None and '${' not in argument:
         specifier = argument[1:-1]
+    elif re.sub(r'\s+', ' ', argument) in BASELINE_LOADERS:
+        return []
     else:
-        if re.search(r'\bbaseline\b', argument):
-            return []
         raise ValueError(
-            f'#1129 unrecognized dynamic import argument in {path}: {argument}')
+            f'#1129 unrecognized dynamic import argument in {path}: {original}')
     if specifier.startswith(('./', '../')):
         return [path.parent / specifier]
+    scheme = re.match(r'[A-Za-z][A-Za-z0-9+.\-]*:', specifier)
+    if scheme is not None:
+        if scheme[0] == 'node:':
+            return []  # Node builtin module, never a repository file
+        if scheme[0] != 'file:':
+            raise ValueError(
+                f'#1129 unsupported dynamic import scheme in {path}: {original}')
+        parsed = urlparse(specifier)
+        if (parsed.netloc not in ('', 'localhost')
+                or parsed.query or parsed.fragment):
+            raise ValueError(
+                f'#1129 dynamic import file URL is not a plain local path '
+                f'in {path}: {original}')
+        specifier = unquote(parsed.path)
+        if not specifier.startswith('/'):
+            raise ValueError(
+                f'#1129 dynamic import file URL lacks an absolute path in {path}: {original}')
     if not specifier.startswith('/'):
         return []  # bare external module specifier, like a static import
     resolved = Path(specifier).resolve()
     if resolved.is_relative_to(source_root):
         return [resolved]
     raise ValueError(
-        f'#1129 absolute dynamic import outside the repository in {path}: {argument}')
+        f'#1129 absolute dynamic import outside the repository in {path}: {original}')
+
+
+def _static_import_specifiers(text, path):
+    """Literal string specifiers of static imports and re-exports in ``text``.
+
+    Covers ``import './x'``, ``import x from './x'`` and ``export ... from
+    './x'`` in any spacing, including zero whitespace and comments between the
+    keyword and the string — forms real loaders accept and the old
+    ``\\bimport\\s+`` regex silently dropped (#1139 fix-r2). Dynamic
+    ``import(`` and ``import.meta`` never reach a string here.
+    """
+    specifiers = []
+    for keyword in ('import', 'from'):
+        for found in re.finditer(rf'\b{keyword}\b', text):
+            index = _skip_spacing(text, found.end())
+            if index >= len(text) or text[index] not in '\'"':
+                continue
+            quote, end = text[index], index + 1
+            while end < len(text) and text[end] not in (quote, '\n'):
+                end += 2 if text[end] == '\\' else 1
+            if end >= len(text) or text[end] != quote:
+                raise ValueError(
+                    f'#1129 unterminated static import specifier in {path}')
+            specifiers.append(text[index + 1:end])
+    return specifiers
 
 
 def local_import_closure(entry, source_root):
     """Find literal relative ESM imports, retaining their repository layout.
 
-    Like baseline_source_guard.mjs, scan from/import string specifiers
-    (including re-exports and side-effect imports). Dynamic imports go through
-    the fail-closed argument scanner above, so a comment-separated or template
-    literal still joins the closure while anything unprovable is an error.
-    This fixture closure uses exact filenames; missing files are errors, never
-    skipped.
+    Static from/import string specifiers (including re-exports and
+    side-effect imports) are scanned spacing- and comment-aware; dynamic
+    imports go through the fail-closed argument scanner above. This fixture
+    closure uses exact filenames; missing files are errors, never skipped.
     """
     source_root = source_root.resolve()
     pending = [entry]
@@ -138,8 +215,7 @@ def local_import_closure(entry, source_root):
             raise FileNotFoundError(f'#1129 missing local import: {path}')
         seen.add(path)
         text = path.read_text()
-        for match in re.finditer(r'''(?:\bfrom\s*|\bimport\s+)(['"])([^'"]+)\1''', text):
-            specifier = match[2]
+        for specifier in _static_import_specifiers(text, path):
             if specifier.startswith(('./', '../')):
                 pending.append(path.parent / specifier)
         for argument in _dynamic_import_arguments(text):
@@ -257,10 +333,13 @@ def main():
             label = f'{name}-generated-run-registry-scenario'
             # cargo would compile unmutated Rust here, so generator mutants
             # carry no cargo receipt: their receipt is the node run of the
-            # mutated generator itself (#1139 fix-r1 P2, synced here).
+            # mutated generator itself, and compiled stays an explicit False
+            # so the row schema matches the Rust rows (#1139 fix-r1 P2, fix-r2
+            # synced here).
             row = dict(mutation=label, test='run-registry/generate.mts::scenario-count',
                        assertion=f'run-registry oracle scenario count: {actual} !== 25',
-                       status='INVALID', reason='not run', receipt='not run')
+                       status='INVALID', reason='not run', compiled=False,
+                       receipt='not run')
             try:
                 # Mirroring from the repository root also keeps ../../ imports
                 # and the provenance guard's import.meta.url inside scratch.

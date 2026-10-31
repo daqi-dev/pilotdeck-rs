@@ -20,6 +20,7 @@ from pathlib import Path
 import re
 import shutil
 import sys
+from urllib.parse import unquote, urlparse
 
 # Kept in sync with run-registry/count-negative.py by hand; extracting the
 # shared closure/guard helpers is M6 #1099 (#1139 fix-r1 sibling review).
@@ -35,6 +36,11 @@ REPO = FIXTURES.parents[4]
 TEST_NAME = 'real_ts_scenarios_match_outcomes_and_bytes'
 TEST = ['cargo', 'test', '-p', 'pilotdeck-gateway', '--test', 'recorder',
         TEST_NAME, '--', '--exact', '--nocapture', '--test-threads=4']
+GATEWAY = REPO / 'src/pilotdeck-gateway'
+# The Rust criterion entry: tests/recorder.rs pulls its inputs in through
+# mod/#[path]/include declarations; the manifest selects the build.
+CRITERION_ENTRY = GATEWAY / 'tests/recorder.rs'
+CRITERION_MANIFEST = GATEWAY / 'Cargo.toml'
 
 
 def _skip_spacing(text, index):
@@ -90,47 +96,123 @@ def _dynamic_import_arguments(text):
     return arguments
 
 
+# The only allowed computed dynamic-import arguments, verbatim: the two fixed
+# TS baseline loaders. recorder/generate.mts loads per-file sources with
+# ('src', path); run-registry/generate.mts loads one full 'src/...' path. Both
+# resolve inside PDRS_BASELINE, whose SHA-256 hashes oracle.json records, and
+# whitespace runs collapse before the comparison. Every other shape — templates
+# with substitutions, variables, concatenations, and arguments that merely
+# mention baseline — is rejected, never silently skipped (#1139 fix-r2 P1-1:
+# a whitelist, not a substring search).
+BASELINE_LOADERS = (
+    "pathToFileURL(join(baseline, 'src', path)).href",
+    'pathToFileURL(join(baseline, source)).href',
+)
+
+
+def _argument_without_trailing(argument, path):
+    """Strip trailing block comments and commas from a dynamic import argument.
+
+    Leading comments were already skipped by the argument scanner; a trailing
+    comment or comma (``import('./a.mjs' /* x */)``, ``import('./a.mjs',)``)
+    still denotes one literal specifier, so it is stripped before matching.
+    """
+    stripped = argument.rstrip()
+    while stripped.endswith(',') or stripped.endswith('*/'):
+        if stripped.endswith(','):
+            stripped = stripped[:-1].rstrip()
+            continue
+        start = stripped.rfind('/*')
+        if start < 0:
+            raise ValueError(
+                f'#1139 unterminated comment in dynamic import in {path}: {argument}')
+        stripped = stripped[:start].rstrip()
+    return stripped
+
+
 def _dynamic_import_targets(path, argument, source_root):
     """Closure members of one dynamic import argument; unprovable is an error.
 
-    Literal specifiers (quoted, comment-free templates) join the closure when
-    relative or inside the repository. Everything the closure cannot prove —
-    templates with substitutions, variables, concatenations and absolute paths
-    outside the repository — is an error, never a silently skipped dependency
-    (#1139 fix-r1 P1). The one allowed computed specifier is the fixed TS
-    baseline loader: those sources live outside the repository and oracle.json
-    records their SHA-256 hashes.
+    Only two argument shapes are accepted: literal specifiers (quoted,
+    comment-free templates) and the fixed baseline loaders listed above.
+    Everything else — templates with substitutions, variables, concatenations
+    and arguments that merely mention baseline — is an error, never a silently
+    skipped dependency (#1139 fix-r1 P1, whitelist in fix-r2 P1-1). file: URLs
+    are local dependencies and follow the absolute-path rules; node: builtins
+    skip like a static import; every other scheme is an error.
     """
+    original = argument
+    argument = _argument_without_trailing(argument, path)
     quoted = re.fullmatch(r'''(['"])([^'"\n]*)\1''', argument)
     if quoted is not None:
         specifier = quoted[2]
     elif re.fullmatch(r'`[^`]*`', argument) is not None and '${' not in argument:
         specifier = argument[1:-1]
+    elif re.sub(r'\s+', ' ', argument) in BASELINE_LOADERS:
+        return []
     else:
-        if re.search(r'\bbaseline\b', argument):
-            return []
         raise ValueError(
-            f'#1139 unrecognized dynamic import argument in {path}: {argument}')
+            f'#1139 unrecognized dynamic import argument in {path}: {original}')
     if specifier.startswith(('./', '../')):
         return [path.parent / specifier]
+    scheme = re.match(r'[A-Za-z][A-Za-z0-9+.\-]*:', specifier)
+    if scheme is not None:
+        if scheme[0] == 'node:':
+            return []  # Node builtin module, never a repository file
+        if scheme[0] != 'file:':
+            raise ValueError(
+                f'#1139 unsupported dynamic import scheme in {path}: {original}')
+        parsed = urlparse(specifier)
+        if (parsed.netloc not in ('', 'localhost')
+                or parsed.query or parsed.fragment):
+            raise ValueError(
+                f'#1139 dynamic import file URL is not a plain local path '
+                f'in {path}: {original}')
+        specifier = unquote(parsed.path)
+        if not specifier.startswith('/'):
+            raise ValueError(
+                f'#1139 dynamic import file URL lacks an absolute path in {path}: {original}')
     if not specifier.startswith('/'):
         return []  # bare external module specifier, like a static import
     resolved = Path(specifier).resolve()
     if resolved.is_relative_to(source_root):
         return [resolved]
     raise ValueError(
-        f'#1139 absolute dynamic import outside the repository in {path}: {argument}')
+        f'#1139 absolute dynamic import outside the repository in {path}: {original}')
+
+
+def _static_import_specifiers(text, path):
+    """Literal string specifiers of static imports and re-exports in ``text``.
+
+    Covers ``import './x'``, ``import x from './x'`` and ``export ... from
+    './x'`` in any spacing, including zero whitespace and comments between the
+    keyword and the string — forms real loaders accept and the old
+    ``\\bimport\\s+`` regex silently dropped (#1139 fix-r2). Dynamic
+    ``import(`` and ``import.meta`` never reach a string here.
+    """
+    specifiers = []
+    for keyword in ('import', 'from'):
+        for found in re.finditer(rf'\b{keyword}\b', text):
+            index = _skip_spacing(text, found.end())
+            if index >= len(text) or text[index] not in '\'"':
+                continue
+            quote, end = text[index], index + 1
+            while end < len(text) and text[end] not in (quote, '\n'):
+                end += 2 if text[end] == '\\' else 1
+            if end >= len(text) or text[end] != quote:
+                raise ValueError(
+                    f'#1139 unterminated static import specifier in {path}')
+            specifiers.append(text[index + 1:end])
+    return specifiers
 
 
 def local_import_closure(entry, source_root):
     """Find literal relative ESM imports, retaining their repository layout.
 
-    Like baseline_source_guard.mjs, scan from/import string specifiers
-    (including re-exports and side-effect imports). Dynamic imports go through
-    the fail-closed argument scanner above, so a comment-separated or template
-    literal still joins the closure while anything unprovable is an error.
-    This fixture closure uses exact filenames; missing files are errors, never
-    skipped.
+    Static from/import string specifiers (including re-exports and
+    side-effect imports) are scanned spacing- and comment-aware; dynamic
+    imports go through the fail-closed argument scanner above. This fixture
+    closure uses exact filenames; missing files are errors, never skipped.
     """
     source_root = source_root.resolve()
     pending = [entry]
@@ -145,8 +227,7 @@ def local_import_closure(entry, source_root):
             raise FileNotFoundError(f'#1139 missing local import: {path}')
         seen.add(path)
         text = path.read_text()
-        for match in re.finditer(r'''(?:\bfrom\s*|\bimport\s+)(['"])([^'"]+)\1''', text):
-            specifier = match[2]
+        for specifier in _static_import_specifiers(text, path):
             if specifier.startswith(('./', '../')):
                 pending.append(path.parent / specifier)
         for argument in _dynamic_import_arguments(text):
@@ -162,28 +243,192 @@ def copy_local_import_closure(entry, source_root, destination_root):
     return destination_root / entry.resolve().relative_to(source_root.resolve())
 
 
+def _rust_masked(text, path):
+    """Rust source with comments and string/char interiors blanked to spaces.
+
+    Delimiters stay in place, so the declaration patterns below can only match
+    real code; the returned map keeps every literal's ``(content, closing
+    quote offset)`` by its opening quote offset. Unterminated comments, strings
+    or raw strings are errors, never silently skipped (#1139 fix-r2 P1-2).
+    """
+    masked = list(text)
+    strings = {}
+    index, length = 0, len(text)
+
+    def blank(start, end):
+        for position in range(start, min(end, length)):
+            if not masked[position].isspace():
+                masked[position] = ' '
+
+    while index < length:
+        if text.startswith('//', index):
+            end = text.find('\n', index)
+            end = length if end < 0 else end
+            blank(index, end)
+            index = end
+        elif text.startswith('/*', index):
+            depth, start = 1, index
+            index += 2
+            while index < length and depth:
+                if text.startswith('/*', index):
+                    depth, index = depth + 1, index + 2
+                elif text.startswith('*/', index):
+                    depth, index = depth - 1, index + 2
+                else:
+                    index += 1
+            if depth:
+                raise ValueError(f'#1139 unterminated Rust comment in {path}')
+            blank(start, index)
+        elif (character := text[index]) == 'r':
+            opening = re.match(r'r(#*)"', text[index:])
+            if opening is None:
+                index += 1
+                continue
+            closing = '"' + opening[1]
+            end = text.find(closing, index + opening.end())
+            if end < 0:
+                raise ValueError(f'#1139 unterminated raw string in {path}')
+            quote = index + opening.end() - 1
+            strings[quote] = (text[quote + 1:end], end)
+            blank(quote + 1, end)
+            index = end + len(closing)
+        elif character == '"':
+            end = index + 1
+            while end < length and text[end] != '"':
+                if text[end] == '\n':
+                    raise ValueError(f'#1139 unterminated Rust string in {path}')
+                end += 2 if text[end] == '\\' else 1
+            if end >= length:
+                raise ValueError(f'#1139 unterminated Rust string in {path}')
+            strings[index] = (text[index + 1:end], end)
+            blank(index + 1, end)
+            index = end + 1
+        elif character == "'":
+            literal = re.match(r"'(\\.|[^'\\])'", text[index:])
+            if literal is None:  # lifetime or loop label: code, not data
+                index += 1
+            else:
+                blank(index + 1, index + len(literal[0]) - 1)
+                index += len(literal[0])
+        else:
+            index += 1
+    return ''.join(masked), strings
+
+
+_PATH_MODULE = re.compile(
+    r'#\[\s*path\s*=\s*"([^"]*)"\s*\]\s*'
+    r'(?:#\[[^\]]*\]\s*|pub(?:\s*\([^)]*\))?\s*)*'
+    r'mod\s+(\w+)\s*;')
+_PLAIN_MODULE = re.compile(r'\bmod\s+(\w+)\s*;')
+_INLINE_MODULE = re.compile(r'\bmod\s+(\w+)\s*\{')
+_INCLUDE = re.compile(r'\binclude(?:_str|_bytes)?!\s*\(')
+
+
+def _rust_declarations(text, path):
+    """``(kind, target)`` declaration pairs of one Rust source file.
+
+    ``('path', file)`` is a ``#[path]``-overridden module, ``('mod', name)``
+    a plain module declaration, ``('data', file)`` an include_str!/include_
+    bytes! literal input. A path attribute without a module, an inline module,
+    a non-literal include argument, a plain ``include!`` of code, or any other
+    mod keyword shape is an error, so the criterion guard can never silently
+    miss a declared input (#1139 fix-r2 P1-2).
+    """
+    masked, strings = _rust_masked(text, path)
+    declarations, claimed = [], []
+    for found in re.finditer(r'#\[\s*path\b', masked):
+        match = _PATH_MODULE.match(masked, found.start())
+        if match is None:
+            raise ValueError(
+                f'#1139 path attribute without a module declaration in {path}')
+        declarations.append(('path', strings[match.start(1) - 1][0]))
+        claimed.append(match.span())
+    for match in _PLAIN_MODULE.finditer(masked):
+        if any(start <= match.start() < end for start, end in claimed):
+            continue
+        declarations.append(('mod', match[1]))
+        claimed.append(match.span())
+    if _INLINE_MODULE.search(masked) is not None:
+        raise ValueError(f'#1139 inline module declaration in {path}')
+    for found in re.finditer(r'\bmod\b', masked):
+        if not any(start <= found.start() < end for start, end in claimed):
+            raise ValueError(f'#1139 unrecognized mod declaration in {path}')
+    for found in _INCLUDE.finditer(masked):
+        index = found.end()
+        while index < len(masked) and masked[index].isspace():
+            index += 1
+        if index >= len(masked) or masked[index] != '"':
+            raise ValueError(f'#1139 non-literal include macro argument in {path}')
+        content, closing = strings[index]
+        after = closing + 1
+        while after < len(masked) and masked[after].isspace():
+            after += 1
+        if after >= len(masked) or masked[after] != ')':
+            raise ValueError(f'#1139 include macro with extra arguments in {path}')
+        if found[0].startswith('include!'):
+            # Code inclusion would need its own recursive scan; nothing in the
+            # criterion uses it today, so refuse instead of under-guarding.
+            raise ValueError(f'#1139 plain include! is unsupported in {path}')
+        declarations.append(('data', content))
+    return declarations
+
+
+def rust_criterion_closure(entry):
+    """Rust files and literal inputs the bound criterion test compiles.
+
+    Walks module declarations and include macros from the test entry
+    recursively; every unresolvable or ambiguous declaration is an error, so a
+    newly declared helper joins the guard without editing a preset list
+    (#1139 fix-r2 P1-2). The crate manifest is added by the caller.
+    """
+    entry = Path(entry).resolve()
+    pending, seen = [entry], set()
+    while pending:
+        path = pending.pop()
+        if path in seen:
+            continue
+        if not path.is_file():
+            raise FileNotFoundError(f'#1139 missing Rust criterion file: {path}')
+        seen.add(path)
+        for kind, target in _rust_declarations(path.read_text(), path):
+            if kind == 'mod':
+                candidates = [path.parent / f'{target}.rs',
+                              path.parent / target / 'mod.rs']
+                existing = [candidate for candidate in candidates if candidate.is_file()]
+                if len(existing) != 1:
+                    raise ValueError(
+                        f'#1139 module {target} in {path} does not resolve to '
+                        f'exactly one file: {[str(c) for c in existing]}')
+                resolved = existing[0]
+            else:
+                resolved = (path.parent / target).resolve()
+                if kind == 'path' and not resolved.is_file():
+                    raise FileNotFoundError(
+                        f'#1139 missing Rust criterion module file: {resolved}')
+                if kind == 'data':
+                    seen.add(resolved)
+                    continue
+            pending.append(resolved)
+    return sorted(seen)
+
+
 @contextmanager
 def guarded_inputs():
     fixture_root = FIXTURES.parent
     generator = FIXTURES / 'generate.mts'
     # The Rust criterion must equal HEAD too, not only the generator side:
-    # tests/recorder.rs binds #[path] common/baseline.rs -> regeneration_masks.rs,
-    # whose include_str! compiles in _shared/regeneration-masks.tsv, and the
-    # crate manifest selects the build; a dirty criterion could publish KILLED
-    # from unreviewed bytes (#1139 fix-r1 P1). run-registry's bound test sits
-    # inside the product tree its shared pristine check already covers.
-    gateway = REPO / 'src/pilotdeck-gateway'
+    # its inputs are discovered from tests/recorder.rs's own mod/#[path]/
+    # include_*! declarations plus the crate manifest, so a newly declared
+    # dependency joins the guard without editing a preset list (#1139 fix-r1
+    # P1, mechanical discovery in fix-r2 P1-2). run-registry's bound test
+    # sits inside the product tree its shared pristine check already covers.
     guarded = [generator, FIXTURES / 'oracle.json', Path(__file__).resolve(),
                fixture_root / '_shared/negative_control.py',
                *(fixture_root / name for name in (
                    'negative_process.py', 'negative_suite.py',
                    'negative_panic.py', 'pending_reanchor.py',
                )),
-               gateway / 'tests/recorder.rs',
-               gateway / 'tests/common/baseline.rs',
-               gateway / 'tests/common/regeneration_masks.rs',
-               fixture_root / '_shared/regeneration-masks.tsv',
-               gateway / 'Cargo.toml']
+               *rust_criterion_closure(CRITERION_ENTRY), CRITERION_MANIFEST]
     # Discover imports only after the entry and runner are checked under the
     # tree lock; keep that same reentrant lock through copying and all controls.
     with mutating_sources(REPO, guarded):
@@ -275,10 +520,12 @@ def main():
             label = f'{name}-generated-recorder-scenario'
             # cargo would compile unmutated Rust here, so generator mutants
             # carry no cargo receipt: their receipt is the node run of the
-            # mutated generator itself (#1139 fix-r1 P2).
+            # mutated generator itself, and compiled stays an explicit False
+            # so the row schema matches the Rust rows (#1139 fix-r1 P2, fix-r2).
             row = dict(mutation=label, test='recorder/generate.mts::scenario-count',
                        assertion=f'recorder oracle scenario count: {actual} !== 28',
-                       status='INVALID', reason='not run', receipt='not run')
+                       status='INVALID', reason='not run', compiled=False,
+                       receipt='not run')
             try:
                 # Mirroring from the repository root also keeps ../_shared and
                 # ../../baseline_source_guard.mjs imports inside scratch (#1139).
