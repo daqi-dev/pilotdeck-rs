@@ -121,15 +121,20 @@ class WorkspacePristine(unittest.TestCase):
                 git(self.root, 'reset', '-q', 'HEAD', '--', str(path))
 
     def test_staged_deletion_is_rejected(self):
-        path = INPUTS[3]
-        with api.mutating_sources(self.root, []):
-            git(self.root, 'rm', path)
-            try:
-                with self.assertRaises(api.SourceBaselineError,
-                                       msg='#1166 staged deletion must remain guarded'):
-                    api._assert_product_pristine(self.root, 'HEAD')
-            finally:
-                git(self.root, 'restore', '--source=HEAD', '--staged', '--worktree', '--', path)
+        # A deletion that also removed the worktree file is caught by the
+        # scanner's missing-input fail-closed. An index-only deletion of a
+        # cache-named tracked input (worktree intact, *.pyc excluded from the
+        # untracked check, non-.rs so the scanner never enumerates it) is
+        # visible to the index-vs-baseline diff alone.
+        for path, cached in ((INPUTS[3], False), (INPUTS[19], True)):
+            with self.subTest(cached=cached), api.mutating_sources(self.root, []):
+                git(self.root, *(['rm'] + (['--cached'] if cached else []) + [path]))
+                try:
+                    with self.assertRaises(api.SourceBaselineError,
+                                           msg='#1166 staged deletion must remain guarded'):
+                        api._assert_product_pristine(self.root, 'HEAD')
+                finally:
+                    git(self.root, 'restore', '--source=HEAD', '--staged', '--worktree', '--', path)
 
     def test_hidden_index_flags_are_rejected(self):
         path = self.root / INPUTS[1]
@@ -556,7 +561,10 @@ class WorkspacePristine(unittest.TestCase):
 
     def test_sigkill_predecessor_other_crate_is_rejected(self):
         helper = str(FIXTURES)
-        target = self.root / INPUTS[3]
+        # A non-.rs input in another crate: the scanner's per-file literal
+        # checks never enumerate it, so only the whole-workspace source areas
+        # can catch this predecessor's residue.
+        target = self.root / INPUTS[6]
         control = self.root / 'control'
         control.mkdir()
         holder = r'''
@@ -644,7 +652,9 @@ class RunnerTargets(unittest.TestCase):
                      and node.func.id == 'run_owned']
             self.assertTrue(len(calls) == 1, marker)
             call_code = compile(ast.Expression(calls[0]), str(script), 'eval')
-        tree_target = str(ROOT / '_build/cargo-target')
+        # The shared admission hands Cargo the resolved target (a host chain's
+        # _build can be a symlink), so the expectation resolves it too.
+        tree_target = str((ROOT / '_build/cargo-target').resolve())
         for supplied in (tree_target, None, str(ROOT / 'src/target'),
                          str(ROOT.parent / 'other-target')):
             with self.subTest(target=supplied), tempfile.TemporaryDirectory(
@@ -788,6 +798,23 @@ class RunnerTargets(unittest.TestCase):
                           '#1166 skills runner shares the admissible target',
                           hook='run_owned', fresh_out=True)
 
+    def test_shared_target_admission_resolves_symlinked_build(self):
+        # A host chain's _build is a symlink to a dedicated build directory.
+        # The shared admission must hand every runner the resolved target, so
+        # the unset default and an explicit symlinked value normalize alike.
+        with tempfile.TemporaryDirectory(prefix='pdrs1166-link-') as directory:
+            outside = Path(directory) / 'shared-target'
+            outside.mkdir()
+            root = Path(directory) / 'tree'
+            root.mkdir()
+            (root / '_build').symlink_to(outside, target_is_directory=True)
+            expected = str((root / '_build/cargo-target').resolve())
+            unset = api.target_environment(root, {})
+            explicit = api.target_environment(root, {'CARGO_TARGET_DIR': str(root / '_build/cargo-target')})
+            self.assertTrue(unset['CARGO_TARGET_DIR'] == expected
+                            and explicit['CARGO_TARGET_DIR'] == expected,
+                            '#1166 shared admission resolves the symlinked _build target')
+
     def test_sibling_scripts_have_no_local_target_allowlist(self):
         # The shared admission is the only place a target directory may be
         # named; a sibling script that grows its own allow-list (r5/r6
@@ -814,8 +841,11 @@ class RunnerTargets(unittest.TestCase):
         result = subprocess.run(['node', '--test', '--test-reporter=tap', '--test-name-pattern=^' + name + '$',
                                  str(FIXTURES.parent / 'upgrade/source_identity.test.mjs')],
                                 capture_output=True, text=True, timeout=30)
+        # Keep the marker at the end of one line: the bound negative control
+        # judges the AssertionError line by that suffix.
+        detail = ' '.join((result.stdout + result.stderr).split())
         self.assertTrue(result.returncode == 0 and ('ok 1 - \\' + name) in result.stdout,
-                        '#1166 source-identity helper defaults outside src: ' + result.stdout + result.stderr)
+                        detail[:400] + ' #1166 source-identity helper defaults outside src')
 
 
 class ScannerBootstrap(unittest.TestCase):
@@ -1224,7 +1254,7 @@ class SnapshotControls(unittest.TestCase):
         with patch.dict(os.environ):
             os.environ.pop('CARGO_TARGET_DIR', None)
             env = api._scanner_environment()
-        self.assertTrue(env['CARGO_TARGET_DIR'] == str(ROOT / '_build/cargo-target'),
+        self.assertTrue(env['CARGO_TARGET_DIR'] == str((ROOT / '_build/cargo-target').resolve()),
                         '#1166 scanner has a default target without caller setup')
 
     def test_runner_build_uses_normalized_environment(self):
