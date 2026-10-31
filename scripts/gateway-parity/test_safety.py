@@ -1733,9 +1733,29 @@ class ApparatusInputs(unittest.TestCase):
         self.assertEqual(report['points'].get('guard-failure', {}).get('shared'), True, message)
 
     def test_deadline_not_run_has_dedicated_exit_code(self):
-        for children in ((), (None,), (None, None), ('PASS', None)):
-            self.assertEqual(common.aggregate_status(*children), ('PASS', 0),
-                             '#166 empty optional aggregation stays PASS/0')
+        # Keep shared-contract assertions in the existing audited test entry.
+        for children in ((), [], (None,), (None, None)):
+            with self.subTest(children=children):
+                self.assertTrue(common.aggregate_status(*children) == ('FAIL', 1),
+                                '#952 empty or all-None aggregation must be FAIL/1')
+
+        from itertools import product
+        states = ('PASS', 'PASS_WITH_SKIPS', 'NOT_RUN', 'BLOCKED', 'FAIL')
+        codes = (0, 1, 3, 2, 1)
+        for size in (1, 2, 3):
+            for children in product(states, repeat=size):
+                worst = max(states.index(child) for child in children)
+                expected = (states[worst], codes[worst])
+                for optional in (children, (None, *children, None)):
+                    with self.subTest(children=optional):
+                        self.assertTrue(common.aggregate_status(*optional) == expected,
+                                        '#952 nonempty aggregation must preserve status order and exit codes')
+        for unknown in ('', 'UNKNOWN', False, 0, [], {}):
+            for children in ((unknown,), ('PASS', None, unknown), (unknown, 'FAIL')):
+                with self.subTest(children=children):
+                    self.assertTrue(common.aggregate_status(*children) == ('FAIL', 1),
+                                    '#952 unknown children must remain FAIL/1')
+
         # State/exit mutations run under the negative runner's parity lease.
         # Exercise the actual main body in-process; CLI isolation is tested by
         # ImportIsolation, so a HEAD refusal cannot masquerade as a status kill.
