@@ -244,30 +244,43 @@ class WitnessTests(unittest.TestCase):
         self.assertTrue(server.shutdown.call_count == worker.join.call_count == 0, '#1140 unstarted provider never waits for serving thread')
         self.assertTrue(not c.common.LIVE_GROUPS, '#1140 failed start leaves no owned provider')
 
-    def test_preflight_reuses_ports(self):
+    def test_preflight_listener_policies(self):
         from contextlib import nullcontext
+        probes = [mock.MagicMock(), mock.MagicMock()]
+        for probe in probes:
+            probe.__enter__.return_value = probe
+            probe.__exit__.return_value = False
         with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
-                mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket') as sockets, \
+                mock.patch.object(sys, 'platform', 'linux'), \
+                mock.patch.object(c.socket, 'socket', side_effect=probes), \
                 mock.patch.object(c, '_native_run', return_value='done'), redirect_stdout(io.StringIO()):
-            probe = sockets.return_value.__enter__.return_value
-            def bind(_):
-                self.assertTrue(probe.setsockopt.call_count == probe.bind.call_count and probe.setsockopt.call_args == mock.call(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1), '#1140 preflight reuses TIME_WAIT ports')
-            probe.bind.side_effect = bind
+            def gateway_bind(address):
+                self.assertTrue(probes[0].setsockopt.call_count == 0, '#1140 gateway preflight never enables reuse')
+                self.assertTrue(address == ('127.0.0.1', 28999), '#1140 gateway preflight uses gateway port')
+            def provider_bind(address):
+                self.assertTrue(probes[1].setsockopt.call_args_list == [mock.call(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)], '#1140 provider preflight enables reuse before bind')
+                self.assertTrue(address == ('127.0.0.1', 29000), '#1140 provider preflight uses provider port')
+            probes[0].bind.side_effect = gateway_bind
+            probes[1].bind.side_effect = provider_bind
             c.native_run('', '', self.folder / 'unused')
-        self.assertTrue(probe.bind.call_count == 2, '#1140 reusable preflight checks both ports')
+        self.assertTrue(all(probe.bind.call_count == 1 for probe in probes), '#1140 policy preflight checks both ports')
 
-    def test_wait_ready_reuses_port(self):
+    def test_wait_ready_gateway_policy(self):
         tracer = mock.Mock()
         tracer.poll.return_value = 1
         with mock.patch.object(c.socket, 'socket') as sockets:
             probe = sockets.return_value.__enter__.return_value
-            def bind(_):
-                self.assertTrue(probe.setsockopt.call_args == mock.call(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1), '#1140 readiness reuses TIME_WAIT port')
+            def bind(address):
+                self.assertTrue(probe.setsockopt.call_count == 0, '#1140 readiness gateway never enables reuse')
+                self.assertTrue(address == ('127.0.0.1', 28999), '#1140 readiness checks gateway port')
             probe.bind.side_effect = bind
-            with self.assertRaises(c.w.Incomplete, msg='#1140 reusable readiness reports original failure'):
+            with self.assertRaises(c.w.Incomplete, msg='#1140 readiness reports original failure on free port'):
                 c.wait_ready(tracer, self.folder, 28999, 0)
+        self.assertTrue(probe.bind.call_count == 1, '#1140 readiness probes exited gateway once')
 
     def test_real_probe_time_wait_and_listener(self):
+        # Exercised on Darwin as well as the Linux collector host; no BSD
+        # reuse assumption. The listener models HTTPServer, not the gateway.
         # Server actively closes first: recv EOF orders FIN before client close.
         with socket.socket() as listener:
             listener.settimeout(2)
@@ -275,9 +288,10 @@ class WitnessTests(unittest.TestCase):
             listener.bind(('127.0.0.1', 0))
             port = listener.getsockname()[1]
             listener.listen()
-            with self.assertRaises(OSError, msg='#1140 reusable probe rejects real listener') as busy:
-                c.probe_bind(port)
-            self.assertTrue(busy.exception.errno == errno.EADDRINUSE, '#1140 real listener is address in use')
+            for reuse in (False, True):
+                with self.assertRaises(OSError, msg='#1140 both probe policies reject real listener') as busy:
+                    c.probe_bind(port, reuse_address=reuse)
+                self.assertTrue(busy.exception.errno == errno.EADDRINUSE, '#1140 real listener is address in use')
             with socket.create_connection(('127.0.0.1', port), timeout=2) as client:
                 connection, _ = listener.accept()
                 with connection:
@@ -286,13 +300,12 @@ class WitnessTests(unittest.TestCase):
                     self.assertTrue(client.recv(1) == b'', '#1140 server FIN precedes client close')
                     client.shutdown(socket.SHUT_WR)
                     self.assertTrue(connection.recv(1) == b'', '#1140 client FIN completes TIME_WAIT setup')
-        with socket.socket() as bare:
-            with self.assertRaises(OSError, msg='#1140 TIME_WAIT fixture rejects bare bind') as waiting:
-                bare.bind(('127.0.0.1', port))
+        with self.assertRaises(OSError, msg='#1140 gateway probe rejects real TIME_WAIT') as waiting:
+            c.probe_bind(port, reuse_address=False)
         self.assertTrue(waiting.exception.errno == errno.EADDRINUSE, '#1140 TIME_WAIT occupies bare bind')
         error = None
         try:
-            c.probe_bind(port)
+            c.probe_bind(port, reuse_address=True)
         except OSError as caught:
             error = caught
         self.assertTrue(error is None, '#1140 reusable probe accepts real TIME_WAIT')
@@ -541,6 +554,61 @@ class WitnessTests(unittest.TestCase):
         self.assertTrue(len(value['networkWitness']['calls']) == 2, '#1140 every connect retained')
         self.assertTrue(value['networkWitness']['calls'][0]['ownerPid'] == 100, '#1140 thread egress owner is TGID')
         self.assertTrue(value['networkWitness']['calls'][1]['target'] == '[::1]:29001', '#1140 IPv6 endpoint retained')
+
+    def test_cb8_interleaved_sendto(self):
+        # Verbatim cb8 trace fragment: mock WS text only, no HTTP prompts/paths.
+        fragment = Path(__file__).with_name('cb8-sendto-interleaved.trace').read_text()
+        raw = (exec_line(2378057, self.host)
+               + '2378057 clone(flags=CLONE_VM|CLONE_THREAD) = 2378081\n'
+               + fragment
+               + '2378057 exit_group(0) = ?\n2378057 +++ exited with 0 +++\n')
+        value, error = None, None
+        try:
+            value = w.parse_trace(raw, self.contract)
+        except w.Incomplete as caught:
+            error = caught
+        self.assertTrue(error is None, '#1140 cb8 interleaved sendto parses complete call: ' + str(error))
+        self.assertTrue(value['networkWitness']['calls'] == [], '#1140 cb8 connected send adds no destination')
+        self.assertTrue(value['processes'][0]['exitCode'] == 0, '#1140 cb8 host exit remains witnessed')
+        rows = w.records(fragment)
+        sends = [body for pid, body in rows if pid == 2378057 and body.startswith('sendto(')]
+        self.assertTrue(len(sends) == 1, '#1140 cb8 sendto entry and return form one record')
+        self.assertTrue(sends[0].startswith('sendto(14, ') and sends[0].endswith(', 352, MSG_NOSIGNAL, NULL, 0 )           = 352'), '#1140 cb8 merged fd arguments and result retained')
+        # Normalizing the separator must not certify an addressed send.
+        with self.assertRaises(w.Incomplete, msg='#1140 cb8 addressed send remains rejected'):
+            w.parse_trace(raw.replace('NULL, 0 <unfinished', '{sa_family=AF_INET}, 16 <unfinished'), self.contract)
+
+    def test_interleaved_connect(self):
+        connection = ('101 connect(3, {sa_family=AF_INET, sin_port=htons(29000), sin_addr=inet_addr('
+                      + hx('127.0.0.1') + ')}, 16) = -1 EINPROGRESS (Operation now in progress)\n')
+        split = ('101 connect(3, {sa_family=AF_INET, sin_port=htons(29000), <unfinished ...>\n'
+                 + '100 sendto(14, "\\x61", 1, MSG_NOSIGNAL, NULL, 0) = 1\n'
+                 + '101 <... connect resumed>sin_addr=inet_addr(' + hx('127.0.0.1')
+                 + ')}, 16) = -1 EINPROGRESS (Operation now in progress)\n')
+        value, error = None, None
+        try:
+            value = w.parse_trace(self.raw.replace(connection, split), self.contract)
+        except w.Incomplete as caught:
+            error = caught
+        self.assertTrue(error is None, '#1140 resumed connect preserves destination: ' + str(error))
+        self.assertTrue(value['networkWitness']['calls'][0] == {
+            'ownerPid': 100, 'tid': 101, 'target': '127.0.0.1:29000', 'address': '127.0.0.1',
+            'port': 29000, 'syscall': 'connect', 'result': '-1 EINPROGRESS (Operation now in progress)'}, '#1140 resumed connect records one complete destination and result')
+        self.assertTrue(len(value['networkWitness']['calls']) == 2, '#1140 interleaving neither duplicates nor drops connects')
+
+    def test_trace_pairing_guards(self):
+        entry = '100 sendto(14, "\\x61", 1, MSG_NOSIGNAL, NULL, 0 <unfinished ...>\n'
+        resumed = '100 <... sendto resumed>) = 1\n'
+        invalid_traces = [
+            ('orphan', resumed),
+            ('wrong pid', entry + resumed.replace('100 ', '101 ')),
+            ('wrong syscall', entry + resumed.replace('sendto', 'sendmsg')),
+            ('duplicate', entry + entry + resumed),
+            ('unterminated', entry),
+        ]
+        for label, raw in invalid_traces:
+            with self.assertRaises(w.Incomplete, msg='#1140 trace pairing rejects ' + label):
+                w.records('99 exit(0) = ?\n' + raw)
 
     def test_replay_exec(self):
         value = w.parse_trace(self.raw, self.contract)

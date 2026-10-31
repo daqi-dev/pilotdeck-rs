@@ -22,7 +22,7 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/native-witness/test_witness.py \
   --capture _tmp/20261026-issue-1140/linux-native-001/capture
 ```
 
-输出目录必须不存在。默认网关 `127.0.0.1:28999`、模型 mock `127.0.0.1:29000`；`--port` 可选 28999..29008（模型为下一端口），绑定前使用 `scripts/gateway-parity/common.py::parity_lock` 的 `/tmp/pdrs-parity.lock` 目录租约，覆盖采集和 provider 清理；目录占用轮询 timeout 为 1 秒（guard 行为继承共享协议），锁忙或任一固定端口占用均报告 `BLOCKED`、退出码 2，不搜索或连接其他进程。预检和启动失败复查共用 `SO_REUSEADDR` 探针，允许 TIME_WAIT、仍拒绝活动监听。与 CLI/native-topology/全量对拍共用租约。独立 `home/`、`project/`；环境只带这次 home、固定 PATH/LANG，不读真实 key，不碰 `~/.pilotdeck` 或 18789。仅发一次本地模型轮次（产品可能另发标题请求）；driver 的每次等待共用 60 秒绝对 deadline。模型服务器在 accept 后立即设置 5 秒 socket 空闲超时，覆盖请求行、headers 和 body。
+输出目录必须不存在。默认网关 `127.0.0.1:28999`、模型 mock `127.0.0.1:29000`；`--port` 可选 28999..29008（模型为下一端口），绑定前使用 `scripts/gateway-parity/common.py::parity_lock` 的 `/tmp/pdrs-parity.lock` 目录租约，覆盖采集和 provider 清理；目录占用轮询 timeout 为 1 秒（guard 行为继承共享协议），锁忙或任一固定端口占用均报告 `BLOCKED`、退出码 2，不搜索或连接其他进程。探针按真实监听方区分策略：gateway 的预检和启动失败复查均不设 `SO_REUSEADDR`，TIME_WAIT 若使裸 bind 失败也报告 BLOCKED；provider 预检设置 `SO_REUSEADDR`，与 Python `HTTPServer` 一致，可复用 TIME_WAIT。两种策略均拒绝活动监听。与 CLI/native-topology/全量对拍共用租约。独立 `home/`、`project/`；环境只带这次 home、固定 PATH/LANG，不读真实 key，不碰 `~/.pilotdeck` 或 18789。仅发一次本地模型轮次（产品可能另发标题请求）；driver 的每次等待共用 60 秒绝对 deadline。模型服务器在 accept 后立即设置 5 秒 socket 空闲超时，覆盖请求行、headers 和 body。
 
 CLI 消费者判定可重试 BLOCKED 时，必须同时核对退出码 2 和 **stdout JSON 的 `status == "BLOCKED"`**。argparse 用法错误同样返回 2，但只往 stderr 写 usage、stdout 为空，不能按退出码单独归为 BLOCKED。成功状态也走 stdout。绑定竞态可能已创建输出目录，重试必须换新目录。
 
@@ -39,7 +39,7 @@ CLI 消费者判定可重试 BLOCKED 时，必须同时核对退出码 2 和 **s
 
 `strace -f` 追踪 execve/execveat、clone/clone3/fork/vfork、exit/exit_group、connect、sendto/sendmsg/sendmmsg、io_uring_setup。保留 exit status，不能使用 `-qq`；`-xx` 避免 C 字符串转义歧义，过长/不认识的格式拒收。[strace 官方手册](https://github.com/strace/strace/blob/master/doc/strace.1.in) 定义这些选项。
 
-本版本是受控 ELF / TCP profile：argv/path 必须与启动前登记一致，sha256 在启动前及采集后核对；假定受控二进制运行中不被替换后又恢复，**不是 exec 瞬间的内核镜像哈希证明**。脚本解释器、成功 execveat、同 PID 重复 exec、PID 复用、无 exec 的 fork 子进程、未知可执行文件、未退出线程、逃逸 clone flags、AF_UNIX helper、地址型 UDP/SCM_RIGHTS、成功 io_uring_setup 均拒完整。Popen 关闭继承描述符，观测范围是它启动的子树；不防恶意内核/同用户篡改整套原始证据。线程 connect 归 TGID，已连接 socket 的无目的地址 write/send 不另计新出口。孙代照实记录，但冻结审计当前只允许 host 直接子进程；不会把孙代伪装成直接子进程。
+本版本是受控 ELF / TCP profile：argv/path 必须与启动前登记一致，sha256 在启动前及采集后核对；假定受控二进制运行中不被替换后又恢复，**不是 exec 瞬间的内核镜像哈希证明**。脚本解释器、成功 execveat、同 PID 重复 exec、PID 复用、无 exec 的 fork 子进程、未知可执行文件、未退出线程、逃逸 clone flags、AF_UNIX helper、地址型 UDP/SCM_RIGHTS、成功 io_uring_setup 均拒完整。Popen 关闭继承描述符，观测范围是它启动的子树；不防恶意内核/同用户篡改整套原始证据。unfinished/resumed 必须按 PID 配对并核对 syscall 名，缺失、重复或错配均拒收；配对后再提取参数和返回值，去掉 strace 在参数末尾插入的分隔空白。线程 connect 归 TGID，已连接 socket 的无目的地址 write/send 不另计新出口。孙代照实记录，但冻结审计当前只允许 host 直接子进程；不会把孙代伪装成直接子进程。
 
 正常停机要求 gateway 在 `--drain-ms 1500` 下处理 SIGTERM 并 exit 0，tracer 同样退出 0；cb8 对 HEAD 949b385a 的原始 trace/receipt 已实证此形态。被信号杀死或其他非零退出仍拒收，不能当正常 drain。`signal.pidfd_send_signal` 自 Python 3.9 已提供（见 [Python 3.11 官方文档](https://docs.python.org/3.11/library/signal.html#signal.pidfd_send_signal)），不降级为存在 PID 复用窗口的 `os.kill`。
 
@@ -63,4 +63,4 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/native-witness/negative.py \
   _tmp/20261026-issue-1140/negative-committed-001
 ```
 
-源码负控依赖 `negative_process.mutating_sources/run_owned`；每条变异先 `compile` 检查 Python 语法，再正控、变异、恢复复测，全部跑完汇总，共 37 个变异；可加 `--case NAME` 仅选一个样本。源码未进 HEAD 时正常拒绝，不是 KILLED。Python 测试不运行 cargo，不创建第二构建目录。不新增 TS 金样，不声称 TS 行为对齐。
+源码负控依赖 `negative_process.mutating_sources/run_owned`；每条变异先 `compile` 检查 Python 语法，再正控、变异、恢复复测，全部跑完汇总，共 45 个变异；可加 `--case NAME` 仅选一个样本。源码未进 HEAD 时正常拒绝，不是 KILLED。Python 测试不运行 cargo，不创建第二构建目录。不新增 TS 金样，不声称 TS 行为对齐。

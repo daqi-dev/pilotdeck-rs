@@ -4,4 +4,6 @@
 
 `test_witness.py` 的默认测试为合成 trace 与生命周期控制；`--capture` 才读取 Linux 原始采集结果。非 witness 的审计外壳明确标合成，不能作为完整 native 格证据。
 
-`negative.py` 是 37 个源码变异，绑定专属单行断言；`--case NAME` 只执行一个指定样本；`--check-anchors` 只读核锚并检查每个变异可编译。真正执行要求文件已提交且等于 HEAD，并使用共享源码还原/进程守卫。
+`negative.py` 是 45 个源码变异，绑定专属单行断言；`--case NAME` 只执行一个指定样本；`--check-anchors` 只读核锚并检查每个变异可编译。真正执行要求文件已提交且等于 HEAD，并使用共享源码还原/进程守卫。
+
+`cb8-sendto-interleaved.trace` 是 cb8 第二次采集的原字节片段（exit/sendto 交错，5 行）；唯一字符串为 hex 编码的 mock WS 帧，解码文本为 `native witness text`、模型为 `mock`。没有 HTTP 请求、提示词、真实密钥或隔离路径。测试将它接入合成进程前后缀，只验证解析，不当作完整采集/TS 金样。
