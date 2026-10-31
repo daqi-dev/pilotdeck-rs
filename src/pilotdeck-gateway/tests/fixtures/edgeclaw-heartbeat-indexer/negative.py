@@ -7,6 +7,12 @@ anchor aborts with status 2 instead of being reported as SURVIVED, and the
 runner never stops at the first non-kill: it records every KILLED / SURVIVED /
 INVALID row and exits non-zero if any row is not KILLED.
 
+Rows are `(name, path, before, after, test, anchor)` tuples for single edits,
+or `dict(name=..., changes=[(path, before, after), ...], test=...,
+assertion=...)` when one mutant needs several edits applied together (the
+#917 before-await hoist). `changes` apply in order, each against the text the
+previous one produced.
+
 New product files are not in HEAD before the coordinator commits them, so this
 script is normally run after that commit. `NEGATIVE_ONLY=a,b` narrows a sample.
 cargo always uses the caller's CARGO_TARGET_DIR; without it the script exits
@@ -26,6 +32,41 @@ target = os.environ.get('CARGO_TARGET_DIR')
 assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
 baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
 out.mkdir(parents=True, exist_ok=True)
+
+# #917: the persist-site cleared-session recheck and the classify fire, both
+# verbatim from `process_session`. The anchors below must stay byte-identical
+# to the source or the run refuses to start (AnchorExpired).
+RECHECK_BLOCK = '''            // #917 (human decision 2026-10-27, #914 A; diff ledger
+            // `A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-001`): a `clearSession`
+            // that lands while the classify/createNote awaits above are in
+            // flight deletes this session's L0 rows before the persist below
+            // runs. The TS baseline still writes the turn's file ("file
+            // resurrection"); the registered divergence discards the turn's
+            // candidates instead, so a cleared session's memory never reaches
+            // the file stores. The lookup deliberately fails open: a close
+            // during the same awaits must keep failing at the same calls TS
+            // fails at, or the close matrix cells would drift.
+            let session_cleared = match self
+                .repository
+                .storage
+                .get_l0_by_ids(std::slice::from_ref(&session.l0_index_id))
+            {
+                Ok(rows) => rows.is_empty(),
+                // Fail open, per the comment above.
+                Err(_) => false,
+            };'''
+
+BEFORE_CLASSIFY_FIRE = '            self.fire(HeartbeatStage::BeforeClassify, &session.session_key);'
+
+HOISTED_RECHECK = '''            let session_cleared = match self
+                .repository
+                .storage
+                .get_l0_by_ids(std::slice::from_ref(&session.l0_index_id))
+            {
+                Ok(rows) => rows.is_empty(),
+                Err(_) => false,
+            };
+            self.fire(HeartbeatStage::BeforeClassify, &session.session_key);'''
 
 # (name, path, before, after, bound test, exact runtime anchor)
 cases = [
@@ -54,15 +95,34 @@ cases = [
             }''',
      'matrix_classify_capture_matches_ts',
      '#770 case matrix-single-classify-capture differs'),
-    ('clear-session-resurrection',
+    # #917: the persist-site recheck neutralized — the lookup still runs but
+    # its result is discarded, the removal equivalent that keeps the
+    # persist-site `session_cleared` binding compilable. Without the guard the
+    # cleared session's turn is resurrected into the file stores.
+    ('clear-resurrect-recheck-removed',
      indexer,
-     '                let record = target_store.upsert_candidate(&routed.candidate)?;',
-     '''                if self.repository.storage.list_unindexed_l0_by_session(&session.session_key)?.is_empty() {
-                    continue;
-                }
-                let record = target_store.upsert_candidate(&routed.candidate)?;''',
-     'matrix_classify_clear_session_matches_ts',
-     '#770 case matrix-single-classify-clearSession storedResults candidate source differs'),
+     '                Ok(rows) => rows.is_empty(),',
+     '                Ok(_) => false,',
+     'matrix_classify_clear_session_no_resurrection',
+     '#917 case matrix-single-classify-clearSession storedResults candidate source differs'),
+    # #917: the recheck hoisted in front of the classify await — the two-edit
+    # shape a plain tuple cannot express. Reading the L0 rows before the
+    # awaits misses a clearSession that lands while classify/createNote are
+    # in flight, so the turn is resurrected exactly as before #917.
+    dict(name='clear-resurrect-recheck-before-await',
+         changes=[(indexer, BEFORE_CLASSIFY_FIRE, HOISTED_RECHECK),
+                  (indexer, RECHECK_BLOCK, '')],
+         test='matrix_create_note_clear_session_no_resurrection',
+         assertion='#917 case matrix-single-createNote-clearSession storedResults candidate source differs'),
+    # #917: the fail-open arm flipped. Treating a lookup error as cleared
+    # skips the file write in the close cells and drifts them away from the
+    # TS baseline (TS writes the file, then rejects at setPipelineState).
+    ('clear-resurrect-recheck-fail-closed',
+     indexer,
+     '                Err(_) => false,',
+     '                Err(_) => true,',
+     'matrix_classify_close_matches_ts',
+     '#770 case matrix-single-classify-close differs'),
     ('close-rejection-swallowed',
      indexer,
      '''            self.repository
@@ -254,7 +314,18 @@ cases = [
      '#770 case single-project request method/url/headers/body differs'),
 ]
 only = {name for name in os.environ.get('NEGATIVE_ONLY', '').split(',') if name}
-unknown = only - {row[0] for row in cases}
+
+
+def normalized(entry):
+    """(name, [(path, before, after)...], bound test, exact runtime anchor)."""
+    if isinstance(entry, dict):
+        return entry['name'], list(entry['changes']), entry['test'], entry['assertion']
+    name, path, before, after, test, anchor = entry
+    return name, [(path, before, after)], test, anchor
+
+
+rows = [normalized(entry) for entry in cases]
+unknown = only - {name for name, _changes, _test, _anchor in rows}
 assert not unknown, f'unknown NEGATIVE_ONLY cases: {sorted(unknown)}'
 
 env = dict(os.environ)
@@ -287,17 +358,24 @@ with mutating_sources(root, [indexer], baseline=baseline) as originals:
         print('BASELINE FAILED: unmutated suite must pass before mutations', flush=True)
         sys.exit(1)
 
-    for name, path, before, after, test, anchor in cases:
+    for name, changes, test, anchor in rows:
         if only and name not in only:
             continue
         reason = None
         try:
-            source = path.read_text()
-            count = source.count(before)
-            if count != 1:
-                raise AnchorExpired(
-                    f'{name}: anchor matched {count} times (expected 1); update negative.py')
-            path.write_text(source.replace(before, after))
+            texts = {}
+            for index, (path, before, after) in enumerate(changes, 1):
+                text = texts.get(path)
+                if text is None:
+                    text = path.read_text()
+                count = text.count(before)
+                if count != 1:
+                    raise AnchorExpired(
+                        f'{name} change {index}: anchor matched {count} times '
+                        '(expected 1); update negative.py')
+                texts[path] = text.replace(before, after)
+            for path, text in texts.items():
+                path.write_text(text)
             slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
             run = cargo_test(test)
             log = run.stdout + run.stderr

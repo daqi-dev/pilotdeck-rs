@@ -16,9 +16,11 @@
 //!
 //! * `runHeartbeat` snapshots pending keys and each session's unindexed rows,
 //!   so a capture during an awaited classify/create is *not* marked indexed;
-//! * a `clearSession` during an awaited classify/create is not re-checked, so
-//!   the turn's candidate is still written after the clear (the baseline
-//!   "resurrects" the file); the same clear before `markL0Indexed` removes the
+//! * a `clearSession` during an awaited classify/create is re-checked before
+//!   the persist (#917, human decision 2026-10-27 #914 A, diff ledger
+//!   `A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-001`): the cleared session's
+//!   turn is discarded instead of writing the file the TS baseline
+//!   "resurrects"; the same clear before `markL0Indexed` still removes the
 //!   already-written file instead;
 //! * `markL0Indexed` and the final `saveIndexTrace` sit outside the per-session
 //!   `try`, so a close at those points rejects `runHeartbeat` with
@@ -1111,9 +1113,36 @@ impl HeartbeatIndexer {
                 created_candidates.push((label.clone(), candidate));
             }
 
+            // #917 (human decision 2026-10-27, #914 A; diff ledger
+            // `A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-001`): a `clearSession`
+            // that lands while the classify/createNote awaits above are in
+            // flight deletes this session's L0 rows before the persist below
+            // runs. The TS baseline still writes the turn's file ("file
+            // resurrection"); the registered divergence discards the turn's
+            // candidates instead, so a cleared session's memory never reaches
+            // the file stores. The lookup deliberately fails open: a close
+            // during the same awaits must keep failing at the same calls TS
+            // fails at, or the close matrix cells would drift.
+            let session_cleared = match self
+                .repository
+                .storage
+                .get_l0_by_ids(std::slice::from_ref(&session.l0_index_id))
+            {
+                Ok(rows) => rows.is_empty(),
+                // Fail open, per the comment above.
+                Err(_) => false,
+            };
+
             let mut persisted_records: Vec<MemoryFileRecord> = Vec::new();
             let mut wrote_global_user_note = false;
             for (label, candidate) in &created_candidates {
+                if session_cleared {
+                    self.info(JsString::from(format!(
+                        "[clawxmemory] skip persist for cleared session={}",
+                        session.session_key
+                    )));
+                    break;
+                }
                 let Some(candidate) = candidate else {
                     continue;
                 };

@@ -1,0 +1,2422 @@
+{
+  "registeredDivergence": "A6.6-EDGECLAW-HEARTBEAT-CLEAR-RESURRECT-001",
+  "issue": 917,
+  "decision": "state/decisions-20261027-770-resurrect.md",
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "note": "Expectations for the five M13 clearSession cells after the registered bug-fix divergence #917 (human decision 2026-10-27, #914 option A). The inputs are the identically named oracle.json cases; oracle.json itself stays byte-identical to the TS baseline and still records that TS cc7c4e6 writes the cleared session's file after the clear. Each expectation here is the fixed Rust replay of the same input, reviewed field by field against the TS cell: requests, promptDebug, captures, seeds, L0 rows, pipeline state and the classification/create steps are identical, and only the persist outcome flips (no resurrected files, empty storedResults, writtenFiles=0, isNoOp) plus one info log. oracle.json is untouched, so generate.mts, verify.mts and the regeneration guards keep proving the TS side.",
+  "cases": {
+    "matrix-single-afterList-clearSession": {
+      "name": "matrix-single-afterList-clearSession",
+      "mode": "single",
+      "timing": "afterList",
+      "action": "clearSession",
+      "eventCapture": null,
+      "seeds": [],
+      "captures": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages": [
+              {
+                "role": "user",
+                "content": "cleared after list"
+              },
+              {
+                "role": "assistant",
+                "content": "a"
+              }
+            ]
+          },
+          "result": {
+            "captured": true,
+            "normalizedMessages": [
+              {
+                "role": "user",
+                "content": "cleared after list"
+              },
+              {
+                "role": "assistant",
+                "content": "a"
+              }
+            ],
+            "sessionKey": "s1"
+          }
+        }
+      ],
+      "directCaptures": [],
+      "llmSteps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"should_store\\\":true,\\\"labels\\\":[{\\\"type\\\":\\\"project\\\",\\\"reason\\\":\\\"durable project fact\\\",\\\"evidence\\\":\\\"project evidence\\\"}]}\"}}]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"skip\\\":false,\\\"reason\\\":\\\"\\\",\\\"name\\\":\\\"Alpha\\\",\\\"description\\\":\\\"Alpha description\\\",\\\"markdown\\\":\\\"## Summary\\\\nAlpha body\\\"}\"}}]}"
+        }
+      ],
+      "result": {
+        "stats": {
+          "capturedSessions": 1,
+          "writtenFiles": 0,
+          "writtenUserFiles": 0,
+          "writtenProjectFiles": 0,
+          "writtenFeedbackFiles": 0,
+          "userProfilesUpdated": 0,
+          "failedSessions": 0
+        }
+      },
+      "db": {
+        "l0": [],
+        "traces": [
+          {
+            "indexTraceId": "index_trace_5efb2abf8d",
+            "sessionKey": "s1",
+            "trigger": "manual_sync",
+            "startedAt": "2026-10-22T00:00:00.000Z",
+            "status": "completed",
+            "isNoOp": true,
+            "displayStatus": "No-op",
+            "batchSummary": {
+              "l0Ids": [
+                "s1_7e01458534_raw"
+              ],
+              "segmentCount": 1,
+              "focusUserTurnCount": 1,
+              "fromTimestamp": "2026-10-22T00:00:01.000Z",
+              "toTimestamp": "2026-10-22T00:00:01.000Z"
+            },
+            "steps": [
+              {
+                "stepId": "index_trace_5efb2abf8d:step:1",
+                "kind": "index_start",
+                "title": "Index Started",
+                "status": "info",
+                "inputSummary": "trigger=manual_sync",
+                "outputSummary": "Preparing batch indexing for s1.",
+                "titleI18n": {
+                  "key": "trace.step.index_start",
+                  "fallback": "Index Started"
+                },
+                "outputSummaryI18n": {
+                  "key": "trace.text.index_start.output.preparing_batch",
+                  "args": [
+                    "s1"
+                  ],
+                  "fallback": "Preparing batch indexing for {0}."
+                }
+              },
+              {
+                "stepId": "index_trace_5efb2abf8d:step:2",
+                "kind": "batch_loaded",
+                "title": "Batch Loaded",
+                "status": "info",
+                "inputSummary": "1 segments from 2026-10-22T00:00:01.000Z to 2026-10-22T00:00:01.000Z",
+                "outputSummary": "2 messages loaded into batch context.",
+                "metrics": {
+                  "segmentCount": 1,
+                  "focusUserTurnCount": 1
+                },
+                "details": [
+                  {
+                    "key": "batch-summary",
+                    "label": "Batch Summary",
+                    "labelI18n": {
+                      "key": "trace.detail.batch_summary",
+                      "fallback": "Batch Summary"
+                    },
+                    "kind": "kv",
+                    "entries": [
+                      {
+                        "label": "sessionKey",
+                        "value": "s1"
+                      },
+                      {
+                        "label": "from",
+                        "value": "2026-10-22T00:00:01.000Z"
+                      },
+                      {
+                        "label": "to",
+                        "value": "2026-10-22T00:00:01.000Z"
+                      },
+                      {
+                        "label": "l0Ids",
+                        "value": "s1_7e01458534_raw"
+                      }
+                    ]
+                  },
+                  {
+                    "key": "batch-context",
+                    "label": "Batch Context",
+                    "labelI18n": {
+                      "key": "trace.detail.batch_context",
+                      "fallback": "Batch Context"
+                    },
+                    "kind": "json",
+                    "json": [
+                      {
+                        "index": 0,
+                        "role": "user",
+                        "content": "cleared after list"
+                      },
+                      {
+                        "index": 1,
+                        "role": "assistant",
+                        "content": "a"
+                      }
+                    ]
+                  }
+                ],
+                "titleI18n": {
+                  "key": "trace.step.batch_loaded",
+                  "fallback": "Batch Loaded"
+                },
+                "inputSummaryI18n": {
+                  "key": "trace.text.batch_loaded.input",
+                  "args": [
+                    "1",
+                    "2026-10-22T00:00:01.000Z",
+                    "2026-10-22T00:00:01.000Z"
+                  ],
+                  "fallback": "{0} segments from {1} to {2}"
+                },
+                "outputSummaryI18n": {
+                  "key": "trace.text.batch_loaded.output",
+                  "args": [
+                    "2"
+                  ],
+                  "fallback": "{0} messages loaded into batch context."
+                }
+              },
+              {
+                "stepId": "index_trace_5efb2abf8d:step:3",
+                "kind": "focus_turns_selected",
+                "title": "Focus Turns Selected",
+                "status": "success",
+                "inputSummary": "1 user turns in this batch.",
+                "outputSummary": "User turns will be classified one by one.",
+                "details": [
+                  {
+                    "key": "focus-turn-selection-summary",
+                    "label": "Focus Selection Summary",
+                    "labelI18n": {
+                      "key": "trace.detail.focus_selection_summary",
+                      "fallback": "Focus Selection Summary"
+                    },
+                    "kind": "kv",
+                    "entries": [
+                      {
+                        "label": "userTurns",
+                        "value": "1"
+                      },
+                      {
+                        "label": "assistantMessagesInContext",
+                        "value": "1"
+                      },
+                      {
+                        "label": "assistantUsedAsContextOnly",
+                        "value": "yes"
+                      }
+                    ]
+                  },
+                  {
+                    "key": "focus-turn-1",
+                    "label": "Focus Turn 1",
+                    "labelI18n": {
+                      "key": "trace.detail.focus_turn",
+                      "args": [
+                        "1"
+                      ],
+                      "fallback": "Focus Turn {0}"
+                    },
+                    "kind": "text",
+                    "text": "cleared after list"
+                  }
+                ],
+                "titleI18n": {
+                  "key": "trace.step.focus_turns_selected",
+                  "fallback": "Focus Turns Selected"
+                },
+                "inputSummaryI18n": {
+                  "key": "trace.text.focus_turns_selected.input",
+                  "args": [
+                    "1"
+                  ],
+                  "fallback": "{0} user turns in this batch."
+                },
+                "outputSummaryI18n": {
+                  "key": "trace.text.focus_turns_selected.output.classifying",
+                  "fallback": "User turns will be classified one by one."
+                }
+              },
+              {
+                "stepId": "index_trace_5efb2abf8d:step:4",
+                "kind": "classification",
+                "title": "Classification",
+                "status": "success",
+                "inputSummary": "cleared after list",
+                "outputSummary": "classified=project",
+                "refs": {
+                  "classification": [
+                    "project"
+                  ]
+                },
+                "details": [
+                  {
+                    "key": "focus-turn-text-s1_7e01458534_raw",
+                    "label": "Focus User Turn",
+                    "labelI18n": {
+                      "key": "trace.detail.focus_user_turn",
+                      "fallback": "Focus User Turn"
+                    },
+                    "kind": "text",
+                    "text": "cleared after list"
+                  },
+                  {
+                    "key": "classification-result-s1_7e01458534_raw",
+                    "label": "Classification Result",
+                    "labelI18n": {
+                      "key": "trace.detail.classification_result",
+                      "fallback": "Classification Result"
+                    },
+                    "kind": "kv",
+                    "entries": [
+                      {
+                        "label": "sessionKey",
+                        "value": "s1"
+                      },
+                      {
+                        "label": "timestamp",
+                        "value": "2026-10-22T00:00:01.000Z"
+                      },
+                      {
+                        "label": "result",
+                        "value": "project"
+                      }
+                    ]
+                  },
+                  {
+                    "key": "classification-labels-s1_7e01458534_raw",
+                    "label": "Classification Labels",
+                    "labelI18n": {
+                      "key": "trace.detail.classifier_candidates",
+                      "fallback": "Classifier Candidates"
+                    },
+                    "kind": "json",
+                    "json": [
+                      {
+                        "type": "project",
+                        "reason": "durable project fact",
+                        "evidence": "project evidence"
+                      }
+                    ]
+                  }
+                ],
+                "promptDebug": {
+                  "requestLabel": "Memory turn classification",
+                  "systemPrompt": "You classify one focus user turn for a long-term memory indexing pipeline.\n\nYou are only deciding categories. Do not generate the memory file yet.\n\nRules:\n- Base the decision on the focus user turn first.\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\n- Assistant text is context only. Never classify something that exists only in assistant wording.\n- A turn can match multiple categories, but at most once per category.\n- Allowed categories:\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\n- Identity test: only use user when the focus turn is describing the user as a person.\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\n- If the user explicitly says \"请记住\", \"帮我记住\", or \"remember this\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\n- If nothing durable should be remembered, return should_store=false and labels=[].\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"should_store\": true,\n  \"labels\": [\n    {\n      \"type\": \"user | project | feedback\",\n      \"reason\": \"why this category applies\",\n      \"evidence\": \"short quote or evidence summary from the focus turn\"\n    }\n  ]\n}",
+                  "userPrompt": "{\n  \"current_project_meta\": null,\n  \"focus_user_turn\": {\n    \"role\": \"user\",\n    \"content\": \"cleared after list\"\n  },\n  \"focus_turn_with_neighbor_assistant_context\": {\n    \"turn_index\": 1,\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": \"cleared after list\"\n      },\n      {\n        \"role\": \"assistant\",\n        \"content\": \"a\"\n      }\n    ]\n  },\n  \"previous_turns\": [],\n  \"next_turns\": []\n}",
+                  "rawResponse": "{\"should_store\":true,\"labels\":[{\"type\":\"project\",\"reason\":\"durable project fact\",\"evidence\":\"project evidence\"}]}",
+                  "parsedResult": {
+                    "should_store": true,
+                    "labels": [
+                      {
+                        "type": "project",
+                        "reason": "durable project fact",
+                        "evidence": "project evidence"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "stepId": "index_trace_5efb2abf8d:step:5",
+                "kind": "project_create",
+                "title": "project Create",
+                "status": "success",
+                "inputSummary": "project | durable project fact",
+                "outputSummary": "created=Alpha",
+                "refs": {
+                  "candidateType": "project"
+                },
+                "details": [
+                  {
+                    "key": "create-project-s1_7e01458534_raw",
+                    "label": "project Create Result",
+                    "kind": "json",
+                    "json": {
+                      "classification": {
+                        "type": "project",
+                        "reason": "durable project fact",
+                        "evidence": "project evidence"
+                      },
+                      "candidate": {
+                        "type": "project",
+                        "name": "Alpha",
+                        "description": "Alpha description",
+                        "body": "## Summary\nAlpha body"
+                      }
+                    }
+                  }
+                ],
+                "promptDebug": {
+                  "requestLabel": "Project memory create",
+                  "systemPrompt": "You create one append-only project memory note from a focus user turn.\n\nRules:\n- Create at most one project note.\n- The note belongs to the current project only.\n- Capture durable project facts: what the project is, stable scope, goals, key progress, blockers, risks, important decisions, important next steps.\n- Do not reduce the note to a vague status line.\n- Do not focus on highly volatile percentages, fleeting schedules, or trivial short-term updates unless they reveal a durable blocker/risk/fact.\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\n- Keep the note readable markdown.\n- Prefer meaningful headings when useful, such as: ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes.\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"skip\": false,\n  \"reason\": \"\",\n  \"name\": \"short project-memory title\",\n  \"description\": \"one-line description\",\n  \"markdown\": \"markdown body\"\n}",
+                  "userPrompt": "{\n  \"classification\": {\n    \"type\": \"project\",\n    \"reason\": \"durable project fact\",\n    \"evidence\": \"project evidence\"\n  },\n  \"context\": {\n    \"current_project_meta\": null,\n    \"focus_user_turn\": {\n      \"role\": \"user\",\n      \"content\": \"cleared after list\"\n    },\n    \"focus_turn_with_neighbor_assistant_context\": {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"cleared after list\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a\"\n        }\n      ]\n    },\n    \"previous_turns\": [],\n    \"next_turns\": []\n  }\n}",
+                  "rawResponse": "{\"skip\":false,\"reason\":\"\",\"name\":\"Alpha\",\"description\":\"Alpha description\",\"markdown\":\"## Summary\\nAlpha body\"}",
+                  "parsedResult": {
+                    "skip": false,
+                    "reason": "",
+                    "name": "Alpha",
+                    "description": "Alpha description",
+                    "markdown": "## Summary\nAlpha body"
+                  }
+                }
+              },
+              {
+                "stepId": "index_trace_5efb2abf8d:step:6",
+                "kind": "persist",
+                "title": "Persist",
+                "status": "skipped",
+                "inputSummary": "1 candidates ready to persist.",
+                "outputSummary": "No memory files were written for this turn.",
+                "details": [
+                  {
+                    "key": "persisted-files-s1_7e01458534_raw",
+                    "label": "Persisted Files",
+                    "labelI18n": {
+                      "key": "trace.detail.persisted_files",
+                      "fallback": "Persisted Files"
+                    },
+                    "kind": "json",
+                    "json": []
+                  }
+                ]
+              },
+              {
+                "stepId": "index_trace_5efb2abf8d:step:7",
+                "kind": "index_finished",
+                "title": "Index Finished",
+                "status": "success",
+                "inputSummary": "segments=1",
+                "outputSummary": "stored=0, failed=0",
+                "metrics": {
+                  "storedResults": 0,
+                  "failed": 0
+                },
+                "details": [
+                  {
+                    "key": "stored-results",
+                    "label": "Stored Results",
+                    "labelI18n": {
+                      "key": "trace.detail.stored_results",
+                      "fallback": "Stored Results"
+                    },
+                    "kind": "json",
+                    "json": []
+                  }
+                ],
+                "titleI18n": {
+                  "key": "trace.step.index_finished",
+                  "fallback": "Index Finished"
+                }
+              }
+            ],
+            "storedResults": [],
+            "finishedAt": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "pipeline": {
+          "lastIndexedAt": "2026-10-22T00:00:01.000Z",
+          "lastIndexedCursor:s1": "2026-10-22T00:00:01.000Z",
+          "workspaceDir": "$ROOT/workspace"
+        }
+      },
+      "files": {
+        "memory": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n"
+          }
+        ],
+        "global": []
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "url": "/v1/chat/completions",
+          "headers": {
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate",
+            "accept-language": "*",
+            "authorization": "Bearer fixture-key",
+            "connection": "keep-alive",
+            "content-length": "2753",
+            "content-type": "application/json",
+            "host": "$HOST",
+            "sec-fetch-mode": "cors",
+            "user-agent": "node"
+          },
+          "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You classify one focus user turn for a long-term memory indexing pipeline.\\n\\nYou are only deciding categories. Do not generate the memory file yet.\\n\\nRules:\\n- Base the decision on the focus user turn first.\\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\\n- Assistant text is context only. Never classify something that exists only in assistant wording.\\n- A turn can match multiple categories, but at most once per category.\\n- Allowed categories:\\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\\n- Identity test: only use user when the focus turn is describing the user as a person.\\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\\n- If the user explicitly says \\\"请记住\\\", \\\"帮我记住\\\", or \\\"remember this\\\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\\n- If nothing durable should be remembered, return should_store=false and labels=[].\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"should_store\\\": true,\\n  \\\"labels\\\": [\\n    {\\n      \\\"type\\\": \\\"user | project | feedback\\\",\\n      \\\"reason\\\": \\\"why this category applies\\\",\\n      \\\"evidence\\\": \\\"short quote or evidence summary from the focus turn\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"current_project_meta\\\": null,\\n  \\\"focus_user_turn\\\": {\\n    \\\"role\\\": \\\"user\\\",\\n    \\\"content\\\": \\\"cleared after list\\\"\\n  },\\n  \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n    \\\"turn_index\\\": 1,\\n    \\\"messages\\\": [\\n      {\\n        \\\"role\\\": \\\"user\\\",\\n        \\\"content\\\": \\\"cleared after list\\\"\\n      },\\n      {\\n        \\\"role\\\": \\\"assistant\\\",\\n        \\\"content\\\": \\\"a\\\"\\n      }\\n    ]\\n  },\\n  \\\"previous_turns\\\": [],\\n  \\\"next_turns\\\": []\\n}\"}]}"
+        },
+        {
+          "method": "POST",
+          "url": "/v1/chat/completions",
+          "headers": {
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate",
+            "accept-language": "*",
+            "authorization": "Bearer fixture-key",
+            "connection": "keep-alive",
+            "content-length": "2109",
+            "content-type": "application/json",
+            "host": "$HOST",
+            "sec-fetch-mode": "cors",
+            "user-agent": "node"
+          },
+          "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You create one append-only project memory note from a focus user turn.\\n\\nRules:\\n- Create at most one project note.\\n- The note belongs to the current project only.\\n- Capture durable project facts: what the project is, stable scope, goals, key progress, blockers, risks, important decisions, important next steps.\\n- Do not reduce the note to a vague status line.\\n- Do not focus on highly volatile percentages, fleeting schedules, or trivial short-term updates unless they reveal a durable blocker/risk/fact.\\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\\n- Keep the note readable markdown.\\n- Prefer meaningful headings when useful, such as: ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes.\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"skip\\\": false,\\n  \\\"reason\\\": \\\"\\\",\\n  \\\"name\\\": \\\"short project-memory title\\\",\\n  \\\"description\\\": \\\"one-line description\\\",\\n  \\\"markdown\\\": \\\"markdown body\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"classification\\\": {\\n    \\\"type\\\": \\\"project\\\",\\n    \\\"reason\\\": \\\"durable project fact\\\",\\n    \\\"evidence\\\": \\\"project evidence\\\"\\n  },\\n  \\\"context\\\": {\\n    \\\"current_project_meta\\\": null,\\n    \\\"focus_user_turn\\\": {\\n      \\\"role\\\": \\\"user\\\",\\n      \\\"content\\\": \\\"cleared after list\\\"\\n    },\\n    \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n      \\\"turn_index\\\": 1,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"cleared after list\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a\\\"\\n        }\\n      ]\\n    },\\n    \\\"previous_turns\\\": [],\\n    \\\"next_turns\\\": []\\n  }\\n}\"}]}"
+        }
+      ],
+      "logs": [
+        {
+          "level": "info",
+          "message": [
+            "[clawxmemory] skip persist for cleared session=s1"
+          ]
+        }
+      ]
+    },
+    "matrix-single-classify-clearSession": {
+      "name": "matrix-single-classify-clearSession",
+      "mode": "single",
+      "timing": "classify",
+      "action": "clearSession",
+      "eventCapture": null,
+      "seeds": [],
+      "captures": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages": [
+              {
+                "role": "user",
+                "content": "cleared during classify"
+              },
+              {
+                "role": "assistant",
+                "content": "a"
+              }
+            ]
+          },
+          "result": {
+            "captured": true,
+            "normalizedMessages": [
+              {
+                "role": "user",
+                "content": "cleared during classify"
+              },
+              {
+                "role": "assistant",
+                "content": "a"
+              }
+            ],
+            "sessionKey": "s1"
+          }
+        }
+      ],
+      "directCaptures": [],
+      "llmSteps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"should_store\\\":true,\\\"labels\\\":[{\\\"type\\\":\\\"project\\\",\\\"reason\\\":\\\"durable project fact\\\",\\\"evidence\\\":\\\"project evidence\\\"}]}\"}}]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"skip\\\":false,\\\"reason\\\":\\\"\\\",\\\"name\\\":\\\"Alpha\\\",\\\"description\\\":\\\"Alpha description\\\",\\\"markdown\\\":\\\"## Summary\\\\nAlpha body\\\"}\"}}]}"
+        }
+      ],
+      "result": {
+        "stats": {
+          "capturedSessions": 1,
+          "writtenFiles": 0,
+          "writtenUserFiles": 0,
+          "writtenProjectFiles": 0,
+          "writtenFeedbackFiles": 0,
+          "userProfilesUpdated": 0,
+          "failedSessions": 0
+        }
+      },
+      "db": {
+        "l0": [],
+        "traces": [
+          {
+            "indexTraceId": "index_trace_4fe08bd25e",
+            "sessionKey": "s1",
+            "trigger": "manual_sync",
+            "startedAt": "2026-10-22T00:00:00.000Z",
+            "status": "completed",
+            "isNoOp": true,
+            "displayStatus": "No-op",
+            "batchSummary": {
+              "l0Ids": [
+                "s1_7d62895821_raw"
+              ],
+              "segmentCount": 1,
+              "focusUserTurnCount": 1,
+              "fromTimestamp": "2026-10-22T00:00:01.000Z",
+              "toTimestamp": "2026-10-22T00:00:01.000Z"
+            },
+            "steps": [
+              {
+                "stepId": "index_trace_4fe08bd25e:step:1",
+                "kind": "index_start",
+                "title": "Index Started",
+                "status": "info",
+                "inputSummary": "trigger=manual_sync",
+                "outputSummary": "Preparing batch indexing for s1.",
+                "titleI18n": {
+                  "key": "trace.step.index_start",
+                  "fallback": "Index Started"
+                },
+                "outputSummaryI18n": {
+                  "key": "trace.text.index_start.output.preparing_batch",
+                  "args": [
+                    "s1"
+                  ],
+                  "fallback": "Preparing batch indexing for {0}."
+                }
+              },
+              {
+                "stepId": "index_trace_4fe08bd25e:step:2",
+                "kind": "batch_loaded",
+                "title": "Batch Loaded",
+                "status": "info",
+                "inputSummary": "1 segments from 2026-10-22T00:00:01.000Z to 2026-10-22T00:00:01.000Z",
+                "outputSummary": "2 messages loaded into batch context.",
+                "metrics": {
+                  "segmentCount": 1,
+                  "focusUserTurnCount": 1
+                },
+                "details": [
+                  {
+                    "key": "batch-summary",
+                    "label": "Batch Summary",
+                    "labelI18n": {
+                      "key": "trace.detail.batch_summary",
+                      "fallback": "Batch Summary"
+                    },
+                    "kind": "kv",
+                    "entries": [
+                      {
+                        "label": "sessionKey",
+                        "value": "s1"
+                      },
+                      {
+                        "label": "from",
+                        "value": "2026-10-22T00:00:01.000Z"
+                      },
+                      {
+                        "label": "to",
+                        "value": "2026-10-22T00:00:01.000Z"
+                      },
+                      {
+                        "label": "l0Ids",
+                        "value": "s1_7d62895821_raw"
+                      }
+                    ]
+                  },
+                  {
+                    "key": "batch-context",
+                    "label": "Batch Context",
+                    "labelI18n": {
+                      "key": "trace.detail.batch_context",
+                      "fallback": "Batch Context"
+                    },
+                    "kind": "json",
+                    "json": [
+                      {
+                        "index": 0,
+                        "role": "user",
+                        "content": "cleared during classify"
+                      },
+                      {
+                        "index": 1,
+                        "role": "assistant",
+                        "content": "a"
+                      }
+                    ]
+                  }
+                ],
+                "titleI18n": {
+                  "key": "trace.step.batch_loaded",
+                  "fallback": "Batch Loaded"
+                },
+                "inputSummaryI18n": {
+                  "key": "trace.text.batch_loaded.input",
+                  "args": [
+                    "1",
+                    "2026-10-22T00:00:01.000Z",
+                    "2026-10-22T00:00:01.000Z"
+                  ],
+                  "fallback": "{0} segments from {1} to {2}"
+                },
+                "outputSummaryI18n": {
+                  "key": "trace.text.batch_loaded.output",
+                  "args": [
+                    "2"
+                  ],
+                  "fallback": "{0} messages loaded into batch context."
+                }
+              },
+              {
+                "stepId": "index_trace_4fe08bd25e:step:3",
+                "kind": "focus_turns_selected",
+                "title": "Focus Turns Selected",
+                "status": "success",
+                "inputSummary": "1 user turns in this batch.",
+                "outputSummary": "User turns will be classified one by one.",
+                "details": [
+                  {
+                    "key": "focus-turn-selection-summary",
+                    "label": "Focus Selection Summary",
+                    "labelI18n": {
+                      "key": "trace.detail.focus_selection_summary",
+                      "fallback": "Focus Selection Summary"
+                    },
+                    "kind": "kv",
+                    "entries": [
+                      {
+                        "label": "userTurns",
+                        "value": "1"
+                      },
+                      {
+                        "label": "assistantMessagesInContext",
+                        "value": "1"
+                      },
+                      {
+                        "label": "assistantUsedAsContextOnly",
+                        "value": "yes"
+                      }
+                    ]
+                  },
+                  {
+                    "key": "focus-turn-1",
+                    "label": "Focus Turn 1",
+                    "labelI18n": {
+                      "key": "trace.detail.focus_turn",
+                      "args": [
+                        "1"
+                      ],
+                      "fallback": "Focus Turn {0}"
+                    },
+                    "kind": "text",
+                    "text": "cleared during classify"
+                  }
+                ],
+                "titleI18n": {
+                  "key": "trace.step.focus_turns_selected",
+                  "fallback": "Focus Turns Selected"
+                },
+                "inputSummaryI18n": {
+                  "key": "trace.text.focus_turns_selected.input",
+                  "args": [
+                    "1"
+                  ],
+                  "fallback": "{0} user turns in this batch."
+                },
+                "outputSummaryI18n": {
+                  "key": "trace.text.focus_turns_selected.output.classifying",
+                  "fallback": "User turns will be classified one by one."
+                }
+              },
+              {
+                "stepId": "index_trace_4fe08bd25e:step:4",
+                "kind": "classification",
+                "title": "Classification",
+                "status": "success",
+                "inputSummary": "cleared during classify",
+                "outputSummary": "classified=project",
+                "refs": {
+                  "classification": [
+                    "project"
+                  ]
+                },
+                "details": [
+                  {
+                    "key": "focus-turn-text-s1_7d62895821_raw",
+                    "label": "Focus User Turn",
+                    "labelI18n": {
+                      "key": "trace.detail.focus_user_turn",
+                      "fallback": "Focus User Turn"
+                    },
+                    "kind": "text",
+                    "text": "cleared during classify"
+                  },
+                  {
+                    "key": "classification-result-s1_7d62895821_raw",
+                    "label": "Classification Result",
+                    "labelI18n": {
+                      "key": "trace.detail.classification_result",
+                      "fallback": "Classification Result"
+                    },
+                    "kind": "kv",
+                    "entries": [
+                      {
+                        "label": "sessionKey",
+                        "value": "s1"
+                      },
+                      {
+                        "label": "timestamp",
+                        "value": "2026-10-22T00:00:01.000Z"
+                      },
+                      {
+                        "label": "result",
+                        "value": "project"
+                      }
+                    ]
+                  },
+                  {
+                    "key": "classification-labels-s1_7d62895821_raw",
+                    "label": "Classification Labels",
+                    "labelI18n": {
+                      "key": "trace.detail.classifier_candidates",
+                      "fallback": "Classifier Candidates"
+                    },
+                    "kind": "json",
+                    "json": [
+                      {
+                        "type": "project",
+                        "reason": "durable project fact",
+                        "evidence": "project evidence"
+                      }
+                    ]
+                  }
+                ],
+                "promptDebug": {
+                  "requestLabel": "Memory turn classification",
+                  "systemPrompt": "You classify one focus user turn for a long-term memory indexing pipeline.\n\nYou are only deciding categories. Do not generate the memory file yet.\n\nRules:\n- Base the decision on the focus user turn first.\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\n- Assistant text is context only. Never classify something that exists only in assistant wording.\n- A turn can match multiple categories, but at most once per category.\n- Allowed categories:\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\n- Identity test: only use user when the focus turn is describing the user as a person.\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\n- If the user explicitly says \"请记住\", \"帮我记住\", or \"remember this\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\n- If nothing durable should be remembered, return should_store=false and labels=[].\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"should_store\": true,\n  \"labels\": [\n    {\n      \"type\": \"user | project | feedback\",\n      \"reason\": \"why this category applies\",\n      \"evidence\": \"short quote or evidence summary from the focus turn\"\n    }\n  ]\n}",
+                  "userPrompt": "{\n  \"current_project_meta\": null,\n  \"focus_user_turn\": {\n    \"role\": \"user\",\n    \"content\": \"cleared during classify\"\n  },\n  \"focus_turn_with_neighbor_assistant_context\": {\n    \"turn_index\": 1,\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": \"cleared during classify\"\n      },\n      {\n        \"role\": \"assistant\",\n        \"content\": \"a\"\n      }\n    ]\n  },\n  \"previous_turns\": [],\n  \"next_turns\": []\n}",
+                  "rawResponse": "{\"should_store\":true,\"labels\":[{\"type\":\"project\",\"reason\":\"durable project fact\",\"evidence\":\"project evidence\"}]}",
+                  "parsedResult": {
+                    "should_store": true,
+                    "labels": [
+                      {
+                        "type": "project",
+                        "reason": "durable project fact",
+                        "evidence": "project evidence"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "stepId": "index_trace_4fe08bd25e:step:5",
+                "kind": "project_create",
+                "title": "project Create",
+                "status": "success",
+                "inputSummary": "project | durable project fact",
+                "outputSummary": "created=Alpha",
+                "refs": {
+                  "candidateType": "project"
+                },
+                "details": [
+                  {
+                    "key": "create-project-s1_7d62895821_raw",
+                    "label": "project Create Result",
+                    "kind": "json",
+                    "json": {
+                      "classification": {
+                        "type": "project",
+                        "reason": "durable project fact",
+                        "evidence": "project evidence"
+                      },
+                      "candidate": {
+                        "type": "project",
+                        "name": "Alpha",
+                        "description": "Alpha description",
+                        "body": "## Summary\nAlpha body"
+                      }
+                    }
+                  }
+                ],
+                "promptDebug": {
+                  "requestLabel": "Project memory create",
+                  "systemPrompt": "You create one append-only project memory note from a focus user turn.\n\nRules:\n- Create at most one project note.\n- The note belongs to the current project only.\n- Capture durable project facts: what the project is, stable scope, goals, key progress, blockers, risks, important decisions, important next steps.\n- Do not reduce the note to a vague status line.\n- Do not focus on highly volatile percentages, fleeting schedules, or trivial short-term updates unless they reveal a durable blocker/risk/fact.\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\n- Keep the note readable markdown.\n- Prefer meaningful headings when useful, such as: ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes.\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"skip\": false,\n  \"reason\": \"\",\n  \"name\": \"short project-memory title\",\n  \"description\": \"one-line description\",\n  \"markdown\": \"markdown body\"\n}",
+                  "userPrompt": "{\n  \"classification\": {\n    \"type\": \"project\",\n    \"reason\": \"durable project fact\",\n    \"evidence\": \"project evidence\"\n  },\n  \"context\": {\n    \"current_project_meta\": null,\n    \"focus_user_turn\": {\n      \"role\": \"user\",\n      \"content\": \"cleared during classify\"\n    },\n    \"focus_turn_with_neighbor_assistant_context\": {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"cleared during classify\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a\"\n        }\n      ]\n    },\n    \"previous_turns\": [],\n    \"next_turns\": []\n  }\n}",
+                  "rawResponse": "{\"skip\":false,\"reason\":\"\",\"name\":\"Alpha\",\"description\":\"Alpha description\",\"markdown\":\"## Summary\\nAlpha body\"}",
+                  "parsedResult": {
+                    "skip": false,
+                    "reason": "",
+                    "name": "Alpha",
+                    "description": "Alpha description",
+                    "markdown": "## Summary\nAlpha body"
+                  }
+                }
+              },
+              {
+                "stepId": "index_trace_4fe08bd25e:step:6",
+                "kind": "persist",
+                "title": "Persist",
+                "status": "skipped",
+                "inputSummary": "1 candidates ready to persist.",
+                "outputSummary": "No memory files were written for this turn.",
+                "details": [
+                  {
+                    "key": "persisted-files-s1_7d62895821_raw",
+                    "label": "Persisted Files",
+                    "labelI18n": {
+                      "key": "trace.detail.persisted_files",
+                      "fallback": "Persisted Files"
+                    },
+                    "kind": "json",
+                    "json": []
+                  }
+                ]
+              },
+              {
+                "stepId": "index_trace_4fe08bd25e:step:7",
+                "kind": "index_finished",
+                "title": "Index Finished",
+                "status": "success",
+                "inputSummary": "segments=1",
+                "outputSummary": "stored=0, failed=0",
+                "metrics": {
+                  "storedResults": 0,
+                  "failed": 0
+                },
+                "details": [
+                  {
+                    "key": "stored-results",
+                    "label": "Stored Results",
+                    "labelI18n": {
+                      "key": "trace.detail.stored_results",
+                      "fallback": "Stored Results"
+                    },
+                    "kind": "json",
+                    "json": []
+                  }
+                ],
+                "titleI18n": {
+                  "key": "trace.step.index_finished",
+                  "fallback": "Index Finished"
+                }
+              }
+            ],
+            "storedResults": [],
+            "finishedAt": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "pipeline": {
+          "lastIndexedAt": "2026-10-22T00:00:01.000Z",
+          "lastIndexedCursor:s1": "2026-10-22T00:00:01.000Z",
+          "workspaceDir": "$ROOT/workspace"
+        }
+      },
+      "files": {
+        "memory": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n"
+          }
+        ],
+        "global": []
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "url": "/v1/chat/completions",
+          "headers": {
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate",
+            "accept-language": "*",
+            "authorization": "Bearer fixture-key",
+            "connection": "keep-alive",
+            "content-length": "2763",
+            "content-type": "application/json",
+            "host": "$HOST",
+            "sec-fetch-mode": "cors",
+            "user-agent": "node"
+          },
+          "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You classify one focus user turn for a long-term memory indexing pipeline.\\n\\nYou are only deciding categories. Do not generate the memory file yet.\\n\\nRules:\\n- Base the decision on the focus user turn first.\\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\\n- Assistant text is context only. Never classify something that exists only in assistant wording.\\n- A turn can match multiple categories, but at most once per category.\\n- Allowed categories:\\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\\n- Identity test: only use user when the focus turn is describing the user as a person.\\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\\n- If the user explicitly says \\\"请记住\\\", \\\"帮我记住\\\", or \\\"remember this\\\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\\n- If nothing durable should be remembered, return should_store=false and labels=[].\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"should_store\\\": true,\\n  \\\"labels\\\": [\\n    {\\n      \\\"type\\\": \\\"user | project | feedback\\\",\\n      \\\"reason\\\": \\\"why this category applies\\\",\\n      \\\"evidence\\\": \\\"short quote or evidence summary from the focus turn\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"current_project_meta\\\": null,\\n  \\\"focus_user_turn\\\": {\\n    \\\"role\\\": \\\"user\\\",\\n    \\\"content\\\": \\\"cleared during classify\\\"\\n  },\\n  \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n    \\\"turn_index\\\": 1,\\n    \\\"messages\\\": [\\n      {\\n        \\\"role\\\": \\\"user\\\",\\n        \\\"content\\\": \\\"cleared during classify\\\"\\n      },\\n      {\\n        \\\"role\\\": \\\"assistant\\\",\\n        \\\"content\\\": \\\"a\\\"\\n      }\\n    ]\\n  },\\n  \\\"previous_turns\\\": [],\\n  \\\"next_turns\\\": []\\n}\"}]}"
+        },
+        {
+          "method": "POST",
+          "url": "/v1/chat/completions",
+          "headers": {
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate",
+            "accept-language": "*",
+            "authorization": "Bearer fixture-key",
+            "connection": "keep-alive",
+            "content-length": "2119",
+            "content-type": "application/json",
+            "host": "$HOST",
+            "sec-fetch-mode": "cors",
+            "user-agent": "node"
+          },
+          "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You create one append-only project memory note from a focus user turn.\\n\\nRules:\\n- Create at most one project note.\\n- The note belongs to the current project only.\\n- Capture durable project facts: what the project is, stable scope, goals, key progress, blockers, risks, important decisions, important next steps.\\n- Do not reduce the note to a vague status line.\\n- Do not focus on highly volatile percentages, fleeting schedules, or trivial short-term updates unless they reveal a durable blocker/risk/fact.\\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\\n- Keep the note readable markdown.\\n- Prefer meaningful headings when useful, such as: ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes.\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"skip\\\": false,\\n  \\\"reason\\\": \\\"\\\",\\n  \\\"name\\\": \\\"short project-memory title\\\",\\n  \\\"description\\\": \\\"one-line description\\\",\\n  \\\"markdown\\\": \\\"markdown body\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"classification\\\": {\\n    \\\"type\\\": \\\"project\\\",\\n    \\\"reason\\\": \\\"durable project fact\\\",\\n    \\\"evidence\\\": \\\"project evidence\\\"\\n  },\\n  \\\"context\\\": {\\n    \\\"current_project_meta\\\": null,\\n    \\\"focus_user_turn\\\": {\\n      \\\"role\\\": \\\"user\\\",\\n      \\\"content\\\": \\\"cleared during classify\\\"\\n    },\\n    \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n      \\\"turn_index\\\": 1,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"cleared during classify\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a\\\"\\n        }\\n      ]\\n    },\\n    \\\"previous_turns\\\": [],\\n    \\\"next_turns\\\": []\\n  }\\n}\"}]}"
+        }
+      ],
+      "logs": [
+        {
+          "level": "info",
+          "message": [
+            "[clawxmemory] skip persist for cleared session=s1"
+          ]
+        }
+      ]
+    },
+    "matrix-single-createNote-clearSession": {
+      "name": "matrix-single-createNote-clearSession",
+      "mode": "single",
+      "timing": "createNote",
+      "action": "clearSession",
+      "eventCapture": null,
+      "seeds": [],
+      "captures": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages": [
+              {
+                "role": "user",
+                "content": "cleared during create"
+              },
+              {
+                "role": "assistant",
+                "content": "a"
+              }
+            ]
+          },
+          "result": {
+            "captured": true,
+            "normalizedMessages": [
+              {
+                "role": "user",
+                "content": "cleared during create"
+              },
+              {
+                "role": "assistant",
+                "content": "a"
+              }
+            ],
+            "sessionKey": "s1"
+          }
+        }
+      ],
+      "directCaptures": [],
+      "llmSteps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"should_store\\\":true,\\\"labels\\\":[{\\\"type\\\":\\\"project\\\",\\\"reason\\\":\\\"durable project fact\\\",\\\"evidence\\\":\\\"project evidence\\\"}]}\"}}]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"skip\\\":false,\\\"reason\\\":\\\"\\\",\\\"name\\\":\\\"Alpha\\\",\\\"description\\\":\\\"Alpha description\\\",\\\"markdown\\\":\\\"## Summary\\\\nAlpha body\\\"}\"}}]}"
+        }
+      ],
+      "result": {
+        "stats": {
+          "capturedSessions": 1,
+          "writtenFiles": 0,
+          "writtenUserFiles": 0,
+          "writtenProjectFiles": 0,
+          "writtenFeedbackFiles": 0,
+          "userProfilesUpdated": 0,
+          "failedSessions": 0
+        }
+      },
+      "db": {
+        "l0": [],
+        "traces": [
+          {
+            "indexTraceId": "index_trace_2fee238071",
+            "sessionKey": "s1",
+            "trigger": "manual_sync",
+            "startedAt": "2026-10-22T00:00:00.000Z",
+            "status": "completed",
+            "isNoOp": true,
+            "displayStatus": "No-op",
+            "batchSummary": {
+              "l0Ids": [
+                "s1_d2afa2a4ff_raw"
+              ],
+              "segmentCount": 1,
+              "focusUserTurnCount": 1,
+              "fromTimestamp": "2026-10-22T00:00:01.000Z",
+              "toTimestamp": "2026-10-22T00:00:01.000Z"
+            },
+            "steps": [
+              {
+                "stepId": "index_trace_2fee238071:step:1",
+                "kind": "index_start",
+                "title": "Index Started",
+                "status": "info",
+                "inputSummary": "trigger=manual_sync",
+                "outputSummary": "Preparing batch indexing for s1.",
+                "titleI18n": {
+                  "key": "trace.step.index_start",
+                  "fallback": "Index Started"
+                },
+                "outputSummaryI18n": {
+                  "key": "trace.text.index_start.output.preparing_batch",
+                  "args": [
+                    "s1"
+                  ],
+                  "fallback": "Preparing batch indexing for {0}."
+                }
+              },
+              {
+                "stepId": "index_trace_2fee238071:step:2",
+                "kind": "batch_loaded",
+                "title": "Batch Loaded",
+                "status": "info",
+                "inputSummary": "1 segments from 2026-10-22T00:00:01.000Z to 2026-10-22T00:00:01.000Z",
+                "outputSummary": "2 messages loaded into batch context.",
+                "metrics": {
+                  "segmentCount": 1,
+                  "focusUserTurnCount": 1
+                },
+                "details": [
+                  {
+                    "key": "batch-summary",
+                    "label": "Batch Summary",
+                    "labelI18n": {
+                      "key": "trace.detail.batch_summary",
+                      "fallback": "Batch Summary"
+                    },
+                    "kind": "kv",
+                    "entries": [
+                      {
+                        "label": "sessionKey",
+                        "value": "s1"
+                      },
+                      {
+                        "label": "from",
+                        "value": "2026-10-22T00:00:01.000Z"
+                      },
+                      {
+                        "label": "to",
+                        "value": "2026-10-22T00:00:01.000Z"
+                      },
+                      {
+                        "label": "l0Ids",
+                        "value": "s1_d2afa2a4ff_raw"
+                      }
+                    ]
+                  },
+                  {
+                    "key": "batch-context",
+                    "label": "Batch Context",
+                    "labelI18n": {
+                      "key": "trace.detail.batch_context",
+                      "fallback": "Batch Context"
+                    },
+                    "kind": "json",
+                    "json": [
+                      {
+                        "index": 0,
+                        "role": "user",
+                        "content": "cleared during create"
+                      },
+                      {
+                        "index": 1,
+                        "role": "assistant",
+                        "content": "a"
+                      }
+                    ]
+                  }
+                ],
+                "titleI18n": {
+                  "key": "trace.step.batch_loaded",
+                  "fallback": "Batch Loaded"
+                },
+                "inputSummaryI18n": {
+                  "key": "trace.text.batch_loaded.input",
+                  "args": [
+                    "1",
+                    "2026-10-22T00:00:01.000Z",
+                    "2026-10-22T00:00:01.000Z"
+                  ],
+                  "fallback": "{0} segments from {1} to {2}"
+                },
+                "outputSummaryI18n": {
+                  "key": "trace.text.batch_loaded.output",
+                  "args": [
+                    "2"
+                  ],
+                  "fallback": "{0} messages loaded into batch context."
+                }
+              },
+              {
+                "stepId": "index_trace_2fee238071:step:3",
+                "kind": "focus_turns_selected",
+                "title": "Focus Turns Selected",
+                "status": "success",
+                "inputSummary": "1 user turns in this batch.",
+                "outputSummary": "User turns will be classified one by one.",
+                "details": [
+                  {
+                    "key": "focus-turn-selection-summary",
+                    "label": "Focus Selection Summary",
+                    "labelI18n": {
+                      "key": "trace.detail.focus_selection_summary",
+                      "fallback": "Focus Selection Summary"
+                    },
+                    "kind": "kv",
+                    "entries": [
+                      {
+                        "label": "userTurns",
+                        "value": "1"
+                      },
+                      {
+                        "label": "assistantMessagesInContext",
+                        "value": "1"
+                      },
+                      {
+                        "label": "assistantUsedAsContextOnly",
+                        "value": "yes"
+                      }
+                    ]
+                  },
+                  {
+                    "key": "focus-turn-1",
+                    "label": "Focus Turn 1",
+                    "labelI18n": {
+                      "key": "trace.detail.focus_turn",
+                      "args": [
+                        "1"
+                      ],
+                      "fallback": "Focus Turn {0}"
+                    },
+                    "kind": "text",
+                    "text": "cleared during create"
+                  }
+                ],
+                "titleI18n": {
+                  "key": "trace.step.focus_turns_selected",
+                  "fallback": "Focus Turns Selected"
+                },
+                "inputSummaryI18n": {
+                  "key": "trace.text.focus_turns_selected.input",
+                  "args": [
+                    "1"
+                  ],
+                  "fallback": "{0} user turns in this batch."
+                },
+                "outputSummaryI18n": {
+                  "key": "trace.text.focus_turns_selected.output.classifying",
+                  "fallback": "User turns will be classified one by one."
+                }
+              },
+              {
+                "stepId": "index_trace_2fee238071:step:4",
+                "kind": "classification",
+                "title": "Classification",
+                "status": "success",
+                "inputSummary": "cleared during create",
+                "outputSummary": "classified=project",
+                "refs": {
+                  "classification": [
+                    "project"
+                  ]
+                },
+                "details": [
+                  {
+                    "key": "focus-turn-text-s1_d2afa2a4ff_raw",
+                    "label": "Focus User Turn",
+                    "labelI18n": {
+                      "key": "trace.detail.focus_user_turn",
+                      "fallback": "Focus User Turn"
+                    },
+                    "kind": "text",
+                    "text": "cleared during create"
+                  },
+                  {
+                    "key": "classification-result-s1_d2afa2a4ff_raw",
+                    "label": "Classification Result",
+                    "labelI18n": {
+                      "key": "trace.detail.classification_result",
+                      "fallback": "Classification Result"
+                    },
+                    "kind": "kv",
+                    "entries": [
+                      {
+                        "label": "sessionKey",
+                        "value": "s1"
+                      },
+                      {
+                        "label": "timestamp",
+                        "value": "2026-10-22T00:00:01.000Z"
+                      },
+                      {
+                        "label": "result",
+                        "value": "project"
+                      }
+                    ]
+                  },
+                  {
+                    "key": "classification-labels-s1_d2afa2a4ff_raw",
+                    "label": "Classification Labels",
+                    "labelI18n": {
+                      "key": "trace.detail.classifier_candidates",
+                      "fallback": "Classifier Candidates"
+                    },
+                    "kind": "json",
+                    "json": [
+                      {
+                        "type": "project",
+                        "reason": "durable project fact",
+                        "evidence": "project evidence"
+                      }
+                    ]
+                  }
+                ],
+                "promptDebug": {
+                  "requestLabel": "Memory turn classification",
+                  "systemPrompt": "You classify one focus user turn for a long-term memory indexing pipeline.\n\nYou are only deciding categories. Do not generate the memory file yet.\n\nRules:\n- Base the decision on the focus user turn first.\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\n- Assistant text is context only. Never classify something that exists only in assistant wording.\n- A turn can match multiple categories, but at most once per category.\n- Allowed categories:\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\n- Identity test: only use user when the focus turn is describing the user as a person.\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\n- If the user explicitly says \"请记住\", \"帮我记住\", or \"remember this\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\n- If nothing durable should be remembered, return should_store=false and labels=[].\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"should_store\": true,\n  \"labels\": [\n    {\n      \"type\": \"user | project | feedback\",\n      \"reason\": \"why this category applies\",\n      \"evidence\": \"short quote or evidence summary from the focus turn\"\n    }\n  ]\n}",
+                  "userPrompt": "{\n  \"current_project_meta\": null,\n  \"focus_user_turn\": {\n    \"role\": \"user\",\n    \"content\": \"cleared during create\"\n  },\n  \"focus_turn_with_neighbor_assistant_context\": {\n    \"turn_index\": 1,\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": \"cleared during create\"\n      },\n      {\n        \"role\": \"assistant\",\n        \"content\": \"a\"\n      }\n    ]\n  },\n  \"previous_turns\": [],\n  \"next_turns\": []\n}",
+                  "rawResponse": "{\"should_store\":true,\"labels\":[{\"type\":\"project\",\"reason\":\"durable project fact\",\"evidence\":\"project evidence\"}]}",
+                  "parsedResult": {
+                    "should_store": true,
+                    "labels": [
+                      {
+                        "type": "project",
+                        "reason": "durable project fact",
+                        "evidence": "project evidence"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "stepId": "index_trace_2fee238071:step:5",
+                "kind": "project_create",
+                "title": "project Create",
+                "status": "success",
+                "inputSummary": "project | durable project fact",
+                "outputSummary": "created=Alpha",
+                "refs": {
+                  "candidateType": "project"
+                },
+                "details": [
+                  {
+                    "key": "create-project-s1_d2afa2a4ff_raw",
+                    "label": "project Create Result",
+                    "kind": "json",
+                    "json": {
+                      "classification": {
+                        "type": "project",
+                        "reason": "durable project fact",
+                        "evidence": "project evidence"
+                      },
+                      "candidate": {
+                        "type": "project",
+                        "name": "Alpha",
+                        "description": "Alpha description",
+                        "body": "## Summary\nAlpha body"
+                      }
+                    }
+                  }
+                ],
+                "promptDebug": {
+                  "requestLabel": "Project memory create",
+                  "systemPrompt": "You create one append-only project memory note from a focus user turn.\n\nRules:\n- Create at most one project note.\n- The note belongs to the current project only.\n- Capture durable project facts: what the project is, stable scope, goals, key progress, blockers, risks, important decisions, important next steps.\n- Do not reduce the note to a vague status line.\n- Do not focus on highly volatile percentages, fleeting schedules, or trivial short-term updates unless they reveal a durable blocker/risk/fact.\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\n- Keep the note readable markdown.\n- Prefer meaningful headings when useful, such as: ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes.\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"skip\": false,\n  \"reason\": \"\",\n  \"name\": \"short project-memory title\",\n  \"description\": \"one-line description\",\n  \"markdown\": \"markdown body\"\n}",
+                  "userPrompt": "{\n  \"classification\": {\n    \"type\": \"project\",\n    \"reason\": \"durable project fact\",\n    \"evidence\": \"project evidence\"\n  },\n  \"context\": {\n    \"current_project_meta\": null,\n    \"focus_user_turn\": {\n      \"role\": \"user\",\n      \"content\": \"cleared during create\"\n    },\n    \"focus_turn_with_neighbor_assistant_context\": {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"cleared during create\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a\"\n        }\n      ]\n    },\n    \"previous_turns\": [],\n    \"next_turns\": []\n  }\n}",
+                  "rawResponse": "{\"skip\":false,\"reason\":\"\",\"name\":\"Alpha\",\"description\":\"Alpha description\",\"markdown\":\"## Summary\\nAlpha body\"}",
+                  "parsedResult": {
+                    "skip": false,
+                    "reason": "",
+                    "name": "Alpha",
+                    "description": "Alpha description",
+                    "markdown": "## Summary\nAlpha body"
+                  }
+                }
+              },
+              {
+                "stepId": "index_trace_2fee238071:step:6",
+                "kind": "persist",
+                "title": "Persist",
+                "status": "skipped",
+                "inputSummary": "1 candidates ready to persist.",
+                "outputSummary": "No memory files were written for this turn.",
+                "details": [
+                  {
+                    "key": "persisted-files-s1_d2afa2a4ff_raw",
+                    "label": "Persisted Files",
+                    "labelI18n": {
+                      "key": "trace.detail.persisted_files",
+                      "fallback": "Persisted Files"
+                    },
+                    "kind": "json",
+                    "json": []
+                  }
+                ]
+              },
+              {
+                "stepId": "index_trace_2fee238071:step:7",
+                "kind": "index_finished",
+                "title": "Index Finished",
+                "status": "success",
+                "inputSummary": "segments=1",
+                "outputSummary": "stored=0, failed=0",
+                "metrics": {
+                  "storedResults": 0,
+                  "failed": 0
+                },
+                "details": [
+                  {
+                    "key": "stored-results",
+                    "label": "Stored Results",
+                    "labelI18n": {
+                      "key": "trace.detail.stored_results",
+                      "fallback": "Stored Results"
+                    },
+                    "kind": "json",
+                    "json": []
+                  }
+                ],
+                "titleI18n": {
+                  "key": "trace.step.index_finished",
+                  "fallback": "Index Finished"
+                }
+              }
+            ],
+            "storedResults": [],
+            "finishedAt": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "pipeline": {
+          "lastIndexedAt": "2026-10-22T00:00:01.000Z",
+          "lastIndexedCursor:s1": "2026-10-22T00:00:01.000Z",
+          "workspaceDir": "$ROOT/workspace"
+        }
+      },
+      "files": {
+        "memory": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n"
+          }
+        ],
+        "global": []
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "url": "/v1/chat/completions",
+          "headers": {
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate",
+            "accept-language": "*",
+            "authorization": "Bearer fixture-key",
+            "connection": "keep-alive",
+            "content-length": "2759",
+            "content-type": "application/json",
+            "host": "$HOST",
+            "sec-fetch-mode": "cors",
+            "user-agent": "node"
+          },
+          "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You classify one focus user turn for a long-term memory indexing pipeline.\\n\\nYou are only deciding categories. Do not generate the memory file yet.\\n\\nRules:\\n- Base the decision on the focus user turn first.\\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\\n- Assistant text is context only. Never classify something that exists only in assistant wording.\\n- A turn can match multiple categories, but at most once per category.\\n- Allowed categories:\\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\\n- Identity test: only use user when the focus turn is describing the user as a person.\\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\\n- If the user explicitly says \\\"请记住\\\", \\\"帮我记住\\\", or \\\"remember this\\\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\\n- If nothing durable should be remembered, return should_store=false and labels=[].\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"should_store\\\": true,\\n  \\\"labels\\\": [\\n    {\\n      \\\"type\\\": \\\"user | project | feedback\\\",\\n      \\\"reason\\\": \\\"why this category applies\\\",\\n      \\\"evidence\\\": \\\"short quote or evidence summary from the focus turn\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"current_project_meta\\\": null,\\n  \\\"focus_user_turn\\\": {\\n    \\\"role\\\": \\\"user\\\",\\n    \\\"content\\\": \\\"cleared during create\\\"\\n  },\\n  \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n    \\\"turn_index\\\": 1,\\n    \\\"messages\\\": [\\n      {\\n        \\\"role\\\": \\\"user\\\",\\n        \\\"content\\\": \\\"cleared during create\\\"\\n      },\\n      {\\n        \\\"role\\\": \\\"assistant\\\",\\n        \\\"content\\\": \\\"a\\\"\\n      }\\n    ]\\n  },\\n  \\\"previous_turns\\\": [],\\n  \\\"next_turns\\\": []\\n}\"}]}"
+        },
+        {
+          "method": "POST",
+          "url": "/v1/chat/completions",
+          "headers": {
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate",
+            "accept-language": "*",
+            "authorization": "Bearer fixture-key",
+            "connection": "keep-alive",
+            "content-length": "2115",
+            "content-type": "application/json",
+            "host": "$HOST",
+            "sec-fetch-mode": "cors",
+            "user-agent": "node"
+          },
+          "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You create one append-only project memory note from a focus user turn.\\n\\nRules:\\n- Create at most one project note.\\n- The note belongs to the current project only.\\n- Capture durable project facts: what the project is, stable scope, goals, key progress, blockers, risks, important decisions, important next steps.\\n- Do not reduce the note to a vague status line.\\n- Do not focus on highly volatile percentages, fleeting schedules, or trivial short-term updates unless they reveal a durable blocker/risk/fact.\\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\\n- Keep the note readable markdown.\\n- Prefer meaningful headings when useful, such as: ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes.\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"skip\\\": false,\\n  \\\"reason\\\": \\\"\\\",\\n  \\\"name\\\": \\\"short project-memory title\\\",\\n  \\\"description\\\": \\\"one-line description\\\",\\n  \\\"markdown\\\": \\\"markdown body\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"classification\\\": {\\n    \\\"type\\\": \\\"project\\\",\\n    \\\"reason\\\": \\\"durable project fact\\\",\\n    \\\"evidence\\\": \\\"project evidence\\\"\\n  },\\n  \\\"context\\\": {\\n    \\\"current_project_meta\\\": null,\\n    \\\"focus_user_turn\\\": {\\n      \\\"role\\\": \\\"user\\\",\\n      \\\"content\\\": \\\"cleared during create\\\"\\n    },\\n    \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n      \\\"turn_index\\\": 1,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"cleared during create\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a\\\"\\n        }\\n      ]\\n    },\\n    \\\"previous_turns\\\": [],\\n    \\\"next_turns\\\": []\\n  }\\n}\"}]}"
+        }
+      ],
+      "logs": [
+        {
+          "level": "info",
+          "message": [
+            "[clawxmemory] skip persist for cleared session=s1"
+          ]
+        }
+      ]
+    },
+    "matrix-general-classify-clearSession": {
+      "name": "matrix-general-classify-clearSession",
+      "mode": "general",
+      "timing": "classify",
+      "action": "clearSession",
+      "eventCapture": null,
+      "seeds": [],
+      "captures": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages": [
+              {
+                "role": "user",
+                "content": "general cleared during classify"
+              },
+              {
+                "role": "assistant",
+                "content": "a"
+              }
+            ]
+          },
+          "result": {
+            "captured": true,
+            "normalizedMessages": [
+              {
+                "role": "user",
+                "content": "general cleared during classify"
+              },
+              {
+                "role": "assistant",
+                "content": "a"
+              }
+            ],
+            "sessionKey": "s1"
+          }
+        }
+      ],
+      "directCaptures": [],
+      "llmSteps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"should_store\\\":true,\\\"labels\\\":[{\\\"type\\\":\\\"project\\\",\\\"reason\\\":\\\"durable project fact\\\",\\\"evidence\\\":\\\"project evidence\\\"}]}\"}}]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"skip\\\":false,\\\"reason\\\":\\\"\\\",\\\"name\\\":\\\"Alpha\\\",\\\"description\\\":\\\"Alpha description\\\",\\\"markdown\\\":\\\"## Summary\\\\nAlpha body\\\"}\"}}]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"decision\\\":\\\"create_new\\\",\\\"selected_project_id\\\":\\\"\\\",\\\"reason\\\":\\\"new\\\"}\"}}]}"
+        }
+      ],
+      "result": {
+        "stats": {
+          "capturedSessions": 1,
+          "writtenFiles": 0,
+          "writtenUserFiles": 0,
+          "writtenProjectFiles": 0,
+          "writtenFeedbackFiles": 0,
+          "userProfilesUpdated": 0,
+          "failedSessions": 0
+        }
+      },
+      "db": {
+        "l0": [],
+        "traces": [
+          {
+            "indexTraceId": "index_trace_369a4aa3f1",
+            "sessionKey": "s1",
+            "trigger": "manual_sync",
+            "startedAt": "2026-10-22T00:00:00.000Z",
+            "status": "completed",
+            "isNoOp": true,
+            "displayStatus": "No-op",
+            "batchSummary": {
+              "l0Ids": [
+                "s1_ddb1204604_raw"
+              ],
+              "segmentCount": 1,
+              "focusUserTurnCount": 1,
+              "fromTimestamp": "2026-10-22T00:00:01.000Z",
+              "toTimestamp": "2026-10-22T00:00:01.000Z"
+            },
+            "steps": [
+              {
+                "stepId": "index_trace_369a4aa3f1:step:1",
+                "kind": "index_start",
+                "title": "Index Started",
+                "status": "info",
+                "inputSummary": "trigger=manual_sync",
+                "outputSummary": "Preparing batch indexing for s1.",
+                "titleI18n": {
+                  "key": "trace.step.index_start",
+                  "fallback": "Index Started"
+                },
+                "outputSummaryI18n": {
+                  "key": "trace.text.index_start.output.preparing_batch",
+                  "args": [
+                    "s1"
+                  ],
+                  "fallback": "Preparing batch indexing for {0}."
+                }
+              },
+              {
+                "stepId": "index_trace_369a4aa3f1:step:2",
+                "kind": "batch_loaded",
+                "title": "Batch Loaded",
+                "status": "info",
+                "inputSummary": "1 segments from 2026-10-22T00:00:01.000Z to 2026-10-22T00:00:01.000Z",
+                "outputSummary": "2 messages loaded into batch context.",
+                "metrics": {
+                  "segmentCount": 1,
+                  "focusUserTurnCount": 1
+                },
+                "details": [
+                  {
+                    "key": "batch-summary",
+                    "label": "Batch Summary",
+                    "labelI18n": {
+                      "key": "trace.detail.batch_summary",
+                      "fallback": "Batch Summary"
+                    },
+                    "kind": "kv",
+                    "entries": [
+                      {
+                        "label": "sessionKey",
+                        "value": "s1"
+                      },
+                      {
+                        "label": "from",
+                        "value": "2026-10-22T00:00:01.000Z"
+                      },
+                      {
+                        "label": "to",
+                        "value": "2026-10-22T00:00:01.000Z"
+                      },
+                      {
+                        "label": "l0Ids",
+                        "value": "s1_ddb1204604_raw"
+                      }
+                    ]
+                  },
+                  {
+                    "key": "batch-context",
+                    "label": "Batch Context",
+                    "labelI18n": {
+                      "key": "trace.detail.batch_context",
+                      "fallback": "Batch Context"
+                    },
+                    "kind": "json",
+                    "json": [
+                      {
+                        "index": 0,
+                        "role": "user",
+                        "content": "general cleared during classify"
+                      },
+                      {
+                        "index": 1,
+                        "role": "assistant",
+                        "content": "a"
+                      }
+                    ]
+                  }
+                ],
+                "titleI18n": {
+                  "key": "trace.step.batch_loaded",
+                  "fallback": "Batch Loaded"
+                },
+                "inputSummaryI18n": {
+                  "key": "trace.text.batch_loaded.input",
+                  "args": [
+                    "1",
+                    "2026-10-22T00:00:01.000Z",
+                    "2026-10-22T00:00:01.000Z"
+                  ],
+                  "fallback": "{0} segments from {1} to {2}"
+                },
+                "outputSummaryI18n": {
+                  "key": "trace.text.batch_loaded.output",
+                  "args": [
+                    "2"
+                  ],
+                  "fallback": "{0} messages loaded into batch context."
+                }
+              },
+              {
+                "stepId": "index_trace_369a4aa3f1:step:3",
+                "kind": "focus_turns_selected",
+                "title": "Focus Turns Selected",
+                "status": "success",
+                "inputSummary": "1 user turns in this batch.",
+                "outputSummary": "User turns will be classified one by one.",
+                "details": [
+                  {
+                    "key": "focus-turn-selection-summary",
+                    "label": "Focus Selection Summary",
+                    "labelI18n": {
+                      "key": "trace.detail.focus_selection_summary",
+                      "fallback": "Focus Selection Summary"
+                    },
+                    "kind": "kv",
+                    "entries": [
+                      {
+                        "label": "userTurns",
+                        "value": "1"
+                      },
+                      {
+                        "label": "assistantMessagesInContext",
+                        "value": "1"
+                      },
+                      {
+                        "label": "assistantUsedAsContextOnly",
+                        "value": "yes"
+                      }
+                    ]
+                  },
+                  {
+                    "key": "focus-turn-1",
+                    "label": "Focus Turn 1",
+                    "labelI18n": {
+                      "key": "trace.detail.focus_turn",
+                      "args": [
+                        "1"
+                      ],
+                      "fallback": "Focus Turn {0}"
+                    },
+                    "kind": "text",
+                    "text": "general cleared during classify"
+                  }
+                ],
+                "titleI18n": {
+                  "key": "trace.step.focus_turns_selected",
+                  "fallback": "Focus Turns Selected"
+                },
+                "inputSummaryI18n": {
+                  "key": "trace.text.focus_turns_selected.input",
+                  "args": [
+                    "1"
+                  ],
+                  "fallback": "{0} user turns in this batch."
+                },
+                "outputSummaryI18n": {
+                  "key": "trace.text.focus_turns_selected.output.classifying",
+                  "fallback": "User turns will be classified one by one."
+                }
+              },
+              {
+                "stepId": "index_trace_369a4aa3f1:step:4",
+                "kind": "classification",
+                "title": "Classification",
+                "status": "success",
+                "inputSummary": "general cleared during classify",
+                "outputSummary": "classified=project",
+                "refs": {
+                  "classification": [
+                    "project"
+                  ]
+                },
+                "details": [
+                  {
+                    "key": "focus-turn-text-s1_ddb1204604_raw",
+                    "label": "Focus User Turn",
+                    "labelI18n": {
+                      "key": "trace.detail.focus_user_turn",
+                      "fallback": "Focus User Turn"
+                    },
+                    "kind": "text",
+                    "text": "general cleared during classify"
+                  },
+                  {
+                    "key": "classification-result-s1_ddb1204604_raw",
+                    "label": "Classification Result",
+                    "labelI18n": {
+                      "key": "trace.detail.classification_result",
+                      "fallback": "Classification Result"
+                    },
+                    "kind": "kv",
+                    "entries": [
+                      {
+                        "label": "sessionKey",
+                        "value": "s1"
+                      },
+                      {
+                        "label": "timestamp",
+                        "value": "2026-10-22T00:00:01.000Z"
+                      },
+                      {
+                        "label": "result",
+                        "value": "project"
+                      }
+                    ]
+                  },
+                  {
+                    "key": "classification-labels-s1_ddb1204604_raw",
+                    "label": "Classification Labels",
+                    "labelI18n": {
+                      "key": "trace.detail.classifier_candidates",
+                      "fallback": "Classifier Candidates"
+                    },
+                    "kind": "json",
+                    "json": [
+                      {
+                        "type": "project",
+                        "reason": "durable project fact",
+                        "evidence": "project evidence"
+                      }
+                    ]
+                  }
+                ],
+                "promptDebug": {
+                  "requestLabel": "Memory turn classification",
+                  "systemPrompt": "You classify one focus user turn for a long-term memory indexing pipeline.\n\nYou are only deciding categories. Do not generate the memory file yet.\n\nRules:\n- Base the decision on the focus user turn first.\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\n- Assistant text is context only. Never classify something that exists only in assistant wording.\n- A turn can match multiple categories, but at most once per category.\n- Allowed categories:\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\n- Identity test: only use user when the focus turn is describing the user as a person.\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\n- If the user explicitly says \"请记住\", \"帮我记住\", or \"remember this\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\n- If nothing durable should be remembered, return should_store=false and labels=[].\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"should_store\": true,\n  \"labels\": [\n    {\n      \"type\": \"user | project | feedback\",\n      \"reason\": \"why this category applies\",\n      \"evidence\": \"short quote or evidence summary from the focus turn\"\n    }\n  ]\n}",
+                  "userPrompt": "{\n  \"current_project_meta\": null,\n  \"focus_user_turn\": {\n    \"role\": \"user\",\n    \"content\": \"general cleared during classify\"\n  },\n  \"focus_turn_with_neighbor_assistant_context\": {\n    \"turn_index\": 1,\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": \"general cleared during classify\"\n      },\n      {\n        \"role\": \"assistant\",\n        \"content\": \"a\"\n      }\n    ]\n  },\n  \"previous_turns\": [],\n  \"next_turns\": []\n}",
+                  "rawResponse": "{\"should_store\":true,\"labels\":[{\"type\":\"project\",\"reason\":\"durable project fact\",\"evidence\":\"project evidence\"}]}",
+                  "parsedResult": {
+                    "should_store": true,
+                    "labels": [
+                      {
+                        "type": "project",
+                        "reason": "durable project fact",
+                        "evidence": "project evidence"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "stepId": "index_trace_369a4aa3f1:step:5",
+                "kind": "project_create",
+                "title": "project Create",
+                "status": "success",
+                "inputSummary": "project | durable project fact",
+                "outputSummary": "created=Alpha",
+                "refs": {
+                  "candidateType": "project"
+                },
+                "details": [
+                  {
+                    "key": "create-project-s1_ddb1204604_raw",
+                    "label": "project Create Result",
+                    "kind": "json",
+                    "json": {
+                      "classification": {
+                        "type": "project",
+                        "reason": "durable project fact",
+                        "evidence": "project evidence"
+                      },
+                      "candidate": {
+                        "type": "project",
+                        "name": "Alpha",
+                        "description": "Alpha description",
+                        "body": "## Summary\nAlpha body"
+                      }
+                    }
+                  }
+                ],
+                "promptDebug": {
+                  "requestLabel": "Project memory create",
+                  "systemPrompt": "You create one append-only project memory note from a focus user turn.\n\nRules:\n- Create at most one project note.\n- The note belongs to the current project only.\n- Capture durable project facts: what the project is, stable scope, goals, key progress, blockers, risks, important decisions, important next steps.\n- Do not reduce the note to a vague status line.\n- Do not focus on highly volatile percentages, fleeting schedules, or trivial short-term updates unless they reveal a durable blocker/risk/fact.\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\n- Keep the note readable markdown.\n- Prefer meaningful headings when useful, such as: ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes.\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"skip\": false,\n  \"reason\": \"\",\n  \"name\": \"short project-memory title\",\n  \"description\": \"one-line description\",\n  \"markdown\": \"markdown body\"\n}",
+                  "userPrompt": "{\n  \"classification\": {\n    \"type\": \"project\",\n    \"reason\": \"durable project fact\",\n    \"evidence\": \"project evidence\"\n  },\n  \"context\": {\n    \"current_project_meta\": null,\n    \"focus_user_turn\": {\n      \"role\": \"user\",\n      \"content\": \"general cleared during classify\"\n    },\n    \"focus_turn_with_neighbor_assistant_context\": {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"general cleared during classify\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a\"\n        }\n      ]\n    },\n    \"previous_turns\": [],\n    \"next_turns\": []\n  }\n}",
+                  "rawResponse": "{\"skip\":false,\"reason\":\"\",\"name\":\"Alpha\",\"description\":\"Alpha description\",\"markdown\":\"## Summary\\nAlpha body\"}",
+                  "parsedResult": {
+                    "skip": false,
+                    "reason": "",
+                    "name": "Alpha",
+                    "description": "Alpha description",
+                    "markdown": "## Summary\nAlpha body"
+                  }
+                }
+              },
+              {
+                "stepId": "index_trace_369a4aa3f1:step:6",
+                "kind": "persist",
+                "title": "Persist",
+                "status": "skipped",
+                "inputSummary": "1 candidates ready to persist.",
+                "outputSummary": "No memory files were written for this turn.",
+                "details": [
+                  {
+                    "key": "persisted-files-s1_ddb1204604_raw",
+                    "label": "Persisted Files",
+                    "labelI18n": {
+                      "key": "trace.detail.persisted_files",
+                      "fallback": "Persisted Files"
+                    },
+                    "kind": "json",
+                    "json": []
+                  }
+                ]
+              },
+              {
+                "stepId": "index_trace_369a4aa3f1:step:7",
+                "kind": "index_finished",
+                "title": "Index Finished",
+                "status": "success",
+                "inputSummary": "segments=1",
+                "outputSummary": "stored=0, failed=0",
+                "metrics": {
+                  "storedResults": 0,
+                  "failed": 0
+                },
+                "details": [
+                  {
+                    "key": "stored-results",
+                    "label": "Stored Results",
+                    "labelI18n": {
+                      "key": "trace.detail.stored_results",
+                      "fallback": "Stored Results"
+                    },
+                    "kind": "json",
+                    "json": []
+                  }
+                ],
+                "titleI18n": {
+                  "key": "trace.step.index_finished",
+                  "fallback": "Index Finished"
+                }
+              }
+            ],
+            "storedResults": [],
+            "finishedAt": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "pipeline": {
+          "lastIndexedAt": "2026-10-22T00:00:01.000Z",
+          "lastIndexedCursor:s1": "2026-10-22T00:00:01.000Z",
+          "workspaceDir": "$HOME/.pilotdeck"
+        }
+      },
+      "files": {
+        "memory": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n"
+          }
+        ],
+        "global": []
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "url": "/v1/chat/completions",
+          "headers": {
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate",
+            "accept-language": "*",
+            "authorization": "Bearer fixture-key",
+            "connection": "keep-alive",
+            "content-length": "2779",
+            "content-type": "application/json",
+            "host": "$HOST",
+            "sec-fetch-mode": "cors",
+            "user-agent": "node"
+          },
+          "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You classify one focus user turn for a long-term memory indexing pipeline.\\n\\nYou are only deciding categories. Do not generate the memory file yet.\\n\\nRules:\\n- Base the decision on the focus user turn first.\\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\\n- Assistant text is context only. Never classify something that exists only in assistant wording.\\n- A turn can match multiple categories, but at most once per category.\\n- Allowed categories:\\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\\n- Identity test: only use user when the focus turn is describing the user as a person.\\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\\n- If the user explicitly says \\\"请记住\\\", \\\"帮我记住\\\", or \\\"remember this\\\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\\n- If nothing durable should be remembered, return should_store=false and labels=[].\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"should_store\\\": true,\\n  \\\"labels\\\": [\\n    {\\n      \\\"type\\\": \\\"user | project | feedback\\\",\\n      \\\"reason\\\": \\\"why this category applies\\\",\\n      \\\"evidence\\\": \\\"short quote or evidence summary from the focus turn\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"current_project_meta\\\": null,\\n  \\\"focus_user_turn\\\": {\\n    \\\"role\\\": \\\"user\\\",\\n    \\\"content\\\": \\\"general cleared during classify\\\"\\n  },\\n  \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n    \\\"turn_index\\\": 1,\\n    \\\"messages\\\": [\\n      {\\n        \\\"role\\\": \\\"user\\\",\\n        \\\"content\\\": \\\"general cleared during classify\\\"\\n      },\\n      {\\n        \\\"role\\\": \\\"assistant\\\",\\n        \\\"content\\\": \\\"a\\\"\\n      }\\n    ]\\n  },\\n  \\\"previous_turns\\\": [],\\n  \\\"next_turns\\\": []\\n}\"}]}"
+        },
+        {
+          "method": "POST",
+          "url": "/v1/chat/completions",
+          "headers": {
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate",
+            "accept-language": "*",
+            "authorization": "Bearer fixture-key",
+            "connection": "keep-alive",
+            "content-length": "2135",
+            "content-type": "application/json",
+            "host": "$HOST",
+            "sec-fetch-mode": "cors",
+            "user-agent": "node"
+          },
+          "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You create one append-only project memory note from a focus user turn.\\n\\nRules:\\n- Create at most one project note.\\n- The note belongs to the current project only.\\n- Capture durable project facts: what the project is, stable scope, goals, key progress, blockers, risks, important decisions, important next steps.\\n- Do not reduce the note to a vague status line.\\n- Do not focus on highly volatile percentages, fleeting schedules, or trivial short-term updates unless they reveal a durable blocker/risk/fact.\\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\\n- Keep the note readable markdown.\\n- Prefer meaningful headings when useful, such as: ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes.\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"skip\\\": false,\\n  \\\"reason\\\": \\\"\\\",\\n  \\\"name\\\": \\\"short project-memory title\\\",\\n  \\\"description\\\": \\\"one-line description\\\",\\n  \\\"markdown\\\": \\\"markdown body\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"classification\\\": {\\n    \\\"type\\\": \\\"project\\\",\\n    \\\"reason\\\": \\\"durable project fact\\\",\\n    \\\"evidence\\\": \\\"project evidence\\\"\\n  },\\n  \\\"context\\\": {\\n    \\\"current_project_meta\\\": null,\\n    \\\"focus_user_turn\\\": {\\n      \\\"role\\\": \\\"user\\\",\\n      \\\"content\\\": \\\"general cleared during classify\\\"\\n    },\\n    \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n      \\\"turn_index\\\": 1,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"general cleared during classify\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a\\\"\\n        }\\n      ]\\n    },\\n    \\\"previous_turns\\\": [],\\n    \\\"next_turns\\\": []\\n  }\\n}\"}]}"
+        }
+      ],
+      "logs": [
+        {
+          "level": "info",
+          "message": [
+            "[clawxmemory] skip persist for cleared session=s1"
+          ]
+        }
+      ]
+    },
+    "matrix-general-createNote-clearSession": {
+      "name": "matrix-general-createNote-clearSession",
+      "mode": "general",
+      "timing": "createNote",
+      "action": "clearSession",
+      "eventCapture": null,
+      "seeds": [],
+      "captures": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "timestamp": "2026-10-22T00:00:01.000Z",
+            "messages": [
+              {
+                "role": "user",
+                "content": "general cleared during create"
+              },
+              {
+                "role": "assistant",
+                "content": "a"
+              }
+            ]
+          },
+          "result": {
+            "captured": true,
+            "normalizedMessages": [
+              {
+                "role": "user",
+                "content": "general cleared during create"
+              },
+              {
+                "role": "assistant",
+                "content": "a"
+              }
+            ],
+            "sessionKey": "s1"
+          }
+        }
+      ],
+      "directCaptures": [],
+      "llmSteps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"should_store\\\":true,\\\"labels\\\":[{\\\"type\\\":\\\"project\\\",\\\"reason\\\":\\\"durable project fact\\\",\\\"evidence\\\":\\\"project evidence\\\"}]}\"}}]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"skip\\\":false,\\\"reason\\\":\\\"\\\",\\\"name\\\":\\\"Alpha\\\",\\\"description\\\":\\\"Alpha description\\\",\\\"markdown\\\":\\\"## Summary\\\\nAlpha body\\\"}\"}}]}"
+        },
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"decision\\\":\\\"create_new\\\",\\\"selected_project_id\\\":\\\"\\\",\\\"reason\\\":\\\"new\\\"}\"}}]}"
+        }
+      ],
+      "result": {
+        "stats": {
+          "capturedSessions": 1,
+          "writtenFiles": 0,
+          "writtenUserFiles": 0,
+          "writtenProjectFiles": 0,
+          "writtenFeedbackFiles": 0,
+          "userProfilesUpdated": 0,
+          "failedSessions": 0
+        }
+      },
+      "db": {
+        "l0": [],
+        "traces": [
+          {
+            "indexTraceId": "index_trace_07b252e576",
+            "sessionKey": "s1",
+            "trigger": "manual_sync",
+            "startedAt": "2026-10-22T00:00:00.000Z",
+            "status": "completed",
+            "isNoOp": true,
+            "displayStatus": "No-op",
+            "batchSummary": {
+              "l0Ids": [
+                "s1_bf20e0f5e8_raw"
+              ],
+              "segmentCount": 1,
+              "focusUserTurnCount": 1,
+              "fromTimestamp": "2026-10-22T00:00:01.000Z",
+              "toTimestamp": "2026-10-22T00:00:01.000Z"
+            },
+            "steps": [
+              {
+                "stepId": "index_trace_07b252e576:step:1",
+                "kind": "index_start",
+                "title": "Index Started",
+                "status": "info",
+                "inputSummary": "trigger=manual_sync",
+                "outputSummary": "Preparing batch indexing for s1.",
+                "titleI18n": {
+                  "key": "trace.step.index_start",
+                  "fallback": "Index Started"
+                },
+                "outputSummaryI18n": {
+                  "key": "trace.text.index_start.output.preparing_batch",
+                  "args": [
+                    "s1"
+                  ],
+                  "fallback": "Preparing batch indexing for {0}."
+                }
+              },
+              {
+                "stepId": "index_trace_07b252e576:step:2",
+                "kind": "batch_loaded",
+                "title": "Batch Loaded",
+                "status": "info",
+                "inputSummary": "1 segments from 2026-10-22T00:00:01.000Z to 2026-10-22T00:00:01.000Z",
+                "outputSummary": "2 messages loaded into batch context.",
+                "metrics": {
+                  "segmentCount": 1,
+                  "focusUserTurnCount": 1
+                },
+                "details": [
+                  {
+                    "key": "batch-summary",
+                    "label": "Batch Summary",
+                    "labelI18n": {
+                      "key": "trace.detail.batch_summary",
+                      "fallback": "Batch Summary"
+                    },
+                    "kind": "kv",
+                    "entries": [
+                      {
+                        "label": "sessionKey",
+                        "value": "s1"
+                      },
+                      {
+                        "label": "from",
+                        "value": "2026-10-22T00:00:01.000Z"
+                      },
+                      {
+                        "label": "to",
+                        "value": "2026-10-22T00:00:01.000Z"
+                      },
+                      {
+                        "label": "l0Ids",
+                        "value": "s1_bf20e0f5e8_raw"
+                      }
+                    ]
+                  },
+                  {
+                    "key": "batch-context",
+                    "label": "Batch Context",
+                    "labelI18n": {
+                      "key": "trace.detail.batch_context",
+                      "fallback": "Batch Context"
+                    },
+                    "kind": "json",
+                    "json": [
+                      {
+                        "index": 0,
+                        "role": "user",
+                        "content": "general cleared during create"
+                      },
+                      {
+                        "index": 1,
+                        "role": "assistant",
+                        "content": "a"
+                      }
+                    ]
+                  }
+                ],
+                "titleI18n": {
+                  "key": "trace.step.batch_loaded",
+                  "fallback": "Batch Loaded"
+                },
+                "inputSummaryI18n": {
+                  "key": "trace.text.batch_loaded.input",
+                  "args": [
+                    "1",
+                    "2026-10-22T00:00:01.000Z",
+                    "2026-10-22T00:00:01.000Z"
+                  ],
+                  "fallback": "{0} segments from {1} to {2}"
+                },
+                "outputSummaryI18n": {
+                  "key": "trace.text.batch_loaded.output",
+                  "args": [
+                    "2"
+                  ],
+                  "fallback": "{0} messages loaded into batch context."
+                }
+              },
+              {
+                "stepId": "index_trace_07b252e576:step:3",
+                "kind": "focus_turns_selected",
+                "title": "Focus Turns Selected",
+                "status": "success",
+                "inputSummary": "1 user turns in this batch.",
+                "outputSummary": "User turns will be classified one by one.",
+                "details": [
+                  {
+                    "key": "focus-turn-selection-summary",
+                    "label": "Focus Selection Summary",
+                    "labelI18n": {
+                      "key": "trace.detail.focus_selection_summary",
+                      "fallback": "Focus Selection Summary"
+                    },
+                    "kind": "kv",
+                    "entries": [
+                      {
+                        "label": "userTurns",
+                        "value": "1"
+                      },
+                      {
+                        "label": "assistantMessagesInContext",
+                        "value": "1"
+                      },
+                      {
+                        "label": "assistantUsedAsContextOnly",
+                        "value": "yes"
+                      }
+                    ]
+                  },
+                  {
+                    "key": "focus-turn-1",
+                    "label": "Focus Turn 1",
+                    "labelI18n": {
+                      "key": "trace.detail.focus_turn",
+                      "args": [
+                        "1"
+                      ],
+                      "fallback": "Focus Turn {0}"
+                    },
+                    "kind": "text",
+                    "text": "general cleared during create"
+                  }
+                ],
+                "titleI18n": {
+                  "key": "trace.step.focus_turns_selected",
+                  "fallback": "Focus Turns Selected"
+                },
+                "inputSummaryI18n": {
+                  "key": "trace.text.focus_turns_selected.input",
+                  "args": [
+                    "1"
+                  ],
+                  "fallback": "{0} user turns in this batch."
+                },
+                "outputSummaryI18n": {
+                  "key": "trace.text.focus_turns_selected.output.classifying",
+                  "fallback": "User turns will be classified one by one."
+                }
+              },
+              {
+                "stepId": "index_trace_07b252e576:step:4",
+                "kind": "classification",
+                "title": "Classification",
+                "status": "success",
+                "inputSummary": "general cleared during create",
+                "outputSummary": "classified=project",
+                "refs": {
+                  "classification": [
+                    "project"
+                  ]
+                },
+                "details": [
+                  {
+                    "key": "focus-turn-text-s1_bf20e0f5e8_raw",
+                    "label": "Focus User Turn",
+                    "labelI18n": {
+                      "key": "trace.detail.focus_user_turn",
+                      "fallback": "Focus User Turn"
+                    },
+                    "kind": "text",
+                    "text": "general cleared during create"
+                  },
+                  {
+                    "key": "classification-result-s1_bf20e0f5e8_raw",
+                    "label": "Classification Result",
+                    "labelI18n": {
+                      "key": "trace.detail.classification_result",
+                      "fallback": "Classification Result"
+                    },
+                    "kind": "kv",
+                    "entries": [
+                      {
+                        "label": "sessionKey",
+                        "value": "s1"
+                      },
+                      {
+                        "label": "timestamp",
+                        "value": "2026-10-22T00:00:01.000Z"
+                      },
+                      {
+                        "label": "result",
+                        "value": "project"
+                      }
+                    ]
+                  },
+                  {
+                    "key": "classification-labels-s1_bf20e0f5e8_raw",
+                    "label": "Classification Labels",
+                    "labelI18n": {
+                      "key": "trace.detail.classifier_candidates",
+                      "fallback": "Classifier Candidates"
+                    },
+                    "kind": "json",
+                    "json": [
+                      {
+                        "type": "project",
+                        "reason": "durable project fact",
+                        "evidence": "project evidence"
+                      }
+                    ]
+                  }
+                ],
+                "promptDebug": {
+                  "requestLabel": "Memory turn classification",
+                  "systemPrompt": "You classify one focus user turn for a long-term memory indexing pipeline.\n\nYou are only deciding categories. Do not generate the memory file yet.\n\nRules:\n- Base the decision on the focus user turn first.\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\n- Assistant text is context only. Never classify something that exists only in assistant wording.\n- A turn can match multiple categories, but at most once per category.\n- Allowed categories:\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\n- Identity test: only use user when the focus turn is describing the user as a person.\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\n- If the user explicitly says \"请记住\", \"帮我记住\", or \"remember this\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\n- If nothing durable should be remembered, return should_store=false and labels=[].\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"should_store\": true,\n  \"labels\": [\n    {\n      \"type\": \"user | project | feedback\",\n      \"reason\": \"why this category applies\",\n      \"evidence\": \"short quote or evidence summary from the focus turn\"\n    }\n  ]\n}",
+                  "userPrompt": "{\n  \"current_project_meta\": null,\n  \"focus_user_turn\": {\n    \"role\": \"user\",\n    \"content\": \"general cleared during create\"\n  },\n  \"focus_turn_with_neighbor_assistant_context\": {\n    \"turn_index\": 1,\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": \"general cleared during create\"\n      },\n      {\n        \"role\": \"assistant\",\n        \"content\": \"a\"\n      }\n    ]\n  },\n  \"previous_turns\": [],\n  \"next_turns\": []\n}",
+                  "rawResponse": "{\"should_store\":true,\"labels\":[{\"type\":\"project\",\"reason\":\"durable project fact\",\"evidence\":\"project evidence\"}]}",
+                  "parsedResult": {
+                    "should_store": true,
+                    "labels": [
+                      {
+                        "type": "project",
+                        "reason": "durable project fact",
+                        "evidence": "project evidence"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "stepId": "index_trace_07b252e576:step:5",
+                "kind": "project_create",
+                "title": "project Create",
+                "status": "success",
+                "inputSummary": "project | durable project fact",
+                "outputSummary": "created=Alpha",
+                "refs": {
+                  "candidateType": "project"
+                },
+                "details": [
+                  {
+                    "key": "create-project-s1_bf20e0f5e8_raw",
+                    "label": "project Create Result",
+                    "kind": "json",
+                    "json": {
+                      "classification": {
+                        "type": "project",
+                        "reason": "durable project fact",
+                        "evidence": "project evidence"
+                      },
+                      "candidate": {
+                        "type": "project",
+                        "name": "Alpha",
+                        "description": "Alpha description",
+                        "body": "## Summary\nAlpha body"
+                      }
+                    }
+                  }
+                ],
+                "promptDebug": {
+                  "requestLabel": "Project memory create",
+                  "systemPrompt": "You create one append-only project memory note from a focus user turn.\n\nRules:\n- Create at most one project note.\n- The note belongs to the current project only.\n- Capture durable project facts: what the project is, stable scope, goals, key progress, blockers, risks, important decisions, important next steps.\n- Do not reduce the note to a vague status line.\n- Do not focus on highly volatile percentages, fleeting schedules, or trivial short-term updates unless they reveal a durable blocker/risk/fact.\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\n- Keep the note readable markdown.\n- Prefer meaningful headings when useful, such as: ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes.\n- Return JSON only.\n\nUse this exact JSON shape:\n{\n  \"skip\": false,\n  \"reason\": \"\",\n  \"name\": \"short project-memory title\",\n  \"description\": \"one-line description\",\n  \"markdown\": \"markdown body\"\n}",
+                  "userPrompt": "{\n  \"classification\": {\n    \"type\": \"project\",\n    \"reason\": \"durable project fact\",\n    \"evidence\": \"project evidence\"\n  },\n  \"context\": {\n    \"current_project_meta\": null,\n    \"focus_user_turn\": {\n      \"role\": \"user\",\n      \"content\": \"general cleared during create\"\n    },\n    \"focus_turn_with_neighbor_assistant_context\": {\n      \"turn_index\": 1,\n      \"messages\": [\n        {\n          \"role\": \"user\",\n          \"content\": \"general cleared during create\"\n        },\n        {\n          \"role\": \"assistant\",\n          \"content\": \"a\"\n        }\n      ]\n    },\n    \"previous_turns\": [],\n    \"next_turns\": []\n  }\n}",
+                  "rawResponse": "{\"skip\":false,\"reason\":\"\",\"name\":\"Alpha\",\"description\":\"Alpha description\",\"markdown\":\"## Summary\\nAlpha body\"}",
+                  "parsedResult": {
+                    "skip": false,
+                    "reason": "",
+                    "name": "Alpha",
+                    "description": "Alpha description",
+                    "markdown": "## Summary\nAlpha body"
+                  }
+                }
+              },
+              {
+                "stepId": "index_trace_07b252e576:step:6",
+                "kind": "persist",
+                "title": "Persist",
+                "status": "skipped",
+                "inputSummary": "1 candidates ready to persist.",
+                "outputSummary": "No memory files were written for this turn.",
+                "details": [
+                  {
+                    "key": "persisted-files-s1_bf20e0f5e8_raw",
+                    "label": "Persisted Files",
+                    "labelI18n": {
+                      "key": "trace.detail.persisted_files",
+                      "fallback": "Persisted Files"
+                    },
+                    "kind": "json",
+                    "json": []
+                  }
+                ]
+              },
+              {
+                "stepId": "index_trace_07b252e576:step:7",
+                "kind": "index_finished",
+                "title": "Index Finished",
+                "status": "success",
+                "inputSummary": "segments=1",
+                "outputSummary": "stored=0, failed=0",
+                "metrics": {
+                  "storedResults": 0,
+                  "failed": 0
+                },
+                "details": [
+                  {
+                    "key": "stored-results",
+                    "label": "Stored Results",
+                    "labelI18n": {
+                      "key": "trace.detail.stored_results",
+                      "fallback": "Stored Results"
+                    },
+                    "kind": "json",
+                    "json": []
+                  }
+                ],
+                "titleI18n": {
+                  "key": "trace.step.index_finished",
+                  "fallback": "Index Finished"
+                }
+              }
+            ],
+            "storedResults": [],
+            "finishedAt": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "pipeline": {
+          "lastIndexedAt": "2026-10-22T00:00:01.000Z",
+          "lastIndexedCursor:s1": "2026-10-22T00:00:01.000Z",
+          "workspaceDir": "$HOME/.pilotdeck"
+        }
+      },
+      "files": {
+        "memory": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n"
+          }
+        ],
+        "global": []
+      },
+      "requests": [
+        {
+          "method": "POST",
+          "url": "/v1/chat/completions",
+          "headers": {
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate",
+            "accept-language": "*",
+            "authorization": "Bearer fixture-key",
+            "connection": "keep-alive",
+            "content-length": "2775",
+            "content-type": "application/json",
+            "host": "$HOST",
+            "sec-fetch-mode": "cors",
+            "user-agent": "node"
+          },
+          "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You classify one focus user turn for a long-term memory indexing pipeline.\\n\\nYou are only deciding categories. Do not generate the memory file yet.\\n\\nRules:\\n- Base the decision on the focus user turn first.\\n- You may use the neighboring user/assistant turns only to disambiguate the focus turn.\\n- Assistant text is context only. Never classify something that exists only in assistant wording.\\n- A turn can match multiple categories, but at most once per category.\\n- Allowed categories:\\n  - user: cross-project durable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationship context.\\n  - project: durable current-project facts such as what the project is, goals, scope, important progress, blockers, risks, key decisions.\\n  - feedback: current-project collaboration rules, delivery rules, output structure, title/body template rules, confirmed style guidance, language rules, and file/tool boundaries.\\n- Identity test: only use user when the focus turn is describing the user as a person.\\n- Override test: if another project could reasonably override this rule or preference, it is not user; classify it as feedback.\\n- Output test: if the turn is constraining how the assistant should reply, write, format, deliver, or touch files/tools, classify it as feedback.\\n- Project memory should prefer stable facts. Do not classify short-lived time-flow updates, percentages, or fleeting scheduling notes as project memory unless they carry a durable blocker/risk/fact.\\n- If the user explicitly says \\\"请记住\\\", \\\"帮我记住\\\", or \\\"remember this\\\", treat that as a stronger signal for durable memory. This is still inferred from the visible user text only.\\n- If nothing durable should be remembered, return should_store=false and labels=[].\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"should_store\\\": true,\\n  \\\"labels\\\": [\\n    {\\n      \\\"type\\\": \\\"user | project | feedback\\\",\\n      \\\"reason\\\": \\\"why this category applies\\\",\\n      \\\"evidence\\\": \\\"short quote or evidence summary from the focus turn\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"current_project_meta\\\": null,\\n  \\\"focus_user_turn\\\": {\\n    \\\"role\\\": \\\"user\\\",\\n    \\\"content\\\": \\\"general cleared during create\\\"\\n  },\\n  \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n    \\\"turn_index\\\": 1,\\n    \\\"messages\\\": [\\n      {\\n        \\\"role\\\": \\\"user\\\",\\n        \\\"content\\\": \\\"general cleared during create\\\"\\n      },\\n      {\\n        \\\"role\\\": \\\"assistant\\\",\\n        \\\"content\\\": \\\"a\\\"\\n      }\\n    ]\\n  },\\n  \\\"previous_turns\\\": [],\\n  \\\"next_turns\\\": []\\n}\"}]}"
+        },
+        {
+          "method": "POST",
+          "url": "/v1/chat/completions",
+          "headers": {
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate",
+            "accept-language": "*",
+            "authorization": "Bearer fixture-key",
+            "connection": "keep-alive",
+            "content-length": "2131",
+            "content-type": "application/json",
+            "host": "$HOST",
+            "sec-fetch-mode": "cors",
+            "user-agent": "node"
+          },
+          "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You create one append-only project memory note from a focus user turn.\\n\\nRules:\\n- Create at most one project note.\\n- The note belongs to the current project only.\\n- Capture durable project facts: what the project is, stable scope, goals, key progress, blockers, risks, important decisions, important next steps.\\n- Do not reduce the note to a vague status line.\\n- Do not focus on highly volatile percentages, fleeting schedules, or trivial short-term updates unless they reveal a durable blocker/risk/fact.\\n- The visible output language must follow the dominant user language in the focus user turn and neighboring user turns.\\n- If the surrounding dialogue mixes languages, prefer the focus user turn language first, then the nearest neighboring user language.\\n- Apply this language rule consistently to the title/name, description, markdown headings, and markdown body text.\\n- Keep the note readable markdown.\\n- Prefer meaningful headings when useful, such as: ## Summary, ## Current Stage, ## Constraints, ## Blockers, ## Next Steps, ## Timeline, ## Notes.\\n- Return JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"skip\\\": false,\\n  \\\"reason\\\": \\\"\\\",\\n  \\\"name\\\": \\\"short project-memory title\\\",\\n  \\\"description\\\": \\\"one-line description\\\",\\n  \\\"markdown\\\": \\\"markdown body\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"classification\\\": {\\n    \\\"type\\\": \\\"project\\\",\\n    \\\"reason\\\": \\\"durable project fact\\\",\\n    \\\"evidence\\\": \\\"project evidence\\\"\\n  },\\n  \\\"context\\\": {\\n    \\\"current_project_meta\\\": null,\\n    \\\"focus_user_turn\\\": {\\n      \\\"role\\\": \\\"user\\\",\\n      \\\"content\\\": \\\"general cleared during create\\\"\\n    },\\n    \\\"focus_turn_with_neighbor_assistant_context\\\": {\\n      \\\"turn_index\\\": 1,\\n      \\\"messages\\\": [\\n        {\\n          \\\"role\\\": \\\"user\\\",\\n          \\\"content\\\": \\\"general cleared during create\\\"\\n        },\\n        {\\n          \\\"role\\\": \\\"assistant\\\",\\n          \\\"content\\\": \\\"a\\\"\\n        }\\n      ]\\n    },\\n    \\\"previous_turns\\\": [],\\n    \\\"next_turns\\\": []\\n  }\\n}\"}]}"
+        }
+      ],
+      "logs": [
+        {
+          "level": "info",
+          "message": [
+            "[clawxmemory] skip persist for cleared session=s1"
+          ]
+        }
+      ]
+    }
+  }
+}
