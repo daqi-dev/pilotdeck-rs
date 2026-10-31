@@ -1386,3 +1386,6 @@ fn node_locale_contract() {
 fn node_locale_regenerates_identically() {
     crate::test_baseline::regenerates_identically("node-locale");
 }
+
+#[cfg(target_os = "linux")]
+mod linux_dirent;

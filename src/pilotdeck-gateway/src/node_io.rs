@@ -490,4 +490,190 @@ mod tests {
             ("EIO", "EIO: i/o error, read".into())
         );
     }
+    /// #117: the errno table was generated on macOS, so its libc numbers were
+    /// never measured against a real Linux Node. This runs on Linux against a
+    /// fresh sample from `tests/fixtures/node-io/linux-errno-verify.mjs`
+    /// (same pinned Node, `os.constants` + libuv tables, no repo writes).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_node_errno_numbers_match_node_os_constants() {
+        if std::env::var_os("PDRS_NODE_IO_LINUX_JSON").is_none() {
+            return;
+        }
+        let path = std::path::PathBuf::from(
+            std::env::var_os("PDRS_NODE_IO_LINUX_JSON")
+                .expect("#117 requires PDRS_NODE_IO_LINUX_JSON (fresh Node errno sample path)"),
+        );
+        let fresh: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("#117 read the fresh Node errno sample: {error}")),
+        )
+        .expect("#117 parse the fresh Node errno sample");
+        assert_eq!(
+            fresh["node"].as_str(),
+            Some("v22.22.0"),
+            "#117 sample Node version: {}",
+            fresh["node"]
+        );
+        assert_eq!(
+            fresh["uv"].as_str(),
+            Some("1.52.1"),
+            "#117 sample libuv version: {}",
+            fresh["uv"]
+        );
+        assert_eq!(
+            fresh["platform"].as_str(),
+            Some("linux"),
+            "#117 sample platform: {}",
+            fresh["platform"]
+        );
+        // The committed fixture is darwin, so its `uv` numbers are platform
+        // data — cb8 measured 38 of 85 rows differing with zero code or
+        // description drift. Names and descriptions are the shared data: a
+        // fresh Linux sample must agree with the fixture code by code, and a
+        // name only one side knows must still be pinned to the compiled
+        // table. The numbers themselves are checked below against this
+        // Linux's own libc instead of the darwin recording.
+        let committed: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/node-io/errors.json"))
+                .expect("#117 parse the committed darwin errors.json fixture");
+        fn all_by_code(document: &serde_json::Value) -> std::collections::BTreeMap<&str, &str> {
+            document["all"]
+                .as_array()
+                .unwrap_or_else(|| panic!("#117 libuv error map is not an array"))
+                .iter()
+                .map(|row| {
+                    (
+                        row["code"]
+                            .as_str()
+                            .unwrap_or_else(|| panic!("#117 libuv error row without a code")),
+                        row["description"].as_str().unwrap_or_else(|| {
+                            panic!("#117 libuv error row without a description")
+                        }),
+                    )
+                })
+                .collect()
+        }
+        let fresh_all = all_by_code(&fresh);
+        let committed_all = all_by_code(&committed);
+        for (code, description) in &fresh_all {
+            match committed_all.get(code) {
+                Some(recorded) => assert_eq!(
+                    description, recorded,
+                    "#117 fresh Linux description for {code} differs from the committed table"
+                ),
+                // A name this Linux's libuv knows but the darwin recording
+                // lacks is exactly what the cfg guards in generated.rs exist
+                // for; it must not bypass the compiled table.
+                None => assert!(
+                    generated::ERRORS.iter().any(|(_, known, _)| known == code),
+                    "#117 fresh Linux-only libuv code {code} is missing from the generated table"
+                ),
+            }
+        }
+        for code in committed_all.keys() {
+            assert!(
+                fresh_all.contains_key(code),
+                "#117 committed darwin libuv code {code} is absent from the fresh Linux sample"
+            );
+        }
+        // The formatting rows for a code only one side's libuv table knows
+        // cannot pair, so compare the shared codes only; both tables are
+        // generated in the same deterministic order, which filtering keeps.
+        fn formatting_codes(document: &serde_json::Value) -> std::collections::BTreeSet<&str> {
+            document["formatting"]
+                .as_array()
+                .unwrap_or_else(|| panic!("#117 formatting table is not an array"))
+                .iter()
+                .map(|row| {
+                    row["code"]
+                        .as_str()
+                        .unwrap_or_else(|| panic!("#117 formatting row without a code"))
+                })
+                .collect()
+        }
+        let fresh_formatting = formatting_codes(&fresh);
+        let committed_formatting = formatting_codes(&committed);
+        for code in fresh_formatting.difference(&committed_formatting) {
+            assert!(
+                generated::ERRORS.iter().any(|(_, known, _)| known == code),
+                "#117 fresh Linux-only formatting code {code} is missing from the generated table"
+            );
+        }
+        let shared_formatting: std::collections::BTreeSet<&str> = fresh_formatting
+            .intersection(&committed_formatting)
+            .copied()
+            .collect();
+        fn shared_rows<'a>(
+            document: &'a serde_json::Value,
+            shared: &std::collections::BTreeSet<&str>,
+        ) -> Vec<&'a serde_json::Value> {
+            document["formatting"]
+                .as_array()
+                .unwrap_or_else(|| panic!("#117 formatting table is not an array"))
+                .iter()
+                .filter(|row| {
+                    row["code"]
+                        .as_str()
+                        .is_some_and(|code| shared.contains(code))
+                })
+                .collect()
+        }
+        assert_eq!(
+            shared_rows(&fresh, &shared_formatting),
+            shared_rows(&committed, &shared_formatting),
+            "#117 fresh Linux UVException formatting differs from the committed table (shared codes)"
+        );
+        // On unix a libuv system errno is the negated libc errno, so every
+        // generated row carries the number Node itself uses on this Linux.
+        // Node's own constant table comes first: a table number that only the
+        // libuv direction still catches is the Linux-only names below, whose
+        // os.constants entry cb8 measured as absent (null), not wrong.
+        for (errno, code, _) in generated::ERRORS {
+            let entry = fresh["all"]
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row["code"].as_str() == Some(code)))
+                .unwrap_or_else(|| panic!("#117 fresh libuv sample lacks {code}"));
+            match fresh["errno"][code].as_i64() {
+                Some(constant) => assert_eq!(
+                    constant,
+                    i64::from(*errno),
+                    "#117 Node os.constants.errno {code} differs from the generated table"
+                ),
+                None => assert!(
+                    fresh["errno"][code].is_null(),
+                    "#117 Node os.constants.errno {code} is neither a number nor absent"
+                ),
+            }
+            assert_eq!(
+                -entry["uv"]
+                    .as_i64()
+                    .unwrap_or_else(|| panic!("#117 fresh libuv {code} uv value is not a number")),
+                i64::from(*errno),
+                "#117 libuv errno number for {code} differs from the generated table"
+            );
+        }
+        // The lookup direction real errors take: io::Error carries the libc
+        // errno, libuv's mapping recovers Node's code name.
+        for entry in fresh["all"]
+            .as_array()
+            .unwrap_or_else(|| panic!("#117 libuv error map is not an array"))
+        {
+            let uv = entry["uv"]
+                .as_i64()
+                .unwrap_or_else(|| panic!("#117 fresh libuv uv value is not a number"));
+            if (-1024..0).contains(&uv) {
+                let expected = entry["code"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("#117 fresh libuv code is not a string"));
+                let found = lookup(&io::Error::from_raw_os_error(-uv as i32))
+                    .unwrap_or_else(|| panic!("#117 lookup found no code for errno {}", -uv))
+                    .0;
+                assert_eq!(
+                    found, expected,
+                    "#117 lookup for {expected} recovers the wrong code"
+                );
+            }
+        }
+    }
 }
