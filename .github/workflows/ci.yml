@@ -8,7 +8,33 @@ on:
   merge_group:
 
 jobs:
+  # #1199：改动只碰 state/ .42cog/ docs/ 时输出 docs_only=true，三个重 job 才允许跳过；
+  # 本 job 自身无条件运行（先跑分类器自测），重 job 的跳过只认它的输出，check 只放行
+  # 「skipped 且 docs_only=true」这一条路径。
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # base..head 两点 diff 要 PR / merge group 的历史，浅克隆没有
+          fetch-depth: 0
+      - name: 分类器自测（正负例与内存内变异负控）
+        run: python3 -I scripts/test-ci-scope.py
+      - name: 分类改动范围（docs-only 判定，fail-closed）
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          MG_BASE: ${{ github.event.merge_group.base_sha }}
+          MG_HEAD: ${{ github.event.merge_group.head_sha }}
+        run: python3 -I scripts/ci_scope.py
+
   metadata-observer:
+    needs: [scope]
+    if: ${{ needs.scope.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,24 +49,32 @@ jobs:
       - name: 共享执行器隔离与候选正控回归（#994）
         run: python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py
 
-  # 保留必需检查名；三个并行 job 任一非 success（含取消/跳过）都拒绝合并。
+  # 保留必需检查名。#1199 后合并闸门语义：scope 非 success 一律拒绝；三个重 job 的结果
+  # 「非 success 且不是（skipped 且 docs_only=true）」才拒绝——即分类器确定纯文档改动才
+  # 接受 skipped，取消 / 其他跳过照旧拒绝（#904 的有意放宽，边界见 state/decisions-20261031-ci-docs-scope.md）。
   check:
-    needs: [metadata-observer, rust, a51-coverage]
+    needs: [scope, metadata-observer, rust, a51-coverage]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
+      - name: Require scope success
+        if: ${{ always() && needs.scope.result != 'success' }}
+        working-directory: .
+        run: exit 1
       - name: Require metadata observer success
-        if: ${{ always() && needs.metadata-observer.result != 'success' }}
+        if: ${{ always() && needs.metadata-observer.result != 'success' && !(needs.metadata-observer.result == 'skipped' && needs.scope.outputs.docs_only == 'true') }}
         working-directory: .
         run: exit 1
       - name: Require Rust success
-        if: ${{ always() && needs.rust.result != 'success' }}
+        if: ${{ always() && needs.rust.result != 'success' && !(needs.rust.result == 'skipped' && needs.scope.outputs.docs_only == 'true') }}
         run: exit 1
       - name: Require A5.1 coverage success
-        if: ${{ always() && needs.a51-coverage.result != 'success' }}
+        if: ${{ always() && needs.a51-coverage.result != 'success' && !(needs.a51-coverage.result == 'skipped' && needs.scope.outputs.docs_only == 'true') }}
         run: exit 1
 
   rust:
+    needs: [scope]
+    if: ${{ needs.scope.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
@@ -145,6 +179,8 @@ jobs:
 
   # A5.1 只依赖 Python、Node 与只读基线，不依赖 Rust 或其他 job 的产物。
   a51-coverage:
+    needs: [scope]
+    if: ${{ needs.scope.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     steps:
       # 校验器只读当前检出文件，不读取 Git 历史，默认浅检出即可。

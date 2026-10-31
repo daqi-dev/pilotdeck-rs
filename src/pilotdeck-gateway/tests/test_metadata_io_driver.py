@@ -162,10 +162,11 @@ class EnvironmentControls(unittest.TestCase):
                                 f'{issue} unsupported job declaration')
                 jobs[name] += line
         # New jobs must explicitly register their Node setup and merge gating here:
+        # scope runs Python/git only and gates the three heavy jobs (#1199);
         # metadata-observer/rust/a51-coverage need their own Node and check gates;
         # check only aggregates; gateway-schema-baseline has Node and its own required check.
-        self.assertEqual(set(jobs), {'metadata-observer', 'check', 'rust', 'a51-coverage',
-                                    'gateway-schema-baseline'}, f'{issue} exact five CI jobs')
+        self.assertEqual(set(jobs), {'scope', 'metadata-observer', 'check', 'rust', 'a51-coverage',
+                                    'gateway-schema-baseline'}, f'{issue} exact six CI jobs')
         return jobs
 
     def ci_steps(self, name, body, issue='#904'):
@@ -250,29 +251,213 @@ class EnvironmentControls(unittest.TestCase):
 
     def test_required_check_gates_observer_failure_instead_of_skipping(self):
         jobs = self.ci_jobs()
-        required = ('metadata-observer', 'rust', 'a51-coverage')
+        heavy = ('metadata-observer', 'rust', 'a51-coverage')
         for name in jobs:
             self.assertIn(name, jobs, f'#904 required job {name} exists')
             self.assertNotRegex(jobs[name], r'''(?m)^\s*(?:continue-on-error|'continue-on-error'|"continue-on-error")\s*:''',
                                 f'#904 {name} cannot ignore failure')
         check = jobs['check']
         self.assertEqual(re.findall(r'^    needs: (.*)$', check, re.M),
-                         ['[' + ', '.join(required) + ']'], '#904 exact required needs')
+                         ['[scope, ' + ', '.join(heavy) + ']'], '#904 exact required needs')
         self.assertEqual(re.findall(r'^    if: (.*)$', check, re.M),
                          ['${{ always() }}'], '#904 check always runs')
         steps = self.ci_steps('check', check)
-        self.assertEqual(len(steps), 3, '#904 exactly three rejection steps')
-        for job in required:
-            condition = "${{ always() && needs." + job + ".result != 'success' }}"
-            gates = [step for step in steps
-                     if re.findall(r'^        if: (.*)$', step, re.M) == [condition]]
-            self.assertEqual(len(gates), 1, f'#904 {job} rejects every non-success')
+        self.assertEqual(len(steps), 4, '#904 exactly four rejection steps')
+
+        def gate_steps(condition):
+            return [step for step in steps
+                    if re.findall(r'^        if: (.*)$', step, re.M) == [condition]]
+
+        # #1199：scope 自身失败（含取消/跳过）必须拒绝合并——它是唯一允许放宽 #904 的来源。
+        scope_gates = gate_steps("${{ always() && needs.scope.result != 'success' }}")
+        self.assertEqual(len(scope_gates), 1, '#904 scope failure must reject the merge')
+        self.assertEqual(re.findall(r'^        run: (.*)$', scope_gates[0], re.M),
+                         ['exit 1'], '#904 scope rejection exits one')
+        for job in heavy:
+            condition = ('${{ always() && needs.' + job + ".result != 'success' && !(needs." + job
+                         + ".result == 'skipped' && needs.scope.outputs.docs_only == 'true') }}")
+            gates = gate_steps(condition)
+            self.assertEqual(len(gates), 1,
+                             f'#904 {job} rejects every non-success beyond the docs-only skip')
             self.assertEqual(re.findall(r'^        run: (.*)$', gates[0], re.M),
                              ['exit 1'], f'#904 {job} rejection exits one')
+        # #1199：三个重 job 的跳过只认 scope 的输出；needs / if 是精确字符串，不许加别的条件。
+        for job in heavy:
+            prefix = jobs[job].split('    steps:\n', 1)[0]
+            gating = re.findall(r"""(?m)^    ['"]?(if|needs|continue-on-error)['"]?\s*:\s*(.*)$""",
+                                prefix)
+            self.assertEqual(gating, [('needs', '[scope]'),
+                                      ('if', "${{ needs.scope.outputs.docs_only != 'true' }}")],
+                             f'#1199 {job} skips only on the scope classifier')
+        # #1199：scope job 自身无条件运行，否则整条放宽路径失去来源。
+        scope_prefix = jobs['scope'].split('    steps:\n', 1)[0]
+        self.assertEqual(re.findall(r"""(?m)^    ['"]?(?:if|needs|continue-on-error)['"]?\s*:""",
+                                   scope_prefix), [], '#1199 scope job runs unconditionally')
         observer_steps = self.ci_steps('metadata-observer', jobs['metadata-observer'])
         self.assertTrue(any(self.ci_run_commands(step)
                             == ['node src/pilotdeck-gateway/tests/test_metadata_observer.mjs']
                             for step in observer_steps), '#904 observer generation control runs')
+
+    def test_ci_rejects_docs_only_gate_drift(self):
+        workflow = self.ci_workflow_fixture()
+        jobs = self.ci_jobs()
+        heavy = ('metadata-observer', 'rust', 'a51-coverage')
+        cases = []
+
+        def change(label, old, new, message):
+            self.assertEqual(workflow.count(old), 1, f'#1199 unique gate mutation anchor: {label}')
+            cases.append((label, workflow.replace(old, new, 1), message))
+
+        def change_job(label, owner, old, new, message):
+            self.assertEqual(jobs[owner].count(old), 1, f'#1199 unique job gate anchor: {label}')
+            cases.append((label, workflow.replace(
+                jobs[owner], jobs[owner].replace(old, new, 1), 1), message))
+
+        # #1199 规格 4：去掉 docs_only 条件后 skipped 被接受 → 必须失败。
+        for job in heavy:
+            strict = '${{ always() && needs.' + job + ".result != 'success' }}"
+            relaxed = ('${{ always() && needs.' + job + ".result != 'success' && !(needs." + job
+                       + ".result == 'skipped' && needs.scope.outputs.docs_only == 'true') }}")
+            change(f'{job}-carve-out-dropped', relaxed, strict,
+                   f'#904 {job} rejects every non-success beyond the docs-only skip')
+            change(f'{job}-any-skip-accepted', relaxed,
+                   '${{ always() && needs.' + job + ".result != 'success' && !(needs."
+                   + job + ".result == 'skipped') }}",
+                   f'#904 {job} rejects every non-success beyond the docs-only skip')
+        # #1199 规格 4：scope 失败时 check 仍通过 → 必须失败。
+        scope_step = ('      - name: Require scope success\n'
+                      "        if: ${{ always() && needs.scope.result != 'success' }}\n"
+                      '        working-directory: .\n'
+                      '        run: exit 1\n')
+        change('scope-gate-removed', scope_step, '', '#904 exactly four rejection steps')
+        change('scope-gate-relaxed', "needs.scope.result != 'success'",
+               "needs.scope.result == 'failure'", '#904 scope failure must reject the merge')
+        change('check-needs-drops-scope', 'needs: [scope, metadata-observer, rust, a51-coverage]',
+               'needs: [metadata-observer, rust, a51-coverage]', '#904 exact required needs')
+        # #1199 规格 4：重 job 加 continue-on-error → 必须失败。
+        for owner in heavy:
+            change_job(f'{owner}-continue-on-error', owner, '    steps:\n',
+                       '    continue-on-error: true\n    steps:\n',
+                       f'#904 {owner} cannot ignore failure')
+        # needs / if 是精确字符串：去掉、反转、放宽、换依赖都必须被拒。
+        docs_only_if = "    if: ${{ needs.scope.outputs.docs_only != 'true' }}\n"
+        for owner in heavy:
+            change_job(f'{owner}-needs-dropped', owner, '    needs: [scope]\n', '',
+                       f'#1199 {owner} skips only on the scope classifier')
+            change_job(f'{owner}-if-dropped', owner, docs_only_if, '',
+                       f'#1199 {owner} skips only on the scope classifier')
+            change_job(f'{owner}-if-inverted', owner, docs_only_if,
+                       "    if: ${{ needs.scope.outputs.docs_only == 'true' }}\n",
+                       f'#1199 {owner} skips only on the scope classifier')
+            change_job(f'{owner}-if-broadened', owner, docs_only_if, '    if: ${{ true }}\n',
+                       f'#1199 {owner} skips only on the scope classifier')
+            change_job(f'{owner}-needs-broadened', owner, '    needs: [scope]\n',
+                       '    needs: [scope, gateway-schema-baseline]\n',
+                       f'#1199 {owner} skips only on the scope classifier')
+        # scope job 自身必须无条件，否则放宽路径失去唯一来源。
+        change('scope-job-conditional', '  scope:\n', '  scope:\n    if: false\n',
+               '#1199 scope job runs unconditionally')
+        change('scope-job-continue-on-error', '  scope:\n', '  scope:\n    continue-on-error: true\n',
+               '#904 scope cannot ignore failure')
+        self.check_ci_mutations(cases,
+                                'test_required_check_gates_observer_failure_instead_of_skipping', '#1199')
+
+    def test_scope_job_runs_its_own_self_test_then_classifier(self):
+        jobs = self.ci_jobs()
+        steps = self.ci_steps('scope', jobs['scope'])
+        checkout_lines = [line.strip() for line in steps[0].splitlines()
+                          if line.strip() and not line.lstrip().startswith('#')]
+        # 浅克隆拿不到 base..head 两点 diff 的历史，分类器会退化为 fail-closed 的全量。
+        self.assertEqual(checkout_lines, ['uses: actions/checkout@v4', 'with:', 'fetch-depth: 0'],
+                         '#1199 scope checkout keeps full history')
+        self.assertEqual([self.ci_run_commands(step) for step in steps[1:]],
+                         [['python3 -I scripts/test-ci-scope.py'], ['python3 -I scripts/ci_scope.py']],
+                         '#1199 scope runs the self-test then the classifier')
+        classify = self.ci_step_fields(steps[2])
+        self.assertEqual(classify.get('id'), ('classify', []),
+                         '#1199 classifier step is the docs_only source')
+        self.assertEqual(classify.get('env'),
+                         ('', ['EVENT_NAME: ${{ github.event_name }}',
+                               'PR_BASE: ${{ github.event.pull_request.base.sha }}',
+                               'PR_HEAD: ${{ github.event.pull_request.head.sha }}',
+                               'MG_BASE: ${{ github.event.merge_group.base_sha }}',
+                               'MG_HEAD: ${{ github.event.merge_group.head_sha }}']),
+                         '#1199 classifier receives the exact event ranges')
+        for step in steps:
+            fields = self.ci_step_fields(step)
+            for key in ('if', 'continue-on-error'):
+                self.assertNotIn(key, fields, '#1199 scope steps stay unconditional')
+        self.assertEqual(re.findall(r'^    outputs:\n((?:      [^\n]*\n)+)', jobs['scope'], re.M),
+                         ['      docs_only: ${{ steps.classify.outputs.docs_only }}\n'],
+                         '#1199 scope exports exactly docs_only')
+
+    def test_ci_rejects_scope_job_drift(self):
+        workflow = self.ci_workflow_fixture()
+        jobs = self.ci_jobs()
+        cases = []
+
+        def change(label, old, new, message):
+            self.assertEqual(jobs['scope'].count(old), 1, f'#1199 unique scope mutation anchor: {label}')
+            cases.append((label, workflow.replace(
+                jobs['scope'], jobs['scope'].replace(old, new, 1), 1), message))
+
+        # 浅克隆 / 过滤克隆拿不到 base..head 历史，分类器会静默退化成 fail-closed 全量。
+        change('shallow-checkout', 'fetch-depth: 0', 'fetch-depth: 1',
+               '#1199 scope checkout keeps full history')
+        change('checkout-filter', 'fetch-depth: 0', 'fetch-depth: 0\n          filter: blob:none',
+               '#1199 scope checkout keeps full history')
+        # 自测步与分类步都不许跳过或忽略失败。
+        selftest = ('      - name: 分类器自测（正负例与内存内变异负控）\n'
+                    '        run: python3 -I scripts/test-ci-scope.py\n')
+        change('selftest-removed', selftest, '', '#1199 scope runs the self-test then the classifier')
+        change('selftest-conditional', selftest, selftest + '        if: false\n',
+               '#1199 scope steps stay unconditional')
+        change('selftest-continue-on-error', selftest, selftest + '        continue-on-error: true\n',
+               '#1199 scope steps stay unconditional')
+        change('classifier-command-changed', 'run: python3 -I scripts/ci_scope.py', 'run: echo true',
+               '#1199 scope runs the self-test then the classifier')
+        change('classifier-id-dropped', '        id: classify\n', '',
+               '#1199 classifier step is the docs_only source')
+        change('classifier-env-dropped-mg-base',
+               '          MG_BASE: ${{ github.event.merge_group.base_sha }}\n', '',
+               '#1199 classifier receives the exact event ranges')
+        change('outputs-dropped',
+               '    outputs:\n      docs_only: ${{ steps.classify.outputs.docs_only }}\n', '',
+               '#1199 scope exports exactly docs_only')
+        self.check_ci_mutations(cases, 'test_scope_job_runs_its_own_self_test_then_classifier', '#1199')
+
+    def test_ci_scope_whitelist_is_exactly_the_documented_prefixes(self):
+        path = Path(__file__).resolve().parents[3] / 'scripts/ci_scope.py'
+        source = path.read_bytes().decode()
+        self.assertEqual(re.findall(r'^DOCS_PREFIXES = \(.*\)$', source, re.M),
+                         ["DOCS_PREFIXES = ('state/', '.42cog/', 'docs/')"],
+                         '#1199 docs-only whitelist is exactly the three prefixes')
+        # 行为层的完整正负例由 scripts/test-ci-scope.py 在 scope job 里跑；
+        # 这里加载真模块做行为抽查，防「文本钉住了、模块本身坏了」。
+        spec = importlib.util.spec_from_file_location('ci_scope_guard', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertTrue(module.paths_are_docs_only(['state/board.md', 'docs/a.md', '.42cog/b.json']),
+                       '#1199 docs-only paths classify true')
+        self.assertFalse(module.paths_are_docs_only(['state/board.md', 'src/main.rs']),
+                         '#1199 mixed src is not docs-only')
+        self.assertFalse(module.paths_are_docs_only([]), '#1199 empty path list is not docs-only')
+
+    def test_ci_rejects_ci_scope_whitelist_drift(self):
+        source = (Path(__file__).resolve().parents[3] / 'scripts/ci_scope.py').read_bytes()
+        line = b"DOCS_PREFIXES = ('state/', '.42cog/', 'docs/')\n"
+        self.assertEqual(source.count(line), 1, '#1199 unique whitelist mutation anchor')
+        # #1199 规格 4：白名单加入 src/ 或 .github/ → 必须失败（行为层由
+        # scripts/test-ci-scope.py 的同名变异再加一道）。
+        cases = [(name, source.replace(line, changed, 1),
+                  '#1199 docs-only whitelist is exactly the three prefixes')
+                 for name, changed in (
+                ('whitelist-adds-src', b"DOCS_PREFIXES = ('state/', '.42cog/', 'docs/', 'src/')\n"),
+                ('whitelist-adds-github', b"DOCS_PREFIXES = ('state/', '.42cog/', 'docs/', '.github/')\n"),
+                ('whitelist-adds-empty-prefix', b"DOCS_PREFIXES = ('state/', '.42cog/', 'docs/', '')\n"),
+                ('whitelist-drops-state', b"DOCS_PREFIXES = ('.42cog/', 'docs/')\n"))]
+        self.check_ci_mutations(cases, 'test_ci_scope_whitelist_is_exactly_the_documented_prefixes',
+                                '#1199', reader='read_bytes')
 
     def test_required_job_runs_shared_isolation_regressions(self):
         command = 'python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py'
@@ -322,8 +507,8 @@ class EnvironmentControls(unittest.TestCase):
         workflow = self.ci_workflow_fixture()
         cases = []
         for name, body in self.ci_jobs().items():
-            if name == 'check':
-                continue
+            if name in ('check', 'scope'):
+                continue  # check 只聚合；scope 只跑 Python/git，无 Node（#1199）
             setups = re.findall(r'      - uses: actions/setup-node@v4\n'
                                 r'(?:        .*\n|          .*\n)*', body)
             self.assertEqual(len(setups), 1, f'#909 {name} unique setup anchor')
@@ -463,9 +648,10 @@ class EnvironmentControls(unittest.TestCase):
         cases.append(('doctest-in-other-job', workflow.replace(doc, '', 1).replace('    steps:\n', '    steps:\n' + doc, 1),
                       '#922 文档测试 occurs once in rust'))
         for old, new, message in (
-                ('needs: [metadata-observer, rust, a51-coverage]', 'needs: [metadata-observer, a51-coverage]',
+                ('needs: [scope, metadata-observer, rust, a51-coverage]', 'needs: [scope, metadata-observer, a51-coverage]',
                  '#904 exact required needs'),
-                ("needs.rust.result != 'success'", "needs.rust.result == 'failure'", '#904 rust rejects every non-success')):
+                ("needs.rust.result != 'success'", "needs.rust.result == 'failure'",
+                 '#904 rust rejects every non-success beyond the docs-only skip')):
             change(old, old, new, message)
         self.check_ci_mutations(cases, 'test_nextest_keeps_workspace_doctests_and_failure_semantics', '#922')
 
@@ -605,9 +791,13 @@ class EnvironmentControls(unittest.TestCase):
             prefix = jobs[owner].split('    steps:\n', 1)[0]
             self.assertNotRegex(step + prefix, shell_key,
                                 f'#918 {label} preserves default fail-fast shell')
-            self.assertNotRegex(prefix,
-                                r"""(?m)^    ['"]?(?:if|continue-on-error|needs)['"]?:""",
-                                f'#918 {owner} job stays independent and unconditional')
+            # #1199：这两个 job 现在经由 scope 门控跳过，但 needs / if 仍是精确字符串，
+            # 不许再加别的条件（原来的「无条件」断言放宽到这一对）。
+            gating = re.findall(r"""(?m)^    ['"]?(if|needs|continue-on-error)['"]?\s*:\s*(.*)$""",
+                                prefix)
+            self.assertEqual(gating, [('needs', '[scope]'),
+                                     ('if', "${{ needs.scope.outputs.docs_only != 'true' }}")],
+                             f'#1199 {owner} skips only on the scope classifier')
             self.assertTrue(steps[owner][0].startswith('uses: actions/checkout@v4\n'),
                             f'#918 {owner} starts with checkout')
             checkout_lines = [line.strip() for line in steps[owner][0].splitlines()
@@ -711,7 +901,7 @@ class EnvironmentControls(unittest.TestCase):
                           "'continue-on-error': true", '"continue-on-error": true',
                           'needs: metadata-observer', "'needs': metadata-observer", '"needs": metadata-observer'):
                 change(f'{label}-job-{field}', owner, '    steps:\n',
-                       f'    {field}\n    steps:\n', f'#918 {owner} job stays independent and unconditional')
+                       f'    {field}\n    steps:\n', f'#1199 {owner} skips only on the scope classifier')
             checkout = '      - ' + steps[0]
             change(f'{label}-missing-checkout', owner, checkout, '', f'#918 {owner} starts with checkout')
             for field in ('if: false', "'if': false", '"if": false', 'continue-on-error: true',
@@ -800,9 +990,9 @@ class EnvironmentControls(unittest.TestCase):
         for name in self.ci_jobs():
             with self.subTest(renamed_job=name):
                 self.assert_ci_rejects(workflow.replace(f'  {name}:\n', f'  renamed-{name}:\n', 1),
-                                       target, '#904 exact five CI jobs')
+                                       target, '#904 exact six CI jobs')
         for declaration, message in (
-                ('  extra:\n    steps:\n      - run: npm test\n', '#904 exact five CI jobs'),
+                ('  extra:\n    steps:\n      - run: npm test\n', '#904 exact six CI jobs'),
                 ('  "extra": {steps: [{run: npm test}]}\n', '#904 unsupported job declaration'),
                 ('  extra: *other-job\n', '#904 unsupported job declaration'),
                 ('  rust:\n    steps:\n      - run: npm test\n', '#904 unique job names')):
@@ -890,7 +1080,12 @@ class EnvironmentControls(unittest.TestCase):
                           '#919 unsupported step'))
         cases.append(('unknown-key', workflow.replace(anchor, '      - runs: npm test\n', 1),
                       '#919 unsupported step key'))
-        cases.append(('flow-sequence', workflow.replace('    steps:\n', '    steps: [{run: npm test}]\n', 1),
+        # #1199：scope 排在 jobs 首位后，首个 `    steps:` 锚点不再属于 metadata-observer，
+        # 按 job 头定位它自己的 steps，避免误杀到别的 job。
+        start = workflow.index('  metadata-observer:\n')
+        flow = workflow.index('    steps:\n', start)
+        cases.append(('flow-sequence',
+                      workflow[:flow] + '    steps: [{run: npm test}]\n' + workflow[flow + len('    steps:\n'):],
                       '#904 metadata-observer has one steps sequence'))
         cases.append(('quoted-duplicate', workflow.replace(anchor, anchor + '        "run": npm test\n', 1),
                       '#904 step has at most one run field'))
