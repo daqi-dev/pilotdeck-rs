@@ -234,7 +234,7 @@ def stop_host(tracer, pid):
         os.close(fd)
 
 
-def capture(contract, output, environment, *, timeout=LIMIT_SECONDS, exercise=None):
+def capture(contract, output, environment, *, timeout=LIMIT_SECONDS, exercise=None, validate=None):
     need(sys.platform == 'linux', 'Linux strace required; macOS needs future eslogger + root support')
     strace = shutil.which('strace')
     need(strace is not None, 'strace is not installed')
@@ -278,6 +278,8 @@ def capture(contract, output, environment, *, timeout=LIMIT_SECONDS, exercise=No
         raw = (output / 'trace.log').read_text()
         evidence = parse_trace(raw, launch)
         need(result == 0, 'tracer/host failed; inspect stderr and trace')
+        if validate is not None:
+            validate(launch, evidence)
         save(output / 'evidence.json', evidence)
         save(output / 'receipt.json', {'status': 'WITNESS_CAPTURED', 'scoring': 'NOT_RUN',
                                       'traceSha256': sha(output / 'trace.log'),

@@ -6,6 +6,8 @@ if not sys.flags.isolated:
 sys.dont_write_bytecode = True
 import argparse
 import base64
+from contextlib import ExitStack
+import errno
 import hashlib
 import http.server
 import importlib.util
@@ -20,6 +22,19 @@ import time
 spec = importlib.util.spec_from_file_location('native_witness', Path(__file__).with_name('witness.py'))
 w = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(w)
+# Explicit source load preserves the frozen auditor's isolated sys.path and
+# records executed bytes for its existing provenance guard.
+common_path = Path(__file__).resolve().parents[1] / 'gateway-parity/common.py'
+spec = importlib.util.spec_from_file_location('native_witness_common', common_path)
+common = importlib.util.module_from_spec(spec)
+common._apparatus_source = common_path.read_bytes()
+exec(compile(common._apparatus_source, str(common_path), 'exec'), common.__dict__)
+sys.modules[spec.name] = common
+parity_lock = common.parity_lock
+
+
+class Blocked(w.Incomplete):
+    """A shared lease or fixed port is unavailable; no fallback endpoint."""
 
 
 class BoundedHTTPServer(http.server.HTTPServer):
@@ -89,6 +104,49 @@ class WireClient:
 def native_run(gateway, sidecar, output, port=28999):
     w.need(sys.platform == 'linux', 'Linux only; macOS eslogger + root deferred')
     w.need(28999 <= port <= 29008, 'gateway port must be in 28999 series')
+    with ExitStack() as lease:
+        try:
+            lease.enter_context(parity_lock(timeout=1))
+        except TimeoutError as error:
+            raise Blocked('#1140 BLOCKED: parity lease unavailable') from error
+        try:
+            # Check both fixed endpoints before launching any owned process.
+            # The shared lease spans the bind handoff and provider cleanup.
+            for candidate in (port, port + 1):
+                with socket.socket() as probe:
+                    probe.bind(('127.0.0.1', candidate))
+            result = _native_run(gateway, sidecar, output, port)
+        except OSError as error:
+            if error.errno == errno.EADDRINUSE:
+                raise Blocked('#1140 BLOCKED: fixed witness port occupied') from error
+            raise
+    print(json.dumps({'status': 'WITNESS_CAPTURED', 'scoring': 'NOT_RUN', 'output': str(Path(output).resolve())}))
+    return result
+
+
+def validate_smoke(contract, evidence, requests, home):
+    w.need(any(p['role'] == 'sidecar' for p in evidence['processes']), 'real sidecar exec missing')
+    w.need(bool(evidence['networkWitness']['calls']) and bool(requests), 'real provider egress missing')
+    w.need(all(c['target'] in contract['externalEndpoints'] for c in evidence['networkWitness']['calls']), 'unexpected native egress')
+    w.need(bool(list(home.rglob('*.jsonl'))), 'durable native output missing')
+
+
+def wait_ready(tracer, folder, port, deadline):
+    while True:
+        if tracer.poll() is not None:
+            # A non-participant may claim the gateway port after preflight.
+            # Probe the same endpoint; native_run maps EADDRINUSE to BLOCKED.
+            with socket.socket() as probe:
+                probe.bind(('127.0.0.1', port))
+            w.need(False, 'native gateway exited before readiness')
+        stderr = (folder / 'stderr.log').read_text()
+        if f'native listening 127.0.0.1:{port}\n' in stderr:
+            return
+        w.need(time.monotonic() < deadline, 'readiness deadline')
+        time.sleep(0.01)
+
+
+def _native_run(gateway, sidecar, output, port):
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     home, project = output / 'home', output / 'project'
@@ -124,6 +182,15 @@ def native_run(gateway, sidecar, output, port=28999):
     server = BoundedHTTPServer(('127.0.0.1', port + 1), Provider)
     worker = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True)
     worker.start()
+    stopped = False
+    def stop_provider():
+        nonlocal stopped
+        if not stopped:
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=6)
+            w.need(not worker.is_alive(), 'provider did not stop')
+            stopped = True
     try:
         (home / 'pilotdeck.yaml').write_text(
             'schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n'
@@ -139,13 +206,7 @@ def native_run(gateway, sidecar, output, port=28999):
                     'capabilities': {'provider': 'loopback-mock', 'tools': []}}
 
         def exercise(tracer, folder, deadline):
-            while True:
-                w.need(tracer.poll() is None, 'native gateway exited before readiness')
-                stderr = (folder / 'stderr.log').read_text()
-                if f'native listening 127.0.0.1:{port}\n' in stderr:
-                    break
-                w.need(time.monotonic() < deadline, 'readiness deadline')
-                time.sleep(0.01)
+            wait_ready(tracer, folder, port, deadline)
             client = WireClient(port, deadline)
             try:
                 client.send({'type': 'hello', 'protocolVersion': '1.2', 'clientName': 'ui',
@@ -172,19 +233,15 @@ def native_run(gateway, sidecar, output, port=28999):
             w.need(root_exec is not None, 'host exec is absent from trace')
             w.stop_host(tracer, int(root_exec[1]))
 
-        launch, evidence = w.capture(contract, output / 'capture', {'HOME': str(home), 'PILOT_HOME': str(home),
-                                      'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'}, exercise=exercise)
-        w.need(any(p['role'] == 'sidecar' for p in evidence['processes']), 'real sidecar exec missing')
-        w.need(bool(evidence['networkWitness']['calls']) and bool(requests), 'real provider egress missing')
-        w.need(all(c['target'] in contract['externalEndpoints'] for c in evidence['networkWitness']['calls']), 'unexpected native egress')
-        w.need(bool(list(home.rglob('*.jsonl'))), 'durable native output missing')
-        print(json.dumps({'status': 'WITNESS_CAPTURED', 'scoring': 'NOT_RUN', 'output': str(output)}))
-        return launch, evidence
+        def validate(launch, evidence):
+            validate_smoke(launch, evidence, requests, home)
+            # Complete owned provider cleanup before capture publishes success.
+            stop_provider()
+
+        return w.capture(contract, output / 'capture', {'HOME': str(home), 'PILOT_HOME': str(home),
+                         'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'}, exercise=exercise, validate=validate)
     finally:
-        server.shutdown()
-        server.server_close()
-        worker.join(timeout=6)
-        w.need(not worker.is_alive(), 'provider did not stop')
+        stop_provider()
 
 
 def main():
@@ -194,8 +251,13 @@ def main():
     parser.add_argument('--output', required=True)
     parser.add_argument('--port', type=int, default=28999)
     args = parser.parse_args()
-    native_run(args.gateway, args.sidecar, args.output, args.port)
+    try:
+        native_run(args.gateway, args.sidecar, args.output, args.port)
+    except Blocked as error:
+        print(json.dumps({'status': 'BLOCKED', 'scoring': 'NOT_RUN', 'error': str(error)}), file=sys.stderr)
+        return 2
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
