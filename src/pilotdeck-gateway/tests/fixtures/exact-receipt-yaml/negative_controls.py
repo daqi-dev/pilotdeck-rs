@@ -12,8 +12,8 @@ The ignored cargo test (resource_scaling) wraps the same Python entry point
 but cannot restrict the matrix, so this control drives the driver directly
 with one fixed-size family (comments at the seed size, no calibration) and a
 single repeat; the receipt logic under mutation is identical. Run after
-committing the candidate; pre-commit full runs pass the SHA printed by
-"git stash create" as --baseline. Never bypass negative_process's HEAD guard.
+committing the candidate. The build requires real HEAD; never bypass
+negative_process's HEAD guard with an alternate candidate baseline.
 """
 import argparse
 import difflib
@@ -24,7 +24,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import build_snapshot, mutating_sources, run_owned, wait_for_slot
 
 # The only family this control needs: plain comments at the seed size, one of
 # the unremarkable passing rows on main. Fixed sizes skip Node calibration.
@@ -67,27 +67,11 @@ def main():
         with (args.output / name).open('x') as stream:
             stream.write(text)
 
-    # One release build of the worker binary before any mutation: the mutated
-    # file is the Python driver, which cargo never compiles.
-    slots = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=600, interval=10)
-    save('build.slots.log', slots.stdout + slots.stderr)
-    build = run_owned([
-        'cargo', 'test', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-yaml',
-        '--test', 'resource_scaling', '--release', '--offline', '--no-run',
-        '--message-format=json',
-    ], cwd=root, env=env, timeout=1800)
-    save('build.log', build.stdout + build.stderr)
-    binary = None
-    for line in build.stdout.splitlines():
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if row.get('reason') == 'compiler-artifact' and row['target']['name'] == 'resource_scaling':
-            binary = row['executable']
-    if build.returncode or not binary:
-        print(f'build failed (rc {build.returncode}); see build.log', file=sys.stderr)
-        return 1
+    # Build and snapshot before the Python mutation window. The child gets
+    # pinned bytes, so it need not reacquire the lock held by this parent.
+    binary = build_snapshot(root, args.output / 'worker', package='pilotdeck-yaml',
+                            target='resource_scaling', env=env)
+    binary_sha256 = hashlib.sha256(Path(binary).read_bytes()).hexdigest()
     save('binary.txt', f'{binary}\n')
     sizes = args.output / 'sizes.json'
     sizes.write_text(json.dumps({'sizes': {FAMILY: SIZE}}) + '\n')
@@ -95,7 +79,7 @@ def main():
     def run(label):
         result = run_owned([
             sys.executable, str(yaml_source), '--baseline', str(args.ts_baseline),
-            '--rust-bin', binary, '--families', FAMILY, '--repeats', '1',
+            '--rust-bin', binary, '--rust-sha256', binary_sha256, '--families', FAMILY, '--repeats', '1',
             '--sizes', str(sizes), '--output', str(args.output / f'{label}.json'),
         ], cwd=root, env=env, timeout=1800)
         log = result.stdout + result.stderr

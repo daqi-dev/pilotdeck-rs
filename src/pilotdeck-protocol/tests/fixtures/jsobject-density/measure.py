@@ -317,9 +317,8 @@ def main():
     # snapshot back — a plain `git checkout --` here would also revert
     # changes this process never made.
     with mutating_sources(root, [root / LIB_RS]):
-        # mutating_sources only verifies lib.rs and gateway/src; the pre build
-        # also compiles protocol's other sources, tests and manifests
-        # (#1128 r5 Codex P1-2).
+        # The shared guard now verifies workspace inputs (#1166). Retain this
+        # fixture's own provenance check until its separate guard migration.
         require_clean_tree('pre build')
         diff = git('diff', f'{BOXING_COMMIT}^', BOXING_COMMIT, '--', LIB_RS).stdout
         if b'Box<HashMap<JsString, usize>>' not in diff:

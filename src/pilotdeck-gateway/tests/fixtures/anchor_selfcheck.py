@@ -154,6 +154,7 @@ UNSUPPORTED_SIGNALS = {
     'negative-adaptive/negative_controls.py': {'table:cases'},
     'negative-adaptive/isolation_negative.py': {'table:CONTROLS'},
     'negative_process.py': set(),
+    'workspace-pristine/test_controls.py': set(),  # #1166 synthetic Git/binary tests
     '_shared/negative_control.py': set(),
     'test_negative_adaptive.py': set(),
     'test_negative_adaptive_isolation.py': set(),

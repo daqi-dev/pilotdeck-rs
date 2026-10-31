@@ -311,7 +311,7 @@ RSS 数字由 `rss-probe.sh` 单进程测量；脚本先取探针子进程状态
 `bounded_peak_rss_is_lower_than_full` 和 2.5 MiB 深层 prefix 用例标了
 `#[ignore]`（进程级 RSS 在并行测试下不稳定，后者 debug 约 1 GB），需要时用
 `cargo test --release -p pilotdeck-gateway --test html_budget_probe -- --ignored`
-或 `rss-probe.sh` 手动跑。
+或 `rss-probe.sh` 手动跑。后者要求调用方导出本树独占的 `CARGO_TARGET_DIR`，且 workspace 输入等于已提交 HEAD；脚本在树锁内排槽、构建和快照，再执行 `_tmp/` 独占目录里的探针。
 
 因此提前停止只解决“输出/UTF-16 副本”放大：2.5 MiB 深嵌套少约 227 MB、
 耗时减半，`flatten` 容量由 264 MB 降到 400 KB（单测断言）。

@@ -119,7 +119,7 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-yaml --release \
 也可以直接运行脚本并指定机器结果路径：
 
 ```sh
-python3 src/pilotdeck-yaml/tests/run_resource_scaling.py \
+CARGO_TARGET_DIR="$PWD/_build/cargo-target" python3 src/pilotdeck-yaml/tests/run_resource_scaling.py \
   --baseline /path/to/baseline --output _tmp/review-yaml/resources-round8.json
 ```
 
@@ -127,7 +127,7 @@ python3 src/pilotdeck-yaml/tests/run_resource_scaling.py \
 
 每个规模、每个实现分别启动三个新进程，交错执行顺序；耗时取中位数，RSS 取三次最大值。计时覆盖默认 `parseAllDocuments` 和所有文档的 `toJSON`，保留文档与转换结果；输入读取、进程启动和释放不计入耗时，均计入进程峰值 RSS。Node 的 collection-key 提示不计终端 IO。独立 Python wrapper 只启动一个子进程，使用内核 `getrusage(RUSAGE_CHILDREN).ru_maxrss`；macOS 单位为 bytes，Linux 为 KiB。没有在同一进程连续测多个输入，没有用父进程 RSS、退出后 current RSS 或上一样本的高水位替代峰值。超时/非零退出会保留失败行并让脚本退出非零。
 
-判定同时检查耗时和 RSS：两个规模的 Rust/Node 耗时与绝对 RSS 均不得超过 3；耗时的 (Rust 4N/N) / (Node 4N/N) 不得超过 1.5；增量 RSS 满足 (Rust RSS@4N − Rust RSS@N) ≤ 1.5 × (Node RSS@4N − Node RSS@N)。RSS 不用原始增长比判定，以避免 Node 固定运行时内存影响缩放结论。`--sizes <previous.json>` 可以复用已记录的 Node 校准值，`--families` 可定位单个族，`--rust-bin` 供 ignore 测试复用已编译二进制；默认所有族都运行。JSON 保存每次原始测量、输入字节数/SHA、N、所有比值和通过/失败结果；同时核对两个规模全部样本的文档数、error/warning 数和转换错误数，双方不一致也判失败。
+判定同时检查耗时和 RSS：两个规模的 Rust/Node 耗时与绝对 RSS 均不得超过 3；耗时的 (Rust 4N/N) / (Node 4N/N) 不得超过 1.5；增量 RSS 满足 (Rust RSS@4N − Rust RSS@N) ≤ 1.5 × (Node RSS@4N − Node RSS@N)。RSS 不用原始增长比判定，以避免 Node 固定运行时内存影响缩放结论。`--sizes <previous.json>` 可以复用已记录的 Node 校准值，`--families` 可定位单个族，默认所有族都运行。构建先持共享树锁并校验 workspace 编译输入等于 HEAD，再排 cargo 槽位；可执行文件复制进 `<output>.artifacts/`，采样只执行该快照。显式 `--output` 及其 artifacts 目录必须不存在；未传输出路径时自动在 `_tmp/` 创建独占运行目录，失败后保留证据并用新路径重跑。调用方已有独占快照时，可同时传 `--rust-bin <snapshot>` 和 `--rust-sha256 <digest>`；驱动复制后验证摘要，不再抢调用方持有的源码锁。ignored 测试也要求调用方设 `CARGO_TARGET_DIR`，走同一构建与快照路径。槽位排队和构建的独立期限分别是 900 秒和 1800 秒（构建静默上限 600 秒），持锁总时长可能超过其他 runner 默认的 900 秒等锁期限；同树长构建须串行安排，等锁超时是 INVALID，不是产品失败。JSON 保存每次原始测量、输入字节数/SHA、N、所有比值和通过/失败结果；同时核对两个规模全部样本的文档数、error/warning 数和转换错误数，双方不一致也判失败。
 
 2026-10-16 的 #95 复测只运行第12族 `anchors_merges`，沿用上述原判据、Node-only定规模和每规模三次独立进程。N=10、4N=40；Rust/Node中位耗时为0.606/0.727，绝对RSS比为0.785/1.090，相对耗时增长1.199、增量RSS比1.258，均通过；完整原始采样见[复算原件](../../docs/reviews/004_p2-cleanup-resources.json)。这是当前机器/规模的观察，旧测1.25–1.45的增长余量仍是提醒；以后改merge/alias路径须重跑此族，不因一次PASS放宽1.5阈值。本轮没有宣称其他11族已重测。
 

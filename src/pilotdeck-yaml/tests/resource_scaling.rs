@@ -12,7 +12,7 @@ fn require_release() {
 #[ignore = "release-only Node v22 resource comparison; requires PILOTDECK_YAML_BASELINE"]
 fn resource_scaling() {
     require_release();
-    let baseline = std::env::var("PILOTDECK_YAML_BASELINE").expect("baseline checkout path");
+    let baseline = std::env::var("PILOTDECK_YAML_BASELINE").expect("#1166 baseline checkout path");
     let status = std::process::Command::new("python3")
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -20,10 +20,8 @@ fn resource_scaling() {
         ))
         .arg("--baseline")
         .arg(baseline)
-        .arg("--rust-bin")
-        .arg(std::env::current_exe().unwrap())
         .status()
-        .unwrap();
+        .expect("#1166 start resource measurement driver");
     assert!(
         status.success(),
         "resource limits exceeded; see result table"

@@ -2,7 +2,7 @@
 """#983 macOS RSS probe: actual CLI, streaming local mock, no large capture copies.
 
 Usage: PDRS_BASELINE=... python3 measure.py NEW_OUTPUT rust|ts 32|64|128
-CARGO_TARGET_DIR selects the already-built Rust CLI. Never builds or mutates it.
+CARGO_TARGET_DIR is required. Rust is built and snapshotted under the tree lock.
 """
 import base64
 import ctypes
@@ -19,6 +19,16 @@ import subprocess
 import sys
 import threading
 import time
+
+
+ROOT = Path(__file__).resolve().parents[5]
+sys.path.insert(0, str(ROOT / 'src/pilotdeck-gateway/tests/fixtures'))
+from negative_process import build_snapshot
+
+
+def rust_binary(out):
+    return build_snapshot(ROOT, out / 'binary', package='pilotdeck-cli',
+                          target='pilotdeck', kind='bin', release=False)
 
 
 def exact(sock, size):
@@ -91,6 +101,7 @@ def main():
     (out / 'isolation.stderr').write_bytes(isolation.stderr)
     if isolation.returncode:
         raise RuntimeError('#983 kernel isolation unavailable; no unconfined fallback')
+    binary = rust_binary(out) if implementation == 'rust' else None
     listener = socket.socket()
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(('127.0.0.1', 28999))
@@ -110,7 +121,7 @@ def main():
     project = out / 'project'
     project.mkdir()
     Path(env['PILOT_HOME'], 'pilotdeck.yaml').write_text('schemaVersion: 1\n')
-    command = ([str(Path(os.environ['CARGO_TARGET_DIR']) / 'debug/pilotdeck')] if implementation == 'rust'
+    command = ([binary] if implementation == 'rust'
                else [node, '--import', str(baseline / 'node_modules/tsx/dist/loader.mjs'),
                      str(baseline / 'src/cli/pilotdeck.ts')]) + ['sessions', 'list']
     events = []

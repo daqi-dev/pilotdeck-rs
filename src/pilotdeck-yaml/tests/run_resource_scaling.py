@@ -2,9 +2,9 @@
 """Release resource regression checks on macOS/Linux, against Node v22 yaml@2.9.0.
 
 Run from repo root:
-  CARGO_HOME="$PWD/_build/cargo-home" python3 src/pilotdeck-yaml/tests/run_resource_scaling.py \
+  CARGO_TARGET_DIR="$PWD/_build/cargo-target" python3 src/pilotdeck-yaml/tests/run_resource_scaling.py \
     --baseline /path/to/baseline --output _tmp/review-yaml/resources-round6.json
-Or use the ignored test with PILOTDECK_YAML_BASELINE and cargo test --release
+Or set CARGO_TARGET_DIR and PILOTDECK_YAML_BASELINE, then cargo test --release
 -p pilotdeck-yaml --test resource_scaling resource_scaling -- --ignored --exact --nocapture.
 
 N is calibrated using ONLY Node to 0.2-1s; 4N scales breadth/length/repetitions,
@@ -25,9 +25,12 @@ import statistics
 import sys
 import subprocess
 import tempfile
+import time
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
+sys.path.insert(0, str(REPO / 'src/pilotdeck-gateway/tests/fixtures'))
+from negative_process import build_snapshot, copy_binary
 FAMILIES = ['documents', 'comments', 'plain', 'quoted', 'flow_seq', 'block_map',
             'mixed_500', 'anchors_aliases', 'block_scalar', 'complex_keys', 'tags_directives', 'anchors_merges']
 SEEDS = dict(zip(FAMILIES, [50000, 100000, 2000000, 200000, 100000, 3000,
@@ -110,26 +113,45 @@ def sample(command, env, timeout, receipt_test=None):
     return rows[0]
 
 
-def build():
-    proc = subprocess.run(['cargo', 'test', '--manifest-path', str(REPO / 'src/Cargo.toml'),
-                           '-p', 'pilotdeck-yaml', '--test', 'resource_scaling', '--release',
-                           '--offline', '--no-run', '--message-format=json'],
-                          capture_output=True, text=True)
-    if proc.returncode:
-        raise RuntimeError(proc.stderr + proc.stdout)
-    for line in proc.stdout.splitlines():
-        row = json.loads(line)
-        if row.get('reason') == 'compiler-artifact' and row['target']['name'] == 'resource_scaling':
-            return row['executable']
-    raise RuntimeError('No Rust test binary')
+def build(output):
+    return build_snapshot(REPO, output, package='pilotdeck-yaml',
+                          target='resource_scaling')
+
+
+def prepare_binary(output, binary=None, sha256=None):
+    if binary is None:
+        if sha256 is not None:
+            raise ValueError('#1166 --rust-sha256 requires --rust-bin')
+        return build(output)
+    if sha256 is None:
+        raise ValueError('#1166 --rust-bin requires a pinned --rust-sha256 snapshot')
+    # A caller that already owns the source lock may supply a pinned private
+    # snapshot. This branch reads no source and never opens a shared target
+    # for execution; hash verification applies to our new copy, not its path.
+    output.mkdir(parents=True, exist_ok=False)
+    return copy_binary(binary, output / 'executable', expected_sha256=sha256)
+
+
+def measurement_output(path=None):
+    if path is None:
+        base = REPO / '_tmp'
+        base.mkdir(parents=True, exist_ok=True)
+        run = tempfile.mkdtemp(prefix=time.strftime('%Y%m%d') + '-yaml-resources-', dir=base)
+        path = Path(run) / 'resources.json'
+    output = Path(path).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open('x') as stream:
+        stream.write(json.dumps({'status': 'incomplete'}) + '\n')
+    return output
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--baseline', required=True)
     parser.add_argument('--node', default='node')
-    parser.add_argument('--rust-bin')
-    parser.add_argument('--output', default=str(REPO / '_tmp/review-yaml/resources.json'))
+    parser.add_argument('--rust-bin', help='caller-owned snapshot; requires --rust-sha256')
+    parser.add_argument('--rust-sha256')
+    parser.add_argument('--output', help='new JSON path; default: a unique run under _tmp/')
     parser.add_argument('--sizes', help='JSON from previous run; reuse Node-only calibration')
     parser.add_argument('--families', nargs='+', choices=FAMILIES, default=FAMILIES)
     parser.add_argument('--repeats', type=int, default=3)
@@ -137,15 +159,17 @@ def main():
     args = parser.parse_args()
     if args.repeats < 1:
         parser.error('repeats must be positive')
-    binary = args.rust_bin or build()
+    output = measurement_output(args.output)
+    binary = prepare_binary(output.with_name(output.name + '.artifacts'),
+                            args.rust_bin, args.rust_sha256)
     sizes = json.loads(Path(args.sizes).read_text())['sizes'] if args.sizes else {}
     result = {'method': __doc__, 'node': subprocess.check_output([args.node, '--version'], text=True).strip(),
               'baseline': str(Path(args.baseline).resolve()), 'sizes': sizes,
               'repeats': args.repeats, 'host': platform.platform(),
               'baseline_commit': subprocess.check_output(['git', '-C', args.baseline, 'rev-parse', 'HEAD'], text=True).strip(),
+              'rust_binary': binary,
+              'rust_sha256': hashlib.sha256(Path(binary).read_bytes()).hexdigest(),
               'rows': [], 'failures': []}
-    output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='yaml-resources-') as temp:
         file = Path(temp) / 'input.yaml'
         env = dict(os.environ, PILOTDECK_YAML_RESOURCE_INPUT=str(file))
