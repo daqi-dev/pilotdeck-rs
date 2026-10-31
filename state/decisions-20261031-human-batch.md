@@ -13,3 +13,7 @@
 
 ## 执行偏离
 （暂无）
+
+## 追加：#1164（2026-10-31 06:19 UTC）
+- 人批原话：「B，感觉这样简单一点」。
+- 结论：P08 剩余 8 格（`{run,resume}--abort-error-{sigint,sigterm}`、`{run,resume}--terminal-during-abort-final-{sigint,sigterm}`）——TS 没有前置业务行，直接以 Node 未处理异常的崩溃形式输出错误，Rust 输出一行干净的错误——**登记为已知差异**，不扩展 #1151 的归一化规则。比较时这 8 格的 stderr 按差异条目放行，其余三面（stdout、退出码、连接 / 监听器）照常严格比较。
