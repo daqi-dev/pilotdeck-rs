@@ -7,7 +7,10 @@ use pilotdeck_protocol::{JsValue, number::number_to_string, parse_json};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::time::Duration;
-use tokio::{net::TcpStream, time::timeout};
+use tokio::{
+    net::TcpStream,
+    time::{Instant, timeout, timeout_at},
+};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async_with_config,
     tungstenite::{Message, protocol::WebSocketConfig},
@@ -27,6 +30,19 @@ fn websocket_config() -> WebSocketConfig {
 
 fn error(message: &str) -> Failure {
     Failure::Error(message.into())
+}
+
+/// Check after each ready operation as well as waiting on the timer. A stream
+/// of ready frames can keep the timer driver from getting another turn.
+pub(super) async fn within_deadline<T>(
+    deadline: Instant,
+    request: impl std::future::Future<Output = Result<T, Failure>>,
+    message: &str,
+) -> Result<T, Failure> {
+    match timeout_at(deadline, request).await {
+        Ok(result) if Instant::now() < deadline => result,
+        _ => Err(error(message)),
+    }
 }
 
 /// Move an own property out of a frame that is being dropped anyway. The old
@@ -112,6 +128,8 @@ pub(super) struct Transport {
     settings_order: bool,
     stream_sequence: f64,
     pub(super) server_info: JsValue,
+    #[cfg(test)]
+    receive_probe: Option<tests::ReceiveProbe>,
 }
 
 /// The query stream and its cancellation RPCs share one socket reader. A
@@ -158,6 +176,8 @@ impl Transport {
             settings_order,
             stream_sequence: -1.0,
             server_info: JsValue::Undefined,
+            #[cfg(test)]
+            receive_probe: None,
         })
     }
 
@@ -166,24 +186,25 @@ impl Transport {
         connection: &Connection,
         client_version: &str,
     ) -> Result<(), Failure> {
-        let hello = timeout(CONNECT_TIMEOUT, async {
+        let deadline = self.deadline(CONNECT_TIMEOUT);
+        let message = "Gateway hello timed out.";
+        within_deadline(
+            deadline,
             send_hello(
                 &mut self.socket,
                 connection,
                 client_version,
                 self.settings_order,
-            )
-            .await?;
-            loop {
-                let frame = receive(&mut self.socket).await?;
-                if string_field(&frame, "type").as_deref() == Some("hello_ok") {
-                    return Ok::<_, Failure>(frame);
-                }
+            ),
+            message,
+        )
+        .await?;
+        let hello = loop {
+            let frame = self.receive(Some((deadline, message))).await?;
+            if string_field(&frame, "type").as_deref() == Some("hello_ok") {
+                break frame;
             }
-        })
-        .await
-        .map_err(|_| error("Gateway hello timed out."))
-        .and_then(|result| result)?;
+        };
         self.server_info = take_field(hello, "serverInfo");
         Ok(())
     }
@@ -194,29 +215,35 @@ impl Transport {
         params: impl Serialize,
     ) -> Result<JsValue, Failure> {
         let id = uuid::Uuid::new_v4().to_string();
-        // A single deadline includes send and all unrelated frames.
-        timeout(REQUEST_TIMEOUT, async {
-            self.send_request(&id, method, params).await?;
-            loop {
-                let frame = receive(&mut self.socket).await?;
-                if string_field(&frame, "type").as_deref() != Some("response")
-                    || string_field(&frame, "id").as_deref() != Some(&id)
-                {
-                    continue;
-                }
-                if frame.get("ok").and_then(JsValue::as_bool) == Some(true) {
-                    return Ok(take_field(frame, "result"));
-                }
-                let message = frame
-                    .get("error")
-                    .and_then(|value| string_field(value, "message"));
-                return Err(error(
-                    message.as_deref().unwrap_or("Gateway request failed."),
-                ));
+        // A single deadline includes send and every unrelated/control frame.
+        let deadline = self.deadline(REQUEST_TIMEOUT);
+        let message = format!("Gateway request timed out: {method}");
+        within_deadline(deadline, self.send_request(&id, method, params), &message).await?;
+        loop {
+            let frame = self.receive(Some((deadline, &message))).await?;
+            if string_field(&frame, "type").as_deref() != Some("response")
+                || string_field(&frame, "id").as_deref() != Some(&id)
+            {
+                continue;
             }
-        })
-        .await
-        .map_err(|_| error(&format!("Gateway request timed out: {method}")))?
+            if frame.get("ok").and_then(JsValue::as_bool) == Some(true) {
+                return Ok(take_field(frame, "result"));
+            }
+            let message = frame
+                .get("error")
+                .and_then(|value| string_field(value, "message"));
+            return Err(error(
+                message.as_deref().unwrap_or("Gateway request failed."),
+            ));
+        }
+    }
+
+    fn deadline(&self, duration: Duration) -> Instant {
+        #[cfg(test)]
+        if let Some(probe) = &self.receive_probe {
+            return Instant::now() + probe.timeout;
+        }
+        Instant::now() + duration
     }
 
     async fn send_request(
@@ -287,7 +314,7 @@ impl Transport {
         abort_ids: &[String],
     ) -> Result<QueryFrame, Failure> {
         loop {
-            let frame = receive(&mut self.socket).await?;
+            let frame = self.receive(None).await?;
             let frame_id = string_field(&frame, "id");
             if string_field(&frame, "type").as_deref() == Some("response")
                 && frame_id.as_ref().is_some_and(|id| abort_ids.contains(id))
@@ -333,6 +360,57 @@ impl Transport {
                 _ => {}
             }
         }
+    }
+
+    /// Bound each raw frame, including Ping/Pong filtering and its flush.
+    /// Untimed query streams retain their existing lifetime.
+    async fn receive(&mut self, deadline: Option<(Instant, &str)>) -> Result<JsValue, Failure> {
+        loop {
+            let next = async {
+                match self.next_message().await {
+                    Some(Ok(Message::Text(raw))) => parse_json(&raw)
+                        .map(Some)
+                        .map_err(|_| error("Invalid Gateway JSON frame.")),
+                    Some(Ok(Message::Close(frame))) => {
+                        let reason = frame
+                            .map(|frame| frame.reason.to_string())
+                            .unwrap_or_default();
+                        Err(error(if reason.is_empty() {
+                            "Gateway WebSocket closed."
+                        } else {
+                            &reason
+                        }))
+                    }
+                    Some(Ok(Message::Ping(_))) => {
+                        self.socket
+                            .flush()
+                            .await
+                            .map_err(|_| error("Gateway WebSocket closed."))?;
+                        Ok(None)
+                    }
+                    Some(Ok(Message::Pong(_))) => Ok(None),
+                    Some(Ok(_)) => Err(error("Invalid Gateway JSON frame.")),
+                    Some(Err(_)) | None => Err(error("Gateway WebSocket closed.")),
+                }
+            };
+            let frame = match deadline {
+                Some((deadline, message)) => within_deadline(deadline, next, message).await?,
+                None => next.await?,
+            };
+            if let Some(frame) = frame {
+                return Ok(frame);
+            }
+        }
+    }
+
+    async fn next_message(
+        &mut self,
+    ) -> Option<Result<Message, tokio_tungstenite::tungstenite::Error>> {
+        #[cfg(test)]
+        if let Some(probe) = &mut self.receive_probe {
+            return probe.next().await;
+        }
+        self.socket.next().await
     }
 
     pub(super) async fn close(&mut self) {
@@ -435,36 +513,6 @@ async fn send(socket: &mut Socket, frame: impl Serialize) -> Result<(), Failure>
         .map_err(|_| error("Gateway WebSocket is not connected."))
 }
 
-async fn receive(socket: &mut Socket) -> Result<JsValue, Failure> {
-    loop {
-        match socket.next().await {
-            Some(Ok(Message::Text(raw))) => {
-                return parse_json(&raw).map_err(|_| error("Invalid Gateway JSON frame."));
-            }
-            Some(Ok(Message::Close(frame))) => {
-                let reason = frame
-                    .map(|frame| frame.reason.to_string())
-                    .unwrap_or_default();
-                return Err(error(if reason.is_empty() {
-                    "Gateway WebSocket closed."
-                } else {
-                    &reason
-                }));
-            }
-            Some(Ok(Message::Ping(_))) => {
-                // tungstenite queues the matching pong while reading the ping.
-                socket
-                    .flush()
-                    .await
-                    .map_err(|_| error("Gateway WebSocket closed."))?;
-            }
-            Some(Ok(Message::Pong(_))) => {}
-            Some(Ok(_)) => return Err(error("Invalid Gateway JSON frame.")),
-            Some(Err(_)) | None => return Err(error("Gateway WebSocket closed.")),
-        }
-    }
-}
-
 pub(super) fn string_field(value: &JsValue, name: &str) -> Option<String> {
     value
         .get(name)?
@@ -476,6 +524,226 @@ pub(super) fn string_field(value: &JsValue, name: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::test_negative_receipt::verify;
+
+    // Per-owner IO hook: every injected frame is Ready in the same poll. The
+    // second read crosses D without yielding to the timer driver; after eight
+    // frames it ends, so an old-loop mutant fails an assertion rather than hangs.
+    pub(super) struct ReceiveProbe {
+        pub(super) timeout: Duration,
+        frame: Option<Message>,
+        reads: usize,
+    }
+
+    impl ReceiveProbe {
+        pub(super) async fn next(
+            &mut self,
+        ) -> Option<Result<Message, tokio_tungstenite::tungstenite::Error>> {
+            self.reads += 1;
+            let Some(frame) = &self.frame else {
+                return std::future::pending().await;
+            };
+            if self.reads == 2 {
+                std::thread::sleep(self.timeout + Duration::from_millis(1));
+            }
+            (self.reads <= 8).then(|| Ok(frame.clone()))
+        }
+    }
+
+    fn deadline_row(operation: &str, mode: &str) -> Value {
+        let oracle: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/sdk-signal-abort-state/oracle.json"
+        ))
+        .expect("#1145 transport deadline oracle JSON");
+        oracle["cases"]
+            .as_array()
+            .expect("#1145 transport deadline cases")
+            .iter()
+            .find(|row| {
+                row["kind"] == "transport-deadline"
+                    && row["input"]["operation"] == operation
+                    && row["input"]["mode"] == mode
+            })
+            .expect("#1145 transport deadline named TS cell exists")
+            .clone()
+    }
+
+    async fn connected_pair() -> (Transport, WebSocketStream<TcpStream>, Connection) {
+        timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("#1145 transport deadline bind owned mock");
+            let address = listener
+                .local_addr()
+                .expect("#1145 transport deadline mock address");
+            let connection = Connection {
+                gateway_url: format!("ws://{address}/ws"),
+                auth_token: "fixture".into(),
+            };
+            let accept = async {
+                let (socket, _) = listener
+                    .accept()
+                    .await
+                    .expect("#1145 transport deadline accept");
+                tokio_tungstenite::accept_async(socket)
+                    .await
+                    .expect("#1145 transport deadline accept websocket")
+            };
+            let (transport, peer) = tokio::join!(Transport::open(&connection, false), accept);
+            (
+                transport.expect("#1145 transport deadline open"),
+                peer,
+                connection,
+            )
+        })
+        .await
+        .expect("#1145 transport deadline setup bounded")
+    }
+
+    async fn operation(
+        transport: &mut Transport,
+        connection: &Connection,
+        kind: &str,
+    ) -> Result<(), Failure> {
+        if kind == "hello" {
+            transport.hello(connection, "fixture").await
+        } else {
+            transport
+                .request("deadline_probe", json!({}))
+                .await
+                .map(|_| ())
+        }
+    }
+
+    async fn ready_flood(operation_name: &str, marker: &str) {
+        let row = deadline_row(operation_name, "ready-flood");
+        assert_eq!(
+            row["output"]["beforeDeadlineSettled"], false,
+            "#1145 transport TS no premature deadline"
+        );
+        assert_eq!(
+            row["output"]["framesDelivered"], 192,
+            "#1145 transport TS frames before and after deadline"
+        );
+        for frame in [
+            Message::Text(
+                r#"{"type":"response","id":"unrelated-rpc","ok":true,"result":{}}"#.into(),
+            ),
+            Message::Ping(vec![1].into()),
+            Message::Pong(vec![1].into()),
+        ] {
+            let (mut transport, _peer, connection) = connected_pair().await;
+            transport.receive_probe = Some(ReceiveProbe {
+                timeout: Duration::from_millis(100),
+                frame: Some(frame),
+                reads: 0,
+            });
+            let result = operation(&mut transport, &connection, operation_name).await;
+            let reads = transport
+                .receive_probe
+                .as_ref()
+                .expect("#1145 transport ready probe retained")
+                .reads;
+            assert!(
+                reads >= 2,
+                "#1145 transport ready probe crossed deadline inside a poll"
+            );
+            let actual = match result {
+                Err(Failure::Error(message)) => json!(message),
+                other => json!(format!("{other:?}")),
+            };
+            assert_eq!(actual, row["output"]["message"], "{marker}");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn hello_ready_frames_cannot_starve_deadline() {
+        ready_flood("hello", "#1145 hello fixed deadline wins over ready frames").await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn request_ready_frames_cannot_starve_deadline() {
+        ready_flood(
+            "request",
+            "#1145 request fixed deadline wins over ready frames",
+        )
+        .await;
+    }
+
+    async fn idle_deadline(operation_name: &str) {
+        let (mut transport, _peer, connection) = connected_pair().await;
+        transport.receive_probe = Some(ReceiveProbe {
+            timeout: Duration::from_millis(10),
+            frame: None,
+            reads: 0,
+        });
+        let result = operation(&mut transport, &connection, operation_name).await;
+        let Err(Failure::Error(message)) = result else {
+            panic!("#1145 transport idle must time out");
+        };
+        assert_eq!(
+            json!(message),
+            deadline_row(operation_name, "idle")["output"]["message"],
+            "#1145 transport idle deadline matches TS"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn hello_idle_deadline_matches_ts() {
+        idle_deadline("hello").await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn request_idle_deadline_matches_ts() {
+        idle_deadline("request").await;
+    }
+
+    async fn reply_before_deadline(operation_name: &str) {
+        let (mut transport, mut peer, connection) = connected_pair().await;
+        let reply = async {
+            let request = peer
+                .next()
+                .await
+                .expect("#1145 transport early reply request exists")
+                .expect("#1145 transport early reply request websocket");
+            let frame: Value = serde_json::from_str(
+                request
+                    .to_text()
+                    .expect("#1145 transport early request text"),
+            )
+            .expect("#1145 transport early request JSON");
+            let response = if operation_name == "hello" {
+                json!({"type":"hello_ok", "serverInfo":{}})
+            } else {
+                json!({"type":"response", "id":frame["id"], "ok":true, "result":{}})
+            };
+            peer.send(Message::Text(response.to_string().into()))
+                .await
+                .expect("#1145 transport early reply send");
+        };
+        let (result, ()) = timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                operation(&mut transport, &connection, operation_name),
+                reply
+            )
+        })
+        .await
+        .expect("#1145 transport early reply bounded");
+        assert_eq!(
+            json!(result.is_ok()),
+            deadline_row(operation_name, "reply-before-deadline")["output"]["resolved"],
+            "#1145 transport early reply matches TS"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn hello_reply_before_deadline_matches_ts() {
+        reply_before_deadline("hello").await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn request_reply_before_deadline_matches_ts() {
+        reply_before_deadline("request").await;
+    }
 
     #[test]
     fn stream_sequence_matches_ts_boundaries() {

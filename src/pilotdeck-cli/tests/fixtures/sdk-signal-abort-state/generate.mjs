@@ -178,18 +178,83 @@ try {
       mock.timers.reset();
     }
   }
-  assert.equal(cases.length, 15, '#1145 fixed supplemental matrix denominator');
-  assert.equal(new Set(cases.map(row => row.id)).size, 15, '#1145 unique supplemental matrix cells');
+  for (const operation of ['hello', 'request']) {
+    for (const mode of ['ready-flood', 'idle', 'reply-before-deadline']) {
+      let socket, sent, notifySent;
+      const started = new Promise(resolve => { notifySent = resolve; });
+      const deliver = frame => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(frame) }));
+      globalThis.WebSocket = class extends EventTarget {
+        constructor() { super(); socket = this; this.readyState = 1; }
+        send(raw) { sent = JSON.parse(raw); notifySent(); }
+        close() { this.readyState = 3; this.dispatchEvent(new Event('close')); }
+      };
+      const timeoutMs = operation === 'hello' ? 10_000 : 30_000;
+      const transport = new GatewayTransport({ url: endpoint, token: 'fixture' });
+      let pending;
+      mock.timers.enable({ apis: ['setTimeout'] });
+      try {
+        if (operation === 'request') {
+          // Establish the real SDK first, then observe its ordinary RPC timer.
+          const connecting = transport.connect();
+          await started;
+          await Promise.resolve();
+          deliver({ type: 'hello_ok', protocolVersion: '1.2', serverVersion: 'fixture',
+            serverInfo: { mode: 'remote', capabilities: [] } });
+          mock.timers.tick(10);
+          await connecting;
+        }
+        let settled = false;
+        pending = (operation === 'hello' ? transport.connect() : transport.request('deadline_probe', {})).then(
+          () => { settled = true; return { resolved: true }; },
+          error => { settled = true; return { resolved: false, message: error.message }; },
+        );
+        if (operation === 'hello') { await started; await Promise.resolve(); }
+        let framesDelivered = 0;
+        const flood = () => {
+          for (let i = 0; i < 64; i += 1) {
+            deliver({ type: 'response', id: 'unrelated-rpc', ok: true, result: {} });
+            framesDelivered += 1;
+          }
+        };
+        if (mode === 'ready-flood') flood();
+        mock.timers.tick(timeoutMs - 20);
+        await Promise.resolve();
+        const beforeDeadlineSettled = settled;
+        assert.equal(settled, false, '#1145 ordinary deadline not early');
+        if (mode === 'ready-flood') flood();
+        if (mode === 'reply-before-deadline') {
+          deliver(operation === 'hello'
+            ? { type: 'hello_ok', protocolVersion: '1.2', serverVersion: 'fixture',
+                serverInfo: { mode: 'remote', capabilities: [] } }
+            : { type: 'response', id: sent.id, ok: true, result: {} });
+          mock.timers.tick(10);
+        } else mock.timers.tick(20);
+        const result = await pending;
+        if (mode === 'ready-flood') flood();
+        assert.equal(result.resolved, mode === 'reply-before-deadline', '#1145 ordinary deadline outcome');
+        const row = { id: `${operation}-deadline-${mode}`, kind: 'transport-deadline',
+          input: { operation, mode, timeoutMs }, output: { beforeDeadlineSettled, framesDelivered, ...result } };
+        cases.push(row);
+        console.log(JSON.stringify(row));
+      } finally {
+        transport.close();
+        if (pending) await pending;
+        mock.timers.reset();
+      }
+    }
+  }
+  assert.equal(cases.length, 21, '#1145 fixed supplemental matrix denominator');
+  assert.equal(new Set(cases.map(row => row.id)).size, 21, '#1145 unique supplemental matrix cells');
   validateFiles(source, parent, baseline);
   assert.equal(sha(readFileSync(join(parent, 'source.json'))), sha(sourceBytes), '#1145 supplemental parent source unchanged');
   assert.equal(sha(readFileSync(fileURLToPath(import.meta.url))), generatorSha256, '#1145 supplemental generator unchanged');
   const oracle = { sourceCommit: source.sourceCommit, nodeVersion: process.version, generatorSha256,
     signalSourceSha256: sha(sourceBytes), sourceSha256: source.sourceSha256,
-    kind: 'real-ts-sdk-state-with-websocket-io-double', matrixCells: 15, cases };
+    kind: 'real-ts-sdk-state-with-websocket-io-double', matrixCells: 21, cases };
   const output = resolve(process.argv[2]);
   mkdirSync(output, { recursive: true });
   writeFileSync(join(output, 'oracle.json'), JSON.stringify(oracle, null, 2) + '\n', { flag: 'wx' });
-  console.log('#1145 generated 15 real TS supplemental state observations');
+  console.log('#1145 generated 21 real TS supplemental state observations');
 } finally {
   clearTimeout(watch);
   globalThis.WebSocket = originalWebSocket;
