@@ -1,13 +1,13 @@
 //! `pilotdeck` entry. Dispatch order follows src/cli/pilotdeck.ts main().
 mod chat_search;
 mod config;
-mod paths;
-mod sdk;
-mod skills;
+pub(crate) mod paths;
+pub(crate) mod sdk;
+pub(crate) mod skills;
 mod skills_migrate;
 #[cfg(test)]
 #[path = "../tests/common/negative_receipt.rs"]
-mod test_negative_receipt;
+pub(crate) mod test_negative_receipt;
 
 use paths::Env;
 use std::io::{IsTerminal, Write};
@@ -26,7 +26,7 @@ pub enum Failure {
 // collected in memory. One implementation only (#983 fix-r11): sessions list
 // and settings stream through the writer directly, so a second copy of the
 // indent/escape logic here could drift unmutated past the negative controls.
-fn json_pretty(raw: &str) -> String {
+pub(crate) fn json_pretty(raw: &str) -> String {
     let mut output = Vec::new();
     write_json_pretty_into(raw, &mut output).expect("#983 in-memory pretty write");
     String::from_utf8(output).expect("#983 pretty bytes are valid UTF-8")
@@ -146,7 +146,7 @@ fn main() -> ExitCode {
     })
 }
 
-fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
+pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     let command = argv.first().map(String::as_str);
     match command {
         Some("run" | "resume" | "sessions" | "settings" | "help" | "--help" | "-h") => {

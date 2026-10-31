@@ -1,0 +1,179 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "nodeVersion": "v22.22.0",
+  "generatorSha256": "66ac405d5ff59eebac9b1c339d6a268e80d298c246ed9335155151cb679e9b3b",
+  "signalSourceSha256": "ac9be8f71f8dd6b1226092ebb3112d1d6f4a6514e9d0937589a2cac09cf2c55b",
+  "sourceSha256": {
+    "src/cli/sdkCli.ts": "d41c08ce59380f85bb81ec8bd2d9bc876c778f9b2ebaea3fd25b1b5f08e288ec",
+    "packages/sdk/src/client.ts": "7dc380d0a7e0d3ac1d97210a36b2a18855d27936de9c12ea6cedf74f75e92c2a",
+    "packages/sdk/src/transport.ts": "793e38f0273836621c54a6bf9fb19645e4924343be9e6825d1fd06227136cb7f",
+    "dist/src/cli/pilotdeck.js": "4489ef95805baa7ae2c278aec9bd4683ee6a8b4d838271a984142303f8bd4483",
+    "dist/src/cli/sdkCli.js": "5734eed2c8e008e22ebd9f9a48b20cfe8808fc16519e32045fe05e08eb1333dc",
+    "packages/sdk/dist/client.js": "1fe1552964726337893b6f294552a385c5cdf5d16a0530e32b5d17f256a2bc49",
+    "packages/sdk/dist/transport.js": "065e0c379092571710f7ca3a2e02d9e417e43029fb8f4fadc1e305f7dc105d87"
+  },
+  "kind": "real-ts-sdk-state-with-websocket-io-double",
+  "matrixCells": 11,
+  "cases": [
+    {
+      "id": "run-id-turn_started-ordinary",
+      "kind": "run-id",
+      "input": {
+        "eventJson": "{\"type\":\"turn_started\",\"runId\":\"server-run\"}"
+      },
+      "output": {
+        "abortParamsJson": "{\"sessionKey\":\"s\",\"runId\":\"server-run\",\"reason\":\"CLI interrupted\"}",
+        "pendingAbort": 0,
+        "socketPresent": false,
+        "closes": 1
+      }
+    },
+    {
+      "id": "run-id-turn_started-empty",
+      "kind": "run-id",
+      "input": {
+        "eventJson": "{\"type\":\"turn_started\",\"runId\":\"\"}"
+      },
+      "output": {
+        "abortParamsJson": "{\"sessionKey\":\"s\",\"runId\":\"\",\"reason\":\"CLI interrupted\"}",
+        "pendingAbort": 0,
+        "socketPresent": false,
+        "closes": 1
+      }
+    },
+    {
+      "id": "run-id-turn_started-lone-surrogate",
+      "kind": "run-id",
+      "input": {
+        "eventJson": "{\"type\":\"turn_started\",\"runId\":\"\\ud800\"}"
+      },
+      "output": {
+        "abortParamsJson": "{\"sessionKey\":\"s\",\"runId\":\"\\ud800\",\"reason\":\"CLI interrupted\"}",
+        "pendingAbort": 0,
+        "socketPresent": false,
+        "closes": 1
+      }
+    },
+    {
+      "id": "run-id-turn.started-ordinary",
+      "kind": "run-id",
+      "input": {
+        "eventJson": "{\"type\":\"turn.started\",\"runId\":\"server-run\"}"
+      },
+      "output": {
+        "abortParamsJson": "{\"sessionKey\":\"s\",\"runId\":\"server-run\",\"reason\":\"CLI interrupted\"}",
+        "pendingAbort": 0,
+        "socketPresent": false,
+        "closes": 1
+      }
+    },
+    {
+      "id": "run-id-turn.started-empty",
+      "kind": "run-id",
+      "input": {
+        "eventJson": "{\"type\":\"turn.started\",\"runId\":\"\"}"
+      },
+      "output": {
+        "abortParamsJson": "{\"sessionKey\":\"s\",\"runId\":\"\",\"reason\":\"CLI interrupted\"}",
+        "pendingAbort": 0,
+        "socketPresent": false,
+        "closes": 1
+      }
+    },
+    {
+      "id": "run-id-turn.started-lone-surrogate",
+      "kind": "run-id",
+      "input": {
+        "eventJson": "{\"type\":\"turn.started\",\"runId\":\"\\ud800\"}"
+      },
+      "output": {
+        "abortParamsJson": "{\"sessionKey\":\"s\",\"runId\":\"\\ud800\",\"reason\":\"CLI interrupted\"}",
+        "pendingAbort": 0,
+        "socketPresent": false,
+        "closes": 1
+      }
+    },
+    {
+      "id": "pending-abort-response-error",
+      "kind": "pending-abort",
+      "input": {
+        "failure": "response-error"
+      },
+      "output": {
+        "readRejected": true,
+        "beforeReply": {
+          "pendingAbort": 1,
+          "socketPresent": true,
+          "closes": 0
+        },
+        "afterReply": {
+          "pendingAbort": 0,
+          "socketPresent": false,
+          "closes": 1
+        }
+      }
+    },
+    {
+      "id": "pending-abort-sequence-gap",
+      "kind": "pending-abort",
+      "input": {
+        "failure": "sequence-gap"
+      },
+      "output": {
+        "readRejected": true,
+        "beforeReply": {
+          "pendingAbort": 1,
+          "socketPresent": true,
+          "closes": 0
+        },
+        "afterReply": {
+          "pendingAbort": 0,
+          "socketPresent": false,
+          "closes": 1
+        }
+      }
+    },
+    {
+      "id": "event-error-toString",
+      "kind": "event-error",
+      "input": {
+        "eventJson": "{\"type\":\"toString\"}"
+      },
+      "output": {
+        "message": "event.type.includes is not a function",
+        "errorKind": "consumer",
+        "pendingAbort": 0,
+        "socketPresent": false,
+        "closes": 1
+      }
+    },
+    {
+      "id": "event-error-__proto__",
+      "kind": "event-error",
+      "input": {
+        "eventJson": "{\"type\":\"__proto__\"}"
+      },
+      "output": {
+        "message": "event.type.includes is not a function",
+        "errorKind": "consumer",
+        "pendingAbort": 0,
+        "socketPresent": false,
+        "closes": 1
+      }
+    },
+    {
+      "id": "event-error-object-to-primitive",
+      "kind": "event-error",
+      "input": {
+        "eventJson": "{\"type\":{\"toString\":\"x\"}}"
+      },
+      "output": {
+        "message": "Cannot convert object to primitive value",
+        "errorKind": "iterator",
+        "pendingAbort": 0,
+        "socketPresent": true,
+        "closes": 0
+      }
+    }
+  ]
+}

@@ -21,6 +21,7 @@ chrono = { version = "=0.4.45", default-features = false, features = ["clock", "
 icu_casemap = "=2.1.1"
 pilotdeck-transport = { path = "../pilotdeck-transport" }
 libc = "=0.2.190"
+signal-hook = { version = "=0.3.18", default-features = false }
 icu_collator = "=2.1.1"
 icu_locale_core = "=2.3.0"
 tokio = { version = "=1.48.0", features = ["rt", "net", "time", "sync"] }

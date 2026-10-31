@@ -14,7 +14,7 @@ use tokio_tungstenite::{
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_RECEIVE_BYTES: usize = 128 * 1024 * 1024;
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -114,25 +114,68 @@ pub(super) struct Transport {
     pub(super) server_info: JsValue,
 }
 
+/// The query stream and its cancellation RPCs share one socket reader. A
+/// response for an abort must never be discarded by the stream consumer.
+pub(super) enum QueryFrame {
+    Event(JsValue, bool),
+    StreamDone,
+    StreamFailed(Failure),
+    AbortReply(Result<JsValue, Failure>),
+}
+
 impl Transport {
     pub(super) async fn connect(
         connection: &Connection,
         client_version: &str,
         settings_order: bool,
     ) -> Result<Self, Failure> {
+        let mut transport = Self::open(connection, settings_order).await?;
+        if let Err(error) = transport.hello(connection, client_version).await {
+            transport.close().await;
+            return Err(error);
+        }
+        Ok(transport)
+    }
+
+    /// The SDK query keeps its socket when initialization rejects. Separate
+    /// opening from hello so the turn owner can preserve that observable
+    /// lifetime, while ordinary `connect` callers retain their usual cleanup.
+    pub(super) async fn open(
+        connection: &Connection,
+        settings_order: bool,
+    ) -> Result<Self, Failure> {
         // Retain P02's registered 128 MiB receive bounds on every connection.
         let config = websocket_config();
-        let (mut socket, _) = timeout(
+        let (socket, _) = timeout(
             CONNECT_TIMEOUT,
             connect_async_with_config(&connection.gateway_url, Some(config), false),
         )
         .await
         .map_err(|_| error("Gateway connection timed out."))?
         .map_err(|_| error("Gateway connection failed."))?;
+        Ok(Self {
+            socket,
+            settings_order,
+            stream_sequence: -1.0,
+            server_info: JsValue::Undefined,
+        })
+    }
+
+    pub(super) async fn hello(
+        &mut self,
+        connection: &Connection,
+        client_version: &str,
+    ) -> Result<(), Failure> {
         let hello = timeout(CONNECT_TIMEOUT, async {
-            send_hello(&mut socket, connection, client_version, settings_order).await?;
+            send_hello(
+                &mut self.socket,
+                connection,
+                client_version,
+                self.settings_order,
+            )
+            .await?;
             loop {
-                let frame = receive(&mut socket).await?;
+                let frame = receive(&mut self.socket).await?;
                 if string_field(&frame, "type").as_deref() == Some("hello_ok") {
                     return Ok::<_, Failure>(frame);
                 }
@@ -140,19 +183,9 @@ impl Transport {
         })
         .await
         .map_err(|_| error("Gateway hello timed out."))
-        .and_then(|result| result);
-        match hello {
-            Ok(frame) => Ok(Self {
-                socket,
-                settings_order,
-                stream_sequence: -1.0,
-                server_info: take_field(frame, "serverInfo"),
-            }),
-            Err(error) => {
-                close_socket(&mut socket).await;
-                Err(error)
-            }
-        }
+        .and_then(|result| result)?;
+        self.server_info = take_field(hello, "serverInfo");
+        Ok(())
     }
 
     pub(super) async fn request(
@@ -229,41 +262,73 @@ impl Transport {
         method: &str,
         params: impl Serialize,
     ) -> Result<String, Failure> {
+        let id = self.begin_request(method, params).await?;
+        self.stream_sequence = -1.0;
+        Ok(id)
+    }
+
+    /// Send an RPC without taking over the socket's receive loop.
+    pub(super) async fn begin_request(
+        &mut self,
+        method: &str,
+        params: impl Serialize,
+    ) -> Result<String, Failure> {
         let id = uuid::Uuid::new_v4().to_string();
         self.send_request(&id, method, params).await?;
-        self.stream_sequence = -1.0;
         Ok(id)
     }
 
     /// Stream events have no ordinary-RPC timeout in the SDK. The `final` bit,
     /// socket closure, or transport error ends this wait; terminal payloads alone
     /// must not close a stream that can still carry lifecycle events.
-    pub(super) async fn stream_event(
+    pub(super) async fn query_frame(
         &mut self,
-        id: &str,
-    ) -> Result<Option<(JsValue, bool)>, Failure> {
+        id: Option<&str>,
+        abort_ids: &[String],
+    ) -> Result<QueryFrame, Failure> {
         loop {
             let frame = receive(&mut self.socket).await?;
-            if string_field(&frame, "id").as_deref() != Some(id) {
+            let frame_id = string_field(&frame, "id");
+            if string_field(&frame, "type").as_deref() == Some("response")
+                && frame_id.as_ref().is_some_and(|id| abort_ids.contains(id))
+            {
+                let result = if frame.get("ok").and_then(JsValue::as_bool) == Some(true) {
+                    Ok(take_field(frame, "result"))
+                } else {
+                    let message = frame.get("error").and_then(|v| string_field(v, "message"));
+                    Err(error(
+                        message.as_deref().unwrap_or("Gateway request failed."),
+                    ))
+                };
+                return Ok(QueryFrame::AbortReply(result));
+            }
+            // After the stream fails, its registration is gone but pending
+            // abort RPCs still own this socket. Ignore every stream frame.
+            let Some(id) = id else {
+                continue;
+            };
+            if frame_id.as_deref() != Some(id) {
                 continue;
             }
             match string_field(&frame, "type").as_deref() {
                 Some("event") => {
-                    let Some(sequence) = next_sequence(&frame, id, self.stream_sequence)? else {
-                        continue;
+                    let sequence = match next_sequence(&frame, id, self.stream_sequence) {
+                        Ok(Some(sequence)) => sequence,
+                        Ok(None) => continue,
+                        Err(error) => return Ok(QueryFrame::StreamFailed(error)),
                     };
                     self.stream_sequence = sequence;
                     let final_frame = matches!(frame.get("final"), Some(JsValue::Bool(true)));
-                    return Ok(Some((take_field(frame, "event"), final_frame)));
+                    return Ok(QueryFrame::Event(take_field(frame, "event"), final_frame));
                 }
                 Some("response") if matches!(frame.get("ok"), Some(JsValue::Bool(true))) => {
-                    return Ok(None);
+                    return Ok(QueryFrame::StreamDone);
                 }
                 Some("response") if frame.get("ok").and_then(JsValue::as_bool) == Some(false) => {
                     let message = frame.get("error").and_then(|v| string_field(v, "message"));
-                    return Err(error(
+                    return Ok(QueryFrame::StreamFailed(error(
                         message.as_deref().unwrap_or("Gateway stream failed."),
-                    ));
+                    )));
                 }
                 _ => {}
             }
@@ -273,6 +338,29 @@ impl Transport {
     pub(super) async fn close(&mut self) {
         // Cleanup never replaces the original RPC/stream error.
         close_socket(&mut self.socket).await;
+    }
+
+    pub(super) async fn flush_pending(&mut self) {
+        // A received close queues an acknowledgement; flushing must not
+        // initiate a close on an otherwise still-open exceptional query.
+        let _ = timeout(CLOSE_TIMEOUT, self.socket.flush()).await;
+    }
+
+    /// An exceptional SDK query can outlive its CLI catch/finally. Do not turn
+    /// that known lifetime into a successful early exit. The peer closing the
+    /// socket (or the process receiving its default signal) ends this wait.
+    pub(super) async fn wait_peer_closed(&mut self) {
+        while let Some(frame) = self.socket.next().await {
+            match frame {
+                Ok(Message::Close(_)) => {
+                    self.flush_pending().await;
+                    break;
+                }
+                Err(_) => break,
+                Ok(Message::Ping(_)) if self.socket.flush().await.is_err() => break,
+                _ => {}
+            }
+        }
     }
 }
 

@@ -58,7 +58,7 @@ mutations = [
     ('query-resume', turn, '    query\n        .request("resume_session", json!({"sessionKey": session}))', '    query\n        .request("wrong_resume", json!({"sessionKey": session}))', 'run_channel_and_two_connections', '#1058 complete two-connection wire and cleanup'),
     ('model-catalog', turn, '.request("model_catalog_list", json!({"projectKey":project}))', '.request("wrong_catalog", json!({"projectKey":project}))', 'run_matches_ts_matrix', '#1058 complete two-connection wire and cleanup'),
     ('drop-stdin', turn, 'if !std::io::stdin().is_terminal() {', 'if false && !std::io::stdin().is_terminal() {', 'run_stdin_contract', '#1058 expected second connection'),
-    ('skip-second-connection', turn, 'let mut query = Transport::connect(connection, "pilotdeck-cli", true).await?;\n        let result = query_turn(&mut query, argv, &session, &prompt, project).await;\n        query.close().await;\n        result', 'query_turn(&mut control, argv, &session, &prompt, project).await', 'run_channel_and_two_connections', '#1058 expected second connection'),
+    ('skip-second-connection', turn, 'query = Some(Transport::open(connection, true).await?);', 'if !argv.is_empty() { return Err(Failure::Error("mutant omitted query".into())); }\n            query = Some(Transport::open(connection, true).await?);', 'run_channel_and_two_connections', '#1058 expected second connection'),
     ('overwrite-submit-channel', turn, 'channel_key: "api_server",', 'channel_key: "cli",', 'run_channel_and_two_connections', '#1058 complete two-connection wire and cleanup'),
     ('argv-priority', turn, 'if !prompt.is_empty() {', 'if false && !prompt.is_empty() {', 'run_channel_and_two_connections', '#1058 expected second connection'),
     ('empty-prompt', turn, 'if prompt.is_empty() {', 'if false && prompt.is_empty() {', 'run_empty_prompt_contract', '#1058 no third connection'),
@@ -71,7 +71,7 @@ mutations = [
     ('text-before-delta', output, 'string_field(event, "text").or_else(|| string_field(event, "delta"))', 'string_field(event, "delta").or_else(|| string_field(event, "text"))', 'run_text_contract', '#1058 output bytes and exit'),
     ('terminal-before-final', turn, 'if final_frame {', 'if final_frame || string_field(&event, "type").as_deref() == Some("turn_completed") {', 'run_waits_for_stream_final', '#1058 output bytes and exit'),
     ('duplicate-sequence', transport, 'if sequence <= previous {', 'if false && sequence <= previous {', 'run_duplicate_event_is_not_printed', '#1058 output bytes and exit'),
-    ('success-response-end', transport, 'Some("response") if matches!(frame.get("ok"), Some(JsValue::Bool(true))) => {\n                    return Ok(None);', 'Some("response") if matches!(frame.get("ok"), Some(JsValue::Bool(true))) => {\n                    return Err(error("Gateway success response rejected."));', 'run_success_response_ends_stream', '#1058 output bytes and exit'),
+    ('success-response-end', transport, 'Some("response") if matches!(frame.get("ok"), Some(JsValue::Bool(true))) => {\n                    return Ok(QueryFrame::StreamDone);', 'Some("response") if matches!(frame.get("ok"), Some(JsValue::Bool(true))) => {\n                    return Ok(QueryFrame::AbortReply(Ok(JsValue::Undefined)));', 'run_success_response_ends_stream', '#1058 output bytes and exit'),
     ('oracle-drift', oracle, '"nodeVersion": "v22.22.0"', '"nodeVersion": "v0.0.0"', 'run_oracle_regenerates_identically', '#1058 identical TS fixture sdk-run'),
 ]
 
