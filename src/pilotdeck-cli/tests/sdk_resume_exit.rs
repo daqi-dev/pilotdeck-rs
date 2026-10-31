@@ -173,6 +173,7 @@ fn write_fixture_stdin(stdin: &mut impl Write, data: &[u8]) {
 struct StdinWriter {
     handle: std::thread::JoinHandle<()>,
     done: std::sync::mpsc::Receiver<std::thread::Result<()>>,
+    joined: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 impl StdinWriter {
     fn start(mut stdin: std::process::ChildStdin, data: Vec<u8>) -> Self {
@@ -184,7 +185,11 @@ impl StdinWriter {
             drop(stdin);
             let _ = finished.send(result);
         });
-        Self { handle, done }
+        Self {
+            handle,
+            done,
+            joined: Default::default(),
+        }
     }
     fn finish(self) {
         let result = self
@@ -192,6 +197,8 @@ impl StdinWriter {
             .recv_timeout(BOUND)
             .expect("#1097 bounded stdin cleanup");
         self.handle.join().expect("#1097 owned stdin thread");
+        self.joined
+            .store(true, std::sync::atomic::Ordering::Release);
         if let Err(payload) = result {
             std::panic::resume_unwind(payload);
         }
@@ -328,11 +335,15 @@ fn fixture_stdin_cancel_reaps_writer() {
         writers.lock().expect("#1097 writer ownership").len() == 1,
         "#1097 writer registered",
     );
+    let joined = writers.lock().expect("#1136 observe writer join")[0]
+        .joined
+        .clone();
     // This child never consumes stdin. Cancelling its owner must close the
     // read end, finish the blocked write, and join the registered thread.
     drop(child);
     verify(
-        writers.lock().expect("#1097 joined writers").is_empty(),
+        writers.lock().expect("#1097 joined writers").is_empty()
+            && joined.load(std::sync::atomic::Ordering::Acquire),
         "#1097 cancellation joins stdin writer",
     );
 }
@@ -341,6 +352,10 @@ async fn collect(child: OwnedChild) -> std::process::Output {
     collect_bounded(child, BOUND).await
 }
 async fn collect_bounded(mut child: OwnedChild, bound: Duration) -> std::process::Output {
+    collect_owned(&mut child, bound).await
+}
+// The replay may register delayed stdin after process exit; retain its owner.
+async fn collect_owned(child: &mut OwnedChild, bound: Duration) -> std::process::Output {
     timeout(bound, async {
         loop {
             if child
@@ -878,7 +893,7 @@ async fn run_case(case: &Value) {
                     .expect("#1086 cleanup owner")
                     .kill()
                     .expect("#1086 explicit cleanup kill");
-                let output = collect(child).await;
+                let output = collect_owned(&mut child, BOUND).await;
                 release
                     .send(())
                     .expect("#1086 release held mock after cleanup");
@@ -895,14 +910,15 @@ async fn run_case(case: &Value) {
                         .await
                         .expect("#1086 mock bounded; not a negative kill")
                 },
-                collect(child)
+                collect_owned(&mut child, BOUND)
             );
             run_ids = ids;
             output
         }
     } else {
-        collect(child).await
+        collect_owned(&mut child, BOUND).await
     };
+    drop(child); // replay can no longer register a writer
     if let Some(listener) = listener.as_ref() {
         if case["connections"]
             .as_u64()
@@ -1038,4 +1054,41 @@ async fn resume_preflight_no_late_connection() {
         .find(|case| case["input"]["id"] == "resume--missing-session")
         .expect("#1097 resume preflight fixture");
     run_case(&case).await;
+}
+
+#[tokio::test]
+async fn fixture_stdin_registered_after_exit_is_joined() {
+    let mut command = Command::new("/bin/sh");
+    command
+        .env_clear()
+        .args(["-c", "exit 23"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = spawn(&mut command, &json!({"holdStdin": true}));
+    let stdin = child
+        .0
+        .as_mut()
+        .expect("#1136 late writer child")
+        .stdin
+        .take()
+        .expect("#1136 late writer pipe");
+    let output = collect_owned(&mut child, BOUND).await;
+    assert_eq!(
+        output.status.code(),
+        Some(23),
+        "#1136 predecessor exited before registration"
+    );
+    let writer = StdinWriter::start(stdin, vec![b'x'; 128 * 1024]);
+    let joined = writer.joined.clone();
+    child
+        .1
+        .lock()
+        .expect("#1136 late writer registry")
+        .push(writer);
+    drop(child); // final replay owner
+    verify(
+        joined.load(std::sync::atomic::Ordering::Acquire),
+        "#1136 post-exit writer joined",
+    );
 }
