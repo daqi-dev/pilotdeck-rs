@@ -3,7 +3,7 @@
 
 These repos are the input under test (including dirty index flags), not an
 alternate HEAD for executing product negative controls. Shared entry points build
-a missing workspace_inputs helper offline before taking the source lease.
+a missing workspace_inputs helper offline inside a pristine source lease.
 """
 from contextlib import contextmanager
 import ast
@@ -599,7 +599,7 @@ except SourceBaselineError: print('REFUSED')
 
 
 class ScannerBootstrap(unittest.TestCase):
-    def test_fresh_target_first_mutation_bootstraps_before_lock(self):
+    def test_fresh_target_first_mutation_bootstraps_inside_pristine_lock(self):
         with tempfile.TemporaryDirectory(prefix='pdrs1166-cold-target-') as directory:
             target = Path(directory).resolve()
             executable = target / 'debug/examples/workspace_inputs'
@@ -623,7 +623,8 @@ class ScannerBootstrap(unittest.TestCase):
                         (events.append('slot') or subprocess.CompletedProcess([], 0, '', ''))), \
                     patch.object(api, 'run_owned', side_effect=build), \
                     patch.object(api, 'tree_lock', lock), \
-                    patch.object(api, '_assert_product_pristine'):
+                    patch.object(api, '_assert_workspace_sources', side_effect=lambda *a: events.append('preflight')), \
+                    patch.object(api, '_assert_product_pristine', side_effect=lambda *a: events.append('clean')):
                 failure = None
                 try:
                     with api.mutating_sources(ROOT, []):
@@ -633,8 +634,60 @@ class ScannerBootstrap(unittest.TestCase):
                 except Exception as error:
                     failure = error
                 self.assertTrue(failure is None and events ==
-                                ['slot', 'build', 'lock', 'body', 'lock', 'warm-body'],
-                                '#1166 cold first mutation prepares before lease and warm reuses helper')
+                                ['lock', 'preflight', 'lock', 'preflight', 'slot', 'build', 'clean', 'body',
+                                 'lock', 'preflight', 'clean', 'warm-body'],
+                                '#1166 cold first mutation prepares inside pristine lease and warm reuses helper')
+
+    def test_dirty_sources_never_bootstrap(self):
+        for entry in ('mutation', 'helper'):
+            events = []
+            @contextmanager
+            def lock(*args, **kwargs):
+                events.append('lock')
+                try:
+                    yield
+                finally:
+                    events.append('unlock')
+            def dirty(*args):
+                events.append('preflight')
+                raise api.SourceBaselineError(ROOT, 'src/dirty.rs', 'synthetic residue')
+            with self.subTest(entry=entry), tempfile.TemporaryDirectory() as target, \
+                    patch.dict(os.environ, {'CARGO_TARGET_DIR': target}), \
+                    patch.object(api, 'tree_lock', lock), \
+                    patch.object(api, '_assert_workspace_sources', side_effect=dirty), \
+                    patch.object(api, '_assert_product_pristine'), \
+                    patch.object(api, 'wait_for_slot') as slot, \
+                    patch.object(api, 'run_owned') as build:
+                failure = None
+                try:
+                    if entry == 'helper':
+                        api._ensure_workspace_scanner()
+                    else:
+                        with api.mutating_sources(ROOT, []):
+                            events.append('body')
+                except Exception as error:
+                    failure = error
+                self.assertTrue(isinstance(failure, api.SourceBaselineError)
+                                and events == ['lock', 'preflight', 'unlock']
+                                and not slot.called and not build.called,
+                                '#1166 dirty cold sources cannot bootstrap before admission')
+
+    def test_waiting_cold_helper_reuses_predecessor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            executable = target / 'debug/examples/workspace_inputs'
+            @contextmanager
+            def predecessor(*args, **kwargs):
+                executable.parent.mkdir(parents=True)
+                executable.write_text('predecessor completed under lease')
+                yield
+            with patch.object(api, 'tree_lock', predecessor), \
+                    patch.object(api, '_assert_workspace_sources'), \
+                    patch.object(api, 'wait_for_slot') as slot, \
+                    patch.object(api, 'run_owned') as build:
+                api._ensure_workspace_scanner({'CARGO_TARGET_DIR': directory})
+            self.assertFalse(slot.called or build.called,
+                             '#1166 cold waiter rechecks completed helper under lease')
 
     def test_bootstrap_failure_never_enters_mutation(self):
         for outcome in ('failed', 'missing', 'cancelled'):
@@ -642,6 +695,7 @@ class ScannerBootstrap(unittest.TestCase):
                     patch.dict(os.environ, {'CARGO_TARGET_DIR': directory}), \
                     patch.object(api, 'wait_for_slot', return_value=subprocess.CompletedProcess([], 0, '', '')), \
                     patch.object(api, 'tree_lock') as lock, \
+                    patch.object(api, '_assert_workspace_sources'), \
                     patch.object(api, '_assert_product_pristine'), \
                     patch.object(api, 'run_owned', side_effect=(KeyboardInterrupt('cancel') if outcome == 'cancelled'
                         else None), return_value=subprocess.CompletedProcess([], int(outcome == 'failed'), '', '')):
@@ -649,7 +703,8 @@ class ScannerBootstrap(unittest.TestCase):
                         msg='#1166 failed scanner bootstrap must fail closed'):
                     with api.mutating_sources(ROOT, []):
                         pass
-                self.assertFalse(lock.called, '#1166 failed bootstrap cannot acquire source lease')
+                self.assertTrue(lock.called and lock.return_value.__exit__.called,
+                                '#1166 failed bootstrap must release source lease')
 
 
 class SnapshotControls(unittest.TestCase):
@@ -664,7 +719,8 @@ class SnapshotControls(unittest.TestCase):
         self.env = {'CARGO_TARGET_DIR': str(self.root / 'target')}
 
     @contextmanager
-    def dependencies(self, *, failed=False, missing=False, distractor=False, kind='test'):
+    def dependencies(self, *, failed=False, missing=False, distractor=False, kind='test',
+                     copy_hook=None, before_copy=None, stale=False):
         @contextmanager
         def lock(*args, **kwargs):
             self.events.append('lock')
@@ -688,6 +744,8 @@ class SnapshotControls(unittest.TestCase):
                             '#1166 cargo build must retain bounded progress deadlines')
             self.assertTrue(command[1] == ('test' if kind == 'test' else 'build'),
                             '#1166 select cargo command for target kind')
+            stamp = 1 if stale else time.time_ns()
+            os.utime(self.source, ns=(stamp, stamp))
             row = dict(reason='compiler-artifact', target={'name': 'probe', 'kind': [kind]},
                        executable=str(self.source))
             rows = [row]
@@ -698,9 +756,17 @@ class SnapshotControls(unittest.TestCase):
         actual_copy = api.copy_binary
         def copy(*args, **kwargs):
             self.events.append('copy')
-            return actual_copy(*args, **kwargs)
+            if before_copy is not None:
+                before_copy()
+            binary = actual_copy(*args, **kwargs)
+            if copy_hook is not None:
+                copy_hook()
+            return binary
         with patch.object(api, '_ensure_workspace_scanner', side_effect=lambda env: self.events.append('prepare')), \
-                patch.object(api, 'tree_lock', lock), patch.object(api, '_assert_product_pristine', clean), \
+                patch.object(api, 'tree_lock', lock), \
+                patch.object(api, '_assert_workspace_sources', side_effect=lambda *a: self.events.append('preflight')), \
+                patch.object(api, '_git', return_value=b'fixture-head\n'), \
+                patch.object(api, '_assert_product_pristine', clean), \
                 patch.object(api, 'wait_for_slot', slot), patch.object(api, 'run_owned', build), \
                 patch.object(api, 'copy_binary', copy):
             yield
@@ -712,7 +778,7 @@ class SnapshotControls(unittest.TestCase):
     def test_build_copy_and_slot_are_inside_lock(self):
         with self.dependencies():
             binary = self.build()
-        self.assertTrue(self.events == ['prepare', 'lock', 'clean', 'slot', 'build', 'copy', 'unlock'],
+        self.assertTrue(self.events == ['lock', 'preflight', 'prepare', 'clean', 'slot', 'build', 'copy', 'unlock'],
                         '#1166 clean slot build copy must stay inside tree lease')
         self.assertTrue(Path(binary).parent == self.root / 'run', '#1166 return private executable')
         # Replace the shared cargo name, then run twice: neither launch may
@@ -725,6 +791,19 @@ class SnapshotControls(unittest.TestCase):
             result = subprocess.run([binary], capture_output=True, timeout=5)
             self.assertTrue(result.returncode == 0 and result.stdout == b'original',
                             '#1166 repeated samples must execute original snapshot bytes')
+
+    def test_dirty_snapshot_never_bootstraps(self):
+        failure = None
+        with self.dependencies(), \
+                patch.object(api, '_assert_workspace_sources',
+                             side_effect=api.SourceBaselineError(self.root, 'src/dirty.rs', 'residue')):
+            try:
+                self.build()
+            except Exception as error:
+                failure = error
+        self.assertTrue(isinstance(failure, api.SourceBaselineError)
+                        and self.events == ['lock', 'unlock'],
+                        '#1166 dirty snapshot cannot bootstrap or build')
 
     def test_artifact_kind_filter(self):
         failure = None
@@ -754,11 +833,7 @@ class SnapshotControls(unittest.TestCase):
                         '#1166 snapshot digest matches executable')
 
     def test_no_target_no_build(self):
-        marker = '#1166 absent target must fail before build'
-        with patch.object(api, '_ensure_workspace_scanner', side_effect=AssertionError(marker)), self.assertRaises(RuntimeError,
-                msg='#1166 absent target must fail before build'):
-            api.build_snapshot(self.root, self.root / 'run', package='fixture', target='probe', env={})
-        self.assertFalse(self.events, '#1166 absent target cannot touch sources')
+        self.reject_target(None, '#1166 absent target must fail before build')
 
     def test_external_target_is_rebuilt_and_copied(self):
         with tempfile.TemporaryDirectory(prefix='pdrs1166-external-') as other:
@@ -772,8 +847,137 @@ class SnapshotControls(unittest.TestCase):
                     binary = ''
             self.assertTrue(failure is None and Path(binary).is_file(),
                             '#1166 external target must build and snapshot successfully')
-            self.assertTrue(self.events == ['prepare', 'lock', 'clean', 'slot', 'build', 'copy', 'unlock'],
+            self.assertTrue(self.events == ['lock', 'preflight', 'prepare', 'clean', 'slot', 'build', 'copy', 'unlock'],
                             '#1166 external target provenance requires locked rebuild and copy')
+
+    def reject_target(self, value, marker):
+        self.env['CARGO_TARGET_DIR'] = value
+        with self.assertRaises(RuntimeError, msg=marker):
+            api._scanner_environment(self.env)
+        failure = None
+        with self.dependencies():
+            try:
+                self.build()
+            except Exception as error:
+                failure = error
+        self.assertTrue(isinstance(failure, RuntimeError) and not self.events
+                        and not (self.root / 'run').exists(), marker)
+
+    def test_whitespace_target_is_refused(self):
+        self.reject_target(' \t\n ', '#1166 whitespace target refused before side effects')
+
+    def test_dot_target_is_refused(self):
+        self.reject_target('.', '#1166 dot target refused before side effects')
+
+    def test_filesystem_root_target_is_refused(self):
+        self.reject_target('/', '#1166 filesystem root target refused before side effects')
+
+    def test_repository_root_target_is_refused(self):
+        self.reject_target(str(ROOT), '#1166 repository root target refused before side effects')
+
+    def test_source_target_is_refused(self):
+        self.reject_target(str(ROOT / 'src/target'), '#1166 source target refused before side effects')
+
+    def test_build_owner_is_atomic_and_unique(self):
+        marker = Path(self.env['CARGO_TARGET_DIR']) / '.negative-build-owner.json'
+        marker.parent.mkdir()
+        marker.write_text('previous owner')
+        replace = Path.replace
+        publications = []
+        def publish(path, destination):
+            publications.append((marker.read_text(), path.read_text()))
+            return replace(path, destination)
+        failure = None
+        try:
+            with patch.object(api, '_git', return_value=b'fixture-head\n'), \
+                    patch.object(Path, 'replace', publish):
+                _, first = api._publish_build_owner(self.root, self.env)
+                _, second = api._publish_build_owner(self.root, self.env)
+            owners = [json.loads(first), json.loads(second)]
+            valid = (len(publications) == 2
+                     and publications == [('previous owner', first), (first, second)]
+                     and marker.read_text() == second
+                     and all(row.get('root') == str(self.root) and row.get('head') == 'fixture-head'
+                             and len(row.get('nonce', '')) == 32 for row in owners)
+                     and owners[0]['nonce'] != owners[1]['nonce'])
+        except Exception as error:
+            failure, valid = error, False
+        self.assertTrue(failure is None and valid,
+                        '#1166 build owner atomically binds root HEAD and fresh nonce')
+
+    def reject_provenance(self, hook, message, *, stale=False):
+        failure = None
+        with self.dependencies(copy_hook=hook, stale=stale):
+            try:
+                self.build()
+            except Exception as error:
+                failure = error
+        self.assertTrue(isinstance(failure, RuntimeError) and str(failure) == message
+                        and not (self.root / 'run/sha256').exists(),
+                        '#1166 ' + message.removeprefix('#1166 ') + ' must reject snapshot')
+
+    def test_foreign_build_between_build_and_copy_is_refused(self):
+        def takeover():
+            marker = Path(self.env['CARGO_TARGET_DIR']) / '.negative-build-owner.json'
+            program = (
+                'from pathlib import Path; import sys, json\n'
+                'artifact, marker = map(Path, sys.argv[1:])\n'
+                'pending = marker.with_suffix(".foreign.tmp")\n'
+                'pending.write_text(json.dumps(dict(root="foreign-tree", head="foreign-head", nonce="foreign")))\n'
+                'pending.replace(marker)\n'
+                'pending = artifact.with_suffix(".foreign.tmp")\n'
+                'pending.write_text("foreign build bytes")\n'
+                'pending.replace(artifact)\n')
+            result = subprocess.run([sys.executable, '-I', '-c', program,
+                                     str(self.source), str(marker)], capture_output=True, timeout=5)
+            self.assertTrue(result.returncode == 0,
+                            '#1166 second builder must complete its deterministic takeover')
+        failure = None
+        with self.dependencies(before_copy=takeover):
+            try:
+                self.build()
+            except Exception as error:
+                failure = error
+        self.assertTrue(isinstance(failure, RuntimeError)
+                        and str(failure) == '#1166 build owner changed during snapshot'
+                        and (self.root / 'run/executable').read_text() == 'foreign build bytes'
+                        and not (self.root / 'run/sha256').exists(),
+                        '#1166 second builder between build and copy cannot claim snapshot')
+
+    def test_owner_replacement_after_copy_is_refused(self):
+        def takeover():
+            marker = Path(self.env['CARGO_TARGET_DIR']) / '.negative-build-owner.json'
+            other = marker.with_suffix('.other.tmp')
+            other.write_text(json.dumps(dict(root='other-tree', head='other-head', nonce='other-nonce')))
+            other.replace(marker)
+        self.reject_provenance(takeover, '#1166 build owner changed during snapshot')
+
+    def test_artifact_replacement_after_copy_is_refused(self):
+        def takeover():
+            other = self.source.with_suffix('.other.tmp')
+            other.write_text('foreign artifact')
+            other.replace(self.source)
+        self.reject_provenance(takeover, '#1166 build artifact changed during snapshot')
+
+    def test_stale_artifact_is_refused(self):
+        self.reject_provenance(None, '#1166 build artifact predates this build', stale=True)
+
+    def test_missing_owner_after_copy_is_refused(self):
+        def remove():
+            (Path(self.env['CARGO_TARGET_DIR']) / '.negative-build-owner.json').unlink()
+        self.reject_provenance(remove, '#1166 build provenance unavailable after copy')
+
+    def test_owner_publication_precedes_cargo_inside_lock(self):
+        actual_publish = api._publish_build_owner
+        def publish(*args):
+            self.assertTrue(self.events == ['lock', 'preflight', 'prepare', 'clean', 'slot'],
+                            '#1166 owner publication precedes cargo inside pristine lease')
+            return actual_publish(*args)
+        with self.dependencies(), patch.object(api, '_publish_build_owner', side_effect=publish):
+            binary = self.build()
+        owner = json.loads((Path(binary).parent / 'build-owner.json').read_text())
+        self.assertTrue(owner['root'] == str(self.root) and owner['head'] == 'fixture-head',
+                        '#1166 successful snapshot records its build owner')
 
     def test_relative_target_is_independent_of_process_cwd(self):
         expected = str((ROOT / '../relative-target').resolve())
@@ -782,9 +986,10 @@ class SnapshotControls(unittest.TestCase):
                 env = api._scanner_environment({'CARGO_TARGET_DIR': '../relative-target'})
             self.assertTrue(env['CARGO_TARGET_DIR'] == expected,
                             '#1166 target resolves relative to repository root')
-        with patch.dict(os.environ, {'CARGO_TARGET_DIR': ''}):
+        with patch.dict(os.environ):
+            os.environ.pop('CARGO_TARGET_DIR', None)
             env = api._scanner_environment()
-        self.assertTrue(env['CARGO_TARGET_DIR'] == str(ROOT / 'src/target'),
+        self.assertTrue(env['CARGO_TARGET_DIR'] == str(ROOT / '_build/cargo-target'),
                         '#1166 scanner has a default target without caller setup')
 
     def test_runner_build_uses_normalized_environment(self):

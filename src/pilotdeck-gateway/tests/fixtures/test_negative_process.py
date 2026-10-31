@@ -732,7 +732,8 @@ class MutatingSources(unittest.TestCase):
             subprocess.run(["git", "add", "."], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "product area"], cwd=root, check=True)
             other.write_text("// residue\n")
-            with patch("negative_process._assert_product_pristine"):
+            with patch("negative_process._assert_product_pristine"), \
+                    patch("negative_process._assert_workspace_sources"):
                 with mutating_sources(root, [target]) as snapshot:
                     self.assertEqual(snapshot[target], b"// head\n")
                     self.assertEqual(other.read_text(), "// residue\n",
@@ -834,6 +835,7 @@ class ParityMutationLock(unittest.TestCase):
             common.__file__ = str(source)
             exec(compile(snapshot[source], str(source), "exec"), common.__dict__)
             with patch.object(negative_process, "_assert_product_pristine"), \
+                    patch.object(negative_process, "_assert_workspace_sources"), \
                     patch.object(negative_process, "_head_bytes",
                                  side_effect=lambda _root, path, _base: snapshot[root / path]):
                 yield root, source, target, snapshot, common
