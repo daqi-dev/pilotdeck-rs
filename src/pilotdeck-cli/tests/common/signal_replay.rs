@@ -665,6 +665,29 @@ fn stderr_matches(ts: &str, rust: &[u8]) -> bool {
     ts_stderr(ts).as_bytes() == rust
 }
 
+// #1164 B / D1-SDK-SIGNAL-UNHANDLED-REJECTION-001. The accepted difference
+// names eight cells, not an exception shape; all other cells retain their rules.
+fn approved_signal_stderr(id: &str) -> Option<&'static [u8]> {
+    match id {
+        "run--abort-error-sigint"
+        | "run--abort-error-sigterm"
+        | "resume--abort-error-sigint"
+        | "resume--abort-error-sigterm" => Some(b"d1 fixture rejected\n"),
+        "run--terminal-during-abort-final-sigint"
+        | "run--terminal-during-abort-final-sigterm"
+        | "resume--terminal-during-abort-final-sigint"
+        | "resume--terminal-during-abort-final-sigterm" => Some(b"Gateway client closed.\n"),
+        _ => None,
+    }
+}
+
+fn stderr_matches_for_case(id: &str, ts: &str, rust: &[u8]) -> bool {
+    match approved_signal_stderr(id) {
+        Some(expected) => expected == rust,
+        None => stderr_matches(ts, rust),
+    }
+}
+
 fn closes_match(id: &str, expected: &Value, actual: &Value) -> bool {
     let mut closes = expected["closes"]
         .as_array()
@@ -953,6 +976,66 @@ async fn capture(expected: &Value, directory: PathBuf, id: &str) -> Value {
     actual
 }
 
+fn compare_surfaces(
+    id: &str,
+    expected: &Value,
+    actual: &Value,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Vec<String> {
+    let mut differences = Vec::new();
+    for field in [
+        "status",
+        "naturalExit",
+        "cleanupExit",
+        "aborts",
+        "connections",
+        "activeAfterExit",
+        "initial",
+        "final",
+        "milestones",
+    ] {
+        if actual[field] != expected[field] {
+            differences.push(field.to_owned());
+        }
+    }
+    let expected_stdout = expected["stdout"]
+        .as_str()
+        .unwrap_or_else(|| panic!("#1145 {id} TS stdout bytes"));
+    if stdout != expected_stdout.as_bytes() {
+        differences.push("stdout".into());
+    }
+    let expected_stderr = expected["stderrRaw"]
+        .as_str()
+        .unwrap_or_else(|| panic!("#1145 {id} TS stderr bytes"));
+    if !stderr_matches_for_case(id, expected_stderr, stderr) {
+        differences.push("stderr".into());
+    }
+    if !closes_match(id, expected, &actual["closes"]) {
+        differences.push("connection closures".into());
+    }
+    let ts_removed = expected["hooks"]
+        .as_array()
+        .unwrap_or_else(|| panic!("#1145 {id} TS listener observations"))
+        .iter()
+        .any(|row| {
+            row["hook"]["kind"] == "listener-removed"
+                && row["hook"]["listeners"]["SIGINT"] == 0
+                && row["hook"]["listeners"]["SIGTERM"] == 0
+        });
+    let rust_removed = actual["hooks"]
+        .as_array()
+        .unwrap_or_else(|| panic!("#1145 {id} Rust listener observations"))
+        .iter()
+        // Each independently consumed once-listener is also removed. TS's
+        // removeListener hook reports both consumption and finally cleanup.
+        .any(|row| row["kind"] == "listeners-removed" || row["kind"] == "abort-enter-2");
+    if ts_removed != rust_removed {
+        differences.push("listener removal".into());
+    }
+    differences
+}
+
 pub(super) fn run(id: &str) {
     // Bounded local serial ownership: all cells share only the explicitly owned
     // mock port. Poison from a preceding assertion must not suppress later cells.
@@ -1022,72 +1105,24 @@ pub(super) fn run(id: &str) {
         "mock runtime",
     );
     let actual = runtime.block_on(capture(expected, directory.clone(), id));
-    let mut differences = Vec::new();
-    for field in [
-        "status",
-        "naturalExit",
-        "cleanupExit",
-        "aborts",
-        "connections",
-        "activeAfterExit",
-        "initial",
-        "final",
-        "milestones",
-    ] {
-        if actual[field] != expected[field] {
-            differences.push(field.to_owned());
-        }
-    }
     let stdout = require(
         fs::read(directory.join("stdout.bin")),
         id,
         "product stdout bytes",
     );
-    let expected_stdout = expected["stdout"]
-        .as_str()
-        .unwrap_or_else(|| panic!("#1145 {id} TS stdout bytes"));
-    if stdout != expected_stdout.as_bytes() {
-        differences.push("stdout".into());
-    }
-    let expected_stderr = expected["stderrRaw"]
-        .as_str()
-        .unwrap_or_else(|| panic!("#1145 {id} TS stderr bytes"));
     let stderr = require(
         fs::read(directory.join("stderr.bin")),
         id,
         "product stderr bytes",
     );
-    if !stderr_matches(expected_stderr, &stderr) {
-        differences.push("stderr".into());
-    }
-    if !closes_match(id, expected, &actual["closes"]) {
-        differences.push("connection closures".into());
-    }
-    let ts_removed = expected["hooks"]
-        .as_array()
-        .unwrap_or_else(|| panic!("#1145 {id} TS listener observations"))
-        .iter()
-        .any(|row| {
-            row["hook"]["kind"] == "listener-removed"
-                && row["hook"]["listeners"]["SIGINT"] == 0
-                && row["hook"]["listeners"]["SIGTERM"] == 0
-        });
-    let rust_removed = actual["hooks"]
-        .as_array()
-        .unwrap_or_else(|| panic!("#1145 {id} Rust listener observations"))
-        .iter()
-        // Each independently consumed once-listener is also removed. TS's
-        // removeListener hook reports both consumption and finally cleanup.
-        .any(|row| row["kind"] == "listeners-removed" || row["kind"] == "abort-enter-2");
-    if ts_removed != rust_removed {
-        differences.push("listener removal".into());
-    }
+    let differences = compare_surfaces(id, expected, &actual, &stdout, &stderr);
     publish(
         &directory,
         "comparison.json",
         &json!({"id":id,"differences":differences,
         "normalization":"TS SQLite prefix and complete business-prefixed Node v22.22.0 tail only; UUID bytes stay literal",
-        "acceptedDifference":"D1-SDK-WS-CLOSE-REASON-001 (four query-hello-reject cells only)"}),
+        "acceptedDifferences":["D1-SDK-WS-CLOSE-REASON-001 (four query-hello-reject cells only)",
+            "D1-SDK-SIGNAL-UNHANDLED-REJECTION-001 (eight exact signal cells; stderr only)"]}),
         id,
     );
     if !differences.is_empty() {
@@ -1312,6 +1347,190 @@ mod comparison_tests {
             stderr_matches(raw, b"auth_failed\n"),
             "#1145 nonblank restored control"
         );
+    }
+
+    // Independent expected identities: adding a ninth production entry must fail.
+    const UNHANDLED_CASES: [(&str, &[u8]); 8] = [
+        ("run--abort-error-sigint", b"d1 fixture rejected\n"),
+        ("run--abort-error-sigterm", b"d1 fixture rejected\n"),
+        ("resume--abort-error-sigint", b"d1 fixture rejected\n"),
+        ("resume--abort-error-sigterm", b"d1 fixture rejected\n"),
+        (
+            "run--terminal-during-abort-final-sigint",
+            b"Gateway client closed.\n",
+        ),
+        (
+            "run--terminal-during-abort-final-sigterm",
+            b"Gateway client closed.\n",
+        ),
+        (
+            "resume--terminal-during-abort-final-sigint",
+            b"Gateway client closed.\n",
+        ),
+        (
+            "resume--terminal-during-abort-final-sigterm",
+            b"Gateway client closed.\n",
+        ),
+    ];
+
+    #[test]
+    fn unhandled_rejection_stderr_is_exact_and_scoped() {
+        for (id, message) in UNHANDLED_CASES {
+            let raw = original(id);
+            assert!(
+                stderr_matches_for_case(id, raw, message),
+                "#1145 approved unhandled rejection line must pass: {id}"
+            );
+            let mut extra_line = message.to_vec();
+            extra_line.extend_from_slice(b"extra output\n");
+            for bad in [
+                b"changed error\n".as_slice(),
+                b"",
+                raw.as_bytes(),
+                &message[..message.len() - 1],
+                extra_line.as_slice(),
+            ] {
+                assert!(
+                    !stderr_matches_for_case(id, raw, bad),
+                    "#1145 unhandled rejection requires exact Rust line: {id}"
+                );
+            }
+        }
+        // Supply the approved error bytes even for other cells, so expanding the
+        // match list cannot hide behind an unrelated original stderr mismatch.
+        for row in captured()["captures"]
+            .as_array()
+            .expect("#1145 rejection scope captures")
+        {
+            let id = row["input"]["id"]
+                .as_str()
+                .expect("#1145 rejection scope id");
+            if UNHANDLED_CASES.iter().any(|(known, _)| *known == id) {
+                continue;
+            }
+            for (source, message) in UNHANDLED_CASES {
+                assert!(
+                    !stderr_matches_for_case(id, original(source), message),
+                    "#1145 unregistered unhandled rejection cannot pass: {id}"
+                );
+            }
+        }
+        for id in [
+            "run--abort-error-sigint-extra",
+            "other--abort-error-sigint",
+            "run--terminal-during-abort-final-sighup",
+        ] {
+            assert!(
+                !stderr_matches_for_case(id, original(UNHANDLED_CASES[0].0), UNHANDLED_CASES[0].1),
+                "#1145 unregistered unhandled rejection cannot pass: {id}"
+            );
+        }
+        for (id, message) in UNHANDLED_CASES {
+            assert!(
+                stderr_matches_for_case(id, original(id), message),
+                "#1145 rejection restored positive"
+            );
+        }
+    }
+
+    #[test]
+    fn unhandled_rejection_preserves_other_surfaces() {
+        for (id, message) in UNHANDLED_CASES {
+            let expected = captured()["captures"]
+                .as_array()
+                .expect("#1145 rejection surface captures")
+                .iter()
+                .find(|row| row["input"]["id"] == id)
+                .expect("#1145 rejection surface original");
+            let stdout = expected["stdout"]
+                .as_str()
+                .expect("#1145 rejection surface stdout")
+                .as_bytes();
+            let mut actual = expected.clone();
+            actual["closes"] = json!(
+                expected["closes"]
+                    .as_array()
+                    .expect("#1145 rejection surface closes")
+                    .iter()
+                    .map(
+                        |row| json!({"connection":row["connection"],"code":row["code"],
+                    "reason":row["reason"],"cleanup":row["cleanup"]})
+                    )
+                    .collect::<Vec<_>>()
+            );
+            actual["closes"]
+                .as_array_mut()
+                .expect("#1145 rejection surface close array")
+                .sort_by_key(|row| row["connection"].as_u64());
+            // Abort rejection crashes before finally; final-terminal consumption
+            // reaches finally and removes both listeners in the real TS capture.
+            let removed = message == b"Gateway client closed.\n";
+            actual["hooks"] = if removed {
+                json!([{"kind":"listeners-removed"}])
+            } else {
+                json!([])
+            };
+            assert!(
+                compare_surfaces(id, expected, &actual, stdout, message).is_empty(),
+                "#1145 rejection all surfaces positive: {id}"
+            );
+            for (field, value) in [
+                ("status", json!("wrong status")),
+                (
+                    "naturalExit",
+                    json!({"code":0,"signal":null,"cleanup":false}),
+                ),
+                (
+                    "cleanupExit",
+                    json!({"code":1,"signal":null,"cleanup":true}),
+                ),
+                ("aborts", json!(99)),
+                ("connections", json!(99)),
+                ("activeAfterExit", json!(99)),
+                ("initial", json!({})),
+                ("final", json!({})),
+                ("milestones", json!({})),
+                ("closes", json!([])),
+                (
+                    "hooks",
+                    if removed {
+                        json!([])
+                    } else {
+                        json!([{"kind":"listeners-removed"}])
+                    },
+                ),
+            ] {
+                let mut bad = actual.clone();
+                assert!(
+                    bad[field] != value,
+                    "#1145 rejection mutation changes {field}: {id}"
+                );
+                bad[field] = value;
+                let surface = match field {
+                    "closes" => "connection closures",
+                    "hooks" => "listener removal",
+                    other => other,
+                };
+                assert!(
+                    compare_surfaces(id, expected, &bad, stdout, message) == [surface],
+                    "#1145 rejection exception cannot hide {field}: {id}"
+                );
+            }
+            let mut bad_stdout = stdout.to_vec();
+            bad_stdout.extend_from_slice(b"extra output\n");
+            assert!(
+                compare_surfaces(id, expected, &actual, &bad_stdout, message) == ["stdout"],
+                "#1145 rejection exception cannot hide stdout: {id}"
+            );
+            assert!(
+                compare_surfaces(id, expected, &actual, stdout, b"wrong error\n") == ["stderr"],
+                "#1145 rejection exception cannot hide stderr: {id}"
+            );
+            assert!(
+                compare_surfaces(id, expected, &actual, stdout, message).is_empty(),
+                "#1145 rejection all surfaces restored: {id}"
+            );
+        }
     }
 
     #[test]
