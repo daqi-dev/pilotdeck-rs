@@ -157,8 +157,8 @@ def main():
     env['CARGO_PROFILE_TEST_DEBUG'] = 'line-tables-only'
     mutations = [
         ('umask-exact-rename', cli_source,
-         '"skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp"',
-         '"skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp_renamed"',
+         '"::copy_tree_preserves_modes_like_node_async_cp"',
+         '"::copy_tree_preserves_modes_like_node_async_cp_renamed"',
          'skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp',
          '#273 umask rerun matched no test'),
         ('dateparse-exact-rename', dateparse_source,

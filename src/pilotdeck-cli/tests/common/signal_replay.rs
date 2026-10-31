@@ -609,7 +609,7 @@ fn signal_name(signal: i32) -> String {
     }
 }
 
-fn ts_stderr(raw: &str) -> &str {
+fn strip_sqlite_warning(raw: &str) -> &str {
     let Some(rest) = raw.strip_prefix("(node:") else {
         return raw;
     };
@@ -619,6 +619,88 @@ fn ts_stderr(raw: &str) -> &str {
     }
     let prefix = ") ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n";
     rest[digits..].strip_prefix(prefix).unwrap_or(raw)
+}
+
+// #1151 一 A: only a complete, observed Node trailer after its business line.
+// Keeping the raw records intact also makes every rejected shape comparable.
+fn ts_stderr(raw: &str) -> &str {
+    static TRAILER: std::sync::LazyLock<fancy_regex::Regex> = std::sync::LazyLock::new(|| {
+        fancy_regex::Regex::new(concat!(
+            r"\A(?P<business>[^\r\n]+\n)",
+            r"file:///[^\r\n]+/packages/sdk/dist/transport\.js:[0-9]+\n",
+            r" +[^ \t\r\n][^\r\n]*\n +\^\n\n",
+            r"PilotDeckError: (?P<message>[^\r\n]+)\n",
+            r"(?:    at [^ \t\r\n{}][^\r\n{}]*\n)*    at [^ \t\r\n{}][^\r\n{}]* \{\n",
+            r"  code: '(?:timeout|authentication_error|server_error|transport_error)',\n",
+            r"  requestId: undefined,\n  details: undefined,\n",
+            r"  retryable: (?:true|false),\n  \[cause\]: undefined\n",
+            r"\}\n\nNode\.js v22\.22\.0\n\z",
+        ))
+        .expect("#1145 exact Node trailer regex")
+    });
+    let raw = strip_sqlite_warning(raw);
+    let Some(captures) = TRAILER
+        .captures(raw)
+        .expect("#1145 bounded Node trailer match")
+    else {
+        return raw;
+    };
+    let business = captures
+        .name("business")
+        .expect("#1145 business capture")
+        .as_str();
+    let message = captures
+        .name("message")
+        .expect("#1145 error message capture")
+        .as_str();
+    if business.strip_suffix('\n') == Some(message) {
+        business
+    } else {
+        raw
+    }
+}
+
+fn stderr_matches(ts: &str, rust: &[u8]) -> bool {
+    // Never normalize Rust, including a byte-identical Node stack on that side.
+    ts_stderr(ts).as_bytes() == rust
+}
+
+fn closes_match(id: &str, expected: &Value, actual: &Value) -> bool {
+    let mut closes = expected["closes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("#1145 {id} TS close observations"))
+        .iter()
+        .map(|row| {
+            json!({"connection":row["connection"],"code":row["code"],
+            "reason":row["reason"],"cleanup":row["cleanup"]})
+        })
+        .collect::<Vec<_>>();
+    closes.sort_by_key(|row| row["connection"].as_u64());
+    if *actual == json!(closes) {
+        return true;
+    }
+    let approved = matches!(
+        id,
+        "run--query-hello-reject-sigint"
+            | "run--query-hello-reject-sigterm"
+            | "resume--query-hello-reject-sigint"
+            | "resume--query-hello-reject-sigterm"
+    );
+    if approved {
+        for row in &mut closes {
+            if row["connection"] == 2
+                && row["code"] == 4003
+                && row["reason"] == ""
+                && row["cleanup"] == false
+            {
+                // #1151 二 A / D1-SDK-WS-CLOSE-REASON-001. This is an exact
+                // expected value, not a wildcard over the actual reason.
+                row["reason"] = json!("auth_failed");
+            }
+        }
+    }
+    closes.sort_by_key(|row| row["connection"].as_u64());
+    *actual == json!(closes)
 }
 
 async fn capture(expected: &Value, directory: PathBuf, id: &str) -> Value {
@@ -671,7 +753,9 @@ async fn capture(expected: &Value, directory: PathBuf, id: &str) -> Value {
     let listener = require(listener, id, "exclusive owned mock port 28999");
     let executable = require(std::env::current_exe(), id, "same-source test executable");
     let wrapper = std::env::var_os("PDRS_SIGINT_WRAPPER").unwrap_or_else(|| {
-        "/Users/da/ws/pilotdeck-rs/_tmp/20261025-claude-loop/sigint-default.py".into()
+        super::fixture_directory()
+            .join("sigint_default.py")
+            .into_os_string()
     });
     ensure(
         Path::new(&wrapper).is_file(),
@@ -973,13 +1057,10 @@ pub(super) fn run(id: &str) {
         id,
         "product stderr bytes",
     );
-    if stderr != ts_stderr(expected_stderr).as_bytes() {
+    if !stderr_matches(expected_stderr, &stderr) {
         differences.push("stderr".into());
     }
-    let mut expected_closes = expected["closes"].as_array().unwrap_or_else(|| panic!("#1145 {id} TS close observations"))
-        .iter().map(|row| json!({"connection":row["connection"],"code":row["code"],"reason":row["reason"],"cleanup":row["cleanup"]})).collect::<Vec<_>>();
-    expected_closes.sort_by_key(|row| row["connection"].as_u64());
-    if actual["closes"] != json!(expected_closes) {
+    if !closes_match(id, expected, &actual["closes"]) {
         differences.push("connection closures".into());
     }
     let ts_removed = expected["hooks"]
@@ -1005,7 +1086,8 @@ pub(super) fn run(id: &str) {
         &directory,
         "comparison.json",
         &json!({"id":id,"differences":differences,
-        "normalization":"TS SQLite prefix only; JS stack and UUID bytes stay literal"}),
+        "normalization":"TS SQLite prefix and complete business-prefixed Node v22.22.0 tail only; UUID bytes stay literal",
+        "acceptedDifference":"D1-SDK-WS-CLOSE-REASON-001 (four query-hello-reject cells only)"}),
         id,
     );
     if !differences.is_empty() {
@@ -1019,4 +1101,332 @@ pub(super) fn run(id: &str) {
         id,
         "four surfaces, abort count, listeners and connections match TS",
     );
+}
+
+#[cfg(test)]
+mod comparison_tests {
+    use super::*;
+
+    fn captured() -> &'static Value {
+        static SOURCE: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
+            serde_json::from_slice(include_bytes!("../fixtures/sdk-signals/source.json"))
+                .expect("#1145 comparison original JSON")
+        });
+        &SOURCE
+    }
+
+    fn original(id: &str) -> &'static str {
+        captured()["captures"]
+            .as_array()
+            .expect("#1145 comparison captures")
+            .iter()
+            .find(|row| row["input"]["id"] == id)
+            .expect("#1145 comparison original case")["stderrRaw"]
+            .as_str()
+            .expect("#1145 comparison stderr bytes")
+    }
+
+    #[test]
+    fn stderr_complete_node_tail_preserves_business_line() {
+        let mut normalized = 0;
+        let mut retained = 0;
+        for row in captured()["captures"]
+            .as_array()
+            .expect("#1145 captured matrix")
+        {
+            let raw = row["stderrRaw"].as_str().expect("#1145 captured stderr");
+            if raw.ends_with("Node.js v22.22.0\n") {
+                let stripped = strip_sqlite_warning(raw);
+                if stripped.starts_with("file:///") {
+                    assert_eq!(
+                        ts_stderr(raw),
+                        stripped,
+                        "#1145 unprefixed stack remains literal"
+                    );
+                    retained += 1;
+                } else {
+                    let business = stripped
+                        .split_inclusive('\n')
+                        .next()
+                        .expect("#1145 business line");
+                    assert!(
+                        stderr_matches(raw, business.as_bytes()),
+                        "#1145 complete TS tail preserves business bytes"
+                    );
+                    normalized += 1;
+                }
+            }
+        }
+        assert_eq!(
+            (normalized, retained),
+            (16, 8),
+            "#1145 observed business-prefixed and unprefixed denominator"
+        );
+    }
+
+    #[test]
+    fn stderr_missing_node_version_is_not_normalized() {
+        let raw = original("run--query-hello-reject-sigint");
+        assert!(
+            stderr_matches(raw, b"auth_failed\n"),
+            "#1145 version positive control"
+        );
+        let bad = raw
+            .strip_suffix("Node.js v22.22.0\n")
+            .expect("#1145 original Node version");
+        assert!(
+            !stderr_matches(bad, b"auth_failed\n"),
+            "#1145 incomplete Node version cannot pass"
+        );
+        assert!(
+            stderr_matches(raw, b"auth_failed\n"),
+            "#1145 version restored control"
+        );
+    }
+
+    #[test]
+    fn stderr_missing_stack_frames_is_not_normalized() {
+        let raw = original("run--query-hello-reject-sigint");
+        assert!(
+            stderr_matches(raw, b"auth_failed\n"),
+            "#1145 frame positive control"
+        );
+        let bad: String = raw
+            .split_inclusive('\n')
+            .filter(|line| !line.starts_with("    at "))
+            .collect();
+        assert!(
+            !stderr_matches(&bad, b"auth_failed\n"),
+            "#1145 missing stack frames cannot pass"
+        );
+        assert!(
+            stderr_matches(raw, b"auth_failed\n"),
+            "#1145 frame restored control"
+        );
+    }
+
+    #[test]
+    fn stderr_changed_business_line_is_not_hidden() {
+        let raw = original("run--query-hello-reject-sigint");
+        assert!(
+            stderr_matches(raw, b"auth_failed\n"),
+            "#1145 business positive control"
+        );
+        let bad = raw.replacen("\nauth_failed\n", "\nchanged business\n", 1);
+        assert_eq!(
+            ts_stderr(&bad),
+            strip_sqlite_warning(&bad),
+            "#1145 mismatched business and exception remain literal"
+        );
+        assert!(
+            !stderr_matches(&bad, b"auth_failed\n"),
+            "#1145 changed TS business line cannot pass"
+        );
+        assert!(
+            !stderr_matches(raw, b"changed business\n"),
+            "#1145 changed Rust business line cannot pass"
+        );
+        assert!(
+            stderr_matches(raw, b"auth_failed\n"),
+            "#1145 business restored control"
+        );
+    }
+
+    #[test]
+    fn stderr_rust_node_stack_is_not_normalized() {
+        let raw = original("run--query-hello-reject-sigint");
+        assert!(
+            stderr_matches(raw, b"auth_failed\n"),
+            "#1145 Rust stack positive control"
+        );
+        assert!(
+            !stderr_matches(raw, strip_sqlite_warning(raw).as_bytes()),
+            "#1145 Rust Node stack cannot pass"
+        );
+        assert!(
+            !stderr_matches(raw, raw.as_bytes()),
+            "#1145 Rust SQLite prefix cannot pass"
+        );
+        assert!(
+            stderr_matches(raw, b"auth_failed\n"),
+            "#1145 Rust stack restored control"
+        );
+    }
+
+    #[test]
+    fn stderr_partial_or_extended_shapes_remain_literal() {
+        let raw = strip_sqlite_warning(original("run--query-hello-reject-sigint"));
+        let bad = [
+            raw.replace("Node.js v22.22.0", "Node.js v22.22.1"),
+            raw.replace("\n                          ^\n", "\n"),
+            raw.replace("  requestId: undefined,\n", ""),
+            raw.replace(
+                "  [cause]: undefined\n",
+                "  [cause]: undefined,\n  extra: true\n",
+            ),
+            raw.replace('\n', "\r\n"),
+            format!("{raw}extra\n"),
+            format!("{raw}{raw}"),
+        ];
+        for value in bad {
+            assert_ne!(value, raw, "#1145 shape mutation must change input");
+            assert_eq!(
+                ts_stderr(&value),
+                value,
+                "#1145 partial or extended shape remains literal"
+            );
+        }
+        assert!(
+            stderr_matches(raw, b"auth_failed\n"),
+            "#1145 shape restored control"
+        );
+    }
+
+    #[test]
+    fn stderr_blank_source_or_stack_body_is_not_normalized() {
+        let raw = strip_sqlite_warning(original("run--query-hello-reject-sigint"));
+        let source = raw.lines().nth(2).expect("#1145 original source excerpt");
+        let blank_source = raw.replacen(source, "  ", 1);
+        assert!(
+            stderr_matches(raw, b"auth_failed\n"),
+            "#1145 nonblank positive control"
+        );
+        assert!(
+            !stderr_matches(&blank_source, b"auth_failed\n"),
+            "#1145 blank source excerpt cannot pass"
+        );
+        let no_frames: String = raw
+            .split_inclusive('\n')
+            .filter(|line| !line.starts_with("    at "))
+            .collect();
+        let blank_frame = no_frames.replacen(
+            "PilotDeckError: auth_failed\n",
+            "PilotDeckError: auth_failed\n    at   {\n",
+            1,
+        );
+        assert!(
+            !stderr_matches(&blank_frame, b"auth_failed\n"),
+            "#1145 blank stack body cannot pass"
+        );
+        assert!(
+            stderr_matches(raw, b"auth_failed\n"),
+            "#1145 nonblank restored control"
+        );
+    }
+
+    #[test]
+    fn close_reason_exception_is_exact_and_scoped() {
+        let id = "run--query-hello-reject-sigint";
+        let expected = json!({"closes":[{"connection":2,"code":4003,"reason":"","cleanup":false}]});
+        let actual = json!([{"connection":2,"code":4003,"reason":"auth_failed","cleanup":false}]);
+        for id in [
+            id,
+            "run--query-hello-reject-sigterm",
+            "resume--query-hello-reject-sigint",
+            "resume--query-hello-reject-sigterm",
+        ] {
+            assert!(
+                closes_match(id, &expected, &actual),
+                "#1145 registered close reason positive control"
+            );
+            assert!(
+                closes_match(id, &expected, &expected["closes"]),
+                "#1145 identical close remains valid"
+            );
+        }
+        for (field, value) in [
+            ("connection", json!(1)),
+            ("code", json!(4002)),
+            ("reason", json!("other")),
+            ("cleanup", json!(true)),
+            ("extra", json!(true)),
+        ] {
+            let mut bad = actual.clone();
+            bad[0][field] = value;
+            assert!(
+                !closes_match(id, &expected, &bad),
+                "#1145 close exception cannot hide {field}"
+            );
+        }
+        for (field, value) in [
+            ("connection", json!(1)),
+            ("code", json!(4002)),
+            ("reason", json!("other")),
+            ("cleanup", json!(true)),
+        ] {
+            let mut bad = expected.clone();
+            bad["closes"][0][field] = value.clone();
+            let mut observed = actual.clone();
+            if field != "reason" {
+                observed[0][field] = value;
+            }
+            assert!(
+                !closes_match(id, &bad, &observed),
+                "#1145 close exception requires TS {field}"
+            );
+        }
+        let mut duplicate = actual.clone();
+        duplicate
+            .as_array_mut()
+            .expect("#1145 close array")
+            .push(actual[0].clone());
+        assert!(
+            !closes_match(id, &expected, &duplicate),
+            "#1145 extra close cannot pass"
+        );
+        assert!(
+            !closes_match("run--complete-cleanup", &expected, &actual),
+            "#1145 unregistered close case cannot pass"
+        );
+        assert!(
+            closes_match(id, &expected, &actual),
+            "#1145 close reason restored control"
+        );
+    }
+
+    #[test]
+    fn signal_wrapper_restores_inherited_sigint_ignore() {
+        let wrapper = super::super::fixture_directory().join("sigint_default.py");
+        let launch = |wrapped: bool| {
+            let mut command = Command::new("/usr/bin/python3");
+            command.args(["-I", "-B", "-c", "import os,signal,sys; signal.signal(signal.SIGINT,signal.SIG_IGN); os.execv(sys.argv[1],sys.argv[1:])"]);
+            if wrapped {
+                command.args(["/usr/bin/python3", "-I", "-B"]).arg(&wrapper);
+            }
+            let child = command
+                .args(["/bin/sh", "-c", "kill -INT $$; exit 99"])
+                .spawn()
+                .expect("#1145 spawn wrapper disposition probe");
+            let mut child = OwnedChild {
+                child,
+                id: "wrapper-probe".into(),
+            };
+            let deadline = Instant::now() + CLEANUP;
+            loop {
+                if let Some(status) = child.poll() {
+                    break status;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "#1145 wrapper probe bounded; not a negative kill"
+                );
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        };
+        assert_eq!(
+            launch(true).signal(),
+            Some(2),
+            "#1145 wrapper restores SIGINT default before exec"
+        );
+        assert_eq!(
+            launch(false).code(),
+            Some(99),
+            "#1145 missing wrapper retains inherited SIGINT ignore"
+        );
+        assert_eq!(
+            launch(true).signal(),
+            Some(2),
+            "#1145 wrapper restored positive control"
+        );
+    }
 }

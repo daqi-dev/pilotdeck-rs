@@ -2,8 +2,9 @@
 
 本包包含 TS 原件、来源验证和 96 格独立的 Rust CLI 进程回放。Rust 实现位于
 `src/sdk/{signals,turn,transport,output}.rs`。**仍不表示 P08 / #123 完成**：
-stdin 六格挂起，严格字节比较会保留 JS 堆栈、动态 UUID、close reason 的差异；
-未取得差异批准前，不把这些格改成 PASS。产品变异负控独立于数据负控。
+stdin 六格挂起，动态 UUID 与无业务前置行的 JS 堆栈仍按字面比较；
+#1151 已批准严格的业务行后 Node 尾段归一化及四格 4003 close reason 差异。
+产品变异负控独立于数据负控。
 
 ## 矩阵与原件
 
@@ -102,14 +103,16 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli \
 `tests/common/signal_replay.rs` 将同一份真实 Rust 入口编入子进程测试，只有观察钩子
 属于 cfg(test)。父进程持有 28999，按客户端原子状态文件触发信号与前驱动作；
 不以「已发送」代替「已消费」。子进程通过 `PDRS_SIGINT_WRAPPER` 指定的
-`sigint-default.py` 恢复默认 SIGINT，包装 Python 使用 `-I -B` 避免运行目录缓存。
-默认包装位置为协调者提供的 `/Users/da/ws/pilotdeck-rs/_tmp/20261025-claude-loop/sigint-default.py`。
+仓内 `sigint_default.py` 恢复默认 SIGINT，包装 Python 使用 `-I -B` 避免运行目录缓存。
+默认包装位于本 fixture 目录，负控与 Rust 回放均使用它，不依赖宿主 `_tmp/`。
 
 96 个 `signal_cases::*` 测试因依赖固定端口、外部 TS checkout 和观察窗口而 ignored；
 默认本地金样守卫照常运行。六个 stdin 测试独立注明 #123/P09 缺口，强制运行会失败，
 不能作为成功格。下面命令必须恰好执行 **96** 个测试；0 个测试不构成验收。
 每次使用新的绝对证据路径，保存原始 stdout/stderr、actual/comparison、连接 wire
-与完整初末树。TS stderr 仅剥 `specs/cli-parity/normalization.md` §6 的精确两行前缀。
+与完整初末树。TS stderr 仅按 `specs/cli-parity/normalization.md` §6/§7 剥精确启动前缀与完整业务行后异常尾段。
+关闭帧只应用 `D1-SDK-WS-CLOSE-REASON-001` 的四格单字段例外。
+离线 `signal_replay::comparison_tests::*` 用真实原件覆盖边界与配对损坏输入，并验证 SIGINT 包装。
 所有窗口格断言 12 秒内没有自然退出，再由本测试 SIGKILL 并在 3 秒内回收。
 
 ```sh
@@ -133,7 +136,7 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py
 python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py NEW_NEGATIVE_DIR
 ```
 
-产品负控固定 9 个变异，完整绑定测试名与单行断言；每项先正控、变异编译、负控、
+产品及比较边界负控固定 23 个变异（9 个既有产品变异、12 个比较/包装器变异、2 个嵌套子测试变异），完整绑定测试名与单行断言；每项先正控、变异编译、负控、
 恢复、复跑正控，最后汇总全部结果。它使用共享 `mutating_sources/run_owned/wait_for_slot`，
 要求调用方设置 `CARGO_TARGET_DIR`，拒绝 dirty/new HEAD，不能绕过。尚未提交的新增
 源码须先由协调者提交，随后在宿主编译所有变异并执行全量；未执行项不能称 KILLED。

@@ -305,14 +305,14 @@ mod tests {
     fn temp_home(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("pdrs-cli-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(&dir).expect("#1145 skills fixture home");
         dir
     }
 
     fn bundled_root(home: &Path) -> PathBuf {
         let root = home.join("bundled");
-        fs::create_dir_all(root.join("docx")).unwrap();
-        fs::write(root.join("docx/SKILL.md"), "x").unwrap();
+        fs::create_dir_all(root.join("docx")).expect("#1145 bundled fixture directory");
+        fs::write(root.join("docx/SKILL.md"), "x").expect("#1145 bundled fixture file");
         root
     }
 
@@ -428,6 +428,11 @@ mod tests {
     fn marker_write_reports_the_write_stage_like_node() {
         let home = temp_home("marker-write-stage");
         bundled_root(&home);
+        // This module is also compiled inside the P08 `product` driver.
+        let child_name = concat!(module_path!(), "::marker_child_over_file_size_limit")
+            .split_once("::")
+            .expect("#1145 marker child crate prefix")
+            .1;
         let output = std::process::Command::new("/bin/sh")
             .arg("-c")
             // #942 fix-r1: the child's `WRITE_ERROR=` line is itself the
@@ -436,27 +441,27 @@ mod tests {
             // then finds no marker line — and `--test-threads=2` pins the
             // multithreaded libtest layout so the marker stays a whole line
             // even under an ambient RUST_TEST_THREADS=1.
-            .arg(
-                "ulimit -f 0; exec \"$0\" --exact skills::tests::marker_child_over_file_size_limit --ignored --nocapture --test-threads=2",
-            )
-            .arg(std::env::current_exe().unwrap())
+            .arg("ulimit -f 0; exec \"$0\" --exact \"$1\" --ignored --nocapture --test-threads=2")
+            .arg(std::env::current_exe().expect("#1145 marker child binary"))
+            .arg(child_name)
             .env("PDRS_MARKER_HOME", &home)
             .output()
-            .unwrap();
+            .expect("#1145 marker child output");
         let stdout = String::from_utf8_lossy(&output.stdout);
         let _ = fs::remove_dir_all(&home);
         assert_eq!(
             output.status.code(),
             Some(0),
-            "child killed or failed: {stdout}"
+            "#1145 marker child killed or failed: {stdout}"
         );
         let line = stdout
             .lines()
             .find_map(|line| line.strip_prefix("WRITE_ERROR="))
-            .unwrap_or_else(|| panic!("no WRITE_ERROR line: {stdout}"));
+            .unwrap_or_else(|| panic!("#1145 marker child emitted no WRITE_ERROR line: {stdout}"));
         assert_eq!(
             line,
-            "[pilotdeck] Could not migrate legacy skill '__migration__': EFBIG: file too large, write"
+            "[pilotdeck] Could not migrate legacy skill '__migration__': EFBIG: file too large, write",
+            "#1145 marker write stage output"
         );
     }
 
