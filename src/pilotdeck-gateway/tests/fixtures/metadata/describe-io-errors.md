@@ -21,7 +21,7 @@ FileHandle stat/read 只读观察器记录实际调用、成功值、失败 errn
 
 Rust 的必跑 replay 使用原始 facts 和真实 RPC 观测错误，完全离线、不读取归档路径。
 CI 覆盖 = 固定原件回放（darwin 录制）；真实 errno 仅本机 driver 跑（`#[ignore]` 用例）。
-errno 名称取自 darwin 原件；Linux 真实语义待 #117/#133 验证。
+errno 名称取自 darwin 原件；Linux 真实语义的门控核对已落库（#117：`node_io` Linux 采样 / #133：`project-files-linux-dirent`），待 cb8 实跑收口。
 完整性守卫锁定十个唯一 ID、RUN 状态、describe_project 方法、各 helper 真实调用栈/
 API/错误种类及结果时间属性；空、截短、重复、错方法、丢任一 helper 错误、错 errno 和
 NOT_RUN 负控均拒绝。完整 response 逐字节比较；配对测试要求上游下一帧只能是独立
@@ -73,7 +73,7 @@ python3 src/pilotdeck-gateway/tests/check_metadata_io.py \
 python3 -m unittest discover -s src/pilotdeck-gateway/tests -p test_metadata_io_driver.py -v
 ```
 
-本批不改变产品吞错行为或冻结装置。Linux 非法目录项仍由 #117/#133 验证。
+本批不改变产品吞错行为或冻结装置。Linux 非法目录项由 #117/#133 的门控测试验证（已落库，待 cb8 实跑收口）。
 本轮曾发生隔离HOME触发rustup自动安装事故；事实、下载现场、停点与修复待验状态只在
 state/board.md 和 state/memory/20261016-runner-home.md 维护，不以本说明代替独立审阅。
 

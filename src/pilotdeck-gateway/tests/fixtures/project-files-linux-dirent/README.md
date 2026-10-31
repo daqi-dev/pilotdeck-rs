@@ -67,21 +67,31 @@ expected-listed 断言与 wire 全量比较共同验证。
 
 ```sh
 CARGO_TARGET_DIR=<caller-owned-build-tree> \
+PDRS_NODE=<pinned-node-binary>        # 可选；默认 ~/opt/node-v22.22.0-icu78-linux-arm64/bin/node \
   ./src/pilotdeck-gateway/tests/fixtures/project-files-linux-dirent/run-linux.sh \
-  <pinned-pilotdeck-ts-checkout>
+  <pinned-pilotdeck-ts-checkout> [evidence-dir]
 ```
 
-先打印并断言 `process.versions.icu == 78.2`（不符报 BLOCKED 退出）、`LANG=C.UTF-8`
-解析为 en-US；随后 `cargo test --no-run`、#133/#117 正控、#117 生成器 `--check`
-（`generated.rs` 差异=真差异；仅 `errors.json` 平台字段差异=预期）、两套负控。
-负控要求提交态（`mutating_sources` 拒绝 untracked 的 `src/pilotdeck-gateway/src`
-文件）——提交前运行会标记 SKIP，由协调者在 cb8 提交后重跑。
+必需环境：`CARGO_TARGET_DIR`（调用方持有的构建树）。Node 不走 PATH：`PDRS_NODE`
+（或默认路径）指到钉死构建（v22.22.0 / ICU 78.2 / libuv 1.52.1），其 bin 目录前置
+进导出的 PATH，供测试内 spawn 的 `node` 与负控继承；旧 `~/opt/node-v22.22.0-linux-arm64`
+是 ICU 77.1 / libuv 1.51.0，过不了门。先打印并断言 `icu == 78.2 && uv == 1.52.1`
+（不符 BLOCKED 退出 3）、`LANG=C.UTF-8` 解析为 en-US；`PDRS_BASELINE` 由脚本
+export，负控可独立复跑。随后 `cargo test --no-run`（编译失败即 FAIL）、#133/#117
+正控（#117 采样器 rc 失败即 FAIL，且先清掉旧样本文件防复用目录读到陈旧样本）、
+#117 生成器 `--check`（`generated.rs` 差异=真差异；仅 `errors.json`
+`platform`/`uv`/`errno` 平台字段差异=预期）、两套负控。负控要求提交态
+（`mutating_sources` 拒绝 untracked 的 `src/pilotdeck-gateway/src` 文件）——
+提交前运行标 NOT_RUN。退出码：0 = 正控过且负控全 KILLED；1 = FAILED；
+2 = BLOCKED（调用方环境）；3 = BLOCKED（钉死 Node/locale 门）；77 = 正控过但
+负控 NOT_RUN（提交前），提交后由协调者在 cb8 重跑。
 
 ## 残余风险
 
-- `os.constants.errno` 不含某名字时（Linux-only ENONET/EREMOTEIO/EUNATCH 在
-  Node 常量表中的覆盖未在 macOS 侧证实），数字核对走 libuv 取负方向（该方向
-  覆盖全表，不缺口）；cb8 采样记录 `errnoConstants` 数量作证据。
+- `os.constants.errno` 不含某名字时（cb8 实测 Node 常量表没有
+  ENONET/EREMOTEIO/EUNATCH/EFTYPE），数字核对走 libuv 取负方向（该方向
+  覆盖全表，不缺口）；#117 门控测试对缺失名字显式断言 null，常量表漂移
+  不再静默跳过，cb8 采样另记 `errnoConstants` 数量作证据。
 - mtimeMs 数值比较按 f64（1700000000123.456 这类可精确表示的值），不做字节
   比较——两侧序列化格式对整值不同属已知差异。
 - 同名组（dup-FF/dup-FE/dup-80）解码后字符串相同、内容不同：Layer A 的

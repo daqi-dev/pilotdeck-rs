@@ -643,10 +643,15 @@ fn linux_dirent_matches_node_v22_on_raw_byte_names() {
     // names whose lossy decoding cannot round-trip are skipped by both sides.
     let listed: BTreeSet<String> = RAW_TREE
         .iter()
-        .filter(|(segments, _, _)| {
-            segments.iter().all(|segment| {
-                std::str::from_utf8(segment)
-                    .is_ok_and(|name| !super::super::EXCLUDED.contains(&name))
+        .filter(|(segments, is_directory, _)| {
+            // Production excludes only directories named in EXCLUDED; every
+            // non-final segment is a directory by construction, and the final
+            // one only when the entry itself is.
+            segments.iter().enumerate().all(|(index, segment)| {
+                let this_is_directory = index + 1 < segments.len() || *is_directory;
+                std::str::from_utf8(segment).is_ok_and(|name| {
+                    !(this_is_directory && super::super::EXCLUDED.contains(&name))
+                })
             })
         })
         .map(|(segments, _, _)| {

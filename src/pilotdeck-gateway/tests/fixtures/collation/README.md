@@ -197,4 +197,4 @@ ASCII、本地/转发混合同 method、汉字/重音/emoji、过滤排除非 AS
 不能仅删除所有 local flags 来验证仍有其他本地 methods 的录制。
 完整协调者回归命令见本 worktree `_tmp/RESULT.md`「第 3 轮」。尺子未修改。
 
-原生非良构UTF16排序跟进 #132，Linux真实非法UTF8 dirent端到端跟进 #133，均前置A8/#127收尾。22组Node Buffer解码原件仅证明共用CStr lossy解码结果；macOS实际建名返回EILSEQ(92)，真实非法dirent未验，不能把单元解码核验视为真实文件系统验收。
+原生非良构UTF16排序跟进 #132，Linux真实非法UTF8 dirent端到端跟进 #133，均前置A8/#127收尾。22组Node Buffer解码原件仅证明共用CStr lossy解码结果；macOS实际建名返回EILSEQ(92)。#133 的 Linux 门控测试已入库（`../project-files-linux-dirent/`，需 cb8 主机运行，证据由协调者产出后收口）；在其实跑证据落盘前，单元解码核验仍不能视为真实文件系统验收。
