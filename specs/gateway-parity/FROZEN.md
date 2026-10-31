@@ -193,7 +193,7 @@ f1dbe6593dd03c859def973170fe774c0087e5645bbf4c151f896a12d3e0be08  ../../scripts/
 95fe265a7b7512f1969f19b7ee2d14133ce56916fb25c0953a84b5ec05568f74  ../../scripts/gateway-parity/mock.mjs
 9752548d9c3a26783e13d449ad7f52f4a84f7b5526076cdc544f43b522dbede8  ../../scripts/gateway-parity/observer.py
 0ea4fb1ff42bf4a72e6e69ad788bfdfd2f4771d57059817f12f58cd550fc7b49  ../../scripts/gateway-parity/run_round.py
-3a725d039d73131ff37bb15921cc5f52e00fd5e6bf9347aafea42f3d1f7260af  ../../scripts/gateway-parity/session_domain.py
+6f6eff4c677d9566f570263a9da098ca7b3ddf576d2f79797abe46428e979fe4  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
 649cc38480ac2e50704c0035084215690d6b84e2593423bf88311063b61d377c  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
