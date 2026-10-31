@@ -31,8 +31,8 @@ mutations = [
      'Err(e) => Err(e.into()),', 'round7_rename_matches_real_ts_non_permission_error'),
 ]
 env = os.environ.copy()
-target = root/'src/target'
-assert Path(env.get('CARGO_TARGET_DIR', target)).resolve() == target.resolve(), 'one build directory only'
+target = root/'_build/cargo-target'
+assert Path(env.get('CARGO_TARGET_DIR', target)).resolve() == target.resolve(), '#1166 use this worktree _build/cargo-target only'
 env['CARGO_TARGET_DIR'] = str(target)
 rows = []
 # Read the pristine bytes only under the same flock as every other in-place

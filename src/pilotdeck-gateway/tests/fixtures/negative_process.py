@@ -548,6 +548,7 @@ def _artifact_identity(path):
 
 
 def _verify_snapshot_owner(marker, payload, artifact, identity, started_ns):
+    """共享构建目录的产物守卫只对协作写者负责，对抗写者归已知边界。"""
     try:
         if marker.read_text() != payload:
             raise RuntimeError('#1166 build owner changed during snapshot')
