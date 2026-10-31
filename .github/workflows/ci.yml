@@ -8,9 +8,10 @@ on:
   merge_group:
 
 jobs:
-  # #1199：改动只碰 state/ .42cog/ docs/ 时输出 docs_only=true，三个重 job 才允许跳过；
-  # 本 job 自身无条件运行（先跑分类器自测），重 job 的跳过只认它的输出，check 只放行
-  # 「skipped 且 docs_only=true」这一条路径。
+  # #1199：改动只碰唯一精确路径 state/board.md 时输出 docs_only=true，三个重 job 才允许跳过；
+  # state/ .42cog/ docs/ 的其余文件是重 job 尺子的输入，不放行（fix-r1 收窄，见
+  # state/decisions-20261031-ci-docs-scope.md）。本 job 自身无条件运行（先跑分类器自测），
+  # 重 job 的跳过只认它的输出，check 只放行「skipped 且 docs_only=true」这一条路径。
   scope:
     runs-on: ubuntu-latest
     outputs:

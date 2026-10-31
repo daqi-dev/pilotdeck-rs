@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ci_scope.py — CI 改动范围分类器（#1199）：改动只碰文档区才输出 docs_only=true。
+"""ci_scope.py — CI 改动范围分类器（#1199）：改动只碰白名单唯一路径才输出 docs_only=true。
 
 用法（由 .github/workflows/ci.yml 的 scope job 调用，环境变量由该 job 注入）：
   python3 -I scripts/ci_scope.py    # 判定当前事件，写 $GITHUB_OUTPUT 并打印 docs_only=…
@@ -9,9 +9,15 @@
   merge_group  → github.event.merge_group.base_sha..head_sha
   push         → 恒为 full（docs_only=false）
 
-fail-closed：以下一律输出 false——任一路径（含 rename / delete 的两侧）不在白名单、
-diff 为空、git 出错、事件缺 SHA、分类器自身异常。白名单只含 state/ .42cog/ docs/
-三个前缀；放行的是「跳过重 job」，宁可多跑不可漏跑。
+fail-closed：以下一律输出 false——任一路径（含 rename / delete 两侧）不等于白名单路径、
+diff 为空、git 出错、事件缺 SHA、分类器自身异常。
+
+白名单只有 state/board.md 一个精确路径（fix-r1 收窄）：state/ .42cog/ docs/ 的其余文件
+是重 job 里尺子的输入——check_ledger / check_coverage_manifest 读 docs/research、docs/plan，
+check_frozen / check-approval-provenance 读 state/decisions-*，product-coverage 读
+docs/experiments——按目录放行会让纯文档 PR 跳过校验它们的尺子（假 PASS）。state/board.md
+没有任何尺子读取（scripts/test-pdrs-loop.sh 用自造的临时测试 board），board_literal_violations
+机检持续看守这条前提。放行的是「跳过重 job」，宁可多跑不可漏跑。
 """
 from __future__ import annotations
 
@@ -19,14 +25,14 @@ import os
 import subprocess
 import sys
 
-# #1199 白名单：只含这三个前缀。test_metadata_io_driver.py 按字面钉死，
-# scripts/test-ci-scope.py 的行为正负例同层把关——加任何一项都会两处失败。
-DOCS_PREFIXES = ('state/', '.42cog/', 'docs/')
+# #1199 白名单（fix-r1 收窄）：唯一精确路径，不用前缀匹配。test_metadata_io_driver.py
+# 按字面钉死，scripts/test-ci-scope.py 的行为正负例同层把关——加宽或改回 startswith 都会两处失败。
+DOCS_ONLY_PATH = 'state/board.md'
 
 
 def paths_are_docs_only(paths) -> bool:
-    """纯路径分类：路径集为空，或任一路径不带白名单前缀，即 False。"""
-    return bool(paths) and all(path.startswith(DOCS_PREFIXES) for path in paths)
+    """纯路径分类：路径集为空，或任一路径不等于白名单路径，即 False。"""
+    return bool(paths) and all(path == DOCS_ONLY_PATH for path in paths)
 
 
 def docs_only_for_range(root, base, head) -> bool:
@@ -60,6 +66,63 @@ def classify(env=None, cwd='.') -> bool:
     if not base or not head:
         return False  # #1199 事件缺 SHA fail-closed
     return docs_only_for_range(cwd, base, head)
+
+
+# ---------- #1199 机检（fix-r1）：看守「没有尺子读 state/board.md」这条白名单前提 ----------
+# scripts/test-ci-scope.py 在 scope job（无条件运行）里调用 board_literal_violations：扫描
+# scripts/ 与 src/**/tests 下的 .py / .mjs / .sh，引用 state/board.md 字面量而不在允许清单
+# 登记的都算违例；允许清单条目过期（文件不存在或不再引用字面量）也算违例，保证登记精确。
+# 以后有人让尺子读 board，scope job 的自测会自动报警。允许清单逐条登记并写明为什么不危
+# 险：本地 worker 工具不在 CI 任何 job 运行（ci.yml 只跑 test-pdrs-loop.sh），自造测试
+# board 的用临时目录里自己那份。
+BOARD_LITERAL_ALLOWLIST = {
+    'scripts/ci_scope.py': '白名单常量与机检自身，只比较路径不读取文件',
+    'scripts/test-ci-scope.py': '分类器自测的样例路径',
+    'scripts/pdrs-loop.sh': '本地 worker 循环工具，CI 任何 job 都不运行',
+    'scripts/next-task.sh': '本地 worker 工具，CI 任何 job 都不运行',
+    'scripts/test-pdrs-loop.sh': '临时目录自造测试 board，不读仓库的 state/board.md',
+    'src/pilotdeck-gateway/tests/test_metadata_io_driver.py': '按字面钉死白名单的守卫断言',
+}
+RULER_SCAN_EXTENSIONS = ('.py', '.mjs', '.sh')
+
+
+def _read(root, rel):
+    """读仓库相对路径的文本；文件缺失 / 不可读返回空串（按「不再引用」处理）。"""
+    try:
+        return (root / rel).read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return ''
+
+
+def _ruler_files(root):
+    """枚举 scripts/ 全部与 src/ 下 tests 目录内的 .py / .mjs / .sh，产出仓库相对路径。"""
+    for directory in ('scripts', 'src'):
+        base = root / directory
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob('*')):
+            if not path.is_file() or path.suffix not in RULER_SCAN_EXTENSIONS:
+                continue
+            rel = path.relative_to(root)
+            if directory == 'src' and 'tests' not in rel.parts:
+                continue
+            yield rel.as_posix()
+
+
+def board_literal_violations(root):
+    """返回违反「尺子不读 state/board.md」前提的文件（仓库相对路径，排序稳定）。
+
+    两类违例：引用了字面量但不在允许清单（有人让尺子读 board）；允许清单条目过期
+    （文件不存在或不再引用字面量，登记必须精确）。
+    """
+    violations = []
+    for rel in _ruler_files(root):
+        if DOCS_ONLY_PATH in _read(root, rel) and rel not in BOARD_LITERAL_ALLOWLIST:
+            violations.append(rel)
+    for rel in BOARD_LITERAL_ALLOWLIST:
+        if DOCS_ONLY_PATH not in _read(root, rel):
+            violations.append(rel)
+    return sorted(set(violations))
 
 
 def emit(value: bool) -> None:
