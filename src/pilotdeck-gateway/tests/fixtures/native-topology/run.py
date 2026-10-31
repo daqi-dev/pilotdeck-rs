@@ -8,6 +8,7 @@ available here. Only the external model service is scripted; the Rust host,
 model module/router/HTTP provider and both sidecars execute their real code.
 """
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -20,9 +21,29 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 ROOT = Path(__file__).resolve().parents[5]
-sys.path.insert(0, str(ROOT / 'scripts/gateway-parity'))
-from common import parity_lock
-from compare import Normalizer
+if not sys.flags.isolated:
+    # The frozen apparatus entries require -I (#1033/#1066); importing compare
+    # without it would fail inside its own bootstrap with a vaguer message.
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+# #1168: load the frozen gateway-parity modules by explicit path, never
+# sys.path — its directory on sys.path is exactly what compare's entry guard
+# rejects (#1066), and this runner predates that contract without being
+# updated. Bytecode stays out of the frozen directory like every entry.
+import importlib.util
+import tempfile
+
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-native-topology-pyc-')
+sys.dont_write_bytecode = True
+_spec = importlib.util.spec_from_file_location('compare', ROOT / 'scripts/gateway-parity/compare.py')
+compare = importlib.util.module_from_spec(_spec)
+sys.modules['compare'] = compare
+_spec.loader.exec_module(compare)
+common = compare.common  # one shared module: LIVE_GROUPS is an identity there.
+Normalizer = compare.Normalizer
+LIVE_GROUPS = common.LIVE_GROUPS
+deferred_signals = common.deferred_signals
+parity_lock = common.parity_lock
+unblock_child_signals = common.unblock_child_signals
 
 BASELINE = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85'
 MODES = ('Rust-sidecar-ts', 'Rust-sidecar-native')
@@ -42,6 +63,27 @@ def digest(path):
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+@contextmanager
+def cancel_signals():
+    """Install before acquiring the lease; restore only after its cleanup.
+
+    #1168: without a handler, SIGTERM terminates the process between the
+    probe's spawn and the finally clauses, orphaning the probe's process
+    groups and leaving the shared lease cleanupPending until MAX_AGE. Same
+    shape as scripts/native-witness/collect.py lease_signals (#1140).
+    """
+    def cancel(signum, _frame):
+        raise KeyboardInterrupt(f'#1168 native-topology cancelled by signal {signum}')
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        for sig in previous:
+            signal.signal(sig, cancel)
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 def baseline_identity(baseline):
@@ -215,6 +257,10 @@ def collect_descendants(pid, owned):
     for child in selected:
         if child in census:
             owned[child] = census[child]
+            # #1168: a descendant leading its own group escapes the probe's
+            # group kill; register it so residue is published, never lost.
+            if census[child]['pgid'] == child:
+                LIVE_GROUPS.add(child)
 
 
 def cleanup_owned(child, owned):
@@ -252,9 +298,15 @@ def cleanup_owned(child, owned):
         census = process_census()
         remaining = [pid for pid, row in owned.items() if pid in census and census[pid]['start'] == row['start']]
         if not remaining:
-            return
+            break
         require(time.monotonic() < deadline, f'CLEANUP: owned processes still alive: {remaining}')
         time.sleep(.05)
+    # #1168: absence is proven; only now may the lease forget these groups.
+    # A failed proof above keeps them registered for cleanupPending.
+    for pid, row in owned.items():
+        if row['pgid'] == pid:
+            LIVE_GROUPS.discard(pid)
+    LIVE_GROUPS.discard(child.pid)
 
 
 def semantic_observations(rows):
@@ -305,12 +357,20 @@ def run_probe(args, config, directory):
     command = [str(args.probe), str(directory / 'config.json')]
     process_census()  # Refuse before spawning when the observer is unavailable.
     with (directory / 'stdout.jsonl').open('xb') as stdout, (directory / 'stderr.log').open('xb') as stderr:
-        child = subprocess.Popen(command, stdout=stdout, stderr=stderr, start_new_session=True,
-                                 cwd=config['isolation'], env={'PATH': '/usr/bin:/bin', 'HOME': config['isolation'],
-                                 'PILOT_HOME': config['isolation'], 'TMPDIR': config['isolation']})
-        owned = {}
-        code = None
+        child, owned, code = None, {}, None
         try:
+            # #1168: spawn and registration share one deferred-signal window
+            # (session_domain.py #209 E1 shape). A cancellation arriving between
+            # Popen and the ownership records stays pending until the probe is
+            # fully owned, then unwinds through the finally below. The probe
+            # undoes the inherited mask so its own SIGINT cancel still works.
+            with deferred_signals():
+                child = subprocess.Popen(command, stdout=stdout, stderr=stderr, start_new_session=True,
+                                         preexec_fn=unblock_child_signals,
+                                         cwd=config['isolation'], env={'PATH': '/usr/bin:/bin', 'HOME': config['isolation'],
+                                         'PILOT_HOME': config['isolation'], 'TMPDIR': config['isolation']})
+                LIVE_GROUPS.add(child.pid)
+                collect_descendants(child.pid, owned)
             deadline = time.monotonic() + 60
             while child.poll() is None:
                 collect_descendants(child.pid, owned)
@@ -318,18 +378,23 @@ def run_probe(args, config, directory):
                 time.sleep(.05)
             code = child.returncode
         finally:
-            cleanup_error = None
-            try:
-                cleanup_owned(child, owned)
-            except Exception as error:
-                cleanup_error = str(error)
-                raise
-            finally:
-                save(directory / 'launch.json', {'argv': command, 'pid': child.pid, 'exitCode': code,
-                    'probeSha256': digest(args.probe), 'hostReaped': child.poll() is not None,
-                    'processSnapshots': list(owned.values()), 'cleanupScope': 'observed descendants only',
-                    'cleanupStatus': 'FAIL' if cleanup_error else 'PASS', 'cleanupError': cleanup_error,
-                    'execWitness': 'NOT_RUN', 'egressWitness': 'NOT_RUN'})
+            # #1168: cleanup is the one window an interrupt must not abandon;
+            # a pending cancellation is delivered only after the audit below.
+            with deferred_signals():
+                cleanup_error = None
+                try:
+                    if child is not None:
+                        cleanup_owned(child, owned)
+                except Exception as error:
+                    cleanup_error = str(error)
+                    raise
+                finally:
+                    save(directory / 'launch.json', {'argv': command, 'pid': None if child is None else child.pid,
+                        'exitCode': code, 'probeSha256': digest(args.probe),
+                        'hostReaped': child is not None and child.poll() is not None,
+                        'processSnapshots': list(owned.values()), 'cleanupScope': 'observed descendants only',
+                        'cleanupStatus': 'FAIL' if cleanup_error else 'PASS', 'cleanupError': cleanup_error,
+                        'execWitness': 'NOT_RUN', 'egressWitness': 'NOT_RUN'})
     require(code == 0, f'PROBE_EXIT: {code}; see stderr.log')
     return [json.loads(line) for line in (directory / 'stdout.jsonl').read_text().splitlines()]
 
@@ -365,9 +430,13 @@ def run(args):
         report['artifacts'] = {str(path): digest(path) for path in (args.probe, args.sidecar, args.node,
             args.baseline / 'src/cli/pilotdeck-agent-loop-sidecar.ts', Path(__file__),
             ROOT / 'scripts/gateway-parity/compare.py', ROOT / 'scripts/gateway-parity/common.py')}
-        provider = Provider()
-        thread = threading.Thread(target=provider.serve_forever, daemon=True)
-        thread.start()
+        # #1168: the provider publish window (socket bound through the serve
+        # loop started) must complete before a pending cancellation unwinds;
+        # cleanup then always sees a fully published provider and thread.
+        with deferred_signals():
+            provider = Provider()
+            thread = threading.Thread(target=provider.serve_forever, daemon=True)
+            thread.start()
         for mode in MODES:
             cell = next(cell for cell in report['cells'] if cell['id'] == mode)
             cell['status'] = 'RUNNING'
@@ -441,21 +510,24 @@ def run(args):
         report['failure'] = str(error) or type(error).__name__
         raise
     finally:
-        try:
-            if provider is not None:
-                try:
-                    if thread is not None and thread.ident is not None:
-                        if thread.is_alive():
-                            provider.shutdown()
-                        thread.join(timeout=5)
-                finally:
-                    provider.server_close()
-        except BaseException as error:
-            report['status'], report['moduleMatrixStatus'] = 'FAIL', 'FAIL'
-            report['cleanupFailure'] = str(error) or type(error).__name__
-            raise
-        finally:
-            save(args.output / 'report.json', report)
+        # #1168: provider cleanup is not interruptible; a pending cancellation
+        # is delivered only after server_close and the report are published.
+        with deferred_signals():
+            try:
+                if provider is not None:
+                    try:
+                        if thread is not None and thread.ident is not None:
+                            if thread.is_alive():
+                                provider.shutdown()
+                            thread.join(timeout=5)
+                    finally:
+                        provider.server_close()
+            except BaseException as error:
+                report['status'], report['moduleMatrixStatus'] = 'FAIL', 'FAIL'
+                report['cleanupFailure'] = str(error) or type(error).__name__
+                raise
+            finally:
+                save(args.output / 'report.json', report)
     return 1 if report['status'] == 'FAIL' else 2  # NOT_RUN never means success.
 
 
@@ -464,8 +536,14 @@ def main():
     for name in ('baseline', 'node', 'sidecar', 'probe', 'output'):
         parser.add_argument('--' + name, type=lambda value: Path(value).resolve(), required=True)
     args = parser.parse_args()
-    with parity_lock():
-        return run(args)
+    with cancel_signals():
+        try:
+            with parity_lock():
+                return run(args)
+        except KeyboardInterrupt:
+            # A cancelled capture already published its FAIL report through
+            # run()'s BaseException branch; never exit 0 or 2 (#1168).
+            return 1
 
 
 if __name__ == '__main__':
