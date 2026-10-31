@@ -1,19 +1,18 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-31 06:30 · by Claude Code 协调者
-- #749 | impl | blocked | **关键路径** pr6c-1 已合（8ebb4054f）；关单待 #1071 pr6c-2（前置 #589、#1079）
-- #1071 | impl | blocked | **关键路径** PR #1105 已合（7175589a7）；关单前置 #1140 native 格采集器（冻结装置，改判分语义须人授权）
+updated: 2026-10-31 12:15 · by Claude Code 协调者
 - #123 | impl | doing | P07 #1097 已合（e13b189a3，#1106）；P08、P09 串行其后；#1136 前置于 #123 收尾
 - #1010 | impl | doing | 与 #1122 叠栈以 PR #1127 合入；r3 opus + GLM 0/0，GLM P2 观察循环超时失效（升 P0）→ macmini 后 fix-r3
 - #1011 | impl | blocked | #745 FactoryStorage projection cache；同模块串行，等 #1010
-- #590 | impl | blocked | 前置 #1071（pr6c-2）
+- #590 | impl | blocked | native 格 + 四格矩阵；前置 #1140（采集器，判分接线已人授权）与 A5.4 冻结期望
+- #952 | impl | doing | aggregate_status 空输入改 FAIL/1（人批 A）→ Codex
+- #1140 | impl | doing | native exec + 出网见证采集器（人批二 A，判分接线等 A5.4）→ Codex
+- #1159 | coord | doing | #1158 账本批量审批 -R 落地 → Codex
 - #589 | impl | blocked | 关单前置 #1010 #1011 #1019 #1020
 - #996 | impl | blocked | pr2 已合（64ab7cbf5）；后续批次按 #988 推广计划，待在审回落后派
 - p2-batch-4b | impl | doing | 归 M6：#935-1/2/4 #782 #835 在 #1110；#935-3 #902 #786-3 待后续 M6 PR
 - #1061 | impl | blocked | gateway-batch 负控取消路径（P0 类）——归 M6 #1099
-- 749-diffs | coord | human | **待人复核**：A7.2-NATIVE-WS-DRAIN-001、A7.2-NATIVE-WS-RESOURCE-001（+R1 / R2）、A7.2-NATIVE-WS-AGGREGATE-001（#1079）原生隔离入口与 TS 的有界差异（未批准）
-- D-4 | coord | human | **AI 已实测，待人签字**：#1120 EdgeClaw 真实模型抽取 / 召回（_tmp/20261031-edgeclaw-smoke/RESULT.md：17/18 格，Rust 与 TS 全命中零误写）；装置 PR #1126 评审中
 - #953 | impl | blocked | item 3 余项等 #996 迁移
 - #983 | review | doing | PR #1121 fix-r11（json_pretty 收敛）r11 opus + Codex 0/0；mbp2 全量在跑 → 入队
 - #1131 | impl | doing | PR #1133 A4 实际端口：rebase 到 #1071 后 + 重钉 #749 哈希；GLM 块 0/0、macmini 全绿 → 补跑 sdk-sessions-list 后入队
@@ -2517,3 +2516,23 @@ updated: 2026-10-31 06:30 · by Claude Code 协调者
 - 05:35 **#1130 合入 de984fdc2**（#1125 ETXTBSY，邮箱 noreply，自动关单，树已回收）。#1131 macmini r3：native-process 一套挂在 #749 守卫 `default_mode_unchanged`（钉了 A4 main.rs 哈希，#1131 本意就是改 A4 日志），CI rust 同一处 → 我重钉哈希 354526d1e（新值与失败输出 left 一致，main.rs 只有本意 3 行），Codex r4 复核 + macmini 补跑。#1129 mbp2 全绿（regen 30/30；count 4/4 实测推翻「整行匹配判不了杀」）→ Codex fix-r3 修 3 条小 P2（上限轮）。
 - 06:17 #1131 当前 head 354526d1 GLM 结果块 0/0/0、macmini lib 2972 passed、native-process 全杀（含 a4-default-bytes）→ 补跑 sdk-sessions-list 后入队。#1129 r3 GLM P1×2：① TreeLock 的 setitimer 覆盖 scratch 的 alarm（macOS / Linux 实测确认，_tmp/20261031-alarm-itimer）→ 共享件开 #1142 归 M6；② recorder 同类 = #1139。README 预算描述我改为如实写明限制 2b49154e6。
 - 06:21 **两小时交接** → `_tmp/20261031-handoff-0620.md`（晚 13 分钟）。本段合入 #1105 #1130 #1138；#1071 未关（native 格采集器 #1140）。
+- 06:46 宿主三处全杀：#1122 session-factory 163/163（上次 SURVIVED 的已杀）、#1131 sdk-sessions-list 54/54、#983 mbp2 16 套 0 失败，均等 lib。#1122 fix-r3 派 Codex（观察循环 yield_now 致超时失效升 P0、去掉全局任务数退出条件、账本 R4 更正）。#1143 state 同步入队中。
+- 07:02 #1131 → #1133 转 ready 入队（GLM 块 0/0、macmini 全绿、sdk-sessions-list 54/54）。#983 → #1121 转 ready 入队（mbp2 16 套 0 失败、lib 2958 passed；r11 opus + Codex 0/0）；合入后做 #983 整单收尾（P02 主体早已合入）。#1122 macmini r3m 全绿作基线，fix-r3 在 Codex。
+- 07:16 **#1133 合入 a279a32a1**（#1131 A4 实际端口，邮箱 noreply，自动关单）；回收 wt-1131、wt-1071。#1122 r4 opus + GLM 0/0（P2 开 #1144）→ 等 macmini。#1129 当前 head 2b49154e6 GLM 全量结果块在跑 + mbp2 lib。队列：#1121、#1143。
+- 07:26 **#1121 合入 8992e75e4** → #983 整单收尾（P02 oracle 77 格、四面比对、负控 16 套 0 失败、占位 0 命中）后关单，回收 wt-983。#1143 state 同步合入 99964ed6d。#123 剩 P08 / P09 → 当场开 #1145（P08 信号与资源，并发包先矩阵，派 Codex）、#1146（P09，前置 A8 + P08，标阻塞）。
+- 08:17 **#1117 合入 f5a84de73**（#1114 mcp_proxy 偶发，自动关单，回收）。#1129 → #1134 转 ready 入队（mbp2 regen 30/30、lib 补跑 2961 passed）。在审只剩 #1122 / #1145 → P2 跟进 40+ 张超限，集中清：派 #1142（M6 TreeLock 定时器，Codex）、#1141（scratch stranger 用例，GLM）；#1144 等 #1127 合入（同模块串行）。
+- 08:28 **#1134 合入 a042b1960**（#1129，自动关单，回收）。#1145 P08 第一阶段交付（矩阵 102 格，TS 实测 96 格，stdin 6 格记缺口；只加 fixture 与 ignored 守卫，4.7 MB）→ 手动收货 7d44710be（文件未跟踪，自动收货跳过）→ 草稿 PR #1148，r1 opus + GLM 只审矩阵，过了再派第二阶段 Rust 实现。
+- 08:34 **两小时交接** → `_tmp/20261031-handoff-0833.md`。本段合入 5 个（#1133 #1143 #1121 #1117 #1134），关 #1131 #1114 #1129 #983；P08 矩阵评审过 → 第二阶段派 Codex。
+- 08:47 #1127 rebase：落后 main 90 个提交，plugin-runtime / session-abort-contract 两个负控与 #818 冲突 → Codex 逐块真合并（macmini f8680dbe 全绿留作基线：session-factory 164/164、lib 2960）。#1141 r1 opus 0/0、Codex P1（陌生进程无独立有界清理）+ P2 → GLM fix-r1（停掉 cb8 旧 head 链）。#1142 r1 两家 0/0，共同 P2（超时 / worker 分支缺专属变异）→ Codex fix-r1；cb8 gateway-entry-guard 50/50、treelock-budget 6/6。
+- 09:03 #1127 rebase：Codex 沙箱写不了 git 元数据，只交了两个冲突文件的语义合并（真实日志验证：两条变异 KILLED、新旧判据都兼容）→ 我 rebase 到 main（中间提交取分支侧，末提交落成 Codex 合并版；两文件与合并版逐字节一致、无冲突标记、fmt / no-run 通过）→ force-with-lease 推 a52b061cb → macmini 跑冲突两套 + session-factory + plugin-loader + lib。#1142 fix-r1 7d2962dd8 → GLM 全量块 + cb8 treelock-budget；r1 基线 4 套全杀。
+- 09:17 **mbp2 在睡**：pmset 日志 05:00–09:15 每十几分钟一次「DarkWake from Deep Idle」，sleep=1；caffeinate 拦不住，最可能是合盖。今天两次断链（06:17 #1129、08:56 #1142）都是它 → #1142 macOS 基线改派 macmini；mbp2 暂不派长任务；**待人：mbp2 接电源、不合盖（或允许改 pmset）**。#1142 GLM 全量块 0/0、cb8 treelock-budget 8/8。#1141 r2 opus + Codex + cb8 在跑。
+- 09:36 #1145 P08 第二阶段 9e33a51ac：尺子三条已修；Rust 96 格 70 PASS / 26 FAIL。差异：24 格 TS 多打 Node 未处理 rejection 崩溃堆栈（规约 §6「唯一归一化只剥 SQLite 两行」是人定边界）、4 格 WS close reason（tungstenite 回显 auth_failed、TS 为空）→ **开决策单 #1151 待人**（建议一 A：TS 侧锚定剥崩溃堆栈；二 A：登记差异）；2 格 runId 本身不确定。产品负控 macmini 在跑。mbp2 合盖睡眠 → 不派长任务。
+- 10:01 人设置 mbp2 接电源合盖不睡（核：AC sleep 0、AppleClamshellCausesSleep=No，最后一次睡眠 09:50 在改动前）→ 挂 30 分钟监视确认后恢复派长任务；macmini 早已 sleep 0，「防休眠」待人项划掉。#1141 fix-r2 3c4d70542（process_group(0) + 非阻塞读探针）→ r3 opus + Codex + cb8。#1127 rebase 后冲突两套全杀、plugin-loader 96/96，等 session-factory。#1142 macmini 基线 2 套 0 失败，等 lib。空闲产能派 #1137（Codex）、#1128（GLM）。
+- 10:19 人：mbp2 可派单（30 分钟监视无睡眠事件）→ 恢复 mbp2 车道。#1149（#1142）CI 绿已入队。#1141 r3：Codex 0/0（P2×2 过上限开跟进）、opus 0/0；cb8 链启动即死、本机轮询因「无 HEAD= 不判死」空等 18 min → 给 remote-host-chain-cb8.sh 加「连续 3 次 ALIVE=0 且无 HEAD= 判死」，重起 r3c 已在跑。#1137（Codex）、#1128（GLM）在做。
+- 10:33 **#1149 合入 f9cecd7e8**（#1142 M6 TreeLock 定时器，自动关单，回收）。#1141 cb8 + CI ubuntu 稳定失败：新用例在 Linux 上 EPIPE 而非 TimedOut（fix-r2 的 process_group(0) 后，helper 死时陌生进程尚未持有读端）→ GLM fix-r3（上限轮，加「陌生进程持有读端」握手），修完 cb8 复验。#1137 r1 opus + GLM 0/0，P2×3（边界格 TS 实测、非 UTF-8、零 case 守卫）→ Codex fix-r1。
+- 10:48 **两小时交接** → `_tmp/20261031-handoff-1047.md`。本段合入 #1149；mbp2 睡眠问题解决、恢复派单；#1151 待人。
+- 11:28 **人问「要人决定的事为何没显式提出」** → 盘点 `_tmp/20261031-human-audit/AUDIT.md`：#952（10-28，空输入判 PASS 致假 PASS 风险）与 #1031 长期没回音；差异账本 118 条未批准 + accepted-diffs ~116 处待复核从未汇总送审；54 处 AI 代批待复核；交接里几条待人项从未开单。已做：#1140 贴三项决策；开 #1156（M1/M2 · 尾注 · DeepSeek · D-4）；重提 #952 #1031；开置顶总表 #1157（每次交接更新）；记忆 surface-decision-at-discovery。待人选差异账本的批量审批方式。A5.4 / A8 排期属 AI 职责，自行排进 READY。
+- 11:39 人选差异账本审批方式：**按阶段分组、给默认值、只点例外** → 4 个子代理并行起草分组表（A4–A6.6 · A6.7–A7.5 / A8 / D · A7.2–A7.4 · 冻结账本 + 54 处 AI 代批卡），回来后协调者核对再开分组 question 单。#1122（#1127）rebase 后 macmini 全绿：4 套负控全杀、lib 3030 passed → GLM 当前 head 结果块在跑，过了入队。#1128 r2 Codex P1×2（TS dump 缺失放过、对照表口径混用）→ GLM fix-r2。#1141（#1150）等 CI。
+- 11:50 4 份分组表齐（112 族全覆盖，协调者机器核对）→ 开 **#1158 批量审批**（每组默认值 + 例外；置顶 3 条需重议的 AI 代批：#1110 等价例外、209e1 :23 单家评审、:28 尺子 P1 按上限放行）；总表 #1157 已更新。#1150 合入（#1141，自动关单，回收）。#1127 GLM 块 simplify 因 unrecognized_model 报 ERROR → 整块重跑。
+- 12:04 **#1158 人批「全部按默认」** → 决策卡 decisions-20261031-ledger-batch.md，落地派 Codex #1159（批准 / 注销族新增 -R 更正，需修族核单号）。人问其余几张是否还要单独批：#952 #1140 #1151 #1156 要；#1031 第 2、3 项属 AI 代批卡、随 #1158 已批，第 1 项（方案 D 选项）仍要。#1127 ready 入队。
+- 12:12 **人批一次批完**：#1158 全部按默认；#952 A；#1140 一A二A三b；#1151 一A二A；#1031 1A 2同意 3同意；#1156 1A 2A 3B 4签字（#1031 / #1156 附「授权按实际选更合适的选项」）→ 决策卡 decisions-20261031-human-batch.md。已执行：D-4 签字关 #1120；#1071 按三 b 关单、native 格挪入 #1146；#749 关单；#590 前置改 #1140；specs/README 尾注改为 Co-Authored-By（2A）。已派：#952（Codex，空输入 FAIL/1 + 真实复算 + 重登记）、#1140（Codex，exec + 出网见证采集器）、#1145 phase3（Codex，TS 崩溃堆栈归一化 + close reason 登记 + 三条负控同步）、#1159（Codex，账本 -R 落地）。M1/M2 机会式继续；DeepSeek 不充值。
