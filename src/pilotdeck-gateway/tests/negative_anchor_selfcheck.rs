@@ -34,6 +34,7 @@ fn negative_fixture_anchors_and_checker_controls() {
                 "OutputDirectoryGuard",
                 "OutputDirectoryClaim",
                 "OutputDirectoryRunnerTests",
+                "TreeLockBudget",
             ][..],
         ),
         ("_negkit/test_compare_verdicts.py", &[][..]),

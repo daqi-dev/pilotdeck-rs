@@ -280,23 +280,10 @@ class TreeLock:
         return self
 
     def _acquire(self, fd):
-        # A blocking flock cannot have a deadline by itself. In the main thread
-        # use SIGALRM to interrupt the wait at the total timeout; other threads
-        # poll the same kernel lock so this module never installs a handler from
-        # a thread that cannot receive the signal.
-        if threading.current_thread() is threading.main_thread():
-            def expired(_signum, _frame):
-                raise TimeoutError(f"source lock busy: {self.path}")
-
-            previous = signal.signal(signal.SIGALRM, expired)
-            if self.timeout > 0:
-                signal.setitimer(signal.ITIMER_REAL, self.timeout)
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX)
-            finally:
-                signal.setitimer(signal.ITIMER_REAL, 0)
-                signal.signal(signal.SIGALRM, previous)
-            return
+        # Poll in every thread: alarm() and setitimer(ITIMER_REAL) share one
+        # process-wide timer. Borrowing it here would replace/cancel scratch's
+        # total budget, and could delay a shorter caller deadline while waiting.
+        # Leave both its timer and handler untouched, including on cancellation.
         deadline = time.monotonic() + self.timeout
         while True:
             try:

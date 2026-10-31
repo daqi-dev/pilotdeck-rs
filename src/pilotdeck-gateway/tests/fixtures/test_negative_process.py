@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from types import ModuleType
@@ -433,6 +434,178 @@ class ProcessControls(unittest.TestCase):
                 holder.kill()
                 holder.communicate(timeout=10)
         self.assertLess(elapsed, 5, f"lock timeout waited {elapsed:.1f}s")
+
+
+class TreeLockBudget(unittest.TestCase):
+    """#1142: the caller owns SIGALRM/ITIMER_REAL, even while flock is busy."""
+
+    def setUp(self):
+        self.assertTrue(signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0),
+                        '#1142 tests require an isolated process without a timer')
+        self.previous_handler = signal.getsignal(signal.SIGALRM)
+        self.addCleanup(signal.signal, signal.SIGALRM, self.previous_handler)
+        self.addCleanup(signal.setitimer, signal.ITIMER_REAL, 0)
+
+        def expired(_signum, _frame):
+            raise SystemExit('#1142 caller deadline')
+
+        self.handler = expired
+        signal.signal(signal.SIGALRM, self.handler)
+
+    @contextmanager
+    def held_lock(self, root):
+        # A distinct open-file description holds the real kernel flock. No
+        # source mutation or alternate Git baseline is involved in this probe.
+        fd = os.open(Path(root) / '.negative-source.lock', os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            negative_process.fcntl.flock(fd, negative_process.fcntl.LOCK_EX)
+            yield fd
+        finally:
+            os.close(fd)
+
+    def arm_timer(self, budget, interval=None):
+        before = time.monotonic()
+        if interval is None:
+            signal.alarm(budget)
+        else:
+            signal.setitimer(signal.ITIMER_REAL, budget, interval)
+        return before, time.monotonic()
+
+    def assert_budget(self, budget, started, interval=0.0):
+        before = time.monotonic()
+        remaining, repeat = signal.getitimer(signal.ITIMER_REAL)
+        after = time.monotonic()
+        # Bracket both syscalls so a descheduled test cannot turn time between
+        # monotonic/getitimer samples into a spurious budget mismatch.
+        lower = budget - (after - started[0])
+        upper = budget - (before - started[1])
+        self.assertTrue(remaining > 0 and lower - 0.01 <= remaining <= upper + 0.01,
+                        '#1142 caller timer must retain only its remaining budget')
+        self.assertTrue(repeat == interval, '#1142 caller timer interval must survive')
+        self.assertIs(signal.getsignal(signal.SIGALRM), self.handler,
+                      '#1142 caller signal handler must survive')
+        print(f'#1142 budget={budget} elapsed={after - started[1]:.6f} remaining={remaining:.6f} '
+              f'interval={repeat}', flush=True)
+
+    def test_no_timer_is_created(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-1142-idle-') as root:
+            with tree_lock(root):
+                self.assertTrue(signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0),
+                                '#1142 idle acquisition must not arm a timer')
+                self.assertIs(signal.getsignal(signal.SIGALRM), self.handler,
+                              '#1142 caller signal handler must survive')
+            self.assertTrue(signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0),
+                            '#1142 idle release must not arm a timer')
+
+    def test_alarm_survives_acquisition_and_nested_release(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-1142-alarm-') as root:
+            started = self.arm_timer(10)
+            with tree_lock(root):
+                with tree_lock(root):
+                    time.sleep(0.2)
+                    self.assert_budget(10, started)
+                self.assert_budget(10, started)
+            self.assert_budget(10, started)
+
+    def test_periodic_timer_survives(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-1142-periodic-') as root:
+            started = self.arm_timer(10, interval=2)
+            with tree_lock(root):
+                self.assert_budget(10, started, interval=2)
+            self.assert_budget(10, started, interval=2)
+
+    def test_alarm_keeps_elapsed_wait_when_holder_releases(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-1142-release-') as root:
+            with self.held_lock(root) as held:
+                attempted = threading.Event()
+                flock = negative_process.fcntl.flock
+
+                def release():
+                    # Even a broken waiter cannot strand this helper thread.
+                    attempted.wait(5)
+                    time.sleep(0.2)
+                    flock(held, negative_process.fcntl.LOCK_UN)
+
+                def acquire(fd, operation):
+                    attempted.set()
+                    return flock(fd, operation)
+
+                holder = threading.Thread(target=release)
+                holder.start()
+                try:
+                    started = self.arm_timer(10)
+                    with patch.object(negative_process.fcntl, 'flock', acquire):
+                        with tree_lock(root, timeout=2):
+                            self.assert_budget(10, started)
+                    self.assert_budget(10, started)
+                finally:
+                    attempted.set()
+                    holder.join(6)
+                self.assertFalse(holder.is_alive(), '#1142 releasing holder must finish')
+
+    def test_lock_timeout_preserves_outer_alarm(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-1142-timeout-') as root:
+            with self.held_lock(root):
+                started = self.arm_timer(10)
+                with self.assertRaises(TimeoutError, msg='#1142 busy lock must time out'):
+                    with tree_lock(root, timeout=0.1):
+                        self.fail('#1142 busy lock must not be acquired')
+                self.assert_budget(10, started)
+
+    def test_outer_deadline_interrupts_wait_and_closes_fd(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-1142-cancel-') as root:
+            with self.held_lock(root):
+                closed = []
+                close = negative_process.os.close
+                acquire = negative_process.TreeLock._acquire
+
+                def close_fd(fd):
+                    closed.append(fd)
+                    close(fd)
+
+                def arm_and_acquire(lock, fd):
+                    # Enter __enter__'s protected acquisition window before
+                    # arming: even a long scheduler pause must close this fd.
+                    signal.setitimer(signal.ITIMER_REAL, 0.05)
+                    return acquire(lock, fd)
+
+                outcome = None
+                with patch.object(negative_process.os, 'close', close_fd), \
+                        patch.object(negative_process.TreeLock, '_acquire', arm_and_acquire):
+                    try:
+                        with tree_lock(root, timeout=0.5):
+                            outcome = 'acquired'
+                    except (SystemExit, TimeoutError) as error:
+                        outcome = (type(error), str(error))
+                self.assertTrue(outcome == (SystemExit, '#1142 caller deadline'),
+                                '#1142 caller deadline must interrupt a busy lock')
+                self.assertTrue(len(closed) == 1, '#1142 interrupted acquisition must close its fd')
+                self.assertNotIn(negative_process._held_key(Path(root) / '.negative-source.lock'),
+                                 negative_process._HELD, '#1142 cancelled acquisition must not own the lock')
+            with tree_lock(root, timeout=0.1):
+                pass
+
+    def test_worker_wait_remains_bounded(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-1142-worker-') as root:
+            with self.held_lock(root):
+                outcome = []
+
+                def wait():
+                    try:
+                        with tree_lock(root, timeout=0.1):
+                            outcome.append('acquired')
+                    except BaseException as error:
+                        outcome.append(type(error))
+
+                worker = threading.Thread(target=wait)
+                worker.start()
+                worker.join(2)
+            # Releasing the real lock also bounds cleanup of a broken waiter.
+            worker.join(2)
+            self.assertFalse(worker.is_alive(), '#1142 worker waiter must finish')
+            self.assertTrue(outcome == [TimeoutError], '#1142 worker must respect lock deadline')
+            self.assertIs(signal.getsignal(signal.SIGALRM), self.handler,
+                          '#1142 worker must not change caller signal handler')
 
 
 class NodeVersionProbe(unittest.TestCase):
