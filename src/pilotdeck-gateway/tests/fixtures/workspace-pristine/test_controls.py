@@ -2,7 +2,8 @@
 """#1166 uses tiny synthetic repositories, never copies product/build state.
 
 These repos are the input under test (including dirty index flags), not an
-alternate HEAD for executing product negative controls. No Cargo is launched.
+alternate HEAD for executing product negative controls. Prebuild workspace_inputs
+once in the real target; these tests execute that helper, never Cargo.
 """
 from contextlib import contextmanager
 import ast
@@ -164,29 +165,42 @@ class WorkspacePristine(unittest.TestCase):
 
     def test_new_external_literal_inputs_are_automatically_guarded(self):
         # These paths did not exist when the helper was written. Include a
-        # recursive Rust source and inline-module #[path] resolution too.
+        # recursive Rust source with a nonstandard extension too.
         self.commit_source(
             'const A: &str = include_str!("../../../new-assets/help.txt");\n'
             'const B: &[u8] = r#include_bytes! { r#"../../../new-assets/blob"# };\n'
-            '#[path = "../../../new-assets/extra.inc"] mod extra;\n'
-            'mod nested { #[path = "../../../../new-assets/nested.rs"] mod child; }\n',
+            '#[path = "../../../new-assets/extra.inc"] mod extra;\n',
             {'new-assets/help.txt': 'help', 'new-assets/blob': 'blob',
              'new-assets/extra.inc': 'const C: &str = include_str!("transitive.txt");',
-             'new-assets/transitive.txt': 'transitive', 'new-assets/nested.rs': '// empty',
-             'src/pilotdeck-cli/src/nested/.keep': ''})
+             'new-assets/transitive.txt': 'transitive'})
         failure = None
         try:
             api._assert_product_pristine(self.root, 'HEAD')
         except Exception as error:
             failure = error
         self.assertTrue(failure is None, '#1166 literal discovery accepts valid Rust paths')
-        for name in ('help.txt', 'blob', 'extra.inc', 'transitive.txt', 'nested.rs'):
+        for name in ('help.txt', 'blob', 'extra.inc', 'transitive.txt'):
             path = self.root / 'new-assets' / name
             with self.subTest(input=name), api.mutating_sources(self.root, [path]):
                 path.write_text('// changed input')
                 with self.assertRaises(api.SourceBaselineError,
                                        msg='#1166 new external literal inputs must be guarded'):
                     api._assert_product_pristine(self.root, 'HEAD')
+
+    def test_attribute_data_inputs_are_guarded(self):
+        self.commit_source('#[doc = include_str!("../../../assets/doc.md")] fn documented() {}',
+                           {'assets/doc.md': 'documentation'})
+        failure = None
+        try:
+            api._assert_product_pristine(self.root, 'HEAD')
+        except Exception as error:
+            failure = error
+        self.assertTrue(failure is None, '#1166 attribute include must parse')
+        with api.mutating_sources(self.root, [self.root / 'assets/doc.md']):
+            (self.root / 'assets/doc.md').write_text('residue')
+            with self.assertRaises(api.SourceBaselineError,
+                                   msg='#1166 attribute data inputs remain guarded'):
+                api._assert_product_pristine(self.root, 'HEAD')
 
     def test_nonliteral_and_unparseable_inputs_fail_closed(self):
         for source in ('const X: &str = include_str!(concat!("x", "y"));',
@@ -203,14 +217,15 @@ class WorkspacePristine(unittest.TestCase):
                                        msg='#1166 unresolved Rust inputs must fail closed'):
                     api._assert_product_pristine(self.root, 'HEAD')
 
-    def test_comments_strings_and_escaped_paths(self):
+    def test_comments_strings_and_raw_paths(self):
         self.commit_source(
             '// include_str!(dynamic())\n/* outer /* include_bytes!(x) */ end */\n'
             'const A: &str = r##"include_str!(not_a_path)"##;\n'
             'const B: &[u8] = br#"include_bytes!(not_a_path)"#;\n'
             'const C: &CStr = cr#"include_bytes!(not_a_path)"#;\n'
             'const Q: char = \'"\'; fn f<\'a>(x: &\'a str) {}\n'
-            'const X: &str = include_str!("../../../new-assets/hel\\u{70}\\x2e\\\n  txt",);',
+            'macro_rules! module { ($name:ident) => { mod $name { pub fn f() {} } } } module!(demo);\n'
+            'const X: &str = include_str!(r###"../../../new-assets/help.txt"###,);',
             {'new-assets/help.txt': 'help'})
         error = None
         try:
@@ -220,6 +235,81 @@ class WorkspacePristine(unittest.TestCase):
             error, inputs = caught, ()
         self.assertTrue(error is None and ':(top,literal)new-assets/help.txt' in inputs,
                         '#1166 Rust lexing distinguishes literals from comments and data')
+
+    def test_escaped_and_nonstring_literals_are_rejected(self):
+        for literal in ('"../../../new-assets/hel\\u{70}.txt"',
+                        '"../../../new-assets/help\\x2etxt"',
+                        'b"../../../new-assets/help.txt"', 'br"../../../new-assets/help.txt"',
+                        'c"../../../new-assets/help.txt"', 'cr"../../../new-assets/help.txt"',
+                        '"../../../new-assets/help.txt"suffix'):
+            for macro in ('include_str', 'include_bytes'):
+                with self.subTest(literal=literal, macro=macro):
+                    self.commit_source(f'const X: &str = {macro}!({literal});',
+                                       {'new-assets/help.txt': 'help'})
+                    with self.assertRaises(api.SourceBaselineError,
+                                           msg='#1166 data includes require an unescaped string literal'):
+                        api._assert_product_pristine(self.root, 'HEAD')
+
+    def test_conditional_and_nested_paths_are_rejected(self):
+        for source in ('#[cfg_attr(any(), path="../../../assets/decoy.rs")] mod child;',
+                       'mod nested { #[path="../../../assets/decoy.rs"] mod child; }',
+                       '#[path="../../../assets/decoy.rs"] struct Decoy; mod child;'):
+            self.commit_source(source, {'assets/decoy.rs': '// decoy',
+                                        'src/pilotdeck-cli/src/child.rs': '// real',
+                                        'src/pilotdeck-cli/src/nested/.keep': ''})
+            with self.assertRaises(api.SourceBaselineError,
+                                   msg='#1166 ambiguous path attributes must fail closed'):
+                api._assert_product_pristine(self.root, 'HEAD')
+
+    def scanner_reply(self):
+        paths = (ROOT / 'src/pilotdeck-gateway/examples/workspace_inputs.rs',
+                 ROOT / 'src/pilotdeck-gateway/tests/common/source_inputs.rs',
+                 ROOT / 'src/pilotdeck-gateway/Cargo.toml',
+                 ROOT / 'src/Cargo.toml', ROOT / 'src/Cargo.lock')
+        return dict(head=git(self.root, 'rev-parse', 'HEAD').stdout.decode().strip(),
+                    root=str(self.root), inputs=[],
+                    scanner_sha256=hashlib.sha256(b''.join(path.read_bytes() for path in paths)).hexdigest())
+
+    def test_scanner_failure_is_rejected(self):
+        result = subprocess.CompletedProcess([], 1, json.dumps(self.scanner_reply()), 'lexer failure')
+        with patch.object(api, 'run_owned', return_value=result):
+            with self.assertRaises(api.SourceBaselineError, msg='#1166 scanner nonzero must fail closed'):
+                api._workspace_literal_inputs(self.root, 'HEAD')
+
+    def test_scanner_identity_is_rejected(self):
+        for field in ('head', 'root', 'scanner_sha256'):
+            document = self.scanner_reply()
+            document[field] = 'wrong'
+            result = subprocess.CompletedProcess([], 0, json.dumps(document), '')
+            with self.subTest(field=field), patch.object(api, 'run_owned', return_value=result):
+                with self.assertRaises(api.SourceBaselineError, msg='#1166 stale scanner identity must fail closed'):
+                    api._workspace_literal_inputs(self.root, 'HEAD')
+
+    def test_scanner_malformed_json_is_rejected(self):
+        for output in ('{', '[]', 'null'):
+            result = subprocess.CompletedProcess([], 0, output, '')
+            with patch.object(api, 'run_owned', return_value=result):
+                with self.assertRaises(api.SourceBaselineError, msg='#1166 malformed scanner output must fail closed'):
+                    api._workspace_literal_inputs(self.root, 'HEAD')
+
+    def test_scanner_input_schema_is_rejected(self):
+        for inputs in (None, 'src', [None], [''], ['../outside'], ['/outside'], ['src/../x'],
+                       ['src//x'], ['src/x', 'src/x']):
+            document = self.scanner_reply()
+            document['inputs'] = inputs
+            result = subprocess.CompletedProcess([], 0, json.dumps(document), '')
+            with self.subTest(inputs=inputs), patch.object(api, 'run_owned', return_value=result):
+                with self.assertRaises(api.SourceBaselineError, msg='#1166 malformed scanner paths must fail closed'):
+                    api._workspace_literal_inputs(self.root, 'HEAD')
+
+    def test_scanner_absent_or_timeout_is_rejected(self):
+        for error in (FileNotFoundError('helper'), subprocess.TimeoutExpired('helper', 60)):
+            with patch.object(api, 'run_owned', side_effect=error):
+                with self.assertRaises(api.SourceBaselineError, msg='#1166 unavailable scanner must fail closed'):
+                    api._workspace_literal_inputs(self.root, 'HEAD')
+        with patch.dict(os.environ, {'CARGO_TARGET_DIR': ''}):
+            with self.assertRaises(api.SourceBaselineError, msg='#1166 unavailable scanner must fail closed'):
+                api._workspace_literal_inputs(self.root, 'HEAD')
 
     def test_explicit_cache_input_is_not_exempt(self):
         self.commit_source('const X: &str = include_str!("../.DS_Store");',
@@ -253,6 +343,15 @@ class WorkspacePristine(unittest.TestCase):
                                    msg='#1166 literal inputs cannot escape the repository'):
                 api._assert_product_pristine(self.root, 'HEAD')
 
+    def test_external_path_escape_is_rejected(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs1166-outside-') as directory:
+            outside = Path(directory) / 'payload'
+            outside.write_text('outside')
+            self.commit_source(f'const X: &str = include_str!("{outside.as_posix()}");', {})
+            with self.assertRaises(api.SourceBaselineError,
+                                   msg='#1166 literal inputs cannot escape the repository'):
+                api._assert_product_pristine(self.root, 'HEAD')
+
     def test_external_default_modules_are_guarded(self):
         self.commit_source('#[path = "../../../assets/custom.inc"] mod external;',
                            {'assets/custom.inc': 'mod child;',
@@ -271,7 +370,8 @@ class WorkspacePristine(unittest.TestCase):
         for source in (
                 'macro_rules! load { () => { include_str!("../../../assets/payload") } }',
                 'macro_rules! load { () => { #[path="../../../assets/child.rs"] mod child; } }',
-                'use std::include_str as load; const X: &str = load!("../../../assets/payload");'):
+                'use std::include_str as load; const X: &str = load!("../../../assets/payload");',
+                'macro_rules! load { ($m:ident) => { const X: &str = $m!("../../../assets/payload"); } } load!(include_str);'):
             with self.subTest(source=source):
                 self.commit_source(source, {'assets/payload': 'data', 'assets/child.rs': '// source'})
                 with self.assertRaises(api.SourceBaselineError,
