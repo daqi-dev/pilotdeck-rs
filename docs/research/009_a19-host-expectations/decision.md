@@ -25,19 +25,19 @@ related: [research/008_phase-a-session-domain/decision, specs/gateway-parity/dif
 | 能否撤回 | 登记可撤（重开冻结事件），无数据迁移。 |
 | 动不动尺子 / 意向 | 只登记，不动判分语义；帧序证据是实测字段。 |
 | 选项与后果 | A 从 TS 源码逐步重推：可行但重复劳动。B **以 `droppedEnqueues` 顺序为准，去掉 G 两帧、去掉 G 侧追加失败引发的 U**：直接以实测责任记录为据；U 的产生点在 TS 里只有 registry append 失败一处，G 侧 append 失败产生的 U 不该出现（G 本身被抑制）。C 只登记稳定子集留失败格空白：违背「每格写明确切期望输出」。 |
-| 建议与分级 | **选 B，自决·待复核**。交叉验证：4 个非超时先行 order 变体 dropped 为空且 frames 已发布，规则与其一致。 |
+| 建议与分级 | **选 B，自决·待复核**。交叉验证（分拓扑）：no-registry 拓扑下 4 个非超时先行 order 变体（unknown-first、known-final-first、after-complete、known-final-before-timeout-pending）dropped 为空且 frames 已发布；registry 拓扑下先收尾的两个（unknown-first、known-final-first）同样 dropped 为空且 frames 已发布，而超时取得收尾权的两个（after-complete、known-final-before-timeout-pending）实测 `framesAfterPrefix=[]`、两帧均在 `droppedEnqueues`——registry 拓扑的「TS 已发布帧」可为空，须与 dropped 合并后规则才与其一致（非 timeout-first 仍按批准范围 ts-equal）。 |
 | 原则 → 断言 | 修复不得发明 TS 从未入队的帧 → rust frames ⊆ TS `droppedEnqueues` ∪ TS 已发布帧；负控 `expectations-rust-surface` 删帧必须 FAIL。 |
 
 ## D2 · T 状态（durable）写失败：不产生 U，帧照 TS 缺省
 
 | 卡项 | 内容 |
 |---|---|
-| 卡在哪 | `settleTimeout` 里 `recordAgentStatusMessage` 抛错被吞后 S(T) 帧不入队（TS 实测 `timeout-status-fails`：frames=[E(T)]）。D4-B 未说 durable 写失败要不要补 U 或补帧。 |
+| 卡在哪 | `settleTimeout` 里 `recordAgentStatusMessage` 抛错被吞后 S(T) 帧不入队（TS 实测 `timeout-status-fails`：no-registry 拓扑 `framesAfterPrefix=[E(T)]`；registry 拓扑 `framesAfterPrefix=[]`，E(T) 同样只在 `droppedEnqueues` 里、未发布）。D4-B 未说 durable 写失败要不要补 U 或补帧。 |
 | 谁受影响 | `no-registry-timeout-status-failed`（2 case）、`registry-timeout-status-failed`（8 case）。 |
 | 能否撤回 | 登记可撤。 |
 | 动不动尺子 / 意向 | 「写失败如实报错，不伪称成功」：durable 没写进去就登记为空，不在实时流伪造一帧补偿（U 的语义是 registry 责任记录，不是 durable 写失败的通用补偿）。 |
-| 选项与后果 | A 补 U 或补 S(T) 帧：发明 TS 没有的帧，且伪称状态已知。B **照 TS 的失败形状：frames=[E(T)]、durable=[]；registry 侧 E(T) 正常追加（events=[n:E(T)]，state=failed，result=E(T)）**：与 TS 唯一不同的是没有迟到的 G。C 整格留空：违背 72/72。 |
-| 建议与分级 | **选 B，自决·待复核**。证据：TS 同格实测 frames=[E(T)]、events 首项 `n:error:turn_timeout`（失败 append 不占 seq）。 |
+| 选项与后果 | A 补 U 或补 S(T) 帧：发明 TS 没有的帧，且伪称状态已知。B **照 TS 的失败形状：durable=[]，frames=[E(T)]（no-registry 为 TS 已发布帧；registry 拓扑 TS 未发布、按 D1 取 `droppedEnqueues` 去掉 G 两帧后的 E(T)）；registry 侧 E(T) 正常追加（events=[n:E(T)]，state=failed，result=E(T)）**：与 TS 唯一不同的是没有迟到的 G。C 整格留空：违背 72/72。 |
+| 建议与分级 | **选 B，自决·待复核**。证据：TS 同格实测 no-registry `framesAfterPrefix=[E(T)]`、registry `framesAfterPrefix=[]` 且 E(T) 在 `droppedEnqueues`；registry events 首项 `n:error:turn_timeout`（失败 append 不占 seq）。 |
 | 原则 → 断言 | durable 写失败不得产生任何 registry 侧补偿 → 该类 registry events 不含 `agent_status:turn_timeout`；负控 `expectations-rust-surface` 必须杀掉任何帧改动。 |
 
 ## D3 · E(T) registry 追加失败：U 保留，registry 停在 running、result 缺席（最弱推导）
