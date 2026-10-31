@@ -70,3 +70,27 @@ project_files 两方法仅五项，session_model_get/model_catalog_list 的共�
 消费面仅六项，详见 `../project-files/README.md` 第 6 轮表。完整生成表继续全量
 验证格式；格式有原件本身不授权 method 本地应答。未列出的错误在包装/吞错
 边界也传播 requires_host/NODE_IO_REQUIRED，整请求交 TS。
+
+# #117 Linux 实测核对
+
+`linux-errno-verify.mjs` 用同一钉死 Node（`--expose-internals`）在 Linux 主机上
+新鲜采样：与生成器同源的 `getSystemErrorMap()` 全表、`UVException` 全部 1,224 条
+格式消息（含绑定规则实测探针）、`os.constants.errno`，写入 argv 路径，不改仓内
+文件。门控测试 `node_io::tests::linux_node_errno_numbers_match_node_os_constants`
+（`PDRS_NODE_IO_LINUX_JSON` 指向采样文件；env 未设时早退，普通链保持绿）逐项核对：
+
+- 采样头（v22.22.0 / libuv 1.52.1 / linux）不符即失败；
+- 新鲜 Linux `all` 表与 `formatting` 表必须与提交的 Darwin fixture 逐项相等
+  （名字/描述/格式是平台无关数据，跨平台漂移即真漂移）；
+- `generated::ERRORS` 每行的 libc 数值 == 采样里该 code 的 libuv 数值取负
+  （unix 上 libuv 系统 errno 即 `-libc errno`），并在 `os.constants.errno`
+  提供该名字时再对一次 Node 自己的数字；
+- uv→errno 反查方向逐项成立（Linux 侧此前只有 macOS cfg 块覆盖）。
+
+生成器 `--check` 在 Linux 上 `generated.rs` 必须逐字节相等（符号名 + 平台
+cfg 守卫与平台无关）；仅 `errors.json` 因 `platform`/`errno` 平台字段差异报
+错，属预期，数字核对由上面的门控测试完成。`negative_controls.py` 两个变异
+（EACCES→EPERM 数值、fixture 描述漂移）各自绑定单行断言。上节末句「本机不
+声称 Linux 运行」由此更新：Linux 实测由协调者在 cb8 提交后执行
+（`../project-files-linux-dirent/run-linux.sh` 一并驱动），本仓不新增 Linux
+构建树。
