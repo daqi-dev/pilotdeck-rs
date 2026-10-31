@@ -3,11 +3,11 @@
 
 Run on the Linux host (cb8) only, after the fixture is committed
 (``mutating_sources`` refuses untracked files by design). A fresh Node sample
-(``linux-errno-verify.mjs``, same pinned Node) is produced once, then each
-mutant is applied to the original independently and must be killed by the
-named test's bound assertion; original bytes and hashes are verified after
-every mutation. ``CARGO_TARGET_DIR`` must come from the caller so no second
-build tree is ever created.
+(``linux-errno-verify.mjs``, same pinned Node — ``PDRS_NODE`` when the caller
+set it) is produced once, then each mutant is applied to the original
+independently and must be killed by the named test's bound assertion; original
+bytes and hashes are verified after every mutation. ``CARGO_TARGET_DIR`` must
+come from the caller so no second build tree is ever created.
 """
 import difflib
 import hashlib
@@ -26,6 +26,7 @@ out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
 generated = root / 'src/pilotdeck-gateway/src/node_io/generated.rs'
 fixture = root / 'src/pilotdeck-gateway/tests/fixtures/node-io/errors.json'
+node_io = root / 'src/pilotdeck-gateway/src/node_io.rs'
 test = 'node_io::tests::linux_node_errno_numbers_match_node_os_constants'
 
 # Every mutant is applied to the original independently and must be killed by
@@ -33,25 +34,47 @@ test = 'node_io::tests::linux_node_errno_numbers_match_node_os_constants'
 # anchor_selfcheck preflight can statically resolve each row's path and verify
 # the old anchor against the live file.
 mutations = [
-    # The generated table's libc value replaced by a neighboring errno: the
-    # libuv number for EACCES no longer matches the table.
+    # The generated table's libc value replaced by a neighboring errno: Node's
+    # own os.constants number for EACCES (checked first) no longer matches.
     ('errno-number-eacces',
      generated,
      '    (libc::EACCES, "EACCES", "permission denied"),',
      '    (libc::EPERM, "EACCES", "permission denied"),'),
+    # Same numeric drift on a name Node's Linux os.constants table does not
+    # carry (cb8 measured null), so this row skips the constant leg and dies
+    # on the libuv-number leg instead — both numeric directions stay bound.
+    ('errno-number-enonet',
+     generated,
+     '    (libc::ENONET, "ENONET", "machine is not on the network"),',
+     '    (libc::ENOSYS, "ENONET", "machine is not on the network"),'),
     # The committed fixture's description drifts from the fresh sample: the
-    # cross-platform equality of the libuv error map fails.
+    # shared-code description comparison of the libuv error map fails.
     ('fixture-description-drift',
      fixture,
      '"uv": -13,\n      "code": "EACCES",\n      "description": "permission denied"',
      '"uv": -13,\n      "code": "EACCES",\n      "description": "permission refused"'),
+    # One committed formatting golden drifts: the shared-code comparison of
+    # the UVException message tables fails.
+    ('formatting-message-drift',
+     fixture,
+     '"code": "E2BIG",\n      "syscall": "stat",\n      "message": "E2BIG: argument list too long, stat"',
+     '"code": "E2BIG",\n      "syscall": "stat",\n      "message": "E2BIG: argument list too long, statt"'),
+    # The reverse lookup no longer maps the libc errno to its own code name
+    # (it resolves the neighboring entry), so the lookup direction fails.
+    ('lookup-direction',
+     node_io,
+     '        .find(|(number, _, _)| *number == errno)',
+     '        .find(|(number, _, _)| *number == errno + 1)'),
 ]
 # A killed mutant must fail through its bound assertion, not by failing to
 # compile or by panicking elsewhere; the message proves the intended
 # assertion fired.
 failure_markers = {
-    'errno-number-eacces': '#117 libuv errno number for EACCES differs from the generated table',
-    'fixture-description-drift': '#117 fresh Linux libuv error map differs from the committed table',
+    'errno-number-eacces': '#117 Node os.constants.errno EACCES differs from the generated table',
+    'errno-number-enonet': '#117 libuv errno number for ENONET differs from the generated table',
+    'fixture-description-drift': '#117 fresh Linux description for EACCES differs from the committed table',
+    'formatting-message-drift': '#117 fresh Linux UVException formatting differs from the committed table (shared codes)',
+    'lookup-direction': '#117 lookup for E2BIG recovers the wrong code',
 }
 selected = sys.argv[2:]
 if selected:
@@ -73,16 +96,19 @@ def run_named():
 
 
 # One fresh sample from the pinned Node; both the baseline and every mutant
-# read it, so sample drift cannot masquerade as a kill.
+# read it, so sample drift cannot masquerade as a kill. The pinned binary is
+# explicit (PDRS_NODE, exported by run-linux.sh) so no ambient PATH node can
+# take its place.
 sampler = root / 'src/pilotdeck-gateway/tests/fixtures/node-io/linux-errno-verify.mjs'
 sample = out / 'node-errno-sample.json'
-result = run_owned(['node', '--expose-internals', str(sampler), str(sample)],
+result = run_owned([os.environ.get('PDRS_NODE', 'node'), '--expose-internals',
+                    str(sampler), str(sample)],
                    cwd=root, env=env, timeout=300)
 (out / 'sampler.log').write_text(result.stdout + result.stderr)
 assert result.returncode == 0, 'the Node errno sampler failed; see sampler.log'
 env['PDRS_NODE_IO_LINUX_JSON'] = str(sample)
 
-with mutating_sources(root, [generated, fixture]) as snapshots:
+with mutating_sources(root, [generated, fixture, node_io]) as snapshots:
     # #819: an unmutated baseline must be green first.
     wait_for_slot(root / 'scripts/cargo-slots.sh')
     code, log = run_named()

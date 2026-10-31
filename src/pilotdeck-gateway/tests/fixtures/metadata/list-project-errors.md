@@ -26,4 +26,4 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway list_projects_pre
 DeepSeek同类检查发现的 describe_storage/chat_dir/summary 真实错误入口原件
 仍未完成；对应TS describeWebProject/resolveProjectStorageDir/listProjectSessions
 路径不同，本批空projects四例不替代这些原件。该P2前置A4/#46收尾；Linux
-errno适用面仍按#117单独验实效。
+errno适用面按#117的门控测试核对（已落库，待 cb8 实跑收口）。

@@ -4,7 +4,7 @@
 
 `cases.json` 原样取自保留的旧候选 `feat/a4-native-archive@9589be4`，SHA-256 `60e878bb9f5433424129822309d1783207cda8c65cbd65d951eabd3a472adef7`。138 个真实公开 RPC 请求/响应保留原字节与磁盘事实，8 份基线源码 SHA 已重核。旧 `forward` 与 `securityEvidence.approvedDifference` 是历史作者元数据，不是本候选路由或人的授权；本候选不使用它们。D6 现在让 138 项全部本地逐字节相等；真实 pairing 后的 observer fence 与 silence 检查上游零请求。原录制快照不因路由期望变化而改写。另将33条文件事实在本轮临时目录实际物化（两大文件为sparse），仅一致替换home/cwd绝对路径及.cwd内容；138条Native响应和138条Native配对逐字节符合显式路径迁移后的原件。该测试不是重写Node原响应，固定原件SHA不变。
 
-`host-boundary.json` 是本轮真实 Node 默认装配的 11 个独立公开 RPC 与文件事实：同 sequence 的孤立 UTF-16 和 +0/-0 同组精确退回4项；唯一 sequence 的孤立 UTF-16、有效代理对、坏行优先报 invalid，以及不读取 transcript 的 artifact 共7项本地。配对测试实际核对4条原样上游请求和7条本地响应。#132 的 A8 宿主边界仍未关闭；#133 Linux 非法字节 dirent 仍未验证。
+`host-boundary.json` 是本轮真实 Node 默认装配的 11 个独立公开 RPC 与文件事实：同 sequence 的孤立 UTF-16 和 +0/-0 同组精确退回4项；唯一 sequence 的孤立 UTF-16、有效代理对、坏行优先报 invalid，以及不读取 transcript 的 artifact 共7项本地。配对测试实际核对4条原样上游请求和7条本地响应。#132 的 A8 宿主边界仍未关闭；#133 Linux 非法字节 dirent 已由 `../project-files-linux-dirent/` 的 Linux 门控测试覆盖，需 cb8 主机运行（证据由协调者产出后收口）。
 
 `io-errors.json` 是两个 transcript method 自己的12条真实 RPC：每个分别 ENOENT/EISDIR/ELOOP/ENOTDIR/EACCES/ENAMETOOLONG。read-only fs observer 保留真实 stat/readFile 的 API、目标、errno/syscall/message，不注入错误。`RUN` 只能由目标实际抛出预期 errno 获得；NOT_RUN 不准入。Rust 以这些固定错误事实重放整个 RPC，并实际 pairing 核对12条本地响应；不是恢复权限后的 Native errno 重现。method 专属 whitelist 与这12条来源集合精确相等，未知 errno/非OS错误仍为显式 host 边界，唯 archive 非 regular/超过既有 2GiB 边界的专用拒绝标记由 transcript 本地返回 PATH_NOT_ALLOWED（artifact 仍按既有契约归并 ARCHIVE_ARTIFACT_NOT_FOUND）；transcript 最多读取 50MiB+1，实际超过 50MiB 返回 SESSION_TRANSCRIPT_INVALID。自然 stat ELOOP 保留 Node 错误；NOFOLLOW 安全失败与 canonical 之后 checked stat/open 的 ENOTDIR 则本地拒绝，不能发回不安全 TS。
 

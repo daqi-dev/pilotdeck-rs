@@ -207,7 +207,7 @@ EIO 的原始帧转发与 TS 回包透传。白名单与生产原件观测集合
 
 catalog过滤后多于一项且排序id含孤立高/低surrogate、session同sequence组createdAt含孤立surrogate时，ICU4X会替换为U+FFFD而Node保留不同排序权重，故经JS_HOST_REQUIRED整帧转发。4个host案例由pairing独立观察完整原请求并回放真实Node响应；8个本地正控逐字节比响应且上游静默，并发sentinel形成观察因果。U+FFFD与paired补充面本地，单项/过滤后单项catalog、不同sequence和未入同序组的孤立surrogate均本地。全输入原生化仍有边界，待后续原生UTF16实现；未登记排序差异豁免。
 
-原生非良构UTF16排序跟进 #132，Linux真实非法UTF8 dirent端到端跟进 #133，均前置A8/#127收尾。22组Node Buffer解码原件仅证明共用CStr lossy解码结果；macOS实际建名返回EILSEQ(92)，真实非法dirent未验，不能把单元解码核验视为真实文件系统验收。
+原生非良构UTF16排序跟进 #132，Linux真实非法UTF8 dirent端到端跟进 #133，均前置A8/#127收尾。22组Node Buffer解码原件仅证明共用CStr lossy解码结果；macOS实际建名返回EILSEQ(92)。#133 的 Linux 门控测试已入库（`../project-files-linux-dirent/`，需 cb8 主机运行，证据由协调者产出后收口）；在其实跑证据落盘前，单元解码核验仍不能视为真实文件系统验收。
 
 ## R19：projectKey 的原始 UTF-16 身份
 
