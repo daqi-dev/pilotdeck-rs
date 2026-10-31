@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#1011 regeneration guard control; run only after the sources are committed."""
+"""#1011 projection cache controls; run only after the sources are committed."""
 import json
 import os
 from pathlib import Path
@@ -17,6 +17,56 @@ mutations = [
      'crate::test_baseline::regenerates_identically_with("session-factory/projection-cache", true);',
      'runtime::session::factory::tests::projection_cache_regenerates_identically',
      '#280 session-factory/projection-cache/oracle.json differs'),
+    ('generator-leftovers',
+     'src/pilotdeck-gateway/tests/fixtures/session-factory/projection-cache/generate.mts',
+     'fs.rmSync(work, {recursive: true, force: true});',
+     'void work; // #1011 retain generated work directory',
+     'runtime::session::factory::projection_cache_tests::generator_cleans_owned_work',
+     '#1011 generator left files behind in OUT'),
+    ('stale-suffix-skipped',
+     'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs',
+     'if sequence(entry) > watermark {',
+     'if sequence(entry) < -2.0 {',
+     'runtime::session::factory::projection_cache_tests::stale_load',
+     '#1011 projection equals TS durable state'),
+    ('invalid-envelope-accepted',
+     'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs',
+     'valid_envelope(value, &self.key.session_id, &entries)',
+     '(valid_envelope(value, &self.key.session_id, &entries) || true)',
+     'runtime::session::factory::projection_cache_tests::invalid_future',
+     '#1011 invalid envelope is rejected before hydrate'),
+    ('concurrent-append-lost',
+     'src/pilotdeck-gateway/src/runtime/session/factory.rs',
+     'self.inner.append(key, entry)?;',
+     'if field(entry, "turnId").as_string().is_none_or(|id| !id.equals_str("concurrent-2")) { self.inner.append(key, entry)?; }',
+     'runtime::session::factory::projection_cache_tests::concurrent_append_keeps_both_commits',
+     '#1011 durable log entries equal TS including parent chain'),
+    ('turn-result-not-scheduled',
+     'src/pilotdeck-gateway/src/runtime/session/factory.rs',
+     'self.cache.schedule();',
+     'if false { self.cache.schedule(); }',
+     'runtime::session::factory::projection_cache_tests::turn_result_schedules_and_binding_dispose_waits',
+     '#1011 checkpoint watermark equals TS'),
+    ('capture-single-attempt',
+     'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs',
+     'for _ in 0..3 {',
+     'for _ in 0..1 {',
+     'runtime::session::factory::projection_cache_tests::capture_retries_three_times',
+     '#1011 capture retry budget is exactly three'),
+
+    ('guard-lib-wiring-omitted',
+     'src/pilotdeck-gateway/tests/fixtures/session-factory/projection-cache/negative_controls.py',
+     "    guard_inputs += [root / 'src/pilotdeck-gateway/src/lib.rs']\n",
+     "    guard_inputs += []\n",
+     'runtime::session::factory::projection_cache_tests::guard_includes_library_wiring',
+     '#1011 guard includes library wiring'),
+    ('generator-owner-wrong',
+     'src/pilotdeck-gateway/tests/fixtures/session-factory/projection-cache/generate.mts',
+     "'session-factory/projection-cache\\n', {flag: 'wx'}",
+     "'#1011\\n', {flag: 'wx'}",
+     'runtime::session::factory::projection_cache_tests::generator_cleans_owned_work',
+     '#1011 generator owner identifies fixture'),
+
 ]
 
 
@@ -51,11 +101,30 @@ def run(out, env):
     return result or int(any(not r['compiled'] for r in compiled))
 
 
+def input_paths():
+    fixture = Path(__file__).resolve().parent
+    tests = root / 'src/pilotdeck-gateway/tests'
+    # Fixed file/directory inventory, not a home-grown Rust source parser.
+    # Include the oracle, generator and judge as well as the mutated test.
+    guard_inputs = [fixture / name for name in ['generate.mts', 'oracle.json', 'README.md', 'negative_controls.py']]
+    guard_inputs += list((root / 'src/pilotdeck-gateway/src/runtime/session').glob('*.rs'))
+    guard_inputs += [p for p in (tests / 'common').rglob('*.rs')]
+    guard_inputs += [p for p in (tests / 'fixtures/_shared').rglob('*') if p.is_file() and p.suffix != '.pyc']
+    guard_inputs += [tests / 'baseline_source_guard.mjs', root / 'scripts/cargo-slots.sh']
+    guard_inputs += [root / 'src/pilotdeck-gateway/src/lib.rs']
+    guard_inputs += [p for p in (tests / 'fixtures').glob('negative_*.py')]
+    guard_inputs += [tests / 'fixtures/pending_reanchor.py', tests / 'fixtures/pending-reanchor.txt']
+    return guard_inputs
+
+
 def main():
+    if sys.argv[1:] == ['--inputs']:
+        print(json.dumps([str(p.relative_to(root)) for p in input_paths()]))
+        return 0
     for _, filename, old, new, _, _ in mutations:
         mutate((root / filename).read_text(), None, [(old, new)])
     if sys.argv[1:] == ['--audit']:
-        print('PASS: #1011 regeneration mutation anchor (static only)')
+        print('PASS: #1011 projection cache mutation anchors (static only)')
         return 0
     if len(sys.argv) != 2:
         raise SystemExit('usage: negative_controls.py OUT | --audit')
@@ -64,20 +133,10 @@ def main():
     out = Path(sys.argv[1]).resolve()
     out.mkdir(parents=True, exist_ok=False)
     env = dict(os.environ, CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only')
-    fixture = Path(__file__).resolve().parent
-    tests = root / 'src/pilotdeck-gateway/tests'
-    # Fixed file/directory inventory, not a home-grown Rust source parser.
-    # Include the oracle, generator and judge as well as the mutated test.
-    guard_inputs = [fixture / name for name in ['generate.mts', 'oracle.json', 'README.md', 'negative_controls.py']]
-    guard_inputs += [p for p in (tests / 'common').rglob('*.rs')]
-    guard_inputs += [p for p in (tests / 'fixtures/_shared').rglob('*') if p.is_file() and p.suffix != '.pyc']
-    guard_inputs += [tests / 'baseline_source_guard.mjs', root / 'scripts/cargo-slots.sh']
-    guard_inputs += [p for p in (tests / 'fixtures').glob('negative_*.py')]
-    guard_inputs += [tests / 'fixtures/pending_reanchor.py', tests / 'fixtures/pending-reanchor.txt']
     run_out = out / 'guarded-run'
     run_out.mkdir()
     try:
-        with mutating_sources(root, guard_inputs):
+        with mutating_sources(root, input_paths()):
             result = run(run_out, env)
         # Only the top-level receipt is final; publish it after all inputs have
         # been restored and verified. A killed process leaves no final receipt.
