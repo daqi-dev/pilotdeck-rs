@@ -384,6 +384,10 @@ regeneration!(spill_lease_regenerates_identically, "spill-lease");
 regeneration!(stats_cwd_regenerates_identically, "stats-cwd");
 regeneration!(stats_dateparse_regenerates_identically, "stats-dateparse");
 regeneration!(steer_regenerates_identically, "steer");
+regeneration!(
+    surrogate_collation_matrix_regenerates_identically,
+    "surrogate-collation-matrix"
+);
 regeneration!(task_budget_regenerates_identically, "task-budget");
 regeneration!(token_accounting_regenerates_identically, "token-accounting");
 regeneration!(token_stats_regenerates_identically, "token-stats");
@@ -1027,3 +1031,395 @@ fn live_e2e_companions_reject_missing_corrupt_and_symlink() {
 }
 
 regeneration!(live_write_order_regenerates_identically, "live-write-order");
+
+/// #132 step 1: the surrogate-collation-matrix oracle is the recorded
+/// original of how Node/ICU (`localeCompare`) orders ill-formed UTF-16 sort
+/// keys, taken through the real TS gateway for `model_catalog_list` and
+/// same-sequence `session_model_get`. Step 2 will pick the native strategy;
+/// these structural checks pin what any candidate must reproduce.
+#[test]
+fn surrogate_collation_matrix_covers_locale_and_key_classes() {
+    use serde_json::value::RawValue;
+    use std::collections::HashMap;
+
+    // Every sort key is compared in the JSON-escaped form the oracle stores:
+    // a lone surrogate has no Rust `char`, and parsing it as a `String` would
+    // fold it to U+FFFD (exactly the ICU4X behaviour #132 distinguishes), so
+    // the surrogate-bearing fields stay raw until the ASCII-only checks.
+    const ORACLE: &str = include_str!("fixtures/surrogate-collation-matrix/oracle.json");
+    // Provenance first (pinned baseline commit + hash table), then the matrix.
+    let _ = baseline::oracle_bounded(ORACLE);
+    assert!(
+        !ORACLE.contains("pdrs-surrogate-matrix") && !ORACLE.contains("/private/var"),
+        "#132 oracle must not leak the generator scratch root"
+    );
+    fn object(raw: &str, what: &str) -> HashMap<String, Box<RawValue>> {
+        serde_json::from_str(raw)
+            .unwrap_or_else(|error| panic!("#132 {what} must be an object: {error}"))
+    }
+    fn array(raw: &str, what: &str) -> Vec<Box<RawValue>> {
+        serde_json::from_str(raw)
+            .unwrap_or_else(|error| panic!("#132 {what} must be an array: {error}"))
+    }
+    fn text(raw: &str, what: &str) -> String {
+        serde_json::from_str(raw)
+            .unwrap_or_else(|error| panic!("#132 {what} must be a string: {error}"))
+    }
+    fn field<'a>(map: &'a HashMap<String, Box<RawValue>>, key: &str, what: &str) -> &'a RawValue {
+        map.get(key)
+            .unwrap_or_else(|| panic!("#132 {what} must record {key}"))
+    }
+    // One string token as the oracle stores it: the raw JSON string minus
+    // quotes, keeping any surrogate escape verbatim.
+    fn unquoted(raw: &RawValue, what: &str) -> String {
+        let token = raw.get();
+        token
+            .strip_prefix('"')
+            .and_then(|token| token.strip_suffix('"'))
+            .unwrap_or_else(|| panic!("#132 {what} must be a string: {token}"))
+            .to_string()
+    }
+    // Key tokens as the oracle stores them.
+    fn unquoted_list(tokens: &RawValue, what: &str) -> Vec<String> {
+        array(tokens.get(), what)
+            .iter()
+            .map(|token| unquoted(token, what))
+            .collect()
+    }
+    // Item order straight from the recorded frame text, keeping the escaped
+    // form: only item ids carry the `parity/` prefix, so the anchor cannot
+    // hit the frame id or `defaultSelection`.
+    fn catalog_order(frame: &str) -> Vec<String> {
+        let anchor = "\"id\":\"parity/";
+        let mut order = Vec::new();
+        let mut rest = frame;
+        while let Some(at) = rest.find(anchor) {
+            rest = &rest[at + anchor.len()..];
+            let end = rest
+                .find('"')
+                .unwrap_or_else(|| panic!("#132 unterminated catalog id in frame"));
+            order.push(rest[..end].to_string());
+            rest = &rest[end..];
+        }
+        order
+    }
+    // `saved` and `effective` are the only `"model":"w…` occurrences and
+    // must agree; both are ASCII so the folded parse cross-checks them.
+    fn session_winners(frame: &str) -> Vec<String> {
+        let anchor = "\"model\":\"w";
+        let mut winners = Vec::new();
+        let mut rest = frame;
+        while let Some(at) = rest.find(anchor) {
+            rest = &rest[at + anchor.len()..];
+            let end = rest
+                .find('"')
+                .unwrap_or_else(|| panic!("#132 unterminated session model in frame"));
+            winners.push(format!("w{}", &rest[..end]));
+            rest = &rest[end..];
+        }
+        winners
+    }
+    let root = object(ORACLE, "oracle root");
+    assert_eq!(
+        text(field(&root, "node", "oracle").get(), "oracle node"),
+        "v22.22.0",
+        "#132 pinned Node runtime"
+    );
+    assert_eq!(
+        text(field(&root, "icu", "oracle").get(), "oracle icu"),
+        "78.2",
+        "#132 pinned ICU version"
+    );
+    let locales: [(&str, &str); 5] = [
+        ("en_US.UTF-8", "en-US"),
+        ("zh_CN.UTF-8", "zh-CN"),
+        ("de_DE.UTF-8", "de-DE"),
+        ("sv_SE.UTF-8", "sv-SE"),
+        ("ja_JP.UTF-8", "ja-JP"),
+    ];
+    let key_classes: [(&str, &[&str]); 10] = [
+        ("lone-high", &[r"\ud800", r"\ud801", r"\ud807", r"\udbff"]),
+        ("lone-low", &[r"\udc00", r"\udc01", r"\udc07", r"\udfff"]),
+        ("band-boundary", &[r"\udbff", r"\udc00", "\u{FFFD}"]),
+        ("fffd-vs-pair", &["\u{FFFD}", "😀", "􏿿"]),
+        ("valid-pair", &["😀", "😁", "𠀀", "􏿿"]),
+        (
+            "embedded-fold",
+            &[r"a\ud800b", r"a\udc00b", "a\u{FFFD}b", "ab"],
+        ),
+        (
+            "cjk-embedded-fold",
+            &[r"中\ud800", r"中\udc00", "中\u{FFFD}", "中"],
+        ),
+        (
+            "pair-interpretation",
+            &[r"𐀀", r"\ud800\ud801", r"\udc00\ud800"],
+        ),
+        (
+            "mixed-uniform",
+            &[
+                r"\ud800", r"\ud801", r"\udc00", r"\udc01", "\u{FFFD}", "😀", "𠀀", "中", "ä", "a",
+            ],
+        ),
+        ("locale-control", &["中文", "a", "ä", "Z"]),
+    ];
+    let rows = array(field(&root, "locales", "oracle").get(), "oracle locales");
+    assert_eq!(
+        rows.len(),
+        locales.len(),
+        "#132 exactly five recorded locales"
+    );
+    let mut control_orders: Vec<Vec<String>> = Vec::new();
+    let mut control_winners: Vec<String> = Vec::new();
+    for (raw_row, (lang, resolved)) in rows.iter().zip(locales) {
+        let row = object(raw_row.get(), "locale row");
+        assert_eq!(
+            text(field(&row, "lang", "locale row").get(), "locale lang"),
+            lang,
+            "#132 recorded locale order must stay pinned"
+        );
+        assert_eq!(
+            text(
+                field(&row, "resolvedLocale", "locale row").get(),
+                "locale resolvedLocale"
+            ),
+            resolved,
+            "#132 the child locale must resolve as pinned"
+        );
+        assert_eq!(
+            text(field(&row, "node", "locale row").get(), "locale node"),
+            "v22.22.0",
+            "#132 child Node version"
+        );
+        assert_eq!(
+            text(field(&row, "icu", "locale row").get(), "locale icu"),
+            "78.2",
+            "#132 child ICU version"
+        );
+        let cases: Vec<HashMap<String, Box<RawValue>>> =
+            array(field(&row, "cases", "locale row").get(), "locale cases")
+                .iter()
+                .map(|case| object(case.get(), "case"))
+                .collect();
+        assert_eq!(
+            cases.len(),
+            key_classes.len() * 2,
+            "#132 both gateway methods per key class"
+        );
+        for (name, keys) in key_classes {
+            let catalog = cases
+                .iter()
+                .find(|case| {
+                    text(field(case, "id", "case").get(), "case id") == format!("catalog-{name}")
+                })
+                .unwrap_or_else(|| panic!("#132 missing catalog-{name} in {lang}"));
+            let session = cases
+                .iter()
+                .find(|case| {
+                    text(field(case, "id", "case").get(), "case id") == format!("session-{name}")
+                })
+                .unwrap_or_else(|| panic!("#132 missing session-{name} in {lang}"));
+            assert_eq!(
+                text(field(catalog, "method", "case").get(), "case method"),
+                "model_catalog_list",
+                "#132 catalog-{name} method"
+            );
+            assert_eq!(
+                text(field(session, "method", "case").get(), "case method"),
+                "session_model_get",
+                "#132 session-{name} method"
+            );
+            assert_eq!(
+                unquoted_list(field(catalog, "keys", "case"), "catalog keys"),
+                keys,
+                "#132 {name} keys must match the designed key class"
+            );
+            let catalog_env = object(field(catalog, "env", "case").get(), "catalog env");
+            assert_eq!(
+                text(
+                    field(&catalog_env, "PILOT_HOME", "catalog env").get(),
+                    "catalog env PILOT_HOME"
+                ),
+                "/fixture/home",
+                "#132 catalog-{name} env root mapping"
+            );
+            let catalog_frame_text = text(
+                field(catalog, "response", "case").get(),
+                "catalog response frame",
+            );
+            // The frame text keeps lone-surrogate escapes, so it cannot go
+            // through a folded `Value` parse; the ASCII facts are checked on
+            // the raw text instead.
+            assert!(
+                catalog_frame_text.starts_with("{\"type\":\"response\","),
+                "#132 catalog-{name} frame type"
+            );
+            assert!(
+                catalog_frame_text.contains("\"ok\":true"),
+                "#132 catalog-{name} response ok"
+            );
+            let order = catalog_order(&catalog_frame_text);
+            assert_eq!(
+                order.len(),
+                keys.len(),
+                "#132 catalog-{name} item count in {lang}"
+            );
+            let mut permutation = order.clone();
+            permutation.sort_unstable();
+            let mut sorted_keys = keys.to_vec();
+            sorted_keys.sort_unstable();
+            assert_eq!(
+                permutation, sorted_keys,
+                "#132 catalog-{name} order must be a permutation of the keys"
+            );
+            // Same-sequence session rows: reversed input order plus distinct
+            // w<i> model tags, so the recorded winner exposes which key the
+            // comparator ranked last on both methods.
+            let entries = array(
+                session
+                    .get("entries")
+                    .unwrap_or_else(|| panic!("#132 session-{name} must record entries"))
+                    .get(),
+                "session entries",
+            );
+            assert_eq!(entries.len(), keys.len(), "#132 session-{name} entry count");
+            for (i, entry) in entries.iter().enumerate() {
+                let entry = object(entry.get(), "session entry");
+                let recorded = unquoted(
+                    field(&entry, "createdAt", "session entry"),
+                    "session entry createdAt",
+                );
+                assert_eq!(
+                    recorded,
+                    keys[keys.len() - 1 - i],
+                    "#132 session-{name} entries must keep the reversed input order"
+                );
+                let metadata = object(
+                    field(&entry, "metadata", "session entry").get(),
+                    "session entry metadata",
+                );
+                let selection = object(
+                    field(&metadata, "modelSelection", "session entry metadata").get(),
+                    "session entry modelSelection",
+                );
+                assert_eq!(
+                    text(
+                        field(&selection, "model", "session entry modelSelection").get(),
+                        "session entry model"
+                    ),
+                    format!("w{i}"),
+                    "#132 session-{name} entry tag"
+                );
+            }
+            let session_env = object(field(session, "env", "case").get(), "session env");
+            assert_eq!(
+                text(
+                    field(&session_env, "PILOT_HOME", "session env").get(),
+                    "session env PILOT_HOME"
+                ),
+                "/fixture/home",
+                "#132 session-{name} env root mapping"
+            );
+            assert_eq!(
+                text(
+                    session
+                        .get("home")
+                        .unwrap_or_else(|| panic!("#132 session-{name} must record home"))
+                        .get(),
+                    "session home"
+                ),
+                "/fixture/home",
+                "#132 session-{name} home root mapping"
+            );
+            let session_frame_text = text(
+                field(session, "response", "case").get(),
+                "session response frame",
+            );
+            assert!(
+                session_frame_text.starts_with("{\"type\":\"response\","),
+                "#132 session-{name} frame type"
+            );
+            assert!(
+                session_frame_text.contains("\"ok\":true"),
+                "#132 session-{name} response ok"
+            );
+            let winners = session_winners(&session_frame_text);
+            assert_eq!(
+                winners.len(),
+                2,
+                "#132 session-{name} saved and effective must both record the winner"
+            );
+            assert_eq!(
+                winners[0], winners[1],
+                "#132 session-{name} saved and effective must agree"
+            );
+            let winner = winners[0].clone();
+            let last = order[order.len() - 1].clone();
+            let position = keys
+                .iter()
+                .position(|k| *k == last)
+                .unwrap_or_else(|| panic!("#132 session-{name} winner key"));
+            let expected = format!("w{}", keys.len() - 1 - position);
+            assert_eq!(
+                winner, expected,
+                "#132 session-{name} winner must agree with the catalog comparator"
+            );
+            if name == "lone-high" || name == "lone-low" {
+                assert_eq!(
+                    order, keys,
+                    "#132 lone surrogates must order by code point, not fold to U+FFFD"
+                );
+            }
+            if name == "band-boundary" {
+                assert_eq!(
+                    order,
+                    vec![r"\udbff", r"\udc00", "\u{FFFD}"],
+                    "#132 the surrogate band must sort below U+FFFD"
+                );
+            }
+            if name == "embedded-fold" {
+                assert_eq!(
+                    order,
+                    vec!["ab", r"a\ud800b", r"a\udc00b", "a\u{FFFD}b"],
+                    "#132 embedded lone surrogates must stay distinct and below U+FFFD"
+                );
+            }
+            if name == "mixed-uniform" {
+                // assigned < lone surrogates (code-point order) < U+FFFD, in
+                // every locale — the tail an FFFD fold would collapse.
+                let tail: Vec<String> = order[order.len() - 5..].to_vec();
+                assert_eq!(
+                    tail,
+                    vec![r"\ud800", r"\ud801", r"\udc00", r"\udc01", "\u{FFFD}"],
+                    "#132 assigned-then-surrogate-then-FFFD tail must hold in {lang}"
+                );
+            }
+            if name == "locale-control" {
+                control_orders.push(order.clone());
+                control_winners.push(winner);
+            }
+        }
+    }
+    // The surrogate-free control proves the child's LANG reached the sort:
+    // the orders and therefore the session winners differ across locales.
+    assert_ne!(
+        control_orders[0], control_orders[1],
+        "#132 en_US vs zh_CN control order must differ"
+    );
+    assert_ne!(
+        control_orders[0], control_orders[3],
+        "#132 en_US vs sv_SE control order must differ"
+    );
+    assert_ne!(
+        control_orders[1], control_orders[3],
+        "#132 zh_CN vs sv_SE control order must differ"
+    );
+    assert_ne!(
+        control_winners[0], control_winners[1],
+        "#132 en_US vs zh_CN control winner must differ"
+    );
+    assert_ne!(
+        control_winners[1], control_winners[3],
+        "#132 zh_CN vs sv_SE control winner must differ"
+    );
+}
