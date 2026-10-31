@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-31 18:35 · by Claude Code 协调者
+updated: 2026-10-31 20:20 · by Claude Code 协调者
 - #1011 | impl | doing | PR #1175 第一步（TS 矩阵 + 金样）r1 opus + GLM 0/0（P2×2）；本机宿主在跑 → 第二步 Rust 实现 + 两条 P2 → Codex（`_tmp/20261031-p2-1011-phase2/extra.md`）
 - #1145 | impl | doing | PR #1148 r5 GLM 0/0 但 abort 期限洪泛不触发升 P1 → Codex fix-r5；mbp2 r5m 在跑；RST 映射跟进 #1178
 - #1166 | impl | doing | PR #1172（M6）r3 GLM 尺子 P1（跨树 target 归属）+ 两家同撞锁外 bootstrap → Codex fix-r4；余项 #1180
@@ -9,7 +9,6 @@ updated: 2026-10-31 18:35 · by Claude Code 协调者
 - #1136 | impl | doing | PR #1171 macmini 全绿；Codex fix-r1（wire-end RST 路径升 P1 + 补负控）；重复抽取跟进 #1179
 - #1154 | impl | doing | 原生进程 Metadata cwd 对齐 TS + Cwd.set 差异登记 → Codex
 - #917 | review | doing | GLM 交付 32de320dd → r1 opus + Codex + macmini
-- #1177 | review | doing | PR #1184 收敛（两家 0/0、calibrate PASS、元负控 KILLED）→ CI 后入队；D3/D4 复核 #1183
 - #133 | impl | doing | Linux 非法 UTF-8 dirent 真实对拍 + #117 errno Linux（同 PR）→ GLM，cb8 实跑
 - #132 | impl | doing | 第一步 TS 原件矩阵 → GLM；第二、三步等 #1154 合入
 - codex | coord | blocked | Codex 额度用尽，11-04 14:36 恢复；在途 Codex 单已转 GLM 接续
@@ -19,7 +18,7 @@ updated: 2026-10-31 18:35 · by Claude Code 协调者
 - A5.4 | coord | doing | 子代理梳理剩余定标范围（`_tmp/20261031-a54-scope/SCOPE.md`）→ 拆包解锁 #1140 判分接线 / #590 / D4
 - #589 | impl | blocked | 关单前置只剩 #1011（#1010 #1019 #1020 已关）
 - #590 | impl | blocked | 前置 A5.4 冻结期望（#1140 采集器已合）
-- #1140 | impl | blocked | 采集器已合 cbb4d1f27；判分接线等 A5.4
+- #1140 | review | doing | 判分接线 PR #1196 r1（opus + DeepSeek + macmini 复算）；cb8 真实采集等 #1154
 - #727 | impl | blocked | 前置 #589（A7 Rust 宿主接线）
 - #19 | impl | blocked | 修复归 #727
 - #1146 | impl | blocked | D1-P09 前置 A8 + P08（#1145）
@@ -2560,3 +2559,15 @@ updated: 2026-10-31 18:35 · by Claude Code 协调者
 - 18:05 #1181（#1169）入队。#1136 r2 两家 0/0，但两家同撞「yields 用例绕过 spawn() 判据收窄」与「三族缺退出后登记回收负控」→ Codex fix-r2；#1154 r1 两家 0/0，GLM 指出 archive RPC 空 projectKey 默认值改为进程 cwd、无金样 → Codex fix-r1 先 TS 实测定性 + chat_dir 去重。两单已起跑的宿主（macmini / cb8）停掉，远端核归零。
 - 18:30 **Codex 额度用尽（11-04 14:36 恢复）**：5 个在跑 Codex 单同时 exit=1 → 全部 dispatch-resume 转 GLM 接续（#1166 补 CI 红 metadata-observer #994 回归）；评审家族改 opus + DeepSeek。#1169 合入 4790da383（收尾：回收树、cb8 build 12 GiB 清）。#1177 收敛（两家 0/0、calibrate PASS、元负控 3 KILLED）→ 回填事件评审路径 87dfc1eb3，跑最终 opus 块；P2 开 #1190。新开 #133+#117、#132-pr1 → GLM。资源评估 _tmp/20261031-capacity-plan/PLAN.md：本机 10 核为瓶颈、宿主空闲；cb8 实现车道需密钥上 cb8，待人定。磁盘：旧归档迁 macmini 冷存储中。
 - 18:35 **两小时交接** → `_tmp/20261031-handoff-1835.md`。待人：#1183（#1177 D3/D4 复核）、#1191（cb8 key）。
+- 19:01 收货 GLM 接续：#1154 fix-r1（archive projectKey nullish 默认 TS 实测：TS 用配置项目，Rust 对齐）、#1145 fix-r6、#1166 fix-r6（同型 src/target 清零 + CI #994 回归）、#1136 fix-r2、#1011 第二步（24 格矩阵 + O(n²) 基准）、#1168 fix-r1；尾注统一补 Codex+GLM 两行（#1154 一次在 auto-receive 推送途中 amend 致推错，force-with-lease 修正）。评审换 opus + DeepSeek。**宿主链 CLI 定向一直假失败**：三条链写死 `cargo test -p pilotdeck-gateway $HV`，CLI 定向改写进 neg.sh（记忆 host-verify-entry 更正）。macmini 非关键车道 2→3、关键名单加 #1011 #1166 #1145。停 worker 只杀子进程致孤儿 claude -p 同树并发写（#1166）→ 记忆补规则。#1154 r2 DeepSeek P1×2（判官守护集缺 baseline.rs 等 + 宿主证据）→ GLM fix-r2。#1168 r2 只缺宿主证据 → 补 run.py / controls.py / test_signals 全量宿主。
+- 19:13 **#1184（#1177 A5.4-pr1）合入 566b49470**（收尾：回收、macmini 构建目录清），#1192 合入 2f4db4b20。A5.4 包 3 → #1140 判分接线派 GLM（冻结件，人批一 A；cb8 真实采集等 #1154 合入）。#132a GLM 交付 → r1 opus+DeepSeek+macmini；#917 fix-r1 → r2。磁盘：在审树 cargo-target 整删约 100 GiB（1145 / 1166 / 1136 / 1168）。自查：替换 macmini-lane.sh 丢执行位致三条宿主 Permission denied → chmod 恢复后重起，记忆补规则。#1166 r6 DeepSeek P1 = 宿主证据（cb8 r6 在跑）。
+- 19:15 #1168 r2m 宿主：module 矩阵 PASS、controls 40 轮/20 对 PASS（正 44 / 负 304）、test_signals OK、负控 9/9 KILLED；run.py rc=2 是设计（总体 NOT_RUN），宿主脚本误判已改。r2 两家 P2 中「清理被中断仍报 cleanupStatus PASS」按 P1、ValueError 未接两家同撞 → GLM fix-r2；同源取消处理器开跟进。
+- 19:18 #1011 第二步 r2：opus P1（session-factory 负控 4 条锚点在新 factory.rs 0 匹配，协调者静态核实）+ DeepSeek P1（宿主证据，cb8 r2 在跑）→ GLM fix-r1（先 anchor_selfcheck --anchors-only 扫全 + 检查点读取封顶）。#133+#117 GLM 交付 60705ea47（PR #1195）→ r1 opus+DeepSeek + cb8 run-linux.sh 总控。
+- 19:19 自查：#1139 chain17 本机侧空转 3 h 22 min（远端无进程）占 macmini 车道 2，#1136 r3m / #132a 排队 → 已杀，记忆 probe-leak-check 补每轮检查。宿主现场：cb8 跑 #1166 r6 / #1136 r3c / #1011 r2；mbp2 跑 #1145（当前 head）；macmini 跑 #917 / #1154。
+- 19:33 cb8 车道 3→5（20 核负载约 3；cp -p 保执行位）；#133 宿主即起。#133 r1 opus P1：#117 正控把 Linux 新采样 errno 表与 Darwin 金样逐项比（含平台相关 uv 数值）必失败 → 等 cb8 实测定性再派修。#132a 宿主补 regenerates_identically 定向测试重起。
+- 19:38 **Node 基线口径**：本机 homebrew node@22（ICU 78.2 / uv 1.52.1）≠ macmini、cb8 的 ~/opt 源码版（ICU 77.1 / uv 1.51.0），#133 ICU 门在 cb8 必 BLOCKED → 决策卡 _tmp/20261031-node-baseline/decision.md（A：以本机为准，cb8 另编 ICU 78.2 源码 Node，AI 代批待复核），子代理在 cb8 编。#133 fix-r1（errno 比 code/description，两家同撞 + cb8 实测）、#917 fix-r2（代次 bump 早于删除：丢 turn 按 P0 + 竞态；负控绑错断言）→ GLM。#1168 fix-r2 → r3 opus+DeepSeek + macmini 全量。
+- 19:47 #132a macmini 宿主 4 条正控未过：macmini ~/opt Node ICU 77.1 对 ICU 78.2 金样，坐实 Node 基线卡；另 1 个变异编译不过 → GLM fix-r1（ICU 门报 BLOCKED + 修变异），修后本机跑宿主。#1154 fix-r2 → r3 opus+DeepSeek+macmini。
+- 19:55 cb8 ICU 78.2 / uv 1.52.1 源码 Node 编好（~/opt/node-v22.22.0-icu78-linux-arm64，tz 2025c ≠ 本机 2026a）→ #133 fix-r1 任务书追加用它。#1168 r3m 只剩 test_probe_running 在负控基线里两格失败（直接跑整套 OK）→ GLM fix-r3 先实测定位。
+- 20:02 本机负载 142（删 cargo-target 后多单冷编译，4 cargo × 默认 10 jobs）→ cargo-gate shim 默认 CARGO_BUILD_JOBS=4（cp -p 保执行位）。#1154 r3 DeepSeek P1×3：差异账本被原地改写（尺子 P1）、negative_proxy 守护集漏判官 pairing/tests.rs、宿主证据 → GLM fix-r3（末轮）。在途 10 单 > 在审 8，暂不开 A8 新线。
+- 20:16 #1140（A5.4 包 3 判分接线）GLM 交付 3bef6fafc → check_frozen --write 重登记 5314d8799，PR #1196 draft；r1 opus + DeepSeek + macmini 官方复算；cb8 真实采集等 #1154。
+- 20:20 **两小时交接** → `_tmp/20261031-handoff-2020.md`。待人：#1183、#1191、Node 基线卡 `state/decisions-20261031-node-baseline.md`（AI 代批待复核）。
