@@ -34,6 +34,11 @@ use std::{
     },
 };
 
+#[path = "projection_cache.rs"]
+mod projection_cache;
+pub use projection_cache::{FileProjectionCheckpointStore, ProjectionCheckpointStore};
+use projection_cache::{ProjectionCache, StorageQueue};
+
 /// AgentSession.ts:311-320 / AgentSessionState.ts:25-32. A new adapter supplies
 /// idle status, no currentTurnId and a fresh cancellation controller.
 #[derive(Clone, Debug)]
@@ -67,11 +72,18 @@ pub struct ReloadSource {
 }
 impl ReloadSource {
     pub fn snapshot_consistent(&self, recorder: &Recorder) -> Result<ReloadSnapshot, RuntimeError> {
+        self.snapshot_consistent_inner(recorder, false)
+    }
+    fn snapshot_consistent_inner(
+        &self,
+        recorder: &Recorder,
+        retained: bool,
+    ) -> Result<ReloadSnapshot, RuntimeError> {
         // A synchronous TS snapshot cannot interleave an append. Avoid taking
         // projection -> writer locks (append takes them in the reverse order).
         for _ in 0..8 {
             let before = recorder.writer().snapshot_state();
-            let snapshot = self.snapshot(before.clone());
+            let snapshot = self.snapshot(before.clone(), retained);
             let after = recorder.writer().snapshot_state();
             if before.sequence == after.sequence && before.last_entry_id == after.last_entry_id {
                 return snapshot;
@@ -81,10 +93,18 @@ impl ReloadSource {
             "Session changed during runtime reload; retry.",
         ))
     }
-    fn snapshot(&self, writer: WriterState) -> Result<ReloadSnapshot, RuntimeError> {
+    fn snapshot(
+        &self,
+        writer: WriterState,
+        retained: bool,
+    ) -> Result<ReloadSnapshot, RuntimeError> {
         Ok(ReloadSnapshot {
             session_id: self.session_id.clone(),
-            state: self.projection.snapshot()?,
+            state: if retained {
+                self.projection.retained_snapshot()?
+            } else {
+                self.projection.snapshot()?
+            },
             cwd: self.cwd.clone(),
             transcript_path: self.transcript_path.clone(),
             file_state: (self.file_state)()?,
@@ -95,20 +115,36 @@ impl ReloadSource {
 
 /// Durable state is restored from storage only after the predecessor writer
 /// has closed. A pre-drain snapshot must never rewind that durable sequence.
-#[derive(Default)]
 pub struct SessionProjection {
     entries: Mutex<Vec<JsValue>>,
     last_valid: Mutex<DurableSessionState>,
+    valid: AtomicBool,
+    disposed: AtomicBool,
+}
+impl Default for SessionProjection {
+    fn default() -> Self {
+        Self {
+            entries: Mutex::default(),
+            last_valid: Mutex::default(),
+            valid: AtomicBool::new(true),
+            disposed: AtomicBool::new(false),
+        }
+    }
 }
 impl SessionProjection {
     pub fn snapshot(&self) -> Result<DurableSessionState, RuntimeError> {
-        project(&lock(&self.entries))
+        if self.disposed.load(Ordering::SeqCst) {
+            return Err(RuntimeError::new("Session projection driver is disposed."));
+        }
+        self.retained_snapshot()
     }
-    fn restore(&self, entries: Vec<JsValue>) -> RuntimeResult {
-        let state = project(&entries)?;
-        *lock(&self.entries) = entries;
-        *lock(&self.last_valid) = state;
-        Ok(())
+    fn retained_snapshot(&self) -> Result<DurableSessionState, RuntimeError> {
+        let entries = lock(&self.entries);
+        if self.valid.load(Ordering::SeqCst) {
+            Ok(lock(&self.last_valid).clone())
+        } else {
+            project(&entries)
+        }
     }
 }
 
@@ -381,22 +417,43 @@ struct ProjectedStore {
     inner: Arc<dyn TranscriptStore>,
     key: TranscriptKey,
     projection: Arc<SessionProjection>,
+    cache: Arc<ProjectionCache>,
 }
 impl TranscriptStore for ProjectedStore {
     fn append(&self, key: &TranscriptKey, entry: &JsValue) -> crate::storage::StoreResult<()> {
         if key != &self.key {
             return self.inner.append(key, entry);
         }
-        let mut entries = lock(&self.projection.entries);
-        let mut candidate = entries.clone();
-        candidate.push(entry.clone());
         self.inner.append(key, entry)?;
-        *entries = candidate;
-        // Projection failure cannot undo a committed durable entry. Fallible
-        // reload/submit surfaces it; the ordinary infallible view keeps its
-        // last successfully projected state.
-        if let Ok(state) = project(&entries) {
-            *lock(&self.projection.last_valid) = state;
+        let mut entries = lock(&self.projection.entries);
+        // A concurrent active restore may already have read this durable
+        // entry before its publisher acquired the projection lock.
+        let already_projected = entries.last().is_some_and(|existing| {
+            field(existing, "sequence").as_number() >= field(entry, "sequence").as_number()
+        });
+        if !already_projected {
+            entries.push(entry.clone());
+            // Only metadata has a bounded standalone delta. Complex events keep
+            // the existing replay semantics, including late turn completion.
+            let state = if self.projection.valid.load(Ordering::SeqCst)
+                && is(field(entry, "type"), "session_metadata")
+            {
+                project(std::slice::from_ref(entry)).map(|delta| {
+                    let mut state = lock(&self.projection.last_valid).clone();
+                    merge_metadata(&mut state.metadata, &delta.metadata);
+                    state
+                })
+            } else {
+                project(&entries)
+            };
+            self.projection.valid.store(state.is_ok(), Ordering::SeqCst);
+            if let Ok(state) = state {
+                *lock(&self.projection.last_valid) = state;
+            }
+        }
+        drop(entries);
+        if is(field(entry, "type"), "turn_result") {
+            self.cache.schedule();
         }
         Ok(())
     }
@@ -501,6 +558,10 @@ pub struct FactoryStorage {
     writer_lease: SharedWriterLease,
     pub recorder: Arc<Recorder>,
     pub projection: Arc<SessionProjection>,
+    cache: Arc<ProjectionCache>,
+    restored: Arc<AtomicBool>,
+    queue: Arc<StorageQueue>,
+    session_id: JsString,
     pub cwd: PathBuf,
     pub load: Arc<dyn Fn() -> BoxFuture<Result<TranscriptRead, RuntimeError>> + Send + Sync>,
     pub load_checkpoint: Arc<dyn Fn() -> BoxFuture<RuntimeResult> + Send + Sync>,
@@ -513,13 +574,33 @@ impl FactoryStorage {
     /// would contend with that lease; #1019's `SessionStorage::Recording`
     /// transfers that ownership to the factory instead of bypassing the fence.
     pub fn new(store: Arc<dyn TranscriptStore>, key: TranscriptKey) -> Self {
+        let mut path = key.transcript_path.clone().into_os_string();
+        path.push(".projections.json");
+        Self::with_checkpoint_store(
+            store,
+            key,
+            Arc::new(FileProjectionCheckpointStore(path.into())),
+        )
+    }
+    pub fn with_checkpoint_store(
+        store: Arc<dyn TranscriptStore>,
+        key: TranscriptKey,
+        checkpoint: Arc<dyn ProjectionCheckpointStore>,
+    ) -> Self {
         let projection = Arc::new(SessionProjection::default());
         let writer_lease = Arc::new(Mutex::new(None));
+        let cache = Arc::new(ProjectionCache::new(
+            checkpoint,
+            store.clone(),
+            key.clone(),
+            projection.clone(),
+        ));
         let projected = Arc::new(ProjectedStore {
             _writer_lease: writer_lease.clone(),
             inner: store.clone(),
             key: key.clone(),
             projection: projection.clone(),
+            cache: cache.clone(),
         });
         let recorder = Arc::new(Recorder::new(projected, key.clone()));
         let close_writer = recorder.writer().clone();
@@ -528,6 +609,10 @@ impl FactoryStorage {
             cwd: key.project_root.clone(),
             recorder,
             projection,
+            cache,
+            restored: Arc::new(AtomicBool::new(false)),
+            queue: Arc::new(StorageQueue::default()),
+            session_id: key.session_id.clone(),
             load: Arc::new(move || {
                 let store = store.clone();
                 let key = key.clone();
@@ -561,30 +646,98 @@ impl FactoryStorage {
             _lease: lock(&self.writer_lease).take(),
         }
     }
-    async fn close_owned(&self) -> RuntimeResult {
-        // Rollback has no OwnedSession guard. Keep the lease on this future's
-        // stack so a hook panic or blocking-task JoinError cannot strand it in
-        // an externally retained storage/recorder. Preserve final hook writes.
-        let _writer_lease = self.take_writer_lease();
-        let result = (self.close)().await;
+    fn close_owned(&self) -> BoxFuture<RuntimeResult> {
+        // Own the writer fence while admitted operations finish and cleanup
+        // runs, including when the caller abandons its completion future.
+        let writer_lease = self.take_writer_lease();
+        let close = self.close.clone();
         let writer = self.recorder.writer().clone();
-        writer.begin_close();
-        tokio::task::spawn_blocking(move || writer.close())
+        let cache = self.cache.clone();
+        let projection = self.projection.clone();
+        self.queue.enqueue(async move {
+            let _writer_lease = writer_lease;
+            let result = close().await;
+            writer.begin_close();
+            tokio::task::spawn_blocking(move || writer.close())
+                .await
+                .map_err(|e| RuntimeError::new(e.to_string()))?;
+            tokio::task::spawn_blocking(move || {
+                cache.flush();
+                cache.dispose();
+                projection.disposed.store(true, Ordering::SeqCst);
+            })
             .await
             .map_err(|e| RuntimeError::new(e.to_string()))?;
-        result
+            result
+        })
     }
-    async fn restore(&self) -> Result<TranscriptRead, RuntimeError> {
-        let read = (self.load)().await?;
-        read.ensure_writable()
-            .map_err(|e| RuntimeError::new(e.to_string()))?;
-        self.recorder
-            .restore(&read.entries)
-            .map_err(|e| RuntimeError::new(e.to_string()))?;
-        (self.load_checkpoint)().await?;
-        self.projection.restore(read.entries.clone())?;
-        validate_web_history(&read.entries)?;
-        Ok(read)
+    /// The storage admission queue shares the recorder used by session ports.
+    /// Each call reserves its position before returning its waiting future.
+    pub fn append_metadata(
+        &self,
+        turn_id: JsString,
+        metadata: JsValue,
+    ) -> BoxFuture<RuntimeResult> {
+        let recorder = self.recorder.clone();
+        let session_id = self.session_id.clone();
+        self.queue.enqueue(async move {
+            tokio::task::spawn_blocking(move || {
+                recorder
+                    .writer()
+                    .record_session_metadata(&session_id, &turn_id, metadata)
+                    .map_err(|e| RuntimeError::new(e.to_string()))
+            })
+            .await
+            .map_err(|e| RuntimeError::new(e.to_string()))?
+        })
+    }
+    pub fn flush(&self) -> BoxFuture<RuntimeResult> {
+        let writer = self.recorder.writer().clone();
+        let cache = self.cache.clone();
+        self.queue.enqueue(async move {
+            tokio::task::spawn_blocking(move || {
+                let _ = writer.snapshot_state();
+                cache.flush();
+            })
+            .await
+            .map_err(|e| RuntimeError::new(e.to_string()))
+        })
+    }
+    fn restore(&self) -> BoxFuture<Result<TranscriptRead, RuntimeError>> {
+        let load = self.load.clone();
+        let load_checkpoint = self.load_checkpoint.clone();
+        let restored = self.restored.clone();
+        let recorder = self.recorder.clone();
+        let cache = self.cache.clone();
+        self.queue.enqueue(async move {
+            let read = load().await?;
+            read.ensure_writable()
+                .map_err(|e| RuntimeError::new(e.to_string()))?;
+            // Initial restore happens before publication under the writer
+            // lease. Active re-hydration preserves the live writer revision.
+            if !restored.load(Ordering::SeqCst) {
+                recorder
+                    .restore(&read.entries)
+                    .map_err(|e| RuntimeError::new(e.to_string()))?;
+            } else if read.entries.iter().any(|entry| {
+                field(entry, "sequence").as_number() > Some(recorder.snapshot_state().0 as f64)
+            }) {
+                // A store may commit bytes and then report failure. Never
+                // append a duplicate sequence from the unadvanced writer.
+                recorder.writer().begin_close();
+                return Err(RuntimeError::new(
+                    "Session transcript is ahead of its writer; recreate the session.",
+                ));
+            }
+            load_checkpoint().await?;
+            let entries = read.entries.clone();
+            tokio::task::spawn_blocking(move || cache.restore(entries))
+                .await
+                .map_err(|e| RuntimeError::new(e.to_string()))??;
+            validate_web_history(&read.entries)?;
+            restored.store(true, Ordering::SeqCst);
+            Ok(read)
+        })
     }
 }
 
@@ -982,7 +1135,7 @@ impl LiveSession for OwnedSession {
     }
     fn draining_reload_snapshot(&self) -> Result<ReloadSnapshot, RuntimeError> {
         self.reload_source
-            .snapshot_consistent(&self.storage.recorder)
+            .snapshot_consistent_inner(&self.storage.recorder, true)
     }
     fn abort(&self, reason: &JsString) -> RuntimeResult {
         self.adapter.abort(reason)
@@ -1415,3 +1568,7 @@ fn project(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {
 #[cfg(test)]
 #[path = "factory_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "projection_cache_tests.rs"]
+mod projection_cache_tests;

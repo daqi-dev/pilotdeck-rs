@@ -24,4 +24,8 @@ cargo test --offline -p pilotdeck-gateway --lib \
   runtime::session::factory::tests::projection_cache_regenerates_identically -- --exact --ignored --nocapture
 ```
 
-生成器使用 recursive mkdir 与 `flag:'wx'` 独占输出，重复 OUT 拒绝。ignored guard 的临时目录由既有共享 helper 管理。产品未修改，阶段一唯一新增 Rust 检查是重生成守卫；其配对负控见 `negative_controls.py`，用共享 `negative_process` / `negative_suite`，先编译变异再运行正控→负控→恢复正控。新增文件和修改测试尚未进入 HEAD 时禁止运行；协调者提交后在宿主设置上述环境并传独占 OUT。`--audit` 仅静态锚点检查。第二阶段的缓存/并发产品负控及 ignored 性能基准尚未实现。
+生成器使用 recursive mkdir 与 `flag:'wx'` 独占输出，重复 OUT 拒绝，写 oracle 前只删除本次自建的 `work-*` 根（外来的 `work-*` 不动）。ignored guard 的临时目录由既有共享 helper 管理。配对负控见 `negative_controls.py`，用共享 `negative_process` / `negative_suite`，先编译变异再运行正控→负控→恢复正控。新增文件和修改测试尚未进入 HEAD 时禁止运行；协调者提交后在宿主设置上述环境并传独占 OUT。`--audit` 仅静态锚点检查。
+
+supplemental 行有三种形状：`cold-*` 是顶层 before/held/settled；`invalid-*`、`turn-result`、`save-reject`、`capture-race`、`predecessor-reject` 只有 before/settled；`predecessor-pending`/`cancel-waiter` 把 held 观测嵌在 `details.held`（cancel-waiter 另有 `details.waiter`）。Rust 消费方（`projection_cache_tests.rs`）按各自行形状读取，不改 oracle 判定内容。
+
+第二阶段已接线：`runtime/session/projection_cache.rs` 提供投影检查点与 FIFO 存储队列，`factory.rs` 的持久会话投影接入可丢弃 checkpoint，`projection_cache_tests.rs` 逐格断言 oracle。产品负控覆盖缓存过期不刷新、损坏缓存不拒绝、并发丢条、turn_result 不调度、capture 只试一次、生成器遗留与 owner、守卫清单缺 lib.rs；ignored 基准 `projection_cache_append_benchmark` 量 metadata append 的 O(n²) 修复（不进 CI 判定）。

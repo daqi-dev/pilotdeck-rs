@@ -1245,11 +1245,20 @@ fn committed_projection_failure_is_not_rolled_back() {
         session_id: "session-745".into(),
         transcript_path: root.join("log.jsonl"),
     };
+    let projection = Arc::new(SessionProjection::default());
+    let inner = Arc::new(JsonlTranscriptStore::new());
+    let cache = Arc::new(ProjectionCache::new(
+        Arc::new(FileProjectionCheckpointStore(root.join("cache.json"))),
+        inner.clone(),
+        key.clone(),
+        projection.clone(),
+    ));
     let store = ProjectedStore {
         _writer_lease: Arc::new(Mutex::new(None)),
-        inner: Arc::new(JsonlTranscriptStore::new()),
+        inner,
         key: key.clone(),
-        projection: Arc::new(SessionProjection::default()),
+        projection,
+        cache,
     };
     let invalid = js(r#"{"type":"accepted_input","messages":null}"#);
     store
@@ -1357,6 +1366,7 @@ async fn invalid_projection_releases_submit_slot() {
     // A persisted malformed input is already covered by the durable-append
     // test; inject that projection state to isolate admission rollback here.
     lock(&projection.entries).push(js(r#"{"type":"accepted_input","messages":null}"#));
+    projection.valid.store(false, Ordering::SeqCst);
     let input = js(r#"{"type":"text","text":"hello"}"#);
     let options = js(r#"{"sessionId":"session-745","turnId":"turn"}"#);
     assert!(
@@ -6342,7 +6352,76 @@ async fn pending_owned_session_after_executor_shutdown_without_runtime() {
 }
 
 #[test]
-#[ignore = "requires the pinned TS checkout and Node v22.22.0"]
+#[ignore = "requires the pinned Node v22.22.0 TS baseline"]
 fn projection_cache_regenerates_identically() {
     crate::test_baseline::regenerates_identically("session-factory/projection-cache");
+}
+
+#[test]
+#[ignore = "bounded append benchmark; timing is not a CI assertion"]
+fn projection_cache_append_benchmark() {
+    struct Sink;
+    impl TranscriptStore for Sink {
+        fn append(&self, _: &TranscriptKey, _: &JsValue) -> crate::storage::StoreResult<()> {
+            Ok(())
+        }
+        fn read(
+            &self,
+            _: &TranscriptKey,
+            _: Option<u64>,
+        ) -> crate::storage::StoreResult<TranscriptRead> {
+            Ok(TranscriptRead {
+                entries: vec![],
+                diagnostics: vec![],
+            })
+        }
+    }
+    let started = std::time::Instant::now();
+    for count in [256, 512, 1024] {
+        let storage = FactoryStorage::new(
+            Arc::new(Sink),
+            TranscriptKey {
+                project_root: PathBuf::from("/unused-1011"),
+                pilot_home: PathBuf::from("/unused-1011"),
+                session_id: "session-1011".into(),
+                transcript_path: PathBuf::from("/unused-1011/bench.jsonl"),
+            },
+        );
+        let begin = std::time::Instant::now();
+        for _ in 0..count {
+            storage
+                .recorder
+                .writer()
+                .record_session_metadata(
+                    &"session-1011".into(),
+                    &"bench".into(),
+                    js(r#"{"title":"fixed","titleSource":"user"}"#),
+                )
+                .expect("#1011 benchmark append");
+        }
+        println!(
+            "#1011 append n={count} elapsed_us={} ns_per_append={}",
+            begin.elapsed().as_micros(),
+            begin.elapsed().as_nanos() / count
+        );
+        assert_eq!(
+            storage.recorder.snapshot_state().0,
+            count as u64,
+            "#1011 benchmark sequence"
+        );
+        assert_eq!(
+            storage
+                .projection
+                .snapshot()
+                .expect("#1011 benchmark projection")
+                .metadata
+                .get("title"),
+            Some(&JsValue::String("fixed".into())),
+            "#1011 benchmark title"
+        );
+        if started.elapsed() >= Duration::from_secs(30) {
+            println!("#1011 benchmark budget reached; no further sizes");
+            break;
+        }
+    }
 }

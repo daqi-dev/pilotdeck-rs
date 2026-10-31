@@ -22,7 +22,7 @@ const sourceSha256 = await baselineSourceHashes(base, [
   'src/session/projection/checkpoint/JsonFileSessionProjectionCheckpointStore.ts',
 ]);
 fs.mkdirSync(output, {recursive: true});
-fs.writeFileSync(path.join(output, '.generation-owner'), '#1011\n', {flag: 'wx'});
+fs.writeFileSync(path.join(output, '.generation-owner'), 'session-factory/projection-cache\n', {flag: 'wx'});
 const work = fs.mkdtempSync(path.join(output, 'work-'));
 // Delay the OS write only after native JsonlSessionPersistence has registered
 // its writeTail. Delaying the provider call itself would invent a restore race
@@ -368,6 +368,7 @@ assert.equal(cases.length, 30, '#1011 matrix count');
 assert.equal(supplemental.length, 15, '#1011 supplemental count');
 // Raw UTF-8 cache/transcript bytes, their hashes and every ordered observation
 // live inside the oracle so the existing byte-for-byte guard covers originals.
+fs.rmSync(work, {recursive: true, force: true});
 fs.writeFileSync(path.join(output, 'oracle.json'), JSON.stringify({
   sourceCommit, sourceSha256, node: process.version, states, events,
   timings: ['before', 'held', 'settled'], cases, supplemental,
