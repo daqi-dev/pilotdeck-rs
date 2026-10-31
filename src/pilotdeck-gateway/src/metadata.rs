@@ -378,6 +378,7 @@ pub(crate) fn millis(time: SystemTime) -> f64 {
 
 pub(crate) struct Metadata<F = NativeFiles> {
     pub home: PathBuf,
+    /// Absolute snapshot base, or an empty path for lazy process-cwd resolution.
     pub cwd: PathBuf,
     pub files: F,
 }
@@ -523,6 +524,16 @@ pub(crate) fn resolved_identity(cwd: &Path, value: &JsString) -> Option<String> 
     resolve_units(&cwd.to_string_lossy(), value).to_utf8().ok()
 }
 
+/// Resolve UTF-16 identity without reading process cwd for an absolute key.
+pub(crate) fn resolve_process_identity(cwd: &Path, value: &JsString) -> io::Result<Option<String>> {
+    let base = if value.units().first() == Some(&UTF16_SLASH) {
+        PathBuf::new()
+    } else {
+        resolve_process_path(cwd, Path::new(""))?
+    };
+    Ok(resolved_identity(&base, value))
+}
+
 pub(crate) fn project_id(root: &Path) -> String {
     let mut result = String::new();
     let normalized = root.to_string_lossy().replace('\\', "/");
@@ -569,7 +580,7 @@ impl<F: Files> Metadata<F> {
             }
             if self
                 .files
-                .stat(&resolve(&self.cwd, &marker))
+                .stat(&self.cwd.join(&marker))
                 .is_ok_and(|stat| stat.directory)
             {
                 return Some(marker);
@@ -662,23 +673,36 @@ impl<F: Files> Metadata<F> {
 
     /// Registration membership without reading unrelated chat summaries. Archive
     /// containment must be checked before any transcript content can be opened.
-    pub(crate) fn has_registered_project(&self, requested: &Path) -> bool {
+    pub(crate) fn has_registered_project(&self, requested: &Path) -> io::Result<bool> {
         let projects = self.home.join("projects");
-        self.files
-            .entries(&projects)
-            .unwrap_or_default()
-            .into_iter()
-            .any(|(id, _)| {
-                self.files
-                    .stat(&projects.join(&id))
-                    .is_ok_and(|stat| stat.directory)
-                    && self.registered_path(&id).is_some_and(|root| {
-                        let root = resolve(&self.cwd, &root);
-                        root != self.home && root == requested
-                    })
-            })
+        let direct_id = project_id(requested);
+        let matches = |id: &str| -> io::Result<bool> {
+            if !self
+                .files
+                .stat(&projects.join(id))
+                .is_ok_and(|stat| stat.directory)
+            {
+                return Ok(false);
+            }
+            let Some(root) = self.registered_path(id) else {
+                return Ok(false);
+            };
+            let root = resolve_process_path(&self.cwd, Path::new(&root))?;
+            Ok(root != self.home && root == requested)
+        };
+        // TS resolver checks the requested project's direct id before scanning
+        // unrelated registrations (whose relative markers may need cwd).
+        if matches(&direct_id)? {
+            return Ok(true);
+        }
+        for (id, directory) in self.files.entries(&projects).unwrap_or_default() {
+            if directory && id != direct_id && matches(&id)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
-    pub fn list_projects(&self) -> JsValue {
+    pub fn list_projects(&self) -> io::Result<JsValue> {
         let projects_dir = self.home.join("projects");
         let mut projects = Vec::new();
         // TS cc7c4e6 src/web/server/listProjects.ts:30-34 returns [] on every
@@ -692,7 +716,7 @@ impl<F: Files> Metadata<F> {
             let Some(root) = self.registered_path(&id) else {
                 continue;
             };
-            if resolve(&self.cwd, &root) == self.home {
+            if resolve_process_path(&self.cwd, Path::new(&root))? == self.home {
                 continue;
             }
             projects.push(self.summary(
@@ -714,40 +738,46 @@ impl<F: Files> Metadata<F> {
                 .partial_cmp(&activity(left))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        object([("projects", JsValue::Array(projects))])
+        Ok(object([("projects", JsValue::Array(projects))]))
     }
-    fn describe_storage(&self, root: &str, identity: Option<&str>) -> Option<PathBuf> {
+    fn describe_storage(&self, root: &str, identity: Option<&str>) -> io::Result<Option<PathBuf>> {
         let projects_dir = self.home.join("projects");
-        let target = resolve(&self.cwd, root);
+        let target = resolve_process_path(&self.cwd, Path::new(root))?;
         let candidate = projects_dir.join(project_id(&target));
-        let matches = |marker: &str| {
-            identity
-                .is_some_and(|identity| resolve(&self.cwd, marker) == resolve(&self.cwd, identity))
+        let matches = |marker: &str| -> io::Result<bool> {
+            let Some(identity) = identity else {
+                return Ok(false);
+            };
+            Ok(resolve_process_path(&self.cwd, Path::new(marker))?
+                == resolve_process_path(&self.cwd, Path::new(identity))?)
         };
         let mut legacy = None;
         if self.files.stat(&candidate).is_ok_and(|stat| stat.directory) {
             match self.marker(&candidate) {
-                Some(marker) if !marker.is_empty() && matches(&marker) => {
-                    return Some(candidate);
-                }
-                None => legacy = Some(candidate),
-                Some(marker) if marker.is_empty() => legacy = Some(candidate),
-                _ => {}
+                Some(marker) if !marker.is_empty() => match matches(&marker) {
+                    Ok(true) => return Ok(Some(candidate)),
+                    Err(_) => legacy = Some(candidate),
+                    Ok(false) => {}
+                },
+                _ => legacy = Some(candidate),
             }
         }
         // TS returns undefined on failed readdir, even if legacy was found.
-        for (id, directory) in self.files.entries(&projects_dir).ok()? {
+        let Ok(entries) = self.files.entries(&projects_dir) else {
+            return Ok(None);
+        };
+        for (id, directory) in entries {
             if directory
                 && self
                     .marker(&projects_dir.join(&id))
-                    .is_some_and(|marker| !marker.is_empty() && matches(&marker))
+                    .is_some_and(|marker| !marker.is_empty() && matches(&marker).unwrap_or(false))
             {
-                return Some(projects_dir.join(id));
+                return Ok(Some(projects_dir.join(id)));
             }
         }
-        legacy
+        Ok(legacy)
     }
-    pub fn describe_project(&self, root: &JsString) -> JsValue {
+    pub fn describe_project(&self, root: &JsString) -> io::Result<JsValue> {
         // Node's fs layer replacement-encodes a lone surrogate, but the
         // registry identity comparison in `listProjects.ts:120-160` keeps the
         // original JS string. Resolve raw UTF-16 units first: `..` can drop a
@@ -757,12 +787,53 @@ impl<F: Files> Metadata<F> {
         // otherwise `"\ud800"` would alias onto a project whose path contains
         // literal U+FFFD.
         let path = String::from_utf16_lossy(root.units());
-        let identity = resolved_identity(&self.cwd, root);
-        let storage = self.describe_storage(&path, identity.as_deref());
-        self.summary(&path, identity.as_deref(), storage.as_deref(), root.clone())
+        let identity = resolve_process_identity(&self.cwd, root)?;
+        let storage = self.describe_storage(&path, identity.as_deref())?;
+        Ok(self.summary(&path, identity.as_deref(), storage.as_deref(), root.clone()))
     }
+    // Explicit-base legacy API used by session_chat_dir. Native Metadata RPCs
+    // use process_chat_dir below, which preserves lazy cwd errors. The native
+    // assembly callers still pass their configured project; see #1154 review
+    // follow-up before A7.2 for that separate storage/registration path.
     pub(crate) fn chat_dir(&self, root: &str) -> PathBuf {
         self.chat_dir_with_identity(root, Some(root))
+    }
+    pub(crate) fn process_chat_dir(&self, root: &str) -> io::Result<PathBuf> {
+        self.process_chat_dir_with_identity(root, Some(root))
+    }
+    fn process_chat_dir_with_identity(
+        &self,
+        root: &str,
+        identity: Option<&str>,
+    ) -> io::Result<PathBuf> {
+        let target = resolve_process_path(&self.cwd, Path::new(root))?;
+        let projects_dir = self.home.join("projects");
+        // findStoredProjectId catches lookup/marker resolution errors and falls
+        // back to the lexical id (paths.ts:127-155).
+        for (id, directory) in self.files.entries(&projects_dir).unwrap_or_default() {
+            if !directory {
+                continue;
+            }
+            let Some(marker) = self
+                .marker(&projects_dir.join(&id))
+                .filter(|m| !m.is_empty())
+            else {
+                continue;
+            };
+            let Ok(marker_path) = resolve_process_path(&self.cwd, Path::new(&marker)) else {
+                break;
+            };
+            if identity.is_some()
+                && marker_path == target
+                && self
+                    .files
+                    .stat(&self.cwd.join(&marker))
+                    .is_ok_and(|s| s.directory)
+            {
+                return Ok(projects_dir.join(id).join("chats"));
+            }
+        }
+        Ok(projects_dir.join(project_id(&target)).join("chats"))
     }
     fn chat_dir_with_identity(&self, root: &str, identity: Option<&str>) -> PathBuf {
         let target = resolve(&self.cwd, root);
@@ -802,16 +873,23 @@ impl<F: Files> Metadata<F> {
                     stat.ctime_ms
                 }
             });
-        let chat_dir = self.chat_dir_with_identity(root, identity);
+        let chat_dir = self.process_chat_dir_with_identity(root, identity).ok();
         let mut activity = Vec::new();
-        for (name, _) in self.files.entries(&chat_dir).unwrap_or_default() {
+        for (name, _) in chat_dir
+            .as_deref()
+            .and_then(|dir| self.files.entries(dir).ok())
+            .unwrap_or_default()
+        {
             let Some(session) = name.strip_suffix(".jsonl") else {
                 continue;
             };
             if is_internal_session(session) {
                 continue;
             }
-            let path = chat_dir.join(name);
+            let path = chat_dir
+                .as_ref()
+                .expect("catalog entries require a chat directory")
+                .join(name);
             let Ok(stat) = self.files.stat(&path) else {
                 continue;
             };

@@ -2,7 +2,7 @@
 //! no retention window. Custom authorization/retention/artifact stores are A6
 //! extension points, unimplemented here (not exemptions).
 use crate::{
-    metadata::{Files, Metadata, js_trim, object, resolve, resolved_identity, text_field},
+    metadata::{Files, Metadata, js_trim, object, resolve, resolve_process_identity, text_field},
     project_files::{has_unpaired_surrogate, node_collator, node_locale},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -205,7 +205,7 @@ fn unknown_project_key(units: &[u16]) -> Error {
 fn project<F: Files>(metadata: &Metadata<F>, params: &JsValue) -> Result<std::path::PathBuf> {
     let value = field(params, "projectKey");
     let requested = if nullish(value) {
-        metadata.cwd.clone()
+        crate::metadata::resolve_process_path(&metadata.cwd, Path::new("")).map_err(cwd_error)?
     } else {
         let Some(s) = value.as_string() else {
             return Err(path_type(value, "paths[0]"));
@@ -214,7 +214,7 @@ fn project<F: Files>(metadata: &Metadata<F>, params: &JsValue) -> Result<std::pa
         // but it folds `.`/`..` first. A surrogate-bearing segment removed by
         // `..` therefore never reaches the comparison; only a surviving one is
         // unrepresentable, and disk markers (valid UTF-8) cannot match it.
-        let Some(requested) = resolved_identity(&metadata.cwd, s) else {
+        let Some(requested) = resolve_process_identity(&metadata.cwd, s).map_err(cwd_error)? else {
             return Err(unknown_project_key(s.units()));
         };
         PathBuf::from(requested)
@@ -222,7 +222,10 @@ fn project<F: Files>(metadata: &Metadata<F>, params: &JsValue) -> Result<std::pa
     if requested == metadata.home {
         return Ok(requested);
     }
-    if registry(metadata).has_registered_project(&requested) {
+    if registry(metadata)
+        .has_registered_project(&requested)
+        .map_err(cwd_error)?
+    {
         return Ok(requested);
     }
     // The fallback key is the host's cwd path (a Rust `Path`); a string key
@@ -231,9 +234,13 @@ fn project<F: Files>(metadata: &Metadata<F>, params: &JsValue) -> Result<std::pa
         Some(s) => unknown_project_key(s.units()),
         None => error(
             "PROJECT_NOT_FOUND",
-            &format!("Unknown projectKey: {}", metadata.cwd.to_string_lossy()),
+            &format!("Unknown projectKey: {}", requested.to_string_lossy()),
         ),
     })
+}
+fn cwd_error(e: io::Error) -> Error {
+    let (code, message) = crate::metadata::process_cwd_diagnostic(&e);
+    (code, message.into())
 }
 fn fs_error(e: io::Error, method: &str, operation: &str, path: &Path) -> Error {
     if crate::project_files::nofollow_loop(&e) {
@@ -303,7 +310,8 @@ fn transcript<F: Files>(
     method: &str,
 ) -> Result<Option<Vec<JsValue>>> {
     let path = registry(metadata)
-        .chat_dir(&project.to_string_lossy())
+        .process_chat_dir(&project.to_string_lossy())
+        .map_err(cwd_error)?
         .join(format!("{}.jsonl", session_id(session)));
     if path.as_os_str().to_string_lossy().contains('\0') {
         return Err((
