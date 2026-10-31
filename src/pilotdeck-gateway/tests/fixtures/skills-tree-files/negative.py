@@ -18,8 +18,8 @@ import tempfile
 REPO = Path(__file__).resolve().parents[5]
 LOGS = REPO / '_tmp/20261023-issue-595-tree-files'
 RELATIVE = Path('src/pilotdeck-gateway/src/skills/import.rs')
-TARGET = REPO / 'src/target'
-assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve()
+TARGET = REPO / '_build/cargo-target'
+assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve(), '#1166 use this worktree _build/cargo-target only'
 ENV = dict(os.environ, CARGO_TARGET_DIR=str(TARGET))
 ORIGINAL = (REPO / RELATIVE).read_bytes()
 

@@ -41,7 +41,7 @@ Rust `compaction_maintenance_reentry_matches_real_ts` 在同层
 ```sh
 cd src
 CARGO_HOME=/Users/da/ws/pilotdeck-rs/_build/cargo-home \
-CARGO_TARGET_DIR=/Users/da/ws/pilotdeck-rs/_build/wt-a6-recorder/src/target \
+CARGO_TARGET_DIR="$PWD/../_build/cargo-target" \
 cargo test --locked --offline -p pilotdeck-gateway \
   --test compaction_orchestrator --test compaction_recovery_loop
 ```
@@ -58,7 +58,7 @@ cd src
 PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck \
 PDRS_GIT=/usr/bin/git LANG=en_US.UTF-8 \
 CARGO_HOME=/Users/da/ws/pilotdeck-rs/_build/cargo-home \
-CARGO_TARGET_DIR=/Users/da/ws/pilotdeck-rs/_build/wt-a6-recorder/src/target \
+CARGO_TARGET_DIR="$PWD/../_build/cargo-target" \
 cargo test --locked --offline -p pilotdeck-gateway --test compaction_orchestrator \
   generator_twice_is_byte_identical -- --ignored
 ```

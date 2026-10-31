@@ -8,6 +8,7 @@ restores, reruns, and accounts for every mutation before a nonzero summary.
 import argparse
 import importlib.util
 import os
+import subprocess
 from pathlib import Path
 import sys
 
@@ -26,12 +27,80 @@ YAML = ROOT / 'src/pilotdeck-yaml/tests/run_resource_scaling.py'
 ROUND6 = FIXTURES / 'edgeclaw-entries/negative_round6.py'
 ROUND7 = FIXTURES / 'edgeclaw-entries/negative_round7.py'
 TOOL_BUDGET = FIXTURES / 'tool-budget/negative_project.py'
+PLUGIN_PANIC = FIXTURES / 'plugin-runtime/panic-negative.py'
+PLUGIN_NOTIFY = FIXTURES / 'plugin-runtime/notify-window-negative.py'
+MODEL_FACTORY = FIXTURES / 'model-factory/negative-controls.py'
+TURN_GATEWAY = FIXTURES / 'turn-gateway/negative.py'
+TURN_FENCE = FIXTURES / 'turn-gateway/negative-fence.py'
+SKILLS_TREE = FIXTURES / 'skills-tree-files/negative.py'
+SOURCE_IDENTITY = FIXTURES.parent / 'upgrade/source_identity.mjs'
 JUDGE = FIXTURES / 'negative-output-directory/negative.py'
 spec = importlib.util.spec_from_file_location('workspace_python_judge', JUDGE)
 judge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(judge)
 
 cases = [
+    ('model-factory-cargo-env-omitted', MODEL_FACTORY,
+     'cwd=root, env=env, timeout=100', 'cwd=root, timeout=100',
+     'RunnerTargets.test_model_factory_target_admission', '#1166 model-factory runner shares the admissible target'),
+    ('plugin-panic-source-target', PLUGIN_PANIC,
+     "TARGET = ROOT / '_build/cargo-target'", "TARGET = ROOT / 'src/target'",
+     'RunnerTargets.test_plugin_panic_target_admission', '#1166 plugin-panic runner shares the admissible target'),
+    ('plugin-panic-accept-source-target', PLUGIN_PANIC,
+     "assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve(), '#1166 use this worktree _build/cargo-target only'", "assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() in {TARGET.resolve(), (ROOT / 'src/target').resolve()}, '#1166 use this worktree _build/cargo-target only'",
+     'RunnerTargets.test_plugin_panic_target_admission', '#1166 plugin-panic runner shares the admissible target'),
+    ('plugin-panic-missing-cargo-target', PLUGIN_PANIC,
+     'CARGO_TARGET_DIR=str(TARGET), ', '',
+     'RunnerTargets.test_plugin_panic_target_admission', '#1166 plugin-panic runner shares the admissible target'),
+    ('plugin-notify-source-target', PLUGIN_NOTIFY,
+     "TARGET = ROOT / '_build/cargo-target'", "TARGET = ROOT / 'src/target'",
+     'RunnerTargets.test_plugin_notify_target_admission', '#1166 plugin-notify runner shares the admissible target'),
+    ('plugin-notify-accept-source-target', PLUGIN_NOTIFY,
+     "assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve(), '#1166 use this worktree _build/cargo-target only'", "assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() in {TARGET.resolve(), (ROOT / 'src/target').resolve()}, '#1166 use this worktree _build/cargo-target only'",
+     'RunnerTargets.test_plugin_notify_target_admission', '#1166 plugin-notify runner shares the admissible target'),
+    ('plugin-notify-missing-cargo-target', PLUGIN_NOTIFY,
+     'CARGO_TARGET_DIR=str(TARGET), ', '',
+     'RunnerTargets.test_plugin_notify_target_admission', '#1166 plugin-notify runner shares the admissible target'),
+    ('model-factory-source-target', MODEL_FACTORY,
+     "TARGET = root / '_build/cargo-target'", "TARGET = root / 'src/target'",
+     'RunnerTargets.test_model_factory_target_admission', '#1166 model-factory runner shares the admissible target'),
+    ('model-factory-accept-source-target', MODEL_FACTORY,
+     "assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve(), '#1166 use this worktree _build/cargo-target only'", "assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() in {TARGET.resolve(), (root / 'src/target').resolve()}, '#1166 use this worktree _build/cargo-target only'",
+     'RunnerTargets.test_model_factory_target_admission', '#1166 model-factory runner shares the admissible target'),
+    ('model-factory-missing-cargo-target', MODEL_FACTORY,
+     ', CARGO_TARGET_DIR=str(TARGET)', '',
+     'RunnerTargets.test_model_factory_target_admission', '#1166 model-factory runner shares the admissible target'),
+    ('turn-gateway-source-target', TURN_GATEWAY,
+     "TARGET = repo / '_build/cargo-target'", "TARGET = repo / 'src/target'",
+     'RunnerTargets.test_turn_gateway_target_admission', '#1166 turn-gateway runner shares the admissible target'),
+    ('turn-gateway-accept-source-target', TURN_GATEWAY,
+     "assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve(), '#1166 use this worktree _build/cargo-target only'", "assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() in {TARGET.resolve(), (repo / 'src/target').resolve()}, '#1166 use this worktree _build/cargo-target only'",
+     'RunnerTargets.test_turn_gateway_target_admission', '#1166 turn-gateway runner shares the admissible target'),
+    ('turn-gateway-missing-cargo-target', TURN_GATEWAY,
+     'CARGO_TARGET_DIR=str(TARGET), ', '',
+     'RunnerTargets.test_turn_gateway_target_admission', '#1166 turn-gateway runner shares the admissible target'),
+    ('turn-fence-source-target', TURN_FENCE,
+     "TARGET = repo / '_build/cargo-target'", "TARGET = repo / 'src/target'",
+     'RunnerTargets.test_turn_fence_target_admission', '#1166 turn-fence runner shares the admissible target'),
+    ('turn-fence-accept-source-target', TURN_FENCE,
+     "assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve(), '#1166 use this worktree _build/cargo-target only'", "assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() in {TARGET.resolve(), (repo / 'src/target').resolve()}, '#1166 use this worktree _build/cargo-target only'",
+     'RunnerTargets.test_turn_fence_target_admission', '#1166 turn-fence runner shares the admissible target'),
+    ('turn-fence-missing-cargo-target', TURN_FENCE,
+     'CARGO_TARGET_DIR=str(TARGET), ', '',
+     'RunnerTargets.test_turn_fence_target_admission', '#1166 turn-fence runner shares the admissible target'),
+    ('skills-tree-source-target', SKILLS_TREE,
+     "TARGET = REPO / '_build/cargo-target'", "TARGET = REPO / 'src/target'",
+     'RunnerTargets.test_skills_tree_target_admission', '#1166 skills-tree runner shares the admissible target'),
+    ('skills-tree-accept-source-target', SKILLS_TREE,
+     "assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve(), '#1166 use this worktree _build/cargo-target only'", "assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() in {TARGET.resolve(), (REPO / 'src/target').resolve()}, '#1166 use this worktree _build/cargo-target only'",
+     'RunnerTargets.test_skills_tree_target_admission', '#1166 skills-tree runner shares the admissible target'),
+    ('skills-tree-missing-cargo-target', SKILLS_TREE,
+     ', CARGO_TARGET_DIR=str(TARGET)', '',
+     'RunnerTargets.test_skills_tree_target_admission', '#1166 skills-tree runner shares the admissible target'),
+    ('source-identity-source-target', SOURCE_IDENTITY,
+     "targetDir=process.env.CARGO_TARGET_DIR??join(root,'_build/cargo-target')",
+     "targetDir=process.env.CARGO_TARGET_DIR??join(root,'src/target')",
+     'RunnerTargets.test_source_identity_target_admission', '#1166 source-identity helper defaults outside src'),
     ('tool-budget-source-target', TOOL_BUDGET,
      "TARGET = REPO / '_build/cargo-target'", "TARGET = REPO / 'src/target'",
      'RunnerTargets.test_tool_budget_target_admission', '#1166 tool-budget runner shares the admissible target'),
@@ -54,6 +123,11 @@ cases = [
     ('skip-toolchain', SOURCE, "areas = ('src', '.cargo', ':(top,glob)rust-toolchain*')",
      "areas = ('src', '.cargo')",
      'WorkspacePristine.test_clean_and_all_input_categories', '#1166 all workspace inputs reject residue'),
+    ('scanner-offline-bootstrap', SOURCE,
+     "['cargo', 'build', '--locked', '--manifest-path', 'src/Cargo.toml'",
+     "['cargo', 'build', '--offline', '--manifest-path', 'src/Cargo.toml'",
+     'ScannerBootstrap.test_fresh_target_first_mutation_bootstraps_inside_pristine_lock',
+     '#1166 cold first mutation prepares inside pristine lease and warm reuses helper'),
     ('no-staged-diff', SOURCE, "for options in ((), ('--cached',)):",
      'for options in ((),):',
      'WorkspacePristine.test_staged_cancellation_is_rejected', '#1166 staged drift cannot hide behind HEAD worktree'),
@@ -294,7 +368,7 @@ cases = [
     ('scanner-nonzero-accepted', SOURCE, "if result.returncode != 0:\n            raise ValueError('Rust scanner failed: '",
      "if False and result.returncode != 0:\n            raise ValueError('Rust scanner failed: '",
      'WorkspacePristine.test_scanner_failure_is_rejected', '#1166 scanner nonzero must fail closed'),
-    ('scanner-identity-ignored', SOURCE, "raise ValueError('Rust scanner identity mismatch; prebuild the current example offline')",
+    ('scanner-identity-ignored', SOURCE, "raise ValueError('Rust scanner identity mismatch; prebuild the current example')",
      'return ()',
      'WorkspacePristine.test_scanner_identity_is_rejected', '#1166 stale scanner identity must fail closed'),
     ('scanner-json-error-ignored', SOURCE, 'except (ValueError, OSError, subprocess.SubprocessError) as error:\n        raise SourceBaselineError',
@@ -356,6 +430,11 @@ def main():
                 if path.suffix == '.py':
                     compile(candidate, str(path), 'exec')
                     print(f'{name}: anchor unique; Python candidate compile PASS (not executed)')
+                elif path.suffix == '.mjs':
+                    result = subprocess.run(['node', '--input-type=module', '--check'], input=candidate,
+                                            text=True, capture_output=True, timeout=30)
+                    result.check_returncode()
+                    print(f'{name}: anchor unique; Node candidate compile PASS (not executed)')
                 else:
                     print(f'{name}: anchor unique; Rust compile requires committed HEAD on host')
             except Exception as error:
@@ -368,6 +447,8 @@ def main():
     out = new_output_directory(args.output)
     records = []
     guarded = [SOURCE, TESTS, YAML, ROUND6, ROUND7, TOOL_BUDGET, JUDGE, SCANNER, DISCOVERY, Path(__file__).resolve(),
+               PLUGIN_PANIC, PLUGIN_NOTIFY, MODEL_FACTORY, TURN_GATEWAY, TURN_FENCE, SKILLS_TREE, SOURCE_IDENTITY,
+               FIXTURES.parent / 'upgrade/source_identity.test.mjs',
                FIXTURES / 'negative_suite.py', FIXTURES / 'negative_panic.py',
                FIXTURES / 'pending_reanchor.py']
 
@@ -405,6 +486,10 @@ def main():
                         written = True
                         if path.suffix == '.rs':
                             build_helper(name + '-compile')
+                        elif path.suffix == '.mjs':
+                            result = run_owned(['node', '--check', str(path)], cwd=ROOT, env=env, timeout=30)
+                            exclusive_write(out / (name + '-compile.log'), result.stdout + result.stderr)
+                            result.check_returncode()
                         else:
                             compile(path.read_bytes(), str(path), 'exec')
                             exclusive_write(out / (name + '-compile.log'), '#1166 on-disk Python compile PASS\n')

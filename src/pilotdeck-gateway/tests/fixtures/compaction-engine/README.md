@@ -18,7 +18,7 @@
 ```sh
 cd src
 CARGO_HOME=/Users/da/ws/pilotdeck-rs/_build/cargo-home \
-CARGO_TARGET_DIR=/Users/da/ws/pilotdeck-rs/_build/wt-a63-pr1/src/target \
+CARGO_TARGET_DIR="$PWD/../_build/cargo-target" \
 cargo test --locked --offline -p pilotdeck-gateway --test compaction_engine
 ```
 
@@ -33,7 +33,7 @@ Rust 的 ignored regeneration 测试在两个独占 `Scratch` 子目录运行生
 PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck \
 PDRS_GIT=/usr/bin/git LANG=en_US.UTF-8 \
 CARGO_HOME=/Users/da/ws/pilotdeck-rs/_build/cargo-home \
-CARGO_TARGET_DIR=/Users/da/ws/pilotdeck-rs/_build/wt-a63-pr1/src/target \
+CARGO_TARGET_DIR="$PWD/../_build/cargo-target" \
 cargo test --locked --offline -p pilotdeck-gateway --test compaction_engine \
 generator_twice_is_byte_identical -- --ignored
 ```

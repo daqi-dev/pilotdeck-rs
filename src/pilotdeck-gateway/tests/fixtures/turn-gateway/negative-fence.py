@@ -23,6 +23,9 @@ from negative_source import assertion_message_present
 fixture = Path(__file__).resolve().parent
 workspace = fixture.parents[3]
 repo = workspace.parent
+TARGET = repo / '_build/cargo-target'
+assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve(), '#1166 use this worktree _build/cargo-target only'
+env = dict(os.environ, CARGO_TARGET_DIR=str(TARGET), CARGO_NET_OFFLINE='true')
 turn = workspace / 'pilotdeck-gateway/src/runtime/turn'
 gateway = turn / 'gateway.rs'
 submit = turn / 'submit.rs'
@@ -31,10 +34,6 @@ submit_tests = turn / 'submit_tests.rs'
 session = workspace / 'pilotdeck-gateway/src/runtime/session/mod.rs'
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=True)
-env = dict(os.environ, CARGO_NET_OFFLINE='true')
-target_dir = Path(env['CARGO_TARGET_DIR']).resolve()
-assert target_dir in {(workspace / 'target').resolve(), (repo / '_build/cargo-target').resolve()}, \
-    'use this tree src/target or _build/cargo-target'
 assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
 for key in ['PDRS_GATEWAY_CASE', 'PDRS_SUBMIT_CAPABILITY']:
     env.pop(key, None)

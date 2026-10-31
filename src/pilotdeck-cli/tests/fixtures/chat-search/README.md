@@ -16,7 +16,7 @@ D0 的 30 个场景是本 JSON 的子集，沿用相同夹具、argv、stdout、
 PDRS_CLI_PARITY_SUITE=chat-search python3 -I scripts/cli-parity/run_round.py \
   --baseline /Users/da/ws/pilotdeck-rs/resources/PilotDeck \
   --node /opt/homebrew/bin/node --output _tmp/20261023-d2-pr2-chat-search/d0 \
-  --rust-bin "$PWD/src/target/debug/pilotdeck" --rust-source "$PWD"
+  --rust-bin "$PWD/_build/cargo-target/debug/pilotdeck" --rust-source "$PWD"
 ```
 
 D0 保留原隔离能力探针、共享锁、30 场景预算和两轮 TS 定标。宿主不具备能力时结果必须记录为 BLOCKED。

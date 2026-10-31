@@ -599,7 +599,7 @@ except SourceBaselineError: print('REFUSED')
 
 
 class RunnerTargets(unittest.TestCase):
-    def check_runner(self, relative, env_name, arguments, marker):
+    def check_runner(self, relative, env_name, arguments, marker, *, skills_copy=False, cargo_call=False):
         # Execute the real script up to its first source lease. Stop before any
         # product mutation, but use the real shared target normalization.
         class Admitted(Exception):
@@ -607,20 +607,32 @@ class RunnerTargets(unittest.TestCase):
 
         script = FIXTURES / relative
         code = compile(script.read_bytes(), str(script), 'exec')
+        if cargo_call:
+            # Evaluate the real Python call expression with inert values, so
+            # omitting env=env cannot hide behind a correct local dictionary.
+            calls = [node for node in ast.walk(ast.parse(script.read_bytes()))
+                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                     and node.func.id == 'run_owned']
+            self.assertTrue(len(calls) == 1, marker)
+            call_code = compile(ast.Expression(calls[0]), str(script), 'eval')
         target = str(ROOT / '_build/cargo-target')
         for supplied in (target, None, str(ROOT / 'src/target'), str(ROOT.parent / 'other-target')):
             with self.subTest(target=supplied), tempfile.TemporaryDirectory(prefix='pdrs1166-runner-') as out:
-                namespace = dict(__file__=str(script), __name__='__main__')
+                namespace = dict(__file__=str(script), __name__='admission_probe' if skills_copy else '__main__')
                 observed = []
 
-                def admission(root, paths):
-                    cargo_env = namespace[env_name]
+                def admission(root, paths, cargo_env=None):
+                    cargo_env = namespace[env_name] if cargo_env is None else cargo_env
+                    if cargo_call:
+                        cargo_env = eval(call_code, dict(namespace, target=['--lib'], test='admission',
+                                                        run_owned=lambda *args, **kwargs: kwargs.get('env', os.environ)))
                     scanner_env = api._scanner_environment()
                     observed.append((root, cargo_env['CARGO_TARGET_DIR'], scanner_env['CARGO_TARGET_DIR'],
                                      api._target_environment(root, cargo_env)['CARGO_TARGET_DIR']))
                     raise Admitted()
 
                 env = dict(os.environ)
+                env['PDRS_BASELINE'] = str(ROOT / 'resources/PilotDeck')
                 env.pop('CARGO_TARGET_DIR', None)
                 if supplied is not None:
                     env['CARGO_TARGET_DIR'] = supplied
@@ -630,9 +642,17 @@ class RunnerTargets(unittest.TestCase):
                         patch.object(api, 'mutating_sources', side_effect=admission):
                     try:
                         exec(code, namespace)
+                        if skills_copy:
+                            # Exercise the existing run() through its actual
+                            # Popen environment; never create a source copy.
+                            namespace['LOGS'] = Path(out)
+                            with patch.object(subprocess, 'run'), patch.object(
+                                    subprocess, 'Popen', side_effect=lambda *args, **kwargs:
+                                    admission(ROOT, [], kwargs['env'])):
+                                namespace['run'](ROOT, 'admission', 'unused')
                     except Admitted:
                         admitted = True
-                    except (AssertionError, RuntimeError) as caught:
+                    except (AssertionError, RuntimeError, KeyError) as caught:
                         error = caught
                 if supplied in (target, None):
                     self.assertTrue(admitted and error is None, marker)
@@ -653,6 +673,38 @@ class RunnerTargets(unittest.TestCase):
         self.check_runner('edgeclaw-entries/negative_round7.py', 'env', ['{out}'],
                           '#1166 round7 runner shares the admissible target')
 
+    def test_plugin_panic_target_admission(self):
+        self.check_runner('plugin-runtime/panic-negative.py', 'ENV', ['{out}/evidence'],
+                          '#1166 plugin-panic runner shares the admissible target')
+
+    def test_plugin_notify_target_admission(self):
+        self.check_runner('plugin-runtime/notify-window-negative.py', 'env', ['{out}/evidence'],
+                          '#1166 plugin-notify runner shares the admissible target')
+
+    def test_model_factory_target_admission(self):
+        self.check_runner('model-factory/negative-controls.py', 'env', ['{out}/evidence'],
+                          '#1166 model-factory runner shares the admissible target', cargo_call=True)
+
+    def test_turn_gateway_target_admission(self):
+        self.check_runner('turn-gateway/negative.py', 'env', ['{out}/evidence'],
+                          '#1166 turn-gateway runner shares the admissible target')
+
+    def test_turn_fence_target_admission(self):
+        self.check_runner('turn-gateway/negative-fence.py', 'env', ['{out}/evidence'],
+                          '#1166 turn-fence runner shares the admissible target')
+
+    def test_skills_tree_target_admission(self):
+        self.check_runner('skills-tree-files/negative.py', 'ENV', [],
+                          '#1166 skills-tree runner shares the admissible target', skills_copy=True)
+
+    def test_source_identity_target_admission(self):
+        name = '#1166 build evidence target precedence keeps default outside src'
+        result = subprocess.run(['node', '--test', '--test-reporter=tap', '--test-name-pattern=^' + name + '$',
+                                 str(FIXTURES.parent / 'upgrade/source_identity.test.mjs')],
+                                capture_output=True, text=True, timeout=30)
+        self.assertTrue(result.returncode == 0 and ('ok 1 - \\' + name) in result.stdout,
+                        '#1166 source-identity helper defaults outside src: ' + result.stdout + result.stderr)
+
 
 class ScannerBootstrap(unittest.TestCase):
     def test_fresh_target_first_mutation_bootstraps_inside_pristine_lock(self):
@@ -662,11 +714,11 @@ class ScannerBootstrap(unittest.TestCase):
             events = []
             def build(command, **kwargs):
                 events.append('build')
-                self.assertTrue(command[:3] == ['cargo', 'build', '--offline']
+                self.assertTrue(command[:3] == ['cargo', 'build', '--locked']
                                 and kwargs['env']['CARGO_TARGET_DIR'] == str(target)
                                 and kwargs['cwd'] == ROOT
                                 and kwargs['timeout'] == 1800 and kwargs['idle_timeout'] == 600,
-                                '#1166 cold scanner build uses bounded caller target')
+                                '#1166 cold scanner build uses locked bounded caller target')
                 executable.parent.mkdir(parents=True)
                 executable.write_text('synthetic Cargo artifact')
                 return subprocess.CompletedProcess(command, 0, '', '')

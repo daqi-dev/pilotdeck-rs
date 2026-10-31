@@ -20,16 +20,15 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_selection import baseline_passed, select
 
 ROOT = Path(__file__).resolve().parents[5]
+TARGET = ROOT / '_build/cargo-target'
+assert Path(os.environ.get('CARGO_TARGET_DIR', TARGET)).resolve() == TARGET.resolve(), '#1166 use this worktree _build/cargo-target only'
+ENV = dict(os.environ, CARGO_TARGET_DIR=str(TARGET), RUSTC_WRAPPER='', CARGO_BUILD_JOBS='4')
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/plugins.rs'
 OUT = Path(sys.argv[1]).resolve()
 OUT.mkdir(parents=True, exist_ok=False)
 with mutating_sources(ROOT, [SOURCE]) as snapshots:
     BASE = snapshots[SOURCE]
     TEXT = BASE.decode()
-    ENV = dict(os.environ, RUSTC_WRAPPER='', CARGO_BUILD_JOBS='4')
-    target_dir = Path(ENV.get('CARGO_TARGET_DIR', ROOT / 'src/target')).resolve()
-    assert target_dir in {(ROOT / 'src/target').resolve(), (ROOT / '_build/cargo-target').resolve()}, \
-        'use this tree src/target or _build/cargo-target'
 
     def replace(old, new):
         assert TEXT.count(old) == 1, f'expected one anchor: {old!r}'

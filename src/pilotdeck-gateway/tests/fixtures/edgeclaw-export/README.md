@@ -92,5 +92,5 @@ an outer lock on standalone overview; all source bytes are restored in finally.
 The r7 general/single case completes but violates the no-outer-lock invariant;
 its negative result is an invariant assertion, not a claimed deadlock. Other
 r6/r7 cyclic layouts fail by the parent deadline. Builds inherit the launcher's
-target directory (otherwise Cargo's existing `src/target`); no second target is
-created. Optional trailing `r6`, `r7`, `overview`, or `snapshot` selects a repair mutant.
+target directory: explicitly set `CARGO_TARGET_DIR="$PWD/_build/cargo-target"`
+from the repository root; no second target is created. Optional trailing `r6`, `r7`, `overview`, or `snapshot` selects a repair mutant.
