@@ -13,6 +13,9 @@ import re
 import shutil
 import sys
 
+# Kept in sync with recorder/fix3-negative.py by hand; extracting the shared
+# closure/guard helpers is M6 #1099 (#1139 fix-r1 sibling review).
+
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '_shared'))
 from negative_control import environment, scratch
@@ -27,12 +30,100 @@ TEST = ['cargo', 'test', '-p', 'pilotdeck-gateway', '--lib',
         '--', '--exact', '--nocapture', '--test-threads=4']
 
 
+def _skip_spacing(text, index):
+    """Skip whitespace and comments; an unterminated comment fails closed."""
+    while index < len(text):
+        if text[index].isspace():
+            index += 1
+        elif text.startswith('//', index):
+            end = text.find('\n', index)
+            index = len(text) if end < 0 else end + 1
+        elif text.startswith('/*', index):
+            end = text.find('*/', index + 2)
+            if end < 0:
+                raise ValueError(f'#1129 unterminated comment at offset {index}')
+            index = end + 2
+        else:
+            break
+    return index
+
+
+def _dynamic_import_arguments(text):
+    """Raw argument text of every dynamic ``import(...)`` call in ``text``.
+
+    Comments and whitespace between ``import`` and ``(`` are allowed, matching
+    real loaders; parentheses inside quoted strings or templates do not end the
+    argument. Static declarations (``import x from`` / ``import 'x'``) and
+    ``import.meta`` never reach the argument scan.
+    """
+    arguments = []
+    for found in re.finditer(r'\bimport\b', text):
+        index = _skip_spacing(text, found.end())
+        if index >= len(text) or text[index] != '(':
+            continue
+        start = _skip_spacing(text, index + 1)
+        index, depth, quote = start, 1, ''
+        while index < len(text) and depth:
+            character = text[index]
+            if quote:
+                if character == '\\':
+                    index += 1
+                elif character == quote:
+                    quote = ''
+            elif character in '\'"`':
+                quote = character
+            elif character == '(':
+                depth += 1
+            elif character == ')':
+                depth -= 1
+            index += 1
+        if depth:
+            raise ValueError(f'#1129 unterminated dynamic import at offset {start}')
+        arguments.append(text[start:index - 1].strip())
+    return arguments
+
+
+def _dynamic_import_targets(path, argument, source_root):
+    """Closure members of one dynamic import argument; unprovable is an error.
+
+    Literal specifiers (quoted, comment-free templates) join the closure when
+    relative or inside the repository. Everything the closure cannot prove —
+    templates with substitutions, variables, concatenations and absolute paths
+    outside the repository — is an error, never a silently skipped dependency
+    (#1139 fix-r1 P1, synced here). The one allowed computed specifier is the
+    fixed TS baseline loader: those sources live outside the repository and
+    oracle.json records their SHA-256 hashes.
+    """
+    quoted = re.fullmatch(r'''(['"])([^'"\n]*)\1''', argument)
+    if quoted is not None:
+        specifier = quoted[2]
+    elif re.fullmatch(r'`[^`]*`', argument) is not None and '${' not in argument:
+        specifier = argument[1:-1]
+    else:
+        if re.search(r'\bbaseline\b', argument):
+            return []
+        raise ValueError(
+            f'#1129 unrecognized dynamic import argument in {path}: {argument}')
+    if specifier.startswith(('./', '../')):
+        return [path.parent / specifier]
+    if not specifier.startswith('/'):
+        return []  # bare external module specifier, like a static import
+    resolved = Path(specifier).resolve()
+    if resolved.is_relative_to(source_root):
+        return [resolved]
+    raise ValueError(
+        f'#1129 absolute dynamic import outside the repository in {path}: {argument}')
+
+
 def local_import_closure(entry, source_root):
     """Find literal relative ESM imports, retaining their repository layout.
 
-    Like baseline_source_guard.mjs, scan from/import string specifiers (including
-    re-exports, side-effect imports and literal dynamic imports). This fixture
-    closure uses exact filenames; missing files are errors, never skipped.
+    Like baseline_source_guard.mjs, scan from/import string specifiers
+    (including re-exports and side-effect imports). Dynamic imports go through
+    the fail-closed argument scanner above, so a comment-separated or template
+    literal still joins the closure while anything unprovable is an error.
+    This fixture closure uses exact filenames; missing files are errors, never
+    skipped.
     """
     source_root = source_root.resolve()
     pending = [entry]
@@ -47,10 +138,12 @@ def local_import_closure(entry, source_root):
             raise FileNotFoundError(f'#1129 missing local import: {path}')
         seen.add(path)
         text = path.read_text()
-        for match in re.finditer(r'''(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])([^'"]+)\1''', text):
+        for match in re.finditer(r'''(?:\bfrom\s*|\bimport\s+)(['"])([^'"]+)\1''', text):
             specifier = match[2]
             if specifier.startswith(('./', '../')):
                 pending.append(path.parent / specifier)
+        for argument in _dynamic_import_arguments(text):
+            pending.extend(_dynamic_import_targets(path, argument, source_root))
     return sorted(seen)
 
 
@@ -74,6 +167,8 @@ def guarded_inputs():
                ))]
     # Discover imports only after the entry and runner are checked under the
     # tree lock; keep that same reentrant lock through copying and all controls.
+    # The bound --lib test sits inside the gateway product tree, so the shared
+    # product pristine check already guards the Rust criterion (#1139 fix-r1).
     with mutating_sources(REPO, guarded):
         with mutating_sources(REPO, local_import_closure(generator, REPO)):
             yield
@@ -84,8 +179,11 @@ def execute(name, command, env):
         slot = wait_for_slot(REPO / 'scripts/cargo-slots.sh', timeout=600, interval=15)
         print(slot.stdout + slot.stderr, end='', flush=True)
     print(f'--- {name} ---', flush=True)
+    # Every cargo call may pay a cold compile (the first positive control
+    # included), so all cargo commands share the 900 s compilation window;
+    # node runs keep the 240 s runtime window (#1139 fix-r1 P2, synced here).
     result = run_owned(command, cwd=REPO / 'src', env=env,
-                       timeout=900 if '--no-run' in command else 240)
+                       timeout=900 if command[0] == 'cargo' else 240)
     print(result.stdout + result.stderr, end='', flush=True)
     print(f'{name}: exit={result.returncode}', flush=True)
     return result
@@ -157,9 +255,12 @@ def main():
             ('add', '  scenarios.push(structuredClone(scenarios.at(-1)));', 26),
         ]:
             label = f'{name}-generated-run-registry-scenario'
+            # cargo would compile unmutated Rust here, so generator mutants
+            # carry no cargo receipt: their receipt is the node run of the
+            # mutated generator itself (#1139 fix-r1 P2, synced here).
             row = dict(mutation=label, test='run-registry/generate.mts::scenario-count',
                        assertion=f'run-registry oracle scenario count: {actual} !== 25',
-                       status='INVALID', reason='not run', compiled=False)
+                       status='INVALID', reason='not run', receipt='not run')
             try:
                 # Mirroring from the repository root also keeps ../../ imports
                 # and the provenance guard's import.meta.url inside scratch.
@@ -170,9 +271,9 @@ def main():
                 output = root / f'{name}-generated'
                 command = ['node', '--import', f'{baseline}/node_modules/tsx/dist/loader.mjs',
                            str(generator_path), str(output)]
-                compile_mutant(label, env)
-                row['compiled'] = True
-                row['status'], row['reason'] = generator_status(execute(label, command, env), actual)
+                result = execute(label, command, env)
+                row['receipt'] = f'generator mutant run: node exit={result.returncode}'
+                row['status'], row['reason'] = generator_status(result, actual)
                 if row['status'] == 'KILLED':
                     assert not (output / 'oracle.json').exists(), '#1129 failed generator published an oracle'
                 generator_path.write_text(source)
