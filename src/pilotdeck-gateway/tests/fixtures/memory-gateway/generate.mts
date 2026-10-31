@@ -280,6 +280,33 @@ await gatewayCase(
   ],
 );
 
+// The wrapper's blank check is `String.prototype.trim`, not just ASCII space:
+// U+00A0 / U+FEFF / U+2028 / U+2029 / U+3000 are whitespace, U+180E and
+// U+200B are not (Node v22.22.0, fix-r1 whitespace-probe.log). The blank
+// projectKey and sessionKey rows record the rejection; the non-whitespace
+// rows pass validation and keep their raw units through the seams.
+await gatewayCase('whitespace-trim-boundary', { capability: 'available', management: 'available' }, [
+  { op: 'memoryList', input: { projectKey: '\u00a0' } },
+  { op: 'memoryList', input: { projectKey: '\ufeff' } },
+  { op: 'memoryList', input: { projectKey: '\u2028' } },
+  { op: 'memoryList', input: { projectKey: '\u2029' } },
+  { op: 'memoryList', input: { projectKey: '\u3000' } },
+  { op: 'memoryList', input: { projectKey: '\u180e' } },
+  { op: 'memoryList', input: { projectKey: '\u200b' } },
+  { op: 'memoryList', input: { projectKey: PROJECT, sessionKey: '\u00a0' } },
+  { op: 'memoryList', input: { projectKey: PROJECT, sessionKey: '\ufeff' } },
+  { op: 'memoryList', input: { projectKey: PROJECT, sessionKey: '\u2028' } },
+  { op: 'memoryList', input: { projectKey: PROJECT, sessionKey: '\u2029' } },
+  { op: 'memoryList', input: { projectKey: PROJECT, sessionKey: '\u3000' } },
+  { op: 'memoryList', input: { projectKey: PROJECT, sessionKey: '\u180e' } },
+  { op: 'memoryList', input: { projectKey: PROJECT, sessionKey: '\u200b' } },
+  // A whitespace sessionKey is rejected by the wrapper's sessionKey
+  // validation before the wipe scope check; a non-whitespace one passes the
+  // scope check and reaches clearSession with its raw units.
+  { op: 'memoryWipe', input: { projectKey: PROJECT, scope: 'session', sessionKey: '\u00a0' } },
+  { op: 'memoryWipe', input: { projectKey: PROJECT, scope: 'session', sessionKey: '\u200b' } },
+]);
+
 const oracle = {
   sourceCommit,
   sourceSha256,

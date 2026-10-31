@@ -32,9 +32,9 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 - 每一步记录 `params`（object / undefined / null）、`input`、`resultJson` 或
   `error`（`{name, code, message}`）、以及 seam 调用序列 `calls`。
 
-## 覆盖（8 案例 50 步）
+## 覆盖（9 案例 66 步）
 
-- `list-project-key-validation`（12 步）：缺 projectKey、空串、空白串、数字、
+- `list-project-key-validation`（11 步）：缺 projectKey、空串、空白串、数字、
   布尔、null、数组、params 为 undefined/null（Node TypeError 文案）、原始值参数。
 - `list-session-key-validation`（8 步）：sessionKey 空串、空白、null、数字、
   布尔、数组、对象 → `INVALID_SESSION_KEY`；缺省（undefined）放行。
@@ -50,6 +50,12 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   `CAPABILITY_UNAVAILABLE`。
 - `project-key-lone-surrogate`（3 步）：`"\ud800"` 与 `"�"` 是不同 project，
   拒绝文案保留原始码元。
+- `whitespace-trim-boundary`（16 步）：包装层的空白判定是
+  `String.prototype.trim` 的完整空白集，不只是 ASCII 空格：U+00A0 / U+FEFF /
+  U+2028 / U+2029 / U+3000 视为空白（projectKey → `PROJECT_NOT_FOUND`、
+  sessionKey → `INVALID_SESSION_KEY`、wipe 的 session-scope 检查放行）；U+180E
+  与 U+200B 不是空白，原样放行（projectKey 继续解析、sessionKey 真值过滤、
+  `clearSession` 收到原始码元）。实测记录见 #1214 fix-r1 RESULT。
 
 ## 域限制
 
@@ -60,7 +66,9 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 
 ## 负控
 
-`negative_controls.py`：参数校验放松、scope 判别改错、wire 字段改名等变异，
+`negative_controls.py`：参数校验放松、scope 判别改错、wire 字段改名、
+`requires_host → Forward` 改 `Response`、`from_projection` 改回 disabled、
+`js_is_space_unit` 删一个空白码点等变异，每项绑定其专属点名测试与断言消息，
 逐项 KILLED / SURVIVED / INVALID 后汇总。新文件提交前不在 HEAD，
 `mutating_sources` 拒跑：提交后由协调者在宿主执行
 （`CARGO_TARGET_DIR` 由调用方设置）。

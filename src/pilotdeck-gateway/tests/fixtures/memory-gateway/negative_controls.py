@@ -32,9 +32,10 @@ FIXTURES = ROOT / "src/pilotdeck-gateway/tests/fixtures"
 TEST_TARGET = "memory_gateway"
 TEST = "gateway_replays_real_ts_wrapper_oracle"
 
-# (name, path, before, after, marker). All rows bind to the same replay test;
-# the marker is the dedicated per-cell message that proves the intended
-# assertion fired, not an unrelated unwrap/compile error.
+# (name, path, before, after, marker, bound test). The marker is the
+# dedicated per-cell message that proves the intended assertion fired, not
+# an unrelated unwrap/compile error; the bound test is the full libtest name
+# whose own panic block must carry that marker.
 mutations = [
     (
         "project-key-validation-relaxed",
@@ -42,6 +43,7 @@ mutations = [
         "        JsValue::String(text) if !js_trim_units(text.units()).is_empty() => Ok(text.clone()),\n",
         "        JsValue::String(text) => Ok(text.clone()),\n",
         "#1214 list-project-key-validation step 1 (memory_list): wire error must match the TS fixture",
+        "gateway_replays_real_ts_wrapper_oracle",
     ),
     (
         "session-key-validation-relaxed",
@@ -49,6 +51,7 @@ mutations = [
         "        JsValue::String(text) if !js_trim_units(text.units()).is_empty() => Ok(Some(text.clone())),\n",
         "        JsValue::String(text) => Ok(Some(text.clone())),\n",
         "#1214 list-session-key-validation step 0 (memory_list): wire error must match the TS fixture",
+        "gateway_replays_real_ts_wrapper_oracle",
     ),
     (
         "scope-discrimination-wrong",
@@ -56,6 +59,7 @@ mutations = [
         '        .is_some_and(|scope| scope.equals_str("session"))',
         '        .is_some_and(|scope| scope.equals_str("project"))',
         "#1214 wipe-scope-discrimination step 2 (memory_wipe): seam calls must match the TS fixture",
+        "gateway_replays_real_ts_wrapper_oracle",
     ),
     (
         "wipe-scope-check-dropped",
@@ -73,6 +77,7 @@ mutations = [
         "        }\n",
         "        let _ = scope_is_session(params);\n",
         "#1214 wipe-scope-discrimination step 2 (memory_wipe): seam calls must match the TS fixture",
+        "gateway_replays_real_ts_wrapper_oracle",
     ),
     (
         "params-typeerror-dropped",
@@ -80,6 +85,7 @@ mutations = [
         "    if let JsValue::Undefined | JsValue::Null = params {",
         "    if let JsValue::Null = params {",
         "#1214 list-project-key-validation step 7 (memory_list): wire error must match the TS fixture",
+        "gateway_replays_real_ts_wrapper_oracle",
     ),
     (
         "wire-field-wipe-renamed",
@@ -87,6 +93,7 @@ mutations = [
         '        object.insert("wiped".into(), JsValue::Bool(self.wiped));',
         '        object.insert("cleared".into(), JsValue::Bool(self.wiped));',
         "#1214 wipe-scope-discrimination step 0 (memory_wipe): wire result must match the TS fixture",
+        "gateway_replays_real_ts_wrapper_oracle",
     ),
     (
         "wire-field-list-renamed",
@@ -94,6 +101,39 @@ mutations = [
         '        object.insert("items".into(), JsValue::Array(self.items.clone()));',
         '        object.insert("entries".into(), JsValue::Array(self.items.clone()));',
         "#1214 list-session-key-validation step 7 (memory_list): wire result must match the TS fixture",
+        "gateway_replays_real_ts_wrapper_oracle",
+    ),
+    (
+        "forward-mapped-to-response",
+        SOURCE / "runtime/memory/gateway.rs",
+        "            Err(error) if error.requires_host() => MemoryDispatch::Forward,\n",
+        "            Err(error) if error.requires_host() => {\n"
+        "                MemoryDispatch::Response(error.to_js())\n"
+        "            }\n",
+        "#1214 memory_list must forward a requires_host boundary to the Node host",
+        "dispatch_forwards_requires_host_boundary",
+    ),
+    (
+        "from_projection-disabled",
+        SOURCE / "runtime/memory/gateway.rs",
+        "    pub fn from_projection(projection: MemoryProjection) -> Self {\n"
+        "        Self {\n"
+        "            projection: Some(projection),\n"
+        "        }\n"
+        "    }\n",
+        "    pub fn from_projection(_projection: MemoryProjection) -> Self {\n"
+        "        Self { projection: None }\n"
+        "    }\n",
+        "#1214 from_projection must serve memory_list through the wired projection",
+        "from_projection_serves_both_methods",
+    ),
+    (
+        "whitespace-unit-dropped",
+        SOURCE / "runtime/memory/mod.rs",
+        "            | 0xFEFF\n",
+        "",
+        "#1214 whitespace-trim-boundary step 1 (memory_list): wire error must match the TS fixture",
+        "gateway_replays_real_ts_wrapper_oracle",
     ),
 ]
 
@@ -116,8 +156,8 @@ def cargo(target, args):
     return run_owned(command + args, cwd=ROOT, env=ENV, timeout=1800)
 
 
-def run_bound_test():
-    return cargo(TEST_TARGET, [TEST, "--", "--exact"])
+def run_bound_test(test):
+    return cargo(TEST_TARGET, [test, "--", "--exact"])
 
 
 def compile_check():
@@ -150,17 +190,22 @@ def main():
         results.append({"name": name, "status": status, "reason": reason})
         print(f"{name}: {status} {reason}", flush=True)
 
-    # #819: the unmutated bound test must be green before any verdict counts.
-    baseline = run_bound_test()
-    log = baseline.stdout + baseline.stderr
-    (out / f"baseline-{TEST}.log").write_text(log)
-    baseline_ok = baseline.returncode == 0 and baseline_passed(log, TEST)
-    if not baseline_ok:
-        record(f"baseline-{TEST}", "INVALID", "unmutated bound test did not pass")
+    # #819: every unmutated bound test must be green before any verdict counts.
+    bound_tests = {row[5] for row in rows}
+    if not selected or "memory-gateway-oracle-truncated" in selected:
+        bound_tests.add(TEST)
+    baselines = {}
+    for test in sorted(bound_tests):
+        baseline = run_bound_test(test)
+        log = baseline.stdout + baseline.stderr
+        (out / f"baseline-{test}.log").write_text(log)
+        baselines[test] = baseline.returncode == 0 and baseline_passed(log, test)
+        if not baselines[test]:
+            record(f"baseline-{test}", "INVALID", "unmutated bound test did not pass")
 
     with mutating_sources(ROOT, paths) as snapshots:
-        for name, path, before, after, marker in rows:
-            if not baseline_ok:
+        for name, path, before, after, marker, test in rows:
+            if not baselines.get(test):
                 record(name, "INVALID", "baseline failed")
                 continue
             original = snapshots[path]
@@ -182,12 +227,12 @@ def main():
                 if compiled.returncode != 0:
                     record(name, "INVALID", "mutant does not compile")
                     continue
-                result = run_bound_test()
+                result = run_bound_test(test)
                 log = result.stdout + result.stderr
                 (out / f"{name}.log").write_text(log)
                 if result.returncode == 0:
                     record(name, "SURVIVED", "bound test stayed green")
-                elif named_test_killed(log, TEST, marker):
+                elif named_test_killed(log, test, marker):
                     record(name, "KILLED", "named assertion failed")
                 else:
                     record(name, "INVALID", "test failed outside the named assertion")
@@ -203,17 +248,17 @@ def main():
                     record(name, "INVALID", "restore mismatch")
                     raise SystemExit(2)
             # The restored source must keep the bound test green.
-            restored = run_bound_test()
+            restored = run_bound_test(test)
             log = restored.stdout + restored.stderr
             (out / f"{name}.restored.log").write_text(log)
-            if not (restored.returncode == 0 and baseline_passed(log, TEST)):
+            if not (restored.returncode == 0 and baseline_passed(log, test)):
                 record(name, "INVALID", "restored bound test did not pass")
 
         if not selected or "memory-gateway-oracle-truncated" in selected:
             # Data mutation: shrinking the committed corpus must trip the exact
             # pin, not silently replay one case. No compile step.
             name = "memory-gateway-oracle-truncated"
-            if not baseline_ok:
+            if not baselines.get(TEST):
                 record(name, "INVALID", "baseline failed")
             else:
                 original = snapshots[ORACLE]
@@ -228,7 +273,7 @@ def main():
                         json.dumps(data, ensure_ascii=True, indent=2) + "\n",
                         encoding="utf-8",
                     )
-                    result = run_bound_test()
+                    result = run_bound_test(TEST)
                     log = result.stdout + result.stderr
                     (out / f"{name}.log").write_text(log)
                     marker = "#1214 the committed gateway case corpus is pinned"
@@ -253,7 +298,7 @@ def main():
                     if hashlib.sha256(ORACLE.read_bytes()).hexdigest() != before_bytes:
                         record(name, "INVALID", "restore mismatch")
                         raise SystemExit(2)
-                restored = run_bound_test()
+                restored = run_bound_test(TEST)
                 log = restored.stdout + restored.stderr
                 (out / f"{name}.restored.log").write_text(log)
                 if not (restored.returncode == 0 and baseline_passed(log, TEST)):
@@ -272,7 +317,12 @@ def main():
     )
     if not results or any(row["status"] != "KILLED" for row in results):
         return 1
-    print(f"{len(results)}/{len(rows) + 1} killed; every source restored byte-for-byte", flush=True)
+    killed = sum(row["status"] == "KILLED" for row in results)
+    scope = "partial run over a selected subset; " if selected else ""
+    print(
+        f"{killed}/{len(results)} killed; {scope}every source restored byte-for-byte",
+        flush=True,
+    )
     return 0
 
 
