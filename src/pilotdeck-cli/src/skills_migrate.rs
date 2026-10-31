@@ -889,7 +889,10 @@ mod tests {
         assert!(!f.path.join("project/~").exists());
         assert!(!f.path.join("home/custom").exists());
     }
-    const UMASK_CHILD: &str = "skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp";
+    const UMASK_CHILD: &str = concat!(
+        module_path!(),
+        "::copy_tree_preserves_modes_like_node_async_cp"
+    );
 
     /// #273: libtest receipt for an `--exact` child — exit 0, one `running 1
     /// test` banner, one passing summary, and the per-test `... ok` line. No
@@ -924,11 +927,15 @@ mod tests {
     fn copy_tree_preserves_modes_like_node_async_cp() {
         // umask is process-wide: set it only in an exec child running this test.
         if std::env::var_os("PDRS_TEST_COPY_UMASK").is_none() {
+            let test_name = UMASK_CHILD
+                .split_once("::")
+                .expect("#1145 umask child crate prefix")
+                .1;
             let mut child = std::process::Command::new("/bin/sh");
             child
                 .args(["-c", "umask 022; exec \"$@\"", "pdrs-copy-umask-test"])
                 .arg(std::env::current_exe().expect("#273 umask test binary path"))
-                .args(["--exact", UMASK_CHILD, "--nocapture"])
+                .args(["--exact", test_name, "--nocapture"])
                 .env("PDRS_TEST_COPY_UMASK", "1");
             let output = child.output().expect("#273 umask child spawn");
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -937,7 +944,7 @@ mod tests {
             // libtest still exits 0 — only the libtest receipt proves the rerun
             // executed this test rather than a vacuous zero-match pass.
             assert!(
-                single_pass(&output.status, UMASK_CHILD, &stdout),
+                single_pass(&output.status, test_name, &stdout),
                 "#273 umask rerun matched no test: {status}\n{stdout}\n{stderr}",
                 status = output.status
             );

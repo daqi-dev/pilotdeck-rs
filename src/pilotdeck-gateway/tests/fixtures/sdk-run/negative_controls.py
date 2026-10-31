@@ -70,7 +70,7 @@ mutations = [
     ('stream-newline', output, 'if self.streamed {\n                    stdout_line("");', 'if self.streamed {\n                    stdout_line("wrong");', 'run_matches_ts_matrix', '#1058 output bytes and exit'),
     ('text-before-delta', output, 'string_field(event, "text").or_else(|| string_field(event, "delta"))', 'string_field(event, "delta").or_else(|| string_field(event, "text"))', 'run_text_contract', '#1058 output bytes and exit'),
     ('terminal-before-final', turn, 'if final_frame {', 'if final_frame || string_field(&event, "type").as_deref() == Some("turn_completed") {', 'run_waits_for_stream_final', '#1058 output bytes and exit'),
-    ('duplicate-sequence', transport, 'if sequence <= previous {', 'if false && sequence <= previous {', 'run_duplicate_event_is_not_printed', '#1058 output bytes and exit'),
+    ('duplicate-sequence', transport, 'if sequence <= previous {\n        return Ok(None);\n    }', 'if sequence <= previous {\n        return Ok(Some(sequence));\n    }', 'run_duplicate_event_is_not_printed', '#1058 output bytes and exit'),
     ('success-response-end', transport, 'Some("response") if matches!(frame.get("ok"), Some(JsValue::Bool(true))) => {\n                    return Ok(QueryFrame::StreamDone);', 'Some("response") if matches!(frame.get("ok"), Some(JsValue::Bool(true))) => {\n                    return Ok(QueryFrame::AbortReply(Ok(JsValue::Undefined)));', 'run_success_response_ends_stream', '#1058 output bytes and exit'),
     ('oracle-drift', oracle, '"nodeVersion": "v22.22.0"', '"nodeVersion": "v0.0.0"', 'run_oracle_regenerates_identically', '#1058 identical TS fixture sdk-run'),
 ]
