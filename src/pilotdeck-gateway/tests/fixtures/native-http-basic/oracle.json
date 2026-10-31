@@ -881,6 +881,20 @@
       "closed": false
     },
     {
+      "id": "health-conn-close",
+      "server": "a",
+      "request": "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+      "response": "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ndate: <masked>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\nb\r\n{\"ok\":true}\r\n0\r\n\r\n",
+      "closed": true
+    },
+    {
+      "id": "head-conn-close",
+      "server": "a",
+      "request": "HEAD /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+      "response": "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ndate: <masked>\r\nConnection: close\r\n\r\n",
+      "closed": true
+    },
+    {
       "id": "token-get",
       "server": "a",
       "request": "GET /auth/local-token HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
@@ -1063,6 +1077,13 @@
       "closed": false
     },
     {
+      "id": "static-absolute-dblslash",
+      "server": "a",
+      "request": "GET http://127.0.0.1//app.js HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+      "response": "HTTP/1.1 200 OK\r\ncontent-type: text/javascript; charset=utf-8\r\ndate: <masked>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\nf\r\nconsole.log(1)\n\r\n0\r\n\r\n",
+      "closed": false
+    },
+    {
       "id": "traversal-parent",
       "server": "a",
       "request": "GET /../x HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
@@ -1238,6 +1259,13 @@
       "closed": true
     },
     {
+      "id": "abs-scheme-nonalpha",
+      "server": "a",
+      "request": "GET a1://x/health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+      "response": "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
+      "closed": true
+    },
+    {
       "id": "empty-request",
       "server": "a",
       "request": "\r\nHost: 127.0.0.1\r\n\r\n",
@@ -1256,6 +1284,13 @@
       "server": "a",
       "request": "CONNECT 127.0.0.1:1 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
       "response": "",
+      "closed": true
+    },
+    {
+      "id": "connect-nonascii",
+      "server": "a",
+      "request": "CONNECT cafÃ©:1 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+      "response": "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
       "closed": true
     },
     {

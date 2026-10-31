@@ -9,10 +9,14 @@ use hyper_util::rt::TokioIo;
 use std::{
     convert::Infallible,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     task::{Context, Poll, Waker},
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::sync::watch;
 pub struct Proxy {
     pub upstream: String,
     pub client: HttpClient,
@@ -231,7 +235,7 @@ where
     F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
     Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
 {
-    serve_connection_configured(stream, handler, false).await
+    serve_connection_configured(stream, handler, false, None).await
 }
 
 /// The native listener's connection serving. TS emits literal header cases
@@ -240,22 +244,31 @@ where
 /// automatic date stays off: the bare parser-level 400s then match TS's
 /// undated ones. The byte-level transport diffs this leaves are registered
 /// in the gateway-parity diff ledger.
-pub(crate) async fn serve_connection_native<S, F, Fut>(
+///
+/// `stop` mirrors Node's `server.close()` semantics (probe `probe-fixr1.out`
+/// B): connections that have served at least one request are closed (idle ones
+/// immediately, in-flight ones after the response) while connections that
+/// never sent bytes are left alone; `graceful_shutdown` is hyper's equivalent
+/// and is a no-op for an already-upgraded connection. A dropped sender means
+/// no stop signal, and the connection simply runs to its natural end.
+pub(crate) async fn serve_connection_native_with_shutdown<S, F, Fut>(
     stream: S,
     handler: F,
+    stop: watch::Receiver<bool>,
 ) -> Result<(), hyper::Error>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
     Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
 {
-    serve_connection_configured(stream, handler, true).await
+    serve_connection_configured(stream, handler, true, Some(stop)).await
 }
 
 async fn serve_connection_configured<S, F, Fut>(
     stream: S,
     handler: F,
     native: bool,
+    stop: Option<watch::Receiver<bool>>,
 ) -> Result<(), hyper::Error>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -267,7 +280,10 @@ where
         stream,
         state: state.clone(),
     };
+    let served = Arc::new(AtomicBool::new(false));
+    let served_in_connection = served.clone();
     let service = service_fn(move |request| {
+        served_in_connection.store(true, Ordering::Relaxed);
         // This must run before returning a future: Hyper can poll read again
         // before it polls that future. Invalid upgrade requests close anyway.
         let lease = if is_upgrade(&request)
@@ -284,11 +300,33 @@ where
     let mut builder = http1::Builder::new();
     if native {
         builder.title_case_headers(true).auto_date_header(false);
+        if !crate::mutants::on("native-http-header-count-off") {
+            // llhttp has no header-count limit (its binding constraint is the
+            // 16 KiB request-line+names+values budget); hyper's default of 100
+            // 431s requests TS serves. 2048 keeps the allocation bounded; the
+            // residual count and byte limits are registered parse-layer diffs.
+            builder.max_headers(2048);
+        }
     }
-    builder
+    let connection = builder
         .serve_connection(TokioIo::new(stream), service)
-        .with_upgrades()
-        .await
+        .with_upgrades();
+    let Some(mut stop) = stop else {
+        return connection.await;
+    };
+    tokio::pin!(connection);
+    tokio::select! {
+        result = &mut connection => return result,
+        changed = stop.wait_for(|stopped| *stopped) => {
+            if changed.is_ok()
+                && served.load(Ordering::Relaxed)
+                && !crate::mutants::on("native-http-idle-close-off")
+            {
+                connection.as_mut().graceful_shutdown();
+            }
+        }
+    }
+    connection.as_mut().await
 }
 
 async fn pair_upgraded<S, U>(
