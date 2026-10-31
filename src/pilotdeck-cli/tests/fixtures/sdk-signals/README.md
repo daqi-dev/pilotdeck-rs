@@ -2,9 +2,10 @@
 
 本包包含 TS 原件、来源验证和 96 格独立的 Rust CLI 进程回放。Rust 实现位于
 `src/sdk/{signals,turn,transport,output}.rs`。**仍不表示 P08 / #123 完成**：
-stdin 六格挂起，动态 UUID 与无业务前置行的 JS 堆栈仍按字面比较；
+stdin 六格挂起，动态 UUID 仍按字面比较；
 #1151 已批准严格的业务行后 Node 尾段归一化及四格 4003 close reason 差异。
-产品变异负控独立于数据负控。
+#1164 选 B 已批准八格未处理 rejection 的 stderr 差异，精确范围见
+`specs/gateway-parity/diffs/D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md`。产品变异负控独立于数据负控。
 
 ## 矩阵与原件
 
@@ -112,6 +113,10 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli \
 每次使用新的绝对证据路径，保存原始 stdout/stderr、actual/comparison、连接 wire
 与完整初末树。TS stderr 仅按 `specs/cli-parity/normalization.md` §6/§7 剥精确启动前缀与完整业务行后异常尾段。
 关闭帧只应用 `D1-SDK-WS-CLOSE-REASON-001` 的四格单字段例外。
+未处理 rejection 仅按 `D1-SDK-SIGNAL-UNHANDLED-REJECTION-001` 的八个完整 ID
+接受各自固定的 Rust 单行错误，不匹配或推广 Node 堆栈形状；stdout、退出码、
+abort、连接、监听器和文件树继续严格比较。96 格预期 94 PASS / 2 FAIL；
+`{run,resume}--unknown-cleanup` 的动态 runId 保留 FAIL。
 离线 `signal_replay::comparison_tests::*` 用真实原件覆盖边界与配对损坏输入，并验证 SIGINT 包装。
 所有窗口格断言 12 秒内没有自然退出，再由本测试 SIGKILL 并在 3 秒内回收。
 
@@ -136,7 +141,7 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py
 python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py NEW_NEGATIVE_DIR
 ```
 
-产品及比较边界负控固定 23 个变异（9 个既有产品变异、12 个比较/包装器变异、2 个嵌套子测试变异），完整绑定测试名与单行断言；每项先正控、变异编译、负控、
+产品及比较边界负控固定 29 个变异（9 个既有产品变异、12 个既有比较/包装器变异、6 个八格 stderr 边界变异、2 个嵌套子测试变异），完整绑定测试名与单行断言；每项先正控、变异编译、负控、
 恢复、复跑正控，最后汇总全部结果。它使用共享 `mutating_sources/run_owned/wait_for_slot`，
 要求调用方设置 `CARGO_TARGET_DIR`，拒绝 dirty/new HEAD，不能绕过。尚未提交的新增
 源码须先由协调者提交，随后在宿主编译所有变异并执行全量；未执行项不能称 KILLED。
