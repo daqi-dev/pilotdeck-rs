@@ -39,7 +39,20 @@ cases = [
     ('recreate-idle', factory, 'fn can_recreate(&self) -> bool {\n        true\n    }', 'fn can_recreate(&self) -> bool {\n        false\n    }', None, prefix+'recreate_idle', '#745 recreate-idle conclusion'),
     ('recreate-draining', factory, 'release_all(std::mem::take(&mut self.releases)).await', 'std::mem::forget(self); Ok(())', None, prefix+'recreate_draining', '#745 recreate-draining lease cleanup'),
     ('recreate-running', factory, 'let read = storage.restore().await?;\n            for diagnostic', 'let read = storage.restore().await?; storage.recorder.writer().restore_state(0.0, &JsValue::Null).map_err(|e| RuntimeError::new(e.to_string()))?;\n            for diagnostic', None, prefix+'recreate_running', '#745 recreate-running durable writer'),
-    ('recreate-disposed', live, 'if self.disposed {', 'if false && self.disposed {', None, prefix+'recreate_disposed', '#745 recreate expected failure'),
+    # fix-r2 (#1011): the projection-cache lifecycle added a second disposed
+    # guard in SessionProjection::snapshot (the TS assertActive port) with the
+    # identical message, so disabling the adapter guard alone survives. The
+    # mutant keeps the "a disposed session cannot be recreated" semantics by
+    # disabling both guards in one run.
+    dict(name='recreate-disposed',
+         changes=[(live, 'if self.disposed {', 'if false && self.disposed {'),
+                  (factory, 'if self.disposed.load(Ordering::SeqCst) {', 'if false && self.disposed.load(Ordering::SeqCst) {')],
+         test=prefix+'recreate_disposed', assertion='#745 recreate expected failure'),
+    # fix-r2 (#1011): the adapter-level guard at SessionState::reload_source
+    # stays load-bearing while the storage close is still queued: the projection
+    # driver is not disposed yet in that window, so this guard is the only
+    # rejection of an ordinary reload there.
+    ('recreate-disposed-adapter-guard', live, 'if self.disposed {', 'if false && self.disposed {', None, prefix+'recreate_while_storage_close_is_pending', '#745 closed adapter rejects ordinary reload'),
     ('recreate-read-reject', factory, 'let _ = prepared.resources.release().await;\n                    storage.close_owned().await', 'let result = storage.close_owned().await;\n                    let _ = prepared.resources.release().await; result', None, prefix+'recreate_read_reject', '#745 recreate-read-reject rollback order'),
     ('recreate-rollback-reject', factory, 'causes: vec![error, rollback],', 'causes: vec![rollback, error],', None, prefix+'recreate_rollback_reject', '#745 recreate-rollback-reject conclusion'),
     ('resume-missing', factory, '(self.options.diagnostic)(diagnostic);', 'let _ = diagnostic;', None, prefix+'resume_missing', '#745 resume-missing conclusion'),
@@ -235,14 +248,32 @@ compile_switches = {
     '1020-stale-retry-unlimited': 'PDRS_1020_UNLIMITED_STALE_RETRY',
 }
 
+def row_parts(row):
+    """(name, [(path, old, new)], scope, test, assertion) for one mutation row.
+
+    Tuple rows mutate a single file; dict rows carry multi-file ``changes`` with
+    the same "(已 dispose 仍可 recreate)" semantics split across two guards.
+    """
+    if isinstance(row, dict):
+        return row['name'], list(row['changes']), None, row['test'], row['assertion']
+    name, path, old, new, scope, test, assertion = row
+    return name, [(path, old, new)], scope, test, assertion
+
+
+def row_name(row):
+    return row['name'] if isinstance(row, dict) else row[0]
+
+
 def audit():
     rows = []
-    for name, path, old, new, scope, test, assertion in cases:
+    for case in cases:
+        name, changes, scope, test, assertion = row_parts(case)
         try:
-            original = path.read_text()
-            changed = mutate(original, scope, [(old, new)])
-            if changed == original:
-                raise ValueError('mutation leaves source unchanged')
+            for path, old, new in changes:
+                original = path.read_text()
+                changed = mutate(original, scope, [(old, new)])
+                if changed == original:
+                    raise ValueError('mutation leaves source unchanged')
             source = factory.with_name('factory_tests.rs').read_text()
             test_name = test.removeprefix(prefix)
             compact = ''.join(source.split())
@@ -287,9 +318,9 @@ env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG=
 for switch in compile_switches.values():
     env.pop(switch, None)
 names = set(args[1:])
-if names - {c[0] for c in cases}:
+if names - {row_name(c) for c in cases}:
     raise SystemExit('unknown mutation')
-chosen = [c for c in cases if not names or c[0] in names]
+chosen = [c for c in cases if not names or row_name(c) in names]
 out = Path(args[0]); out.mkdir(parents=True, exist_ok=False)
 command = ['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib']
 
@@ -303,11 +334,12 @@ def run(label, test, compile=False):
     return result
 
 results=[]
-source_cases = [c for c in chosen if c[0] not in compile_switches]
-switch_cases = [c for c in chosen if c[0] in compile_switches]
+source_cases = [c for c in chosen if row_name(c) not in compile_switches]
+switch_cases = [c for c in chosen if row_name(c) in compile_switches]
 
 def compile_and_classify(row, case):
-    name,path,old,new,scope,test,assertion = case
+    name,changes,scope,test,assertion = row_parts(case)
+    path,old,new = changes[0]
     if run(name+'-compile',test,compile=True).returncode:
         raise RuntimeError('mutant compile failed')
     row['compiled']=True
@@ -333,7 +365,8 @@ def guard_failed(group, error):
     # invalidate_completed also revokes ``compiled``). Unrun rows stay INVALID.
     invalidate_completed(results, f'source guard: {error}')
     recorded = {row['mutation'] for row in results}
-    for name,path,old,new,scope,test,assertion in group:
+    for case in group:
+        name, _changes, _scope, test, assertion = row_parts(case)
         if name not in recorded:
             results.append(dict(mutation=name,test=test,assertion=assertion,status='INVALID',compiled=False,reason=f'guard: {error}'))
 
@@ -341,19 +374,28 @@ source_guard_error = None
 
 if source_cases:
     try:
-        with mutating_sources(root, list(dict.fromkeys(c[1] for c in source_cases))) as originals:
-            for name,path,old,new,scope,test,assertion in source_cases:
+        with mutating_sources(root, list(dict.fromkeys(
+                path for case in source_cases for path, _old, _new in row_parts(case)[1]))) as originals:
+            for case in source_cases:
+                name,changes,scope,test,assertion = row_parts(case)
                 row=dict(mutation=name,test=test,assertion=assertion,status='INVALID',reason='',compiled=False)
                 try:
-                    changed=mutate(originals[path].decode(),scope,[(old,new)])
+                    texts=[]
+                    for path,old,new in changes:
+                        changed=mutate(originals[path].decode(),scope,[(old,new)])
+                        if changed == originals[path].decode():
+                            raise ValueError('mutation leaves source unchanged')
+                        texts.append((path,changed))
                     if not compile_only and not passed(run(name+'-positive',test),test):
                         raise RuntimeError('bound positive test failed')
-                    path.write_text(changed)
-                    compile_and_classify(row, (name,path,old,new,scope,test,assertion))
+                    for path,changed in texts:
+                        path.write_text(changed)
+                    compile_and_classify(row, case)
                 except Exception as error:
                     row.update(status='INVALID',reason=f'{type(error).__name__}: {error}')
                 finally:
-                    path.write_bytes(originals[path])
+                    for path,_old,_new in changes:
+                        path.write_bytes(originals[path])
                 restored(row, name, test)
     except Exception as error:
         source_guard_error = error

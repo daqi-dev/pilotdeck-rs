@@ -47,6 +47,16 @@ mutations = [
      'if false { self.cache.schedule(); }',
      'runtime::session::factory::projection_cache_tests::turn_result_schedules_and_binding_dispose_waits',
      '#1011 checkpoint watermark equals TS'),
+    # fix-r2 (#1011): SessionProjection::snapshot's disposed guard is the TS
+    # assertActive port and the projection-level recreate-disposed rejection
+    # point; this direct storage-level pin does not pass through the adapter
+    # guard in front of it. Run only after this script itself is committed.
+    ('disposed-guard-removed',
+     'src/pilotdeck-gateway/src/runtime/session/factory.rs',
+     'if self.disposed.load(Ordering::SeqCst) {',
+     'if false && self.disposed.load(Ordering::SeqCst) {',
+     'runtime::session::factory::projection_cache_tests::missing_recreate',
+     '#1011 fenced predecessor disposed before replacement load'),
     ('capture-single-attempt',
      'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs',
      'for _ in 0..3 {',
