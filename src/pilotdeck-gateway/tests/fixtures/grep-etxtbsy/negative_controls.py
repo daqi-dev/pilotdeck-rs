@@ -21,13 +21,23 @@ KILLED. The cleanup, deadline, and writer mutants are bound to the
 lib-only publication unit tests instead: they are deterministic and
 unix-only like the module itself. macOS uses posix_spawn and never shows
 the window, so the two race mutants are a Linux contract (expected
-SURVIVED elsewhere); the other seven must kill on every unix host. The
+SURVIVED elsewhere); the other nine must kill on every unix host. The
 #1141 mutants target the dead-helper stranger test's write-end
-observations — EOF arriving at all (`deadline-write-end-kept-open`), EOF
-arriving by the publication's return boundary rather than later
-(`deadline-write-end-released-late`, fix-r1 review P2-1) — and its
-stranger guard (`stranger-guard-kill-removed`, fix-r1 review P1-1): the
-stranger parks in a bounded sleep that only that guard may end.
+observation — the stranger is a python probe that classifies the pipe at
+the go signal (a 0-byte read is EOF pending, a not-ready read end is a
+write end held past the return boundary), so any mutant that leaks a
+write end past the observation — the writer's give-up
+(`deadline-write-end-kept-open`) or the parent's own copy
+(`parent-write-end-held-past-return`, fix-r2 review P2-1) — fails the
+marker's verdict; the r1 `deadline-write-end-released-late` (a fixed 4 s
+release) is subsumed by those, which hold the write end through the whole
+observation instead of racing a timer — and the guards: the dead-helper
+test's group kill (`stranger-guard-kill-removed`, fix-r1 review P1-1),
+plus the spawn-window panic test, which proves the guard owns the group
+from the spawn on (`spawn-hook-removed`) and still ends the stranger
+after an in-flight panic (`stranger-panic-guard-kill-removed`, fix-r2
+review P1-1). The stranger parks in a bounded sleep that only that guard
+may end.
 """
 import argparse
 import json
@@ -51,6 +61,7 @@ unread = 'test_scratch_publication::a_helper_that_never_reads_hits_the_write_dea
 stranger = 'test_scratch_publication::a_stranger_on_the_read_end_still_hits_the_write_deadline'
 dead_stranger = ('test_scratch_publication::'
                  'a_dead_helper_with_a_stranger_reader_still_closes_the_write_end')
+panic_stranger = 'test_scratch_publication::a_panic_while_the_stranger_runs_still_ends_it'
 cases = [
     # The literal pre-fix shape: Scratch::script itself writes and chmods
     # the exec'd path in the test process, reopening the wide write window.
@@ -88,6 +99,16 @@ cases = [
         temporary: temporary.clone(),
         reaped: Some(reaped),
     };
+    // #1141 fix-r2 review P1-1: the handover happens while the guard already
+    // owns the helper but before any later step — taking the stdin, starting
+    // the writer, the write itself, the waits — can fail or panic, so a panic
+    // raised by the hook itself still unwinds through the guard's cleanup.
+    let helper_id = guard
+        .helper
+        .as_ref()
+        .expect("#1125 reap guard holds the helper")
+        .id();
+    spawned(helper_id);
     let mut stdin = guard
         .helper
         .as_mut()
@@ -248,11 +269,11 @@ cases = [
      stranger, '#1125 helper writer did not exit by its deadline'),
     # The give-up must also close this process's copy of the write end: the
     # mutant leaks a clone past the deadline, so the stranger that the
-    # dead-helper test leaves holding the read end never reads EOF and its
-    # marker never appears. Only that test observes the write end — the
-    # other bound tests assert the error, the kill report, or the residue,
-    # none of which the leaked descriptor touches (#1141, #1125 r4 review
-    # P2-1).
+    # dead-helper test leaves holding the read end observes a not-ready
+    # read end at the go signal and records `write-end-still-held` instead
+    # of `eof`. Only that test observes the write end — the other bound
+    # tests assert the error, the kill report, or the residue, none of
+    # which the leaked descriptor touches (#1141, #1125 r4 review P2-1).
     ('deadline-write-end-kept-open', helper,
      '''                if Instant::now() >= expiry {
                     return Err(helper_deadline_error(deadline));
@@ -262,30 +283,21 @@ cases = [
                     std::mem::forget(stdin.as_fd().try_clone_to_owned());
                     return Err(helper_deadline_error(deadline));
                 }''',
-     dead_stranger, '#1141 the write end must be closed'),
-    # #1141 fix-r1 review P2-1: the write end must be closed by the time the
-    # publication returns, not merely eventually. The mutant hands the
-    # writer's give-up clone to a thread that releases it 4 s later: the
-    # writer still exits on schedule, the error is still TimedOut, the
-    # helper still died on its own, and the stranger still sees EOF — only
-    # the marker's timestamp against the test's go signal betrays the late
-    # release, so only the dead-helper test's return-boundary assertion
-    # kills.
-    ('deadline-write-end-released-late', helper,
-     '''                if Instant::now() >= expiry {
-                    return Err(helper_deadline_error(deadline));
-                }''',
-     '''                if Instant::now() >= expiry {
-                    use std::os::fd::AsFd;
-                    let held = stdin.as_fd().try_clone_to_owned()?;
-                    let _ = thread::Builder::new()
-                        .name("#1141 late releaser".into())
-                        .spawn(move || {
-                            thread::sleep(Duration::from_secs(4));
-                            drop(held);
-                        });
-                    return Err(helper_deadline_error(deadline));
-                }''',
+     dead_stranger, '#1141 the write end must be closed by the time the publication returns'),
+    # #1141 fix-r2 review P2-1 (Codex): a write end held past the publication
+    # must fail the return-boundary observation, whatever holds it. The
+    # writer-side leak above covers the give-up clone; this one leaks the
+    # parent's own dup before the writer even starts — the review's shape of
+    # a copy surviving the return boundary — and holds it through the whole
+    # observation (no fixed-delay release to race), so the probe's verdict
+    # is the only assertion that can kill.
+    ('parent-write-end-held-past-return', helper,
+     '''    set_nonblocking(&mut stdin)?;
+    let (sent, done) = mpsc::channel();''',
+     '''    set_nonblocking(&mut stdin)?;
+    use std::os::fd::AsFd;
+    std::mem::forget(stdin.as_fd().try_clone_to_owned());
+    let (sent, done) = mpsc::channel();''',
      dead_stranger, '#1141 the write end must be closed by the time the publication returns'),
     # #1141 fix-r1 review P1-1: the stranger must be ended by the test's own
     # guard, never left parked behind the pipe. The mutant drops the guard's
@@ -295,6 +307,24 @@ cases = [
      '''        super::process_group::kill(Some(group), Signal::KILL);''',
      '''        let _ = group;''',
      dead_stranger, "#1141 the stranger must be killed and reaped by the test's guard"),
+    # #1141 fix-r2 review P1-1 (Codex): the same kill, bound to the panic
+    # test — a publication that panics while the stranger runs must still
+    # end it, so the guard's end() after the caught unwind is the assertion
+    # this mutant breaks.
+    ('stranger-panic-guard-kill-removed', publication,
+     '''        super::process_group::kill(Some(group), Signal::KILL);''',
+     '''        let _ = group;''',
+     panic_stranger, '#1141 the stranger must still be killed and confirmed gone after a panic'),
+    # #1141 fix-r2 review P1-1 (Codex): the spawn id handover itself. The
+    # mutant never invokes the `spawned` hook, so no panic ever happens in
+    # the window and the publication runs to its ordinary deadline error:
+    # the caught-Ok expect_err is the first thing that can fail, and the
+    # guard's ownership assertion right after is what keeps a hook that
+    # stops halfway from passing vacuously.
+    ('spawn-hook-removed', helper,
+     '''    spawned(helper_id);''',
+     '''    let _ = (helper_id, &spawned);''',
+     panic_stranger, '#1141 the publication must panic while the stranger is running'),
 ]
 
 

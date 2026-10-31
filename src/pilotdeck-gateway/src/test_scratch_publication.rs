@@ -9,7 +9,8 @@
 //! review P2).
 use std::{
     fs, io,
-    path::{Path, PathBuf},
+    panic::{AssertUnwindSafe, catch_unwind},
+    path::Path,
     process,
     sync::mpsc::{self, Receiver},
     thread,
@@ -26,47 +27,83 @@ use std::os::unix::process::CommandExt;
 /// only bounds a never-firing mutant.
 const REPORT_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// How long the stranger below may take to record the EOF it read after the
-/// go signal; EOF is already pending by then — the publication returned and
-/// the writer dropped its write end — so this only bounds a never-firing
-/// mutant (#1141).
+/// How long the stranger below may take to record its write-end observation
+/// after the go signal; the observation is already decided by then — the
+/// publication returned and with it either every write end is closed or one
+/// is held for good — so this only bounds a never-firing stranger.
 const MARKER_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// How far past the deadline a publication may take to return; a correct
 /// one returns right after the writer reports its give-up (#1141).
 const RETURN_GRACE: Duration = Duration::from_secs(2);
 
-/// How far past the go signal the stranger's EOF marker may land: the write
-/// end was closed before the publication returned, so EOF is already pending
-/// and only the stranger's own poll interval and the pipe drain separate the
-/// two files' timestamps. A copy still held when the publication returned
-/// holds EOF back past this grace (#1141 fix-r1 review P2-1).
-const EOF_AFTER_GO_GRACE: Duration = Duration::from_secs(2);
-
-/// How long the guard below may wait for the dead helper to publish the
-/// stranger's group id; the helper writes it before it exits, so this only
-/// bounds a helper that never spawned a stranger (#1141 fix-r1 review P1-1).
-const STRANGER_GROUP_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long the panic test below may wait for the stranger to signal that it
+/// started; the stranger publishes that signal as its first act, so this only
+/// bounds a stranger that never started (#1141 fix-r2 review P1-1).
+const STRANGER_STARTED_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long the guard below may take to confirm the stranger's process group
 /// is empty after its kill; it only bounds a stranger that refuses to die
 /// (#1141 fix-r1 review P1-1).
 const STRANGER_REAP_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The name the stranger records its EOF observation under (#1141).
+/// The name the stranger records its write-end observation under (#1141).
 const STRANGER_EOF: &str = "stranger-eof";
 
 /// The go signal the test publishes once the publication has returned: the
-/// stranger reads the pipe only after it, so the EOF observation is bound to
-/// the return boundary instead of a fixed sleep past the deadline
+/// stranger reads the pipe only after it, so the write-end observation is
+/// bound to the return boundary instead of a fixed sleep past the deadline
 /// (#1141 fix-r1 review P2-1).
 const STRANGER_GO: &str = "stranger-go";
 
-/// The name the dead helper publishes its process-group id under — it is the
-/// group leader, so its pid is the only handle the test ever gets on the
-/// stranger tree, whose members are its grandchildren (#1141 fix-r1 review
-/// P1-1).
-const STRANGER_GROUP: &str = "stranger-group";
+/// The signal the stranger publishes as its first act; the panic test below
+/// waits for it so its deliberate panic lands once the stranger provably
+/// exists but no publication step has run yet (#1141 fix-r2 review P1-1).
+const STRANGER_STARTED: &str = "stranger-started";
+
+/// The panic the `spawned` hook of the panic test below raises once the
+/// stranger has started; comparing the caught payload against it keeps a
+/// hook that failed earlier — a stranger that never signalled — from passing
+/// as the deliberate window panic (#1141 fix-r2 review P1-1).
+const DELIBERATE_PANIC: &str = "#1141 deliberate panic while the stranger is running";
+
+/// The stranger the dead-helper tests leave holding the pipe's read end
+/// (#1141, #1125 r4 review P2-1): after the go signal it drains the pipe
+/// with a zero-timeout `select` on its stdin and classifies what it sees —
+/// a 0-byte read means EOF was pending, i.e. every write end was closed
+/// before the observation, while a not-ready read end means one is still
+/// held (the writer is gone by then, so no data can ever arrive and make it
+/// ready; the state is monotone, which is what replaces a timing grace).
+/// It publishes the verdict — and the `started` signal it publishes as its
+/// first act — atomically through a staging file + rename (#166 r8), and
+/// then parks in a bounded sleep that only the test's [`StrangerGuard`] may
+/// end, never EOF or a self-chosen lifetime. `/bin/sh` itself cannot make a
+/// non-blocking read, so the stranger is this `python3` probe (`python3` is
+/// an established dependency of the gateway host runtime and of tests:
+/// `host/connection.rs`, `pilotdeck-yaml/tests/resource_scaling.rs`); the
+/// script contains no single quotes, so it embeds verbatim into the
+/// helper's single-quoted `-c` argument below.
+const STRANGER_PROBE: &str = r#"
+import os, select, sys, time
+marker, go, started = sys.argv[1], sys.argv[2], sys.argv[3]
+def publish(path, text):
+    staging = path + ".staging"
+    with open(staging, "w") as handle:
+        handle.write(text)
+    os.rename(staging, path)
+publish(started, "started")
+deadline = time.monotonic() + 60.0
+while not os.path.exists(go) and time.monotonic() < deadline:
+    time.sleep(0.05)
+while True:
+    if not select.select([0], [], [], 0)[0]:
+        publish(marker, "write-end-still-held")
+        break
+    if not os.read(0, 65536):
+        publish(marker, "eof")
+        break
+time.sleep(30)
+"#;
 
 /// #1125 fix-r1 review P2: a publication that fails after the helper
 /// created the temporary name must remove it again, so a failed
@@ -106,6 +143,8 @@ fn a_stalled_helper_is_killed_and_cleaned_up() {
         0o755,
         Duration::from_millis(1500),
         stalled_after_cat,
+        // These helpers spawn no stranger, so nobody consumes the spawn id.
+        |_| {},
         |status| {
             let _ = kill_sent.send(status);
         },
@@ -134,6 +173,8 @@ fn a_helper_that_never_reads_hits_the_write_deadline() {
         0o755,
         Duration::from_millis(1500),
         |_| stalled_without_reading(),
+        // This helper spawns no stranger, so nobody consumes the spawn id.
+        |_| {},
         |status| {
             let _ = kill_sent.send(status);
         },
@@ -166,6 +207,9 @@ fn a_stranger_on_the_read_end_still_hits_the_write_deadline() {
         0o755,
         Duration::from_millis(1500),
         |_| stalled_behind_a_stranger_reader(),
+        // This helper's stranger ends on its own within a bounded moment
+        // (#1141), so nobody consumes the spawn id either.
+        |_| {},
         |status| {
             let _ = kill_sent.send(status);
         },
@@ -188,53 +232,54 @@ fn a_stranger_on_the_read_end_still_hits_the_write_deadline() {
 /// closed at the deadline would have surfaced as a broken pipe instead),
 /// and the publication returns within its deadline. The stranger — released
 /// by a go signal the test publishes once the publication has returned —
-/// then reads until EOF and records that in the marker, proving the writer
-/// thread exited and with it dropped this process's only copy of the write
-/// end: EOF reaches a reader only after every write end is closed. The
-/// marker's timestamp against the go signal's binds that proof to the
-/// return boundary — a copy still held when the publication returned holds
-/// EOF back past the grace below (#1141 fix-r1 review P2-1). The stranger
-/// parks in a bounded sleep after recording EOF rather than ending on its
-/// own, so the [`StrangerGuard`] is the only thing that may collect it, on
-/// every exit of this test (#1141 fix-r1 review P1-1): it kills the
-/// stranger's process group, confirms the group is empty, and the test
-/// asserts the stranger was collected before it returns.
+/// then observes the pipe with the non-blocking probe and records the
+/// verdict in the marker, proving the writer thread exited and with it
+/// dropped this process's only copy of the write end: EOF reaches a reader
+/// only after every write end is closed, and the go signal was published
+/// after the return, so a copy still held past that boundary is observed
+/// as `write-end-still-held` instead of `eof` (#1141 fix-r2 review P2-1,
+/// which replaced the r1 marker-timestamp judgment and its fixed grace).
+/// The stranger parks in a bounded sleep after recording the verdict rather
+/// than ending on its own, so the [`StrangerGuard`] is the only thing that
+/// may collect it, on every exit of this test (#1141 fix-r1 review P1-1):
+/// it kills the stranger's process group, confirms the group is empty, and
+/// the test asserts the stranger was collected before it returns.
 #[test]
 fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
     let scratch = Scratch::new("helper-dead-stranger");
     let marker = scratch.path().join(STRANGER_EOF);
-    // The go signal and the group-id file are test machinery rather than
-    // observations of the publication, so they live in a scratch of their
-    // own and the residue assertion keeps watching the publication's names.
+    // The go and started signals are test machinery rather than observations
+    // of the publication, so they live in a scratch of their own and the
+    // residue assertion keeps watching the publication's names.
     let signals = Scratch::new("helper-dead-stranger-signals");
     let go = signals.path().join(STRANGER_GO);
-    let group_file = signals.path().join(STRANGER_GROUP);
+    let started = signals.path().join(STRANGER_STARTED);
     // Declared before the publication so every later exit of this test —
     // including a panic from inside the shared helper — unwinds through the
     // guard's Drop (#1141 fix-r1 review P1-1).
-    let mut stranger = StrangerGuard::new(&group_file);
+    let mut stranger = StrangerGuard::new();
     let (kill_sent, kill_reported) = mpsc::channel();
     let body = "\n".repeat(256 * 1024);
     let deadline = Duration::from_millis(1500);
-    let started = Instant::now();
+    let begin = Instant::now();
     let error = write_executable_bounded(
         &scratch.path().join("script"),
         &body,
         0o755,
         deadline,
-        |_| dead_helper_with_a_stranger_reader(&marker, &go, &group_file),
+        |_| dead_helper_with_a_stranger_reader(&marker, &go, &started),
+        // #1141 fix-r2 review P1-1: the helper runs as its own group leader
+        // (`process_group(0)` below), so its spawn-returned id is the group
+        // the stranger lands in — adopted here, before the helper or the
+        // stranger can do anything at all.
+        |pid| stranger.adopt(helper_group(pid)),
         |status| {
             let _ = kill_sent.send(status);
         },
     )
     .expect_err("#1141 a dead helper with a stranger reader must fail its publication");
-    stranger.adopt(
-        stranger_group(&group_file, STRANGER_GROUP_TIMEOUT)
-            .expect("#1141 the dead helper must publish the stranger's group id"),
-    );
-    publish_go_signal(&go);
     assert!(
-        started.elapsed() < deadline + RETURN_GRACE,
+        begin.elapsed() < deadline + RETURN_GRACE,
         "#1141 publication must return within its deadline"
     );
     assert!(
@@ -242,32 +287,25 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
         "#1141 deadline error must be TimedOut: {error}"
     );
     assert_reaped_after_a_natural_death(&kill_reported);
+    assert!(
+        stranger.owns_group().is_some(),
+        "#1141 the guard must own the stranger's group from the spawn on"
+    );
+    publish_go_signal(&go);
     let marker_deadline = Instant::now() + MARKER_TIMEOUT;
     while !marker.exists() && Instant::now() < marker_deadline {
         thread::sleep(Duration::from_millis(5));
     }
+    let observation = fs::read_to_string(&marker)
+        .expect("#1141 the stranger must record its write-end observation");
+    // #1141 fix-r2 review P2-1: the probe distinguishes the two pipe states
+    // directly — every write end already closed (a 0-byte read) versus one
+    // still held past the return boundary (a not-ready read end) — so the
+    // verdict, not a timestamp difference, is the judgment.
     assert!(
-        marker.exists(),
-        "#1141 the write end must be closed for the stranger to see EOF"
-    );
-    // #1141 fix-r1 review P2-1: the check above proves the write end closes
-    // eventually; this one proves it was closed by the time the publication
-    // returned. The go signal was published after the return and the
-    // stranger reads only after it, so EOF was already pending unless a
-    // write end survived the return boundary to hold it back.
-    let eof = fs::metadata(&marker)
-        .expect("#1141 read the stranger's EOF marker")
-        .modified()
-        .expect("#1141 the stranger's EOF marker needs a modification time");
-    let signaled = fs::metadata(&go)
-        .expect("#1141 read the published go signal")
-        .modified()
-        .expect("#1141 the go signal needs a modification time");
-    let since_go = eof.duration_since(signaled).unwrap_or_default();
-    assert!(
-        since_go < EOF_AFTER_GO_GRACE,
+        observation == "eof",
         "#1141 the write end must be closed by the time the publication returns, \
-         not held {since_go:?} after the go signal"
+         the stranger observed {observation:?}"
     );
     stranger
         .end()
@@ -278,6 +316,67 @@ fn a_dead_helper_with_a_stranger_reader_still_closes_the_write_end() {
         expected,
         "#1141 dead helper residue"
     );
+}
+
+/// #1141 fix-r2 review P1-1 (Codex): the stranger must be owned from the
+/// moment the helper is spawned — not from a group id the helper child
+/// publishes later, which left a window where a panic could not find the
+/// group. This test panics deliberately inside that window — once the
+/// stranger has signalled it started, but before the publication takes any
+/// further step (its stdin is not even taken yet) — and catches the unwind:
+/// the inner `ReapGuard` ends the helper while the outer [`StrangerGuard`]
+/// still holds the spawn-returned group id, so it can kill the stranger's
+/// group and confirm it is empty. The assertions run explicitly because
+/// `catch_unwind` stops the unwind before the guard's own Drop would.
+#[test]
+fn a_panic_while_the_stranger_runs_still_ends_it() {
+    let scratch = Scratch::new("helper-panic-stranger");
+    // The panic never reaches the publication's assertions, so the marker,
+    // go, and started signals all live in a scratch of their own and the
+    // residue assertion watches the publication's names alone.
+    let signals = Scratch::new("helper-panic-stranger-signals");
+    let marker = signals.path().join(STRANGER_EOF);
+    let go = signals.path().join(STRANGER_GO);
+    let started = signals.path().join(STRANGER_STARTED);
+    let mut stranger = StrangerGuard::new();
+    let (kill_sent, _kill_reported) = mpsc::channel();
+    let body = "\n".repeat(256 * 1024);
+    let publication = catch_unwind(AssertUnwindSafe(|| {
+        write_executable_bounded(
+            &scratch.path().join("script"),
+            &body,
+            0o755,
+            Duration::from_millis(1500),
+            |_| dead_helper_with_a_stranger_reader(&marker, &go, &started),
+            |pid| {
+                stranger.adopt(helper_group(pid));
+                wait_for_signal(&started, STRANGER_STARTED_TIMEOUT)
+                    .expect("#1141 the stranger must signal that it started");
+                panic!("{DELIBERATE_PANIC}");
+            },
+            |status| {
+                let _ = kill_sent.send(status);
+            },
+        )
+    }))
+    .expect_err("#1141 the publication must panic while the stranger is running");
+    let message = publication
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| publication.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("");
+    assert_eq!(
+        message, DELIBERATE_PANIC,
+        "#1141 the caught panic must be the deliberate in-window one: {message:?}"
+    );
+    assert!(
+        stranger.owns_group().is_some(),
+        "#1141 the guard must own the stranger's group from the spawn on"
+    );
+    stranger
+        .end()
+        .expect("#1141 the stranger must still be killed and confirmed gone after a panic");
+    assert_only_the_owner_token_remains(&scratch);
 }
 
 /// `/bin/sh` copies its stdin into `temporary`, then `exec`s a sleep: the
@@ -325,67 +424,77 @@ fn stalled_behind_a_stranger_reader() -> process::Command {
 }
 
 /// `/bin/sh` `exit 0`s right away, so the helper is dead long before the
-/// deadline, while a background stranger subshell keeps holding the pipe's
-/// read end through the same `<&0` retention as above (#1141). The helper
-/// runs as its own process-group leader, so the stranger and everything it
-/// runs stay in a group the test alone can end. The stranger waits for the
-/// go signal the test publishes once the publication has returned (capped,
-/// so even a test that never signals leaves it bounded), reads until EOF —
-/// which arrives only once every write end is closed — records that by
-/// creating `marker`, and then parks in a bounded sleep that only the test's
-/// [`StrangerGuard`] may end, never EOF or a self-chosen lifetime
+/// deadline, while a background stranger keeps holding the pipe's read end
+/// through the same `<&0` retention as above (#1141). The helper runs as its
+/// own process-group leader (`process_group(0)`), so the stranger — and
+/// everything it runs — stays in a group the test alone can end, and whose
+/// id is the spawn-returned one the `spawned` hook hands over: the group
+/// exists from the spawn on, so it never depends on the helper (or the
+/// stranger) publishing anything (#1141 fix-r2 review P1-1). The stranger
+/// itself is the [`STRANGER_PROBE`] python process: it waits for the go
+/// signal the test publishes once the publication has returned (capped, so
+/// even a test that never signals leaves it bounded), observes the pipe,
+/// records the verdict, and then parks in a bounded sleep that only the
+/// test's [`StrangerGuard`] may end, never EOF or a self-chosen lifetime
 /// (#1141 fix-r1 review P1-1).
 fn dead_helper_with_a_stranger_reader(
     marker: &Path,
     go: &Path,
-    group_file: &Path,
+    started: &Path,
 ) -> process::Command {
     let mut helper = process::Command::new("/bin/sh");
     helper
         .arg("-c")
-        .arg(
-            "( i=0
-               while [ ! -e \"$2\" ] && [ \"$i\" -lt 600 ]; do i=$((i+1)); /bin/sleep 0.1; done
-               cat > /dev/null
-               : > \"$1\"
-               exec /bin/sleep 30 ) <&0 &
-               echo $$ > \"$3\"
-               exit 0",
-        )
+        .arg(format!(
+            "python3 -c '{STRANGER_PROBE}' \"$1\" \"$2\" \"$3\" <&0 &
+               exit 0"
+        ))
         .arg("dead-helper")
         .arg(marker)
         .arg(go)
-        .arg(group_file)
+        .arg(started)
         .stdin(process::Stdio::piped())
         .process_group(0);
     helper
 }
 
-/// Ends the stranger the dead-helper test leaves behind, on every exit of
-/// that test (#1141 fix-r1 review P1-1). The group id arrives only once the
-/// dead helper has published it, so a panic from before that point is
-/// covered by Drop re-reading the file: the helper spawns the stranger
-/// before it exits, so the file is already complete whenever the panic
-/// happens past the spawn.
+/// The helper's spawn-returned id, which `process_group(0)` above also made
+/// the process-group id the stranger lands in (#1141 fix-r2 review P1-1).
+fn helper_group(id: u32) -> Pid {
+    Pid::from_raw(id as i32).expect("#1141 the helper's id must be a valid group id")
+}
+
+/// Ends the stranger the dead-helper tests leave behind, on every exit of
+/// those tests (#1141 fix-r1 review P1-1, #1141 fix-r2 review P1-1). The
+/// group id is handed over by the `spawned` hook the moment the helper
+/// exists, so the guard is armed before the stranger can even be forked: a
+/// helper that dies before forking it, a group file that is never written,
+/// an in-flight publication that panics — the guard already holds the group,
+/// and a `None` group means the spawn never succeeded, so nothing was ever
+/// forked and there is nothing to end.
 struct StrangerGuard {
-    group_file: PathBuf,
     group: Option<Pid>,
     ended: bool,
 }
 
 impl StrangerGuard {
-    fn new(group_file: &Path) -> Self {
+    fn new() -> Self {
         Self {
-            group_file: group_file.to_path_buf(),
             group: None,
             ended: false,
         }
     }
 
-    /// Take over the stranger once its group id is known; until then Drop
-    /// below re-reads the file, so a panic before this point is covered too.
+    /// Take over the stranger's group at the spawn, through the `spawned`
+    /// hook (#1141 fix-r2 review P1-1).
     fn adopt(&mut self, group: Pid) {
         self.group = Some(group);
+    }
+
+    /// The owned group, if the spawn handed one over; the tests assert this
+    /// so a regression that never adopts cannot pass vacuously (#1141).
+    fn owns_group(&self) -> Option<Pid> {
+        self.group
     }
 
     /// Kill the stranger's whole process group and confirm the group is
@@ -413,42 +522,43 @@ impl StrangerGuard {
     }
 }
 
+impl Default for StrangerGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Drop for StrangerGuard {
     fn drop(&mut self) {
-        if !self.ended && self.group.is_none() {
-            // A panic unwound before the group id was adopted: the helper
-            // may still have spawned the stranger, so give its file a
-            // bounded chance to appear before deciding there is nothing to
-            // end.
-            self.group = stranger_group(&self.group_file, STRANGER_GROUP_TIMEOUT);
-        }
         // The panic and timeout paths must not assert — a panic raised while
         // unwinding would abort the process — but the kill stays bounded.
         let _ = self.end();
     }
 }
 
-/// Read the stranger's process-group id, giving the dead helper a bounded
-/// moment to publish it; `None` when the file never appears, which on the
-/// Drop paths means the helper never spawned a stranger at all.
-fn stranger_group(group_file: &Path, wait: Duration) -> Option<Pid> {
+/// Wait until the stranger has published `signal`, bounded by `wait`; the
+/// stranger publishes the signal as its first act, so the bound only covers
+/// a stranger that never started (#1141 fix-r2 review P1-1).
+fn wait_for_signal(signal: &Path, wait: Duration) -> io::Result<()> {
     let deadline = Instant::now() + wait;
-    loop {
-        let published = fs::read_to_string(group_file)
-            .ok()
-            .and_then(|text| text.trim().parse::<i32>().ok())
-            .filter(|pid| *pid > 0);
-        if published.is_some() || Instant::now() >= deadline {
-            return published.and_then(Pid::from_raw);
-        }
+    while !signal.exists() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(5));
+    }
+    if signal.exists() {
+        Ok(())
+    } else {
+        Err(io::Error::other(
+            "#1141 the stranger never signalled that it started",
+        ))
     }
 }
 
 /// Publish the go signal atomically — write a staging file, then rename it
 /// into place (#166 r8) — so the stranger waits for the rename, never for a
-/// partially written file. Its timestamp is the return boundary the EOF
-/// observation is judged against (#1141 fix-r1 review P2-1).
+/// partially written file. The stranger reads the pipe only after it, which
+/// binds the write-end observation to the return boundary instead of a
+/// fixed sleep past the deadline (#1141 fix-r1 review P2-1, fix-r2 review
+/// P2-1).
 fn publish_go_signal(go: &Path) {
     let staging = go.with_extension("staging");
     fs::write(&staging, b"go").expect("#1141 write the go signal's staging file");

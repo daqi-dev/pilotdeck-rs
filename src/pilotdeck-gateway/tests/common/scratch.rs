@@ -118,6 +118,9 @@ pub(crate) fn write_executable(path: &Path, body: &str, mode: u32) -> io::Result
                 .stdin(process::Stdio::piped());
             helper
         },
+        // The production helper is spawned without a group of its own and
+        // nothing must clean up its descendants, so no test consumes its id.
+        |_| {},
         // The production helper is killed exactly when it overruns; only
         // the publication tests consume a kill report.
         |_| {},
@@ -127,16 +130,23 @@ pub(crate) fn write_executable(path: &Path, body: &str, mode: u32) -> io::Result
 /// The deadline-parameterized core of [`write_executable`]: `build_helper`
 /// receives the temporary name it must pipe the body into, so a test can
 /// substitute a helper that stalls deterministically (#1125 fix-r2 review
-/// P2 asked for exactly that coverage). `reaped` receives the kill + wait
-/// outcome whenever the guard had to end the helper (#1125 fix-r3 review
-/// P2): it is the only liveness evidence the publication tests use, so no
-/// pid is ever read back from a file and signalled.
+/// P2 asked for exactly that coverage). `spawned` receives the helper's id
+/// the moment the child exists — for a helper built with `process_group(0)`
+/// that id is also the process-group id its descendants land in, so a test
+/// that must clean those up owns the group before the helper (or anything it
+/// forks) can run a single instruction, instead of relying on the child
+/// publishing its group id afterwards (#1141 fix-r2 review P1-1). `reaped`
+/// receives the kill + wait outcome whenever the guard had to end the helper
+/// (#1125 fix-r3 review P2): it is the only liveness evidence the
+/// publication tests use, so no pid is ever read back from a file and
+/// signalled.
 pub(crate) fn write_executable_bounded(
     path: &Path,
     body: &str,
     mode: u32,
     deadline: Duration,
     build_helper: impl FnOnce(&Path) -> process::Command,
+    spawned: impl FnOnce(u32),
     reaped: impl FnOnce(io::Result<process::ExitStatus>),
 ) -> io::Result<()> {
     let name = path
@@ -157,6 +167,16 @@ pub(crate) fn write_executable_bounded(
         temporary: temporary.clone(),
         reaped: Some(reaped),
     };
+    // #1141 fix-r2 review P1-1: the handover happens while the guard already
+    // owns the helper but before any later step — taking the stdin, starting
+    // the writer, the write itself, the waits — can fail or panic, so a panic
+    // raised by the hook itself still unwinds through the guard's cleanup.
+    let helper_id = guard
+        .helper
+        .as_ref()
+        .expect("#1125 reap guard holds the helper")
+        .id();
+    spawned(helper_id);
     let mut stdin = guard
         .helper
         .as_mut()
