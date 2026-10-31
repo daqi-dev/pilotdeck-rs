@@ -19,7 +19,7 @@ mod mutants;
 use llm_stub::LlmStub;
 use pilotdeck_gateway::runtime::{
     memory::edgeclaw::{
-        file_memory::{EdgeClawFileStores, FileMemoryError},
+        file_memory::{ClearSessionStage, EdgeClawFileStores, FileMemoryError},
         heartbeat::{
             helpers::messages_from_value,
             indexer::{
@@ -2443,11 +2443,14 @@ async fn clear_parked_mid_scope_does_not_resurrect_turn_started_inside_window() 
     let (listed_tx, listed_rx) = std::sync::mpsc::channel::<()>();
     let release_clear_rx = Arc::new(Mutex::new(release_clear_rx));
     lab.stores
-        .set_clear_session_hook(Arc::new(move |_stage, session| {
+        .set_clear_session_hook(Arc::new(move |stage, session| {
             assert_eq!(
                 session, "s1",
                 "#917 the parked-clear hook must fire on the target session"
             );
+            if stage != ClearSessionStage::BeforeRemoveData {
+                return Ok(());
+            }
             clear_parked_tx
                 .send(())
                 .expect("#917 the parked clear must signal its critical section");
@@ -2490,6 +2493,15 @@ async fn clear_parked_mid_scope_does_not_resurrect_turn_started_inside_window() 
     listed_rx
         .recv_timeout(std::time::Duration::from_secs(10))
         .expect("#917 the heartbeat must list the rows while the clear is parked mid-scope");
+    // fix-r3 (review P1-2): the parked clear must not have advanced the
+    // generation while it sits inside its critical section — with the bump
+    // moved back in front of the seam (the pure fix-r2 rollback) this reads 1
+    // and the regression is caught here, before any release can mask it.
+    assert_eq!(
+        lab.stores.session_clear_generation("s1"),
+        0,
+        "#917 the parked clear must not advance the generation before its L0 deletion completes"
+    );
     release_clear_tx
         .send(())
         .expect("#917 the release signal must reach the parked clear");
@@ -2526,4 +2538,238 @@ async fn clear_parked_mid_scope_does_not_resurrect_turn_started_inside_window() 
         2,
         "#917 classify and createNote must still run before the discard"
     );
+}
+
+// T-race (fix-r3, review P0 / DeepSeek P1-1): the run parks between its
+// clear-baseline read and the unindexed list (`BeforeListUnindexed`, the
+// Rust-only seam — TS runs this segment synchronously, heartbeat.ts:587, so
+// the interleaving cannot happen there). While parked, a `clearSession`
+// completes (deleting the old turn's row and bumping the generation) and a
+// brand-new turn is captured for the same session. The session-level
+// generation comparison used to treat that new row as cleared — candidates
+// discarded, row still marked indexed, the turn lost forever. The per-row
+// recheck must keep it: it is new data captured after the clear finished,
+// exactly the turn the TS baseline persists on the next run (probe
+// `probe-out/post-clear-capture-ts.json`, Node v22.22.1: writtenFiles=1,
+// indexed=true).
+#[tokio::test]
+async fn turn_captured_after_completed_clear_is_not_silently_dropped() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("post-clear-capture", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "old turn the clear removes",
+    );
+    let stores = lab.stores.clone();
+    let capturing = lab.indexer.clone();
+    let hooked =
+        lab.indexer
+            .with_hook(Arc::new(move |stage: HeartbeatStage, session_key: &str| {
+                assert_eq!(
+                    session_key, "s1",
+                    "#917 the post-clear-capture hook must fire on the target session"
+                );
+                if stage == HeartbeatStage::BeforeListUnindexed {
+                    // The baseline above this point read 0. Complete the clear
+                    // (row deleted, generation bumped to 1, removed set = the old
+                    // row), then capture a brand-new turn: the review P0 shape.
+                    stores
+                        .clear_session_memory_data("s1")
+                        .expect("#917 the in-hook clearSession must complete");
+                    capture_user_turn(
+                        &capturing,
+                        "s1",
+                        "2026-10-22T00:00:02.000Z",
+                        "new turn captured after the clear",
+                    );
+                }
+            }));
+    let stats = hooked
+        .run_heartbeat(run_options())
+        .await
+        .expect("#917 the heartbeat run over the post-clear turn must succeed");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 1, 0),
+        "#917 the turn captured after the completed clear must be indexed, not silently dropped"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#917 list l0 rows after the post-clear run");
+    assert_eq!(
+        rows.len(),
+        1,
+        "#917 only the turn captured after the clear may keep its L0 row, got {rows:?}"
+    );
+    assert_eq!(
+        rows[0].timestamp, "2026-10-22T00:00:02.000Z",
+        "#917 the surviving L0 row must be the post-clear turn"
+    );
+    assert!(
+        rows[0].indexed,
+        "#917 the post-clear turn's row may be marked indexed only because its file was really written"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().any(|path| path.starts_with("Project/")),
+        "#917 the post-clear turn's file must be written, got {paths:?}"
+    );
+    let requests = lab
+        .server
+        .requests
+        .lock()
+        .expect("#917 stub requests")
+        .clone();
+    lab.server.close().await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "#917 classify and createNote must run for the post-clear turn"
+    );
+}
+
+// T-partial (fix-r3, review P2): the clear parks at `BeforeDeleteL0` — the
+// session's memory files are already removed, its L0 rows are not — then
+// aborts with the injected error (the "bump after `delete_memory_entries`,
+// before the L0 DELETE" half-fix position). At the park the generation must
+// still be the baseline and the row still present; after the abort the clear
+// has failed with the files already gone, so the generation must still be
+// untouched and the turn must stay persistable — the following heartbeat
+// writes its file. With the bump anywhere before the L0 DELETE the generation
+// advances while the rows survive, and an in-flight heartbeat silently drops
+// the turn instead.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn clear_failing_before_l0_delete_keeps_generation_and_turn() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("clear-fails-before-l0-delete", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "cleared by a clear failing right before the L0 delete",
+    );
+    let (parked_tx, parked_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+    lab.stores
+        .set_clear_session_hook(Arc::new(move |stage, session| {
+            assert_eq!(
+                session, "s1",
+                "#917 the partial-clear hook must fire on the target session"
+            );
+            if stage == ClearSessionStage::BeforeRemoveData {
+                return Ok(());
+            }
+            assert_eq!(
+                stage,
+                ClearSessionStage::BeforeDeleteL0,
+                "#917 the partial-clear hook must see the two stages in order"
+            );
+            parked_tx
+                .send(())
+                .expect("#917 the partial clear must signal it reached the L0 delete");
+            release_rx
+                .lock()
+                .expect("#917 partial-clear channel lock")
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .expect("#917 the partial clear must be released");
+            Err(FileMemoryError::Invalid(
+                "#917 injected failure before the L0 delete".into(),
+            ))
+        }));
+    let clear_stores = lab.stores.clone();
+    let clear = thread::spawn(move || {
+        let error = clear_stores
+            .clear_session_memory_data("s1")
+            .expect_err("#917 the partial clear must fail with the injected error");
+        assert!(
+            error
+                .to_string()
+                .contains("#917 injected failure before the L0 delete"),
+            "#917 the partial clear must fail with the injected error, got {error}"
+        );
+    });
+    parked_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("#917 the clear must park before the L0 delete");
+    assert_eq!(
+        lab.stores.session_clear_generation("s1"),
+        0,
+        "#917 the clear parked before its L0 delete must not have advanced the generation"
+    );
+    let parked_rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#917 list l0 rows while the clear is parked before the L0 delete");
+    assert_eq!(
+        parked_rows.len(),
+        1,
+        "#917 the clear parked before its L0 delete must keep the L0 row in place"
+    );
+    release_tx
+        .send(())
+        .expect("#917 the release signal must reach the parked partial clear");
+    clear
+        .join()
+        .expect("#917 the partial-clear thread must not panic");
+    assert_eq!(
+        lab.stores.session_clear_generation("s1"),
+        0,
+        "#917 a clear that failed right before its L0 delete must not advance the generation"
+    );
+    let stats = lab
+        .indexer
+        .run_heartbeat(run_options())
+        .await
+        .expect("#917 the heartbeat after the failed partial clear must succeed");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 1, 0),
+        "#917 a clear that failed right before its L0 delete must leave the turn persistable, not silently drop it"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#917 list l0 rows after the failed partial clear");
+    assert_eq!(
+        rows.len(),
+        1,
+        "#917 the failed partial clear must leave the session's L0 row in place"
+    );
+    assert!(
+        rows[0].indexed,
+        "#917 the L0 row may be marked indexed only alongside the persist that really wrote the file"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().any(|path| path.starts_with("Project/")),
+        "#917 the failed partial clear must not lose the turn's persist, got {paths:?}"
+    );
+    lab.server.close().await;
 }

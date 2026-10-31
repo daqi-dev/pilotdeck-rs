@@ -421,12 +421,15 @@ impl EdgeClawFileStores {
             // deleted (the mid-clear storage failure shape); one that blocks
             // parks the clear inside its critical section (the in-flight
             // window shape). Production never installs a hook.
-            if let Some(hook) = self
+            // #917 fix-r3 (review P3-3): the hook is cloned out of its slot
+            // before the call — a hook that re-enters `set_clear_session_hook`
+            // or the same store would self-deadlock on the slot's mutex.
+            let hook = self
                 .clear_session_hook
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .as_ref()
-            {
+                .clone();
+            if let Some(hook) = hook {
                 hook(ClearSessionStage::BeforeRemoveData, session)?;
             }
             let l0 = self.storage.conn()?.query_row(
@@ -450,6 +453,34 @@ impl EdgeClawFileStores {
                     .collect(),
             );
             let deleted = self.delete_memory_entries(&ids)?;
+            // #917 fix-r3 (review P2) seam: the session's memory files are
+            // already removed but its L0 rows are not — the "bump after the
+            // file removal, before the L0 DELETE" half-fix position. A hook
+            // that parks here observes the partial-clear state (generation
+            // still at its baseline, rows still present); one that errors
+            // aborts the clear with the files already gone, which must still
+            // leave the generation untouched and the L0 rows in place.
+            // Production never installs a hook.
+            let hook = self
+                .clear_session_hook
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            if let Some(hook) = hook {
+                hook(ClearSessionStage::BeforeDeleteL0, session)?;
+            }
+            // #917 fix-r3 (review P0): remember exactly which L0 rows this
+            // clear deletes, selected immediately before the DELETE inside
+            // the same exclusive snapshot operation — a row that somehow
+            // lands between the selection and the DELETE escapes the record
+            // and can only be resurrected (the TS shape), never silently
+            // dropped.
+            let removed_l0_ids: Vec<String> = self
+                .storage
+                .conn()?
+                .prepare("SELECT l0_index_id FROM l0_sessions WHERE session_key = ?")?
+                .query_map([session], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
             self.storage
                 .conn()?
                 .execute("DELETE FROM l0_sessions WHERE session_key = ?", [session])?;
@@ -460,8 +491,12 @@ impl EdgeClawFileStores {
             // discards the turn nor marks its still-present L0 row indexed
             // (the silent-turn-loss shape), and a baseline read inside a live
             // clear's critical section can only predate the deletion — after
-            // the bump the rows are gone, so that run lists nothing.
-            self.session_clears.bump(session);
+            // the bump that run's own list predates the deletion too, so what
+            // it lists are rows the clear has not claimed. fix-r3: the bump
+            // carries the removed ids, so the heartbeat recheck discards only
+            // those rows and keeps a turn captured after the completed clear
+            // (review P0: the session-level comparison used to drop it).
+            self.session_clears.bump(session, &removed_l0_ids);
             Ok(self.clear_result(
                 "session",
                 l0 as usize,
@@ -475,6 +510,17 @@ impl EdgeClawFileStores {
     /// baseline; see [`SessionClears`].
     pub fn session_clear_generation(&self, session: &str) -> u64 {
         self.session_clears.generation_of(session)
+    }
+    /// #917 fix-r3 (review P0): did a `clearSession` complete after
+    /// `baseline` and delete this exact L0 row? See [`SessionClears`].
+    pub fn session_clear_removed_since(
+        &self,
+        session: &str,
+        baseline: u64,
+        l0_index_id: &str,
+    ) -> bool {
+        self.session_clears
+            .removed_since(session, baseline, l0_index_id)
     }
     fn clear_result(
         &self,

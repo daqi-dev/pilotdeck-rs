@@ -37,25 +37,48 @@ baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
 out.mkdir(parents=True, exist_ok=True)
 
 # #917 fix-r1: the two recheck layers (the pre-loop `session_cleared` helper
-# call and the in-lock per-candidate generation recheck) plus the commit-segment
-# scope binding, all verbatim from `process_session` / `session_cleared`. The
-# anchors below must stay byte-identical to the source or the run refuses to
-# start (AnchorExpired).
+# call and the in-lock per-candidate recheck) plus the commit-segment scope
+# binding, all verbatim from `process_session` / `session_cleared`. fix-r3:
+# both layers discriminate per row via the removed-id set the clear records.
+# The anchors below must stay byte-identical to the source or the run refuses
+# to start (AnchorExpired).
 BEFORE_CLASSIFY_FIRE = '            self.fire(HeartbeatStage::BeforeClassify, &session.session_key);'
 
 PRE_LOOP_RECHECK = '''            let session_cleared =
                 self.session_cleared(&session.session_key, clear_baseline, &session.l0_index_id)?;
 '''
 
-IN_LOOP_RECHECK = '''                if self
-                    .repository
-                    .session_clear_generation(&session.session_key)
-                    != clear_baseline
+IN_LOOP_RECHECK = '''                if self.repository.session_clear_removed_since(
+                    &session.session_key,
+                    clear_baseline,
+                    &session.l0_index_id,
+                ) {
 '''
 
 HELPER_MARKER = '''        if self.repository.session_clear_generation(session_key) != clear_baseline {
+            return Ok(self.repository.session_clear_removed_since(
+                session_key,
+                clear_baseline,
+                l0_index_id,
+            ));
+        }
+'''
+
+# #917 fix-r3 (review P0): the mismatch arm back to the unconditional
+# session-level discard — a turn captured after the completed clear is
+# silently dropped again.
+HELPER_UNCONDITIONAL = '''        if self.repository.session_clear_generation(session_key) != clear_baseline {
             return Ok(true);
         }
+'''
+
+# #917 fix-r3 (review P0): the in-lock recheck back to the session-level
+# generation comparison, ignoring the per-row removed-id set.
+IN_LOOP_SESSION_ONLY = '''                if self
+                    .repository
+                    .session_clear_generation(&session.session_key)
+                    != clear_baseline
+                {
 '''
 
 L0_ARM = '            Ok(rows) => Ok(rows.is_empty()),'
@@ -82,17 +105,21 @@ HOISTED_RECHECK = '''            let session_cleared = self
 # recheck is gated on an empty storedResults list, so every candidate after
 # the first write resurrects.
 FIRST_ROUND_RECHECK = '''                if stored_results_len(trace) == 0
-                    && self
-                        .repository
-                        .session_clear_generation(&session.session_key)
-                        != clear_baseline
+                    && self.repository.session_clear_removed_since(
+                        &session.session_key,
+                        clear_baseline,
+                        &session.l0_index_id,
+                    )
+                {
 '''
 
 DISABLED_RECHECK = '''                if false
-                    && self
-                        .repository
-                        .session_clear_generation(&session.session_key)
-                        != clear_baseline
+                    && self.repository.session_clear_removed_since(
+                        &session.session_key,
+                        clear_baseline,
+                        &session.l0_index_id,
+                    )
+                {
 '''
 
 DISABLED_MARKER = '''        if false && self.repository.session_clear_generation(session_key) != clear_baseline {
@@ -103,19 +130,52 @@ DISABLED_MARKER = '''        if false && self.repository.session_clear_generatio
 # #917 fix-r2 (review P1-1): the clear generation must mean "the clear
 # completed". Moving the bump back to its fix-r1 position — in front of the
 # clear-session seam that occupies that spot now — makes a clear that fails
-# midway advance the generation anyway.
-BUMP_AFTER_DELETE = '            self.session_clears.bump(session);\n'
+# midway advance the generation anyway. fix-r3: the bump carries the removed
+# ids, so the faithful rollback collects the session's ids at the old position
+# (claiming the rows it is about to delete) before bumping; moving only the
+# line without the collection leaves the removed set empty and no longer
+# reproduces the discard (that minimal textual revert is the parked pure
+# rollback mutant below).
+BUMP_AFTER_DELETE = '            self.session_clears.bump(session, &removed_l0_ids);\n'
 
 CLEAR_SESSION_GUARD = '''            if session.is_empty() {
                 return Err(FileMemoryError::Invalid("sessionKey is required.".into()));
             }
 '''
 
-BUMP_BEFORE_SEAM = '''            if session.is_empty() {
-                return Err(FileMemoryError::Invalid("sessionKey is required.".into()));
-            }
-            self.session_clears.bump(session);
+CLAIMED_L0_IDS = '''            let claimed_l0_ids: Vec<String> = self
+                .storage
+                .conn()?
+                .prepare("SELECT l0_index_id FROM l0_sessions WHERE session_key = ?")?
+                .query_map([session], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            self.session_clears.bump(session, &claimed_l0_ids);
 '''
+
+BUMP_BEFORE_SEAM = CLAIMED_L0_IDS
+
+# The pure fix-r2 rollback (fix-r3, review P1-2 / coordinator): only the bump
+# line moves back in front of the seam, claiming nothing. The parked clear
+# then advances the generation while its rows are still present — caught by
+# the parked test's seam assertion on the generation.
+BUMP_LINE_ONLY = '            self.session_clears.bump(session, &[]);\n'
+
+# #917 fix-r3 (review P2): the clear-session seam right before the L0 rows
+# are selected and deleted, after the session's memory files are already
+# gone. Bumping here (still claiming the rows) is the "bump after
+# delete_memory_entries, before the L0 DELETE" half-fix: a clear whose DELETE
+# then fails has advanced the generation with the rows still in place.
+BEFORE_DELETE_L0_SEAM = '''            let hook = self
+                .clear_session_hook
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            if let Some(hook) = hook {
+                hook(ClearSessionStage::BeforeDeleteL0, session)?;
+            }
+'''
+
+BUMP_BEFORE_L0_SEAM = CLAIMED_L0_IDS + BEFORE_DELETE_L0_SEAM
 
 # The reviewer's "recheck outside the lock" shape: the snapshot scope is
 # acquired and dropped again at once, so a concurrent clearSession runs while
@@ -191,6 +251,26 @@ cases = [
      DISABLED_RECHECK,
      'clear_during_select_request_in_flight_discards_persist',
      '#917 a clear while the select request is in flight must discard the routed candidate'),
+    # #917 fix-r3 (review P0): the pre-loop recheck's mismatch arm back to
+    # the unconditional session-level discard — the heartbeat that listed a
+    # turn captured after the completed clear treats it as cleared and
+    # silently drops it (candidates discarded, row marked indexed).
+    ('clear-resurrect-post-clear-capture-dropped',
+     indexer,
+     HELPER_MARKER,
+     HELPER_UNCONDITIONAL,
+     'turn_captured_after_completed_clear_is_not_silently_dropped',
+     '#917 the turn captured after the completed clear must be indexed, not silently dropped'),
+    # #917 fix-r3 (review P0): the in-lock recheck ignores the per-row
+    # removed-id set and compares the session-level generation again — the
+    # post-clear turn passes the pre-loop check but is discarded inside the
+    # commit segment.
+    ('clear-resurrect-loop-recheck-ignores-removed',
+     indexer,
+     IN_LOOP_RECHECK,
+     IN_LOOP_SESSION_ONLY,
+     'turn_captured_after_completed_clear_is_not_silently_dropped',
+     '#917 the turn captured after the completed clear must be indexed, not silently dropped'),
     # #917 fix-r1 (review P0): the commit segment no longer holds the snapshot
     # operation scope across its writes, so a concurrent clearSession runs
     # while the segment is parked between its recheck and its writes.
@@ -224,24 +304,36 @@ cases = [
      'non_closed_l0_read_error_fails_closed',
      '#917 a non-Closed L0 read error must fail the session, not reject the run'),
     # #917 fix-r2 (review P1-1 data-loss half): the bump moved back in front
-    # of the seam, so a clear that fails midway (the seam's injected error)
-    # has already advanced the generation; the in-flight heartbeat discards
-    # the turn and marks its still-present L0 row indexed — silent loss.
+    # of the seam — collecting the session's ids there and claiming them — so
+    # a clear that fails midway (the seam's injected error) has already
+    # advanced the generation with the rows recorded as removed; the
+    # in-flight heartbeat discards the turn and marks its still-present L0
+    # row indexed — silent loss.
     dict(name='clear-resurrect-bump-before-delete',
          changes=[(entries, BUMP_AFTER_DELETE, ''),
-                  (entries, CLEAR_SESSION_GUARD, BUMP_BEFORE_SEAM)],
+                  (entries, CLEAR_SESSION_GUARD, CLEAR_SESSION_GUARD + BUMP_BEFORE_SEAM)],
          test='failed_clear_midway_keeps_the_turn_persistable',
          assertion='#917 a clearSession that failed midway must leave the turn persistable, not silently drop it'),
-    # #917 fix-r2 (review P1-1 race half): the bump moved back AND the
-    # empty-L0 backstop flipped, so a heartbeat whose baseline was read
-    # inside the parked clear's window passes both rechecks and resurrects
-    # the file after the clear completes.
+    # #917 fix-r3 (review P1-2, coordinator): the pure fix-r2 rollback —
+    # only the bump line moves back in front of the seam, claiming nothing.
+    # The parked clear advances the generation while its rows are still
+    # present; the parked test's seam assertion on the generation goes red
+    # (the fix-r2 stacked L0 flip is no longer needed to kill it).
     dict(name='clear-resurrect-parked-window-resurrect',
          changes=[(entries, BUMP_AFTER_DELETE, ''),
-                  (entries, CLEAR_SESSION_GUARD, BUMP_BEFORE_SEAM),
-                  (indexer, L0_ARM, '            Ok(_) => Ok(false),')],
+                  (entries, CLEAR_SESSION_GUARD, CLEAR_SESSION_GUARD + BUMP_LINE_ONLY)],
          test='clear_parked_mid_scope_does_not_resurrect_turn_started_inside_window',
-         assertion="#917 the turn whose baseline was read inside the parked clear's window must be discarded, not resurrected"),
+         assertion='#917 the parked clear must not advance the generation before its L0 deletion completes'),
+    # #917 fix-r3 (review P2): the half-fix — the bump (still claiming the
+    # rows) moved to the `BeforeDeleteL0` seam, after the session's memory
+    # files are removed but before the L0 DELETE. A clear that then fails has
+    # advanced the generation with the rows still in place; the partial-clear
+    # test's parked generation assertion goes red.
+    dict(name='clear-resurrect-bump-before-l0-delete',
+         changes=[(entries, BUMP_AFTER_DELETE, ''),
+                  (entries, BEFORE_DELETE_L0_SEAM, BUMP_BEFORE_L0_SEAM)],
+         test='clear_failing_before_l0_delete_keeps_generation_and_turn',
+         assertion='#917 the clear parked before its L0 delete must not have advanced the generation'),
     ('close-rejection-swallowed',
      indexer,
      '''            self.repository
