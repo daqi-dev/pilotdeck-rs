@@ -357,13 +357,13 @@ def _scanner_environment(env=None):
     """
     env = dict(os.environ if env is None else env)
     scanner_root = Path(__file__).resolve().parents[4]
-    target = env.get('CARGO_TARGET_DIR') or str(scanner_root / 'src/target')
-    env['CARGO_TARGET_DIR'] = str((scanner_root / target).resolve())
-    return env
+    if 'CARGO_TARGET_DIR' not in env:
+        env['CARGO_TARGET_DIR'] = str(scanner_root / '_build/cargo-target')
+    return _target_environment(scanner_root, env)
 
 
 def _ensure_workspace_scanner(env=None):
-    """Bootstrap only a missing helper, before acquiring a source-tree lease.
+    """Bootstrap only a missing helper under its pristine source-tree lease.
 
     Never silently replace an existing helper: its embedded source digest is
     checked on every scan, including deliberate scanner mutations. Rebuilding a
@@ -374,19 +374,24 @@ def _ensure_workspace_scanner(env=None):
     if executable.is_file():
         return
     root = Path(__file__).resolve().parents[4]
-    wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15).check_returncode()
-    result = run_owned(['cargo', 'build', '--offline', '--manifest-path', 'src/Cargo.toml',
-                        '-p', 'pilotdeck-gateway', '--example', 'workspace_inputs'],
-                       cwd=root, env=env, timeout=1800, idle_timeout=600)
-    result.check_returncode()
-    if not executable.is_file():
-        raise RuntimeError('#1166 scanner build produced no executable')
+    with tree_lock(root):
+        _assert_workspace_sources(root, 'HEAD')
+        # Another cold caller may have completed while this one waited.
+        if executable.is_file():
+            return
+        wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15).check_returncode()
+        result = run_owned(['cargo', 'build', '--offline', '--manifest-path', 'src/Cargo.toml',
+                            '-p', 'pilotdeck-gateway', '--example', 'workspace_inputs'],
+                           cwd=root, env=env, timeout=1800, idle_timeout=600)
+        result.check_returncode()
+        if not executable.is_file():
+            raise RuntimeError('#1166 scanner build produced no executable')
 
 
 def _workspace_literal_inputs(root, baseline, *, env=None):
     """Run the prebuilt #449/#1166 proc-macro2 scanner; never launch Cargo here.
 
-    The shared entry points bootstrap a missing helper before the lease.
+    The shared entry points bootstrap a missing helper inside a pristine lease.
     No inventory cache: included external Rust
     sources are re-read every time. Embedded source identity rejects stale builds.
     """
@@ -430,13 +435,18 @@ def _assert_product_pristine(root, baseline, *, env=None):
     # refusal for every next runner, not just the one that shares its file.
     # include_str!/include_bytes! can read non-Rust files; src/vendor
     # and src/data are path dependencies too. Do not maintain a crate list.
-    areas = ('src', '.cargo', ':(top,glob)rust-toolchain*')
-    _assert_input_areas(root, baseline, areas)
+    _assert_workspace_sources(root, baseline)
     literal_inputs = _workspace_literal_inputs(root, baseline, env=env)
     # Explicitly included files are inputs even when named like a cache. Bound
     # argv by encoded bytes (not characters/count); preserve every literal.
     for batch in _pathspec_batches(literal_inputs):
         _assert_input_areas(root, baseline, batch, exclude_caches=False)
+
+
+def _assert_workspace_sources(root, baseline):
+    # This cheap preflight does not need the scanner it protects at cold start.
+    areas = ('src', '.cargo', ':(top,glob)rust-toolchain*')
+    _assert_input_areas(root, baseline, areas)
 
 
 def _pathspec_batches(paths):
@@ -494,6 +504,61 @@ def copy_binary(source, destination, *, expected_sha256=None):
     return str(destination)
 
 
+def _target_environment(root, env):
+    raw = env.get('CARGO_TARGET_DIR')
+    if raw is None or not raw.strip():
+        raise RuntimeError('#1166 CARGO_TARGET_DIR must be supplied by the caller')
+    if raw.strip() == '.':
+        raise RuntimeError('#1166 target cannot be dot')
+    env = dict(env)
+    scanner_root = Path(__file__).resolve().parents[4]
+    target = raw
+    env['CARGO_TARGET_DIR'] = str((scanner_root / target).resolve())
+    target = Path(env['CARGO_TARGET_DIR'])
+    if target == Path(target.anchor):
+        raise RuntimeError('#1166 target cannot be filesystem root')
+    if target in (root, Path(__file__).resolve().parents[4]):
+        raise RuntimeError('#1166 target cannot be repository root')
+    if any(target.is_relative_to(base / 'src')
+           for base in (root, Path(__file__).resolve().parents[4])):
+        raise RuntimeError('#1166 target cannot be inside src')
+    return env
+
+
+def _publish_build_owner(root, env):
+    owner = dict(root=str(root), head=_git(root, 'rev-parse', 'HEAD').decode().strip(),
+                 nonce=os.urandom(16).hex())
+    target = Path(env['CARGO_TARGET_DIR'])
+    target.mkdir(parents=True, exist_ok=True)
+    marker = target / '.negative-build-owner.json'
+    payload = json.dumps(owner, sort_keys=True) + '\n'
+    pending = marker.with_name(marker.name + '.' + owner['nonce'] + '.tmp')
+    try:
+        with pending.open('x') as stream:
+            stream.write(payload)
+        pending.replace(marker)
+    finally:
+        pending.unlink(missing_ok=True)
+    return marker, payload
+
+
+def _artifact_identity(path):
+    info = Path(path).stat()
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _verify_snapshot_owner(marker, payload, artifact, identity, started_ns):
+    try:
+        if marker.read_text() != payload:
+            raise RuntimeError('#1166 build owner changed during snapshot')
+        if _artifact_identity(artifact) != identity:
+            raise RuntimeError('#1166 build artifact changed during snapshot')
+        if identity[3] < started_ns:
+            raise RuntimeError('#1166 build artifact predates this build')
+    except OSError as error:
+        raise RuntimeError('#1166 build provenance unavailable after copy') from error
+
+
 def build_snapshot(root, output, *, package, target, kind='test', release=True,
                    env=None):
     """Build verified workspace inputs and copy the executable under one lease.
@@ -506,9 +571,7 @@ def build_snapshot(root, output, *, package, target, kind='test', release=True,
     """
     root = Path(root).resolve()
     env = dict(os.environ if env is None else env)
-    if not env.get('CARGO_TARGET_DIR'):
-        raise RuntimeError('#1166 CARGO_TARGET_DIR must be supplied by the caller')
-    env = _scanner_environment(env)
+    env = _target_environment(root, env)
     if kind not in ('test', 'bin'):
         raise ValueError('#1166 unsupported measurement target kind')
     output = Path(output).resolve()
@@ -520,11 +583,14 @@ def build_snapshot(root, output, *, package, target, kind='test', release=True,
         command.append('--no-run')
     if release:
         command.append('--release')
-    _ensure_workspace_scanner(env)
     with tree_lock(root, timeout=900):
+        _assert_workspace_sources(root, 'HEAD')
+        _ensure_workspace_scanner(env)
         _assert_product_pristine(root, 'HEAD', env=env)
         slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15)
         (output / 'slots.log').write_text(slot.stdout + slot.stderr)
+        marker, owner = _publish_build_owner(root, env)
+        started_ns = time.time_ns()
         result = run_owned(command, cwd=root, env=env, timeout=1800, idle_timeout=600)
         (output / 'build.log').write_text(result.stdout + result.stderr)
         result.check_returncode()
@@ -537,7 +603,11 @@ def build_snapshot(root, output, *, package, target, kind='test', release=True,
                 executables.add(row['executable'])
         if len(executables) != 1:
             raise RuntimeError('#1166 expected exactly one measurement executable')
-        binary = copy_binary(executables.pop(), output / 'executable')
+        artifact = executables.pop()
+        identity = _artifact_identity(artifact)
+        binary = copy_binary(artifact, output / 'executable')
+        _verify_snapshot_owner(marker, owner, artifact, identity, started_ns)
+        (output / 'build-owner.json').write_text(owner)
         (output / 'sha256').write_text(hashlib.sha256(Path(binary).read_bytes()).hexdigest() + '\n')
         return binary
 
@@ -604,8 +674,9 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
             raise ValueError(f"source to mutate is outside {root}: {candidate}")
         normalized.append((alias, candidate, relative))
 
-    _ensure_workspace_scanner()
     with tree_lock(root, timeout=lock_timeout):
+        _assert_workspace_sources(root, baseline)
+        _ensure_workspace_scanner()
         _assert_product_pristine(root, baseline)
         baseline_bytes = {path: _head_bytes(root, relative, baseline)
                           for _alias, path, relative in normalized}

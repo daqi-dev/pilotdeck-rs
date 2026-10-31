@@ -41,10 +41,10 @@ python3 -B tests/fixtures/pending-reanchor/negative_controls.py NEW_OUTPUT_DIR
 
 以上命令在 `src/pilotdeck-gateway` 下运行。四格及边界自测也由 `tests/negative_anchor_selfcheck.rs` 纳入 Cargo 测试。负控只改 Python 共享件，逐项先 `compile()` 验证语法，再执行绑定自测与恢复自测；不运行 cargo，因此不占 cargo slot。锚点失配、HEAD 不一致、语法错误或非绑定断言失败记 `INVALID`，所有选择项汇总后非零退出；把 WARN 降级逻辑改为 no-op 必须杀于 `#1048 downgrade` 断言。
 
-## 共享输入扫描器（#1166 fix-r3）
+## 共享输入扫描器（#1166 fix-r4）
 
-`mutating_sources` 和 `build_snapshot` 在取得源码树锁前，按需离线构建缺失的 `workspace_inputs` example；先排 cargo 槽位（900 秒），构建总期限 1800 秒、静默期限 600 秒，失败或取消即拒绝进入变异/快照。已有 helper 不自动重建，锁内每次扫描仍核对源码摘要、仓库根和 HEAD；摘要不符须由持有人离线重建，不能默许陈旧或别树的 scanner。纯 Python 负控的“无 Cargo”只指变异/绑定测试本身，首次共享入口可能构建 scanner。
+`mutating_sources` 和 `build_snapshot` 在取得源码树锁并通过基础输入 pristine 检查后，按需离线构建缺失的 `workspace_inputs` example；先排 cargo 槽位（900 秒），构建总期限 1800 秒、静默期限 600 秒，失败或取消即拒绝进入变异/快照。已有 helper 不自动重建，锁内每次扫描仍核对源码摘要、仓库根和 HEAD；摘要不符须由持有人离线重建，不能默许陈旧或别树的 scanner。纯 Python 负控的“无 Cargo”只指变异/绑定测试本身，首次共享入口可能构建 scanner。
 
-负控脚本仍使用调用方的 `CARGO_TARGET_DIR`，允许树外但须本树独占。共享入口将相对值按仓库根解释并传绝对值给 Cargo/扫描器；普通 `mutating_sources` 调用未设置时，scanner 使用本树 `src/target`。测量 `build_snapshot` 仍要求显式 target，并在树锁内校验 HEAD、重新调用 Cargo、从本次 artifact JSON 取 executable 后独占复制；target 位置不是来源证明。
+负控脚本仍使用调用方的 `CARGO_TARGET_DIR`，允许树外但须本树独占。共享入口将相对值按仓库根解释并传绝对值给 Cargo/扫描器；普通 `mutating_sources` 调用未设置时，scanner 使用本树 `_build/cargo-target`。测量 `build_snapshot` 仍要求显式 target，并在树锁内校验 HEAD、重新调用 Cargo、从本次 artifact JSON 取 executable 后独占复制；target 位置不是来源证明。共享 target 归一化在副作用前拒收空白串、`.`、文件系统根、仓库根及 `src/` 内目录（显式空值同样拒收）。构建前在 target 原子发布 root / HEAD / 随机 nonce 标记；复制后复核标记未变、artifact 身份未变且 mtime 不早于本次构建开始，再发布摘要与 build-owner.json。Cargo 命中旧缓存产物也会因 mtime 被拒收；使用专属的新 target 或由持有人安排真实重建，不 touch 产物冒充本次构建。
 
 默认模块扫描对 tracked `src/**/*.rs` 种子同时覆盖 crate 根与普通模块两种所有权目录（含该集合内的自定义 target），递归边使用精确目录。该保守输入闭包可能因非实际上下文中的歧义额外拒绝；它不替代 Cargo 编译有效性检查。`src` 外未由 include/path/mod 连接的自定义根不属于该种子发现规则。
