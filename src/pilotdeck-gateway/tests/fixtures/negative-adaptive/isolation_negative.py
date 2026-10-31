@@ -86,7 +86,7 @@ def main():
     parser.add_argument('controls', nargs='*')
     args = parser.parse_args()
     if not os.environ.get('CARGO_TARGET_DIR'):
-        parser.error('CARGO_TARGET_DIR must be supplied by the caller (no Cargo is launched)')
+        parser.error('CARGO_TARGET_DIR must be supplied by the caller (only a missing shared scanner may launch offline Cargo)')
     selected = [row for row in CONTROLS if not args.controls or row[0] in args.controls]
     if args.controls and (len(selected) != len(args.controls) or len(set(args.controls)) != len(args.controls)):
         parser.error('unknown/duplicate control')

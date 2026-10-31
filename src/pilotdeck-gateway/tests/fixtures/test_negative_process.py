@@ -1,5 +1,5 @@
 # anchor-selfcheck: unsupported unit tests of the shared process/source guard
-"""Run directly with Python; no Cargo, network or product fixtures needed.
+"""Run directly with Python; no network or product fixtures needed; the shared guard may bootstrap its Rust scanner offline.
 
 The source-window cases create a throwaway git repository under the system
 temporary directory, so they exercise the real baseline check without touching

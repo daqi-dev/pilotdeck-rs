@@ -2,8 +2,8 @@
 """#1166 uses tiny synthetic repositories, never copies product/build state.
 
 These repos are the input under test (including dirty index flags), not an
-alternate HEAD for executing product negative controls. Prebuild workspace_inputs
-once in the real target; these tests execute that helper, never Cargo.
+alternate HEAD for executing product negative controls. Shared entry points build
+a missing workspace_inputs helper offline before taking the source lease.
 """
 from contextlib import contextmanager
 import ast
@@ -138,9 +138,139 @@ class WorkspacePristine(unittest.TestCase):
                 finally:
                     path.unlink()
 
+    def test_deep_target_is_not_a_cache(self):
+        path = self.root / 'src/vendor/nested/target/generated.rs'
+        path.parent.mkdir(parents=True)
+        path.write_text('// generated input')
+        with self.assertRaises(api.SourceBaselineError,
+                               msg='#1166 nested target inputs cannot be exempt'):
+            api._assert_product_pristine(self.root, 'HEAD')
+
+    def test_literal_batches_are_bounded_and_complete(self):
+        paths = tuple(':(top,literal)assets/' + str(i) + '/' + '界' * 80 for i in range(1000))
+        batches = list(api._pathspec_batches(paths))
+        self.assertTrue(len(batches) > 1 and all(
+            sum(len(os.fsencode(path)) + 1 for path in batch) <= 32768 for batch in batches),
+            '#1166 literal argv batches stay bounded')
+        self.assertTrue(tuple(path for batch in batches for path in batch) == paths,
+                        '#1166 every literal survives batching')
+        with patch.object(api, '_workspace_literal_inputs', return_value=paths), \
+                patch.object(api, '_assert_input_areas') as check:
+            api._assert_product_pristine(self.root, 'HEAD')
+        literal_calls = check.call_args_list[1:]
+        self.assertTrue(tuple(path for call in literal_calls for path in call.args[2]) == paths
+                        and all(call.kwargs == {'exclude_caches': False} for call in literal_calls),
+                        '#1166 every literal batch is checked without cache exemptions')
+
+    def test_last_real_literal_batch_is_guarded(self):
+        files = {'assets/' + f'{i:04}-' + 'x' * 180: 'data' for i in range(200)}
+        source = ''.join('const X' + str(i) + ': &str = include_str!("../../../' + name + '");\n'
+                         for i, name in enumerate(files))
+        self.commit_source(source, files)
+        inputs = api._workspace_literal_inputs(self.root, 'HEAD')
+        self.assertTrue(sum(len(os.fsencode(path)) + 1 for path in inputs) > 32768,
+                        '#1166 actual inventory crosses the literal batch budget')
+        target = self.root / next(reversed(files))
+        with api.mutating_sources(self.root, [target]):
+            target.write_text('residue')
+            with self.assertRaises(api.SourceBaselineError,
+                                   msg='#1166 final real literal batch remains guarded'):
+                api._assert_product_pristine(self.root, 'HEAD')
+
+    def test_crate_root_and_module_seed_contexts(self):
+        for relative in ('tests/probe.rs', 'examples/probe.rs', 'src/bin/probe.rs',
+                         'build.rs', 'custom/entry.rs'):
+            with self.subTest(root=relative):
+                base = Path('src/pilotdeck-cli') / relative
+                parent = base.parent
+                nested = parent / base.stem
+                # Both roots point to distinct external data, so a fallback
+                # choosing the first existing module cannot pass this test.
+                import os.path
+                files = {str(base): 'mod child;',
+                         str(parent / 'child.rs'): 'const X: &str = include_str!("' +
+                            os.path.relpath('assets/root-data', parent) + '");',
+                         str(nested / 'child.rs'): 'const X: &str = include_str!("' +
+                            os.path.relpath('assets/module-data', nested) + '");',
+                         'assets/root-data': 'root', 'assets/module-data': 'module'}
+                root_only = {name: content for name, content in files.items()
+                             if name != str(nested / 'child.rs')}
+                self.commit_source('// fixture', root_only)
+                failure = None
+                try:
+                    api._workspace_literal_inputs(self.root, 'HEAD')
+                except Exception as error:
+                    failure = error
+                self.assertTrue(failure is None,
+                                '#1166 crate roots and module seeds retain both real inputs')
+                self.commit_source('// fixture', files)
+                failure = None
+                try:
+                    inputs = api._workspace_literal_inputs(self.root, 'HEAD')
+                except Exception as error:
+                    failure = error
+                    inputs = ()
+                self.assertTrue(failure is None and all(':(top,literal)assets/' + name in inputs
+                                for name in ('root-data', 'module-data')),
+                                '#1166 crate roots and module seeds retain both real inputs')
+                for name in ('root-data', 'module-data'):
+                    path = self.root / 'assets' / name
+                    with api.mutating_sources(self.root, [path]):
+                        path.write_text('dirty')
+                        with self.assertRaises(api.SourceBaselineError,
+                                msg='#1166 both seed ownership inputs stay guarded'):
+                            api._assert_product_pristine(self.root, 'HEAD')
+
+    def test_ordinary_lib_and_main_modules_use_stem_directories(self):
+        files = {}
+        for name in ('lib', 'main'):
+            base = 'src/pilotdeck-cli/custom_' + name + '/'
+            files[base + 'entry.rs'] = 'mod ' + name + ';'
+            files[base + name + '.rs'] = 'mod child;'
+            files[base + name + '/child.rs'] = '// ordinary module child'
+        self.commit_source('// fixture', files)
+        failure = None
+        try:
+            api._workspace_literal_inputs(self.root, 'HEAD')
+        except Exception as error:
+            failure = error
+        self.assertTrue(failure is None,
+                        '#1166 ordinary lib and main modules use stem directories')
+
+    def test_seed_union_does_not_stop_at_first_existing_module(self):
+        self.commit_source('// fixture', {
+            'src/pilotdeck-cli/custom/entry.rs': 'mod child;',
+            'assets/union-root': 'root', 'assets/union-module': 'module'})
+        # Keep children out of HEAD so they cannot be independently seeded.
+        # This tests parser discovery directly; the pristine guard separately
+        # rejects untracked source inputs before scanning them.
+        for relative, data in (('custom/child.rs', 'union-root'),
+                               ('custom/entry/child.rs', 'union-module')):
+            path = self.root / 'src/pilotdeck-cli' / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('const X: &str = include_str!("' +
+                            os.path.relpath(self.root / 'assets' / data, path.parent) + '");')
+        failure = None
+        try:
+            inputs = api._workspace_literal_inputs(self.root, 'HEAD')
+        except Exception as error:
+            failure, inputs = error, ()
+        self.assertTrue(failure is None and all(':(top,literal)assets/' + name in inputs
+                        for name in ('union-root', 'union-module')),
+                        '#1166 seed ownership union cannot drop a candidate')
+
+    def test_ambiguous_seed_module_fails_closed(self):
+        self.commit_source('// fixture', {
+            'src/pilotdeck-cli/tests/ambiguous.rs': 'mod child;',
+            'src/pilotdeck-cli/tests/child.rs': '// child',
+            'src/pilotdeck-cli/tests/child/mod.rs': '// ambiguous child'})
+        with self.assertRaises(api.SourceBaselineError,
+                               msg='#1166 each ownership context rejects ambiguous modules'):
+            api._workspace_literal_inputs(self.root, 'HEAD')
+
     def test_only_untracked_caches_are_excluded(self):
         for name in ('src/target/debug/cache', 'src/pilotdeck-cli/target/debug/cache',
-                     'src/vendor/nested/target/debug/cache', 'src/.DS_Store',
+                     'src/.DS_Store',
                      'src/pilotdeck-cli/.pytest_cache/state',
                      'src/pilotdeck-cli/tests/__pycache__/fixture.pyc'):
             path = self.root / name
@@ -307,9 +437,6 @@ class WorkspacePristine(unittest.TestCase):
             with patch.object(api, 'run_owned', side_effect=error):
                 with self.assertRaises(api.SourceBaselineError, msg='#1166 unavailable scanner must fail closed'):
                     api._workspace_literal_inputs(self.root, 'HEAD')
-        with patch.dict(os.environ, {'CARGO_TARGET_DIR': ''}):
-            with self.assertRaises(api.SourceBaselineError, msg='#1166 unavailable scanner must fail closed'):
-                api._workspace_literal_inputs(self.root, 'HEAD')
 
     def test_explicit_cache_input_is_not_exempt(self):
         self.commit_source('const X: &str = include_str!("../.DS_Store");',
@@ -471,6 +598,60 @@ except SourceBaselineError: print('REFUSED')
                 child.communicate(timeout=5)
 
 
+class ScannerBootstrap(unittest.TestCase):
+    def test_fresh_target_first_mutation_bootstraps_before_lock(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs1166-cold-target-') as directory:
+            target = Path(directory).resolve()
+            executable = target / 'debug/examples/workspace_inputs'
+            events = []
+            def build(command, **kwargs):
+                events.append('build')
+                self.assertTrue(command[:3] == ['cargo', 'build', '--offline']
+                                and kwargs['env']['CARGO_TARGET_DIR'] == str(target)
+                                and kwargs['cwd'] == ROOT
+                                and kwargs['timeout'] == 1800 and kwargs['idle_timeout'] == 600,
+                                '#1166 cold scanner build uses bounded caller target')
+                executable.parent.mkdir(parents=True)
+                executable.write_text('synthetic Cargo artifact')
+                return subprocess.CompletedProcess(command, 0, '', '')
+            @contextmanager
+            def lock(*args, **kwargs):
+                events.append('lock')
+                yield
+            with patch.dict(os.environ, {'CARGO_TARGET_DIR': str(target)}), \
+                    patch.object(api, 'wait_for_slot', side_effect=lambda *a, **k:
+                        (events.append('slot') or subprocess.CompletedProcess([], 0, '', ''))), \
+                    patch.object(api, 'run_owned', side_effect=build), \
+                    patch.object(api, 'tree_lock', lock), \
+                    patch.object(api, '_assert_product_pristine'):
+                failure = None
+                try:
+                    with api.mutating_sources(ROOT, []):
+                        events.append('body')
+                    with api.mutating_sources(ROOT, []):
+                        events.append('warm-body')
+                except Exception as error:
+                    failure = error
+                self.assertTrue(failure is None and events ==
+                                ['slot', 'build', 'lock', 'body', 'lock', 'warm-body'],
+                                '#1166 cold first mutation prepares before lease and warm reuses helper')
+
+    def test_bootstrap_failure_never_enters_mutation(self):
+        for outcome in ('failed', 'missing', 'cancelled'):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory, \
+                    patch.dict(os.environ, {'CARGO_TARGET_DIR': directory}), \
+                    patch.object(api, 'wait_for_slot', return_value=subprocess.CompletedProcess([], 0, '', '')), \
+                    patch.object(api, 'tree_lock') as lock, \
+                    patch.object(api, '_assert_product_pristine'), \
+                    patch.object(api, 'run_owned', side_effect=(KeyboardInterrupt('cancel') if outcome == 'cancelled'
+                        else None), return_value=subprocess.CompletedProcess([], int(outcome == 'failed'), '', '')):
+                with self.assertRaises((RuntimeError, subprocess.CalledProcessError, KeyboardInterrupt),
+                        msg='#1166 failed scanner bootstrap must fail closed'):
+                    with api.mutating_sources(ROOT, []):
+                        pass
+                self.assertFalse(lock.called, '#1166 failed bootstrap cannot acquire source lease')
+
+
 class SnapshotControls(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='pdrs1166-binary-')
@@ -491,8 +672,9 @@ class SnapshotControls(unittest.TestCase):
                 yield
             finally:
                 self.events.append('unlock')
-        def clean(*args):
+        def clean(*args, **kwargs):
             self.events.append('clean')
+            self.assertTrue(kwargs['env'] == self.env, '#1166 scanner and Cargo share target environment')
         def slot(*args, **kwargs):
             self.events.append('slot')
             return subprocess.CompletedProcess([], 0, 'slot\n', '')
@@ -517,7 +699,8 @@ class SnapshotControls(unittest.TestCase):
         def copy(*args, **kwargs):
             self.events.append('copy')
             return actual_copy(*args, **kwargs)
-        with patch.object(api, 'tree_lock', lock), patch.object(api, '_assert_product_pristine', clean), \
+        with patch.object(api, '_ensure_workspace_scanner', side_effect=lambda env: self.events.append('prepare')), \
+                patch.object(api, 'tree_lock', lock), patch.object(api, '_assert_product_pristine', clean), \
                 patch.object(api, 'wait_for_slot', slot), patch.object(api, 'run_owned', build), \
                 patch.object(api, 'copy_binary', copy):
             yield
@@ -529,7 +712,7 @@ class SnapshotControls(unittest.TestCase):
     def test_build_copy_and_slot_are_inside_lock(self):
         with self.dependencies():
             binary = self.build()
-        self.assertTrue(self.events == ['lock', 'clean', 'slot', 'build', 'copy', 'unlock'],
+        self.assertTrue(self.events == ['prepare', 'lock', 'clean', 'slot', 'build', 'copy', 'unlock'],
                         '#1166 clean slot build copy must stay inside tree lease')
         self.assertTrue(Path(binary).parent == self.root / 'run', '#1166 return private executable')
         # Replace the shared cargo name, then run twice: neither launch may
@@ -572,24 +755,58 @@ class SnapshotControls(unittest.TestCase):
 
     def test_no_target_no_build(self):
         marker = '#1166 absent target must fail before build'
-        with patch.object(api, 'tree_lock', side_effect=AssertionError(marker)), self.assertRaises(RuntimeError,
+        with patch.object(api, '_ensure_workspace_scanner', side_effect=AssertionError(marker)), self.assertRaises(RuntimeError,
                 msg='#1166 absent target must fail before build'):
             api.build_snapshot(self.root, self.root / 'run', package='fixture', target='probe', env={})
         self.assertFalse(self.events, '#1166 absent target cannot touch sources')
 
-    def test_target_directory_must_belong_to_worktree(self):
-        with tempfile.TemporaryDirectory(prefix='pdrs1166-other-target-') as other:
-            (self.root / 'shared-link').symlink_to(other, target_is_directory=True)
-            marker = '#1166 foreign cargo target must be rejected before work'
-            for index, target in enumerate((other, '../shared-target', str(self.root), 'shared-link')):
-                output = self.root / f'run-{index}'
-                with self.subTest(target=target), patch.object(
-                        api, 'tree_lock', side_effect=AssertionError(marker)), self.assertRaises(
-                        RuntimeError, msg='#1166 foreign cargo target must be rejected before work'):
-                    api.build_snapshot(self.root, output, package='fixture', target='probe',
-                                       env={'CARGO_TARGET_DIR': target})
-                self.assertFalse(self.events, '#1166 foreign cargo target cannot acquire or build')
-                self.assertFalse(output.exists(), '#1166 foreign target cannot claim output')
+    def test_external_target_is_rebuilt_and_copied(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs1166-external-') as other:
+            self.env = {'CARGO_TARGET_DIR': str(Path(other).resolve())}
+            failure = None
+            with self.dependencies():
+                try:
+                    binary = self.build()
+                except Exception as error:
+                    failure = error
+                    binary = ''
+            self.assertTrue(failure is None and Path(binary).is_file(),
+                            '#1166 external target must build and snapshot successfully')
+            self.assertTrue(self.events == ['prepare', 'lock', 'clean', 'slot', 'build', 'copy', 'unlock'],
+                            '#1166 external target provenance requires locked rebuild and copy')
+
+    def test_relative_target_is_independent_of_process_cwd(self):
+        expected = str((ROOT / '../relative-target').resolve())
+        for cwd in (ROOT, self.root):
+            with contextlib.chdir(cwd):
+                env = api._scanner_environment({'CARGO_TARGET_DIR': '../relative-target'})
+            self.assertTrue(env['CARGO_TARGET_DIR'] == expected,
+                            '#1166 target resolves relative to repository root')
+        with patch.dict(os.environ, {'CARGO_TARGET_DIR': ''}):
+            env = api._scanner_environment()
+        self.assertTrue(env['CARGO_TARGET_DIR'] == str(ROOT / 'src/target'),
+                        '#1166 scanner has a default target without caller setup')
+
+    def test_runner_build_uses_normalized_environment(self):
+        source = Path(__file__).with_name('negative_controls.py')
+        main = next(node for node in ast.parse(source.read_text()).body
+                    if isinstance(node, ast.FunctionDef) and node.name == 'main')
+        build = next(node for node in main.body
+                     if isinstance(node, ast.FunctionDef) and node.name == 'build_helper')
+        env = api._scanner_environment({'CARGO_TARGET_DIR': '../caller-target'})
+        calls = []
+        def run(command, **kwargs):
+            calls.append(kwargs)
+            return subprocess.CompletedProcess(command, 0, '', '')
+        namespace = dict(ROOT=ROOT, env=env, out=self.root, run_owned=run,
+                         wait_for_slot=lambda *a, **k: subprocess.CompletedProcess([], 0, '', ''),
+                         exclusive_write=lambda *a: None)
+        exec(compile(ast.Module(body=[build], type_ignores=[]), str(source), 'exec'), namespace)
+        namespace['build_helper']('probe')
+        self.assertTrue(bool(calls) and all(call.get('env') == env for call in calls),
+                        '#1166 runner Cargo uses normalized caller target')
+        self.assertTrue(all(call.get('timeout') == 1800 and call.get('idle_timeout') == 600 for call in calls),
+                        '#1166 runner helper keeps bounded progress deadlines')
 
     def test_yaml_has_only_python_measurement_entrypoint(self):
         source = (ROOT / 'src/pilotdeck-yaml/tests/resource_scaling.rs').read_text()

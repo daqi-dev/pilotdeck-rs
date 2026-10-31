@@ -3,8 +3,8 @@
 
 Usage: CARGO_TARGET_DIR=<caller-owned> python3 -I -B negative_controls.py OUTPUT
 --check compiles all candidate replacements without writing a source file;
-only a committed, guarded run can report KILLED. No cargo is needed for these
-Python-only mutations. Each child has a 90s bound via the existing Python runner.
+only a committed, guarded run can report KILLED. Python mutations need no Cargo; shared admission may bootstrap a missing
+Rust scanner offline before acquiring the source lease. Each child has a 90s bound via the existing Python runner.
 """
 import argparse
 import importlib.util

@@ -1,4 +1,4 @@
-//! Prebuild offline before running negative controls; execution never invokes Cargo.
+//! Shared entry points bootstrap this offline; scanning itself never invokes Cargo.
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeSet, HashSet},
@@ -52,9 +52,15 @@ fn main() {
         let relative = std::str::from_utf8(name).expect("#1166 UTF-8 source path");
         let path = source_inputs::workspace_target(&root, &root.join(relative));
         inputs.insert(relative.to_owned());
-        pending.push((path.clone(), source_inputs::source_module_dir(&path)));
+        let mut directories = vec![
+            path.parent().expect("#1166 seed parent").to_path_buf(),
+            source_inputs::source_module_dir(&path),
+        ];
+        directories.sort();
+        directories.dedup();
+        pending.push((path, directories));
     }
-    let mut seen = HashSet::<(PathBuf, PathBuf)>::new();
+    let mut seen = HashSet::<(PathBuf, Vec<PathBuf>)>::new();
     while let Some((path, module_dir)) = pending.pop() {
         if !seen.insert((path.clone(), module_dir.clone())) {
             continue;
@@ -69,7 +75,7 @@ fn main() {
                     .to_owned(),
             );
             if edge.rust_source {
-                pending.push((edge.path, edge.module_dir));
+                pending.push((edge.path, vec![edge.module_dir]));
             }
         }
     }
