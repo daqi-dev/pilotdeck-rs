@@ -311,11 +311,12 @@ impl HeartbeatIndexer {
 
         for session_key in session_keys {
             // #917 fix-r1: capture the clear generation before listing this
-            // session's rows. Any `clearSession` after this point bumps the
-            // generation, and the persist-side recheck compares against this
-            // baseline, so a clear that lands in a later await is detected
-            // even when the L0 lookup itself can no longer read SQLite
-            // (clear followed by close).
+            // session's rows. Any `clearSession` that completes after this
+            // point bumps the generation (fix-r2: only after its deletion
+            // succeeded — a failed clear leaves it untouched), and the
+            // persist-side recheck compares against this baseline, so a clear
+            // that lands in a later await is detected even when the L0 lookup
+            // itself can no longer read SQLite (clear followed by close).
             let clear_baseline = self.repository.session_clear_generation(&session_key);
             let sessions = self
                 .repository
