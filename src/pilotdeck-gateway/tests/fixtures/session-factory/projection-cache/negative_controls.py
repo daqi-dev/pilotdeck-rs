@@ -53,6 +53,30 @@ mutations = [
      'for _ in 0..1 {',
      'runtime::session::factory::projection_cache_tests::capture_retries_three_times',
      '#1011 capture retry budget is exactly three'),
+    # fix-r1 (opus P2): removing the read-side size bound would allocate and
+    # parse the whole oversized cache; the missing-file fallback must win.
+    ('oversized-checkpoint-accepted',
+     'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs',
+     'if len > crate::storage::TRANSCRIPT_MAX_BYTES {',
+     'if false {',
+     'runtime::session::factory::projection_cache_tests::oversized_checkpoint_is_missing',
+     '#1011 oversized checkpoint is treated as missing'),
+    # fix-r1 (DeepSeek P2-2): replay alone produces equal projections; only
+    # the hydrated-row counter observes that a valid cache was consumed.
+    ('hydrate-branch-removed',
+     'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs',
+     'if let Some(checkpoint) = checkpoint {',
+     'if let Some(checkpoint) = checkpoint.filter(|_| false) {',
+     'runtime::session::factory::projection_cache_tests::fresh_load',
+     '#1011 valid cache is hydrated'),
+    # fix-r1 (DeepSeek P2-1): rejecting the whole envelope because one row's
+    # codec is unknown must not dehydrate the two supported rows.
+    ('envelope-over-rejected',
+     'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs',
+     '.is_some_and(|n| (1.0..=9_007_199_254_740_991.0).contains(&n) && n.fract() == 0.0)',
+     '.is_some_and(|n| (1.0..=2.0).contains(&n) && n.fract() == 0.0)',
+     'runtime::session::factory::projection_cache_tests::invalid_codec',
+     '#1011 invalid codec row falls back alone'),
 
     ('guard-lib-wiring-omitted',
      'src/pilotdeck-gateway/tests/fixtures/session-factory/projection-cache/negative_controls.py',

@@ -277,6 +277,8 @@ fn assert_snapshot(h: &Harness, expected: &JsValue, index: usize) {
                 field(&expected, "anchor"),
                 "#1011 checkpoint anchor equals TS"
             );
+            // Rust registers exactly these two rows (see envelope()); the
+            // other 11 rows are not faked and cold-replay from the log.
             for name in ["agent-transcript.metadata", "agent-transcript.turn-summary"] {
                 assert_eq!(
                     field(field(&actual, "projections"), name),
@@ -401,6 +403,22 @@ async fn matrix(name: &str) {
     } else {
         assert_snapshot(&h, &snapshots[2], 0);
     }
+    if state == "fresh" || state == "stale" {
+        // Replay and hydrate produce equal projection values, so the snapshot
+        // oracle alone cannot see that the valid rows were actually consumed.
+        let storage = if event == "recreate" {
+            lock(&recreated)
+                .clone()
+                .expect("#1011 hydrated replacement exists")
+        } else {
+            h.storage.clone()
+        };
+        assert_eq!(
+            *lock(&storage.cache.hydrated_rows),
+            2,
+            "#1011 valid cache is hydrated"
+        );
+    }
     assert_ne!(
         state, "concurrent",
         "#1011 concurrency has dedicated scenario"
@@ -466,13 +484,31 @@ async fn restore_case(name: &str) {
             cache: h.cache,
         };
         assert_snapshot(&h, field(&row, "settled"), 1);
+        if name == "cold-fresh" || name == "cold-stale" {
+            // Replay and hydrate produce equal projection values here; only
+            // this counter observes that the replacement actually read them.
+            assert_eq!(
+                *lock(&h.storage.cache.hydrated_rows),
+                2,
+                "#1011 valid cache is hydrated"
+            );
+        }
     } else {
         h.storage
             .restore()
             .await
             .expect("#1011 supplemental restore fulfilled");
         assert_snapshot(&h, field(&row, "settled"), 0);
-        if name != "invalid-codec" {
+        if name == "invalid-codec" {
+            // Only the conversation row's codec is unsupported; conversation
+            // always replays, so the metadata and turn-summary rows of the
+            // same envelope still hydrate.
+            assert_eq!(
+                *lock(&h.storage.cache.hydrated_rows),
+                2,
+                "#1011 invalid codec row falls back alone"
+            );
+        } else {
             assert_eq!(
                 *lock(&h.storage.cache.hydrated_rows),
                 0,
@@ -686,6 +722,42 @@ async fn capture_retries_three_times() {
         "#1011 capture exhaustion diagnostic equals TS"
     );
 }
+#[test]
+fn oversized_checkpoint_is_missing() {
+    let root = std::env::temp_dir().join(format!("pdrs-1011-oversized-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("#1011 oversized scratch");
+    let path = root.join("log.jsonl.projections.json");
+    let envelope = "{\"format\":\"pilotdeck.session-projections\",\"version\":1}";
+    std::fs::write(&path, envelope).expect("#1011 bounded checkpoint written");
+    assert!(
+        FileProjectionCheckpointStore(path.clone())
+            .load()
+            .is_some_and(|value| is(field(&value, "format"), "pilotdeck.session-projections")),
+        "#1011 bounded checkpoint still loads"
+    );
+    // Trailing whitespace keeps the file parseable, so only the size bound
+    // rejects it once it passes the transcript read limit.
+    let padding = crate::storage::TRANSCRIPT_MAX_BYTES + 1 - envelope.len() as u64;
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .expect("#1011 oversized reopen");
+    std::io::Write::write_all(&mut file, &vec![b' '; padding as usize])
+        .expect("#1011 oversized padding");
+    assert_eq!(
+        std::fs::metadata(&path)
+            .expect("#1011 oversized stat")
+            .len(),
+        crate::storage::TRANSCRIPT_MAX_BYTES + 1,
+        "#1011 oversized fixture size"
+    );
+    assert!(
+        FileProjectionCheckpointStore(path).load().is_none(),
+        "#1011 oversized checkpoint is treated as missing"
+    );
+    std::fs::remove_dir_all(root).expect("#1011 oversized cleanup");
+}
+
 #[tokio::test]
 async fn predecessor_rejection_does_not_consume_sequence() {
     let row = case("predecessor-reject");
@@ -836,6 +908,13 @@ async fn queued_matrix(event: &str) {
     let h = Harness::new(&snaps[0]);
     h.storage.restore().await.expect("#1011 queued restore");
     assert_snapshot(&h, &snaps[0], 0);
+    // The concurrent cells hold the same valid before-cache as fresh-*, so the
+    // queued restore must have consumed its rows too; only this sees it.
+    assert_eq!(
+        *lock(&h.storage.cache.hydrated_rows),
+        2,
+        "#1011 valid cache is hydrated"
+    );
     let (gate, entered) = Gate::new();
     *lock(&h.log.append_gate) = Some(gate.clone());
     let first = tokio::spawn(queued_metadata(&h.storage, "concurrent-1", "concurrent-1"));
