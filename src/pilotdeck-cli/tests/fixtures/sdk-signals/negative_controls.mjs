@@ -1,10 +1,12 @@
 // #1145 Adversarial input controls for the capture contract. No source mutation,
 // no HEAD guard bypass, and no claim to cover the future Rust signal behavior.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validate } from './contract.mjs';
+import { validate, validateFiles, validateControlCount, TOTAL_CONTROLS } from './contract.mjs';
 import { cleanupAll } from './cleanup.mjs';
 
 assert.equal(process.version, 'v22.22.0', '#1145 negative Node version');
@@ -102,6 +104,8 @@ const mutations = [
 ];
 
 validate(source, definitions);
+validateFiles(source, here, process.env.PDRS_BASELINE);
+validateControlCount(mutations);
 const results = [];
 for (const [name, mutate, assertion] of mutations) {
   let status = 'INVALID', reason;
@@ -141,6 +145,95 @@ try {
   results.push({ name: 'cleanup-step-errors', status: 'INVALID', reason: String(error) });
 }
 console.log(JSON.stringify(results.at(-1)));
+// Scratch files exercise actual file reads, without changing the registered
+// producer, TS checkout, or any product source in place.
+for (const [name, operation, assertion] of [
+  ['cases-disk-drift', (dir, baseline) => {
+    writeFileSync(join(dir, 'cases.json'), '\n', { flag: 'a' });
+    validateFiles(source, dir, baseline);
+  }, '#1145 producer file SHA256 matches disk: cases.json'],
+  ['probe-disk-drift', (dir, baseline) => {
+    writeFileSync(join(dir, 'probe.mjs'), '\n', { flag: 'a' });
+    validateFiles(source, dir, baseline);
+  }, '#1145 producer file SHA256 matches disk: probe.mjs'],
+  ['source-disk-drift', (dir, baseline) => {
+    writeFileSync(join(baseline, 'src/cli/sdkCli.ts'), '\n', { flag: 'a' });
+    validateFiles(source, dir, baseline);
+  }, '#1145 TS file SHA256 matches disk: src/cli/sdkCli.ts'],
+  ['well-formed-wrong-hash', (dir, baseline) => {
+    const changed = structuredClone(source);
+    changed.probeSha256['hooks.mjs'] = '0'.repeat(64);
+    validateFiles(changed, dir, baseline);
+  }, '#1145 producer file SHA256 matches disk: hooks.mjs'],
+  ['empty-mutations', () => validateControlCount([]), '#1145 fixed data mutation denominator'],
+  ['short-mutations', () => validateControlCount(mutations.slice(1)), '#1145 fixed data mutation denominator'],
+  ['empty-results', () => validateControlCount(mutations, []), '#1145 fixed negative result denominator'],
+]) {
+  const scratch = mkdtempSync(join(tmpdir(), 'pdrs-1145-identity-'));
+  const baseline = join(scratch, 'baseline');
+  let status = 'INVALID', reason;
+  try {
+    for (const file of Object.keys(source.probeSha256)) {
+      writeFileSync(join(scratch, file), readFileSync(join(here, file)), { flag: 'wx' });
+    }
+    for (const file of Object.keys(source.sourceSha256)) {
+      mkdirSync(dirname(join(baseline, file)), { recursive: true });
+      writeFileSync(join(baseline, file), readFileSync(join(process.env.PDRS_BASELINE, file)), { flag: 'wx' });
+    }
+    validateFiles(source, scratch, baseline);
+    try {
+      operation(scratch, baseline);
+      status = 'SURVIVED'; reason = 'corrupted disk input or denominator accepted';
+    } catch (error) {
+      status = error.code === 'ERR_ASSERTION' && error.message.includes(assertion) ? 'KILLED' : 'INVALID';
+      reason = status === 'KILLED' ? assertion : String(error);
+    }
+  } catch (error) { reason = String(error); }
+  finally { rmSync(scratch, { recursive: true, force: true }); }
+  const row = { name, status, reason };
+  results.push(row); console.log(JSON.stringify(row));
+}
+// Check the generator entry itself, so deleting its verification call cannot
+// leave the helper-only negatives green. No product/registered file is edited.
+for (const [name, file, group] of [
+  ['generator-cases-drift', 'cases.json', 'producer'],
+  ['generator-probe-drift', 'probe.mjs', 'producer'],
+  ['generator-ts-drift', 'src/cli/sdkCli.ts', 'TS'],
+]) {
+  const scratch = mkdtempSync(join(tmpdir(), 'pdrs-1145-generator-'));
+  const baseline = join(scratch, 'baseline');
+  const assertion = `#1145 ${group} file SHA256 matches disk: ${file}`;
+  let status = 'INVALID', reason;
+  try {
+    for (const entry of [...Object.keys(source.probeSha256), 'source.json', 'contract.mjs', 'generate.mjs']) {
+      writeFileSync(join(scratch, entry), readFileSync(join(here, entry)), { flag: 'wx' });
+    }
+    for (const entry of Object.keys(source.sourceSha256)) {
+      mkdirSync(dirname(join(baseline, entry)), { recursive: true });
+      writeFileSync(join(baseline, entry), readFileSync(join(process.env.PDRS_BASELINE, entry)), { flag: 'wx' });
+    }
+    const run = label => spawnSync(process.execPath, [join(scratch, 'generate.mjs'), join(scratch, label)], {
+      env: { ...process.env, PDRS_BASELINE: baseline }, encoding: 'utf8', timeout: 20_000, maxBuffer: 4 * 1024 * 1024,
+    });
+    const positive = run('positive');
+    assert.equal(positive.status, 0, '#1145 generator entry positive control');
+    const target = join(group === 'TS' ? baseline : scratch, file);
+    writeFileSync(target, '\n', { flag: 'a' });
+    const negative = run('negative');
+    const killed = negative.status === 1 && !negative.error && !negative.signal
+      && negative.stderr.includes(`AssertionError [ERR_ASSERTION]: ${assertion}`);
+    status = killed ? 'KILLED' : negative.status === 0 ? 'SURVIVED' : 'INVALID';
+    reason = killed ? assertion : JSON.stringify({ status: negative.status, error: String(negative.error), stderr: negative.stderr });
+    writeFileSync(target, readFileSync(join(group === 'TS' ? process.env.PDRS_BASELINE : here, file)));
+    assert.equal(run('restored').status, 0, '#1145 generator entry restored positive control');
+  } catch (error) { status = 'INVALID'; reason = String(error); }
+  finally { rmSync(scratch, { recursive: true, force: true }); }
+  const row = { name, status, reason };
+  results.push(row); console.log(JSON.stringify(row));
+}
+validateControlCount(mutations, results);
+validateFiles(source, here, process.env.PDRS_BASELINE);
 const counts = Object.fromEntries(['KILLED', 'SURVIVED', 'INVALID'].map(status => [status, results.filter(row => row.status === status).length]));
+assert.equal(results.length, TOTAL_CONTROLS, '#1145 emitted total is registered');
 console.log(JSON.stringify({ counts, total: results.length }));
 process.exitCode = results.some(row => row.status !== 'KILLED') ? 1 : 0;

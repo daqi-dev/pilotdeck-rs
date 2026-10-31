@@ -1,9 +1,9 @@
-# #1145 P08：先矩阵、后实现
+# #1145 P08：信号矩阵与 Rust 生命周期回放
 
-本包只交信号与资源生命周期的 TS 候选金样、采集器和原件验证。
-**不包含 Rust 信号实现或逐格 Rust CLI 对拍，不表示 P08 / #123 完成。**
-协调者提交本阶段矩阵和金样后再进入实现；不能用本包的数据负控替代
-listener 提前/漏移除、abort 不等回复、前驱假通过、遗留连接等产品负控。
+本包包含 TS 原件、来源验证和 96 格独立的 Rust CLI 进程回放。Rust 实现位于
+`src/sdk/{signals,turn,transport,output}.rs`。**仍不表示 P08 / #123 完成**：
+stdin 六格挂起，严格字节比较会保留 JS 堆栈、动态 UUID、close reason 的差异；
+未取得差异批准前，不把这些格改成 PASS。产品变异负控独立于数据负控。
 
 ## 矩阵与原件
 
@@ -56,11 +56,21 @@ stdin 缺口的原件单独保留在 `gap-source.json`：本宿主的 Node pipe 
 
 ## 重采、提取与数据负控
 
+phase2-A 已补来源与固定分母守卫。默认非 ignored 的
+`signal_oracle_matches_recorded_source_and_local_files` 不依赖 Node，实际读取
+本目录六个 producer 文件并比对 SHA256，同时核对完整 source→oracle 投影。
+它只表示本地原件一致，不表示外部 TS 文件已经核验。完整
+`signal_oracle_regenerates_identically` 在 Rust 与 Node 两侧都重算七个 TS/source/dist
+文件的磁盘哈希，缺 `PDRS_BASELINE` 明确失败，保留 ignored 是为了声明外部基线依赖。
+选用常跑本地金样守卫解决未运行问题，不修改 CI 元数据或冻结装置。
+
 ```sh
 PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck \
   python3 -I src/pilotdeck-cli/tests/fixtures/sdk-signals/capture.py NEW_EVIDENCE_DIR
-node src/pilotdeck-cli/tests/fixtures/sdk-signals/generate.mjs NEW_EXTRACT_DIR
-node src/pilotdeck-cli/tests/fixtures/sdk-signals/negative_controls.mjs
+PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck \
+  node src/pilotdeck-cli/tests/fixtures/sdk-signals/generate.mjs NEW_EXTRACT_DIR
+PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck \
+  node src/pilotdeck-cli/tests/fixtures/sdk-signals/negative_controls.mjs
 ```
 
 采集默认跳过已挂起的 stdin 格，并带上其原件缺口清单。新原件须审查后才替换
@@ -70,12 +80,60 @@ node src/pilotdeck-cli/tests/fixtures/sdk-signals/negative_controls.mjs
 
 `negative_controls.mjs` 在内存中独立破坏真实采集数据，绑定专属断言判杀，全部变异
 跑完再汇总 KILLED/SURVIVED/INVALID，并在每轮重验原件。它不修改产品源码、不使用
-影子 git、不绕过 HEAD 守卫，也不需要变异 Rust 编译。产品源码负控留在第二阶段。
+影子 git、不绕过 HEAD 守卫，也不需要变异 Rust 编译。产品源码负控见下节。
+
+固定分母为 **61 个数据变异 + 11 个额外控制 = 72**：额外控制包括 cleanup、
+磁盘漂移、合法但错误的哈希、空/缩短变异表、空结果表，以及三个真实生成器入口
+漂移负控。入口负控在独占临时 fixture 目录运行正控→改坏→恢复正控；不复制 Git
+仓库、不改原件。所有项跑完再汇总；Rust 解析末行并核 total 与三种状态计数。
+Rust 本地金样检查也有实际磁盘漂移、等长换身份、金样输出篡改与分母负控。
 
 ```sh
 scripts/cargo-slots.sh
 export CARGO_TARGET_DIR=/Users/da/ws/pilotdeck-rs/_build/wt-1145/_build/cargo-target
 export CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_PROFILE_TEST_DEBUG=line-tables-only
+export PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck
 cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli \
-  --test sdk_signal_exit -- --include-ignored --test-threads=1 --show-output
+  --test sdk_signal_exit signal_ -- --include-ignored --skip signal_cases:: --skip signal_driver
 ```
+
+## Rust 回放与产品负控
+
+`tests/common/signal_replay.rs` 将同一份真实 Rust 入口编入子进程测试，只有观察钩子
+属于 cfg(test)。父进程持有 28999，按客户端原子状态文件触发信号与前驱动作；
+不以「已发送」代替「已消费」。子进程通过 `PDRS_SIGINT_WRAPPER` 指定的
+`sigint-default.py` 恢复默认 SIGINT，包装 Python 使用 `-I -B` 避免运行目录缓存。
+默认包装位置为协调者提供的 `/Users/da/ws/pilotdeck-rs/_tmp/20261025-claude-loop/sigint-default.py`。
+
+96 个 `signal_cases::*` 测试因依赖固定端口、外部 TS checkout 和观察窗口而 ignored；
+默认本地金样守卫照常运行。六个 stdin 测试独立注明 #123/P09 缺口，强制运行会失败，
+不能作为成功格。下面命令必须恰好执行 **96** 个测试；0 个测试不构成验收。
+每次使用新的绝对证据路径，保存原始 stdout/stderr、actual/comparison、连接 wire
+与完整初末树。TS stderr 仅剥 `specs/cli-parity/normalization.md` §6 的精确两行前缀。
+所有窗口格断言 12 秒内没有自然退出，再由本测试 SIGKILL 并在 3 秒内回收。
+
+```sh
+scripts/cargo-slots.sh
+PDRS_SIGNAL_RESULTS=/absolute/new-evidence-directory \
+  cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli \
+  --test sdk_signal_exit signal_cases:: -- --ignored --skip stdin_ --test-threads=1
+```
+
+`../sdk-signal-abort-state/` 增补 11 格真实 SDK 状态探针：两类 turn_started 各三种
+runId、两种流失败与待决 abort、三种 iterator/consumer 错误。仅 WebSocket IO
+被替换；不是完整 CLI 四面对拍。生成器在执行前后校验同一真实 TS 磁盘来源，
+默认测试校验生成器与父原件身份，另有显式 ignored 重生成守卫。
+待决 abort 的本地 socket 回归须独占 28999：
+
+```sh
+scripts/cargo-slots.sh
+cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli --test sdk_signal_exit \
+  product::sdk::turn::tests::pending_abort_keeps_query_until_reply -- --exact --ignored
+python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py --check
+python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py NEW_NEGATIVE_DIR
+```
+
+产品负控固定 9 个变异，完整绑定测试名与单行断言；每项先正控、变异编译、负控、
+恢复、复跑正控，最后汇总全部结果。它使用共享 `mutating_sources/run_owned/wait_for_slot`，
+要求调用方设置 `CARGO_TARGET_DIR`，拒绝 dirty/new HEAD，不能绕过。尚未提交的新增
+源码须先由协调者提交，随后在宿主编译所有变异并执行全量；未执行项不能称 KILLED。
