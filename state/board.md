@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-31 17:15 · by Claude Code 协调者
+updated: 2026-10-31 18:35 · by Claude Code 协调者
 - #1011 | impl | doing | PR #1175 第一步（TS 矩阵 + 金样）r1 opus + GLM 0/0（P2×2）；本机宿主在跑 → 第二步 Rust 实现 + 两条 P2 → Codex（`_tmp/20261031-p2-1011-phase2/extra.md`）
 - #1145 | impl | doing | PR #1148 r5 GLM 0/0 但 abort 期限洪泛不触发升 P1 → Codex fix-r5；mbp2 r5m 在跑；RST 映射跟进 #1178
 - #1166 | impl | doing | PR #1172（M6）r3 GLM 尺子 P1（跨树 target 归属）+ 两家同撞锁外 bootstrap → Codex fix-r4；余项 #1180
@@ -9,8 +9,12 @@ updated: 2026-10-31 17:15 · by Claude Code 协调者
 - #1136 | impl | doing | PR #1171 macmini 全绿；Codex fix-r1（wire-end RST 路径升 P1 + 补负控）；重复抽取跟进 #1179
 - #1154 | impl | doing | 原生进程 Metadata cwd 对齐 TS + Cwd.set 差异登记 → Codex
 - #917 | review | doing | GLM 交付 32de320dd → r1 opus + Codex + macmini
-- #1169 | review | doing | PR #1181 Codex 交付 d55520f25；r1 opus + GLM；cb8 r1b 等 #1166 cb8 链结束后重跑（对拍锁被占）
-- #1177 | impl | doing | A5.4-pr1 A19-HOST 逐格期望（冻结件）→ GLM
+- #1177 | review | doing | PR #1184 收敛（两家 0/0、calibrate PASS、元负控 KILLED）→ CI 后入队；D3/D4 复核 #1183
+- #133 | impl | doing | Linux 非法 UTF-8 dirent 真实对拍 + #117 errno Linux（同 PR）→ GLM，cb8 实跑
+- #132 | impl | doing | 第一步 TS 原件矩阵 → GLM；第二、三步等 #1154 合入
+- codex | coord | blocked | Codex 额度用尽，11-04 14:36 恢复；在途 Codex 单已转 GLM 接续
+- #1183 | coord | human | #1177 D3/D4 自决待复核
+- #1191 | coord | human | cb8 远端实现车道是否放 llm-center key
 - #1168 | impl | doing | native-topology 信号矩阵（#590 前置）→ GLM
 - A5.4 | coord | doing | 子代理梳理剩余定标范围（`_tmp/20261031-a54-scope/SCOPE.md`）→ 拆包解锁 #1140 判分接线 / #590 / D4
 - #589 | impl | blocked | 关单前置只剩 #1011（#1010 #1019 #1020 已关）
@@ -2547,3 +2551,12 @@ updated: 2026-10-31 17:15 · by Claude Code 协调者
 - 17:03 #1166 P2 余项开 #1180；派 #1168（native-topology 信号矩阵，A5.4 → #590 路径）→ GLM。
 - 17:10 #1169 Codex 交付 d55520f25（PR #1181）→ r1 opus + GLM + cb8（真实采集，路径含逗号空格 + 离线审计 + 源码负控）。
 - 17:15 #1154 看板评审轮数误 +1（worker 自审被我当正式轮）：正式 r1 派出时不再 +1。#1169 cb8 r1 FAILED 是对拍锁被 #1166 r3 负控占用（collect 按设计 BLOCKED），其余项全过 → 等 #1166 cb8 链结束后重跑 r1b。
+- 17:24 #1177 GLM 交付 8430c7fec（72 格 ts 对 360 实测相等，负控 8+7 KILLED）→ check_frozen --write 重登记 6d1b1cdf0，PR #1184，r1 opus + Codex + macmini 官方 calibrate 复算；D3（写失败停 running）/ D4（帧序）判断题开 #1183 自决待复核。
+- 17:34 #1177 r1：Codex P1（决策卡 D1/D2 把 registry 拓扑的已发布帧与被丢弃帧混写，数据无误）+ opus P2×2 负控只变异一行帧（events/state/result、U/E(T) 换序、no-registry applicable 无负控 → 尺子会松，按 P1）→ GLM fix-r1；macmini 复算作废已停。#1011 本机宿主因 cargo 名额超时出 1 个 INVALID（本机 4 个 worker 抢名额）→ 改在 cb8 另跑 r1c。#1166 fix-r4 交付，cb8 上 r3 旧链停掉让位。反思：本机满负荷时宿主负控会 INVALID，长宿主默认走 macmini / cb8 / mbp2，本机只跑短链。
+- 17:48 #1166 r4：GLM P1 兄弟脚本只认 src/target 被新拒收规则假 FAIL（协调者探针确认）→ Codex fix-r5 只修此项；前窗 TOCTOU（同一处第 3 次）登记已知边界，卡 decisions-20261031-1166-threat（AI 代批待复核，随 PR 入库）。#1011 本机宿主 65 KILLED + 1 INVALID（名额超时），cb8 r1c 重跑；第二步 → Codex。#1145 fix-r5 b093d6a41 → r6 opus+GLM、mbp2 排队；#1154 a67180683 → r1 opus+GLM+macmini；#1168 GLM 0d5d6c6e0 → r1 opus+Codex+macmini。#917 Codex r1 0/0 P2×3（fail-open、复查与写入并发窗口、注入时机）→ 等 opus 后 GLM fix-r1。
+- 17:51 #1169 收敛：r1 opus + GLM 0/0/0，cb8 r1b 全绿（真实采集 WITNESS_CAPTURED、负控 63 KILLED）→ PR #1181 ready 入队。#917 r1 两家同撞复查后仍有 await 窗口 → GLM fix-r1（旧 head 的 macmini 链远端已停）。#1182 合入 248b8b261。
+- 17:55 #1145 r6 两家 0/0；GLM sibling 指出 transport.rs request()/hello() 同款 timeout 原形 → 与 abort 同级按 P1，Codex fix-r6；计数硬编码开跟进。mbp2 r5m 因分支前移自动作废（branch-watch），r6 在跑。#1168 r1：opus P1（run.py 新 -I 守卫使 controls.py import 失效）+ 宿主 negative_signals 全量模式参数判断写反 → 等 Codex 评审后 GLM fix-r1。
+- 18:03 自查：三个「等前一条链结束再起」的等待脚本因 pgrep -f 匹配到自身命令行永远不退出，#1166 r4 / #1136 r2c / #1145 r6 宿主空等 15–24 min → 已杀、直接起；记忆 stop-then-start-same-id 补规则。#1166 fix-r5 96e51d0d5 + 威胁边界卡 a4f0a9226 → r5 opus+GLM + cb8。#1177 fix-r1 983043290 + 重登记 13daba9fc → r2 opus+Codex + macmini 复算。#1168 r1 Codex P1×6 + opus P1 → GLM fix-r1。
+- 18:05 #1181（#1169）入队。#1136 r2 两家 0/0，但两家同撞「yields 用例绕过 spawn() 判据收窄」与「三族缺退出后登记回收负控」→ Codex fix-r2；#1154 r1 两家 0/0，GLM 指出 archive RPC 空 projectKey 默认值改为进程 cwd、无金样 → Codex fix-r1 先 TS 实测定性 + chat_dir 去重。两单已起跑的宿主（macmini / cb8）停掉，远端核归零。
+- 18:30 **Codex 额度用尽（11-04 14:36 恢复）**：5 个在跑 Codex 单同时 exit=1 → 全部 dispatch-resume 转 GLM 接续（#1166 补 CI 红 metadata-observer #994 回归）；评审家族改 opus + DeepSeek。#1169 合入 4790da383（收尾：回收树、cb8 build 12 GiB 清）。#1177 收敛（两家 0/0、calibrate PASS、元负控 3 KILLED）→ 回填事件评审路径 87dfc1eb3，跑最终 opus 块；P2 开 #1190。新开 #133+#117、#132-pr1 → GLM。资源评估 _tmp/20261031-capacity-plan/PLAN.md：本机 10 核为瓶颈、宿主空闲；cb8 实现车道需密钥上 cb8，待人定。磁盘：旧归档迁 macmini 冷存储中。
+- 18:35 **两小时交接** → `_tmp/20261031-handoff-1835.md`。待人：#1183（#1177 D3/D4 复核）、#1191（cb8 key）。
