@@ -125,6 +125,12 @@ CALIBRATION_CASES = {
 # case, one mutated surface on either side, a class label that disagrees with
 # the preregistered fault configuration, and a rust difference outside the
 # A19-HOST entry's listed surfaces (including a shrunk scope table).
+# fix-r1 (#1177 review): per-class canonical-output controls.  Every D4-B
+# rust-derivation class now has at least one rust-side mutation inside its
+# allowed scope, so only the canonical-output comparison can reject it:
+# registry events/state/result on the weakest class (D3), the U/E(T) frame
+# order (D4), no agent_status:turn_timeout in a status-failed registry (D2),
+# both no-registry durable shapes, and the inapplicable-registry shape.
 EXPECTATION_CASES = {
     'expectations-missing-case': 'EXPECTATION_COVERAGE',
     'expectations-extra-case': 'EXPECTATION_COVERAGE',
@@ -134,6 +140,14 @@ EXPECTATION_CASES = {
     'expectations-rust-out-of-scope': 'EXPECTATION_SCOPE',
     'expectations-rust-surface': 'EXPECTATION_RUST_DERIVATION',
     'expectations-scope-shrunk': 'EXPECTATION_SCOPE',
+    'expectations-rust-registry-state': 'EXPECTATION_RUST_DERIVATION',
+    'expectations-rust-registry-result': 'EXPECTATION_RUST_DERIVATION',
+    'expectations-rust-registry-events': 'EXPECTATION_RUST_DERIVATION',
+    'expectations-rust-events-timeout-status': 'EXPECTATION_RUST_DERIVATION',
+    'expectations-rust-frame-swap': 'EXPECTATION_RUST_DERIVATION',
+    'expectations-rust-no-registry-durable': 'EXPECTATION_RUST_DERIVATION',
+    'expectations-rust-no-registry-status-durable': 'EXPECTATION_RUST_DERIVATION',
+    'expectations-rust-no-registry-registry': 'EXPECTATION_STRUCTURE',
 }
 
 # Direct Node-path label controls, paired with the Python calibration-* variants.
@@ -364,6 +378,53 @@ def expectation_case(name, output, source):
     elif name == 'expectations-rust-surface':
         # An allowed surface: only the canonical-output check can catch the edit.
         row['rust']['frames'] = row['rust']['frames'][:1]
+    elif name == 'expectations-rust-registry-state':
+        # D3 weakest derivation: the registry state is the disk fact (running).
+        row = next(r for r in document['cases']
+                   if r['case'] == 'registry-failure/timeout-append-fails-status-fast/model')
+        row['rust']['registry']['state'] = 'failed'
+    elif name == 'expectations-rust-registry-result':
+        # D3: a result that was never appended must stay absent.
+        row = next(r for r in document['cases']
+                   if r['case'] == 'registry-failure/timeout-append-fails-status-fast/model')
+        row['rust']['registry']['result'] = session_domain_module.A19_TIMEOUT_ERROR
+    elif name == 'expectations-rust-registry-events':
+        # registry-timeout-final: the anchored registry event sequence itself.
+        row = next(r for r in document['cases'] if r['case'] == 'registry-fast/fast/model')
+        events = row['rust']['registry']['events']
+        seq, _, label = events[-1].partition(':')
+        events[-1] = f'{int(seq) + 1}:{label}'
+    elif name == 'expectations-rust-events-timeout-status':
+        # D2: a durable write failure must not register a timeout status event.
+        row = next(r for r in document['cases']
+                   if r['case'] == 'registry-failure/timeout-status-fails-append-fast/model')
+        events = row['rust']['registry']['events']
+        first = int(events[0].partition(':')[0])
+        events.insert(0, f'{first}:{session_domain_module.A19_TIMEOUT_STATUS}')
+    elif name == 'expectations-rust-frame-swap':
+        # D4: the frame order is the enqueue order; U comes before E(T).
+        row = next(r for r in document['cases']
+                   if r['case'] == 'registry-failure/timeout-status-event-append-fails/model')
+        row['rust']['frames'][0], row['rust']['frames'][1] = \
+            row['rust']['frames'][1], row['rust']['frames'][0]
+    elif name == 'expectations-rust-no-registry-durable':
+        # no-registry-timeout-final: the durable status difference itself.
+        row = next(r for r in document['cases'] if r['case'] == 'no-registry-fast/fast/model')
+        row['rust']['durableStatus'] = []
+    elif name == 'expectations-rust-no-registry-status-durable':
+        # no-registry-timeout-status-failed: durable stays empty.
+        row = next(r for r in document['cases']
+                   if r['case'] == 'no-registry-failure/timeout-status-fails/model')
+        row['rust']['durableStatus'] = ['turn_timeout']
+    elif name == 'expectations-rust-no-registry-registry':
+        # Without a run registry the rust expectation must stay inapplicable.
+        # The ts side keeps the measured inapplicable registry, so the
+        # applicability-equality structure check rejects this first; the
+        # canonical-output require on the same shape is defense in depth.
+        row = next(r for r in document['cases'] if r['case'] == 'no-registry-fast/fast/model')
+        row['rust']['registry'] = {'applicable': True,
+                                   'events': ['1:agent_status:turn_timeout'],
+                                   'state': 'running', 'result': None}
 
     def mutated_read(path):
         return copy.deepcopy(document) if Path(path).resolve() == fixture else read(path)
