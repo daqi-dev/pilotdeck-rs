@@ -103,6 +103,12 @@ def bench_line(output, marker):
     raise SystemExit(f'#1128 no {marker} line in runner output:\n{output[-2000:]}')
 
 
+def require_clean_tree(stage):
+    dirty = git('status', '--porcelain', '--untracked-files=all', '--', 'src', check=False).stdout.decode()
+    if dirty:
+        raise SystemExit(f'#1128 tree differs from HEAD under the lock before {stage}:\n' + dirty)
+
+
 def build_release_test(env, log_name, out):
     slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15)
     (out / log_name).write_text(slot.stdout + slot.stderr)
@@ -250,6 +256,10 @@ def main():
     # the cargo-slot queue, the same order mutating_sources uses, so a slot
     # holder never waits on this tree's lock.
     with tree_lock(root, timeout=900):
+        # Re-check under the lock: the check above can pass while another
+        # runner still holds the lock and later leaves a mutant behind after
+        # being killed (#1128 r4 GLM P1). Only the in-lock verdict counts.
+        require_clean_tree('post build')
         exe = build_release_test(env, 'build-post.slots.log', out)
 
     inputs = {}
@@ -324,6 +334,7 @@ def main():
     # Same tree lock as the post build: the restored binary must be built
     # from the same HEAD bytes the pre window was verified against.
     with tree_lock(root, timeout=900):
+        require_clean_tree('restored build')
         exe_restored = build_release_test(env, 'build-restored.slots.log', out)
     spot = None
     if 'small-8' in inputs:
