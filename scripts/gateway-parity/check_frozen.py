@@ -239,7 +239,8 @@ def manifest_inventory(root):
     names = ('acceptance.md', 'normalization.md', 'accepted-diffs.md')
     inventory = {name: manifest_path(name) for name in names}
     paths = [f'scripts/gateway-parity/{name}' for name in A2_SCRIPTS]
-    paths += ['scripts/gateway-parity/fixtures/session-calibration.json']
+    paths += ['scripts/gateway-parity/fixtures/session-calibration.json',
+              'scripts/gateway-parity/fixtures/session-expectations.json']
     paths += [f'scripts/a5-19/{name}' for name in
               ('observation_rules.mjs', 'run.py', 'six_cells.mts', 'append-observer.mjs', 'cleanup-observer.mjs')]
     inventory.update({'../../' + name: name for name in paths})

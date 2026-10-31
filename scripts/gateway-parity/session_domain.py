@@ -126,6 +126,69 @@ MATRIX = tuple((host, sidecar) for host in ('ts', 'rust') for sidecar in ('ts', 
 REPEATS = 5
 FIXTURE_NAMES = ('run.py', 'six_cells.mts', 'observation_rules.mjs',
                  'append-observer.mjs', 'cleanup-observer.mjs')
+# A19-HOST per-case expectation registration (issue #1177): the labels the D4-B
+# canonical outputs are built from.  S(T)/E(T) are the single timeout status and
+# error set; U is the result_unknown responsibility record that replaces a failed
+# registry append on the real-time stream.
+A19_TIMEOUT_STATUS = 'agent_status:turn_timeout'
+A19_TIMEOUT_ERROR = 'error:turn_timeout'
+A19_RESULT_UNKNOWN = 'error:result_unknown'
+# Closed class set of the D4-B derivation.  ``ts-equal`` covers every non
+# timeout-first ordering; the other classes name the T-side write that failed.
+A19_CLASSES = ('ts-equal',
+               'no-registry-timeout-final',
+               'no-registry-timeout-status-failed',
+               'registry-timeout-final',
+               'registry-timeout-status-failed',
+               'registry-timeout-error-append-failed',
+               'registry-timeout-status-append-failed')
+# Canonical rust output per class, derived from the human-approved D4-B wording
+# (state/decisions-20261014.md, 2026-10-15) plus the TS dropped-enqueue evidence
+# in exp014: rust publishes the frames TS dropped, minus both gateway_submit_failed
+# events, minus a result_unknown caused by a failed G-side append.  ``eventLabels``
+# are anchored to the TS-side first after-prefix registry seq (model 4 / tool 5);
+# ``None`` marks the two no-registry classes.
+A19_CANONICAL_RUST = {
+    'no-registry-timeout-final': {
+        'frames': (A19_TIMEOUT_STATUS, A19_TIMEOUT_ERROR),
+        'durableStatus': ('turn_timeout',), 'eventLabels': None},
+    'no-registry-timeout-status-failed': {
+        'frames': (A19_TIMEOUT_ERROR,),
+        'durableStatus': (), 'eventLabels': None},
+    'registry-timeout-final': {
+        'frames': (A19_TIMEOUT_STATUS, A19_TIMEOUT_ERROR),
+        'durableStatus': ('turn_timeout',),
+        'eventLabels': (A19_TIMEOUT_STATUS, A19_TIMEOUT_ERROR),
+        'state': 'failed', 'result': A19_TIMEOUT_ERROR},
+    'registry-timeout-status-failed': {
+        'frames': (A19_TIMEOUT_ERROR,),
+        'durableStatus': (),
+        'eventLabels': (A19_TIMEOUT_ERROR,),
+        'state': 'failed', 'result': A19_TIMEOUT_ERROR},
+    'registry-timeout-error-append-failed': {
+        'frames': (A19_TIMEOUT_STATUS, A19_RESULT_UNKNOWN),
+        'durableStatus': ('turn_timeout',),
+        'eventLabels': (A19_TIMEOUT_STATUS,),
+        'state': 'running', 'result': None},
+    'registry-timeout-status-append-failed': {
+        'frames': (A19_RESULT_UNKNOWN, A19_TIMEOUT_ERROR),
+        'durableStatus': ('turn_timeout',),
+        'eventLabels': (A19_TIMEOUT_ERROR,),
+        'state': 'failed', 'result': A19_TIMEOUT_ERROR},
+}
+# Surfaces where the registered rust expectation may differ from the registered
+# ts measurement, per class.  This is the machine scope of the A19-HOST-001 diff
+# entry; anything differing outside it is out of the approved difference.
+A19_ALLOWED_SURFACES = {
+    'ts-equal': (),
+    'no-registry-timeout-final': ('durableStatus',),
+    'no-registry-timeout-status-failed': ('durableStatus',),
+    'registry-timeout-final': ('frames', 'durableStatus', 'registry.events', 'registry.result'),
+    'registry-timeout-status-failed': ('frames', 'durableStatus', 'registry.events', 'registry.result'),
+    'registry-timeout-error-append-failed': ('frames', 'durableStatus', 'registry.events',
+                                             'registry.state', 'registry.result'),
+    'registry-timeout-status-append-failed': ('frames', 'durableStatus', 'registry.events', 'registry.result'),
+}
 
 
 class EvidenceError(ValueError):
@@ -154,6 +217,7 @@ def hashes():
     # E1 includes its transitive observation rules and the reused A2 primitives.
     paths = [SCRIPT / name for name in ('session_domain.py', 'session_observations.mjs',
              'controls/session_domain.py', 'fixtures/session-calibration.json',
+             'fixtures/session-expectations.json',
              'common.py', 'compare.py', 'driver.mts', 'observer.py')]
     paths += [ROOT / 'scripts/a5-19' / name for name in FIXTURE_NAMES]
     return {**apparatus_hashes(), **{p.relative_to(ROOT).as_posix(): digest(p) for p in paths}}
@@ -723,6 +787,203 @@ def observation_check(payload, output, name='observation-check'):
     return result
 
 
+SESSION_PREFIX_TYPES = frozenset(('turn_started', 'input_accepted', 'model_request_started',
+                                 'tool_call_started'))
+
+
+def _session_label(event):
+    """Mirror of the fixture's ``label``: type plus the first present detail."""
+    detail = event.get('event')
+    if detail is None:
+        detail = event.get('code')
+    if detail is None:
+        detail = event.get('finishReason')
+    if detail is None:
+        detail = ''
+    return f"{event['type']}:{detail}"
+
+
+def project_observation(observation):
+    """Independent Python projection of one raw observation onto the three
+    registered surfaces, mirroring the fixture's ``summarize`` (frames after
+    prefix, durable statuses, registry events/state/result after prefix)."""
+    frames = [_session_label(event) for event in observation['frames']
+              if event['type'] not in SESSION_PREFIX_TYPES]
+    durable = [entry['event'] for entry in observation['durableStatus']['entries']]
+    registry = observation['registry']
+    if registry.get('applicable'):
+        events = [f"{event['seq']}:{_session_label(event['event'])}"
+                  for event in registry['events']
+                  if event['event']['type'] not in SESSION_PREFIX_TYPES]
+        record = registry['record']
+        result = record.get('result')
+        projected = {'applicable': True, 'events': events, 'state': record['state'],
+                    'result': None if result is None else _session_label(result)}
+    else:
+        projected = {'applicable': False}
+    return {'frames': frames, 'durableStatus': durable, 'registry': projected}
+
+
+def expectation_class(cell, variant):
+    """D4-B class of a preregistered variant, from the variant's fault config."""
+    if variant.get('order', 'timeout-first') != 'timeout-first':
+        return 'ts-equal'
+    if cell.startswith('registry-'):
+        if variant.get('failStatus') == 'turn_timeout':
+            return 'registry-timeout-status-failed'
+        if variant.get('failAppend') == 'error:turn_timeout':
+            return 'registry-timeout-error-append-failed'
+        if variant.get('failAppend') == 'agent_status:turn_timeout':
+            return 'registry-timeout-status-append-failed'
+        return 'registry-timeout-final'
+    return ('no-registry-timeout-status-failed'
+            if variant.get('failStatus') == 'turn_timeout' else 'no-registry-timeout-final')
+
+
+def _valid_registry_event(item):
+    """A registered registry event is a ``<seq>:<label>`` string with a non-empty label."""
+    if not isinstance(item, str):
+        return False
+    head, separator, label = item.partition(':')
+    return separator == ':' and head.isdigit() and bool(label)
+
+
+def _expectation_structure(row):
+    """Shape of one registered case; None when healthy, else the offending field."""
+    if not isinstance(row, dict) or set(row) != {'case', 'a19Class', 'ts', 'rust'}:
+        return 'case keys'
+    if row['a19Class'] not in A19_CLASSES:
+        return 'a19Class'
+    for side in ('ts', 'rust'):
+        value = row[side]
+        if not isinstance(value, dict) or set(value) != {'frames', 'durableStatus', 'registry'}:
+            return side + ' keys'
+        if not (isinstance(value['frames'], list)
+                and all(isinstance(item, str) and item for item in value['frames'])):
+            return side + ' frames'
+        if not (isinstance(value['durableStatus'], list)
+                and all(isinstance(item, str) and item for item in value['durableStatus'])):
+            return side + ' durableStatus'
+        registry = value['registry']
+        if not isinstance(registry, dict):
+            return side + ' registry'
+        if registry.get('applicable') is False:
+            if set(registry) != {'applicable'}:
+                return side + ' registry keys'
+        elif registry.get('applicable') is True:
+            if set(registry) != {'applicable', 'events', 'state', 'result'}:
+                return side + ' registry keys'
+            if not (isinstance(registry['events'], list)
+                    and all(_valid_registry_event(item) for item in registry['events'])):
+                return side + ' registry events'
+            if not isinstance(registry['state'], str) or not registry['state']:
+                return side + ' registry state'
+            if registry['result'] is not None and not isinstance(registry['result'], str):
+                return side + ' registry result'
+        else:
+            return side + ' registry applicable'
+    if row['ts']['registry']['applicable'] != row['rust']['registry']['applicable']:
+        return 'registry applicability'
+    return None
+
+
+def _expectation_diff_surfaces(ts, rust):
+    """Surfaces on which the registered rust expectation differs from the ts one."""
+    surfaces = []
+    if ts['frames'] != rust['frames']:
+        surfaces.append('frames')
+    if ts['durableStatus'] != rust['durableStatus']:
+        surfaces.append('durableStatus')
+    expected, registered = ts['registry'], rust['registry']
+    if expected.get('applicable') != registered.get('applicable'):
+        surfaces.append('registry.applicable')
+    elif expected.get('applicable'):
+        for field in ('events', 'state', 'result'):
+            if expected.get(field) != registered.get(field):
+                surfaces.append('registry.' + field)
+    return surfaces
+
+
+def validate_expectations(registration, observations):
+    """A5.4 structural registration check for the A19-HOST expectations.
+
+    Never scores a native run: it only pins the registration itself.  (1) the
+    case set is one-to-one with the calibration manifest, (2) every registered
+    ts expectation equals the projected measurement for all repetitions,
+    (3) rust differs from ts only on the surfaces the A19-HOST entry lists,
+    (4) rust equals the D4-B canonical output derived from the variant's fault
+    configuration, so an edit inside the allowed scope is still caught.
+    """
+    contract = read(SCRIPT / 'fixtures/session-calibration.json')
+    document = read(SCRIPT / 'fixtures/session-expectations.json')
+    require(isinstance(document, dict)
+            and isinstance(document.get('cases'), list)
+            and document.get('baselineCommit') == BASELINE_COMMIT
+            and document.get('repeats') == REPEATS
+            and document.get('phases') == ['model', 'tool'],
+            'EXPECTATION_STRUCTURE', 'expectation document header')
+    rows = document['cases']
+    require([row.get('case') if isinstance(row, dict) else None for row in rows] == contract['cases'],
+            'EXPECTATION_COVERAGE',
+            'expectation cases must equal the independent E1 case manifest one-to-one')
+    for row in rows:
+        problem = _expectation_structure(row)
+        require(problem is None, 'EXPECTATION_STRUCTURE', f"{row['case']}: {problem}")
+    variants = {(cell['name'], variant['name']): variant
+                for cell in registration['cells'] for variant in cell['variants']}
+    registered = {row['case']: row for row in rows}
+    for case, row in registered.items():
+        cell, variant, _phase = case.split('/')
+        require(row['a19Class'] == expectation_class(cell, variants[(cell, variant)]),
+                'EXPECTATION_CLASS', case + ': a19Class disagrees with the preregistered fault configuration')
+    measured = {}
+    for observation in observations:
+        case = '/'.join(observation['id'].split('/')[:3])
+        projection = project_observation(observation)
+        if case in measured:
+            require(measured[case] == projection, 'EXPECTATION_TS_DRIFT',
+                    case + ': repetitions disagree with each other')
+        else:
+            measured[case] = projection
+    require(set(measured) == set(registered), 'EXPECTATION_COVERAGE',
+            'measured cases must equal the registered expectation cases')
+    for case, row in registered.items():
+        require(row['ts'] == measured[case], 'EXPECTATION_TS_DRIFT',
+                case + ': ts expectation drifted from the calibrate measurement')
+        surfaces = _expectation_diff_surfaces(row['ts'], row['rust'])
+        require(all(surface in A19_ALLOWED_SURFACES[row['a19Class']] for surface in surfaces),
+                'EXPECTATION_SCOPE',
+                case + ': rust differs from ts outside the A19-HOST listed surfaces: '
+                + ','.join(surfaces))
+        if row['a19Class'] == 'ts-equal':
+            require(row['rust'] == row['ts'], 'EXPECTATION_RUST_DERIVATION',
+                    case + ': non-timeout-first ordering must match TS exactly')
+            continue
+        canonical = A19_CANONICAL_RUST[row['a19Class']]
+        require(tuple(row['rust']['frames']) == canonical['frames'], 'EXPECTATION_RUST_DERIVATION',
+                case + ': rust frames differ from the D4-B canonical output')
+        require(tuple(row['rust']['durableStatus']) == canonical['durableStatus'],
+                'EXPECTATION_RUST_DERIVATION',
+                case + ': rust durable statuses differ from the D4-B canonical output')
+        registry = row['rust']['registry']
+        if canonical['eventLabels'] is None:
+            require(registry == {'applicable': False}, 'EXPECTATION_RUST_DERIVATION',
+                    case + ': rust registry must be inapplicable without a run registry')
+        else:
+            first = int(row['ts']['registry']['events'][0].split(':', 1)[0])
+            expected_events = [f'{first + index}:{label}'
+                               for index, label in enumerate(canonical['eventLabels'])]
+            require(registry['applicable'] is True and registry['events'] == expected_events,
+                    'EXPECTATION_RUST_DERIVATION',
+                    case + ': rust registry events differ from the D4-B canonical output')
+            require(registry['state'] == canonical['state'], 'EXPECTATION_RUST_DERIVATION',
+                    case + ': rust registry state differs from the D4-B canonical output')
+            require(registry['result'] == canonical['result'], 'EXPECTATION_RUST_DERIVATION',
+                    case + ': rust registry result differs from the D4-B canonical output')
+    return {'status': 'PASS', 'cases': len(rows), 'measurements': len(observations),
+            'a19DiffCases': sum(1 for row in rows if _expectation_diff_surfaces(row['ts'], row['rust']))}
+
+
 def calibration_coverage(registration, manifest):
     """Check candidate bookkeeping against our independently versioned case list."""
     contract = read(SCRIPT / 'fixtures/session-calibration.json')
@@ -788,6 +1049,7 @@ def validate_calibration(folder, output, baseline):
               for i in range(1, REPEATS + 1)]
     require(not observations or all(round_['observations'] for round_ in rounds),
             'COVERAGE', 'nonempty observations require nonempty repetition ledgers')
+    expectations = validate_expectations(registration, observations)
     oracle = observation_check({'observations': observations, 'controls': True}, output)
     controls = manifest['checks']['observerControls']
     require(len(controls) == 9 and len({c['name'] for c in controls}) == 9
@@ -799,6 +1061,7 @@ def validate_calibration(folder, output, baseline):
             'CLEANUP', 'A5.2a did not finish/reap its child')
     return {'groups': groups, 'expectedCases': expected, 'executedCases': manifest['executedCases'],
             'repeats': REPEATS, 'measurements': len(observations), 'oracle': oracle,
+            'expectations': expectations,
             'rounds': rounds,
             'controls': controls, 'unstableGroups': manifest['unstableGroups'],
             'sidecar': {'status': 'NOT_APPLICABLE', 'reason': 'controlled in-process TS loop; no sidecar binary'},
@@ -911,7 +1174,9 @@ def deadline_report():
                       'sidecarSha256': None, 'output': None, 'disk': None, 'http': None,
                       'oracle': 'NOT_RUN', 'cleanup': 'NOT_RUN'})
     result = {'status': 'NOT_RUN', 'structureStatus': 'PASS', 'cells': cells,
-            'reason': 'A7 native host/driver/exec+egress witnesses and A5.4 frozen expectations are not ready',
+            'reason': 'A7 native host/driver/exec+egress witnesses are not ready; A5.4 '
+                      'expectations are registered in fixtures/session-expectations.json '
+                      'but native scoring is not wired here',
             'executionStatus': 'NOT_RUN', 'acceptanceStatus': 'NOT_RUN'}
     require([(c['host'], c['sidecar']) for c in cells] == list(MATRIX)
             and all(c['status'] == 'NOT_RUN' and not c['executedCases'] and c['expectedCases'] for c in cells),

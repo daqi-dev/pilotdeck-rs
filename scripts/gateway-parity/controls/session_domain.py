@@ -118,6 +118,24 @@ CALIBRATION_CASES = {
     'calibration-identity': 'IDENTITY',
 }
 
+# A5.4 expectation-registration controls (#1177).  Each mutates only the
+# session-expectations fixture (or the registered scope table) while the
+# measured source stays healthy, so the first failing rule names exactly the
+# structural check that must catch a corrupted registration: a missing/extra
+# case, one mutated surface on either side, a class label that disagrees with
+# the preregistered fault configuration, and a rust difference outside the
+# A19-HOST entry's listed surfaces (including a shrunk scope table).
+EXPECTATION_CASES = {
+    'expectations-missing-case': 'EXPECTATION_COVERAGE',
+    'expectations-extra-case': 'EXPECTATION_COVERAGE',
+    'expectations-bad-structure': 'EXPECTATION_STRUCTURE',
+    'expectations-class-swap': 'EXPECTATION_CLASS',
+    'expectations-ts-drift': 'EXPECTATION_TS_DRIFT',
+    'expectations-rust-out-of-scope': 'EXPECTATION_SCOPE',
+    'expectations-rust-surface': 'EXPECTATION_RUST_DERIVATION',
+    'expectations-scope-shrunk': 'EXPECTATION_SCOPE',
+}
+
 # Direct Node-path label controls, paired with the Python calibration-* variants.
 # Each mutates exactly one label while the id (the expected source) stays fixed,
 # so checkObservationLabels must reject with COVERAGE.
@@ -168,6 +186,7 @@ CASES = {
     'calibration-missing-variant': 'COVERAGE',
     'calibration-unavailable': 'CAPABILITY',
     **CALIBRATION_CASES,
+    **EXPECTATION_CASES,
     **{name: 'COVERAGE' for name in LABEL_CASES},
     **{name: None for name in LABEL_KNOWN_ACCEPT},
 }
@@ -290,9 +309,86 @@ def calibration_case(name, output, source):
     raise failure
 
 
+def expectation_case(name, output, source):
+    """Mutate fresh reads of the expectations fixture only; the measured source
+    stays healthy, so the first failing rule names the structural check that
+    must reject a corrupted A19-HOST registration (#1177)."""
+    require(source is not None, 'CONTROL_PRECONDITION', 'expectation control requires --source')
+    source = source.resolve()
+    baseline = Path(read(source / 'launch.json')['environment']['A52_BASELINE']).resolve()
+    try:
+        validate_calibration(source, output / 'healthy-expectations', baseline)
+    except EvidenceError as error:
+        raise EvidenceError('CONTROL_PRECONDITION', f'healthy calibration failed: {error.rule}: {error}') from error
+
+    if name == 'expectations-scope-shrunk':
+        # Shrink the registered scope table: the canonical durable difference of
+        # the timeout-first no-registry cases is now outside the listed surfaces
+        # and the scope check itself must reject it.
+        shrunk = {cls: tuple(surface for surface in surfaces if surface != 'durableStatus')
+                  for cls, surfaces in session_domain_module.A19_ALLOWED_SURFACES.items()}
+        failure = None
+        with patch.object(session_domain_module, 'A19_ALLOWED_SURFACES', shrunk):
+            try:
+                validate_calibration(source, output / 'scope-shrunk', baseline)
+            except EvidenceError as error:
+                failure = error
+        save(output / 'expectation-mutation.json',
+             {'case': name, 'firstRule': failure.rule if failure else None,
+              'detail': str(failure) if failure else 'mutation accepted'})
+        require(failure is not None and failure.rule == CASES[name], 'CONTROL_EXPECTATION',
+                'scope table shrunk: expected ' + CASES[name]
+                + (', got ' + failure.rule if failure else ', mutation accepted'))
+        raise failure
+
+    fixture = SCRIPT / 'fixtures/session-expectations.json'
+    document = copy.deepcopy(read(fixture))
+    row = next(r for r in document['cases'] if r['case'] == 'registry-fast/fast/model')
+    if name == 'expectations-missing-case':
+        document['cases'].remove(row)
+    elif name == 'expectations-extra-case':
+        extra = copy.deepcopy(row)
+        extra['case'] = 'registry-fast/fast/extra'
+        document['cases'].append(extra)
+    elif name == 'expectations-bad-structure':
+        row['rust']['registry'] = {'applicable': 'yes'}
+    elif name == 'expectations-class-swap':
+        row['a19Class'] = 'registry-timeout-status-failed'
+    elif name == 'expectations-ts-drift':
+        row = next(r for r in document['cases'] if r['case'] == 'no-registry-fast/fast/model')
+        row['ts']['frames'] = row['ts']['frames'][:1]
+    elif name == 'expectations-rust-out-of-scope':
+        # ts-equal case: no surface may differ, so any rust edit is out of scope.
+        row = next(r for r in document['cases'] if r['case'] == 'no-registry-fast/unknown-first/model')
+        row['rust']['durableStatus'] = ['turn_timeout']
+    elif name == 'expectations-rust-surface':
+        # An allowed surface: only the canonical-output check can catch the edit.
+        row['rust']['frames'] = row['rust']['frames'][:1]
+
+    def mutated_read(path):
+        return copy.deepcopy(document) if Path(path).resolve() == fixture else read(path)
+
+    failure = None
+    with patch('session_domain.read', side_effect=mutated_read):
+        try:
+            validate_calibration(source, output / name, baseline)
+        except EvidenceError as error:
+            failure = error
+    save(output / 'expectation-mutation.json',
+         {'case': name, 'firstRule': failure.rule if failure else None,
+          'detail': str(failure) if failure else 'mutation accepted'})
+    require(failure is not None and failure.rule == CASES[name], 'CONTROL_EXPECTATION',
+            name + ': expected ' + CASES[name]
+            + (', got ' + failure.rule if failure else ', mutation accepted'))
+    raise failure
+
+
 def check_case(name, output, source=None):
     if name in CALIBRATION_CASES:
         calibration_case(name, output, source)
+        return
+    if name in EXPECTATION_CASES:
+        expectation_case(name, output, source)
         return
     evidence, contract = native_fixture(output)
     observation = observation_fixture(source)
@@ -797,7 +893,7 @@ def cleanup_controls(output):
 def run_all(output, source=None):
     output.mkdir(parents=True, exist_ok=False)
     results = []
-    not_run = [] if source else list(CALIBRATION_CASES)
+    not_run = [] if source else list(CALIBRATION_CASES) + list(EXPECTATION_CASES)
     for name in ('healthy', *(case for case in CASES if case not in not_run)):
         command = [sys.executable, '-I', str(SCRIPT / 'controls/session_domain.py'),
                    '--case', name, '--output', str(output / name)]

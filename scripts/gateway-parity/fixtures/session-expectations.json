@@ -1,0 +1,2559 @@
+{
+  "scope": "A19-HOST per-case expectation registration: 72 cases x {ts, rust} x {frames, durableStatus, registry(events/state/result)}; structural registration only, native scoring is wired separately",
+  "source": "ts: docs/experiments/exp014-a52-session-fixtures/results.json (Node v22.22.0, baseline cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85, k=5, 360 measurements); rust: D4-B human approval 2026-10-15 (state/decisions-20261014.md), entry specs/gateway-parity/diffs/A19-HOST-001.md; derivation card docs/research/009_a19-host-expectations/decision.md",
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "baselineNode": "v22.22.0",
+  "repeats": 5,
+  "phases": [
+    "model",
+    "tool"
+  ],
+  "cells": [
+    "no-registry-fast",
+    "no-registry-slow",
+    "no-registry-failure",
+    "registry-fast",
+    "registry-slow",
+    "registry-failure"
+  ],
+  "cases": [
+    {
+      "case": "no-registry-fast/fast/model",
+      "a19Class": "no-registry-timeout-final",
+      "ts": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-fast/fast/tool",
+      "a19Class": "no-registry-timeout-final",
+      "ts": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-fast/unknown-first/model",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [
+          "agent_status:turn_failed",
+          "error:agent_invalid_state",
+          "turn_completed:model_error"
+        ],
+        "durableStatus": [
+          "turn_failed"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_failed",
+          "error:agent_invalid_state",
+          "turn_completed:model_error"
+        ],
+        "durableStatus": [
+          "turn_failed"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-fast/unknown-first/tool",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [
+          "agent_status:turn_failed",
+          "error:agent_invalid_state",
+          "turn_completed:model_error"
+        ],
+        "durableStatus": [
+          "turn_failed"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_failed",
+          "error:agent_invalid_state",
+          "turn_completed:model_error"
+        ],
+        "durableStatus": [
+          "turn_failed"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-fast/known-final-first/model",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [
+          "turn_completed:completed"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "turn_completed:completed"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-fast/known-final-first/tool",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [
+          "turn_completed:completed"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "turn_completed:completed"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-fast/after-complete/model",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-fast/after-complete/tool",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-fast/known-final-before-timeout-pending/model",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-fast/known-final-before-timeout-pending/tool",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-slow/status-slow/model",
+      "a19Class": "no-registry-timeout-final",
+      "ts": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-slow/status-slow/tool",
+      "a19Class": "no-registry-timeout-final",
+      "ts": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-slow/catch-status-slow/model",
+      "a19Class": "no-registry-timeout-final",
+      "ts": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-slow/catch-status-slow/tool",
+      "a19Class": "no-registry-timeout-final",
+      "ts": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-failure/timeout-status-fails/model",
+      "a19Class": "no-registry-timeout-status-failed",
+      "ts": {
+        "frames": [
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "error:turn_timeout"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-failure/timeout-status-fails/tool",
+      "a19Class": "no-registry-timeout-status-failed",
+      "ts": {
+        "frames": [
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "error:turn_timeout"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-failure/catch-status-fails/model",
+      "a19Class": "no-registry-timeout-final",
+      "ts": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "no-registry-failure/catch-status-fails/tool",
+      "a19Class": "no-registry-timeout-final",
+      "ts": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": false
+        }
+      }
+    },
+    {
+      "case": "registry-fast/fast/model",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-fast/fast/tool",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-fast/unknown-first/model",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [
+          "agent_status:turn_failed",
+          "error:agent_invalid_state",
+          "turn_completed:model_error"
+        ],
+        "durableStatus": [
+          "turn_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_failed",
+            "5:error:agent_invalid_state",
+            "6:turn_completed:model_error"
+          ],
+          "state": "completed",
+          "result": "turn_completed:model_error"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_failed",
+          "error:agent_invalid_state",
+          "turn_completed:model_error"
+        ],
+        "durableStatus": [
+          "turn_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_failed",
+            "5:error:agent_invalid_state",
+            "6:turn_completed:model_error"
+          ],
+          "state": "completed",
+          "result": "turn_completed:model_error"
+        }
+      }
+    },
+    {
+      "case": "registry-fast/unknown-first/tool",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [
+          "agent_status:turn_failed",
+          "error:agent_invalid_state",
+          "turn_completed:model_error"
+        ],
+        "durableStatus": [
+          "turn_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_failed",
+            "6:error:agent_invalid_state",
+            "7:turn_completed:model_error"
+          ],
+          "state": "completed",
+          "result": "turn_completed:model_error"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_failed",
+          "error:agent_invalid_state",
+          "turn_completed:model_error"
+        ],
+        "durableStatus": [
+          "turn_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_failed",
+            "6:error:agent_invalid_state",
+            "7:turn_completed:model_error"
+          ],
+          "state": "completed",
+          "result": "turn_completed:model_error"
+        }
+      }
+    },
+    {
+      "case": "registry-fast/known-final-first/model",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [
+          "turn_completed:completed"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:turn_completed:completed"
+          ],
+          "state": "completed",
+          "result": "turn_completed:completed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "turn_completed:completed"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:turn_completed:completed"
+          ],
+          "state": "completed",
+          "result": "turn_completed:completed"
+        }
+      }
+    },
+    {
+      "case": "registry-fast/known-final-first/tool",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [
+          "turn_completed:completed"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:turn_completed:completed"
+          ],
+          "state": "completed",
+          "result": "turn_completed:completed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "turn_completed:completed"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:turn_completed:completed"
+          ],
+          "state": "completed",
+          "result": "turn_completed:completed"
+        }
+      }
+    },
+    {
+      "case": "registry-fast/after-complete/model",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      },
+      "rust": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-fast/after-complete/tool",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      },
+      "rust": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-fast/known-final-before-timeout-pending/model",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      },
+      "rust": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-fast/known-final-before-timeout-pending/tool",
+      "a19Class": "ts-equal",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      },
+      "rust": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-slow/status-slow-append-fast/model",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-slow/status-slow-append-fast/tool",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-slow/status-fast-append-slow/model",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-slow/status-fast-append-slow/tool",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-slow/both-slow/model",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-slow/both-slow/tool",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-slow/status-fast-catch-append-slow/model",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-slow/status-fast-catch-append-slow/tool",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-slow/status-slow-catch-append-slow/model",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-slow/status-slow-catch-append-slow/tool",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-slow/catch-status-slow-append-fast/model",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-slow/catch-status-slow-append-fast/tool",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-slow/catch-status-slow-append-slow/model",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-slow/catch-status-slow-append-slow/tool",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-status-fails-append-fast/model",
+      "a19Class": "registry-timeout-status-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:error:turn_timeout",
+            "5:agent_status:gateway_submit_failed",
+            "6:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "error:turn_timeout"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-status-fails-append-fast/tool",
+      "a19Class": "registry-timeout-status-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "error:turn_timeout"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/catch-status-fails-append-fast/model",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/catch-status-fails-append-fast/tool",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-status-fails-append-slow/model",
+      "a19Class": "registry-timeout-status-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:error:turn_timeout",
+            "5:agent_status:gateway_submit_failed",
+            "6:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "error:turn_timeout"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-status-fails-append-slow/tool",
+      "a19Class": "registry-timeout-status-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "error:turn_timeout"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/catch-status-fails-append-slow/model",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/catch-status-fails-append-slow/tool",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-status-fails-catch-append-slow/model",
+      "a19Class": "registry-timeout-status-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:error:turn_timeout",
+            "5:agent_status:gateway_submit_failed",
+            "6:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "error:turn_timeout"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-status-fails-catch-append-slow/tool",
+      "a19Class": "registry-timeout-status-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "error:turn_timeout"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/catch-status-fails-catch-append-slow/model",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/catch-status-fails-catch-append-slow/tool",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-append-fails-status-fast/model",
+      "a19Class": "registry-timeout-error-append-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:agent_status:gateway_submit_failed",
+            "6:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:result_unknown"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout"
+          ],
+          "state": "running",
+          "result": null
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-append-fails-status-fast/tool",
+      "a19Class": "registry-timeout-error-append-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:result_unknown"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout"
+          ],
+          "state": "running",
+          "result": null
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-status-event-append-fails/model",
+      "a19Class": "registry-timeout-status-append-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:error:turn_timeout",
+            "5:agent_status:gateway_submit_failed",
+            "6:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "error:result_unknown",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-status-event-append-fails/tool",
+      "a19Class": "registry-timeout-status-append-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "error:result_unknown",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/catch-status-event-append-fails/model",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/catch-status-event-append-fails/tool",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/catch-append-fails-status-fast/model",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/catch-append-fails-status-fast/tool",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-append-fails-status-slow/model",
+      "a19Class": "registry-timeout-error-append-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:agent_status:gateway_submit_failed",
+            "6:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:result_unknown"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout"
+          ],
+          "state": "running",
+          "result": null
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-append-fails-status-slow/tool",
+      "a19Class": "registry-timeout-error-append-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:result_unknown"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout"
+          ],
+          "state": "running",
+          "result": null
+        }
+      }
+    },
+    {
+      "case": "registry-failure/catch-append-fails-status-slow/model",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/catch-append-fails-status-slow/tool",
+      "a19Class": "registry-timeout-final",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:turn_timeout"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-status-and-catch-append-fail/model",
+      "a19Class": "registry-timeout-status-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:error:turn_timeout",
+            "5:agent_status:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      },
+      "rust": {
+        "frames": [
+          "error:turn_timeout"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-status-and-catch-append-fail/tool",
+      "a19Class": "registry-timeout-status-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      },
+      "rust": {
+        "frames": [
+          "error:turn_timeout"
+        ],
+        "durableStatus": [],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:error:turn_timeout"
+          ],
+          "state": "failed",
+          "result": "error:turn_timeout"
+        }
+      }
+    },
+    {
+      "case": "registry-failure/catch-status-and-timeout-append-fail/model",
+      "a19Class": "registry-timeout-error-append-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:agent_status:gateway_submit_failed",
+            "6:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:result_unknown"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout"
+          ],
+          "state": "running",
+          "result": null
+        }
+      }
+    },
+    {
+      "case": "registry-failure/catch-status-and-timeout-append-fail/tool",
+      "a19Class": "registry-timeout-error-append-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:result_unknown"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout"
+          ],
+          "state": "running",
+          "result": null
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-append-fails-catch-status-slow/model",
+      "a19Class": "registry-timeout-error-append-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout",
+            "5:agent_status:gateway_submit_failed",
+            "6:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:result_unknown"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "4:agent_status:turn_timeout"
+          ],
+          "state": "running",
+          "result": null
+        }
+      }
+    },
+    {
+      "case": "registry-failure/timeout-append-fails-catch-status-slow/tool",
+      "a19Class": "registry-timeout-error-append-failed",
+      "ts": {
+        "frames": [],
+        "durableStatus": [
+          "turn_timeout",
+          "gateway_submit_failed"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "state": "failed",
+          "result": "error:gateway_submit_failed"
+        }
+      },
+      "rust": {
+        "frames": [
+          "agent_status:turn_timeout",
+          "error:result_unknown"
+        ],
+        "durableStatus": [
+          "turn_timeout"
+        ],
+        "registry": {
+          "applicable": true,
+          "events": [
+            "5:agent_status:turn_timeout"
+          ],
+          "state": "running",
+          "result": null
+        }
+      }
+    }
+  ]
+}
